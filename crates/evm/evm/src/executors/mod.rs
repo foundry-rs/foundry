@@ -35,7 +35,7 @@ use foundry_evm_core::{
         history_window_start,
     },
     evm::{
-        BlockContext, ContextAuxFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory,
+        BlockContext, ChainContextFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory,
         FoundryEvmNetwork, HaltReasonFor, IntoInstructionResult, SpecFor, TxEnvFor,
     },
     utils::StateChangeset,
@@ -67,6 +67,8 @@ use std::{
 
 mod builder;
 pub use builder::ExecutorBuilder;
+
+mod campaign;
 
 pub mod fuzz;
 pub use fuzz::FuzzedExecutor;
@@ -101,8 +103,11 @@ pub fn should_ignore_revert<FEN: FoundryEvmNetwork>(
     reverter: Option<Address>,
 ) -> bool {
     !fail_on_revert
-        && reverter
-            .is_some_and(|reverter| reverter != target && !FEN::is_cheatcode_address(reverter))
+        && reverter.is_some_and(|reverter| {
+            reverter != target
+                && reverter != CHEATCODE_ADDRESS
+                && !FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES.contains(&reverter)
+        })
 }
 
 sol! {
@@ -175,7 +180,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             },
         );
 
-        for &address in FEN::EXTRA_CHEATCODE_ADDRESSES {
+        for &address in FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES {
             backend.insert_account_info(
                 address,
                 revm::state::AccountInfo {
@@ -189,7 +194,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         // Network-native precompiles that hold state but carry no bytecode need the same treatment:
         // Solidity's `extcodesize` check on high-level calls to functions without return data makes
         // the caller revert before the precompile ever runs. Never overwrite a real deployment.
-        for address in FEN::stateful_precompiles(evm_env.cfg_env.spec) {
+        for address in FEN::EvmFactory::stateful_precompiles(evm_env.cfg_env.spec) {
             let mut account = backend.basic_ref(address).unwrap_or_default().unwrap_or_default();
             if account.code.as_ref().is_none_or(|code| code.is_empty()) {
                 let code = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
@@ -271,17 +276,17 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         }
     }
 
-    fn context_for_synthetic_transaction(
+    fn chain_context_for_synthetic_transaction(
         &self,
         tx: &TxEnvFor<FEN>,
-    ) -> eyre::Result<ContextAuxFor<FEN>> {
+    ) -> eyre::Result<ChainContextFor<FEN>> {
         self.block_context.as_ref().map_or_else(
-            || self.backend().context_for_synthetic_transaction(tx),
+            || self.backend().chain_context_for_synthetic_transaction(tx),
             |context| Ok(context.next_transaction(tx)),
         )
     }
 
-    fn record_transaction_context(&mut self, tx: TxEnvFor<FEN>) {
+    fn record_block_transaction(&mut self, tx: TxEnvFor<FEN>) {
         if let Some(context) = &mut self.block_context {
             context.record_transaction(tx);
         }
@@ -513,11 +518,11 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         from: Address,
         code: Bytes,
         value: U256,
-        context_aux: ContextAuxFor<FEN>,
+        chain_context: ChainContextFor<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
         let (evm_env, tx_env) = self.build_test_env(from, TxKind::Create, code, value);
-        self.deploy_with_env_and_context(evm_env, tx_env, context_aux, rd)
+        self.deploy_with_env_and_context(evm_env, tx_env, chain_context, rd)
     }
 
     /// Deploys a contract using the given `env` and commits the new state to the underlying
@@ -533,8 +538,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         tx_env: TxEnvFor<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
-        let context_aux = self.context_for_synthetic_transaction(&tx_env)?;
-        self.deploy_with_env_and_context(evm_env, tx_env, context_aux, rd)
+        let chain_context = self.chain_context_for_synthetic_transaction(&tx_env)?;
+        self.deploy_with_env_and_context(evm_env, tx_env, chain_context, rd)
     }
 
     /// Deploys a contract with explicit network-specific context and commits its state changes.
@@ -547,7 +552,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &mut self,
         evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
-        context_aux: ContextAuxFor<FEN>,
+        chain_context: ChainContextFor<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
         assert!(
@@ -557,7 +562,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         );
         trace!(sender=%tx_env.caller(), "deploying contract");
 
-        let mut result = self.transact_with_env_and_context(evm_env, tx_env, context_aux)?;
+        let mut result = self.transact_with_env_and_context(evm_env, tx_env, chain_context)?;
         result = result.into_result(rd)?;
         let Some(Output::Create(_, Some(address))) = result.out else {
             panic!("Deployment succeeded, but no address was returned: {result:#?}");
@@ -699,10 +704,10 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         to: Address,
         calldata: Bytes,
         value: U256,
-        context_aux: ContextAuxFor<FEN>,
+        chain_context: ChainContextFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let (evm_env, tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
-        self.transact_with_env_and_context(evm_env, tx_env, context_aux)
+        self.transact_with_env_and_context(evm_env, tx_env, chain_context)
     }
 
     /// Performs a raw call to an account on the current state of the VM with an EIP-7702
@@ -735,7 +740,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
                 &mut backend,
                 evm_env.clone(),
-                Default::default(),
+                FEN::EvmFactory::default()
+                    .chain_context_for_transaction(&TxEnvFor::<FEN>::default()),
                 inspector,
             );
             let result =
@@ -760,8 +766,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let context_aux = self.context_for_synthetic_transaction(&tx_env)?;
-        self.call_with_env_and_context(evm_env, tx_env, context_aux)
+        let chain_context = self.chain_context_for_synthetic_transaction(&tx_env)?;
+        self.call_with_env_and_context(evm_env, tx_env, chain_context)
     }
 
     /// Executes the transaction with explicit network-specific context without committing state.
@@ -770,7 +776,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &self,
         mut evm_env: EvmEnvFor<FEN>,
         mut tx_env: TxEnvFor<FEN>,
-        context_aux: ContextAuxFor<FEN>,
+        chain_context: ChainContextFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
         let sancov_edges = stack.inner.sancov_edges;
@@ -779,9 +785,10 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let mut backend = CowBackend::new_borrowed(self.backend());
         let result = {
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
-            backend.inspect_with_context(&mut evm_env, &mut tx_env, context_aux, &mut stack)?
+            backend.inspect_with_context(&mut evm_env, &mut tx_env, chain_context, &mut stack)?
         };
         let has_state_snapshot_failure = backend.has_state_snapshot_failure();
+        let fork_block_number = backend.active_fork_block_number();
         let mut result = convert_executed_result(
             evm_env,
             tx_env,
@@ -789,6 +796,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             result,
             &backend,
             has_state_snapshot_failure,
+            fork_block_number,
         )?;
         if sancov_edges {
             SancovGuard::append_edges_into(&mut result);
@@ -806,8 +814,8 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let context_aux = self.context_for_synthetic_transaction(&tx_env)?;
-        self.transact_with_env_and_context(evm_env, tx_env, context_aux)
+        let chain_context = self.chain_context_for_synthetic_transaction(&tx_env)?;
+        self.transact_with_env_and_context(evm_env, tx_env, chain_context)
     }
 
     /// Executes and commits the transaction with explicit network-specific context.
@@ -816,7 +824,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &mut self,
         mut evm_env: EvmEnvFor<FEN>,
         mut tx_env: TxEnvFor<FEN>,
-        context_aux: ContextAuxFor<FEN>,
+        chain_context: ChainContextFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
         let sancov_edges = stack.inner.sancov_edges;
@@ -825,9 +833,10 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let backend = self.backend_mut();
         let result = {
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
-            backend.inspect_with_context(&mut evm_env, &mut tx_env, context_aux, &mut stack)?
+            backend.inspect_with_context(&mut evm_env, &mut tx_env, chain_context, &mut stack)?
         };
         let has_state_snapshot_failure = backend.has_state_snapshot_failure();
+        let fork_block_number = backend.active_fork_block_number();
         let mut result = convert_executed_result(
             evm_env,
             tx_env,
@@ -835,6 +844,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             result,
             &*backend,
             has_state_snapshot_failure,
+            fork_block_number,
         )?;
         if sancov_edges {
             SancovGuard::append_edges_into(&mut result);
@@ -844,7 +854,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         }
         let committed_tx = result.tx_env.clone();
         self.commit(&mut result);
-        self.record_transaction_context(committed_tx);
+        self.record_block_transaction(committed_tx);
         Ok(result)
     }
 
@@ -854,7 +864,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &mut self,
         mut evm_env: EvmEnvFor<FEN>,
         mut tx_env: TxEnvFor<FEN>,
-        context_aux: ContextAuxFor<FEN>,
+        chain_context: ChainContextFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let factory = FEN::EvmFactory::default();
         if factory.protocol_system_call(&tx_env)?.is_none() {
@@ -866,10 +876,11 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let result = backend.inspect_replay_with_context(
             &mut evm_env,
             &mut tx_env,
-            context_aux,
+            chain_context,
             &mut stack,
         )?;
         let has_state_snapshot_failure = backend.has_state_snapshot_failure();
+        let fork_block_number = backend.active_fork_block_number();
         let mut result = convert_executed_result(
             evm_env,
             tx_env,
@@ -877,10 +888,11 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             result,
             &backend,
             has_state_snapshot_failure,
+            fork_block_number,
         )?;
         let committed_tx = result.tx_env.clone();
         self.commit(&mut result);
-        self.record_transaction_context(committed_tx);
+        self.record_block_transaction(committed_tx);
         Ok(result)
     }
 
@@ -1292,6 +1304,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub cheatcodes: Option<Box<Cheatcodes<FEN>>>,
     /// The raw output of the execution
     pub out: Option<Output>,
+    /// The active fork's block number after execution, if any.
+    pub fork_block_number: Option<u64>,
     /// The chisel state
     pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
     pub reverter: Option<Address>,
@@ -1324,6 +1338,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             tx_env: TxEnvFor::<FEN>::default(),
             cheatcodes: Default::default(),
             out: None,
+            fork_block_number: None,
             chisel_state: None,
             reverter: None,
         }
@@ -1546,6 +1561,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     ResultAndState { result, state: state_changeset }: ResultAndState<HaltReasonFor<FEN>>,
     db: &dyn DatabaseRef<Error = DatabaseError>,
     has_state_snapshot_failure: bool,
+    fork_block_number: Option<u64>,
 ) -> eyre::Result<RawCallResult<FEN>> {
     let execution_cancelled = inspector.execution_cancelled();
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
@@ -1587,6 +1603,10 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         chisel_state,
         reverter,
     } = inspector.collect();
+    let fork_block_number = cheatcodes
+        .as_ref()
+        .and_then(|cheats| cheats.fork_block_number_override)
+        .or(fork_block_number);
     let debug_bytecodes = collect_debug_bytecodes(traces.as_ref(), db);
 
     if logs.is_empty() {
@@ -1623,6 +1643,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         tx_env,
         cheatcodes,
         out,
+        fork_block_number,
         chisel_state,
         reverter,
     })

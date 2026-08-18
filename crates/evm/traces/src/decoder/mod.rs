@@ -10,6 +10,8 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap, HashSet},
 };
 use alloy_sol_types::SolValue;
+#[cfg(feature = "base")]
+use base_common_precompiles::{ActivationRegistryStorage, NonceManagerStorage, TxContextStorage};
 use foundry_common::{
     ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
     get_contract_name, selectors::SelectorKind,
@@ -24,7 +26,7 @@ use foundry_evm_core::{
     precompiles::{
         BLAKE_2F, BLS12_G1ADD, BLS12_G1MSM, BLS12_G2ADD, BLS12_G2MSM, BLS12_MAP_FP_TO_G1,
         BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, CELO_TRANSFER, EC_ADD, EC_MUL, EC_PAIRING,
-        EC_RECOVER, IDENTITY, MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
+        EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
 };
 #[cfg(feature = "base")]
@@ -32,11 +34,11 @@ use foundry_evm_hardforks::BaseUpgrade;
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::TempoHardfork;
-#[cfg(feature = "base")]
-use foundry_evm_networks::active_base_precompiles;
 #[cfg(feature = "monad")]
 use foundry_evm_networks::is_monad_precompile_active_at;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant, celo::transfer::CELO_TRANSFER_LABEL};
+#[cfg(feature = "base")]
+use foundry_evm_networks::{active_base_precompiles, is_base_precompile_active_at};
 use itertools::Itertools;
 #[cfg(feature = "monad")]
 use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
@@ -57,6 +59,8 @@ use tempo_precompiles::{
     tip20::ITIP20,
 };
 
+#[cfg(feature = "base")]
+mod base;
 #[cfg(feature = "monad")]
 mod monad;
 pub(crate) mod precompiles;
@@ -66,6 +70,8 @@ use monad::{IMonadStaking, IMonadStakingSyscalls, IReserveBalance};
 
 #[cfg(not(feature = "monad"))]
 type MonadHardfork = ();
+#[cfg(not(feature = "base"))]
+type BaseUpgrade = ();
 type AddressEvents = HashMap<Address, BTreeMap<(B256, usize), Vec<Event>>>;
 
 /// Build a new [CallTraceDecoder].
@@ -284,7 +290,6 @@ pub struct CallTraceDecoder {
     monad_hardfork: Option<MonadHardfork>,
 
     /// The Base upgrade, used to determine upgrade-specific precompiles.
-    #[cfg(feature = "base")]
     base_upgrade: Option<BaseUpgrade>,
 
     /// Hide addresses when a label is available, showing only the label.
@@ -299,6 +304,7 @@ impl CallTraceDecoder {
             self.chain_id,
             self.tempo_hardfork,
             self.monad_hardfork,
+            self.base_upgrade,
         ) {
             self.labels.entry(CELO_TRANSFER).or_insert_with(|| CELO_TRANSFER_LABEL.to_string());
         }
@@ -329,6 +335,27 @@ impl CallTraceDecoder {
 
         for (label, address) in active_base_precompiles(upgrade) {
             self.labels.entry(address).or_insert_with(|| label.to_string());
+        }
+
+        // Labels alone leave calls showing a raw selector, so register the ABIs too. Each is
+        // scoped to its address and gated on the upgrade that installs it.
+        if is_base_precompile_active_at(ActivationRegistryStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                ActivationRegistryStorage::ADDRESS,
+                &base::IActivationRegistry::abi::contract(),
+            );
+        }
+        if is_base_precompile_active_at(NonceManagerStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                NonceManagerStorage::ADDRESS,
+                &base::INonceManager::abi::contract(),
+            );
+        }
+        if is_base_precompile_active_at(TxContextStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                TxContextStorage::ADDRESS,
+                &base::ITransactionContext::abi::contract(),
+            );
         }
     }
 
@@ -432,7 +459,6 @@ impl CallTraceDecoder {
             (BLS12_PAIRING_CHECK, "BLS12_PAIRING_CHECK".to_string()),
             (BLS12_MAP_FP_TO_G1, "BLS12_MAP_FP_TO_G1".to_string()),
             (BLS12_MAP_FP2_TO_G2, "BLS12_MAP_FP2_TO_G2".to_string()),
-            (P256_VERIFY, "P256VERIFY".to_string()),
             // Tempo
             (TIP_FEE_MANAGER_ADDRESS, "FeeManager".to_string()),
             (TIP403_REGISTRY_ADDRESS, "TIP403Registry".to_string()),
@@ -526,7 +552,6 @@ impl CallTraceDecoder {
             tempo_hardfork: None,
 
             monad_hardfork: None,
-            #[cfg(feature = "base")]
             base_upgrade: None,
 
             compact_labels: false,
@@ -561,25 +586,14 @@ impl CallTraceDecoder {
 
     /// Returns whether `address` is a precompile in this decoder's chain context.
     fn is_known_precompile(&self, address: Address) -> bool {
-        if precompiles::is_known_precompile(
+        precompiles::is_known_precompile(
             address,
             self.networks,
             self.chain_id,
             self.tempo_hardfork,
             self.monad_hardfork,
-        ) {
-            return true;
-        }
-        #[cfg(feature = "base")]
-        if precompiles::is_known_base_precompile(
-            address,
-            self.networks,
-            self.chain_id,
             self.base_upgrade,
-        ) {
-            return true;
-        }
-        false
+        )
     }
 
     /// Returns labels for precompiles active in this decoder's chain context.
@@ -619,7 +633,16 @@ impl CallTraceDecoder {
     ) -> Vec<IdentifiedAddress<'a>> {
         let nodes = arena.nodes().iter().filter(|node| {
             // Skip precompile addresses, they will never resolve externally.
-            if node.is_precompile() || self.is_known_precompile(node.trace.address) {
+            if node.is_precompile()
+                || precompiles::is_known_precompile_call(
+                    &node.trace,
+                    self.networks,
+                    self.chain_id,
+                    self.tempo_hardfork,
+                    self.monad_hardfork,
+                    self.base_upgrade,
+                )
+            {
                 return false;
             }
             let address = &node.trace.address;
@@ -729,7 +752,7 @@ impl CallTraceDecoder {
         }
     }
 
-    #[cfg(feature = "monad")]
+    #[cfg(any(feature = "base", feature = "monad"))]
     fn register_address_abi(&mut self, address: Address, abi: &JsonAbi) {
         for function in abi.functions() {
             self.push_address_function(address, function.clone());
@@ -946,6 +969,7 @@ impl CallTraceDecoder {
             self.chain_id,
             self.tempo_hardfork,
             self.monad_hardfork,
+            self.base_upgrade,
         ) {
             return trace;
         }
@@ -1488,7 +1512,14 @@ impl CallTraceDecoder {
                 // Ignore known addresses.
                 if n.trace.address == DEFAULT_CREATE2_DEPLOYER
                     || n.is_precompile()
-                    || self.is_known_precompile(n.trace.address)
+                    || precompiles::is_known_precompile_call(
+                        &n.trace,
+                        self.networks,
+                        self.chain_id,
+                        self.tempo_hardfork,
+                        self.monad_hardfork,
+                        self.base_upgrade,
+                    )
                 {
                     return false;
                 }
@@ -1659,6 +1690,7 @@ mod tests {
     #[cfg(feature = "monad")]
     use alloy_sol_types::TopicList;
     use alloy_sol_types::{SolCall, SolError, SolEvent};
+    use foundry_evm_core::precompiles::P256_VERIFY;
     #[cfg(feature = "monad")]
     use monad_revm::{
         reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
@@ -3113,6 +3145,32 @@ mod tests {
 
         assert_eq!(decoder.functions.get(&selector).unwrap().len(), global_functions);
         assert_eq!(decoder.functions_by_address[&address][&selector], [function]);
+    }
+
+    #[tokio::test]
+    async fn inactive_p256_address_uses_contract_identity() {
+        let abi = JsonAbi::parse(["function ordinaryCode()"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let mut arena = CallTraceArena::default();
+        arena.nodes_mut()[0].trace = CallTrace {
+            address: P256_VERIFY,
+            maybe_precompile: Some(false),
+            data: function.selector().to_vec().into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.identify(&arena, &mut AbiIdentifier { abi });
+        let decoded = decoder.decode_function(&arena.nodes()[0].trace).await;
+
+        assert_eq!(decoded.label.as_deref(), Some("Scoped"));
+        assert_eq!(decoded.call_data.unwrap().signature, "ordinaryCode()");
+    }
+
+    #[test]
+    fn p256_is_not_an_unconditional_precompile_label() {
+        assert!(!CallTraceDecoder::new().precompile_labels().contains_key(&P256_VERIFY));
     }
 
     #[test]

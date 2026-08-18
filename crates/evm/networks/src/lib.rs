@@ -793,9 +793,10 @@ impl NetworkConfigs {
 
     /// Resolves an RPC endpoint's complete execution profile.
     ///
-    /// Explicit metadata is authoritative. Legacy Anvil responses and ordinary RPC endpoints
-    /// recover Celo only from a canonical Celo chain ID; a caller-supplied fallback handles custom
-    /// chain IDs when the profile was selected explicitly.
+    /// Explicit metadata is authoritative. When metadata is absent or omits the profile, a
+    /// caller-supplied explicit profile takes precedence over chain-ID inference. Otherwise,
+    /// legacy Anvil responses and ordinary RPC endpoints recover Celo from a canonical Celo chain
+    /// ID and preserve the historical behavior for custom chain IDs.
     pub fn from_rpc_identity_profile_with_fallback(
         chain_id: ChainId,
         node_info_profile: Option<Option<&str>>,
@@ -806,11 +807,19 @@ impl NetworkConfigs {
                 network.map(|network| Self::default().with_rpc_identity(network, chain_id))
             })
         };
+        let fallback_is_explicit =
+            unknown_fallback.is_some_and(|fallback| fallback.has_network_selection());
         let fallback = unknown_fallback.map(Self::canonical_execution_profile);
+        if let Some(Some(profile)) = node_info_profile {
+            return Self::from_node_info_profile(profile).map(Some);
+        }
+        if fallback_is_explicit && let Some(fallback) = fallback {
+            return Ok(Some(fallback));
+        }
         match node_info_profile {
-            Some(Some(profile)) => Self::from_node_info_profile(profile).map(Some),
             Some(None) => Ok(known_profile()?.or(fallback).or(Some(Self::default()))),
             None => Ok(known_profile()?.or(fallback)),
+            Some(Some(_)) => unreachable!(),
         }
     }
 
@@ -1275,6 +1284,80 @@ mod tests {
 
         assert_eq!(profile, NetworkConfigs::default());
         assert!(profile.bypass_prevrandao(NamedChain::Moonbeam as u64));
+    }
+
+    #[test]
+    fn default_fallback_still_infers_known_execution_profile() {
+        for node_info in [None, Some(None)] {
+            assert_eq!(
+                NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                    NamedChain::Tempo as u64,
+                    node_info,
+                    Some(NetworkConfigs::default()),
+                )
+                .unwrap(),
+                Some(NetworkConfigs::with_tempo())
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_ethereum_overrides_known_execution_profile() {
+        for node_info in [None, Some(None)] {
+            assert_eq!(
+                NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                    NamedChain::Tempo as u64,
+                    node_info,
+                    Some(NetworkConfigs::with_ethereum()),
+                )
+                .unwrap(),
+                Some(NetworkConfigs::default())
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn explicit_ethereum_overrides_disabled_monad_without_node_info() {
+        assert_eq!(
+            NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                NamedChain::Monad as u64,
+                None,
+                Some(NetworkConfigs::with_ethereum()),
+            )
+            .unwrap(),
+            Some(NetworkConfigs::default())
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn explicit_ethereum_overrides_disabled_monad_with_legacy_node_info() {
+        assert_eq!(
+            NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                NamedChain::Monad as u64,
+                Some(None),
+                Some(NetworkConfigs::with_ethereum()),
+            )
+            .unwrap(),
+            Some(NetworkConfigs::default())
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "monad"))]
+    fn disabled_monad_without_explicit_profile_still_errors() {
+        for node_info in [None, Some(None)] {
+            assert_eq!(
+                NetworkConfigs::from_rpc_identity_profile_with_fallback(
+                    NamedChain::Monad as u64,
+                    node_info,
+                    None,
+                )
+                .unwrap_err(),
+                "network family `monad` is not enabled in this build"
+            );
+        }
     }
 
     #[test]

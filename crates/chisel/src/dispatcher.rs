@@ -162,7 +162,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         result: &mut ChiselResult,
         // known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
-        let chain_id = trace_chain_id(session_config);
+        let chain_id = session_config.source_chain_id.map(Chain::from);
         let resolved_hardfork = session_config.resolved_hardfork;
 
         #[cfg_attr(not(any(feature = "base", feature = "monad")), allow(unused_mut))]
@@ -623,10 +623,6 @@ fn config_network_name(config: &Config) -> &'static str {
     config.networks.active_network_name().unwrap_or("ethereum")
 }
 
-fn trace_chain_id<FEN: FoundryEvmNetwork>(config: &SessionSourceConfig<FEN>) -> Option<Chain> {
-    config.source_chain_id.map(Chain::from)
-}
-
 fn network_variant(networks: NetworkConfigs) -> NetworkVariant {
     networks.resolved_network().unwrap_or_default()
 }
@@ -713,20 +709,6 @@ mod tests {
     #[test]
     fn config_network_name_defaults_to_ethereum() {
         assert_eq!(config_network_name(&Config::default()), "ethereum");
-    }
-
-    #[test]
-    fn trace_chain_id_prefers_nested_fork_source() {
-        let config = SessionSourceConfig::<EthEvmNetwork> {
-            source_chain_id: Some(143),
-            evm_opts: EvmOpts {
-                env: Env { chain_id: Some(1), ..Default::default() },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        assert_eq!(trace_chain_id(&config).map(|chain| chain.id()), Some(143));
     }
 
     #[test]

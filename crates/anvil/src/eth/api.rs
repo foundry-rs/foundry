@@ -64,6 +64,7 @@ use alloy_rpc_types::{
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
     },
+    debug::ExecutionWitness,
     erc4337::TransactionConditional,
     pubsub::TransactionReceiptsParams,
     request::TransactionRequest,
@@ -1654,6 +1655,16 @@ impl EthApi<FoundryNetwork> {
         self.backend.debug_account_info_at(block_id, tx_index, address).await
     }
 
+    /// Returns a best-effort execution witness for the given block, built from the full parent
+    /// state. See [`crate::eth::backend::mem::Backend::debug_execution_witness`] for the exact
+    /// contents and limitations.
+    ///
+    /// Handler for RPC call: `debug_executionWitness`.
+    pub async fn debug_execution_witness(&self, block: BlockNumber) -> Result<ExecutionWitness> {
+        node_info!("debug_executionWitness");
+        self.backend.debug_execution_witness(block).await
+    }
+
     /// Returns opcode gas usage for a transaction.
     ///
     /// Handler for RPC call: `trace_transactionOpcodeGas`.
@@ -2184,6 +2195,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::DebugFreeOsMemory(()) => self.debug_free_os_memory().to_rpc_result(),
             EthRequest::DebugAccountInfoAt(block_id, tx_index, address) => {
                 self.debug_account_info_at(block_id, tx_index, address).await.to_rpc_result()
+            }
+            EthRequest::DebugExecutionWitness(block) => {
+                self.debug_execution_witness(block).await.to_rpc_result()
             }
             EthRequest::DebugTraceBlock(rlp_block, opts) => {
                 self.debug_trace_block(rlp_block, opts).await.to_rpc_result()

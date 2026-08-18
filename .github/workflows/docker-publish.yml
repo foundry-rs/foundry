@@ -29,7 +29,7 @@ env:
 
   # Keep the base features in sync with `release.yml`.
   RUST_PROFILE: dist
-  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad,optimism
 
 jobs:
   build:
@@ -109,7 +109,8 @@ jobs:
             VERGEN_GIT_SHA=${{ github.sha }}
           project: 8gkbxxjrpw
           context: .
-          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+          # Depot implicitly tags an untagged multi-platform output as `latest` when merging.
+          outputs: type=image,name=ghcr.io/${{ github.repository }}:build-staging,push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
           no-cache: true
@@ -180,7 +181,7 @@ jobs:
 
       - name: Image build provenance attestation
         if: steps.existing.outputs.exists != 'true'
-        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.select.outputs.digest }}

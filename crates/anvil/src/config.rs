@@ -620,27 +620,20 @@ impl Default for NodeConfig {
 }
 
 impl NodeConfig {
-    /// Resolves Tempo's safe default beneficiary for fork-derived configuration.
-    pub(crate) fn tempo_fork_beneficiary(&self, beneficiary: Address) -> Address {
-        if self.networks.is_tempo() && !self.fork_urls.is_empty() && beneficiary.is_zero() {
-            TIP_FEE_MANAGER_ADDRESS
-        } else {
-            beneficiary
-        }
-    }
-
     /// Applies Tempo's safe default beneficiary for forked nodes while preserving
     /// explicit coinbase selections.
     pub(crate) fn apply_tempo_fork_beneficiary_default<N>(&self, evm_env: &mut EvmEnv<N>) {
-        let beneficiary = self.tempo_fork_beneficiary(evm_env.block_env.beneficiary);
-        if beneficiary != evm_env.block_env.beneficiary {
+        if self.networks.is_tempo()
+            && !self.fork_urls.is_empty()
+            && evm_env.block_env.beneficiary.is_zero()
+        {
             // Tempo mainnet maps the zero validator token to a DONOTUSE sentinel.
             // Forked transactions with the default zero beneficiary can therefore
             // fail fee collection before producing a receipt. Use the same neutral
             // fee-recipient sentinel as Tempo's simulation path so validator token
             // lookup falls back to the default PathUSD token unless the user has
             // explicitly supplied a non-zero coinbase.
-            evm_env.block_env.beneficiary = beneficiary;
+            evm_env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
         }
     }
 
@@ -1574,9 +1567,7 @@ impl NodeConfig {
     ) -> Result<ForkEndpointIdentity> {
         let Some(node_info) = node_info_probe.request(provider).await? else {
             let source_chain_id = source_chain_id_override.unwrap_or(fallback_execution_chain_id);
-            let explicit_fallback = self
-                .has_explicit_network_selection()
-                .then(|| self.networks.canonical_execution_profile());
+            let explicit_fallback = self.has_explicit_network_selection().then_some(self.networks);
             let network_profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
                 source_chain_id,
                 None,
@@ -1624,9 +1615,7 @@ impl NodeConfig {
         };
         let identity_chain_id =
             if node_info.network.is_some() { execution_chain_id } else { source_chain_id };
-        let explicit_fallback = self
-            .has_explicit_network_selection()
-            .then(|| self.networks.canonical_execution_profile());
+        let explicit_fallback = self.has_explicit_network_selection().then_some(self.networks);
         let network_profile = NetworkConfigs::from_rpc_identity_profile_with_fallback(
             identity_chain_id,
             Some(node_info.network.as_deref()),

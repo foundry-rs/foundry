@@ -110,6 +110,9 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
 ] }
 
+[target.'cfg(unix)'.dev-dependencies]
+rexpect.workspace = true
+
 [dev-dependencies]
 alloy-hardforks.workspace = true
 alloy-serde.workspace = true

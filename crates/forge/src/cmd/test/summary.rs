@@ -9,31 +9,31 @@ use serde_json::json;
 use std::{collections::HashMap, fmt::Display};
 
 /// Represents a test summary report.
-pub struct TestSummaryReport {
+pub struct TestSummaryReport<'a> {
     /// Whether the report should be detailed.
     is_detailed: bool,
     /// The test outcome to report.
-    outcome: TestOutcome,
+    outcome: &'a TestOutcome,
 }
 
-impl TestSummaryReport {
-    pub const fn new(is_detailed: bool, outcome: TestOutcome) -> Self {
+impl<'a> TestSummaryReport<'a> {
+    pub const fn new(is_detailed: bool, outcome: &'a TestOutcome) -> Self {
         Self { is_detailed, outcome }
     }
 }
 
-impl Display for TestSummaryReport {
+impl Display for TestSummaryReport<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         if shell::is_json() {
-            writeln!(f, "{}", self.format_json_output(&self.is_detailed, &self.outcome))?;
+            writeln!(f, "{}", self.format_json_output(&self.is_detailed, self.outcome))?;
         } else {
-            writeln!(f, "\n{}", self.format_table_output(&self.is_detailed, &self.outcome))?;
+            writeln!(f, "\n{}", self.format_table_output(&self.is_detailed, self.outcome))?;
         }
         Ok(())
     }
 }
 
-impl TestSummaryReport {
+impl TestSummaryReport<'_> {
     // Helper function to format the JSON output.
     fn format_json_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> String {
         let output = json!({

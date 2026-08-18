@@ -37,6 +37,7 @@ revm-inspectors.workspace = true
 tempo-contracts.workspace = true
 tempo-precompiles.workspace = true
 monad-revm = { workspace = true, optional = true }
+base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
 
 async-trait.workspace = true
 eyre.workspace = true
@@ -68,6 +69,7 @@ monad = [
     "foundry-evm-networks/monad",
 ]
 base = [
+    "dep:base-common-precompiles",
     "foundry-common/base",
     "foundry-evm-core/base",
     "foundry-evm-hardforks/base",

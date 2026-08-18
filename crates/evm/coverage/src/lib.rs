@@ -10,7 +10,10 @@ extern crate tracing;
 
 use alloy_primitives::{
     Bytes,
-    map::{B256HashMap, HashMap, rustc_hash::FxHashMap},
+    map::{
+        B256HashMap, HashMap,
+        rustc_hash::{FxHashMap, FxHashSet},
+    },
 };
 use analysis::SourceAnalysis;
 use eyre::Result;
@@ -47,6 +50,8 @@ pub struct CoverageReport {
     ///
     /// `(id, (creation, runtime))`
     pub anchors: HashMap<ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>)>,
+    /// Execution-based anchors for coverage items without source-mapped bytecode.
+    execution_anchors: HashMap<ContractId, ContractExecutionAnchors>,
     /// All the bytecode hits for the codebase.
     pub bytecode_hits: HashMap<ContractId, HitMap>,
     /// The bytecode -> source mappings.
@@ -91,6 +96,29 @@ impl CoverageReport {
         anchors: impl IntoIterator<Item = (ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>))>,
     ) {
         self.anchors.extend(anchors);
+    }
+
+    /// Adds execution-based anchors for a contract.
+    pub fn add_execution_anchors(
+        &mut self,
+        contract_id: ContractId,
+        anchors: Vec<ExecutionAnchor>,
+        function_selectors: impl IntoIterator<Item = [u8; 4]>,
+        has_receive: bool,
+        fallback_payable: bool,
+    ) {
+        if anchors.is_empty() {
+            return;
+        }
+        self.execution_anchors.insert(
+            contract_id,
+            ContractExecutionAnchors {
+                anchors,
+                function_selectors: function_selectors.into_iter().collect(),
+                has_receive,
+                fallback_payable,
+            },
+        );
     }
 
     /// Returns an iterator over coverage summaries by source file path.
@@ -150,6 +178,16 @@ impl CoverageReport {
                 }
             }
         }
+        if let Some(anchors) = self.execution_anchors.get(contract_id) {
+            for anchor in &anchors.anchors {
+                let hits = anchors.hits(hit_map, anchor.kind, is_deployed_code);
+                self.analyses
+                    .get_mut(&contract_id.build_id)
+                    .and_then(|items| items.all_items_mut().get_mut(anchor.item_id as usize))
+                    .expect("Anchor refers to non-existent coverage item")
+                    .hits += hits;
+            }
+        }
 
         Ok(())
     }
@@ -168,6 +206,14 @@ impl CoverageReport {
         for anchor in anchors {
             if let Some(hits) = hit_map.get(anchor.instruction) {
                 *hits_by_item.entry(anchor.item_id).or_default() += hits.get();
+            }
+        }
+        if let Some(anchors) = self.execution_anchors.get(contract_id) {
+            for anchor in &anchors.anchors {
+                let hits = anchors.hits(hit_map, anchor.kind, is_deployed_code);
+                if hits > 0 {
+                    *hits_by_item.entry(anchor.item_id).or_default() += hits;
+                }
             }
         }
 
@@ -246,6 +292,50 @@ impl DerefMut for HitMaps {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum CallData {
+    Empty,
+    Short,
+    Selector([u8; 4]),
+}
+
+impl CallData {
+    fn new(input: &[u8]) -> Self {
+        if input.is_empty() {
+            Self::Empty
+        } else if let Some(selector) = input.get(..4) {
+            Self::Selector(selector.try_into().unwrap())
+        } else {
+            Self::Short
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CallHits {
+    without_value: u32,
+    with_value: u32,
+}
+
+impl CallHits {
+    const fn hit(&mut self, with_value: bool) {
+        if with_value {
+            self.with_value += 1;
+        } else {
+            self.without_value += 1;
+        }
+    }
+
+    const fn merge(&mut self, other: Self) {
+        self.without_value += other.without_value;
+        self.with_value += other.with_value;
+    }
+
+    const fn total(self, payable: bool) -> u32 {
+        self.without_value + if payable { self.with_value } else { 0 }
+    }
+}
+
 /// Hit data for an address.
 ///
 /// Contains low-level data about hit counters for the instructions in the bytecode of a contract.
@@ -253,13 +343,24 @@ impl DerefMut for HitMaps {
 pub struct HitMap {
     hits: FxHashMap<u32, u32>,
     bytecode: Bytes,
+    creations: u32,
+    empty_calls: CallHits,
+    short_calls: CallHits,
+    selector_calls: FxHashMap<[u8; 4], CallHits>,
 }
 
 impl HitMap {
     /// Create a new hitmap with the given bytecode.
     #[inline]
     pub fn new(bytecode: Bytes) -> Self {
-        Self { bytecode, hits: HashMap::with_capacity_and_hasher(1024, Default::default()) }
+        Self {
+            bytecode,
+            hits: HashMap::with_capacity_and_hasher(1024, Default::default()),
+            creations: 0,
+            empty_calls: Default::default(),
+            short_calls: Default::default(),
+            selector_calls: Default::default(),
+        }
     }
 
     /// Returns the bytecode.
@@ -286,6 +387,19 @@ impl HitMap {
         *self.hits.entry(pc).or_default() += hits;
     }
 
+    fn call(&mut self, call: CallData, with_value: bool) {
+        let hits = match call {
+            CallData::Empty => &mut self.empty_calls,
+            CallData::Short => &mut self.short_calls,
+            CallData::Selector(selector) => self.selector_calls.entry(selector).or_default(),
+        };
+        hits.hit(with_value);
+    }
+
+    const fn creation(&mut self) {
+        self.creations += 1;
+    }
+
     /// Reserve space for additional hits.
     #[inline]
     pub fn reserve(&mut self, additional: usize) {
@@ -297,6 +411,12 @@ impl HitMap {
         self.reserve(other.len());
         for (pc, hits) in other.iter() {
             self.hits(pc, hits);
+        }
+        self.creations += other.creations;
+        self.empty_calls.merge(other.empty_calls);
+        self.short_calls.merge(other.short_calls);
+        for (&selector, &hits) in &other.selector_calls {
+            self.selector_calls.entry(selector).or_default().merge(hits);
         }
     }
 
@@ -350,6 +470,59 @@ pub struct ItemAnchor {
 impl fmt::Display for ItemAnchor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "IC {} -> Item {}", self.instruction, self.item_id)
+    }
+}
+
+/// An execution-based anchor for a coverage item without source-mapped bytecode.
+#[derive(Clone, Copy, Debug)]
+pub struct ExecutionAnchor {
+    /// The item ID this anchor points to.
+    pub item_id: u32,
+    /// The execution path that marks the item as covered.
+    pub kind: ExecutionAnchorKind,
+}
+
+/// The execution path associated with an execution-based anchor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecutionAnchorKind {
+    /// A successful contract creation.
+    Constructor,
+    /// An empty calldata call routed to `receive`.
+    Receive,
+    /// A call routed to `fallback`.
+    Fallback,
+}
+
+#[derive(Clone, Debug)]
+struct ContractExecutionAnchors {
+    anchors: Vec<ExecutionAnchor>,
+    function_selectors: FxHashSet<[u8; 4]>,
+    has_receive: bool,
+    fallback_payable: bool,
+}
+
+impl ContractExecutionAnchors {
+    fn hits(&self, hit_map: &HitMap, kind: ExecutionAnchorKind, is_deployed_code: bool) -> u32 {
+        match (kind, is_deployed_code) {
+            (ExecutionAnchorKind::Constructor, false) => hit_map.creations,
+            (ExecutionAnchorKind::Receive, true) => hit_map.empty_calls.total(true),
+            (ExecutionAnchorKind::Fallback, true) => {
+                let empty_calls = if self.has_receive {
+                    0
+                } else {
+                    hit_map.empty_calls.total(self.fallback_payable)
+                };
+                empty_calls
+                    + hit_map.short_calls.total(self.fallback_payable)
+                    + hit_map
+                        .selector_calls
+                        .iter()
+                        .filter(|(selector, _)| !self.function_selectors.contains(*selector))
+                        .map(|(_, hits)| hits.total(self.fallback_payable))
+                        .sum::<u32>()
+            }
+            _ => 0,
+        }
     }
 }
 

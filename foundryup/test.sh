@@ -127,6 +127,71 @@ touch "$optional_path"
 check_eq "present optional binary without hash is rejected" \
   "1" "$(is_missing_optional_bin solar "" "$optional_path"; echo $?)"
 
+status_tmp="$selector_tmp/status"
+mkdir -p "$status_tmp"
+BINS=(forge)
+HASH_NAMES=()
+HASH_VALUES=()
+check_eq "missing installed binary is reported without implying a hash mismatch" \
+  "missing:forge" "$(installed_bins_status "$status_tmp")"
+printf 'forge' > "$status_tmp/forge"
+check_eq "non-executable installed binary is reported explicitly" \
+  "not-executable:forge" "$(installed_bins_status "$status_tmp")"
+chmod +x "$status_tmp/forge"
+check_eq "installed binary without an expected hash is unverifiable" \
+  "unverifiable:forge" "$(installed_bins_status "$status_tmp")"
+HASH_NAMES=(forge)
+HASH_VALUES=(expected)
+rm -f "$status_tmp/forge"
+mkdir "$status_tmp/forge"
+check_eq "non-file installed binary is reported as non-executable" \
+  "not-executable:forge" "$(installed_bins_status "$status_tmp")"
+rm -rf "$status_tmp/forge"
+printf 'changed' > "$status_tmp/forge"
+chmod +x "$status_tmp/forge"
+check_eq "installed binary hash mismatch is reported explicitly" \
+  "mismatch:forge" "$(installed_bins_status "$status_tmp")"
+HASH_VALUES=("$(compute_sha256 "$status_tmp/forge")")
+check_eq "installed binary with expected hash is verified" \
+  "verified" "$(installed_bins_status "$status_tmp")"
+original_compute_sha256=$(declare -f compute_sha256)
+compute_sha256() { return 1; }
+check_eq "hash computation failure is not reported as a mismatch" \
+  "hash-error:forge" "$(installed_bins_status "$status_tmp")"
+say() { printf 'foundryup: %s\n' "$1"; }
+if downloaded_hash_output=$(compute_downloaded_sha256 forge "$status_tmp/forge" 2>&1); then
+  downloaded_hash_status=0
+else
+  downloaded_hash_status=$?
+fi
+check_eq "downloaded binary hash computation failure aborts with context" \
+  "1" "$downloaded_hash_status"
+check_eq "downloaded binary hash computation failure identifies the binary" \
+  "foundryup: could not calculate SHA-256 hash for downloaded forge, aborting installation" \
+  "$downloaded_hash_output"
+say() { :; }
+eval "$original_compute_sha256"
+
+check_eq "first install message does not imply a hash mismatch" \
+  "version nightly is not installed, downloading binaries" \
+  "$(installed_bins_message not-installed nightly)"
+check_eq "incomplete install message identifies a missing binary" \
+  "installed version nightly is incomplete (missing forge), downloading and verifying a fresh copy" \
+  "$(installed_bins_message missing:forge nightly)"
+check_eq "incomplete install message identifies a non-executable binary" \
+  "installed version nightly is incomplete (forge is not executable), downloading and verifying a fresh copy" \
+  "$(installed_bins_message not-executable:forge nightly)"
+check_eq "unverifiable install message identifies a missing expected hash" \
+  "installed version nightly cannot be verified (no expected hash for forge), downloading a fresh copy" \
+  "$(installed_bins_message unverifiable:forge nightly)"
+check_eq "hash computation failure message does not imply a mismatch" \
+  "installed version nightly cannot be verified (could not calculate a hash for forge), aborting installation" \
+  "$(installed_bins_message hash-error:forge nightly)"
+check_eq "hash mismatch message is limited to a genuine mismatch" \
+  "installed version nightly did not match the expected SHA-256 hash (forge), downloading and verifying a fresh copy" \
+  "$(installed_bins_message mismatch:forge nightly)"
+BINS=(forge cast anvil chisel solar)
+
 version_tmp="$selector_tmp/version"
 mkdir -p "$version_tmp"
 touch "$version_tmp/solar" "$version_tmp/solar.exe" "$version_tmp/unrelated"

@@ -398,7 +398,7 @@ impl EvmOpts {
 
     fn endpoint_network_fallback(&self) -> NetworkConfigs {
         if self.networks.has_network_selection() && !self.fork_network_is_inferred {
-            self.networks.canonical_execution_profile()
+            self.networks
         } else {
             NetworkConfigs::default()
         }
@@ -1585,6 +1585,17 @@ mod tests {
         assert_eq!(description, "provider example.com");
         assert!(!description.contains("secret"));
         assert!(!description.contains("private-api-key"));
+    }
+
+    #[test]
+    fn endpoint_network_fallback_preserves_explicit_selection() {
+        let default = EvmOpts::default().endpoint_network_fallback();
+        assert!(!default.has_network_selection());
+
+        let explicit = EvmOpts { networks: NetworkConfigs::with_ethereum(), ..Default::default() }
+            .endpoint_network_fallback();
+        assert!(explicit.has_network_selection());
+        assert_eq!(explicit.execution_network(), NetworkVariant::Ethereum);
     }
 
     #[test]

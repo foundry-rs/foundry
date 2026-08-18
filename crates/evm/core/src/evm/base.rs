@@ -6,9 +6,7 @@ use base_common_evm::{
     BaseTransactionError,
 };
 use base_common_network::Base;
-use foundry_evm_networks::{
-    BASE_PRECOMPILE_ADDRESSES, NetworkVariant, is_base_precompile_active_at,
-};
+use foundry_evm_networks::{BASE_PRECOMPILE_ADDRESSES, is_base_precompile_active_at};
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
@@ -24,9 +22,9 @@ use revm::{
 };
 
 use crate::{
-    FoundryContextExt, FoundryContextState, FoundryInspectorExt,
+    FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
-    evm::{FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm},
+    evm::{FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor},
 };
 
 /// Base EVM network.
@@ -36,19 +34,6 @@ pub struct BaseEvmNetwork;
 impl FoundryEvmNetwork for BaseEvmNetwork {
     type Network = Base;
     type EvmFactory = BaseEvmFactory;
-
-    fn supports_network(network: NetworkVariant) -> bool {
-        network.is_base()
-    }
-
-    fn stateful_precompiles(spec: BaseSpecId) -> Vec<Address> {
-        let upgrade = spec.upgrade();
-        BASE_PRECOMPILE_ADDRESSES
-            .iter()
-            .copied()
-            .filter(|address| is_base_precompile_active_at(*address, upgrade))
-            .collect()
-    }
 }
 
 impl IntoInstructionResult for BaseHaltReason {
@@ -82,16 +67,27 @@ fn base_factory_for_env(
 }
 
 impl FoundryEvmFactory for BaseEvmFactory {
-    type ContextAux = ();
+    // Base has no ancestor-participant or reserve-balance style auxiliary state, so both are unit.
+    type ChainContext = ();
+    type TransactionState = ();
     type FoundryContext<'db> = BaseContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> = BaseRevmEvm<'db, I>;
+
+    fn stateful_precompiles(spec: Self::Spec) -> Vec<Address> {
+        let upgrade = spec.upgrade();
+        BASE_PRECOMPILE_ADDRESSES
+            .iter()
+            .copied()
+            .filter(|address| is_base_precompile_active_at(*address, upgrade))
+            .collect()
+    }
 
     fn create_evm_with_context<DB: alloy_evm::Database>(
         &self,
         db: DB,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _context_aux: Self::ContextAux,
+        _chain_context: Self::ChainContext,
     ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
         let factory = base_factory_for_env(*self, &evm_env);
         factory.create_evm(db, evm_env)
@@ -101,7 +97,7 @@ impl FoundryEvmFactory for BaseEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _context_aux: Self::ContextAux,
+        _chain_context: Self::ChainContext,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let factory = base_factory_for_env(*self, &evm_env);
@@ -114,13 +110,10 @@ impl FoundryEvmFactory for BaseEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        context_aux: Self::ContextAux,
+        chain_context: Self::ChainContext,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> Box<
-        dyn NestedEvm<Spec = BaseSpecId, Block = BlockEnv, Tx = BaseTransaction<TxEnv>, Aux = ()>
-            + 'db,
-    > {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, context_aux, inspector))
+    ) -> NestedEvmFor<'db, Self> {
+        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, chain_context, inspector))
     }
 }
 
@@ -142,22 +135,11 @@ impl<'db, I: FoundryInspectorExt<BaseContext<&'db mut dyn DatabaseExt<BaseEvmFac
     type Spec = BaseSpecId;
     type Block = BlockEnv;
     type Tx = BaseTransaction<TxEnv>;
-    type Aux = ();
+    type ChainContext = ();
+    type TransactionState = ();
 
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx_mut().journaled_state.inner
-    }
-
-    fn context_state(&self) -> FoundryContextState<Self::Aux> {
-        self.ctx_ref().context_state()
-    }
-
-    fn aux_state(&self) -> Self::Aux {
-        self.ctx_ref().aux_state()
-    }
-
-    fn set_context_state(&mut self, state: FoundryContextState<Self::Aux>) {
-        self.ctx_mut().set_context_state(state);
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
@@ -201,7 +183,6 @@ impl<'db, I: FoundryInspectorExt<BaseContext<&'db mut dyn DatabaseExt<BaseEvmFac
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::Address;
     use alloy_sol_types::SolCall;
     use base_common_evm::BaseUpgrade;
     use base_common_precompiles::{
@@ -217,7 +198,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::evm::{EthEvmNetwork, TempoEvmNetwork};
 
     fn has_precompile(upgrade: BaseUpgrade, address: Address) -> bool {
         let evm = BaseEvmFactory::default().create_evm(
@@ -240,9 +220,6 @@ mod tests {
 
         assert_foundry_factory::<BaseEvmFactory>();
         assert_foundry_network::<BaseEvmNetwork>();
-        assert!(BaseEvmNetwork::supports_network(NetworkVariant::Base));
-        assert!(!EthEvmNetwork::supports_network(NetworkVariant::Base));
-        assert!(!TempoEvmNetwork::supports_network(NetworkVariant::Base));
     }
 
     #[test]

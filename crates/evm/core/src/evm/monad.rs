@@ -4,14 +4,15 @@ use alloy_sol_types::SolCall;
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use monad_revm::{
-    MonadBuilder, MonadCfgEnv, MonadContext, MonadEvm as RevmMonadEvm, MonadHardfork,
-    MonadJournalTr,
+    MonadBuilder, MonadCfgEnv, MonadChainContext, MonadContext, MonadEvm as RevmMonadEvm,
+    MonadHardfork, MonadJournalTr,
     api::block::{
         syscall_on_epoch_change_calldata, syscall_reward_calldata, syscall_snapshot_calldata,
     },
     handler::MonadHandler,
     instructions::MonadInstructions,
     monad_context_with_db,
+    reserve_balance::tracker::ReserveBalanceTracker,
     staking::{
         STAKING_ADDRESS,
         constants::SYSTEM_ADDRESS,
@@ -30,12 +31,12 @@ use revm::{
     inspector::{InspectSystemCallEvm, Inspector, InspectorHandler},
     interpreter::{FrameInput, GasTracker, SharedMemory, interpreter_action::FrameInit},
     primitives::{Address, HashSet},
-    state::EvmState,
 };
 
 use crate::{
-    FoundryContextExt, FoundryContextState, FoundryInspectorExt, MonadContextAux,
+    FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
+    constants::MONAD_CHEATCODE_ADDRESS,
     evm::{FoundryEvmFactory, NestedEvm, ProtocolSystemCall, finish_protocol_system_call},
 };
 
@@ -69,21 +70,25 @@ pub fn monad_context_from_participants(
     parent_senders_and_authorities: MonadBlockParticipants,
     current: &[TxEnv],
     current_tx_index: usize,
-) -> MonadContextAux {
-    MonadContextAux {
-        chain: monad_revm::MonadChainContext {
-            grandparent_senders_and_authorities,
-            parent_senders_and_authorities,
-            current_block_senders: current.iter().map(Transaction::caller).collect(),
-            current_block_authorities: current
-                .iter()
-                .map(|tx| tx.authorization_list().filter_map(|auth| auth.authority()).collect())
-                .collect(),
-            current_tx_index,
-            ..Default::default()
-        },
+) -> MonadChainContext {
+    MonadChainContext {
+        grandparent_senders_and_authorities,
+        parent_senders_and_authorities,
+        current_block_senders: current.iter().map(Transaction::caller).collect(),
+        current_block_authorities: current
+            .iter()
+            .map(|tx| tx.authorization_list().filter_map(|auth| auth.authority()).collect())
+            .collect(),
+        current_tx_index,
         ..Default::default()
     }
+}
+
+fn rebase_monad_context<DB: alloy_evm::Database>(context: &mut MonadContext<DB>) {
+    let chain = context.chain.clone();
+    let mut tracker = std::mem::take(context.journaled_state.reserve_balance_mut());
+    tracker.rebase(&chain, &context.journaled_state.inner.state);
+    *context.journaled_state.reserve_balance_mut() = tracker;
 }
 
 fn transact_monad_replay<DB, I>(
@@ -100,7 +105,9 @@ where
     };
 
     system_call.validate_chain_id(evm.chain_id())?;
-    let context_state = evm.ctx().context_state();
+    let journal = evm.ctx().journal_inner().clone();
+    let chain = evm.ctx().chain.clone();
+    let reserve_balance = evm.ctx().journaled_state.reserve_balance().clone();
     let result = (|| {
         let (db, journal) = evm.ctx_mut().db_journal_inner_mut();
         system_call.apply_prestate(db, journal)?;
@@ -110,58 +117,61 @@ where
         finish_protocol_system_call(result)
     })();
     if result.is_err() {
-        evm.ctx_mut().set_context_state(context_state);
+        evm.ctx_mut().set_journal_inner(journal);
+        evm.ctx_mut().chain = chain;
+        *evm.ctx_mut().journaled_state.reserve_balance_mut() = reserve_balance;
     }
     result
 }
 
 impl FoundryEvmFactory for MonadEvmFactory {
+    const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[MONAD_CHEATCODE_ADDRESS];
+    const CONTRACT_INITCODE_SIZE_LIMIT: usize = monad_revm::MONAD_MAX_INITCODE_SIZE;
+
     const NEEDS_BLOCK_CONTEXT: bool = true;
     const REPLAYS_PROTOCOL_SYSTEM_TRANSACTIONS: bool = true;
-    const USES_EIP4788_BEACON_ROOTS: bool = false;
 
-    type ContextAux = MonadContextAux;
+    type ChainContext = MonadChainContext;
+    type TransactionState = ReserveBalanceTracker;
+
     type FoundryContext<'db> = MonadContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         MonadEvm<&'db mut dyn DatabaseExt<Self>, I>;
 
-    fn create_evm_with_context<DB: alloy_evm::Database>(
+    fn capture_transaction_state(&self, ecx: &Self::FoundryContext<'_>) -> Self::TransactionState {
+        ecx.journaled_state.reserve_balance().clone()
+    }
+
+    fn capture_chain_context(&self, ecx: &Self::FoundryContext<'_>) -> Self::ChainContext {
+        ecx.chain.clone()
+    }
+
+    fn restore_transaction_state(
         &self,
-        db: DB,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        context_aux: Self::ContextAux,
-    ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
-        let mut evm = self.create_evm(db, evm_env);
-        evm.ctx_mut().set_aux_state(context_aux);
-        evm
+        ecx: &mut Self::FoundryContext<'_>,
+        state: Self::TransactionState,
+    ) {
+        *ecx.journaled_state.reserve_balance_mut() = state;
+        rebase_monad_context(ecx);
     }
 
-    fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
-        &self,
-        db: &'db mut dyn DatabaseExt<Self>,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        context_aux: Self::ContextAux,
-        inspector: I,
-    ) -> Self::FoundryEvm<'db, I> {
-        let mut monad_evm = self.create_evm_with_inspector(db, evm_env, inspector);
-        monad_evm.ctx_mut().set_aux_state(context_aux);
-        monad_evm.cfg.tx_chain_id_check = true;
-        monad_evm.inspector().get_networks().inject_precompiles(monad_evm.precompiles_mut());
-        monad_evm
+    fn chain_context_for_transaction(&self, tx: &Self::Tx) -> Self::ChainContext {
+        monad_context_from_participants(
+            Default::default(),
+            Default::default(),
+            std::slice::from_ref(tx),
+            0,
+        )
     }
 
-    fn context_for_transaction(&self, tx: &Self::Tx) -> Self::ContextAux {
-        self.context_for_block(&[], &[], std::slice::from_ref(tx), 0)
-    }
-
-    fn context_for_block(
+    fn chain_context_for_block(
         &self,
         grandparent: &[Self::Tx],
         parent: &[Self::Tx],
         current: &[Self::Tx],
         current_tx_index: usize,
-    ) -> Self::ContextAux {
+    ) -> Self::ChainContext {
         monad_context_from_participants(
             monad_block_participants(grandparent),
             monad_block_participants(parent),
@@ -170,14 +180,40 @@ impl FoundryEvmFactory for MonadEvmFactory {
         )
     }
 
-    fn rebase_context_aux(
+    fn create_evm_with_context<DB: alloy_evm::Database>(
         &self,
-        current: &Self::ContextAux,
-        replacement: &mut Self::ContextAux,
-        state: &EvmState,
+        db: DB,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        chain_context: Self::ChainContext,
+    ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
+        let mut evm = self.create_evm(db, evm_env);
+        evm.ctx_mut().chain = chain_context;
+        evm
+    }
+
+    fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
+        &self,
+        db: &'db mut dyn DatabaseExt<Self>,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        chain_context: Self::ChainContext,
+        inspector: I,
+    ) -> Self::FoundryEvm<'db, I> {
+        let mut monad_evm = self.create_evm_with_inspector(db, evm_env, inspector);
+        monad_evm.ctx_mut().chain = chain_context;
+        monad_evm.cfg.tx_chain_id_check = true;
+        monad_evm.inspector().get_networks().inject_precompiles(monad_evm.precompiles_mut());
+        monad_evm
+    }
+
+    fn apply_context_transition<'db>(
+        &self,
+        ecx: &mut Self::FoundryContext<'db>,
+        replacement: Option<&Self::ChainContext>,
     ) {
-        replacement.reserve_balance = current.reserve_balance.clone();
-        replacement.reserve_balance.rebase(&replacement.chain, state);
+        if let Some(replacement) = replacement {
+            ecx.chain = replacement.clone();
+        }
+        rebase_monad_context(ecx);
     }
 
     fn protocol_system_call(&self, tx: &Self::Tx) -> eyre::Result<Option<ProtocolSystemCall>> {
@@ -320,11 +356,16 @@ impl FoundryEvmFactory for MonadEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        context_aux: Self::ContextAux,
+        chain_context: Self::ChainContext,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> Box<
-        dyn NestedEvm<Spec = MonadHardfork, Block = BlockEnv, Tx = TxEnv, Aux = MonadContextAux>
-            + 'db,
+        dyn NestedEvm<
+                Spec = MonadHardfork,
+                Block = BlockEnv,
+                Tx = TxEnv,
+                ChainContext = MonadChainContext,
+                TransactionState = ReserveBalanceTracker,
+            > + 'db,
     > {
         let spec = evm_env.cfg_env.spec;
         let monad_cfg = MonadCfgEnv::from(evm_env.cfg_env);
@@ -334,7 +375,7 @@ impl FoundryEvmFactory for MonadEvmFactory {
             .build_monad_with_inspector(inspector)
             .with_precompiles(MonadPrecompilesMap::new_with_spec(spec));
 
-        evm.0.ctx.set_aux_state(context_aux);
+        evm.0.ctx.chain = chain_context;
         evm.0.ctx.cfg.tx_chain_id_check = true;
         evm.0.inspector.get_networks().inject_precompiles(&mut evm.0.precompiles);
 
@@ -348,25 +389,26 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
     type Spec = MonadHardfork;
     type Block = BlockEnv;
     type Tx = TxEnv;
-    type Aux = MonadContextAux;
-
+    type ChainContext = MonadChainContext;
+    type TransactionState = ReserveBalanceTracker;
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx_mut().journaled_state.inner
     }
 
-    fn context_state(&self) -> FoundryContextState<Self::Aux> {
-        self.ctx_ref().context_state()
+    fn capture_chain_context(&self) -> Self::ChainContext {
+        self.ctx_ref().chain.clone()
     }
 
-    fn aux_state(&self) -> Self::Aux {
-        self.ctx_ref().aux_state()
+    fn capture_transaction_state(&self) -> Self::TransactionState {
+        self.ctx_ref().journaled_state.reserve_balance().clone()
     }
 
-    fn set_context_state(&mut self, state: FoundryContextState<Self::Aux>) {
-        self.ctx_mut().set_context_state(state);
+    fn restore_transaction_state(&mut self, state: Self::TransactionState) {
+        *self.ctx_mut().journaled_state.reserve_balance_mut() = state;
+        rebase_monad_context(self.ctx_mut());
     }
 
-    fn preserve_aux_state_on_transaction(&mut self) {
+    fn preserve_transaction_state_on_next_transaction(&mut self) {
         self.ctx_mut().journaled_state.set_preserve_reserve_balance_tracker(true);
     }
 
@@ -405,7 +447,9 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
         };
 
         system_call.validate_chain_id(self.ctx_ref().cfg().chain_id())?;
-        let context_state = self.context_state();
+        let journal = self.ctx_ref().journal_inner().clone();
+        let chain = self.ctx_ref().chain.clone();
+        let reserve_balance = self.ctx_ref().journaled_state.reserve_balance().clone();
         let result = (|| {
             let (db, journal) = self.0.ctx.db_journal_inner_mut();
             system_call.apply_prestate(db, journal)?;
@@ -419,7 +463,9 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
             finish_protocol_system_call(result)
         })();
         if result.is_err() {
-            self.set_context_state(context_state);
+            self.ctx_mut().set_journal_inner(journal);
+            self.ctx_mut().chain = chain;
+            *self.ctx_mut().journaled_state.reserve_balance_mut() = reserve_balance;
         }
         result
     }
@@ -442,7 +488,7 @@ mod tests {
             },
         },
         primitives::{B256, U256},
-        state::{Account, AccountInfo},
+        state::{Account, AccountInfo, EvmState},
     };
 
     fn transaction(caller: Address, authority: Address) -> TxEnv {
@@ -484,10 +530,10 @@ mod tests {
     }
 
     #[test]
-    fn monad_factory_rebases_live_tracker_with_replacement_context() {
+    fn monad_context_transition_rebases_live_tracker() {
         let sender = Address::with_last_byte(1);
-        let old_chain = monad_revm::MonadChainContext::default();
-        let new_chain = monad_revm::MonadChainContext {
+        let old_chain = MonadChainContext::default();
+        let new_chain = MonadChainContext {
             parent_senders_and_authorities: [sender].into_iter().collect(),
             ..Default::default()
         };
@@ -495,8 +541,16 @@ mod tests {
             Account::from(AccountInfo { balance: U256::from(12), ..Default::default() });
         account.info.balance = U256::from(9);
 
-        let mut current = MonadContextAux { chain: old_chain.clone(), ..Default::default() };
-        current.reserve_balance.init(ReserveBalanceInit {
+        let factory = MonadEvmFactory::default();
+        let mut evm = factory.create_evm(
+            revm::database::EmptyDB::default(),
+            EvmEnv::new(
+                revm::context::CfgEnv::new_with_spec(MonadHardfork::MonadNine),
+                BlockEnv::default(),
+            ),
+        );
+        evm.ctx_mut().chain = old_chain.clone();
+        evm.ctx_mut().journaled_state.reserve_balance_mut().init(ReserveBalanceInit {
             chain: &old_chain,
             spec: MonadHardfork::MonadNine,
             sender,
@@ -505,15 +559,14 @@ mod tests {
             sender_is_delegated: false,
             sender_account: Some(&account),
         });
-        assert!(!current.reserve_balance.has_violation());
+        assert!(!evm.ctx().journaled_state.reserve_balance().has_violation());
 
-        let mut replacement = MonadContextAux { chain: new_chain.clone(), ..Default::default() };
-        let state = EvmState::from_iter([(sender, account)]);
-        MonadEvmFactory::default().rebase_context_aux(&current, &mut replacement, &state);
+        evm.ctx_mut().chain = new_chain.clone();
+        evm.ctx_mut().journaled_state.inner.state = EvmState::from_iter([(sender, account)]);
+        rebase_monad_context(evm.ctx_mut());
 
-        assert_eq!(replacement.chain, new_chain);
-        assert!(replacement.reserve_balance.has_violation());
-        assert!(!current.reserve_balance.has_violation());
+        assert_eq!(evm.ctx().chain, new_chain);
+        assert!(evm.ctx().journaled_state.reserve_balance().has_violation());
     }
 
     #[test]
@@ -675,17 +728,17 @@ mod tests {
             1,
         );
 
-        assert_eq!(context.chain.current_tx_index, 1);
-        assert_eq!(context.chain.grandparent_senders_and_authorities.len(), 2);
-        assert!(context.chain.grandparent_senders_and_authorities.contains(&grandparent_sender));
-        assert!(context.chain.grandparent_senders_and_authorities.contains(&grandparent_authority));
-        assert_eq!(context.chain.parent_senders_and_authorities.len(), 2);
-        assert!(context.chain.parent_senders_and_authorities.contains(&parent_sender));
-        assert!(context.chain.parent_senders_and_authorities.contains(&parent_authority));
-        assert_eq!(context.chain.current_block_senders, vec![current_sender, next_sender]);
-        assert_eq!(context.chain.current_block_authorities.len(), 2);
-        assert!(context.chain.current_block_authorities[0].contains(&current_authority));
-        assert!(context.chain.current_block_authorities[1].contains(&next_authority));
+        assert_eq!(context.current_tx_index, 1);
+        assert_eq!(context.grandparent_senders_and_authorities.len(), 2);
+        assert!(context.grandparent_senders_and_authorities.contains(&grandparent_sender));
+        assert!(context.grandparent_senders_and_authorities.contains(&grandparent_authority));
+        assert_eq!(context.parent_senders_and_authorities.len(), 2);
+        assert!(context.parent_senders_and_authorities.contains(&parent_sender));
+        assert!(context.parent_senders_and_authorities.contains(&parent_authority));
+        assert_eq!(context.current_block_senders, vec![current_sender, next_sender]);
+        assert_eq!(context.current_block_authorities.len(), 2);
+        assert!(context.current_block_authorities[0].contains(&current_authority));
+        assert!(context.current_block_authorities[1].contains(&next_authority));
     }
 
     #[test]
@@ -702,17 +755,18 @@ mod tests {
             vec![transaction(parent_sender, parent_authority)],
             vec![transaction(current_sender, current_authority)],
         )
-        .child(&transaction(child_sender, child_authority));
+        .into_child()
+        .next_transaction(&transaction(child_sender, child_authority));
 
-        assert_eq!(context.chain.current_tx_index, 0);
-        assert_eq!(context.chain.grandparent_senders_and_authorities.len(), 2);
-        assert!(context.chain.grandparent_senders_and_authorities.contains(&parent_sender));
-        assert!(context.chain.grandparent_senders_and_authorities.contains(&parent_authority));
-        assert_eq!(context.chain.parent_senders_and_authorities.len(), 2);
-        assert!(context.chain.parent_senders_and_authorities.contains(&current_sender));
-        assert!(context.chain.parent_senders_and_authorities.contains(&current_authority));
-        assert_eq!(context.chain.current_block_senders, vec![child_sender]);
-        assert!(context.chain.current_block_authorities[0].contains(&child_authority));
+        assert_eq!(context.current_tx_index, 0);
+        assert_eq!(context.grandparent_senders_and_authorities.len(), 2);
+        assert!(context.grandparent_senders_and_authorities.contains(&parent_sender));
+        assert!(context.grandparent_senders_and_authorities.contains(&parent_authority));
+        assert_eq!(context.parent_senders_and_authorities.len(), 2);
+        assert!(context.parent_senders_and_authorities.contains(&current_sender));
+        assert!(context.parent_senders_and_authorities.contains(&current_authority));
+        assert_eq!(context.current_block_senders, vec![child_sender]);
+        assert!(context.current_block_authorities[0].contains(&child_authority));
     }
 
     #[test]
@@ -735,10 +789,10 @@ mod tests {
         .unwrap();
         let context = cursor.next_transaction(&transaction(synthetic_sender, Address::ZERO));
 
-        assert_eq!(context.chain.current_tx_index, 1);
-        assert_eq!(context.chain.current_block_senders, vec![preceding_sender, synthetic_sender]);
-        assert!(!context.chain.current_block_senders.contains(&target_sender));
-        assert!(!context.chain.current_block_senders.contains(&future_sender));
+        assert_eq!(context.current_tx_index, 1);
+        assert_eq!(context.current_block_senders, vec![preceding_sender, synthetic_sender]);
+        assert!(!context.current_block_senders.contains(&target_sender));
+        assert!(!context.current_block_senders.contains(&future_sender));
     }
 
     #[test]
@@ -756,9 +810,9 @@ mod tests {
         cursor.record_transaction(transaction(first_sender, Address::ZERO));
         let context = cursor.next_transaction(&transaction(second_sender, Address::ZERO));
 
-        assert_eq!(context.chain.current_tx_index, 1);
-        assert_eq!(context.chain.current_block_senders, vec![first_sender, second_sender]);
-        assert!(context.chain.parent_senders_and_authorities.contains(&fork_sender));
+        assert_eq!(context.current_tx_index, 1);
+        assert_eq!(context.current_block_senders, vec![first_sender, second_sender]);
+        assert!(context.parent_senders_and_authorities.contains(&fork_sender));
     }
 
     #[test]
@@ -778,10 +832,10 @@ mod tests {
         cursor.advance_block();
         let context = cursor.next_transaction(&transaction(second_sender, Address::ZERO));
 
-        assert_eq!(context.chain.current_tx_index, 0);
-        assert_eq!(context.chain.current_block_senders, vec![second_sender]);
-        assert!(context.chain.parent_senders_and_authorities.contains(&first_sender));
-        assert!(context.chain.grandparent_senders_and_authorities.contains(&fork_sender));
-        assert!(!context.chain.grandparent_senders_and_authorities.contains(&fork_parent_sender));
+        assert_eq!(context.current_tx_index, 0);
+        assert_eq!(context.current_block_senders, vec![second_sender]);
+        assert!(context.parent_senders_and_authorities.contains(&first_sender));
+        assert!(context.grandparent_senders_and_authorities.contains(&fork_sender));
+        assert!(!context.grandparent_senders_and_authorities.contains(&fork_parent_sender));
     }
 }

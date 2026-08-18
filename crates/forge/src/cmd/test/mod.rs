@@ -67,7 +67,8 @@ use foundry_evm::core::evm::MonadEvmNetwork;
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
+        BlockEnvFor, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, SpecFor, TempoEvmNetwork,
+        TxEnvFor,
     },
     executors::ShowmapDomain,
     fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
@@ -2139,7 +2140,7 @@ impl TestArgs {
                 sh_println!("{}", outcome.summary(multi_pass_timer.elapsed()))?;
             }
             if self.summary && !outcome.results.is_empty() {
-                let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
+                let summary_report = TestSummaryReport::new(self.detailed, &outcome);
                 sh_println!("{}", &summary_report)?;
             }
 
@@ -3009,7 +3010,7 @@ impl TestArgs {
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
                 config.gas_reports_include_tests,
-                FEN::EXTRA_CHEATCODE_ADDRESSES.iter().copied(),
+                FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES.iter().copied(),
             )
         });
 
@@ -3359,7 +3360,7 @@ impl TestArgs {
         }
 
         if !is_multi_pass && self.summary && !outcome.results.is_empty() {
-            let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
+            let summary_report = TestSummaryReport::new(self.detailed, &outcome);
             sh_println!("{summary_report}")?;
         }
 

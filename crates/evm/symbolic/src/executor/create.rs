@@ -128,6 +128,7 @@ impl SymbolicExecutor {
             parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
             parent.mapping_storage_store_hooks = outcome.state.mapping_storage_store_hooks.clone();
             parent.inherit_mapping_hook_provenance(&outcome.state);
+            parent.inherit_inspector_recordings(&outcome.state);
             parent.return_data = SymReturnData::empty(&mut self.cx);
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
@@ -163,7 +164,6 @@ impl SymbolicExecutor {
                         } else {
                             parent.expected_revert = Some(expected);
                         }
-                        parent.access_record = outcome.state.access_record.clone();
                         parent.expected_calls = outcome.state.expected_calls.clone();
                         parent.expected_creates = pending_expected_creates.clone();
                         parent.call_mocks = outcome.state.call_mocks.clone();
@@ -180,8 +180,6 @@ impl SymbolicExecutor {
                 TopLevelCallStatus::Success => {
                     parent.world = outcome.state.world.clone();
                     parent.block = outcome.state.block.clone();
-                    parent.recorded_logs = outcome.state.recorded_logs.clone();
-                    parent.access_record = outcome.state.access_record.clone();
                     parent.expected_emit = outcome.state.expected_emit.clone();
                     parent.expected_calls = outcome.state.expected_calls.clone();
                     parent.expected_creates = pending_expected_creates.clone();
@@ -203,6 +201,7 @@ impl SymbolicExecutor {
                 }
                 TopLevelCallStatus::Revert => {
                     parent.world = failure_world.clone();
+                    parent.return_data = outcome.return_data.clone();
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                 }
                 TopLevelCallStatus::Failure => {
@@ -274,11 +273,11 @@ impl SymbolicExecutor {
                         let mut in_bounds_constraints = state.constraints.clone();
                         in_bounds_constraints.push(condition.clone());
                         let in_bounds_sat =
-                            self.solver.is_sat(&mut self.cx, &in_bounds_constraints)?;
+                            self.is_sat_with_state(&state, &in_bounds_constraints)?;
 
                         let mut out_of_bounds_constraints = state.constraints.clone();
                         out_of_bounds_constraints.push(condition.not(&mut self.cx));
-                        if self.solver.is_sat(&mut self.cx, &out_of_bounds_constraints)? {
+                        if self.is_sat_with_state(&state, &out_of_bounds_constraints)? {
                             let mut halted = state.clone();
                             halted.constraints = out_of_bounds_constraints;
                             *completed_paths += 1;

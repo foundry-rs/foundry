@@ -14,9 +14,14 @@ use alloy_sol_types::SolValue;
 use foundry_common::wallet::{derive_private_key, derive_private_key_with_language};
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use k256::{
-    FieldBytes, Scalar,
+    AffinePoint, EncodedPoint, FieldBytes, FieldElement, ProjectivePoint, Scalar,
     ecdsa::{SigningKey, hazmat},
-    elliptic_curve::{bigint::ArrayEncoding, sec1::ToEncodedPoint},
+    elliptic_curve::{
+        bigint::{ArrayEncoding, U256 as K256U256},
+        group::Group,
+        ops::Reduce,
+        sec1::{FromEncodedPoint, ToEncodedPoint},
+    },
 };
 
 use p256::ecdsa::{
@@ -232,6 +237,42 @@ impl Cheatcode for publicKeyP256Call {
         let pub_key_y = U256::from_be_bytes((*pub_key.y().unwrap()).into());
 
         Ok((pub_key_x, pub_key_y).abi_encode())
+    }
+}
+
+impl Cheatcode for ecAddAffineCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { pointX1, pointY1, pointX2, pointY2 } = self;
+        let lhs = parse_affine_point(pointX1, pointY1, "first point")?;
+        let rhs = parse_affine_point(pointX2, pointY2, "second point")?;
+        encode_affine_point(ProjectivePoint::from(lhs) + rhs)
+    }
+}
+
+impl Cheatcode for ecAddProjectiveCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { pointX1, pointY1, pointZ1, pointX2, pointY2, pointZ2 } = self;
+        let lhs = parse_projective_point(pointX1, pointY1, pointZ1, "first point")?;
+        let rhs = parse_projective_point(pointX2, pointY2, pointZ2, "second point")?;
+        encode_projective_point(lhs + rhs)
+    }
+}
+
+impl Cheatcode for ecMulAffineCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { pointX, pointY, scalar } = self;
+        let point = parse_affine_point(pointX, pointY, "point")?;
+        let scalar = reduce_ec_scalar(scalar);
+        encode_affine_point(ProjectivePoint::from(point) * scalar)
+    }
+}
+
+impl Cheatcode for ecMulProjectiveCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { pointX, pointY, pointZ, scalar } = self;
+        let point = parse_projective_point(pointX, pointY, pointZ, "point")?;
+        let scalar = reduce_ec_scalar(scalar);
+        encode_projective_point(point * scalar)
     }
 }
 
@@ -461,6 +502,75 @@ fn sign_p256(private_key: &U256, digest: &B256) -> Result {
     let s_bytes: [u8; 32] = signature.s().to_bytes().into();
 
     Ok((r_bytes, s_bytes).abi_encode())
+}
+
+fn parse_affine_point(x: &U256, y: &U256, name: &str) -> Result<AffinePoint> {
+    if x.is_zero() && y.is_zero() {
+        return Ok(AffinePoint::IDENTITY);
+    }
+
+    let encoded = EncodedPoint::from_affine_coordinates(
+        &FieldBytes::from(x.to_be_bytes()),
+        &FieldBytes::from(y.to_be_bytes()),
+        false,
+    );
+    AffinePoint::from_encoded_point(&encoded)
+        .into_option()
+        .ok_or_else(|| fmt_err!("invalid secp256k1 {name}"))
+}
+
+fn parse_projective_point(x: &U256, y: &U256, z: &U256, name: &str) -> Result<ProjectivePoint> {
+    let x_field = parse_field_element(x, name)?;
+    let y_field = parse_field_element(y, name)?;
+    let z_field = parse_field_element(z, name)?;
+
+    if bool::from(z_field.is_zero()) {
+        ensure!(
+            bool::from(x_field.is_zero()) && !bool::from(y_field.is_zero()),
+            "invalid secp256k1 {name}"
+        );
+        return Ok(ProjectivePoint::IDENTITY);
+    }
+
+    let z_inv = z_field.invert().expect("non-zero field element is invertible");
+    let affine_x = U256::from_be_slice(&(x_field * z_inv).to_bytes());
+    let affine_y = U256::from_be_slice(&(y_field * z_inv).to_bytes());
+
+    Ok(ProjectivePoint::from(parse_affine_point(&affine_x, &affine_y, name)?))
+}
+
+fn parse_field_element(value: &U256, name: &str) -> Result<FieldElement> {
+    FieldElement::from_bytes(&FieldBytes::from(value.to_be_bytes()))
+        .into_option()
+        .ok_or_else(|| fmt_err!("invalid secp256k1 {name}"))
+}
+
+fn reduce_ec_scalar(scalar: &U256) -> Scalar {
+    <Scalar as Reduce<K256U256>>::reduce_bytes(&scalar.to_be_bytes().into())
+}
+
+fn encode_affine_point(point: ProjectivePoint) -> Result {
+    if bool::from(point.is_identity()) {
+        return Ok((U256::ZERO, U256::ZERO).abi_encode());
+    }
+
+    let encoded = point.to_affine().to_encoded_point(false);
+    let x = U256::from_be_slice(encoded.x().expect("non-identity point has x coordinate"));
+    let y = U256::from_be_slice(encoded.y().expect("non-identity point has y coordinate"));
+
+    Ok((x, y).abi_encode())
+}
+
+fn encode_projective_point(point: ProjectivePoint) -> Result {
+    if bool::from(point.is_identity()) {
+        return Ok((U256::ZERO, U256::from(1), U256::ZERO).abi_encode());
+    }
+
+    let encoded = point.to_affine().to_encoded_point(false);
+    let x = U256::from_be_slice(encoded.x().expect("non-identity point has x coordinate"));
+    let y = U256::from_be_slice(encoded.y().expect("non-identity point has y coordinate"));
+
+    Ok((x, y, U256::from(1)).abi_encode())
 }
 
 fn validate_private_key<C: ecdsa::PrimeCurve>(private_key: &U256) -> Result<()> {
