@@ -1343,17 +1343,19 @@ fn ensure_account_name_available(name: &str) -> Result<()> {
 
 /// Returns true when `value` is a bare keystore account name rather than a filesystem path.
 ///
-/// Path-like values (`.`, `..`, anything containing a separator, or a Windows path prefix
-/// such as `C:foo`) stay on the existing directory-resolution path for `cast wallet new`.
+/// Path-like values (`.`, `..`, anything containing a separator or `:`, including Windows
+/// prefixes such as `C:foo` and ADS names such as `foo:bar`) stay on the existing
+/// directory-resolution path for `cast wallet new`.
 fn is_bare_account_name(value: &str) -> bool {
     !value.is_empty()
         && value != "."
         && value != ".."
         && !value.contains('/')
         && !value.contains('\\')
-        // `C:foo` is a drive-relative path on Windows even without a separator, and joining
-        // it can replace the default keystore directory.
-        && !matches!(value.as_bytes(), [drive, b':', ..] if drive.is_ascii_alphabetic())
+        // `C:foo` is a drive-relative path; `foo:bar` is an alternate data stream on
+        // Windows. Joining either can write outside the default keystore directory
+        // or hide the keystore in a stream so listing/loading miss it.
+        && !value.contains(':')
 }
 
 fn ensure_default_keystores_dir() -> Result<PathBuf> {
@@ -2124,6 +2126,7 @@ mod tests {
         assert!(!is_bare_account_name("/tmp/keystores"));
         assert!(!is_bare_account_name(r"C:\keystores"));
         assert!(!is_bare_account_name("C:foo"));
+        assert!(!is_bare_account_name("foo:bar"));
     }
 
     #[test]
