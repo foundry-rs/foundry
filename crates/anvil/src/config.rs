@@ -476,7 +476,7 @@ Genesis Number
             json!({
               "available_accounts": available_accounts,
               "private_keys": private_keys,
-              "endpoint": fork.eth_rpc_url().unwrap_or_default(),
+              "endpoint": fork.eth_rpc_url().as_deref().map(redact_url).unwrap_or_default(),
               "block_number": fork.block_number(),
               "block_hash": fork.block_hash(),
               "chain_id": fork.execution_chain_id(),
@@ -2433,6 +2433,11 @@ mod tests {
 
         let fork = api.backend.get_fork().unwrap();
         let output = config.as_string(Some(&fork));
+        let temp = tempfile::tempdir().unwrap();
+        let config_out = temp.path().join("config.json");
+        config.config_out = Some(config_out.clone());
+        config.print(Some(&fork)).unwrap();
+        let json = serde_json::from_slice::<Value>(&std::fs::read(config_out).unwrap()).unwrap();
 
         assert!(output.contains(&redact_url(&fork_url)));
         assert!(output.contains("https://mirror.example/"));
@@ -2440,6 +2445,9 @@ mod tests {
         assert!(!output.contains("password"));
         assert!(!output.contains("private-api-key"));
         assert!(!output.contains("secret"));
+        assert_eq!(json["endpoint"], redact_url(&fork_url));
+        assert!(!json.to_string().contains("password"));
+        assert!(!json.to_string().contains("secret"));
     }
 
     #[test]

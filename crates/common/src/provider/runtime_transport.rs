@@ -18,8 +18,15 @@ use alloy_transport::{
 };
 use alloy_transport_ipc::IpcConnect;
 use alloy_transport_ws::WsConnect;
+use regex::{Captures, Regex};
 use reqwest::header::{HeaderName, HeaderValue};
-use std::{error::Error as StdError, fmt, path::PathBuf, str::FromStr, sync::Arc};
+use std::{
+    error::Error as StdError,
+    fmt,
+    path::PathBuf,
+    str::FromStr,
+    sync::{Arc, LazyLock},
+};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tower::Service;
@@ -30,6 +37,9 @@ use url::Url;
 /// Endpoints matching these patterns always use the MPP WebSocket transport,
 /// regardless of whether local MPP keys have been discovered.
 const KNOWN_MPP_HOSTS: &[&str] = &[".mpp.tempo.xyz", ".mpp.moderato.tempo.xyz"];
+
+static HTTP_URL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)https?://[^\s<>"']+"#).expect("valid URL regex"));
 
 /// Returns `true` if `url` points to a known MPP-enabled RPC service.
 fn is_known_mpp_endpoint(url: &Url) -> bool {
@@ -367,11 +377,6 @@ fn redact_http_transport_error(error: TransportError, endpoint: &Url) -> Transpo
         return error;
     };
     let safe_endpoint = redact_url(endpoint.as_str());
-    let mut request_endpoint = endpoint.clone();
-    let _ = request_endpoint.set_username("");
-    let _ = request_endpoint.set_password(None);
-    request_endpoint.set_query(None);
-    request_endpoint.set_fragment(None);
 
     let mut message = String::new();
     let mut error: Option<&(dyn StdError + 'static)> = Some(source.as_ref());
@@ -382,9 +387,17 @@ fn redact_http_transport_error(error: TransportError, endpoint: &Url) -> Transpo
         message.push_str(&source.to_string());
         error = source.source();
     }
-    for sensitive in [endpoint.as_str(), request_endpoint.as_str()] {
-        message = message.replace(sensitive, &safe_endpoint);
-    }
+    let message = HTTP_URL_RE.replace_all(&message, |captures: &Captures<'_>| {
+        let candidate = &captures[0];
+        let Ok(url) = Url::parse(candidate) else { return candidate.to_owned() };
+        if url.host() == endpoint.host()
+            && url.port_or_known_default() == endpoint.port_or_known_default()
+        {
+            safe_endpoint.clone()
+        } else {
+            candidate.to_owned()
+        }
+    });
     TransportErrorKind::custom_str(&message)
 }
 
@@ -506,6 +519,22 @@ mod tests {
         assert!(!report.contains("secret"));
         assert!(report.to_lowercase().contains("connection refused"));
         assert!(report.contains("cast tempo login"));
+    }
+
+    #[test]
+    fn http_transport_errors_redact_normalized_endpoint_variants() {
+        let endpoint =
+            Url::parse("https://user:password@example.com/private-api-key?token=secret").unwrap();
+        let error = TransportErrorKind::custom_str(
+            "request to https://USER:normalized@example.com:443/different%2Fpath?key=other failed",
+        );
+
+        let report = redact_http_transport_error(error, &endpoint).to_string();
+
+        assert!(report.contains("https://example.com/"));
+        assert!(!report.contains("normalized"));
+        assert!(!report.contains("different"));
+        assert!(!report.contains("other"));
     }
 
     #[tokio::test]
