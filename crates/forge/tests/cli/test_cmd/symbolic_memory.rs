@@ -107,6 +107,25 @@ contract SymbolicOversizedMemoryOffset is Test {
         (bool ok,) = address(this).call(abi.encodeCall(this.store, (offset)));
         assertFalse(ok);
     }
+
+    function createWithOversizedSize() external {
+        assembly {
+            pop(create(0, 0, not(0)))
+        }
+    }
+
+    function create2WithOversizedSize() external {
+        assembly {
+            pop(create2(0, 0, not(0), 0))
+        }
+    }
+
+    function checkOversizedCreateRanges() public {
+        (bool createOk,) = address(this).call(abi.encodeCall(this.createWithOversizedSize, ()));
+        (bool create2Ok,) = address(this).call(abi.encodeCall(this.create2WithOversizedSize, ()));
+        assertFalse(createOk);
+        assertFalse(create2Ok);
+    }
 }
 "#,
     );
@@ -122,6 +141,7 @@ contract SymbolicOversizedMemoryOffset is Test {
         foundry_test_utils::str![[r#"
 [PASS] checkOversizedFixedMemoryAccesses()
 [PASS] checkConstrainedOversizedMemoryAccess(uint256)
+[PASS] checkOversizedCreateRanges()
 "#]],
     );
 
@@ -200,7 +220,7 @@ contract SymbolicMemoryLimit {
             mstore(2048, 1)
             ok := call(gas(), address(), 2, 0, 0, 0, 0)
         }
-        assert(!ok);
+        assert(ok);
     }
 
     function checkMemoryLimitCallInputExpansion() public {
@@ -208,7 +228,7 @@ contract SymbolicMemoryLimit {
         assembly {
             ok := call(gas(), address(), 3, 2048, 2048, 0, 0)
         }
-        assert(!ok);
+        assert(ok);
     }
 
     function checkMemoryLimitSymbolicCallSize(bool expand) public {
@@ -217,7 +237,7 @@ contract SymbolicMemoryLimit {
             let size := mul(expand, 2048)
             ok := call(gas(), address(), 3, 2048, size, 0, 0)
         }
-        assert(ok != expand);
+        assert(ok);
     }
 
     function wrappingCallRange() external {
@@ -239,6 +259,9 @@ contract SymbolicMemoryLimit {
 "#,
     );
 
+    cmd.args(["test", "--match-test", "checkMemoryLimitNestedCall"]).assert_success();
+
+    cmd.forge_fuse();
     let stdout = cmd
         .args(["test", "--symbolic", "--match-test", "checkMemoryLimit"])
         .assert_success()

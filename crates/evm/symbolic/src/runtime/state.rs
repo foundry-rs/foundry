@@ -203,8 +203,7 @@ impl PathState {
         }
     }
 
-    pub(crate) fn child(&self, cx: &mut SymCx, mut frame: CallFrame) -> Self {
-        frame.memory_checkpoint = self.total_memory_size(cx);
+    pub(crate) fn child(&self, frame: CallFrame) -> Self {
         Self {
             depth: self.depth,
             call_depth: self.call_depth + 1,
@@ -247,8 +246,8 @@ impl PathState {
         }
     }
 
-    pub(crate) fn storage_hook_child(&self, cx: &mut SymCx, frame: CallFrame) -> Self {
-        let mut child = self.child(cx, frame);
+    pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
+        let mut child = self.child(frame);
         child.storage_hook_active = true;
         child.recorded_logs = None;
         child.access_record = None;
@@ -1443,7 +1442,6 @@ pub(crate) struct CallFrame {
     pub(crate) is_static: bool,
     pub(crate) calldata: SymCalldata,
     pub(crate) stack: SymStack,
-    pub(crate) memory_checkpoint: SymExpr,
     pub(crate) memory: SymMemory,
     pub(crate) return_data: SymReturnData,
 }
@@ -1472,15 +1470,9 @@ impl CallFrame {
             is_static,
             calldata,
             stack: SymStack::default(),
-            memory_checkpoint: SymExpr::zero(cx),
             memory: SymMemory::default(),
             return_data: SymReturnData::empty(cx),
         }
-    }
-
-    pub(crate) fn total_memory_size(&self, cx: &mut SymCx) -> SymExpr {
-        let size = self.memory.size_word(cx);
-        SymMemory::saturating_add_word(cx, self.memory_checkpoint.clone(), size)
     }
 }
 
@@ -2510,7 +2502,7 @@ mod tests {
         state.function_mocks.push(FunctionMock::new(callee, Address::ZERO, data));
         let frame = state.frame.clone();
 
-        let child = state.storage_hook_child(&mut cx, frame);
+        let child = state.storage_hook_child(frame);
 
         assert!(child.storage_hook_active);
         assert!(child.branch_target().is_none());

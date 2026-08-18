@@ -14,7 +14,12 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
 
-        let memory_rewind_state = state.clone();
+        let offset = state.stack.peek(1)?.clone();
+        let size = state.stack.peek(2)?.clone();
+        if let Some(outcome) = self.guard_memory_range(executor, state, worklist, &offset, &size)? {
+            return Ok(outcome);
+        }
+
         let value = state.stack.pop()?;
         let offset = state.stack.pop()?;
         let size = state.stack.pop()?;
@@ -22,8 +27,7 @@ impl SymbolicExecutor {
             Some(Ok(size)) => BoundedCopySize::Concrete(size),
             Some(Err(_)) => {
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                state.stack.push(SymExpr::zero(&mut self.cx))?;
-                return Ok(StepOutcome::Continue);
+                return Ok(StepOutcome::Revert);
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
@@ -45,17 +49,6 @@ impl SymbolicExecutor {
         let salt =
             if matches!(kind, CreateKind::Create2) { Some(state.stack.pop()?) } else { None };
 
-        let size_word = size.size_word(&mut self.cx);
-        if let Some(outcome) = self.guard_memory_range(
-            executor,
-            state,
-            worklist,
-            &memory_rewind_state,
-            &offset,
-            &size_word,
-        )? {
-            return Ok(outcome);
-        }
         size.expand_memory(&mut self.cx, &mut state.memory, offset.clone());
 
         let initcode = match &size {
@@ -118,7 +111,7 @@ impl SymbolicExecutor {
         );
         frame.address_word = created_word.clone();
         frame.caller_word = state.address_word.clone();
-        let mut child = state.child(&mut self.cx, frame);
+        let mut child = state.child(frame);
         let pending_expected_creates = std::mem::take(&mut child.expected_creates);
         child.world = failure_world.clone();
         child.world.mark_current_transaction_created(created);

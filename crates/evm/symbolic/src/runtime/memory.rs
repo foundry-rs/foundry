@@ -44,9 +44,8 @@ pub(crate) enum BoundedCopySize {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymMemory {
     symbolic_writes: Vec<SymbolicMemoryWrite>,
-    symbolic_access_sizes: Vec<SymExpr>,
     materialized_size: usize,
-    logical_size: usize,
+    logical_size: Option<SymExpr>,
 }
 
 #[derive(Clone, Debug)]
@@ -72,7 +71,7 @@ impl SymbolicMemoryWrite {
 }
 
 impl SymMemory {
-    pub(crate) fn saturating_add_word(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> SymExpr {
+    fn saturating_add_word(cx: &mut SymCx, left: SymExpr, right: SymExpr) -> SymExpr {
         let sum = SymExpr::binop(cx, SymBinOp::Add, left.clone(), right);
         let overflow = SymBoolExpr::cmp(cx, SymCmpOp::Ult, sum.clone(), left);
         let max = SymExpr::constant(cx, U256::MAX);
@@ -112,6 +111,13 @@ impl SymMemory {
             let condition = SymBoolExpr::cmp(cx, SymCmpOp::Ult, left.clone(), right.clone());
             SymExpr::ite(cx, condition, right, left)
         }
+    }
+
+    fn expand_to(&mut self, cx: &mut SymCx, size: SymExpr) {
+        self.logical_size = Some(match self.logical_size.take() {
+            Some(current) => Self::max_size_word(cx, current, size),
+            None => size,
+        });
     }
 
     pub(crate) fn store_word(&mut self, cx: &mut SymCx, offset: usize, value: SymExpr) {
@@ -154,7 +160,8 @@ impl SymMemory {
         }
         let size = Self::size_after_access(offset, bytes.len());
         self.materialized_size = self.materialized_size.max(size);
-        self.logical_size = self.logical_size.max(size);
+        let size = SymExpr::constant(cx, U256::from(size));
+        self.expand_to(cx, size);
         let offset = SymExpr::constant(cx, U256::from(offset));
         self.symbolic_writes.push(SymbolicMemoryWrite { offset, bytes });
     }
@@ -169,7 +176,7 @@ impl SymMemory {
             return;
         }
         let size = Self::size_after_access_word(cx, offset.clone(), bytes.len());
-        self.symbolic_access_sizes.push(size);
+        self.expand_to(cx, size);
         self.symbolic_writes.push(SymbolicMemoryWrite { offset, bytes });
     }
 
@@ -214,11 +221,12 @@ impl SymMemory {
             let Ok(offset) = usize::try_from(offset) else { return Ok(SymExpr::zero(cx)) };
             let size = Self::size_after_access(offset, 32);
             self.materialized_size = self.materialized_size.max(size);
-            self.logical_size = self.logical_size.max(size);
+            let size = SymExpr::constant(cx, U256::from(size));
+            self.expand_to(cx, size);
             self.load_word(cx, offset)
         } else {
             let size = Self::size_after_access_word(cx, offset.clone(), 32);
-            self.symbolic_access_sizes.push(size);
+            self.expand_to(cx, size);
             self.load_word_dynamic(cx, &offset)
         }
     }
@@ -442,11 +450,7 @@ impl SymMemory {
     }
 
     pub(crate) fn size_word(&self, cx: &mut SymCx) -> SymExpr {
-        let mut size = SymExpr::constant(cx, U256::from(self.logical_size));
-        for access_size in &self.symbolic_access_sizes {
-            size = Self::max_size_word(cx, size, access_size.clone());
-        }
-        size
+        self.logical_size.clone().unwrap_or_else(|| SymExpr::zero(cx))
     }
 
     pub(crate) fn size_after_range_expansion_word(
@@ -465,12 +469,14 @@ impl SymMemory {
             && let (Ok(offset), Ok(size)) = (usize::try_from(offset), usize::try_from(size))
         {
             if size != 0 {
-                self.logical_size = self.logical_size.max(Self::size_after_access(offset, size));
+                let size = Self::size_after_access(offset, size);
+                let size = SymExpr::constant(cx, U256::from(size));
+                self.expand_to(cx, size);
             }
             return;
         }
         let size = Self::size_after_range_word(cx, offset, size);
-        self.symbolic_access_sizes.push(size);
+        self.expand_to(cx, size);
     }
 
     pub(crate) fn copy_bytes_offset(&mut self, cx: &mut SymCx, dest: SymExpr, src: SymBytes) {
@@ -520,7 +526,7 @@ impl SymMemory {
             self.store_materialized_bytes(dest.clone(), bytes);
         }
         let access_size = Self::size_after_range_word(cx, dest, size);
-        self.symbolic_access_sizes.push(access_size);
+        self.expand_to(cx, access_size);
         Ok(())
     }
 

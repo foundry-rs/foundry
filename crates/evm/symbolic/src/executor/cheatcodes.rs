@@ -179,7 +179,7 @@ impl SymbolicExecutor {
         );
         frame.address_word = created_word.clone();
         frame.caller_word = state.address_word.clone();
-        let mut child = state.child(&mut self.cx, frame);
+        let mut child = state.child(frame);
         let pending_expected_creates = std::mem::take(&mut child.expected_creates);
         child.world = failure_world.clone();
         child.world.mark_current_transaction_created(created);

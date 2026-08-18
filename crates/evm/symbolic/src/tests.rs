@@ -1761,9 +1761,6 @@ fn path_state_child_replaces_frame_and_resets_local_loop_state() {
 
     let parent_stack = SymExpr::constant(&mut cx, U256::from(0xab));
     state.stack.push(parent_stack).unwrap();
-    let parent_memory = SymExpr::constant(&mut cx, U256::from(0xcd));
-    state.memory.store_word(&mut cx, 32, parent_memory);
-
     let constrained = SymExpr::var(&mut cx, "constrained");
     let seven = SymExpr::constant(&mut cx, U256::from(7));
     let constraint = SymBoolExpr::eq(&mut cx, constrained, seven);
@@ -1787,14 +1784,13 @@ fn path_state_child_replaces_frame_and_resets_local_loop_state() {
         calldata,
     );
 
-    let child = state.child(&mut cx, frame);
+    let child = state.child(frame);
 
     assert_eq!(child.call_depth, 3);
     assert_eq!(child.next_symbol, 7);
     assert_eq!(child.constraints, vec![constraint]);
     assert_eq!(child.world.cached_nonce(cached), Some(9));
     assert_eq!(child.address, child_address);
-    assert_eq!(child.memory_checkpoint.as_const(), Some(U256::from(64)));
     assert!(child.loop_jumps.is_empty());
     assert_eq!(state.loop_jumps.get(&3), Some(&4));
     assert!(child.stack.peek(0).is_err());
