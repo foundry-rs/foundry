@@ -92,6 +92,13 @@ impl CallTraceDecoderBuilder {
         self
     }
 
+    /// Add an ABI for a specific contract address.
+    #[inline]
+    pub fn with_address_abi(mut self, address: Address, abi: &JsonAbi) -> Self {
+        self.decoder.collect_abi(abi, Some(address), false);
+        self
+    }
+
     /// Add known contracts to the decoder.
     #[inline]
     pub fn with_known_contracts(mut self, contracts: &ContractsByArtifact) -> Self {
@@ -786,10 +793,15 @@ impl CallTraceDecoder {
         {
             self.constructors_by_address.entry(address).or_insert_with(|| constructor.clone());
         }
-        if global {
-            for event in abi.events() {
+        for event in abi.events() {
+            if let Some(address) = address {
+                self.push_address_event(address, event.clone());
+            }
+            if global {
                 self.push_event(event.clone());
             }
+        }
+        if global {
             for error in abi.errors() {
                 self.push_error(error.clone());
             }

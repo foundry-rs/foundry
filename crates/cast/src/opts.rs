@@ -14,6 +14,7 @@ use crate::cmd::{
     creation_code::CreationCodeArgs,
     erc20::Erc20Subcommand,
     estimate::EstimateArgs,
+    events::EventsArgs,
     find_block::FindBlockArgs,
     interface::InterfaceArgs,
     keychain::{KeyAuthorizationSubcommand, KeychainSubcommand},
@@ -415,6 +416,14 @@ pub enum CastSubcommand {
     /// - cast logs --address $TOKEN --from-block 21000000 --to-block latest $TOPIC_0
     #[command(verbatim_doc_comment, visible_alias = "l")]
     Logs(LogsArgs),
+    /// Fetch and decode events from a transaction receipt or log filter.
+    ///
+    /// Examples:
+    /// - cast events --tx-hash $TX_HASH
+    /// - cast events --address $TOKEN --from-block 21000000 --to-block latest
+    /// - cast events --address $TOKEN "Transfer(address indexed,address indexed,uint256)"
+    #[command(verbatim_doc_comment, visible_alias = "ev")]
+    Events(EventsArgs),
     /// Get information about a block
     ///
     /// Examples:

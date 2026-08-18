@@ -1,0 +1,533 @@
+use super::logs::LogQueryArgs;
+use crate::{
+    Cast,
+    traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
+};
+use alloy_network::AnyNetwork;
+use alloy_primitives::{Address, B256, Bytes, TxHash};
+use alloy_provider::Provider;
+use alloy_rpc_types::Log;
+use clap::{ArgGroup, Parser};
+use eyre::Result;
+use foundry_cli::{
+    json::print_json_object,
+    opts::{EtherscanOpts, RpcOpts},
+    utils::{self, LoadConfig},
+};
+use foundry_common::{abi::find_source, shell};
+use foundry_config::{Chain, Config};
+use futures::{StreamExt, stream};
+use serde::Serialize;
+use std::{collections::BTreeSet, fmt::Write as _};
+
+foundry_config::impl_figment_convert!(EventsArgs, etherscan, rpc);
+
+/// CLI arguments for `cast events`.
+#[derive(Debug, Parser)]
+#[command(group(
+    ArgGroup::new("event_source")
+        .required(true)
+        .multiple(true)
+        .args(["tx_hash", "address", "from_block", "to_block", "sig_or_topic"])
+))]
+pub struct EventsArgs {
+    /// Get events emitted by this transaction.
+    #[arg(
+        long,
+        alias = "txhash",
+        value_name = "TX_HASH",
+        conflicts_with_all = [
+            "from_block",
+            "to_block",
+            "address",
+            "sig_or_topic",
+            "topics_or_args",
+            "query_size"
+        ]
+    )]
+    tx_hash: Option<TxHash>,
+
+    #[command(flatten)]
+    query: LogQueryArgs,
+
+    #[command(flatten)]
+    etherscan: EtherscanOpts,
+
+    #[command(flatten)]
+    rpc: RpcOpts,
+}
+
+impl EventsArgs {
+    pub async fn run(self) -> Result<()> {
+        let mut config = self.load_config()?;
+        let Self { tx_hash, query, etherscan: _, rpc: _ } = self;
+        let provider = utils::get_provider(&config)?;
+        let chain_id = provider.get_chain_id().await?;
+        let (rpc_chain, explorer_chain) = resolve_chains(config.chain, Chain::from(chain_id));
+        config.chain = Some(rpc_chain);
+
+        let logs = fetch_logs(&provider, tx_hash, query).await?;
+
+        let events = decode_logs(logs, &config, explorer_chain).await?;
+        if shell::is_json() {
+            print_json_object(events)?;
+        } else {
+            // Bypass the shell verbosity layer so `--quiet` does not suppress the primary result.
+            let mut shell = shell::Shell::get();
+            let out = shell.out();
+            write!(out, "{}", format_events(&events))?;
+            out.flush()?;
+        }
+        Ok(())
+    }
+}
+
+fn resolve_chains(configured_chain: Option<Chain>, rpc_chain: Chain) -> (Chain, Chain) {
+    (rpc_chain, configured_chain.unwrap_or(rpc_chain))
+}
+
+async fn fetch_logs<P>(
+    provider: &P,
+    tx_hash: Option<TxHash>,
+    query: LogQueryArgs,
+) -> Result<Vec<Log>>
+where
+    P: Provider<AnyNetwork> + Clone + Unpin,
+{
+    if let Some(tx_hash) = tx_hash {
+        return Ok(provider
+            .get_transaction_receipt(tx_hash)
+            .await?
+            .ok_or_else(|| eyre::eyre!("tx receipt not found: {tx_hash}"))?
+            .inner
+            .logs()
+            .to_vec());
+    }
+
+    let (filter, query_size) = query.resolve(provider).await?;
+    let cast = Cast::new(provider);
+    match query_size {
+        Some(chunk_size) => cast.get_logs_chunked(&filter, chunk_size).await,
+        None => cast.get_logs(&filter).await,
+    }
+}
+
+async fn decode_logs(
+    logs: Vec<Log>,
+    config: &Config,
+    explorer_chain: Chain,
+) -> Result<Vec<EventOutput>> {
+    let signature_identifier = SignaturesIdentifier::from_config(config)?;
+    let mut builder = CallTraceDecoderBuilder::new()
+        .with_signature_identifier(signature_identifier)
+        .with_networks(config.networks)
+        .with_chain_id(config.chain.map(|chain| chain.id()));
+
+    if !config.offline && config.get_etherscan_config_with_chain(Some(explorer_chain))?.is_some() {
+        let addresses = logs.iter().map(Log::address).collect::<BTreeSet<_>>();
+        let abis = stream::iter(addresses)
+            .map(|address| async move {
+                let result = async {
+                    let client = config
+                        .get_etherscan_config_with_chain(Some(explorer_chain))?
+                        .ok_or_else(|| {
+                            eyre::eyre!(
+                                "No Etherscan API key configured for chain {explorer_chain}"
+                            )
+                        })?
+                        .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
+                    let source = find_source(client, address).await?;
+                    source
+                        .items
+                        .into_iter()
+                        .map(|item| item.abi().map_err(Into::into))
+                        .collect::<Result<Vec<_>>>()
+                }
+                .await;
+                (address, result)
+            })
+            .buffer_unordered(5)
+            .collect::<Vec<_>>()
+            .await;
+        for (address, abis) in abis {
+            if let Ok(abis) = abis {
+                for abi in abis {
+                    builder = builder.with_address_abi(address, &abi);
+                }
+            }
+        }
+    }
+
+    let decoder = builder.build();
+    let mut events = Vec::with_capacity(logs.len());
+    for log in logs {
+        let decoded = decoder.decode_event_with_address(log.address(), log.data()).await;
+        events.push(EventOutput::new(log, decoded.name, decoded.params));
+    }
+    Ok(events)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EventOutput {
+    address: Address,
+    block_hash: Option<B256>,
+    block_number: Option<u64>,
+    block_timestamp: Option<u64>,
+    transaction_hash: Option<TxHash>,
+    transaction_index: Option<u64>,
+    log_index: Option<u64>,
+    removed: bool,
+    event: Option<String>,
+    params: Option<Vec<EventParam>>,
+    topics: Vec<B256>,
+    data: Bytes,
+}
+
+impl EventOutput {
+    fn new(log: Log, event: Option<String>, params: Option<Vec<(String, String)>>) -> Self {
+        let params = params.map(|params| {
+            params
+                .into_iter()
+                .enumerate()
+                .map(|(index, (name, value))| EventParam {
+                    name: if name.is_empty() { format!("param{index}") } else { name },
+                    value,
+                })
+                .collect()
+        });
+        Self {
+            address: log.address(),
+            block_hash: log.block_hash,
+            block_number: log.block_number,
+            block_timestamp: log.block_timestamp,
+            transaction_hash: log.transaction_hash,
+            transaction_index: log.transaction_index,
+            log_index: log.log_index,
+            removed: log.removed,
+            event,
+            params,
+            topics: log.topics().to_vec(),
+            data: log.data().data.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct EventParam {
+    name: String,
+    value: String,
+}
+
+fn format_events(events: &[EventOutput]) -> String {
+    let mut output = String::new();
+    for event in events {
+        if event.block_number.is_some()
+            || event.transaction_hash.is_some()
+            || event.log_index.is_some()
+        {
+            output.push('[');
+            if let Some(block_number) = event.block_number {
+                let _ = write!(output, "block {block_number}");
+            }
+            if let Some(transaction_hash) = event.transaction_hash {
+                if event.block_number.is_some() {
+                    output.push_str(", ");
+                }
+                let _ = write!(output, "tx {transaction_hash}");
+            }
+            if let Some(log_index) = event.log_index {
+                if event.block_number.is_some() || event.transaction_hash.is_some() {
+                    output.push_str(", ");
+                }
+                let _ = write!(output, "log {log_index}");
+            }
+            output.push_str("] ");
+        }
+        if let Some(name) = &event.event {
+            let _ = write!(output, "{}::{name}(", event.address);
+            if let Some(params) = &event.params {
+                for (index, param) in params.iter().enumerate() {
+                    if index > 0 {
+                        output.push_str(", ");
+                    }
+                    let _ = write!(output, "{}: {}", param.name, param.value);
+                }
+            }
+            output.push_str(")\n");
+        } else {
+            let _ = writeln!(output, "{}", event.address);
+            for (index, topic) in event.topics.iter().enumerate() {
+                let _ = writeln!(output, "  topic {index}: {topic}");
+            }
+            let _ = writeln!(output, "  data: {}", event.data);
+        }
+    }
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_json_abi::{Event, JsonAbi};
+    use alloy_primitives::{LogData, U256};
+    use alloy_provider::{ProviderBuilder, mock::Asserter};
+    use alloy_sol_types::SolValue;
+
+    #[test]
+    fn requires_event_source() {
+        assert!(EventsArgs::try_parse_from(["events"]).is_err());
+    }
+
+    #[test]
+    fn transaction_and_filter_modes_conflict() {
+        assert!(
+            EventsArgs::try_parse_from([
+                "events",
+                "--tx-hash",
+                &TxHash::ZERO.to_string(),
+                "--address",
+                &Address::ZERO.to_string(),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn accepts_transaction_and_filter_modes_separately() {
+        assert!(
+            EventsArgs::try_parse_from(["events", "--tx-hash", &TxHash::ZERO.to_string()]).is_ok()
+        );
+        assert!(
+            EventsArgs::try_parse_from(["events", "--txhash", &TxHash::ZERO.to_string()]).is_ok()
+        );
+        assert!(
+            EventsArgs::try_parse_from([
+                "events",
+                "--address",
+                &Address::ZERO.to_string(),
+                "--from-block",
+                "1",
+                "--to-block",
+                "2",
+            ])
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn configured_chain_controls_explorer_lookup() {
+        let rpc_chain = Chain::from(31337);
+        let (decoder_chain, explorer_chain) = resolve_chains(Some(Chain::mainnet()), rpc_chain);
+        assert_eq!(decoder_chain, rpc_chain);
+        assert_eq!(explorer_chain, Chain::mainnet());
+
+        let (_, explorer_chain) = resolve_chains(None, rpc_chain);
+        assert_eq!(explorer_chain, rpc_chain);
+    }
+
+    #[tokio::test]
+    async fn fetches_receipt_logs_and_reports_missing_receipts() {
+        let tx_hash = TxHash::repeat_byte(0x44);
+        let log_address = Address::repeat_byte(0xaa);
+        let receipt = serde_json::json!({
+            "type": "0x2",
+            "status": "0x1",
+            "cumulativeGasUsed": "0x5208",
+            "logs": [{
+                "address": log_address,
+                "topics": [],
+                "data": "0x",
+                "blockNumber": "0x7",
+                "transactionHash": tx_hash,
+                "transactionIndex": "0x0",
+                "blockHash": B256::repeat_byte(0x33),
+                "logIndex": "0x3",
+                "removed": false
+            }],
+            "transactionHash": tx_hash,
+            "transactionIndex": "0x0",
+            "blockHash": B256::repeat_byte(0x33),
+            "blockNumber": "0x7",
+            "logsBloom": format!("0x{}", "0".repeat(512)),
+            "gasUsed": "0x5208",
+            "effectiveGasPrice": "0x1",
+            "from": Address::ZERO,
+            "to": Address::ZERO,
+            "contractAddress": null
+        });
+        let asserter = Asserter::new();
+        asserter.push_success(&receipt);
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter.clone());
+        let EventsArgs { query, .. } =
+            EventsArgs::try_parse_from(["events", "--tx-hash", &tx_hash.to_string()]).unwrap();
+
+        let logs = fetch_logs(&provider, Some(tx_hash), query).await.unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].address(), log_address);
+        assert_eq!(logs[0].block_number, Some(7));
+        assert_eq!(logs[0].log_index, Some(3));
+
+        let missing: Option<serde_json::Value> = None;
+        asserter.push_success(&missing);
+        let EventsArgs { query, .. } =
+            EventsArgs::try_parse_from(["events", "--tx-hash", &tx_hash.to_string()]).unwrap();
+        let err = fetch_logs(&provider, Some(tx_hash), query).await.unwrap_err();
+        assert!(err.to_string().contains("tx receipt not found"));
+    }
+
+    #[tokio::test]
+    async fn fetches_filtered_logs_in_chunk_order() {
+        let asserter = Asserter::new();
+        asserter
+            .push_success(&vec![Log::<LogData> { block_number: Some(1), ..Default::default() }]);
+        asserter
+            .push_success(&vec![Log::<LogData> { block_number: Some(2), ..Default::default() }]);
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter);
+        let EventsArgs { query, .. } = EventsArgs::try_parse_from([
+            "events",
+            "--from-block",
+            "1",
+            "--to-block",
+            "2",
+            "--query-size",
+            "1",
+        ])
+        .unwrap();
+
+        let logs = fetch_logs(&provider, None, query).await.unwrap();
+        assert_eq!(logs.iter().map(|log| log.block_number).collect::<Vec<_>>(), [Some(1), Some(2)]);
+    }
+
+    #[tokio::test]
+    async fn decodes_known_event_and_preserves_metadata() {
+        let event = Event::parse(
+            "event WidgetMoved(address indexed from, address indexed to, uint256 value)",
+        )
+        .unwrap();
+        let from = Address::repeat_byte(0x11);
+        let to = Address::repeat_byte(0x22);
+        let data = LogData::new_unchecked(
+            vec![event.selector(), from.into_word(), to.into_word()],
+            (U256::from(42),).abi_encode().into(),
+        );
+        let log = Log {
+            inner: alloy_primitives::Log { address: Address::repeat_byte(0xaa), data },
+            block_hash: Some(B256::repeat_byte(0x33)),
+            block_number: Some(7),
+            block_timestamp: Some(123),
+            transaction_hash: Some(TxHash::repeat_byte(0xbb)),
+            transaction_index: Some(2),
+            log_index: Some(3),
+            removed: true,
+        };
+        let signature = event.full_signature();
+        let abi = JsonAbi::parse([signature.as_str()]).unwrap();
+        let decoder = CallTraceDecoderBuilder::new().with_address_abi(log.address(), &abi).build();
+        let decoded = decoder.decode_event_with_address(log.address(), log.data()).await;
+        let output = EventOutput::new(log, decoded.name, decoded.params);
+
+        assert_eq!(output.event.as_deref(), Some("WidgetMoved"));
+        assert_eq!(output.params.as_ref().unwrap().len(), 3);
+        assert_eq!(output.block_hash, Some(B256::repeat_byte(0x33)));
+        assert_eq!(output.block_number, Some(7));
+        assert_eq!(output.block_timestamp, Some(123));
+        assert_eq!(output.transaction_hash, Some(TxHash::repeat_byte(0xbb)));
+        assert_eq!(output.transaction_index, Some(2));
+        assert_eq!(output.log_index, Some(3));
+        assert!(output.removed);
+    }
+
+    #[tokio::test]
+    async fn unknown_event_falls_back_to_raw_log() {
+        let topic = B256::repeat_byte(0x11);
+        let log = Log {
+            inner: alloy_primitives::Log {
+                address: Address::repeat_byte(0xaa),
+                data: LogData::new_unchecked(vec![topic], Bytes::from_static(&[1, 2, 3])),
+            },
+            ..Default::default()
+        };
+        let decoded = CallTraceDecoderBuilder::new()
+            .build()
+            .decode_event_with_address(log.address(), log.data())
+            .await;
+        let output = EventOutput::new(log, decoded.name, decoded.params);
+
+        assert!(output.event.is_none());
+        assert_eq!(output.topics, vec![topic]);
+        assert_eq!(output.data, Bytes::from_static(&[1, 2, 3]));
+    }
+
+    #[test]
+    fn formats_decoded_and_raw_events() {
+        let decoded = EventOutput {
+            address: Address::repeat_byte(0xaa),
+            block_hash: Some(B256::repeat_byte(0x33)),
+            block_number: Some(7),
+            block_timestamp: Some(123),
+            transaction_hash: Some(TxHash::repeat_byte(0xbb)),
+            transaction_index: None,
+            log_index: Some(3),
+            removed: false,
+            event: Some("Transfer".to_string()),
+            params: Some(vec![EventParam { name: "value".to_string(), value: "42".to_string() }]),
+            topics: vec![],
+            data: Bytes::new(),
+        };
+        let raw = EventOutput {
+            address: Address::repeat_byte(0xbb),
+            block_hash: None,
+            block_number: None,
+            block_timestamp: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            removed: false,
+            event: None,
+            params: None,
+            topics: vec![B256::repeat_byte(0x11)],
+            data: Bytes::from_static(&[0x22]),
+        };
+
+        assert_eq!(
+            format_events(&[decoded, raw]),
+            concat!(
+                "[block 7, tx 0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, log 3] ",
+                "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa::Transfer(value: 42)\n",
+                "0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB\n",
+                "  topic 0: 0x1111111111111111111111111111111111111111111111111111111111111111\n",
+                "  data: 0x22\n",
+            )
+        );
+    }
+
+    #[test]
+    fn serializes_structured_json_output() {
+        let event = EventOutput {
+            address: Address::repeat_byte(0xaa),
+            block_hash: Some(B256::repeat_byte(0x33)),
+            block_number: Some(7),
+            block_timestamp: Some(123),
+            transaction_hash: Some(TxHash::repeat_byte(0xbb)),
+            transaction_index: Some(2),
+            log_index: Some(3),
+            removed: false,
+            event: Some("Transfer".to_string()),
+            params: Some(vec![EventParam { name: "value".to_string(), value: "42".to_string() }]),
+            topics: vec![B256::repeat_byte(0x11)],
+            data: Bytes::from_static(&[0x22]),
+        };
+
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(value["blockHash"], B256::repeat_byte(0x33).to_string());
+        assert_eq!(value["blockNumber"], 7);
+        assert_eq!(value["blockTimestamp"], 123);
+        assert_eq!(value["event"], "Transfer");
+        assert_eq!(value["params"][0]["name"], "value");
+        assert_eq!(value["topics"][0], B256::repeat_byte(0x11).to_string());
+        assert_eq!(value["data"], "0x22");
+    }
+}

@@ -629,8 +629,13 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     }
 
     pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
-        let logs = self.provider.get_logs(&filter).await?;
+        let logs = self.get_logs(&filter).await?;
         Self::format_logs(logs)
+    }
+
+    /// Retrieves logs matching the filter.
+    pub async fn get_logs(&self, filter: &Filter) -> Result<Vec<Log>> {
+        self.provider.get_logs(filter).await.map_err(Into::into)
     }
 
     /// Retrieves logs using chunked requests to handle large block ranges.
@@ -703,7 +708,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     }
 
     /// Retrieves logs, splitting the request into fixed-size block chunks when needed.
-    async fn get_logs_chunked(&self, filter: &Filter, chunk_size: u64) -> Result<Vec<Log>>
+    pub async fn get_logs_chunked(&self, filter: &Filter, chunk_size: u64) -> Result<Vec<Log>>
     where
         P: Clone + Unpin,
     {

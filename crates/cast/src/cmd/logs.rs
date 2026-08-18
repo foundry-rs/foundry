@@ -2,8 +2,9 @@ use crate::Cast;
 use alloy_dyn_abi::{DynSolType, DynSolValue, Specifier};
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Event;
-use alloy_network::AnyNetwork;
+use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::{Address, B256, hex::FromHex};
+use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet, Topic};
 use clap::Parser;
 use eyre::Result;
@@ -17,6 +18,21 @@ use std::{io, str::FromStr};
 /// CLI arguments for `cast logs`.
 #[derive(Debug, Parser)]
 pub struct LogsArgs {
+    #[command(flatten)]
+    query: LogQueryArgs,
+
+    /// If the RPC type and endpoints supports `eth_subscribe` stream logs instead of printing and
+    /// exiting. Will continue until interrupted or TO_BLOCK is reached.
+    #[arg(long)]
+    subscribe: bool,
+
+    #[command(flatten)]
+    rpc: RpcOpts,
+}
+
+/// Arguments shared by commands that query logs with `eth_getLogs`.
+#[derive(Debug, Parser)]
+pub struct LogQueryArgs {
     /// The block height to start query at.
     ///
     /// Can also be the tags earliest, finalized, safe, latest, or pending.
@@ -43,11 +59,6 @@ pub struct LogsArgs {
     #[arg(value_name = "TOPICS_OR_ARGS")]
     topics_or_args: Vec<String>,
 
-    /// If the RPC type and endpoints supports `eth_subscribe` stream logs instead of printing and
-    /// exiting. Will continue until interrupted or TO_BLOCK is reached.
-    #[arg(long)]
-    subscribe: bool,
-
     /// Split the query into chunks of this many blocks to work around provider range/result
     /// limits.
     ///
@@ -55,26 +66,16 @@ pub struct LogsArgs {
     /// fetch the logs in `query-size`-block chunks instead.
     #[arg(long, value_name = "BLOCKS")]
     query_size: Option<u64>,
-
-    #[command(flatten)]
-    rpc: RpcOpts,
 }
 
-impl LogsArgs {
-    pub async fn run(self) -> Result<()> {
-        let Self {
-            from_block,
-            to_block,
-            address,
-            sig_or_topic,
-            topics_or_args,
-            subscribe,
-            query_size,
-            rpc,
-        } = self;
-
-        let config = rpc.load_config()?;
-        let provider = utils::get_provider(&config)?;
+impl LogQueryArgs {
+    /// Resolves names and block tags and builds the RPC filter.
+    pub async fn resolve<P, N>(self, provider: &P) -> Result<(Filter, Option<u64>)>
+    where
+        P: Provider<N> + Clone + Unpin,
+        N: Network,
+    {
+        let Self { from_block, to_block, address, sig_or_topic, topics_or_args, query_size } = self;
 
         let cast = Cast::new(&provider);
         let addresses = match address {
@@ -92,8 +93,20 @@ impl LogsArgs {
             cast.convert_block_number(Some(from_block.unwrap_or_else(BlockId::earliest))).await?;
         let to_block =
             cast.convert_block_number(Some(to_block.unwrap_or_else(BlockId::latest))).await?;
-
         let filter = build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
+
+        Ok((filter, query_size))
+    }
+}
+
+impl LogsArgs {
+    pub async fn run(self) -> Result<()> {
+        let Self { query, subscribe, rpc } = self;
+
+        let config = rpc.load_config()?;
+        let provider = utils::get_provider(&config)?;
+        let (filter, query_size) = query.resolve(&provider).await?;
+        let cast = Cast::new(&provider);
 
         if !subscribe {
             let logs = match query_size {
