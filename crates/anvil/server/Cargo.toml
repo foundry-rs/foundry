@@ -41,6 +41,9 @@ thiserror.workspace = true
 clap = { version = "4", features = ["derive", "env"], optional = true }
 pin-project = "1"
 
+[dev-dependencies]
+tower.workspace = true
+
 [features]
 default = ["ipc"]
 ipc = ["dep:interprocess", "dep:bytes", "dep:tokio-util"]

@@ -114,7 +114,11 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
             }
             Err(err) => {
                 let err = err.to_string();
-                if err.contains("unknown variant") {
+                let method_not_found = serde_json::from_value::<Self::Request>(
+                    serde_json::json!({ "method": &method }),
+                )
+                .is_err_and(|err| err.to_string().contains("unknown variant"));
+                if method_not_found {
                     error!(target: "rpc", ?method, "failed to deserialize method due to unknown variant");
                     RpcResponse::new(id, RpcError::method_not_found())
                 } else {
