@@ -65,11 +65,22 @@ pub(crate) async fn resolve_network(config: &Config) -> eyre::Result<NetworkVari
         return Ok(network);
     }
     if let Some(chain) = config.chain {
-        return Ok(chain.id().into());
+        return network_for_chain_id(chain.id());
     }
 
     let provider = ProviderBuilder::<AnyNetwork>::from_config(config)?.build()?;
-    Ok(provider.get_chain_id().await?.into())
+    network_for_chain_id(provider.get_chain_id().await?)
+}
+
+/// Resolves a chain ID to its network family, reporting a disabled family as an error.
+///
+/// The infallible `From<ChainId>` conversion swallows that error and degrades to Ethereum, which
+/// would make `cast tx` and `cast block --raw` disagree with `cast call` on the same input. Unknown
+/// chain IDs still fall back to Ethereum, as before.
+fn network_for_chain_id(chain_id: u64) -> eyre::Result<NetworkVariant> {
+    NetworkVariant::from_known_chain_id(chain_id)
+        .map_err(eyre::Report::msg)
+        .map(|network| network.unwrap_or(NetworkVariant::Ethereum))
 }
 
 #[cfg(all(test, any(feature = "base", feature = "monad")))]
@@ -91,5 +102,36 @@ mod tests {
     async fn resolve_network_preserves_explicit_base() {
         let config = Config { networks: NetworkVariant::Base.into(), ..Default::default() };
         assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Base);
+    }
+
+    #[cfg(feature = "base")]
+    #[tokio::test]
+    async fn resolve_network_infers_base_from_chain_id() {
+        let config = Config {
+            chain: Some(foundry_config::Chain::from_named(alloy_chains::NamedChain::Base)),
+            ..Default::default()
+        };
+        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Base);
+    }
+
+    /// A disabled family has to surface here too, otherwise `cast tx` reports Ethereum for input
+    /// that `cast call` rejects.
+    #[cfg(all(feature = "base", not(feature = "monad")))]
+    #[tokio::test]
+    async fn resolve_network_reports_disabled_family() {
+        let config = Config {
+            chain: Some(foundry_config::Chain::from_named(alloy_chains::NamedChain::Monad)),
+            ..Default::default()
+        };
+        let err = resolve_network(&config).await.unwrap_err().to_string();
+        assert!(err.contains("`monad` is not enabled"), "unexpected error: {err}");
+    }
+
+    #[cfg(feature = "base")]
+    #[tokio::test]
+    async fn resolve_network_still_defaults_unknown_chain_ids_to_ethereum() {
+        let config =
+            Config { chain: Some(foundry_config::Chain::from_id(u64::MAX)), ..Default::default() };
+        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Ethereum);
     }
 }

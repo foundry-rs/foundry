@@ -557,7 +557,44 @@ input                {}",
 #[cfg(feature = "base")]
 impl UIfmt for Eip8130Signed {
     fn pretty(&self) -> String {
-        serde_json::to_string(self).unwrap_or_default()
+        let tx = self.tx();
+        // `calls` is grouped into phases, and `accountChanges` can be long, so both are summarized
+        // by count rather than dumped inline.
+        format!(
+            "
+chainId              {}
+sender               {}
+payer                {}
+nonceKey             {}
+nonceSequence        {}
+validAfter           {}
+validBefore          {}
+maxFeePerGas         {}
+maxPriorityFeePerGas {}
+gasLimit             {}
+accountChanges       {}
+callPhases           {}
+calls                {}
+metadata             {}
+senderAuth           {}
+payerAuth            {}",
+            tx.chain_id.pretty(),
+            tx.sender.pretty(),
+            tx.payer.pretty(),
+            tx.nonce_key.pretty(),
+            tx.nonce_sequence.pretty(),
+            tx.valid_after.pretty(),
+            tx.valid_before.pretty(),
+            tx.max_fee_per_gas.pretty(),
+            tx.max_priority_fee_per_gas.pretty(),
+            tx.gas_limit.pretty(),
+            tx.account_changes.len(),
+            tx.calls.len(),
+            tx.calls.iter().map(Vec::len).sum::<usize>(),
+            tx.metadata.pretty(),
+            self.sender_auth().pretty(),
+            self.payer_auth().pretty(),
+        )
     }
 }
 
@@ -1283,6 +1320,51 @@ mod tests {
         );
         let b: Bytes = val.into();
         assert_eq!(b.pretty(), b32.pretty());
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_pretty_print_eip8130_transaction() {
+        use base_common_consensus::{Call as BaseCall, TxEip8130};
+
+        let base_call = BaseCall { to: Address::ZERO, data: Bytes::new() };
+        let tx = TxEip8130 {
+            chain_id: 8453,
+            sender: Some(Address::with_last_byte(0x11)),
+            payer: Some(Address::with_last_byte(0x22)),
+            nonce_key: U256::from(7),
+            nonce_sequence: 3,
+            valid_after: 100,
+            valid_before: 200,
+            max_fee_per_gas: 1_000,
+            max_priority_fee_per_gas: 10,
+            gas_limit: 21_000,
+            metadata: Bytes::from_static(&[0xab]),
+            calls: vec![vec![base_call.clone(), base_call.clone()], vec![base_call]],
+            ..Default::default()
+        };
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02]));
+
+        assert_eq!(
+            signed.pretty().trim(),
+            r"chainId              8453
+sender               0x0000000000000000000000000000000000000011
+payer                0x0000000000000000000000000000000000000022
+nonceKey             7
+nonceSequence        3
+validAfter           100
+validBefore          200
+maxFeePerGas         1000
+maxPriorityFeePerGas 10
+gasLimit             21000
+accountChanges       0
+callPhases           2
+calls                3
+metadata             0xab
+senderAuth           0x01
+payerAuth            0x02"
+        );
     }
 
     #[cfg(feature = "base")]
