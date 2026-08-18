@@ -2400,7 +2400,7 @@ dependencies = [
 [[package]]
 name = "base-common-chains"
 version = "0.0.0"
-source = "git+https://github.com/base/base?rev=c7c801749bbb35a96907bd50b9c0114fb88a4d99#c7c801749bbb35a96907bd50b9c0114fb88a4d99"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
 dependencies = [
  "alloy-chains",
  "alloy-eips",
@@ -2416,7 +2416,7 @@ dependencies = [
 [[package]]
 name = "base-common-consensus"
 version = "0.0.0"
-source = "git+https://github.com/base/base?rev=c7c801749bbb35a96907bd50b9c0114fb88a4d99#c7c801749bbb35a96907bd50b9c0114fb88a4d99"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2438,7 +2438,7 @@ dependencies = [
 [[package]]
 name = "base-common-evm"
 version = "0.0.0"
-source = "git+https://github.com/base/base?rev=c7c801749bbb35a96907bd50b9c0114fb88a4d99#c7c801749bbb35a96907bd50b9c0114fb88a4d99"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2461,12 +2461,12 @@ dependencies = [
 [[package]]
 name = "base-common-flz"
 version = "0.0.0"
-source = "git+https://github.com/base/base?rev=c7c801749bbb35a96907bd50b9c0114fb88a4d99#c7c801749bbb35a96907bd50b9c0114fb88a4d99"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
 
 [[package]]
 name = "base-common-genesis"
 version = "0.0.0"
-source = "git+https://github.com/base/base?rev=c7c801749bbb35a96907bd50b9c0114fb88a4d99#c7c801749bbb35a96907bd50b9c0114fb88a4d99"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -2484,7 +2484,7 @@ dependencies = [
 [[package]]
 name = "base-common-network"
 version = "0.0.0"
-source = "git+https://github.com/base/base?rev=c7c801749bbb35a96907bd50b9c0114fb88a4d99#c7c801749bbb35a96907bd50b9c0114fb88a4d99"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -2501,7 +2501,7 @@ dependencies = [
 [[package]]
 name = "base-common-precompiles"
 version = "0.0.0"
-source = "git+https://github.com/base/base?rev=c7c801749bbb35a96907bd50b9c0114fb88a4d99#c7c801749bbb35a96907bd50b9c0114fb88a4d99"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -2516,7 +2516,7 @@ dependencies = [
 [[package]]
 name = "base-common-rpc-types"
 version = "0.0.0"
-source = "git+https://github.com/base/base?rev=c7c801749bbb35a96907bd50b9c0114fb88a4d99#c7c801749bbb35a96907bd50b9c0114fb88a4d99"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2538,7 +2538,7 @@ dependencies = [
 [[package]]
 name = "base-common-rpc-types-engine"
 version = "0.0.0"
-source = "git+https://github.com/base/base?rev=c7c801749bbb35a96907bd50b9c0114fb88a4d99#c7c801749bbb35a96907bd50b9c0114fb88a4d99"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -2558,7 +2558,7 @@ dependencies = [
 [[package]]
 name = "base-execution-eip8130"
 version = "0.0.0"
-source = "git+https://github.com/base/base?rev=c7c801749bbb35a96907bd50b9c0114fb88a4d99#c7c801749bbb35a96907bd50b9c0114fb88a4d99"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -2577,12 +2577,12 @@ dependencies = [
 [[package]]
 name = "base-metrics"
 version = "0.0.0"
-source = "git+https://github.com/base/base?rev=c7c801749bbb35a96907bd50b9c0114fb88a4d99#c7c801749bbb35a96907bd50b9c0114fb88a4d99"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
 
 [[package]]
 name = "base-precompile-macros"
 version = "0.0.0"
-source = "git+https://github.com/base/base?rev=c7c801749bbb35a96907bd50b9c0114fb88a4d99#c7c801749bbb35a96907bd50b9c0114fb88a4d99"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
 dependencies = [
  "alloy-primitives",
  "proc-macro2",
@@ -2593,7 +2593,7 @@ dependencies = [
 [[package]]
 name = "base-precompile-storage"
 version = "0.0.0"
-source = "git+https://github.com/base/base?rev=c7c801749bbb35a96907bd50b9c0114fb88a4d99#c7c801749bbb35a96907bd50b9c0114fb88a4d99"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
