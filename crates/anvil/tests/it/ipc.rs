@@ -75,7 +75,7 @@ async fn malformed_delimiter_does_not_corrupt_ipc_connection() {
     writer.write_all(b"}").await.unwrap();
     reader.read_line(&mut response).await.unwrap();
     let malformed = serde_json::from_str::<serde_json::Value>(&response).unwrap();
-    assert_eq!(malformed["error"]["code"], -32600);
+    assert_eq!(malformed["error"]["code"], -32700);
 
     response.clear();
     writer

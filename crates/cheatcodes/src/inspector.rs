@@ -149,9 +149,11 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
     inputs: CreateInputs,
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
 ) -> std::result::Result<CreateOutcome, EVMError<DatabaseError>> {
+    let fee_token = ccx.ecx.tx().fee_token();
     let mut inputs = Some(inputs);
     let mut outcome = None;
     executor.with_nested_evm(ccx.state, ccx.ecx, &mut |evm| {
+        evm.tx_mut().set_fee_token(fee_token);
         let inputs = inputs.take().unwrap();
         evm.journal_inner_mut().depth += 1;
 
@@ -1659,6 +1661,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     let input = call.input.bytes(ecx);
                     let chain_id = ecx.cfg().chain_id();
                     let rpc = ecx.db().active_fork_url();
+                    let fee_token = ecx.tx().fee_token();
                     let account =
                         ecx.journal_mut().evm_state_mut().get_mut(&broadcast.new_origin).unwrap();
 
@@ -1708,7 +1711,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         }
                         tx_req.set_authorization_list(active_delegations);
                     }
-                    if let Some(fee_token) = self.config.fee_token {
+                    if let Some(fee_token) = fee_token {
                         tx_req.set_fee_token(fee_token);
                     }
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -2881,6 +2884,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 input.set_caller(broadcast.new_origin);
 
                 let rpc = ecx.db().active_fork_url();
+                let fee_token = ecx.tx().fee_token();
                 let account = &ecx.journal().evm_state()[&broadcast.new_origin];
                 let mut tx_req = TransactionRequestFor::<FEN>::default()
                     .with_from(broadcast.new_origin)
@@ -2888,7 +2892,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                     .with_value(input.value())
                     .with_input(input.init_code())
                     .with_nonce(account.info.nonce);
-                if let Some(fee_token) = self.config.fee_token {
+                if let Some(fee_token) = fee_token {
                     tx_req.set_fee_token(fee_token);
                 }
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
