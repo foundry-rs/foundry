@@ -11,7 +11,10 @@ use alloy_primitives::{
 };
 use alloy_sol_types::SolValue;
 #[cfg(feature = "base")]
-use base_common_precompiles::{ActivationRegistryStorage, NonceManagerStorage, TxContextStorage};
+use base_common_precompiles::{
+    ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage, PolicyRegistryStorage,
+    TxContextStorage,
+};
 use foundry_common::{
     ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
     get_contract_name, selectors::SelectorKind,
@@ -345,6 +348,18 @@ impl CallTraceDecoder {
                 &base::IActivationRegistry::abi::contract(),
             );
         }
+        if is_base_precompile_active_at(PolicyRegistryStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                PolicyRegistryStorage::ADDRESS,
+                &base::IPolicyRegistry::abi::contract(),
+            );
+        }
+        if is_base_precompile_active_at(B20FactoryStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                B20FactoryStorage::ADDRESS,
+                &base::IB20Factory::abi::contract(),
+            );
+        }
         if is_base_precompile_active_at(NonceManagerStorage::ADDRESS, upgrade) {
             self.register_address_abi(
                 NonceManagerStorage::ADDRESS,
@@ -475,7 +490,8 @@ impl CallTraceDecoder {
             (PATH_USD_ADDRESS, "PathUSD".to_string()),
         ]);
 
-        let function_groups: Vec<_> = console::hh::abi::functions()
+        #[allow(unused_mut)]
+        let mut function_groups: Vec<_> = console::hh::abi::functions()
             .into_values()
             .chain(Vm::abi::functions().into_values())
             .chain(IFeeManager::abi::functions().into_values())
@@ -494,13 +510,18 @@ impl CallTraceDecoder {
             .chain(ISignatureVerifier::abi::functions().into_values())
             .chain(IReceivePolicyGuard::abi::functions().into_values())
             .collect();
+        // B-20 tokens live at factory-derived addresses, so their Base-specific members are
+        // registered globally by selector, as Tempo does for TIP20.
+        #[cfg(feature = "base")]
+        function_groups.extend(base::IB20Extensions::abi::functions().into_values());
         let functions = function_groups
             .into_iter()
             .flatten()
             .map(|func| (func.selector(), vec![func]))
             .collect();
 
-        let event_groups: Vec<_> = console::ds::abi::events()
+        #[allow(unused_mut)]
+        let mut event_groups: Vec<_> = console::ds::abi::events()
             .into_values()
             .chain(IFeeManager::abi::events().into_values())
             .chain(ITIP20::abi::events().into_values())
@@ -515,6 +536,8 @@ impl CallTraceDecoder {
             .chain(ISignatureVerifier::abi::events().into_values())
             .chain(IReceivePolicyGuard::abi::events().into_values())
             .collect();
+        #[cfg(feature = "base")]
+        event_groups.extend(base::IB20Extensions::abi::events().into_values());
         let events = event_groups
             .into_iter()
             .flatten()
