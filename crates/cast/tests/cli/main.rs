@@ -7942,7 +7942,7 @@ casttest!(monad_run_traces_protocol_system_call, async |_prj, cmd| {
         original.stdout_lossy()
     );
 
-    let canonical_endpoint = spawn_canonical_monad_system_rpc(endpoint, tx_hash).await;
+    let canonical_endpoint = spawn_canonical_monad_system_rpc(endpoint.clone(), tx_hash).await;
     let output = cmd
         .cast_fuse()
         .args(["run", &tx_hash_string, "--rpc-url", &canonical_endpoint, "--quick"])
@@ -7953,6 +7953,37 @@ casttest!(monad_run_traces_protocol_system_call, async |_prj, cmd| {
     assert!(output.contains("Staking::syscallSnapshot()"), "{output}");
     assert!(output.contains("Transaction successfully executed."), "{output}");
     assert!(!output.contains("0x0000000000000000000000000000000000000000::fallback()"), "{output}");
+
+    let unrelated_system = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
+    api.anvil_impersonate_account(unrelated_system).await.unwrap();
+    api.anvil_set_balance(unrelated_system, mon(1)).await.unwrap();
+    let unrelated_receipt = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(unrelated_system)
+                .with_to(Address::with_last_byte(1))
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(unrelated_receipt.status());
+    let unrelated_hash = unrelated_receipt.transaction_hash.to_string();
+
+    cmd.cast_fuse()
+        .args(["run", &unrelated_hash, "--rpc-url", &endpoint, "--quick"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: 0x[..] is a system transaction.
+Replaying system transactions is currently not supported.
+
+"#]]);
+    cmd.cast_fuse()
+        .args(["run", &unrelated_hash, "--rpc-url", &endpoint, "--quick", "--replay-system-txes"])
+        .assert_success();
 });
 
 #[cfg(feature = "monad")]

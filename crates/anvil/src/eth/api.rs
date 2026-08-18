@@ -47,8 +47,6 @@ use alloy_eips::{
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
-#[cfg(feature = "monad")]
-use alloy_monad_evm::MonadEvmFactory;
 use alloy_network::{
     AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, BlockResponse, Network,
     NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder, TransactionBuilder4844,
@@ -101,7 +99,7 @@ use foundry_common::{
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
 #[cfg(feature = "monad")]
-use foundry_evm::core::evm::FoundryEvmFactory;
+use foundry_evm::core::evm::protocol_system_call;
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
@@ -569,7 +567,7 @@ impl<N: Network> EthApi<N> {
     pub fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
         node_info!("evm_setTime");
         let now = self.backend.time().current_call_timestamp();
-        self.backend.time().reset(timestamp);
+        self.backend.time().set_time(timestamp);
 
         // number of seconds between the given timestamp and the current time.
         let offset = timestamp.saturating_sub(now);
@@ -759,6 +757,14 @@ impl<N: Network> EthApi<N> {
     pub fn anvil_get_genesis_time(&self) -> Result<u64> {
         node_info!("anvil_getGenesisTime");
         Ok(self.backend.genesis_time())
+    }
+
+    /// Returns the UNIX wall time in milliseconds when the current head was installed.
+    ///
+    /// Handler for RPC call: `anvil_getLastBlockWallTime`
+    pub fn anvil_get_last_block_wall_time(&self) -> Result<u64> {
+        node_info!("anvil_getLastBlockWallTime");
+        Ok(self.backend.time().last_block_wall_time())
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config.
@@ -2059,6 +2065,9 @@ impl EthApi<FoundryNetwork> {
                 self.anvil_get_blob_by_tx_hash(hash).to_rpc_result()
             }
             EthRequest::GetGenesisTime(()) => self.anvil_get_genesis_time().to_rpc_result(),
+            EthRequest::GetLastBlockWallTime(()) => {
+                self.anvil_get_last_block_wall_time().to_rpc_result()
+            }
             EthRequest::EthGetRawTransactionByBlockHashAndIndex(hash, index) => {
                 self.raw_transaction_by_block_hash_and_index(hash, index).await.to_rpc_result()
             }
@@ -4019,10 +4028,7 @@ impl EthApi<FoundryNetwork> {
             MONAD_SYSTEM_ADDRESS,
         );
         let tx_env: TxEnv = build_tx_env_for_pending(&pending, self.backend.cheats());
-        MonadEvmFactory::default()
-            .protocol_system_call(&tx_env)
-            .is_ok_and(|call| call.is_some())
-            .then_some(pending)
+        protocol_system_call(&tx_env).is_ok_and(|call| call.is_some()).then_some(pending)
     }
 
     /// Reorg the chain to a specific depth and mine new blocks back to the canonical height.
