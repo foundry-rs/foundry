@@ -1,4 +1,4 @@
-use crate::FoundryContextState;
+use crate::backend::JournaledState;
 use alloy_evm::EvmEnv;
 use alloy_primitives::{
     B256, U256,
@@ -39,22 +39,18 @@ impl Serialize for StateSnapshot {
 
 /// Represents a state snapshot taken during evm execution
 #[derive(Clone, Debug)]
-pub struct BackendStateSnapshot<T, SPEC, BLOCK, AUX> {
+pub struct BackendStateSnapshot<T, SPEC, BLOCK> {
     pub db: T,
     /// Complete context state at a specific point.
-    pub context_state: FoundryContextState<AUX>,
+    pub journaled_state: JournaledState,
     /// Contains the evm env at the time of the snapshot
     pub snap_evm_env: EvmEnv<SPEC, BLOCK>,
 }
 
-impl<T, SPEC, BLOCK, AUX> BackendStateSnapshot<T, SPEC, BLOCK, AUX> {
+impl<T, SPEC, BLOCK> BackendStateSnapshot<T, SPEC, BLOCK> {
     /// Takes a new state snapshot.
-    pub const fn new(
-        db: T,
-        context_state: FoundryContextState<AUX>,
-        evm_env: EvmEnv<SPEC, BLOCK>,
-    ) -> Self {
-        Self { db, context_state, snap_evm_env: evm_env }
+    pub const fn new(db: T, journaled_state: JournaledState, evm_env: EvmEnv<SPEC, BLOCK>) -> Self {
+        Self { db, journaled_state, snap_evm_env: evm_env }
     }
 
     /// Called when this state snapshot is reverted.
@@ -64,8 +60,8 @@ impl<T, SPEC, BLOCK, AUX> BackendStateSnapshot<T, SPEC, BLOCK, AUX> {
     /// those logs that are missing in the snapshot's journaled_state, since the current
     /// journaled_state includes the same logs, we can simply replace use that See also
     /// `DatabaseExt::revert`.
-    pub fn merge(&mut self, current: &FoundryContextState<AUX>) {
-        self.context_state.journaled_state.logs.clone_from(&current.journaled_state.logs);
+    pub fn merge(&mut self, current: &JournaledState) {
+        self.journaled_state.logs.clone_from(&current.logs);
     }
 }
 

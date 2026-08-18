@@ -1,5 +1,7 @@
 use super::{hashcons::HashConsed, *};
 
+const MAX_BITWISE_BOOL_WORD_VISITS: usize = 256;
+
 pub(crate) fn keccak_word(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymExpr {
     let len = bytes.len();
     let len = SymExpr::constant(cx, U256::from(len));
@@ -587,6 +589,19 @@ impl SymExpr {
                 (SymExprKind::Const(value), _) if value.is_zero() => right,
                 // `a + 0 => a`.
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
+                // `bool_word(c) + MAX => ite(c, 0, MAX)`.
+                (SymExprKind::Const(value), _) | (_, SymExprKind::Const(value))
+                    if *value == U256::MAX
+                        && let Some(condition) = if left.as_const() == Some(U256::MAX) {
+                            right.bitwise_bool_word_condition(cx)
+                        } else {
+                            left.bitwise_bool_word_condition(cx)
+                        } =>
+                {
+                    let zero = Self::zero(cx);
+                    let max = Self::constant(cx, U256::MAX);
+                    Self::ite(cx, condition, zero, max)
+                }
                 _ => Self::commutative_binop(cx, binop, left, right),
             },
             SymBinOp::Sub => match (left.kind(), right.kind()) {
@@ -598,6 +613,15 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
                 // `a - a => 0`.
                 _ if left == right => Self::zero(cx),
+                // `bool_word(c) - 1 => ite(c, 0, MAX)`.
+                (_, SymExprKind::Const(value))
+                    if *value == U256::ONE
+                        && let Some(condition) = left.bitwise_bool_word_condition(cx) =>
+                {
+                    let zero = Self::zero(cx);
+                    let max = Self::constant(cx, U256::MAX);
+                    Self::ite(cx, condition, zero, max)
+                }
                 _ => Self::from_kind(cx, SymExprKind::BinOp(binop, left, right)),
             },
             SymBinOp::Mul => match (left.kind(), right.kind()) {
@@ -707,6 +731,12 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
                 // `a | a => a`.
                 _ if left == right => left,
+                _ if let Some(value) = Self::or_with_absorbing_ite(cx, &left, right.clone()) => {
+                    value
+                }
+                _ if let Some(value) = Self::or_with_absorbing_ite(cx, &right, left.clone()) => {
+                    value
+                }
                 _ => Self::or(cx, left, right),
             },
             SymBinOp::Xor => match (left.kind(), right.kind()) {
@@ -863,6 +893,23 @@ impl SymExpr {
         Self::commutative_binop(cx, SymBinOp::Or, left, right)
     }
 
+    fn or_with_absorbing_ite(cx: &mut SymCx, conditional: &Self, other: Self) -> Option<Self> {
+        let SymExprKind::Ite(condition, then_expr, else_expr) = conditional.kind() else {
+            return None;
+        };
+        if then_expr.as_const().is_some_and(|value| value.is_zero())
+            && else_expr.as_const() == Some(U256::MAX)
+        {
+            return Some(Self::ite(cx, condition.clone(), other, else_expr.clone()));
+        }
+        if then_expr.as_const() == Some(U256::MAX)
+            && else_expr.as_const().is_some_and(|value| value.is_zero())
+        {
+            return Some(Self::ite(cx, condition.clone(), then_expr.clone(), other));
+        }
+        None
+    }
+
     fn commutative_binop(cx: &mut SymCx, op: SymBinOp, left: Self, right: Self) -> Self {
         // `a + b => b + a`.
         let (left, right) = Self::ordered_commutative_operands(left, right);
@@ -882,6 +929,14 @@ impl SymExpr {
             }
             std::cmp::Ordering::Equal => (left, right),
         }
+    }
+
+    /// Canonically orders factors that belong to the same symbolic context.
+    ///
+    /// Polynomial normalization only needs a stable order within one context, where hash-consed
+    /// identity is both total and substantially cheaper than rendering structural string keys.
+    pub(in crate::runtime) fn sort_interned_factors(factors: &mut [Self]) {
+        factors.sort_unstable_by(|left, right| left.kind.identity_cmp(&right.kind));
     }
 
     fn complexity(&self) -> usize {
@@ -1263,6 +1318,42 @@ impl SymExpr {
             return None;
         };
         Self::bool_word_condition_from_parts(condition, then_expr, else_expr)
+    }
+
+    pub(in crate::runtime) fn bitwise_bool_word_condition(
+        &self,
+        cx: &mut SymCx,
+    ) -> Option<SymBoolExpr> {
+        let mut visited = HashSet::default();
+        let mut conditions = Vec::new();
+        let mut remaining_visits = MAX_BITWISE_BOOL_WORD_VISITS;
+        self.collect_bitwise_bool_word_conditions(
+            &mut visited,
+            &mut remaining_visits,
+            &mut conditions,
+        )?;
+        Some(SymBoolExpr::or(cx, conditions))
+    }
+
+    fn collect_bitwise_bool_word_conditions(
+        &self,
+        visited: &mut HashSet<Self>,
+        remaining_visits: &mut usize,
+        conditions: &mut Vec<SymBoolExpr>,
+    ) -> Option<()> {
+        if !visited.insert(self.clone()) {
+            return Some(());
+        }
+        *remaining_visits = remaining_visits.checked_sub(1)?;
+        if let Some(condition) = self.bool_word_condition() {
+            conditions.push(condition);
+        } else if let SymExprKind::BinOp(SymBinOp::Or, left, right) = self.kind() {
+            left.collect_bitwise_bool_word_conditions(visited, remaining_visits, conditions)?;
+            right.collect_bitwise_bool_word_conditions(visited, remaining_visits, conditions)?;
+        } else {
+            return None;
+        }
+        Some(())
     }
 
     fn bool_word_condition_from_parts(
@@ -1969,6 +2060,106 @@ impl SymBinOp {
                     sar(left, usize::try_from(right).expect("checked word shift"))
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn indexed_bool_word(cx: &mut SymCx, source: &SymExpr, index: usize) -> SymExpr {
+        let value = SymExpr::constant(cx, U256::from(index));
+        let condition = SymBoolExpr::eq(cx, source.clone(), value);
+        SymExpr::bool_word(cx, condition)
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_visits_shared_or_dag_once() {
+        let mut cx = SymCx::new();
+        let source = SymExpr::var(&mut cx, "source");
+        let mut word = indexed_bool_word(&mut cx, &source, 0);
+        for index in 1..=26 {
+            let next_word = indexed_bool_word(&mut cx, &source, index);
+            let nested_word = SymExpr::binop(&mut cx, SymBinOp::Or, word.clone(), next_word);
+            word = SymExpr::binop(&mut cx, SymBinOp::Or, word, nested_word);
+        }
+
+        assert!(word.bitwise_bool_word_condition(&mut cx).is_some());
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_stops_at_shared_visit_budget() {
+        let mut cx = SymCx::new();
+        let source = SymExpr::var(&mut cx, "source");
+        let mut word = indexed_bool_word(&mut cx, &source, 0);
+        for index in 1..=MAX_BITWISE_BOOL_WORD_VISITS {
+            let next_word = indexed_bool_word(&mut cx, &source, index);
+            word = SymExpr::binop(&mut cx, SymBinOp::Or, word, next_word);
+        }
+
+        assert!(word.bitwise_bool_word_condition(&mut cx).is_none());
+        let one = SymExpr::one(&mut cx);
+        let mask = SymExpr::binop(&mut cx, SymBinOp::Sub, word, one);
+        assert!(matches!(mask.kind(), SymExprKind::BinOp(SymBinOp::Sub, _, _)));
+    }
+
+    #[test]
+    fn saturating_mul_rewrite_preserves_boundary_values() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let x_symbol = match x.kind() {
+            SymExprKind::Var(symbol) => *symbol,
+            _ => unreachable!("constructed symbolic variable"),
+        };
+        let y_symbol = match y.kind() {
+            SymExprKind::Var(symbol) => *symbol,
+            _ => unreachable!("constructed symbolic variable"),
+        };
+
+        let zero = SymExpr::zero(&mut cx);
+        let x_is_zero = SymBoolExpr::eq(&mut cx, x.clone(), zero);
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x.clone(), y.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product.clone(), x);
+        let product_is_exact = SymBoolExpr::eq(&mut cx, quotient, y);
+        let safe = SymBoolExpr::or(&mut cx, vec![product_is_exact.clone(), x_is_zero.clone()]);
+        let x_is_zero_word = SymExpr::bool_word(&mut cx, x_is_zero);
+        let product_is_exact_word = SymExpr::bool_word(&mut cx, product_is_exact);
+        let guard = SymExpr::binop(&mut cx, SymBinOp::Or, x_is_zero_word, product_is_exact_word);
+        let one = SymExpr::one(&mut cx);
+        let raw_mask =
+            SymExpr::from_kind(&mut cx, SymExprKind::BinOp(SymBinOp::Sub, guard.clone(), one));
+        let original = SymExpr::from_kind(
+            &mut cx,
+            SymExprKind::BinOp(SymBinOp::Or, raw_mask, product.clone()),
+        );
+
+        let one = SymExpr::one(&mut cx);
+        let simplified_mask = SymExpr::binop(&mut cx, SymBinOp::Sub, guard, one);
+        let simplified = SymExpr::binop(&mut cx, SymBinOp::Or, simplified_mask, product.clone());
+        let max = SymExpr::constant(&mut cx, U256::MAX);
+        let expected = SymExpr::ite(&mut cx, safe, product, max);
+        assert_eq!(simplified, expected);
+
+        let half_range = U256::ONE << 255;
+        let boundaries = [
+            (U256::ZERO, U256::MAX),
+            (U256::MAX, U256::ZERO),
+            (U256::MAX, U256::ONE),
+            (U256::ONE, U256::MAX),
+            (U256::MAX, U256::from(2)),
+            (U256::from(2), U256::MAX),
+            (half_range, U256::from(2)),
+            (U256::from(2), half_range),
+        ];
+        for (x_value, y_value) in boundaries {
+            let mut model = SymbolicModel::default();
+            model.insert(x_symbol, x_value);
+            model.insert(y_symbol, y_value);
+            let expected_value = x_value.checked_mul(y_value).unwrap_or(U256::MAX);
+            assert_eq!(original.eval_model(&model).unwrap(), expected_value);
+            assert_eq!(simplified.eval_model(&model).unwrap(), expected_value);
         }
     }
 }
