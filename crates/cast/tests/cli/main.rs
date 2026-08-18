@@ -8454,8 +8454,10 @@ casttest!(cast_call_trace_selects_base_network, async |prj, cmd| {
         .get_output()
         .stdout_lossy();
 
-    assert!(output.contains("ActivationRegistry"), "{output}");
-    assert!(output.contains("ce3a3bee7e72e2a24079f3c0cb3b97740ed425a9"), "{output}");
+    // The registered precompile ABI names the call and decodes the return as a typed address,
+    // which renders checksummed rather than as raw hex.
+    assert!(output.contains("ActivationRegistry::admin()"), "{output}");
+    assert!(output.contains("0xcE3a3bEE7E72E2A24079f3c0Cb3b97740ED425A9"), "{output}");
 });
 
 // tests that `cast call --trace` executes the call with the gas limit given via `--gas-limit`,
