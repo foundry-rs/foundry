@@ -2602,51 +2602,120 @@ interface Vm {
     /// Parses a string of JSON data at `key` and coerces it to `uint256`.
     #[cheatcode(group = Json)]
     function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);
+    /// Parses a string of JSON data at `key` and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonUint(string calldata json, string calldata key, uint256 defaultValue) external pure returns (uint256);
     /// Parses a string of JSON data at `key` and coerces it to `uint256[]`.
     #[cheatcode(group = Json)]
     function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);
+    /// Parses a string of JSON data at `key` and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonUintArray(string calldata json, string calldata key, uint256[] calldata defaultValue)
+        external
+        pure
+        returns (uint256[] memory);
     /// Parses a string of JSON data at `key` and coerces it to `int256`.
     #[cheatcode(group = Json)]
     function parseJsonInt(string calldata json, string calldata key) external pure returns (int256);
+    /// Parses a string of JSON data at `key` and coerces it to `int256`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonInt(string calldata json, string calldata key, int256 defaultValue) external pure returns (int256);
     /// Parses a string of JSON data at `key` and coerces it to `int256[]`.
     #[cheatcode(group = Json)]
     function parseJsonIntArray(string calldata json, string calldata key) external pure returns (int256[] memory);
+    /// Parses a string of JSON data at `key` and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonIntArray(string calldata json, string calldata key, int256[] calldata defaultValue)
+        external
+        pure
+        returns (int256[] memory);
     /// Parses a string of JSON data at `key` and coerces it to `bool`.
     #[cheatcode(group = Json)]
     function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);
+    /// Parses a string of JSON data at `key` and coerces it to `bool`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBool(string calldata json, string calldata key, bool defaultValue) external pure returns (bool);
     /// Parses a string of JSON data at `key` and coerces it to `bool[]`.
     #[cheatcode(group = Json)]
     function parseJsonBoolArray(string calldata json, string calldata key) external pure returns (bool[] memory);
+    /// Parses a string of JSON data at `key` and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBoolArray(string calldata json, string calldata key, bool[] calldata defaultValue)
+        external
+        pure
+        returns (bool[] memory);
     /// Parses a string of JSON data at `key` and coerces it to `address`.
     #[cheatcode(group = Json)]
     function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);
+    /// Parses a string of JSON data at `key` and coerces it to `address`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonAddress(string calldata json, string calldata key, address defaultValue) external pure returns (address);
     /// Parses a string of JSON data at `key` and coerces it to `address[]`.
     #[cheatcode(group = Json)]
     function parseJsonAddressArray(string calldata json, string calldata key)
         external
         pure
         returns (address[] memory);
+    /// Parses a string of JSON data at `key` and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonAddressArray(string calldata json, string calldata key, address[] calldata defaultValue)
+        external
+        pure
+        returns (address[] memory);
     /// Parses a string of JSON data at `key` and coerces it to `string`.
     #[cheatcode(group = Json)]
     function parseJsonString(string calldata json, string calldata key) external pure returns (string memory);
+    /// Parses a string of JSON data at `key` and coerces it to `string`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonString(string calldata json, string calldata key, string calldata defaultValue)
+        external
+        pure
+        returns (string memory);
     /// Parses a string of JSON data at `key` and coerces it to `string[]`.
     #[cheatcode(group = Json)]
     function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);
+    /// Parses a string of JSON data at `key` and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonStringArray(string calldata json, string calldata key, string[] calldata defaultValue)
+        external
+        pure
+        returns (string[] memory);
     /// Returns the length of the JSON array at `key`.
     #[cheatcode(group = Json)]
     function parseJsonArrayLength(string calldata json, string calldata key) external pure returns (uint256 length);
     /// Parses a string of JSON data at `key` and coerces it to `bytes`.
     #[cheatcode(group = Json)]
     function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);
+    /// Parses a string of JSON data at `key` and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBytes(string calldata json, string calldata key, bytes calldata defaultValue)
+        external
+        pure
+        returns (bytes memory);
     /// Parses a string of JSON data at `key` and coerces it to `bytes[]`.
     #[cheatcode(group = Json)]
     function parseJsonBytesArray(string calldata json, string calldata key) external pure returns (bytes[] memory);
+    /// Parses a string of JSON data at `key` and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBytesArray(string calldata json, string calldata key, bytes[] calldata defaultValue)
+        external
+        pure
+        returns (bytes[] memory);
     /// Parses a string of JSON data at `key` and coerces it to `bytes32`.
     #[cheatcode(group = Json)]
     function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);
+    /// Parses a string of JSON data at `key` and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBytes32(string calldata json, string calldata key, bytes32 defaultValue) external pure returns (bytes32);
     /// Parses a string of JSON data at `key` and coerces it to `bytes32[]`.
     #[cheatcode(group = Json)]
     function parseJsonBytes32Array(string calldata json, string calldata key)
+        external
+        pure
+        returns (bytes32[] memory);
+    /// Parses a string of JSON data at `key` and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Json)]
+    function parseJsonBytes32Array(string calldata json, string calldata key, bytes32[] calldata defaultValue)
         external
         pure
         returns (bytes32[] memory);
@@ -2807,48 +2876,117 @@ interface Vm {
     /// Parses a string of TOML data at `key` and coerces it to `uint256`.
     #[cheatcode(group = Toml)]
     function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);
+    /// Parses a string of TOML data at `key` and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlUint(string calldata toml, string calldata key, uint256 defaultValue) external pure returns (uint256);
     /// Parses a string of TOML data at `key` and coerces it to `uint256[]`.
     #[cheatcode(group = Toml)]
     function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlUintArray(string calldata toml, string calldata key, uint256[] calldata defaultValue)
+        external
+        pure
+        returns (uint256[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `int256`.
     #[cheatcode(group = Toml)]
     function parseTomlInt(string calldata toml, string calldata key) external pure returns (int256);
+    /// Parses a string of TOML data at `key` and coerces it to `int256`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlInt(string calldata toml, string calldata key, int256 defaultValue) external pure returns (int256);
     /// Parses a string of TOML data at `key` and coerces it to `int256[]`.
     #[cheatcode(group = Toml)]
     function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlIntArray(string calldata toml, string calldata key, int256[] calldata defaultValue)
+        external
+        pure
+        returns (int256[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `bool`.
     #[cheatcode(group = Toml)]
     function parseTomlBool(string calldata toml, string calldata key) external pure returns (bool);
+    /// Parses a string of TOML data at `key` and coerces it to `bool`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBool(string calldata toml, string calldata key, bool defaultValue) external pure returns (bool);
     /// Parses a string of TOML data at `key` and coerces it to `bool[]`.
     #[cheatcode(group = Toml)]
     function parseTomlBoolArray(string calldata toml, string calldata key) external pure returns (bool[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBoolArray(string calldata toml, string calldata key, bool[] calldata defaultValue)
+        external
+        pure
+        returns (bool[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `address`.
     #[cheatcode(group = Toml)]
     function parseTomlAddress(string calldata toml, string calldata key) external pure returns (address);
+    /// Parses a string of TOML data at `key` and coerces it to `address`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlAddress(string calldata toml, string calldata key, address defaultValue) external pure returns (address);
     /// Parses a string of TOML data at `key` and coerces it to `address[]`.
     #[cheatcode(group = Toml)]
     function parseTomlAddressArray(string calldata toml, string calldata key)
         external
         pure
         returns (address[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlAddressArray(string calldata toml, string calldata key, address[] calldata defaultValue)
+        external
+        pure
+        returns (address[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `string`.
     #[cheatcode(group = Toml)]
     function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);
+    /// Parses a string of TOML data at `key` and coerces it to `string`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlString(string calldata toml, string calldata key, string calldata defaultValue)
+        external
+        pure
+        returns (string memory);
     /// Parses a string of TOML data at `key` and coerces it to `string[]`.
     #[cheatcode(group = Toml)]
     function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlStringArray(string calldata toml, string calldata key, string[] calldata defaultValue)
+        external
+        pure
+        returns (string[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `bytes`.
     #[cheatcode(group = Toml)]
     function parseTomlBytes(string calldata toml, string calldata key) external pure returns (bytes memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes(string calldata toml, string calldata key, bytes calldata defaultValue)
+        external
+        pure
+        returns (bytes memory);
     /// Parses a string of TOML data at `key` and coerces it to `bytes[]`.
     #[cheatcode(group = Toml)]
     function parseTomlBytesArray(string calldata toml, string calldata key) external pure returns (bytes[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytesArray(string calldata toml, string calldata key, bytes[] calldata defaultValue)
+        external
+        pure
+        returns (bytes[] memory);
     /// Parses a string of TOML data at `key` and coerces it to `bytes32`.
     #[cheatcode(group = Toml)]
     function parseTomlBytes32(string calldata toml, string calldata key) external pure returns (bytes32);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes32(string calldata toml, string calldata key, bytes32 defaultValue) external pure returns (bytes32);
     /// Parses a string of TOML data at `key` and coerces it to `bytes32[]`.
     #[cheatcode(group = Toml)]
     function parseTomlBytes32Array(string calldata toml, string calldata key)
+        external
+        pure
+        returns (bytes32[] memory);
+    /// Parses a string of TOML data at `key` and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.
+    #[cheatcode(group = Toml)]
+    function parseTomlBytes32Array(string calldata toml, string calldata key, bytes32[] calldata defaultValue)
         external
         pure
         returns (bytes32[] memory);
