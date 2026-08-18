@@ -402,14 +402,20 @@ impl WalletSubcommands {
 
                 let mut json_values = shell::is_json().then(std::vec::Vec::new);
 
-                // A single positional that is not an existing directory is treated as ACCOUNT_NAME
-                // and stored in the default keystore directory, matching
+                // A single positional that does not resolve to anything on disk is treated as
+                // ACCOUNT_NAME and stored in the default keystore directory, matching
                 // `cast wallet import <name>`. Path-like values (`.`, `..`, or anything
-                // containing a separator) keep the existing directory error.
+                // containing a separator) keep the existing directory error, and resolution
+                // failures other than `NotFound` are surfaced instead of silently redirecting
+                // the keystore to the default directory.
                 let path = if let Some(path) = path {
                     match dunce::canonicalize(&path) {
                         Ok(canonical) if canonical.is_dir() => Some(canonical),
-                        _ if account_name.is_none() && is_bare_account_name(&path) => {
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::NotFound
+                                && account_name.is_none()
+                                && is_bare_account_name(&path) =>
+                        {
                             account_name = Some(path);
                             Some(ensure_default_keystores_dir()?)
                         }
