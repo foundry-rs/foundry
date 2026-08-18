@@ -149,9 +149,11 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
     inputs: CreateInputs,
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
 ) -> std::result::Result<CreateOutcome, EVMError<DatabaseError>> {
+    let fee_token = ccx.ecx.tx().fee_token();
     let mut inputs = Some(inputs);
     let mut outcome = None;
     executor.with_nested_evm(ccx.state, ccx.ecx, &mut |evm| {
+        evm.tx_mut().set_fee_token(fee_token);
         let inputs = inputs.take().unwrap();
         evm.journal_inner_mut().depth += 1;
 

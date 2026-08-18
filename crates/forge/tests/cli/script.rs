@@ -4807,6 +4807,12 @@ forgetest!(can_execute_script_command_with_tempo, |prj, cmd| {
 
 forgetest_async!(tempo_aa_script_broadcast_deploys_with_fee_token, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "TempoCodeDeployment",
+        r#"
+contract TempoCodeDeployment {}
+"#,
+    );
     let script = prj.add_script(
         "DeployTempoAA.s.sol",
         r#"
@@ -4821,6 +4827,8 @@ contract DeployTempoAA is Script {
         vm.startBroadcast();
         TempoAADeployment deployment = new TempoAADeployment();
         deployment.ping();
+        vm.deployCode("src/TempoCodeDeployment.sol:TempoCodeDeployment");
+        vm.deployCode("src/TempoCodeDeployment.sol:TempoCodeDeployment", bytes32(uint256(1)));
         vm.stopBroadcast();
     }
 }
@@ -4854,7 +4862,7 @@ contract DeployTempoAA is Script {
         .expect("no broadcast artifact found");
     let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
     let transactions = json["transactions"].as_array().unwrap();
-    assert_eq!(transactions.len(), 2, "expected one CREATE and one CALL transaction");
+    assert_eq!(transactions.len(), 4, "expected CREATE, CALL, CREATE, and CREATE2 transactions");
     for transaction in transactions {
         assert_eq!(transaction["transaction"]["feeToken"], alpha_usd.to_string().to_lowercase());
     }
