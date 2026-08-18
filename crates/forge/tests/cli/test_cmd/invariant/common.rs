@@ -439,6 +439,7 @@ forgetest_init!(invariant_fixtures, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 100;
+        config.fuzz.seed = Some(U256::from(1));
         // disable literals to test fixtures
         config.invariant.dictionary.max_fuzz_dictionary_literals = 0;
         config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;

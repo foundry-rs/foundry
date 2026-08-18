@@ -24,20 +24,21 @@ use monad_revm::{
 use revm::{
     context::{
         BlockEnv, ContextTr, LocalContextTr, Transaction, TransactionType, TxEnv,
+        journaled_state::account::JournaledAccountTr,
         result::{EVMError, ResultAndState},
     },
     context_interface::{Cfg, ContextSetters, transaction::AuthorizationTr},
     handler::{EthFrame, EvmTr, FrameResult, Handler},
     inspector::{InspectSystemCallEvm, Inspector, InspectorHandler},
     interpreter::{FrameInput, GasTracker, SharedMemory, interpreter_action::FrameInit},
-    primitives::{Address, HashSet},
+    primitives::{Address, Bytes, HashSet, U256},
 };
 
 use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
     constants::MONAD_CHEATCODE_ADDRESS,
-    evm::{FoundryEvmFactory, NestedEvm, ProtocolSystemCall, finish_protocol_system_call},
+    evm::{FoundryEvmFactory, NestedEvm},
 };
 
 type MonadEvmHandler<'db, I> =
@@ -91,17 +92,222 @@ fn rebase_monad_context<DB: alloy_evm::Database>(context: &mut MonadContext<DB>)
     *context.journaled_state.reserve_balance_mut() = tracker;
 }
 
-fn transact_monad_replay<DB, I>(
+/// A canonical Monad protocol system transaction.
+#[derive(Clone, Debug)]
+pub struct ProtocolSystemCall {
+    /// Reserved caller used by the protocol.
+    pub caller: Address,
+    /// Native system contract or precompile being called.
+    pub contract: Address,
+    /// Calldata passed to the dedicated system-call entry point.
+    pub data: Bytes,
+    /// Sender nonce encoded by the canonical envelope.
+    pub nonce: u64,
+    /// Optional EIP-155 chain ID encoded by the canonical envelope.
+    pub chain_id: Option<u64>,
+    /// Optional protocol mint applied before system-call execution.
+    pub balance_increment: Option<(Address, U256)>,
+}
+
+impl ProtocolSystemCall {
+    fn validate_chain_id(&self, chain_id: u64) -> eyre::Result<()> {
+        if let Some(envelope_chain_id) = self.chain_id
+            && envelope_chain_id != chain_id
+        {
+            eyre::bail!(
+                "protocol system transaction chain ID mismatch: envelope {envelope_chain_id}, \
+                 environment {chain_id}"
+            );
+        }
+        Ok(())
+    }
+
+    fn apply_prestate<DB: alloy_evm::Database>(
+        &self,
+        db: &mut DB,
+        journal: &mut JournaledState,
+    ) -> eyre::Result<()> {
+        let next_nonce = self
+            .nonce
+            .checked_add(1)
+            .ok_or_else(|| eyre::eyre!("protocol system transaction nonce overflow"))?;
+        let caller_nonce = journal.load_account(db, self.caller)?.data.info.nonce;
+        if caller_nonce != self.nonce {
+            eyre::bail!(
+                "protocol system transaction nonce mismatch: envelope {}, state {}",
+                self.nonce,
+                caller_nonce
+            );
+        }
+
+        let balance = if let Some((address, amount)) = self.balance_increment {
+            let balance = journal
+                .load_account(db, address)?
+                .data
+                .info
+                .balance
+                .checked_add(amount)
+                .ok_or_else(|| eyre::eyre!("protocol system transaction balance overflow"))?;
+            Some((address, balance))
+        } else {
+            None
+        };
+
+        journal.load_account_mut(db, self.caller)?.data.set_nonce(next_nonce);
+        if let Some((address, balance)) = balance {
+            journal.load_account_mut(db, address)?.data.set_balance(balance);
+        }
+
+        Ok(())
+    }
+}
+
+/// Converts a canonical Monad envelope into its dedicated system call.
+///
+/// Returns an error when the transaction uses Monad's reserved protocol sender but does not
+/// satisfy the canonical envelope rules.
+pub fn protocol_system_call(tx: &TxEnv) -> eyre::Result<Option<ProtocolSystemCall>> {
+    if tx.caller() != SYSTEM_ADDRESS {
+        return Ok(None);
+    }
+
+    eyre::ensure!(
+        tx.tx_type() == TransactionType::Legacy as u8,
+        "invalid Monad protocol system transaction: transaction type must be legacy"
+    );
+    eyre::ensure!(
+        tx.kind() == revm::primitives::TxKind::Call(STAKING_ADDRESS),
+        "invalid Monad protocol system transaction: target must be the staking contract"
+    );
+    eyre::ensure!(
+        tx.gas_limit() == 0,
+        "invalid Monad protocol system transaction: gas limit must be zero"
+    );
+    eyre::ensure!(
+        tx.gas_price() == 0,
+        "invalid Monad protocol system transaction: gas price must be zero"
+    );
+    eyre::ensure!(
+        tx.gas_priority_fee.is_none(),
+        "invalid Monad protocol system transaction: priority fee must be absent"
+    );
+    eyre::ensure!(
+        tx.access_list.0.is_empty(),
+        "invalid Monad protocol system transaction: access list must be empty"
+    );
+    eyre::ensure!(
+        tx.blob_hashes.is_empty(),
+        "invalid Monad protocol system transaction: blob hashes must be empty"
+    );
+    eyre::ensure!(
+        tx.max_fee_per_blob_gas == 0,
+        "invalid Monad protocol system transaction: blob gas fee must be zero"
+    );
+    eyre::ensure!(
+        tx.authorization_list.is_empty(),
+        "invalid Monad protocol system transaction: authorization list must be empty"
+    );
+
+    let selector: [u8; 4] = tx
+        .input()
+        .get(..4)
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "invalid Monad protocol system transaction: calldata is shorter than a selector"
+            )
+        })?
+        .try_into()
+        .expect("slice has exactly four bytes");
+    let (data, balance_increment) = match selector {
+        syscallRewardCall::SELECTOR => {
+            eyre::ensure!(
+                tx.input().len() == 36,
+                "invalid Monad protocol system transaction: reward calldata must be 36 bytes"
+            );
+            let call = syscallRewardCall::abi_decode_raw(&tx.input()[4..])
+                .wrap_err("invalid Monad protocol system reward calldata")?;
+            eyre::ensure!(
+                call.abi_encode().as_slice() == tx.input(),
+                "invalid Monad protocol system reward calldata"
+            );
+            (
+                syscall_reward_calldata(call.blockAuthor, tx.value()),
+                Some((STAKING_ADDRESS, tx.value())),
+            )
+        }
+        syscallSnapshotCall::SELECTOR => {
+            eyre::ensure!(
+                tx.input().len() == 4,
+                "invalid Monad protocol system transaction: snapshot calldata must be 4 bytes"
+            );
+            eyre::ensure!(
+                tx.value().is_zero(),
+                "invalid Monad protocol system transaction: snapshot value must be zero"
+            );
+            syscallSnapshotCall::abi_decode_raw(&tx.input()[4..])
+                .wrap_err("invalid Monad protocol system snapshot calldata")?;
+            (syscall_snapshot_calldata(), None)
+        }
+        syscallOnEpochChangeCall::SELECTOR => {
+            eyre::ensure!(
+                tx.input().len() == 36,
+                "invalid Monad protocol system transaction: epoch calldata must be 36 bytes"
+            );
+            eyre::ensure!(
+                tx.value().is_zero(),
+                "invalid Monad protocol system transaction: epoch value must be zero"
+            );
+            let call = syscallOnEpochChangeCall::abi_decode_raw(&tx.input()[4..])
+                .wrap_err("invalid Monad protocol system epoch calldata")?;
+            eyre::ensure!(
+                call.abi_encode().as_slice() == tx.input(),
+                "invalid Monad protocol system epoch calldata"
+            );
+            (syscall_on_epoch_change_calldata(call.epoch), None)
+        }
+        _ => {
+            return Err(eyre::eyre!(
+                "invalid Monad protocol system transaction: unknown staking syscall selector"
+            ));
+        }
+    };
+
+    Ok(Some(ProtocolSystemCall {
+        caller: SYSTEM_ADDRESS,
+        contract: STAKING_ADDRESS,
+        data,
+        nonce: tx.nonce(),
+        chain_id: tx.chain_id(),
+        balance_increment,
+    }))
+}
+
+fn finish_protocol_system_call<H>(
+    mut result: ResultAndState<H>,
+) -> eyre::Result<ResultAndState<H>> {
+    if !result.result.is_success() {
+        eyre::bail!("protocol system transaction reverted or halted");
+    }
+
+    if let revm::context_interface::result::ExecutionResult::Success { gas, .. } =
+        &mut result.result
+    {
+        *gas = Default::default();
+    }
+
+    Ok(result)
+}
+
+fn try_transact_monad_system_replay<DB, I>(
     evm: &mut MonadEvm<DB, I>,
-    tx: TxEnv,
-) -> eyre::Result<ResultAndState>
+    tx: &TxEnv,
+) -> eyre::Result<Option<ResultAndState>>
 where
     DB: alloy_evm::Database,
     I: Inspector<MonadContext<DB>>,
 {
-    let factory = MonadEvmFactory::default();
-    let Some(system_call) = factory.protocol_system_call(&tx)? else {
-        return evm.transact(tx).map_err(Into::into);
+    let Some(system_call) = protocol_system_call(tx)? else {
+        return Ok(None);
     };
 
     system_call.validate_chain_id(evm.chain_id())?;
@@ -121,7 +327,7 @@ where
         evm.ctx_mut().chain = chain;
         *evm.ctx_mut().journaled_state.reserve_balance_mut() = reserve_balance;
     }
-    result
+    result.map(Some)
 }
 
 impl FoundryEvmFactory for MonadEvmFactory {
@@ -129,7 +335,6 @@ impl FoundryEvmFactory for MonadEvmFactory {
     const CONTRACT_INITCODE_SIZE_LIMIT: usize = monad_revm::MONAD_MAX_INITCODE_SIZE;
 
     const NEEDS_BLOCK_CONTEXT: bool = true;
-    const REPLAYS_PROTOCOL_SYSTEM_TRANSACTIONS: bool = true;
 
     type ChainContext = MonadChainContext;
     type TransactionState = ReserveBalanceTracker;
@@ -216,140 +421,27 @@ impl FoundryEvmFactory for MonadEvmFactory {
         rebase_monad_context(ecx);
     }
 
-    fn protocol_system_call(&self, tx: &Self::Tx) -> eyre::Result<Option<ProtocolSystemCall>> {
-        if tx.caller() != SYSTEM_ADDRESS {
-            return Ok(None);
-        }
-
-        eyre::ensure!(
-            tx.tx_type() == TransactionType::Legacy as u8,
-            "invalid Monad protocol system transaction: transaction type must be legacy"
-        );
-        eyre::ensure!(
-            tx.kind() == revm::primitives::TxKind::Call(STAKING_ADDRESS),
-            "invalid Monad protocol system transaction: target must be the staking contract"
-        );
-        eyre::ensure!(
-            tx.gas_limit() == 0,
-            "invalid Monad protocol system transaction: gas limit must be zero"
-        );
-        eyre::ensure!(
-            tx.gas_price() == 0,
-            "invalid Monad protocol system transaction: gas price must be zero"
-        );
-        eyre::ensure!(
-            tx.gas_priority_fee.is_none(),
-            "invalid Monad protocol system transaction: priority fee must be absent"
-        );
-        eyre::ensure!(
-            tx.access_list.0.is_empty(),
-            "invalid Monad protocol system transaction: access list must be empty"
-        );
-        eyre::ensure!(
-            tx.blob_hashes.is_empty(),
-            "invalid Monad protocol system transaction: blob hashes must be empty"
-        );
-        eyre::ensure!(
-            tx.max_fee_per_blob_gas == 0,
-            "invalid Monad protocol system transaction: blob gas fee must be zero"
-        );
-        eyre::ensure!(
-            tx.authorization_list.is_empty(),
-            "invalid Monad protocol system transaction: authorization list must be empty"
-        );
-
-        let selector: [u8; 4] = tx
-            .input()
-            .get(..4)
-            .ok_or_else(|| {
-                eyre::eyre!(
-                    "invalid Monad protocol system transaction: calldata is shorter than a selector"
-                )
-            })?
-            .try_into()
-            .expect("slice has exactly four bytes");
-        let (data, balance_increment) = match selector {
-            syscallRewardCall::SELECTOR => {
-                eyre::ensure!(
-                    tx.input().len() == 36,
-                    "invalid Monad protocol system transaction: reward calldata must be 36 bytes"
-                );
-                let call = syscallRewardCall::abi_decode_raw(&tx.input()[4..])
-                    .wrap_err("invalid Monad protocol system reward calldata")?;
-                eyre::ensure!(
-                    call.abi_encode().as_slice() == tx.input(),
-                    "invalid Monad protocol system reward calldata"
-                );
-                (
-                    syscall_reward_calldata(call.blockAuthor, tx.value()),
-                    Some((STAKING_ADDRESS, tx.value())),
-                )
-            }
-            syscallSnapshotCall::SELECTOR => {
-                eyre::ensure!(
-                    tx.input().len() == 4,
-                    "invalid Monad protocol system transaction: snapshot calldata must be 4 bytes"
-                );
-                eyre::ensure!(
-                    tx.value().is_zero(),
-                    "invalid Monad protocol system transaction: snapshot value must be zero"
-                );
-                syscallSnapshotCall::abi_decode_raw(&tx.input()[4..])
-                    .wrap_err("invalid Monad protocol system snapshot calldata")?;
-                (syscall_snapshot_calldata(), None)
-            }
-            syscallOnEpochChangeCall::SELECTOR => {
-                eyre::ensure!(
-                    tx.input().len() == 36,
-                    "invalid Monad protocol system transaction: epoch calldata must be 36 bytes"
-                );
-                eyre::ensure!(
-                    tx.value().is_zero(),
-                    "invalid Monad protocol system transaction: epoch value must be zero"
-                );
-                let call = syscallOnEpochChangeCall::abi_decode_raw(&tx.input()[4..])
-                    .wrap_err("invalid Monad protocol system epoch calldata")?;
-                eyre::ensure!(
-                    call.abi_encode().as_slice() == tx.input(),
-                    "invalid Monad protocol system epoch calldata"
-                );
-                (syscall_on_epoch_change_calldata(call.epoch), None)
-            }
-            _ => {
-                return Err(eyre::eyre!(
-                    "invalid Monad protocol system transaction: unknown staking syscall selector"
-                ));
-            }
-        };
-
-        Ok(Some(ProtocolSystemCall {
-            caller: SYSTEM_ADDRESS,
-            contract: STAKING_ADDRESS,
-            data,
-            nonce: tx.nonce(),
-            chain_id: tx.chain_id(),
-            balance_increment,
-        }))
-    }
-
-    fn transact_replay<DB, I>(
+    fn try_transact_system_replay<DB, I>(
         &self,
         evm: &mut Self::Evm<DB, I>,
-        tx: Self::Tx,
-    ) -> eyre::Result<ResultAndState<Self::HaltReason>>
+        tx: &Self::Tx,
+    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>>
     where
         DB: alloy_evm::Database,
         I: Inspector<Self::Context<DB>>,
     {
-        transact_monad_replay(evm, tx)
+        try_transact_monad_system_replay(evm, tx)
     }
 
-    fn transact_foundry_replay<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
+    fn try_transact_foundry_system_replay<
+        'db,
+        I: FoundryInspectorExt<Self::FoundryContext<'db>>,
+    >(
         &self,
         evm: &mut Self::FoundryEvm<'db, I>,
-        tx: Self::Tx,
-    ) -> eyre::Result<ResultAndState<Self::HaltReason>> {
-        transact_monad_replay(evm, tx)
+        tx: &Self::Tx,
+    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>> {
+        try_transact_monad_system_replay(evm, tx)
     }
 
     fn create_foundry_nested_evm<'db>(
@@ -441,8 +533,7 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
     }
 
     fn transact_replay(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
-        let factory = MonadEvmFactory::default();
-        let Some(system_call) = factory.protocol_system_call(&tx)? else {
+        let Some(system_call) = protocol_system_call(&tx)? else {
             return self.transact_raw(tx).map_err(Into::into);
         };
 
@@ -479,17 +570,54 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
 mod tests {
     use super::*;
     use crate::evm::{BlockContext, MonadEvmNetwork};
-    use monad_revm::reserve_balance::tracker::ReserveBalanceInit;
+    use alloy_sol_types::SolEvent;
+    use monad_revm::{
+        reserve_balance::tracker::ReserveBalanceInit,
+        staking::{
+            constants::MON,
+            interface::IMonadStaking::ValidatorRewarded,
+            storage::{
+                consensus_view_key, global_slots, val_id_secp_key, validator_key, validator_offsets,
+            },
+        },
+    };
     use revm::{
+        Database, DatabaseCommit,
+        context::CfgEnv,
         context_interface::{
             either::Either,
             transaction::{
                 AccessListItem, Authorization, RecoveredAuthority, RecoveredAuthorization,
             },
         },
-        primitives::{B256, U256},
+        database::InMemoryDB,
+        interpreter::{CallInputs, CallOutcome},
+        primitives::{B256, TxKind, address},
         state::{Account, AccountInfo, EvmState},
     };
+
+    #[derive(Default)]
+    struct ProtocolPrestateInspector {
+        call_count: usize,
+        staking_balance: Option<U256>,
+    }
+
+    impl Inspector<MonadContext<InMemoryDB>> for ProtocolPrestateInspector {
+        fn call(
+            &mut self,
+            context: &mut MonadContext<InMemoryDB>,
+            _inputs: &mut CallInputs,
+        ) -> Option<CallOutcome> {
+            self.call_count += 1;
+            self.staking_balance = context
+                .journaled_state
+                .inner
+                .state
+                .get(&STAKING_ADDRESS)
+                .map(|account| account.info.balance);
+            None
+        }
+    }
 
     fn transaction(caller: Address, authority: Address) -> TxEnv {
         let authorization = RecoveredAuthorization::new_unchecked(
@@ -518,7 +646,7 @@ mod tests {
     }
 
     fn assert_invalid_system_transaction(tx: TxEnv, expected: &str) {
-        let err = MonadEvmFactory::default().protocol_system_call(&tx).unwrap_err();
+        let err = protocol_system_call(&tx).unwrap_err();
         assert!(err.to_string().contains(expected), "expected {expected:?} in error, got {err:?}");
     }
 
@@ -571,27 +699,49 @@ mod tests {
 
     #[test]
     fn monad_factory_classifies_canonical_system_envelopes() {
-        let factory = MonadEvmFactory::default();
         let reward = U256::from(25);
         let reward_tx = system_transaction(
             syscallRewardCall { blockAuthor: Address::with_last_byte(1) }.abi_encode(),
             reward,
         );
-        let reward_call = factory.protocol_system_call(&reward_tx).unwrap().unwrap();
+        let reward_call = protocol_system_call(&reward_tx).unwrap().unwrap();
         assert_eq!(reward_call.data.len(), 68);
         assert_eq!(reward_call.balance_increment, Some((STAKING_ADDRESS, reward)));
 
         let snapshot_tx = system_transaction(syscallSnapshotCall {}.abi_encode(), U256::ZERO);
-        assert!(factory.protocol_system_call(&snapshot_tx).unwrap().is_some());
+        assert!(protocol_system_call(&snapshot_tx).unwrap().is_some());
 
         let epoch_tx =
             system_transaction(syscallOnEpochChangeCall { epoch: 9 }.abi_encode(), U256::ZERO);
-        assert!(factory.protocol_system_call(&epoch_tx).unwrap().is_some());
+        assert!(protocol_system_call(&epoch_tx).unwrap().is_some());
 
         let mut unrelated = snapshot_tx;
         unrelated.caller = Address::with_last_byte(2);
         unrelated.tx_type = TransactionType::Eip1559 as u8;
-        assert!(factory.protocol_system_call(&unrelated).unwrap().is_none());
+        assert!(protocol_system_call(&unrelated).unwrap().is_none());
+    }
+
+    #[test]
+    fn monad_replay_decline_leaves_evm_untouched() {
+        let tx = TxEnv {
+            caller: foundry_common::OPTIMISM_SYSTEM_ADDRESS,
+            kind: TxKind::Call(Address::with_last_byte(1)),
+            ..Default::default()
+        };
+        let factory = MonadEvmFactory::default();
+        let evm_env =
+            EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default());
+        let mut evm = factory.create_evm(InMemoryDB::default(), evm_env);
+        let tx_before = evm.tx().clone();
+        let journal_before = evm.ctx().journal_inner().clone();
+        let chain_before = evm.ctx().chain.clone();
+        let tracker_before = evm.ctx().journaled_state.reserve_balance().clone();
+
+        assert!(factory.try_transact_system_replay(&mut evm, &tx).unwrap().is_none());
+        assert_eq!(evm.tx(), &tx_before);
+        assert_eq!(evm.ctx().journal_inner().state, journal_before.state);
+        assert_eq!(evm.ctx().chain, chain_before);
+        assert_eq!(evm.ctx().journaled_state.reserve_balance(), &tracker_before);
     }
 
     #[test]
@@ -695,11 +845,213 @@ mod tests {
     fn monad_factory_validates_system_envelope_chain_id_at_execution() {
         let mut tx = system_transaction(syscallSnapshotCall {}.abi_encode(), U256::ZERO);
         tx.chain_id = Some(143);
-        let system_call = MonadEvmFactory::default().protocol_system_call(&tx).unwrap().unwrap();
+        let system_call = protocol_system_call(&tx).unwrap().unwrap();
 
         system_call.validate_chain_id(143).unwrap();
         assert!(
             system_call.validate_chain_id(1).unwrap_err().to_string().contains("chain ID mismatch")
+        );
+    }
+
+    #[test]
+    fn protocol_prestate_updates_nonce_and_balance() {
+        let caller = address!("00000000000000000000000000000000000000fe");
+        let recipient = address!("0000000000000000000000000000000000001000");
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(caller, AccountInfo { nonce: 7, ..Default::default() });
+        db.insert_account_info(
+            recipient,
+            AccountInfo { balance: U256::from(10), ..Default::default() },
+        );
+        let call = ProtocolSystemCall {
+            caller,
+            contract: recipient,
+            data: Bytes::new(),
+            nonce: 7,
+            chain_id: None,
+            balance_increment: Some((recipient, U256::from(25))),
+        };
+        let mut journal = JournaledState::default();
+
+        call.apply_prestate(&mut db, &mut journal).unwrap();
+
+        assert_eq!(journal.state[&caller].info.nonce, 8);
+        assert_eq!(journal.state[&recipient].info.balance, U256::from(35));
+        assert_eq!(db.basic(caller).unwrap().unwrap().nonce, 7);
+        assert_eq!(db.basic(recipient).unwrap().unwrap().balance, U256::from(10));
+    }
+
+    #[test]
+    fn protocol_prestate_rejects_nonce_mismatch() {
+        let caller = address!("00000000000000000000000000000000000000fe");
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(caller, AccountInfo { nonce: 3, ..Default::default() });
+        let call = ProtocolSystemCall {
+            caller,
+            contract: Address::ZERO,
+            data: Bytes::new(),
+            nonce: 4,
+            chain_id: None,
+            balance_increment: None,
+        };
+        let mut journal = JournaledState::default();
+
+        let err = call.apply_prestate(&mut db, &mut journal).unwrap_err();
+
+        assert!(err.to_string().contains("nonce mismatch"));
+        assert_eq!(db.basic(caller).unwrap().unwrap().nonce, 3);
+    }
+
+    #[test]
+    fn protocol_prestate_rejects_nonce_overflow() {
+        let caller = address!("00000000000000000000000000000000000000fe");
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(caller, AccountInfo { nonce: u64::MAX, ..Default::default() });
+        let call = ProtocolSystemCall {
+            caller,
+            contract: Address::ZERO,
+            data: Bytes::new(),
+            nonce: u64::MAX,
+            chain_id: None,
+            balance_increment: None,
+        };
+        let mut journal = JournaledState::default();
+
+        let err = call.apply_prestate(&mut db, &mut journal).unwrap_err();
+
+        assert!(err.to_string().contains("nonce overflow"));
+        assert_eq!(db.basic(caller).unwrap().unwrap().nonce, u64::MAX);
+    }
+
+    #[test]
+    fn reward_envelope_replays_mint_nonce_storage_and_log() {
+        let block_author = address!("1111111111111111111111111111111111111111");
+        let validator_auth = address!("2222222222222222222222222222222222222222");
+        let validator_id = 7;
+        let reward = U256::from(25) * MON;
+        let initial_staking_balance = U256::from(3) * MON;
+        // Monad stores validator IDs and packed address/flags values left-aligned.
+        let validator_id_slot = U256::from(validator_id) << 192;
+        let address_flags_slot = U256::from_be_slice(validator_auth.as_slice()) << 96;
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(SYSTEM_ADDRESS, AccountInfo { nonce: 11, ..Default::default() });
+        db.insert_account_info(
+            STAKING_ADDRESS,
+            AccountInfo { balance: initial_staking_balance, ..Default::default() },
+        );
+        db.insert_account_storage(
+            STAKING_ADDRESS,
+            val_id_secp_key(&block_author),
+            validator_id_slot,
+        )
+        .unwrap();
+        db.insert_account_storage(
+            STAKING_ADDRESS,
+            consensus_view_key(validator_id, 0),
+            U256::from(100) * MON,
+        )
+        .unwrap();
+        db.insert_account_storage(STAKING_ADDRESS, consensus_view_key(validator_id, 1), U256::ZERO)
+            .unwrap();
+        db.insert_account_storage(
+            STAKING_ADDRESS,
+            validator_key(validator_id, validator_offsets::ADDRESS_FLAGS),
+            address_flags_slot,
+        )
+        .unwrap();
+
+        let tx = TxEnv {
+            tx_type: 0,
+            caller: SYSTEM_ADDRESS,
+            gas_limit: 0,
+            kind: TxKind::Call(STAKING_ADDRESS),
+            value: reward,
+            data: syscallRewardCall { blockAuthor: block_author }.abi_encode().into(),
+            nonce: 11,
+            ..Default::default()
+        };
+        let factory = MonadEvmFactory::default();
+        let evm_env =
+            EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default());
+        let mut evm =
+            factory.create_evm_with_inspector(db, evm_env, ProtocolPrestateInspector::default());
+
+        let result = factory.try_transact_system_replay(&mut evm, &tx).unwrap().unwrap();
+
+        assert!(result.result.is_success());
+        assert_eq!(result.result.tx_gas_used(), 0);
+        assert!(evm.inspector().call_count > 0);
+        assert_eq!(evm.inspector().staking_balance, Some(initial_staking_balance + reward));
+        assert_eq!(result.result.logs().len(), 1);
+        assert_eq!(result.result.logs()[0].address, STAKING_ADDRESS);
+        assert_eq!(result.result.logs()[0].topics()[0], ValidatorRewarded::SIGNATURE_HASH);
+        evm.db_mut().commit(result.state);
+        let mut db = evm.into_db();
+        assert_eq!(db.basic(SYSTEM_ADDRESS).unwrap().unwrap().nonce, 12);
+        assert_eq!(
+            db.basic(STAKING_ADDRESS).unwrap().unwrap().balance,
+            initial_staking_balance + reward
+        );
+        assert_eq!(
+            db.storage(STAKING_ADDRESS, global_slots::PROPOSER_VAL_ID).unwrap(),
+            validator_id_slot
+        );
+        assert_eq!(
+            db.storage(
+                STAKING_ADDRESS,
+                validator_key(validator_id, validator_offsets::UNCLAIMED_REWARDS),
+            )
+            .unwrap(),
+            reward
+        );
+    }
+
+    #[test]
+    fn failed_reward_envelope_does_not_commit_prestate() {
+        let unknown_author = address!("1111111111111111111111111111111111111111");
+        let reward = U256::from(25) * MON;
+        let initial_staking_balance = U256::from(3) * MON;
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(SYSTEM_ADDRESS, AccountInfo { nonce: 11, ..Default::default() });
+        db.insert_account_info(
+            STAKING_ADDRESS,
+            AccountInfo { balance: initial_staking_balance, ..Default::default() },
+        );
+        let tx = TxEnv {
+            tx_type: 0,
+            caller: SYSTEM_ADDRESS,
+            gas_limit: 0,
+            kind: TxKind::Call(STAKING_ADDRESS),
+            value: reward,
+            data: syscallRewardCall { blockAuthor: unknown_author }.abi_encode().into(),
+            nonce: 11,
+            ..Default::default()
+        };
+        let factory = MonadEvmFactory::default();
+        let evm_env =
+            EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default());
+        let mut evm =
+            factory.create_evm_with_inspector(db, evm_env, ProtocolPrestateInspector::default());
+        let journal_before = evm.ctx().journal_inner().clone();
+        let chain_before = evm.ctx().chain.clone();
+        let tracker_before = evm.ctx().journaled_state.reserve_balance().clone();
+
+        let error = factory.try_transact_system_replay(&mut evm, &tx).unwrap_err();
+
+        assert!(error.to_string().contains("reverted or halted"));
+        assert!(evm.inspector().call_count > 0);
+        assert_eq!(evm.inspector().staking_balance, Some(initial_staking_balance + reward));
+        assert_eq!(evm.ctx().journal_inner().state, journal_before.state);
+        assert_eq!(evm.ctx().chain, chain_before);
+        assert_eq!(evm.ctx().journaled_state.reserve_balance(), &tracker_before);
+        assert_eq!(evm.db_mut().basic(SYSTEM_ADDRESS).unwrap().unwrap().nonce, 11);
+        assert_eq!(
+            evm.db_mut().basic(STAKING_ADDRESS).unwrap().unwrap().balance,
+            initial_staking_balance
+        );
+        assert_eq!(
+            evm.db_mut().storage(STAKING_ADDRESS, global_slots::PROPOSER_VAL_ID).unwrap(),
+            U256::ZERO
         );
     }
 
