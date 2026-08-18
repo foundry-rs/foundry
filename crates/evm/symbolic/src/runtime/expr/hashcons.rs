@@ -100,16 +100,18 @@ impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
 }
 
 type HashConsHasher = FixedState;
+const MIN_GC_THRESHOLD: usize = 1024;
 
 /// Hash-consing table for sharing structurally equal immutable values.
 ///
 /// The table stores weak references so interned values disappear when the rest of
 /// the symbolic state stops using them. `make` removes dead entries encountered
-/// while looking up the new value, keeping short-lived rewrites from growing the
-/// table for the lifetime of the context.
+/// during lookup and periodically sweeps distinct dead values before they can
+/// grow the table without bound.
 pub(in crate::runtime) struct HashCons<T> {
     table: HashTable<HashConsEntry<T>>,
     hash_builder: HashConsHasher,
+    gc_threshold: usize,
 }
 
 struct HashConsEntry<T> {
@@ -125,7 +127,11 @@ impl<T> HashConsEntry<T> {
 
 impl<T> HashCons<T> {
     pub(in crate::runtime) fn new() -> Self {
-        Self { table: HashTable::new(), hash_builder: HashConsHasher::default() }
+        Self {
+            table: HashTable::new(),
+            hash_builder: HashConsHasher::default(),
+            gc_threshold: MIN_GC_THRESHOLD,
+        }
     }
 
     fn hash<Q: Hash + ?Sized>(&self, value: &Q) -> u64 {
@@ -135,6 +141,11 @@ impl<T> HashCons<T> {
 
 impl<T: Eq + Hash> HashCons<T> {
     pub(in crate::runtime) fn make(&mut self, value: T) -> HashConsed<T> {
+        if self.table.len() >= self.gc_threshold {
+            self.table.retain(|entry| entry.value.strong_count() != 0);
+            self.gc_threshold = self.table.len().saturating_mul(2).max(MIN_GC_THRESHOLD);
+        }
+
         let hash = self.hash(&value);
         loop {
             let mut found = None;
@@ -225,6 +236,20 @@ mod tests {
         }
 
         assert_eq!(table.table.len(), 1);
+    }
+
+    #[test]
+    fn make_reclaims_distinct_dropped_values() {
+        let mut table = HashCons::<String>::new();
+        let retained = table.make("retained".to_string());
+
+        for value in 0..MIN_GC_THRESHOLD - 1 {
+            drop(table.make(value.to_string()));
+        }
+        let same = table.make("retained".to_string());
+
+        assert_eq!(table.table.len(), 1);
+        assert_eq!(retained, same);
     }
 
     #[test]

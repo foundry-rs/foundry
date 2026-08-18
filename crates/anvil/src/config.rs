@@ -2370,11 +2370,14 @@ impl AccountGenerator {
 
         // use the derivation path
         let derivation_path = self.get_derivation_path();
+        foundry_common::wallet::validate_bip32_path(derivation_path).map_err(|e| eyre::eyre!(e))?;
 
         let mut wallets = Vec::with_capacity(self.amount);
         for idx in 0..self.amount {
-            let builder =
-                builder.clone().derivation_path(format!("{derivation_path}{idx}")).unwrap();
+            let idx = u32::try_from(idx).map_err(|_| eyre::eyre!("account index overflows u32"))?;
+            let full_path = foundry_common::wallet::derive_key_path_checked(derivation_path, idx)
+                .map_err(|e| eyre::eyre!(e))?;
+            let builder = builder.clone().derivation_path(full_path)?;
             let wallet = builder.build()?.with_chain_id(Some(self.chain_id));
             wallets.push(wallet)
         }
@@ -2611,5 +2614,24 @@ mod tests {
 
         assert_eq!(config.get_chain_id(), 1);
         assert_eq!(config.get_hardfork(), FoundryHardfork::Monad(MonadHardfork::MonadEight));
+    }
+
+    #[test]
+    fn account_generator_rejects_harden_bit_overflow_path() {
+        let err = AccountGenerator::new(1)
+            .phrase("test test test test test test test test test test test junk")
+            .derivation_path("m/44'/60'/0'/0/2147483648'")
+            .generate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("harden bit"), "{err}");
+
+        assert!(
+            AccountGenerator::new(1)
+                .phrase("test test test test test test test test test test test junk")
+                .derivation_path("m/44'/60'/0'/0")
+                .generate()
+                .is_ok()
+        );
     }
 }

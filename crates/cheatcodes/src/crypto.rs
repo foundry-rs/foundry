@@ -698,18 +698,14 @@ fn derive_wallets<W: Wordlist>(
     path: &str,
     count: u32,
 ) -> Result<Vec<LocalSigner<SigningKey>>> {
-    let mut out = path.to_string();
-
-    if !out.ends_with('/') {
-        out.push('/');
-    }
+    foundry_common::wallet::validate_bip32_path(path).map_err(|e| fmt_err!("{e}"))?;
 
     let mut wallets = Vec::with_capacity(count as usize);
     for idx in 0..count {
-        let wallet = MnemonicBuilder::<W>::default()
-            .phrase(mnemonic)
-            .derivation_path(format!("{out}{idx}"))?
-            .build()?;
+        let full_path = foundry_common::wallet::derive_key_path_checked(path, idx)
+            .map_err(|e| fmt_err!("{e}"))?;
+        let wallet =
+            MnemonicBuilder::<W>::default().phrase(mnemonic).derivation_path(full_path)?.build()?;
         wallets.push(wallet);
     }
 
@@ -1113,5 +1109,45 @@ mod tests {
         let verify_result = verify_ed25519(&invalid_sig, namespace, message, &public_key).unwrap();
         let valid = bool::abi_decode(&verify_result).unwrap();
         assert!(!valid, "signature with wrong length should not verify");
+    }
+
+    const MNEMONIC: &str = "test test test test test test test test test test test junk";
+
+    #[test]
+    fn derive_key_rejects_harden_bit_overflow() {
+        let err = derive_key::<English>(MNEMONIC, "m/44'/60'/0'/0/2147483648'", 0)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("harden bit"), "{err}");
+
+        let err = derive_key::<English>(MNEMONIC, "m/44'/60'/0'/0/2147483648h", 0)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("harden bit"), "{err}");
+
+        let err =
+            derive_key::<English>(MNEMONIC, "m/44'/60'/0'/0", foundry_common::wallet::BIP32_HARDEN)
+                .unwrap_err()
+                .to_string();
+        assert!(err.contains("harden bit"), "{err}");
+
+        assert!(derive_key::<English>(MNEMONIC, "m/44'/60'/0'/0", 0).is_ok());
+        assert!(
+            derive_key::<English>(
+                MNEMONIC,
+                &format!("m/44'/60'/0'/0/{}", foundry_common::wallet::BIP32_HARDEN - 1),
+                0
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn remember_keys_rejects_harden_bit_overflow() {
+        let err = derive_wallets::<English>(MNEMONIC, "m/44'/60'/0'/0/2147483648'", 1)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("harden bit"), "{err}");
+        assert!(derive_wallets::<English>(MNEMONIC, "m/44'/60'/0'/0", 1).is_ok());
     }
 }
