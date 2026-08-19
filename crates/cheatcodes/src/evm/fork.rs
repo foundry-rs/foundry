@@ -10,13 +10,12 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
+#[cfg(feature = "monad")]
+use foundry_evm_core::evm::FoundryEvmFactory;
 use foundry_evm_core::{
     FoundryContextExt,
     backend::{ContextUpdate, JournaledState, LocalForkId},
-    evm::{
-        BlockEnvFor, ChainContextFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
-        SpecFor, TxEnvFor,
-    },
+    evm::{BlockEnvFor, ChainContextFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     fork::CreateFork,
 };
 use revm::context::ContextTr;
@@ -445,9 +444,12 @@ fn fork_env_op<FEN: FoundryEvmNetwork, T: SolValue>(
     match context_update {
         ContextUpdate::Unchanged => {}
         ContextUpdate::Replace(chain_context) => {
+            let _ = &chain_context;
+            #[cfg(feature = "monad")]
             FEN::EvmFactory::default().apply_context_transition(ecx, Some(&chain_context));
         }
         ContextUpdate::Rebase => {
+            #[cfg(feature = "monad")]
             FEN::EvmFactory::default().apply_context_transition(ecx, None);
         }
     }
@@ -507,13 +509,16 @@ fn transact<FEN: FoundryEvmNetwork>(
 ) -> Result {
     let context_update = executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)?;
     match context_update {
+        ContextUpdate::Unchanged => {}
         ContextUpdate::Replace(chain_context) => {
+            let _ = &chain_context;
+            #[cfg(feature = "monad")]
             FEN::EvmFactory::default().apply_context_transition(ccx.ecx, Some(&chain_context));
         }
         ContextUpdate::Rebase => {
+            #[cfg(feature = "monad")]
             FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
         }
-        ContextUpdate::Unchanged => {}
     }
     Ok(Default::default())
 }
