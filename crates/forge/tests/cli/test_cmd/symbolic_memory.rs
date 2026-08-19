@@ -173,6 +173,136 @@ args=[0]
     assert!(!stdout.contains("counterexample did not replay"), "{stdout}");
 });
 
+forgetest_init!(symbolic_variable_memory_access_rejects_oversized_ranges, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_variable_memory_access_rejects_oversized_ranges because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicOversizedMemoryRange.t.sol",
+        r#"
+contract SymbolicOversizedMemoryRange {
+    function calldataCopy() external pure {
+        assembly {
+            calldatacopy(not(0), 0, 1)
+        }
+    }
+
+    function codeCopy() external pure {
+        assembly {
+            codecopy(not(0), 0, 1)
+        }
+    }
+
+    function extcodeCopy() external view {
+        assembly {
+            extcodecopy(address(), not(0), 0, 1)
+        }
+    }
+
+    function returndataCopy() external view {
+        assembly {
+            pop(staticcall(gas(), 4, 0, 1, 0, 1))
+            returndatacopy(not(0), 0, 1)
+        }
+    }
+
+    function memoryCopyDest() external pure {
+        assembly {
+            mcopy(not(0), 0, 1)
+        }
+    }
+
+    function memoryCopySource() external pure {
+        assembly {
+            mcopy(0, not(0), 1)
+        }
+    }
+
+    function hash() external pure {
+        assembly {
+            pop(keccak256(not(0), 1))
+        }
+    }
+
+    function log() external {
+        assembly {
+            log0(not(0), 1)
+        }
+    }
+
+    function ret() external pure {
+        assembly {
+            return(not(0), 1)
+        }
+    }
+
+    function rev() external pure {
+        assembly {
+            revert(not(0), 1)
+        }
+    }
+
+    function testOversizedVariableMemoryRanges() public {
+        verifyOversizedVariableMemoryRanges();
+    }
+
+    function checkOversizedVariableMemoryRanges() public {
+        verifyOversizedVariableMemoryRanges();
+    }
+
+    function verifyOversizedVariableMemoryRanges() internal {
+        assertFails(this.calldataCopy.selector);
+        assertFails(this.codeCopy.selector);
+        assertFails(this.extcodeCopy.selector);
+        assertFails(this.returndataCopy.selector);
+        assertFails(this.memoryCopyDest.selector);
+        assertFails(this.memoryCopySource.selector);
+        assertFails(this.hash.selector);
+        assertFails(this.log.selector);
+        assertFails(this.ret.selector);
+        assertFails(this.rev.selector);
+    }
+
+    function assertFails(bytes4 selector) internal {
+        (bool ok, bytes memory data) =
+            address(this).call{gas: 100_000}(abi.encodeWithSelector(selector));
+        assert(!ok);
+        assert(data.length == 0);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--match-test", "testOversizedVariableMemoryRanges"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[PASS] testOversizedVariableMemoryRanges()
+"#]],
+    );
+
+    cmd.forge_fuse();
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkOversizedVariableMemoryRanges"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[PASS] checkOversizedVariableMemoryRanges()
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_fixed_memory_access_respects_memory_limit, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

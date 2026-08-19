@@ -558,6 +558,13 @@ impl SymbolicExecutor {
                 state.shift_word(&mut self.cx, ShiftKind::Sar)?;
             }
             opcode::KECCAK256 => {
+                let offset = state.stack.peek(0)?.clone();
+                let size = state.stack.peek(1)?.clone();
+                if let Some(outcome) =
+                    self.guard_memory_range(executor, state, worklist, &offset, &size)?
+                {
+                    return Ok(outcome);
+                }
                 let offset = state.stack.pop()?;
                 let size = state.stack.pop()?;
                 match state.constrained_usize_checked(&mut self.cx, &size) {
@@ -660,6 +667,13 @@ impl SymbolicExecutor {
                 state.stack.push(hash)?;
             }
             opcode::EXTCODECOPY => {
+                let dest = state.stack.peek(1)?.clone();
+                let size = state.stack.peek(3)?.clone();
+                if let Some(outcome) =
+                    self.guard_memory_range(executor, state, worklist, &dest, &size)?
+                {
+                    return Ok(outcome);
+                }
                 let target = state.stack.pop()?;
                 let dest = state.stack.pop()?;
                 let offset = state.stack.pop()?;
@@ -715,6 +729,13 @@ impl SymbolicExecutor {
                 state.stack.push(size)?;
             }
             opcode::CALLDATACOPY => {
+                let dest = state.stack.peek(0)?.clone();
+                let size = state.stack.peek(2)?.clone();
+                if let Some(outcome) =
+                    self.guard_memory_range(executor, state, worklist, &dest, &size)?
+                {
+                    return Ok(outcome);
+                }
                 let dest = state.stack.pop()?;
                 let offset = state.stack.pop()?;
                 let size = state.stack.pop()?;
@@ -758,6 +779,13 @@ impl SymbolicExecutor {
                 state.stack.push(value)?;
             }
             opcode::CODECOPY => {
+                let dest = state.stack.peek(0)?.clone();
+                let size = state.stack.peek(2)?.clone();
+                if let Some(outcome) =
+                    self.guard_memory_range(executor, state, worklist, &dest, &size)?
+                {
+                    return Ok(outcome);
+                }
                 let dest = state.stack.pop()?;
                 let offset = state.stack.pop()?;
                 let size = state.stack.pop()?;
@@ -795,6 +823,13 @@ impl SymbolicExecutor {
                 state.stack.push(size)?;
             }
             opcode::RETURNDATACOPY => {
+                let dest = state.stack.peek(0)?.clone();
+                let size = state.stack.peek(2)?.clone();
+                if let Some(outcome) =
+                    self.guard_memory_range(executor, state, worklist, &dest, &size)?
+                {
+                    return Ok(outcome);
+                }
                 let dest = state.stack.pop()?;
                 let offset = state.stack.pop()?;
                 let size = state.stack.pop()?;
@@ -1120,6 +1155,19 @@ impl SymbolicExecutor {
             }
             opcode::JUMPDEST => {}
             opcode::MCOPY => {
+                let dest = state.stack.peek(0)?.clone();
+                let src = state.stack.peek(1)?.clone();
+                let size = state.stack.peek(2)?.clone();
+                if let Some(outcome) =
+                    self.guard_memory_range(executor, state, worklist, &dest, &size)?
+                {
+                    return Ok(outcome);
+                }
+                if let Some(outcome) =
+                    self.guard_memory_range(executor, state, worklist, &src, &size)?
+                {
+                    return Ok(outcome);
+                }
                 let dest = state.stack.pop()?;
                 let src = state.stack.pop()?;
                 let size = state.stack.pop()?;
@@ -1156,8 +1204,16 @@ impl SymbolicExecutor {
                     }
                 }
             }
-            opcode::RETURN => return self.return_or_revert(state, false),
-            opcode::REVERT => return self.return_or_revert(state, true),
+            opcode::RETURN | opcode::REVERT => {
+                let offset = state.stack.peek(0)?.clone();
+                let size = state.stack.peek(1)?.clone();
+                if let Some(outcome) =
+                    self.guard_memory_range(executor, state, worklist, &offset, &size)?
+                {
+                    return Ok(outcome);
+                }
+                return self.return_or_revert(state, op == opcode::REVERT);
+            }
             opcode::INVALID => return Ok(StepOutcome::Failure),
             opcode::CALL => {
                 return self.call(executor, state, worklist, completed_paths, CallKind::Call);
@@ -1276,6 +1332,13 @@ impl SymbolicExecutor {
                     return Ok(StepOutcome::Revert);
                 }
                 let topics = (op - opcode::LOG0) as usize;
+                let offset = state.stack.peek(0)?.clone();
+                let size = state.stack.peek(1)?.clone();
+                if let Some(outcome) =
+                    self.guard_memory_range(executor, state, worklist, &offset, &size)?
+                {
+                    return Ok(outcome);
+                }
                 let offset = state.stack.pop()?;
                 if offset.contains_gasleft() {
                     return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
