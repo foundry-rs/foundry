@@ -1389,52 +1389,7 @@ impl SymExpr {
         &self,
         model: &M,
     ) -> Result<U256, SymbolicError> {
-        let kind = self.kind();
-        if let Some(var) = kind.get_eval_var() {
-            return Ok(model.value(var).unwrap_or_default());
-        }
-        Ok(match kind {
-            SymExprKind::Const(value) => *value,
-            SymExprKind::Var(_) | SymExprKind::GasLeft(_) | SymExprKind::Hash { .. } => {
-                unreachable!("symbolic eval leaf handled above")
-            }
-            SymExprKind::Keccak { len, bytes, .. } => {
-                let len = len.eval_model(model)?;
-                let Ok(len) = usize::try_from(len) else {
-                    return Err(SymbolicError::Solver(
-                        "solver model uses an invalid keccak length".to_string(),
-                    ));
-                };
-                if len > bytes.len() {
-                    return Err(SymbolicError::Solver(
-                        "solver model uses an invalid keccak length".to_string(),
-                    ));
-                }
-
-                let mut input = Vec::with_capacity(len);
-                for byte in bytes.iter().take(len) {
-                    input.push((byte.eval_model(model)? & U256::from(0xff)).to::<u8>());
-                }
-
-                U256::from_be_bytes(keccak256(input).0)
-            }
-            SymExprKind::Not(value) => !value.eval_model(model)?,
-            SymExprKind::BinOp(op, left, right) => {
-                op.eval(left.eval_model(model)?, right.eval_model(model)?)
-            }
-            SymExprKind::TernOp(op, left, right, modulus) => op.eval(
-                left.eval_model(model)?,
-                right.eval_model(model)?,
-                modulus.eval_model(model)?,
-            ),
-            SymExprKind::Ite(cond, then_expr, else_expr) => {
-                if cond.eval_model(model)? {
-                    then_expr.eval_model(model)?
-                } else {
-                    else_expr.eval_model(model)?
-                }
-            }
-        })
+        ModelEvaluator::new(model).eval_word(self)
     }
 
     pub(crate) fn eval_model_if_complete<M: SymbolicModelLookup + ?Sized>(
