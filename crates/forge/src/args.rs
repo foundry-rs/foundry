@@ -99,6 +99,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Install(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Reinit(cmd) => cmd.run(),
         ForgeSubcommand::Remove(cmd) => cmd.run(),
+        ForgeSubcommand::Dependencies(cmd) => cmd.run(),
         ForgeSubcommand::Remappings(cmd) => cmd.run(),
         ForgeSubcommand::Init(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Completions { shell } => {
