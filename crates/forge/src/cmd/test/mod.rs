@@ -42,7 +42,7 @@ use foundry_common::{
 };
 use foundry_compilers::{
     Artifact, ProjectCompileOutput,
-    artifacts::{BytecodeObject, Libraries},
+    artifacts::{BytecodeObject, Libraries, output_selection::ContractOutputSelection},
     compilers::{
         Language,
         multi::{MultiCompiler, MultiCompilerLanguage},
@@ -1778,6 +1778,10 @@ impl TestArgs {
 
         self.apply_auto_fuzz_corpus_dir(&mut config);
 
+        if self.debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+            config.extra_output.push(ContractOutputSelection::StorageLayout);
+        }
+
         // Set up the project.
         let mut project = config.project()?;
         let project_root = project.paths.root.clone();
@@ -2333,6 +2337,9 @@ impl TestArgs {
 
             if let Some(decoder) = &outcome.last_run_decoder {
                 builder = builder.decoder(decoder);
+            }
+            if let Some(known_contracts) = &outcome.known_contracts {
+                builder = builder.known_contracts(known_contracts);
             }
 
             let mut debugger = builder.build();

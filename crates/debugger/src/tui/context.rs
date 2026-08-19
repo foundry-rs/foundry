@@ -4,7 +4,7 @@ use super::storage::{
     StorageAccess, StorageSpace, hex_u256, storage_access_at, storage_accesses_until,
 };
 use crate::{DebugNode, DebuggerLayout, ExitReason, debugger::DebuggerContext};
-use alloy_primitives::{Address, U256, hex, map::IndexMap};
+use alloy_primitives::{Address, B256, U256, hex, map::IndexMap};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
@@ -201,6 +201,18 @@ impl<'a> TUIContext<'a> {
             self.current_step,
             space,
         )
+    }
+
+    pub(super) fn storage_label(&self, space: StorageSpace, slot: U256) -> Option<String> {
+        if space != StorageSpace::Persistent {
+            return None;
+        }
+        self.debugger_context
+            .slot_identifiers
+            .as_ref()?
+            .get(self.address())?
+            .identify(&B256::from(slot), None)
+            .map(|info| info.label)
     }
 
     fn active_data_len(&self) -> usize {
@@ -1781,6 +1793,7 @@ mod tests {
             debug_arena: arena,
             stats: None,
             identified_contracts: Default::default(),
+            slot_identifiers: None,
             contracts_sources: ContractSources::default(),
             breakpoints: Breakpoints::default(),
             layout: Default::default(),

@@ -618,7 +618,10 @@ impl TUIContext<'_> {
     }
 
     fn current_storage_access_line(&self) -> Option<Line<'static>> {
-        storage_access_at(self.debug_steps(), self.current_step).map(storage_access_line)
+        storage_access_at(self.debug_steps(), self.current_step).map(|access| {
+            let label = self.storage_label(access.space(), access.slot());
+            storage_access_line(access, label.as_deref())
+        })
     }
 
     fn draw_data(&mut self, f: &mut Frame<'_>, area: Rect) {
@@ -644,7 +647,14 @@ impl TUIContext<'_> {
             .enumerate()
             .skip(self.draw_memory.current_storage_startline)
             .flat_map(|(index, access)| {
-                storage_slot_lines(index, index_width, access, current_slot == Some(access.slot()))
+                let label = self.storage_label(space, access.slot());
+                storage_slot_lines(
+                    index,
+                    index_width,
+                    access,
+                    label.as_deref(),
+                    current_slot == Some(access.slot()),
+                )
             })
             .collect::<Vec<_>>();
         if lines.is_empty() {
@@ -1167,14 +1177,23 @@ fn scope_variable_line(variable: ScopeVariable) -> Line<'static> {
     Line::from(spans)
 }
 
-fn storage_access_line(access: StorageAccess) -> Line<'static> {
-    Line::from(Span::styled(access.describe(), Style::new().fg(Color::Yellow)))
+fn storage_access_line(access: StorageAccess, label: Option<&str>) -> Line<'static> {
+    let mut spans = vec![Span::styled(access.describe(), Style::new().fg(Color::Yellow))];
+    if let Some(label) = label {
+        spans.extend([
+            Span::raw(" ("),
+            Span::styled(label.to_string(), Color::Cyan),
+            Span::raw(")"),
+        ]);
+    }
+    Line::from(spans)
 }
 
 fn storage_slot_lines(
     index: usize,
     index_width: usize,
     access: StorageAccess,
+    label: Option<&str>,
     current: bool,
 ) -> [Line<'static>; 2] {
     let value_style = if current {
@@ -1183,13 +1202,21 @@ fn storage_slot_lines(
         Style::new().fg(Color::White)
     };
     let prefix_width = index_width + 2;
+    let mut slot_spans = vec![
+        Span::styled(format!("{index:0index_width$}| "), Style::new().fg(Color::Gray)),
+        Span::styled(access.op(), value_style),
+        Span::raw(" slot "),
+        Span::styled(hex_u256(access.slot()), value_style),
+    ];
+    if let Some(label) = label {
+        slot_spans.extend([
+            Span::raw(" ("),
+            Span::styled(label.to_string(), Style::new().fg(Color::Cyan)),
+            Span::raw(")"),
+        ]);
+    }
     [
-        Line::from(vec![
-            Span::styled(format!("{index:0index_width$}| "), Style::new().fg(Color::Gray)),
-            Span::styled(access.op(), value_style),
-            Span::raw(" slot "),
-            Span::styled(hex_u256(access.slot()), value_style),
-        ]),
+        Line::from(slot_spans),
         Line::from(vec![
             Span::raw(" ".repeat(prefix_width)),
             Span::raw("value "),
@@ -1414,6 +1441,8 @@ mod tests {
     };
     use alloy_dyn_abi::parser::Parameters;
     use alloy_primitives::{Address, Bytes, U256, address};
+    use foundry_common::slot_identifier::SlotIdentifier;
+    use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
     use foundry_evm_core::Breakpoints;
     use foundry_evm_traces::debug::{ContractSources, DebugSourceScope, DebugVariable};
     use ratatui::{
@@ -1428,6 +1457,7 @@ mod tests {
         CallKind, CallTraceStep, DecodedCallData, DecodedCallTrace, DecodedInternalCall,
         DecodedTraceStep, StorageChange, StorageChangeReason,
     };
+    use std::sync::Arc;
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans.iter().map(|span| span.content.as_ref()).collect()
@@ -1524,6 +1554,7 @@ mod tests {
             debug_arena: arena,
             stats: None,
             identified_contracts: Default::default(),
+            slot_identifiers: None,
             contracts_sources: ContractSources::default(),
             breakpoints: Breakpoints::default(),
             layout: Default::default(),
@@ -1532,6 +1563,32 @@ mod tests {
 
     fn abi_word(value: U256) -> [u8; 32] {
         value.to_be_bytes::<32>()
+    }
+
+    fn uint256_slot_identifier(label: &str) -> SlotIdentifier {
+        let storage_type = "t_uint256".to_string();
+        SlotIdentifier::new(Arc::new(StorageLayout {
+            storage: vec![Storage {
+                ast_id: 1,
+                contract: "StorageTest".to_string(),
+                label: label.to_string(),
+                offset: 0,
+                slot: "0".to_string(),
+                storage_type: storage_type.clone(),
+            }],
+            types: [(
+                storage_type,
+                StorageType {
+                    encoding: "inplace".to_string(),
+                    key: None,
+                    label: "uint256".to_string(),
+                    number_of_bytes: "32".to_string(),
+                    value: None,
+                    other: Default::default(),
+                },
+            )]
+            .into(),
+        }))
     }
 
     #[test]
@@ -1577,6 +1634,8 @@ mod tests {
             reason: StorageChangeReason::SSTORE,
         }));
         let mut context = context_with_arena(vec![debug_node(0, 0, vec![first, second, latest])]);
+        context.slot_identifiers =
+            Some([(Address::ZERO, uint256_slot_identifier("count"))].into_iter().collect());
         let mut tui = TUIContext::new(&mut context);
         tui.current_step = 2;
         let backend = TestBackend::new(100, 6);
@@ -1594,7 +1653,7 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(screen.contains("Storage: 2 accessed slots"));
-        assert!(screen.contains("SSTORE slot 0x0"));
+        assert!(screen.contains("SSTORE slot 0x0 (count)"));
         assert!(screen.contains("value 0x2b"));
         assert!(screen.contains("SSTORE slot 0x1"));
         assert!(screen.contains("value 0xbeef"));
@@ -2076,7 +2135,10 @@ mod tests {
         let steps = [step];
         let access = super::storage_access_at(&steps, 0).unwrap();
 
-        assert_eq!(line_text(&super::storage_access_line(access)), "storage SLOAD slot 0x1 = 0x2a");
+        assert_eq!(
+            line_text(&super::storage_access_line(access, None)),
+            "storage SLOAD slot 0x1 = 0x2a"
+        );
     }
 
     #[test]
@@ -2092,7 +2154,7 @@ mod tests {
         let access = super::storage_access_at(&steps, 0).unwrap();
 
         assert_eq!(
-            line_text(&super::storage_access_line(access)),
+            line_text(&super::storage_access_line(access, None)),
             "storage SSTORE slot 0x1: 0x7 -> 0x2a"
         );
     }

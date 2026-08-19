@@ -4,6 +4,7 @@ use crate::{DebugNode, DebuggerBuilder, ExitReason, tui::TUI};
 use alloy_primitives::map::AddressHashMap;
 use clap::ValueEnum;
 use eyre::Result;
+use foundry_common::slot_identifier::SlotIdentifier;
 use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::debug::ContractSources;
 use std::path::Path;
@@ -49,6 +50,7 @@ pub struct DebuggerContext {
     pub debug_arena: Vec<DebugNode>,
     pub stats: Option<DebuggerStats>,
     pub identified_contracts: AddressHashMap<String>,
+    pub(crate) slot_identifiers: Option<AddressHashMap<SlotIdentifier>>,
     /// Source map of contract sources
     pub contracts_sources: ContractSources,
     pub breakpoints: Breakpoints,
@@ -78,6 +80,7 @@ impl Debugger {
                 debug_arena,
                 stats: None,
                 identified_contracts,
+                slot_identifiers: None,
                 contracts_sources,
                 breakpoints,
                 layout: DebuggerLayout::Auto,
@@ -89,6 +92,7 @@ impl Debugger {
         debug_arena: Vec<DebugNode>,
         stats: DebuggerStats,
         identified_contracts: AddressHashMap<String>,
+        slot_identifiers: AddressHashMap<SlotIdentifier>,
         contracts_sources: ContractSources,
         breakpoints: Breakpoints,
         layout: DebuggerLayout,
@@ -98,6 +102,7 @@ impl Debugger {
                 debug_arena,
                 stats: Some(stats),
                 identified_contracts,
+                slot_identifiers: Some(slot_identifiers),
                 contracts_sources,
                 breakpoints,
                 layout,
