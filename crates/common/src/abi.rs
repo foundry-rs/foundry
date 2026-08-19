@@ -3,10 +3,12 @@
 use alloy_chains::Chain;
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::{Error, Event, Function, Param};
-use alloy_primitives::{Address, LogData, hex};
+use alloy_primitives::{Address, LogData, hex, map::HashSet};
 use eyre::{Context, ContextCompat, Result};
 use foundry_block_explorers::{Client, contract::ContractMetadata, errors::EtherscanError};
 use std::pin::Pin;
+
+const MAX_PROXY_DEPTH: usize = 16;
 
 pub fn encode_args<I, S>(inputs: &[Param], args: I) -> Result<Vec<DynSolValue>>
 where
@@ -166,26 +168,48 @@ pub async fn get_func_etherscan(
     Err(eyre::eyre!("Function not found in abi"))
 }
 
-/// If the code at `address` is a proxy, recurse until we find the implementation.
+/// If the code at `address` is a proxy, recurse through its implementations and return metadata for
+/// the full chain, with the final implementation first.
 pub fn find_source(
     client: Client,
     address: Address,
 ) -> Pin<Box<dyn Future<Output = Result<ContractMetadata>>>> {
+    find_source_inner(client, address, HashSet::default(), 0)
+}
+
+fn find_source_inner(
+    client: Client,
+    address: Address,
+    mut visited: HashSet<Address>,
+    depth: usize,
+) -> Pin<Box<dyn Future<Output = Result<ContractMetadata>>>> {
     Box::pin(async move {
+        if depth >= MAX_PROXY_DEPTH {
+            eyre::bail!("proxy chain exceeds maximum depth of {MAX_PROXY_DEPTH}");
+        }
+        if !visited.insert(address) {
+            eyre::bail!("proxy cycle detected at {address}");
+        }
+
         trace!(%address, "find Etherscan source");
         let source = client.contract_source_code(address).await?;
         let metadata = source.items.first().wrap_err("Etherscan returned no data")?;
         if metadata.proxy == 0 {
             Ok(source)
         } else {
-            let implementation = metadata.implementation.unwrap();
+            let implementation = metadata
+                .implementation
+                .ok_or_else(|| eyre::eyre!("proxy at {address} has no implementation address"))?;
             sh_status!(
                 "Contract at {address} is a proxy, trying to fetch source at {implementation}..."
             )?;
-            match find_source(client, implementation).await {
-                impl_source @ Ok(_) => impl_source,
+            match find_source_inner(client, implementation, visited, depth + 1).await {
+                Ok(mut impl_source) => {
+                    impl_source.items.extend(source.items);
+                    Ok(impl_source)
+                }
                 Err(e) => {
-                    let err = EtherscanError::ContractCodeNotVerified(address).to_string();
+                    let err = EtherscanError::ContractCodeNotVerified(implementation).to_string();
                     if e.to_string() == err {
                         error!(%err);
                         Ok(source)
@@ -209,6 +233,50 @@ mod tests {
     use super::*;
     use alloy_dyn_abi::EventExt;
     use alloy_primitives::{B256, U256};
+    use axum::{
+        Json, Router,
+        extract::{Query, State},
+        routing::get,
+    };
+    use serde_json::{Value, json};
+    use std::{collections::HashMap as StdHashMap, sync::Arc};
+    use tokio::task::JoinHandle;
+
+    fn source_response(name: &str, abi: Value, implementation: Option<Address>) -> Value {
+        let mut metadata = json!({
+            "SourceCode": "",
+            "ABI": abi.to_string(),
+            "ContractName": name,
+            "CompilerVersion": "v0.8.26+commit.8a97fa7a",
+            "OptimizationUsed": "0",
+            "OptimizationRuns": "0",
+            "ConstructorArguments": "",
+            "EVMVersion": "Default",
+            "IsProxy": if implementation.is_some() { "1" } else { "0" }
+        });
+        if let Some(implementation) = implementation {
+            metadata["Implementation"] = json!(implementation);
+        }
+        json!({ "status": "1", "message": "OK", "result": [metadata] })
+    }
+
+    async fn explorer_client(responses: StdHashMap<Address, Value>) -> (Client, JoinHandle<()>) {
+        async fn handler(
+            State(responses): State<Arc<StdHashMap<Address, Value>>>,
+            Query(query): Query<StdHashMap<String, String>>,
+        ) -> Json<Value> {
+            let address = query["address"].parse::<Address>().unwrap();
+            Json(responses[&address].clone())
+        }
+
+        let app = Router::new().route("/", get(handler)).with_state(Arc::new(responses));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client =
+            Client::builder().with_api_url(&url).unwrap().with_url(&url).unwrap().build().unwrap();
+        (client, handle)
+    }
 
     #[test]
     fn test_get_func() {
@@ -313,5 +381,85 @@ mod tests {
         let res = encode_args(&params, &args);
         assert!(res.is_err());
         assert!(format!("{}", res.unwrap_err()).contains("encode length mismatch"));
+    }
+
+    #[tokio::test]
+    async fn find_source_accumulates_proxy_chain_metadata() {
+        let proxy = Address::repeat_byte(0x11);
+        let implementation = Address::repeat_byte(0x22);
+        let responses = StdHashMap::from([
+            (
+                proxy,
+                source_response(
+                    "Proxy",
+                    json!([{
+                        "anonymous": false,
+                        "inputs": [],
+                        "name": "ProxyEvent",
+                        "type": "event"
+                    }]),
+                    Some(implementation),
+                ),
+            ),
+            (
+                implementation,
+                source_response(
+                    "Implementation",
+                    json!([{
+                        "anonymous": false,
+                        "inputs": [],
+                        "name": "ImplementationEvent",
+                        "type": "event"
+                    }]),
+                    None,
+                ),
+            ),
+        ]);
+        let (client, server) = explorer_client(responses).await;
+
+        let source = find_source(client, proxy).await.unwrap();
+        server.abort();
+
+        assert_eq!(source.items.len(), 2);
+        assert_eq!(source.items[0].contract_name, "Implementation");
+        assert_eq!(source.items[1].contract_name, "Proxy");
+        assert!(source.items.iter().all(|item| item.abi().unwrap().events().count() == 1));
+    }
+
+    #[tokio::test]
+    async fn find_source_retains_proxy_metadata_for_unverified_implementation() {
+        let proxy = Address::repeat_byte(0x11);
+        let implementation = Address::repeat_byte(0x22);
+        let responses = StdHashMap::from([
+            (proxy, source_response("Proxy", json!([]), Some(implementation))),
+            (
+                implementation,
+                json!({
+                    "status": "0",
+                    "message": "NOTOK",
+                    "result": "Contract source code not verified"
+                }),
+            ),
+        ]);
+        let (client, server) = explorer_client(responses).await;
+
+        let source = find_source(client, proxy).await.unwrap();
+        server.abort();
+
+        assert_eq!(source.items.len(), 1);
+        assert_eq!(source.items[0].contract_name, "Proxy");
+    }
+
+    #[tokio::test]
+    async fn find_source_rejects_proxy_without_implementation() {
+        let proxy = Address::repeat_byte(0x11);
+        let mut response = source_response("Proxy", json!([]), None);
+        response["result"][0]["IsProxy"] = json!("1");
+        let (client, server) = explorer_client(StdHashMap::from([(proxy, response)])).await;
+
+        let error = find_source(client, proxy).await.unwrap_err();
+        server.abort();
+
+        assert!(error.to_string().contains("has no implementation address"));
     }
 }

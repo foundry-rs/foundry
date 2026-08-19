@@ -63,6 +63,7 @@ use monad::{IMonadStaking, IMonadStakingSyscalls, IReserveBalance};
 #[cfg(not(feature = "monad"))]
 type MonadHardfork = ();
 type AddressEvents = HashMap<Address, BTreeMap<(B256, usize), Vec<Event>>>;
+type AddressAnonymousEvents = HashMap<Address, BTreeMap<usize, Vec<Event>>>;
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
@@ -247,6 +248,8 @@ pub struct CallTraceDecoder {
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// Events identified for a specific contract address.
     events_by_address: Option<Box<AddressEvents>>,
+    /// Anonymous events identified for a specific contract address, keyed by topic count.
+    anonymous_events_by_address: Option<Box<AddressAnonymousEvents>>,
     /// Revert decoder. Contains all known custom errors.
     pub revert_decoder: RevertDecoder,
 
@@ -468,6 +471,7 @@ impl CallTraceDecoder {
             constructor_args_offsets: Default::default(),
             events,
             events_by_address: None,
+            anonymous_events_by_address: None,
             // Decode Tempo precompile custom errors by name in traces.
             revert_decoder: RevertDecoder::new().with_abis(tempo_abis.iter()),
 
@@ -505,6 +509,7 @@ impl CallTraceDecoder {
         self.non_fallback_contracts.clear();
         self.functions_by_address.clear();
         self.events_by_address = None;
+        self.anonymous_events_by_address = None;
         self.constructors_by_address.clear();
         self.constructor_args_offsets.clear();
 
@@ -583,6 +588,19 @@ impl CallTraceDecoder {
 
     /// Adds a single event to the decoder for a specific contract address.
     pub fn push_address_event(&mut self, address: Address, event: Event) {
+        if event.anonymous {
+            let events = self
+                .anonymous_events_by_address
+                .get_or_insert_with(Default::default)
+                .entry(address)
+                .or_default()
+                .entry(indexed_inputs(&event))
+                .or_default();
+            if !events.contains(&event) {
+                events.push(event);
+            }
+            return;
+        }
         let events = self
             .events_by_address
             .get_or_insert_with(Default::default)
@@ -1373,28 +1391,48 @@ impl CallTraceDecoder {
     }
 
     async fn decode_event_inner(&self, address: Option<Address>, log: &LogData) -> DecodedCallLog {
-        let &[t0, ..] = log.topics() else { return DecodedCallLog { name: None, params: None } };
+        let regular_events = log.topics().first().and_then(|&topic| {
+            let key = (topic, log.topics().len() - 1);
+            address
+                .and_then(|address| self.events_by_address.as_deref()?.get(&address))
+                .and_then(|events| events.get(&key))
+                .or_else(|| self.events.get(&key))
+        });
+        let anonymous_events = address
+            .and_then(|address| self.anonymous_events_by_address.as_deref()?.get(&address))
+            .and_then(|events| events.get(&log.topics().len()));
 
-        let mut events = Vec::new();
-        let key = (t0, log.topics().len() - 1);
-        let address_events = address
-            .and_then(|address| self.events_by_address.as_deref()?.get(&address))
-            .and_then(|events| events.get(&key));
-        let events = match address_events.or_else(|| self.events.get(&key)) {
-            Some(es) => es,
-            None => {
-                if let Some(identifier) = &self.signature_identifier
-                    && let Some(event) = identifier.identify_event(t0).await
-                {
-                    events.push(get_indexed_event(event, log));
-                }
-                &events
+        if let Some(decoded) = self.decode_event_candidates(
+            address,
+            log,
+            regular_events.into_iter().flatten().chain(anonymous_events.into_iter().flatten()),
+        ) {
+            return decoded;
+        }
+
+        if let Some(&topic) = log.topics().first()
+            && let Some(identifier) = &self.signature_identifier
+            && let Some(event) = identifier.identify_event(topic).await
+        {
+            let event = get_indexed_event(event, log);
+            if let Some(decoded) = self.decode_event_candidates(address, log, [&event]) {
+                return decoded;
             }
-        };
+        }
+
+        DecodedCallLog { name: None, params: None }
+    }
+
+    fn decode_event_candidates<'a>(
+        &self,
+        address: Option<Address>,
+        log: &LogData,
+        events: impl IntoIterator<Item = &'a Event>,
+    ) -> Option<DecodedCallLog> {
         for event in events {
             if let Ok(decoded) = event.decode_log(log) {
                 let params = reconstruct_params(event, &decoded);
-                return DecodedCallLog {
+                return Some(DecodedCallLog {
                     name: Some(event.name.clone()),
                     params: Some(
                         params
@@ -1416,11 +1454,10 @@ impl CallTraceDecoder {
                             })
                             .collect(),
                     ),
-                };
+                });
             }
         }
-
-        DecodedCallLog { name: None, params: None }
+        None
     }
 
     /// Prefetches function and event signatures into the identifier cache

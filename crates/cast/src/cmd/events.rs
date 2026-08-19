@@ -441,6 +441,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn decodes_address_scoped_anonymous_events() {
+        let address = Address::repeat_byte(0xaa);
+        let unindexed = Event::parse("event AnonymousValue(uint256 value) anonymous").unwrap();
+        let indexed =
+            Event::parse("event AnonymousTransfer(address indexed from, uint256 value) anonymous")
+                .unwrap();
+        let abi = JsonAbi::parse([
+            "event AnonymousValue(uint256 value) anonymous",
+            "event AnonymousTransfer(address indexed from, uint256 value) anonymous",
+        ])
+        .unwrap();
+        let decoder = CallTraceDecoderBuilder::new().with_address_abi(address, &abi).build();
+
+        let decoded = decoder
+            .decode_event_with_address(
+                address,
+                &LogData::new_unchecked(Vec::new(), (U256::from(7),).abi_encode().into()),
+            )
+            .await;
+        assert_eq!(decoded.name.as_deref(), Some(unindexed.name.as_str()));
+        assert_eq!(decoded.params.unwrap(), [("value".to_string(), "7".to_string())]);
+
+        let from = Address::repeat_byte(0x11);
+        let decoded = decoder
+            .decode_event_with_address(
+                address,
+                &LogData::new_unchecked(
+                    vec![from.into_word()],
+                    (U256::from(42),).abi_encode().into(),
+                ),
+            )
+            .await;
+        assert_eq!(decoded.name.as_deref(), Some(indexed.name.as_str()));
+        assert_eq!(decoded.params.as_ref().unwrap()[0], ("from".to_string(), from.to_string()));
+        assert_eq!(decoded.params.as_ref().unwrap()[1], ("value".to_string(), "42".to_string()));
+    }
+
+    #[tokio::test]
+    async fn decodes_proxy_and_implementation_events_at_proxy_address() {
+        let address = Address::repeat_byte(0xaa);
+        let proxy_abi = JsonAbi::parse(["event Upgraded(address indexed implementation)"]).unwrap();
+        let implementation_abi = JsonAbi::parse(["event ValueChanged(uint256 value)"]).unwrap();
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_address_abi(address, &implementation_abi)
+            .with_address_abi(address, &proxy_abi)
+            .build();
+
+        let upgraded = proxy_abi.events().next().unwrap();
+        let implementation = Address::repeat_byte(0x22);
+        let decoded = decoder
+            .decode_event_with_address(
+                address,
+                &LogData::new_unchecked(
+                    vec![upgraded.selector(), implementation.into_word()],
+                    Bytes::new(),
+                ),
+            )
+            .await;
+        assert_eq!(decoded.name.as_deref(), Some("Upgraded"));
+        assert_eq!(decoded.params.unwrap()[0].1, implementation.to_string());
+
+        let changed = implementation_abi.events().next().unwrap();
+        let decoded = decoder
+            .decode_event_with_address(
+                address,
+                &LogData::new_unchecked(
+                    vec![changed.selector()],
+                    (U256::from(9),).abi_encode().into(),
+                ),
+            )
+            .await;
+        assert_eq!(decoded.name.as_deref(), Some("ValueChanged"));
+        assert_eq!(decoded.params.unwrap()[0].1, "9");
+    }
+
+    #[tokio::test]
     async fn unknown_event_falls_back_to_raw_log() {
         let topic = B256::repeat_byte(0x11);
         let log = Log {
