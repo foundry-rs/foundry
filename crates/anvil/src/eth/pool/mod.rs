@@ -36,7 +36,9 @@ use crate::{
     },
     mem::storage::MinedBlockOutcome,
 };
-use alloy_consensus::{Transaction, Typed2718};
+use alloy_consensus::Transaction;
+#[cfg(feature = "base")]
+use alloy_consensus::Typed2718;
 use alloy_primitives::{Address, TxHash};
 use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
@@ -74,6 +76,7 @@ impl<T> Pool<T> {
     }
 
     /// Returns every ready and queued transaction.
+    #[cfg(feature = "base")]
     pub fn all_transactions(&self) -> Vec<Arc<PoolTransaction<T>>> {
         let pool = self.inner.read();
         pool.pending_transactions
@@ -116,6 +119,7 @@ impl<T> Pool<T> {
     }
 
     /// Returns a transaction from `sender` that provides exactly `markers`.
+    #[cfg(feature = "base")]
     pub fn transaction_with_markers(
         &self,
         sender: Address,
@@ -265,6 +269,7 @@ impl<T: Transaction> Pool<T> {
     }
 }
 
+#[cfg(feature = "base")]
 impl<T: Typed2718> Pool<T> {
     /// Removes every transaction with the given EIP-2718 type.
     pub fn clear_transaction_type(&self, tx_type: u8) -> Vec<Arc<PoolTransaction<T>>> {

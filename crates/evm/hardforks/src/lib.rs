@@ -1,7 +1,6 @@
 //! EVM hardfork definitions for Foundry.
 //!
-//! Provides [`FoundryHardfork`], a unified enum over Ethereum, Optimism, Base, Tempo, and Monad
-//! hardforks
+//! Provides [`FoundryHardfork`], a unified enum over Ethereum, Optimism, Tempo, and Monad hardforks
 //! with `FromStr`/`Serialize`/`Deserialize` support for CLI and config usage.
 
 use std::{

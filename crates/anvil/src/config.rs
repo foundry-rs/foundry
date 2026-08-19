@@ -274,6 +274,7 @@ pub struct NodeConfig {
     /// Networks to enable features for.
     pub networks: NetworkConfigs,
     /// Overrides the Base activation-registry administrator.
+    #[cfg(feature = "base")]
     pub base_activation_admin: Option<Address>,
     /// Do not print log messages.
     pub silent: bool,
@@ -611,6 +612,7 @@ impl Default for NodeConfig {
             memory_limit: None,
             precompile_factory: None,
             networks: Default::default(),
+            #[cfg(feature = "base")]
             base_activation_admin: None,
             silent: false,
             cache_path: None,
@@ -1284,6 +1286,7 @@ impl NodeConfig {
     }
 
     /// Sets the Base activation-registry administrator override.
+    #[cfg(feature = "base")]
     #[must_use]
     pub const fn with_base_activation_admin(mut self, admin: Option<Address>) -> Self {
         self.base_activation_admin = admin;

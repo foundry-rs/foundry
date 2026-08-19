@@ -1,16 +1,19 @@
 use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes};
 use base_common_chains::ChainConfig;
 use base_common_evm::{
     BaseContext, BaseEvm, BaseEvmFactory, BaseHaltReason, BaseHandler, BaseSpecId, BaseTransaction,
     BaseTransactionError,
 };
 use base_common_network::Base;
+// Only the tests below need this crate, but Cargo forbids optional dev-dependencies, so it is an
+// optional regular dependency that the `base` feature turns on.
+use base_common_precompiles as _;
 use foundry_evm_networks::{BASE_CODE_SENTINEL_ADDRESSES, is_base_precompile_active_at};
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
-        BlockEnv, ContextTr, LocalContextTr, TxEnv,
+        BlockEnv, ContextTr, JournalTr, LocalContextTr, TxEnv,
         result::{EVMError, HaltReason, ResultAndState},
     },
     handler::{EthFrame, EvmTr, FrameResult, Handler},
@@ -19,11 +22,13 @@ use revm::{
         FrameInput, GasTracker, InstructionResult, SharedMemory, interpreter::EthInterpreter,
         interpreter_action::FrameInit,
     },
+    state::Bytecode,
 };
 
 use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
+    constants::SYSTEM_PRECOMPILE_STUB,
     evm::{FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor},
 };
 
@@ -53,6 +58,41 @@ type BaseEvmHandler<'db, I> = BaseHandler<
     EthFrame<EthInterpreter>,
 >;
 
+/// Base precompiles installed at `spec` that hold state but carry no bytecode.
+///
+/// Solidity emits an `extcodesize` check for high-level calls to functions without return data,
+/// so a code-less precompile makes the *caller* revert before the precompile ever runs. Base
+/// mainnet plants a one-byte sentinel on exactly these accounts, so mirroring it keeps local
+/// execution faithful to the chain.
+pub fn base_code_sentinel_addresses(spec: BaseSpecId) -> impl Iterator<Item = Address> {
+    let upgrade = spec.upgrade();
+    BASE_CODE_SENTINEL_ADDRESSES
+        .iter()
+        .copied()
+        .filter(move |address| is_base_precompile_active_at(*address, upgrade))
+}
+
+/// Plants the sentinel byte on code-less stateful precompiles for a newly created EVM.
+///
+/// A real deployment is never replaced, so forks that already carry the mainnet sentinel — or
+/// any genuine code — are left untouched.
+fn plant_code_sentinels<'db, I>(evm: &mut BaseRevmEvm<'db, I>)
+where
+    I: FoundryInspectorExt<BaseContext<&'db mut dyn DatabaseExt<BaseEvmFactory>>>,
+{
+    let spec = evm.ctx_ref().cfg_env().spec;
+    let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
+    let sentinel_hash = sentinel.hash_slow();
+    let journal = evm.ctx_mut().journal_mut();
+    for address in base_code_sentinel_addresses(spec) {
+        let Ok(account) = journal.load_account_with_code(address) else { continue };
+        let is_code_less = account.info.code.as_ref().is_none_or(|code| code.is_empty());
+        if is_code_less {
+            journal.set_code_with_hash(address, sentinel.clone(), sentinel_hash);
+        }
+    }
+}
+
 fn base_factory_for_env(
     factory: BaseEvmFactory,
     evm_env: &EvmEnv<BaseSpecId, BlockEnv>,
@@ -73,15 +113,6 @@ impl FoundryEvmFactory for BaseEvmFactory {
     type FoundryContext<'db> = BaseContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> = BaseRevmEvm<'db, I>;
-
-    fn stateful_precompiles(spec: Self::Spec) -> Vec<Address> {
-        let upgrade = spec.upgrade();
-        BASE_CODE_SENTINEL_ADDRESSES
-            .iter()
-            .copied()
-            .filter(|address| is_base_precompile_active_at(*address, upgrade))
-            .collect()
-    }
 
     fn create_evm_with_context<DB: alloy_evm::Database>(
         &self,
@@ -104,6 +135,7 @@ impl FoundryEvmFactory for BaseEvmFactory {
         let mut base_evm = factory.create_evm_with_inspector(db, evm_env, inspector);
         base_evm.ctx_mut().cfg.tx_chain_id_check = true;
         base_evm.inspector().get_networks().inject_precompiles(base_evm.precompiles_mut());
+        plant_code_sentinels(&mut base_evm);
         base_evm
     }
 
@@ -191,11 +223,7 @@ mod tests {
         PolicyRegistryStorage, TxContextStorage,
     };
     use revm::{
-        ExecuteEvm,
-        context::CfgEnv,
-        database::EmptyDB,
-        precompile::secp256r1,
-        primitives::{Bytes, TxKind},
+        ExecuteEvm, context::CfgEnv, database::EmptyDB, precompile::secp256r1, primitives::TxKind,
     };
 
     use super::*;
@@ -220,7 +248,8 @@ mod tests {
     /// revert on Base.
     #[test]
     fn code_sentinel_covers_only_void_returning_precompiles() {
-        let stubbed = |upgrade| BaseEvmFactory::stateful_precompiles(BaseSpecId::new(upgrade));
+        let stubbed =
+            |upgrade| base_code_sentinel_addresses(BaseSpecId::new(upgrade)).collect::<Vec<_>>();
 
         assert!(stubbed(BaseUpgrade::Azul).is_empty());
 

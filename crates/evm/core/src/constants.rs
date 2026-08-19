@@ -53,7 +53,8 @@ pub const DEFAULT_CREATE2_DEPLOYER: Address =
 ///
 /// `0xEF` is the EIP-3541 reserved prefix, so it can never come from a real deployment; it marks
 /// the account non-empty for `extcodesize` without being executable, since the address is still
-/// serviced by the precompile. Base plants the same byte on its EIP-8130 system accounts.
+/// serviced by the precompile.
+#[cfg(feature = "base")]
 pub const SYSTEM_PRECOMPILE_STUB: &[u8] = &[0xEF];
 /// The initcode of the default CREATE2 deployer.
 pub const DEFAULT_CREATE2_DEPLOYER_CODE: &[u8] = &hex!(

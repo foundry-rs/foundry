@@ -1,4 +1,6 @@
-use super::{BaseUpgrade, MonadHardfork};
+#[cfg(feature = "base")]
+use super::BaseUpgrade;
+use super::MonadHardfork;
 use crate::{CallTrace, DecodedCallData};
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_sol_types::{SolCall, abi, sol};
@@ -69,12 +71,10 @@ pub(crate) fn is_known_precompile(
     chain_id: Option<u64>,
     tempo_hardfork: Option<TempoHardfork>,
     monad_hardfork: Option<MonadHardfork>,
-    base_upgrade: Option<BaseUpgrade>,
+    #[cfg(feature = "base")] base_upgrade: Option<BaseUpgrade>,
 ) -> bool {
     #[cfg(not(feature = "monad"))]
     let _ = monad_hardfork;
-    #[cfg(not(feature = "base"))]
-    let _ = base_upgrade;
 
     // Standard EVM precompiles (all chains).
     // An 18-byte zero prefix, as `P256_VERIFY` (0x..0100) occupies the two lowest bytes.
@@ -193,7 +193,7 @@ pub(crate) fn is_known_precompile_call(
     chain_id: Option<u64>,
     tempo_hardfork: Option<TempoHardfork>,
     monad_hardfork: Option<MonadHardfork>,
-    base_upgrade: Option<BaseUpgrade>,
+    #[cfg(feature = "base")] base_upgrade: Option<BaseUpgrade>,
 ) -> bool {
     // Unlike the long-established low addresses, P256 is hardfork-dependent. Traces without an
     // execution classification, such as RPC callTracer frames, cannot safely infer it by address.
@@ -206,6 +206,7 @@ pub(crate) fn is_known_precompile_call(
         chain_id,
         tempo_hardfork,
         monad_hardfork,
+        #[cfg(feature = "base")]
         base_upgrade,
     )
 }
@@ -217,7 +218,7 @@ pub(super) fn decode(
     chain_id: Option<u64>,
     tempo_hardfork: Option<TempoHardfork>,
     monad_hardfork: Option<MonadHardfork>,
-    base_upgrade: Option<BaseUpgrade>,
+    #[cfg(feature = "base")] base_upgrade: Option<BaseUpgrade>,
 ) -> Option<DecodedCallTrace> {
     if !is_known_precompile_call(
         trace,
@@ -225,6 +226,7 @@ pub(super) fn decode(
         chain_id,
         tempo_hardfork,
         monad_hardfork,
+        #[cfg(feature = "base")]
         base_upgrade,
     ) {
         return None;
@@ -680,13 +682,22 @@ mod tests {
 
     #[test]
     fn known_precompile_boundaries() {
-        assert!(is_known_precompile(P256_VERIFY, None, None, None, None, None));
+        assert!(is_known_precompile(
+            P256_VERIFY,
+            None,
+            None,
+            None,
+            None,
+            #[cfg(feature = "base")]
+            None
+        ));
         assert!(!is_known_precompile(
             address!("0x0000000000000000000000000000000000000101"),
             None,
             None,
             None,
             None,
+            #[cfg(feature = "base")]
             None
         ));
         assert!(!is_known_precompile(
@@ -695,6 +706,7 @@ mod tests {
             None,
             None,
             None,
+            #[cfg(feature = "base")]
             None
         ));
     }
@@ -703,19 +715,52 @@ mod tests {
     fn decodes_only_confirmed_p256_precompile_calls() {
         for maybe_precompile in [None, Some(false)] {
             let trace = CallTrace { address: P256_VERIFY, maybe_precompile, ..Default::default() };
-            assert!(decode(&trace, None, None, None, None, None).is_none());
+            assert!(
+                decode(
+                    &trace,
+                    None,
+                    None,
+                    None,
+                    None,
+                    #[cfg(feature = "base")]
+                    None
+                )
+                .is_none()
+            );
         }
 
         let trace =
             CallTrace { address: P256_VERIFY, maybe_precompile: Some(true), ..Default::default() };
-        assert!(decode(&trace, None, None, None, None, None).is_some());
+        assert!(
+            decode(
+                &trace,
+                None,
+                None,
+                None,
+                None,
+                #[cfg(feature = "base")]
+                None
+            )
+            .is_some()
+        );
     }
 
     #[test]
     fn decodes_established_precompile_despite_negative_execution_classification() {
         let trace =
             CallTrace { address: SHA_256, maybe_precompile: Some(false), ..Default::default() };
-        assert!(decode(&trace, None, None, None, None, None).is_some());
+        assert!(
+            decode(
+                &trace,
+                None,
+                None,
+                None,
+                None,
+                #[cfg(feature = "base")]
+                None
+            )
+            .is_some()
+        );
     }
 
     #[test]

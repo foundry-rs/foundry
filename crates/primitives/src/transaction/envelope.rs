@@ -62,7 +62,7 @@ pub enum FoundryTxEnvelope {
     /// [EIP-7702]: https://eips.ethereum.org/EIPS/eip-7702
     #[envelope(ty = 4)]
     Eip7702(Signed<TxEip7702>),
-    /// OP-stack/Base deposit transaction.
+    /// OP stack deposit transaction.
     ///
     /// See <https://docs.optimism.io/op-stack/bridging/deposit-flow>.
     #[cfg(any(feature = "base", feature = "optimism"))]
@@ -114,7 +114,7 @@ impl FoundryTxEnvelope {
         matches!(self, Self::Eip7702(_))
     }
 
-    /// Returns `true` if this is an OP-stack/Base deposit transaction.
+    /// Returns `true` if this is an OP stack deposit transaction.
     #[cfg(any(feature = "base", feature = "optimism"))]
     #[inline]
     pub const fn is_deposit(&self) -> bool {
@@ -226,7 +226,7 @@ impl FoundryTxEnvelope {
 }
 
 impl FoundryTxType {
-    /// Returns `true` if this is an OP-stack/Base deposit transaction type.
+    /// Returns `true` if this is an OP stack deposit transaction type.
     #[cfg(any(feature = "base", feature = "optimism"))]
     pub const fn is_deposit(&self) -> bool {
         matches!(self, Self::Deposit)
@@ -283,7 +283,7 @@ impl FoundryTypedTx {
         }
     }
 
-    /// Returns `true` if this is an OP-stack/Base deposit transaction.
+    /// Returns `true` if this is an OP stack deposit transaction.
     #[cfg(any(feature = "base", feature = "optimism"))]
     pub const fn is_deposit(&self) -> bool {
         matches!(self, Self::Deposit(_))

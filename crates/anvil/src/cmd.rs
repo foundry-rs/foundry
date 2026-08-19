@@ -1191,20 +1191,18 @@ mod tests {
         assert!(config.networks.is_base());
     }
 
+    /// Base chain IDs resolved to Optimism before Base support existed, so a build without the
+    /// `base` feature must keep resolving them that way rather than erroring.
     #[test]
-    #[cfg(not(feature = "base"))]
-    fn genesis_chain_id_rejects_disabled_base_network() {
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn genesis_chain_id_without_base_still_infers_optimism() {
         let mut args = NodeArgs::parse_from(["anvil"]);
         let mut genesis = Genesis::default();
         genesis.config.chain_id = 8453;
         args.init = Some(genesis);
 
-        let error = args.into_node_config().unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "cannot infer execution network from chain ID 8453: network family `base` is not \
-             enabled in this build"
-        );
+        let config = args.into_node_config().unwrap();
+        assert!(config.networks.is_optimism());
     }
 
     #[test]

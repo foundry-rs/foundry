@@ -361,16 +361,14 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_set_chain_id(&self, chain_id: u64) -> Result<()> {
         node_info!("anvil_setChainId");
         self.backend.set_chain_id(chain_id);
+        #[cfg(feature = "base")]
         self.invalidate_base_eip8130_pool();
         Ok(())
     }
 
     /// Invalidates EIP-8130 admission state after out-of-band state mutation.
-    ///
-    /// This is a no-op without Base support, where it has nothing to invalidate.
-    #[cfg_attr(not(feature = "base"), allow(clippy::missing_const_for_fn))]
+    #[cfg(feature = "base")]
     fn invalidate_base_eip8130_pool(&self) {
-        #[cfg(feature = "base")]
         if self.backend.is_base() {
             let _ = self.pool.clear_transaction_type(base_common_evm::EIP8130_TRANSACTION_TYPE);
         }
@@ -382,6 +380,7 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_set_balance(&self, address: Address, balance: U256) -> Result<()> {
         node_info!("anvil_setBalance");
         self.backend.set_balance(address, balance).await?;
+        #[cfg(feature = "base")]
         self.invalidate_base_eip8130_pool();
         Ok(())
     }
@@ -392,6 +391,7 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_set_code(&self, address: Address, code: Bytes) -> Result<()> {
         node_info!("anvil_setCode");
         self.backend.set_code(address, code).await?;
+        #[cfg(feature = "base")]
         self.invalidate_base_eip8130_pool();
         Ok(())
     }
@@ -402,6 +402,7 @@ impl<N: Network> EthApi<N> {
     pub async fn anvil_set_nonce(&self, address: Address, nonce: U256) -> Result<()> {
         node_info!("anvil_setNonce");
         self.backend.set_nonce(address, nonce).await?;
+        #[cfg(feature = "base")]
         self.invalidate_base_eip8130_pool();
         Ok(())
     }
@@ -417,6 +418,7 @@ impl<N: Network> EthApi<N> {
     ) -> Result<bool> {
         node_info!("anvil_setStorageAt");
         self.backend.set_storage_at(address, slot, val).await?;
+        #[cfg(feature = "base")]
         self.invalidate_base_eip8130_pool();
         Ok(true)
     }
@@ -825,6 +827,7 @@ impl<N: Network> EthApi<N> {
         let _lifecycle = self.lifecycle_lock.read().await;
         let _mining = self.backend.lock_mining().await;
         let reverted = self.backend.revert_state_snapshot(id).await?;
+        #[cfg(feature = "base")]
         if reverted {
             self.invalidate_base_eip8130_pool();
         }
@@ -1619,6 +1622,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
         node_info!("anvil_loadState");
         let loaded = self.backend.load_state_bytes(buf).await?;
+        #[cfg(feature = "base")]
         if loaded {
             self.invalidate_base_eip8130_pool();
         }
@@ -2045,9 +2049,14 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthGetBlockAccessListRaw(block_id) => {
                 self.block_access_list_raw(block_id).await.to_rpc_result()
             }
+            #[cfg(feature = "base")]
             EthRequest::EthGetTransactionCount(params) => {
                 let (address, block, nonce_key) = params.into_parts();
                 self.transaction_count_with_key(address, block, nonce_key).await.to_rpc_result()
+            }
+            #[cfg(not(feature = "base"))]
+            EthRequest::EthGetTransactionCount(addr, block) => {
+                self.transaction_count(addr, block).await.to_rpc_result()
             }
             EthRequest::EthGetTransactionCountByHash(hash) => {
                 self.block_transaction_count_by_hash(hash).await.to_rpc_result()
@@ -2743,6 +2752,7 @@ impl EthApi<FoundryNetwork> {
     }
 
     /// Returns a protocol or EIP-8130 channel nonce.
+    #[cfg(feature = "base")]
     pub async fn transaction_count_with_key(
         &self,
         address: Address,
@@ -2756,29 +2766,23 @@ impl EthApi<FoundryNetwork> {
             return self.transaction_count(address, block_number).await;
         }
 
-        #[cfg(feature = "base")]
-        {
-            let block_request = self.block_request(block_number).await?;
-            let timestamp = self.backend.block_request_timestamp(&block_request).await?;
-            self.backend.ensure_base_eip8130_active_at(timestamp)?;
-            if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
-                return Err(RpcError::invalid_params(
-                    "nonce_key NONCE_KEY_MAX selects the expiring-nonce channel which has no \
-                     per-channel counter",
-                )
-                .into());
-            }
-            let slot = NonceManagerStorage::nonce_slot(address, nonce_key)
-                .map_err(|error| RpcError::invalid_params(error.to_string()))?;
-            let word = self
-                .backend
-                .storage_at(NonceManagerStorage::ADDRESS, slot, Some(block_request))
-                .await?;
-            Ok(Eip8130Nonce::decode_channel_nonce(U256::from_be_bytes(word.0)))
+        let block_request = self.block_request(block_number).await?;
+        let timestamp = self.backend.block_request_timestamp(&block_request).await?;
+        self.backend.ensure_base_eip8130_active_at(timestamp)?;
+        if nonce_key == Eip8130Constants::NONCE_KEY_MAX {
+            return Err(RpcError::invalid_params(
+                "nonce_key NONCE_KEY_MAX selects the expiring-nonce channel which has no \
+                 per-channel counter",
+            )
+            .into());
         }
-
-        #[cfg(not(feature = "base"))]
-        Err(RpcError::invalid_params("EIP-8130 nonce keys are not supported").into())
+        let slot = NonceManagerStorage::nonce_slot(address, nonce_key)
+            .map_err(|error| RpcError::invalid_params(error.to_string()))?;
+        let word = self
+            .backend
+            .storage_at(NonceManagerStorage::ADDRESS, slot, Some(block_request))
+            .await?;
+        Ok(Eip8130Nonce::decode_channel_nonce(U256::from_be_bytes(word.0)))
     }
 
     /// Returns the number of transactions in a block with given block number.
@@ -2898,12 +2902,15 @@ impl EthApi<FoundryNetwork> {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
+        #[cfg(feature = "base")]
         let (requires, provides) =
             if let Some(markers) = self.eip8130_nonce_markers(&pending_transaction).await? {
                 markers
             } else {
                 nonce_markers(&pending_transaction, nonce, on_chain_nonce, from)
             };
+        #[cfg(not(feature = "base"))]
+        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -2957,12 +2964,15 @@ impl EthApi<FoundryNetwork> {
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
         let on_chain_nonce = self.backend.current_nonce(from).await?;
+        #[cfg(feature = "base")]
         let (requires, provides) =
             if let Some(markers) = self.eip8130_nonce_markers(&pending_transaction).await? {
                 markers
             } else {
                 nonce_markers(&pending_transaction, nonce, on_chain_nonce, from)
             };
+        #[cfg(not(feature = "base"))]
+        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -3064,6 +3074,7 @@ impl EthApi<FoundryNetwork> {
         let from = *pending_transaction.sender();
         let priority = self.transaction_priority(&pending_transaction.transaction);
 
+        #[cfg(feature = "base")]
         let (requires, provides) =
             if let Some(markers) = self.eip8130_nonce_markers(&pending_transaction).await? {
                 markers
@@ -3074,6 +3085,17 @@ impl EthApi<FoundryNetwork> {
                 let nonce = pending_transaction.transaction.nonce();
                 (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
             };
+        // Tempo txs use a 2D nonce system — no sequential ordering by account nonce.
+        #[cfg(not(feature = "base"))]
+        let (requires, provides) = if let Some((requires, provides)) =
+            tempo_parallel_nonce_markers(&pending_transaction)
+        {
+            (requires, provides)
+        } else {
+            let on_chain_nonce = self.backend.current_nonce(from).await?;
+            let nonce = pending_transaction.transaction.nonce();
+            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
+        };
 
         let pool_transaction =
             PoolTransaction { requires, provides, pending_transaction, priority, is_replay: false };
@@ -4407,12 +4429,15 @@ impl EthApi<FoundryNetwork> {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
+        #[cfg(feature = "base")]
         let (requires, provides) =
             if let Some(markers) = self.eip8130_nonce_markers(&pending_transaction).await? {
                 markers
             } else {
                 nonce_markers(&pending_transaction, nonce, on_chain_nonce, from)
             };
+        #[cfg(not(feature = "base"))]
+        let (requires, provides) = nonce_markers(&pending_transaction, nonce, on_chain_nonce, from);
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -4929,13 +4954,11 @@ impl EthApi<FoundryNetwork> {
 
     /// Returns Base EIP-8130 channel/replay markers when the transaction does not use the
     /// protocol nonce lane.
+    #[cfg(feature = "base")]
     async fn eip8130_nonce_markers(
         &self,
-        #[cfg_attr(not(feature = "base"), allow(unused_variables))] pending: &PendingTransaction<
-            FoundryTxEnvelope,
-        >,
+        pending: &PendingTransaction<FoundryTxEnvelope>,
     ) -> Result<Option<(Vec<TxMarker>, Vec<TxMarker>)>> {
-        #[cfg(feature = "base")]
         if let FoundryTxEnvelope::Eip8130(signed) = pending.transaction.as_ref() {
             let tx = signed.tx();
             let now = self.backend.eip8130_pool_timestamp_ms();

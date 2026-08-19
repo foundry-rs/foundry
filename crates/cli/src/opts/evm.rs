@@ -2,8 +2,10 @@
 
 use alloy_primitives::{Address, B256, U256};
 use clap::Parser;
+#[cfg(feature = "base")]
+use foundry_config::FoundryHardfork;
 use foundry_config::{
-    Chain, Config, FoundryHardfork,
+    Chain, Config,
     figment::{
         self, Metadata, Profile, Provider,
         error::Kind::InvalidType,
@@ -128,6 +130,7 @@ pub struct EvmArgs {
     /// The runtime EVM hardfork to use.
     ///
     /// Network-specific hardforks must be namespaced, for example `base:Beryl`.
+    #[cfg(feature = "base")]
     #[arg(long, value_name = "HARDFORK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hardfork: Option<FoundryHardfork>,

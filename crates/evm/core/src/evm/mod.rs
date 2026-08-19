@@ -161,17 +161,6 @@ pub trait FoundryEvmFactory:
     /// Maximum initcode size enforced during nested transaction execution.
     const CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE;
 
-    /// Network-native precompile addresses installed at `spec` that carry no bytecode.
-    ///
-    /// Solidity emits an `extcodesize` check for high-level calls to functions without return
-    /// data, so a code-less precompile makes the *caller* revert before the precompile runs.
-    /// Harnesses give these accounts a sentinel byte; see [`SYSTEM_PRECOMPILE_STUB`].
-    ///
-    /// [`SYSTEM_PRECOMPILE_STUB`]: crate::constants::SYSTEM_PRECOMPILE_STUB
-    fn stateful_precompiles(_spec: Self::Spec) -> Vec<Address> {
-        Vec::new()
-    }
-
     /// Whether transaction execution needs metadata from surrounding blocks.
     const NEEDS_BLOCK_CONTEXT: bool = false;
 

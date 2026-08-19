@@ -804,6 +804,7 @@ struct PreparedCall {
     evm_env: EvmEnv,
     tx_env: CallTxEnv,
     simulated_tempo_tx: Option<AASigned>,
+    #[cfg(feature = "base")]
     simulated_envelope: Option<FoundryTxEnvelope>,
 }
 
@@ -1711,6 +1712,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns true if Base network mode is active.
+    #[cfg(feature = "base")]
     pub const fn is_base(&self) -> bool {
         self.networks.is_base()
     }
@@ -1841,15 +1843,13 @@ impl<N: Network> Backend<N> {
         let monad_hardfork = self.is_monad().then(|| self.monad_hardfork());
         #[cfg(not(feature = "monad"))]
         let monad_hardfork = None;
+        precompiles_map.extend(
+            self.networks
+                .precompiles(self.is_tempo().then(|| self.tempo_hardfork()), monad_hardfork),
+        );
         #[cfg(feature = "base")]
-        let base_upgrade = self.is_base().then(|| self.base_upgrade());
-        #[cfg(not(feature = "base"))]
-        let base_upgrade = None;
-        precompiles_map.extend(self.networks.precompiles(
-            self.is_tempo().then(|| self.tempo_hardfork()),
-            monad_hardfork,
-            base_upgrade,
-        ));
+        precompiles_map
+            .extend(self.networks.base_precompiles(self.is_base().then(|| self.base_upgrade())));
 
         if let Some(factory) = &self.precompile_factory {
             for (address, precompile) in factory.precompiles() {
@@ -1941,7 +1941,12 @@ impl<N: Network> Backend<N> {
     /// Returns an error if deposit transactions are not active.
     #[cfg(any(feature = "base", feature = "optimism"))]
     pub const fn ensure_deposits_active(&self) -> Result<(), BlockchainError> {
-        if self.is_base() || self.is_optimism() {
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            return Ok(());
+        }
+        #[cfg(feature = "optimism")]
+        if self.is_optimism() {
             return Ok(());
         }
         Err(BlockchainError::DepositTransactionUnsupported)
@@ -2775,7 +2780,14 @@ impl<N: Network> Backend<N> {
         if moves.is_empty() {
             return Ok(SimulationPrecompileOverrides::default());
         }
-        if self.is_base() || self.is_optimism() || self.is_tempo() || self.is_monad() {
+        #[cfg(feature = "base")]
+        if self.is_base() {
+            return Err(simulate_rpc_error(
+                -32000,
+                "precompile moves are not supported on this network",
+            ));
+        }
+        if self.is_optimism() || self.is_tempo() || self.is_monad() {
             return Err(simulate_rpc_error(
                 -32000,
                 "precompile moves are not supported on this network",
@@ -3571,7 +3583,13 @@ impl<N: Network> Backend<N> {
                 self.base_call_tx_env(tx_env)
             }
         };
-        Ok(PreparedCall { evm_env, tx_env, simulated_tempo_tx: None, simulated_envelope: None })
+        Ok(PreparedCall {
+            evm_env,
+            tx_env,
+            simulated_tempo_tx: None,
+            #[cfg(feature = "base")]
+            simulated_envelope: None,
+        })
     }
 
     /// Classifies an RPC request according to the active network.
@@ -3749,6 +3767,7 @@ impl<N: Network> Backend<N> {
                     evm_env,
                     tx_env: CallTxEnv::Tempo(tx_env),
                     simulated_tempo_tx: Some(simulated_tempo_tx),
+                    #[cfg(feature = "base")]
                     simulated_envelope: None,
                 })
             }
@@ -4836,9 +4855,7 @@ impl<N: Network> Backend<N> {
             // check on high-level calls to functions without return data does not revert in the
             // caller. `ensure_eip8130_system_accounts` only covers the Cobalt nonce manager.
             for address in
-                <BaseEvmFactory as foundry_evm::core::evm::FoundryEvmFactory>::stateful_precompiles(
-                    BaseSpecId::new(upgrade),
-                )
+                foundry_evm::core::evm::base_code_sentinel_addresses(BaseSpecId::new(upgrade))
             {
                 let mut account = erased.basic(address)?.unwrap_or_default();
                 if account.code.as_ref().is_none_or(|code| code.is_empty()) {
@@ -8925,6 +8942,7 @@ impl Backend<FoundryNetwork> {
                         mut evm_env,
                         mut tx_env,
                         simulated_tempo_tx,
+                        #[cfg(feature = "base")]
                         simulated_envelope,
                     } = if let Some(parsed_request) = parsed_request {
                         self.prepare_typed_call_env(
@@ -8950,8 +8968,11 @@ impl Backend<FoundryNetwork> {
                         tx_env.base_mut().nonce = 0;
                     }
                     let uses_protocol_call_nonce = tx_env.uses_protocol_call_nonce();
+                    #[cfg(feature = "base")]
                     let simulated_envelope = simulated_envelope
                         .or_else(|| simulated_tempo_tx.map(FoundryTxEnvelope::Tempo));
+                    #[cfg(not(feature = "base"))]
+                    let simulated_envelope = simulated_tempo_tx.map(FoundryTxEnvelope::Tempo);
 
                     if is_amsterdam {
                         // Ensure simulated Amsterdam calls use EIP-8037's split gas schedule.

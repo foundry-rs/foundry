@@ -27,7 +27,7 @@ use foundry_evm_core::{
     },
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
-        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER, SYSTEM_PRECOMPILE_STUB,
+        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
     },
     decode::{RevertDecoder, SkipReason},
     eip2935::{
@@ -189,19 +189,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
                     ..Default::default()
                 },
             );
-        }
-
-        // Network-native precompiles that hold state but carry no bytecode need the same treatment:
-        // Solidity's `extcodesize` check on high-level calls to functions without return data makes
-        // the caller revert before the precompile ever runs. Never overwrite a real deployment.
-        for address in FEN::EvmFactory::stateful_precompiles(evm_env.cfg_env.spec) {
-            let mut account = backend.basic_ref(address).unwrap_or_default().unwrap_or_default();
-            if account.code.as_ref().is_none_or(|code| code.is_empty()) {
-                let code = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
-                account.code_hash = code.hash_slow();
-                account.code = Some(code);
-                backend.insert_account_info(address, account);
-            }
         }
 
         if !backend.is_in_forking_mode() && evm_env.cfg_env.spec.into() >= SpecId::PRAGUE {

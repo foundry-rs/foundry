@@ -40,6 +40,7 @@ pub struct Params<T> {
 }
 
 /// Parameters accepted by `eth_getTransactionCount`.
+#[cfg(feature = "base")]
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(untagged)]
 pub enum TransactionCountParams {
@@ -51,6 +52,7 @@ pub enum TransactionCountParams {
     Eip8130((Address, Option<BlockId>, U256)),
 }
 
+#[cfg(feature = "base")]
 impl TransactionCountParams {
     /// Splits the request into address, block, and optional EIP-8130 nonce key.
     pub const fn into_parts(self) -> (Address, Option<BlockId>, Option<U256>) {
@@ -161,8 +163,13 @@ pub enum EthRequest {
     #[serde(rename = "eth_getBlockAccessListRaw", with = "sequence")]
     EthGetBlockAccessListRaw(BlockId),
 
+    #[cfg(feature = "base")]
     #[serde(rename = "eth_getTransactionCount")]
     EthGetTransactionCount(TransactionCountParams),
+
+    #[cfg(not(feature = "base"))]
+    #[serde(rename = "eth_getTransactionCount")]
+    EthGetTransactionCount(Address, Option<BlockId>),
 
     #[serde(rename = "eth_getBlockTransactionCountByHash", with = "sequence")]
     EthGetTransactionCountByHash(B256),

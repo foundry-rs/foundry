@@ -140,19 +140,16 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         });
         #[cfg(not(feature = "monad"))]
         let monad_hardfork = None;
-        #[cfg(feature = "base")]
-        let base_upgrade = resolved_hardfork.and_then(|hardfork| match hardfork {
-            FoundryHardfork::Base(upgrade) => Some(upgrade),
-            _ => None,
-        });
-        #[cfg(not(feature = "base"))]
-        let base_upgrade = None;
+        config.labels.extend(networks.precompiles_label(tempo_hardfork, monad_hardfork));
 
-        config.labels.extend(networks.precompiles_label(
-            tempo_hardfork,
-            monad_hardfork,
-            base_upgrade,
-        ));
+        #[cfg(feature = "base")]
+        {
+            let base_upgrade = resolved_hardfork.and_then(|hardfork| match hardfork {
+                FoundryHardfork::Base(upgrade) => Some(upgrade),
+                _ => None,
+            });
+            config.labels.extend(networks.base_precompiles_label(base_upgrade));
+        }
     }
 
     /// uses the fork block number from the config

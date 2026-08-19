@@ -145,8 +145,7 @@ fn append_deposit_requests(
 pub struct FoundryReceiptBuilder;
 
 impl FoundryReceiptBuilder {
-    // Base receipts consume thread-local EIP-8130 phase statuses at runtime.
-    #[allow(clippy::missing_const_for_fn)]
+    #[cfg_attr(not(feature = "base"), allow(clippy::missing_const_for_fn))]
     fn wrap_receipt(
         tx_type: FoundryTxType,
         receipt: ReceiptWithBloom<Receipt>,

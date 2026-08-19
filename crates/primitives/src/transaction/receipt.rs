@@ -56,7 +56,7 @@ impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
         cumulative_gas_used: u64,
         logs: impl IntoIterator<Item = alloy_rpc_types::Log>,
         tx_type: FoundryTxType,
-        #[cfg_attr(not(feature = "base"), allow(unused_variables))] eip8130_phase_statuses: Vec<u8>,
+        #[cfg(feature = "base")] eip8130_phase_statuses: Vec<u8>,
         #[cfg_attr(not(any(feature = "base", feature = "optimism")), allow(unused_variables))]
         deposit_nonce: Option<u64>,
         #[cfg_attr(not(any(feature = "base", feature = "optimism")), allow(unused_variables))]
@@ -121,8 +121,6 @@ impl FoundryReceiptEnvelope<Log> {
     ) -> FoundryReceiptEnvelope<alloy_rpc_types::Log> {
         #[cfg(feature = "base")]
         let eip8130_phase_statuses = self.eip8130_phase_statuses().to_vec();
-        #[cfg(not(feature = "base"))]
-        let eip8130_phase_statuses = Vec::new();
         let logs = self
             .logs()
             .iter()
@@ -148,6 +146,7 @@ impl FoundryReceiptEnvelope<Log> {
             self.cumulative_gas_used(),
             logs,
             self.tx_type(),
+            #[cfg(feature = "base")]
             eip8130_phase_statuses,
             deposit_nonce,
             deposit_receipt_version,
@@ -156,7 +155,7 @@ impl FoundryReceiptEnvelope<Log> {
 }
 
 impl<T> FoundryReceiptEnvelope<T> {
-    /// Returns `true` if this is an OP-stack/Base deposit receipt.
+    /// Returns `true` if this is an OP stack deposit receipt.
     #[cfg(any(feature = "base", feature = "optimism"))]
     pub const fn is_deposit(&self) -> bool {
         matches!(self, Self::Deposit(_))
@@ -608,6 +607,7 @@ mod tests {
             0,
             Vec::new(),
             tx_type,
+            #[cfg(feature = "base")]
             Vec::new(),
             None,
             None,
@@ -805,6 +805,7 @@ mod tests {
             100000,
             vec![],
             FoundryTxType::Tempo,
+            #[cfg(feature = "base")]
             Vec::new(),
             None,
             None,

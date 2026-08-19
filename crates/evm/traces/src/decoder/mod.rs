@@ -73,8 +73,6 @@ use monad::{IMonadStaking, IMonadStakingSyscalls, IReserveBalance};
 
 #[cfg(not(feature = "monad"))]
 type MonadHardfork = ();
-#[cfg(not(feature = "base"))]
-type BaseUpgrade = ();
 type AddressEvents = HashMap<Address, BTreeMap<(B256, usize), Vec<Event>>>;
 
 /// Build a new [CallTraceDecoder].
@@ -293,6 +291,7 @@ pub struct CallTraceDecoder {
     monad_hardfork: Option<MonadHardfork>,
 
     /// The Base upgrade, used to determine upgrade-specific precompiles.
+    #[cfg(feature = "base")]
     base_upgrade: Option<BaseUpgrade>,
 
     /// Hide addresses when a label is available, showing only the label.
@@ -307,6 +306,7 @@ impl CallTraceDecoder {
             self.chain_id,
             self.tempo_hardfork,
             self.monad_hardfork,
+            #[cfg(feature = "base")]
             self.base_upgrade,
         ) {
             self.labels.entry(CELO_TRANSFER).or_insert_with(|| CELO_TRANSFER_LABEL.to_string());
@@ -575,6 +575,7 @@ impl CallTraceDecoder {
             tempo_hardfork: None,
 
             monad_hardfork: None,
+            #[cfg(feature = "base")]
             base_upgrade: None,
 
             compact_labels: false,
@@ -615,6 +616,7 @@ impl CallTraceDecoder {
             self.chain_id,
             self.tempo_hardfork,
             self.monad_hardfork,
+            #[cfg(feature = "base")]
             self.base_upgrade,
         )
     }
@@ -663,6 +665,7 @@ impl CallTraceDecoder {
                     self.chain_id,
                     self.tempo_hardfork,
                     self.monad_hardfork,
+                    #[cfg(feature = "base")]
                     self.base_upgrade,
                 )
             {
@@ -992,6 +995,7 @@ impl CallTraceDecoder {
             self.chain_id,
             self.tempo_hardfork,
             self.monad_hardfork,
+            #[cfg(feature = "base")]
             self.base_upgrade,
         ) {
             return trace;
@@ -1541,6 +1545,7 @@ impl CallTraceDecoder {
                         self.chain_id,
                         self.tempo_hardfork,
                         self.monad_hardfork,
+                        #[cfg(feature = "base")]
                         self.base_upgrade,
                     )
                 {

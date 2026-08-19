@@ -112,8 +112,17 @@ pub enum BlockchainError {
         "EIP-7702 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork prague' or later."
     )]
     EIP7702TransactionUnsupportedAtHardfork,
-    #[error(
-        "deposit transaction received but is not supported.\n\nYou can use it by running anvil with '--optimism' or '--network base'."
+    #[cfg_attr(
+        feature = "base",
+        error(
+            "deposit transaction received but is not supported.\n\nYou can use it by running anvil with '--optimism' or '--network base'."
+        )
+    )]
+    #[cfg_attr(
+        not(feature = "base"),
+        error(
+            "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism'."
+        )
     )]
     DepositTransactionUnsupported,
     #[error(
@@ -135,6 +144,7 @@ pub enum BlockchainError {
     },
     #[error("Invalid transaction request: {0}")]
     InvalidTransactionRequest(String),
+    #[cfg(feature = "base")]
     #[error("EIP-8130 transaction rejected: {0}")]
     Eip8130TransactionRejected(String),
     #[error("filter not found")]
@@ -345,6 +355,7 @@ pub enum InvalidTransactionError {
     #[error("missing enveloped transaction")]
     MissingEnvelopedTx,
     /// EIP-8130 transaction failed block-inclusion validation.
+    #[cfg(feature = "base")]
     #[error("EIP-8130 transaction rejected: {0}")]
     Eip8130(String),
     /// Native ETH value transfers are not allowed in Tempo mode
@@ -545,6 +556,7 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     message: err.to_string().into(),
                     data: None,
                 },
+                #[cfg(feature = "base")]
                 err @ BlockchainError::Eip8130TransactionRejected(_) => RpcError {
                     code: ErrorCode::TransactionRejected,
                     message: err.to_string().into(),

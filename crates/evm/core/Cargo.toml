@@ -64,6 +64,7 @@ base-common-evm = { workspace = true, optional = true, features = [
     "std",
 ] }
 base-common-network = { workspace = true, optional = true, features = ["serde", "std"] }
+base-common-precompiles = { workspace = true, optional = true, features = ["std"] }
 base-common-rpc-types = { workspace = true, optional = true, features = ["serde", "std"] }
 
 revm = { workspace = true, features = [
@@ -110,7 +111,6 @@ alloy-signer-local.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
 tempo-primitives.workspace = true
-base-common-precompiles = { workspace = true, features = ["std"] }
 
 [[test]]
 name = "base_replay"
@@ -132,6 +132,7 @@ base = [
     "dep:base-common-consensus",
     "dep:base-common-evm",
     "dep:base-common-network",
+    "dep:base-common-precompiles",
     "dep:base-common-rpc-types",
     "foundry-common/base",
     "foundry-config/base",
