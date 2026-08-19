@@ -4,7 +4,7 @@ use crate::{
 };
 use clap::{
     Command, CommandFactory, FromArgMatches, Parser, builder::OsStringValueParser,
-    parser::ValueSource,
+    error::ErrorKind, parser::ValueSource,
 };
 use clap_complete::generate;
 use eyre::Result;
@@ -56,7 +56,8 @@ fn parse_lsp_subcommand<I>(args: I) -> bool
 where
     I: IntoIterator<Item = OsString>,
 {
-    Forge::command()
+    let args = args.into_iter().collect::<Vec<_>>();
+    let Some(matches) = Forge::command()
         .disable_help_flag(true)
         .ignore_errors(true)
         .mut_args(|arg| {
@@ -66,9 +67,31 @@ where
                 arg
             }
         })
-        .try_get_matches_from(args)
+        .try_get_matches_from(args.clone())
         .ok()
-        .is_some_and(|matches| matches.subcommand_name() == Some("lsp"))
+    else {
+        return false;
+    };
+
+    if matches.subcommand_name() == Some("lsp") {
+        return true;
+    }
+
+    // A typed global value can consume `lsp` and hide a malformed subcommand from the
+    // permissive parse above. Only use the strict parse for this no-subcommand case so a
+    // value followed by a real command (for example `--color lsp test`) is left alone.
+    matches.subcommand_name().is_none() && has_invalid_lsp_value(&args)
+}
+
+fn has_invalid_lsp_value(args: &[OsString]) -> bool {
+    if !args.iter().skip(1).any(|arg| arg == "lsp") {
+        return false;
+    }
+
+    let Err(err) = Forge::command().disable_help_flag(true).try_get_matches_from(args) else {
+        return false;
+    };
+    matches!(err.kind(), ErrorKind::InvalidValue | ErrorKind::ValueValidation)
 }
 
 fn lsp_command() -> Command {
@@ -284,12 +307,27 @@ mod tests {
     }
 
     #[test]
+    fn detects_lsp_value_validation_before_setup() {
+        for args in [
+            ["forge", "--color", "lsp"],
+            ["forge", "--threads", "lsp"],
+            ["forge", "--jobs", "lsp"],
+            ["forge", "-j", "lsp"],
+        ] {
+            assert!(is_lsp_invocation(args));
+        }
+    }
+
+    #[test]
     fn does_not_treat_option_values_or_other_commands_as_lsp() {
         assert!(!is_lsp_invocation(["forge", "--profile", "lsp", "test"]));
         assert!(!is_lsp_invocation(["forge", "build", "lsp"]));
         assert!(!is_lsp_invocation(["forge", "--", "lsp"]));
         assert!(!is_lsp_invocation(["forge", "--help", "lsp"]));
         assert!(!is_lsp_invocation(["forge", "--version"]));
+        assert!(!is_lsp_invocation(["forge", "--profile", "lsp"]));
+        assert!(!is_lsp_invocation(["forge", "--color", "lsp", "test"]));
+        assert!(!is_lsp_invocation(["forge", "--threads", "lsp", "test"]));
     }
 
     #[test]

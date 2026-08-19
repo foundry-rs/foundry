@@ -326,7 +326,14 @@ fn lsp_invalid_global_values_skip_project_env_setup() {
     fs::write(project.path().join(".env"), "FOUNDRY_PROFILE=default\n").unwrap();
     let empty_path = tempfile::tempdir().unwrap();
 
-    for args in [["--threads=bad", "lsp"], ["--color=bogus", "lsp"]] {
+    for args in [
+        ["--threads=bad", "lsp"],
+        ["--color=bogus", "lsp"],
+        ["--color", "lsp"],
+        ["--threads", "lsp"],
+        ["--jobs", "lsp"],
+        ["-j", "lsp"],
+    ] {
         let output = Command::new(env!("CARGO_BIN_EXE_forge"))
             .current_dir(project.path())
             .env("PATH", empty_path.path())
