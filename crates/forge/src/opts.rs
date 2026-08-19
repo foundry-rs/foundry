@@ -1,9 +1,9 @@
 use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
-    compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
-    fmt::FmtArgs, fuzz::FuzzArgs, geiger, init::InitArgs, inspect, install::InstallArgs,
-    lint::LintArgs, remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands,
-    snapshot, soldeer, test, tree, update,
+    compiler::CompilerArgs, config, coverage, create::CreateArgs, dependencies::DependenciesArgs,
+    doc::DocArgs, eip712, flatten, fmt::FmtArgs, fuzz::FuzzArgs, geiger, init::InitArgs, inspect,
+    install::InstallArgs, lint::LintArgs, remappings::RemappingArgs, remove::RemoveArgs,
+    selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
@@ -109,6 +109,14 @@ pub enum ForgeSubcommand {
     /// Remove one or multiple dependencies.
     #[command(visible_alias = "rm")]
     Remove(RemoveArgs),
+
+    /// List installed dependencies, both Git submodules and Soldeer packages.
+    ///
+    /// Examples:
+    /// - forge dependencies
+    /// - forge dependencies --json
+    #[command(verbatim_doc_comment, visible_alias = "deps")]
+    Dependencies(DependenciesArgs),
 
     /// Get the automatically inferred remappings for the project.
     #[command(visible_alias = "re")]
