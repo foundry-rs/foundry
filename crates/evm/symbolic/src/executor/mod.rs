@@ -8,6 +8,40 @@ mod invariant;
 mod opcodes;
 mod run;
 
+#[derive(Debug)]
+struct CallOutcome {
+    status: CallStatus,
+    state: PathState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CallStatus {
+    Success,
+    Revert,
+    Failure,
+}
+
+#[derive(Debug)]
+struct SequencePath {
+    state: PathState,
+    steps: Vec<SequenceStepTemplate>,
+}
+
+#[derive(Clone, Debug)]
+struct SequenceStepTemplate {
+    sender: Address,
+    address: Address,
+    contract_name: Option<String>,
+    function: Function,
+    calldata: SymbolicCalldata,
+}
+
+#[derive(Debug)]
+struct InvariantCheckOutcome {
+    failed: bool,
+    state: PathState,
+}
+
 impl SymbolicExecutor {
     pub(super) fn pop_next_path(&self, paths: &mut VecDeque<PathState>) -> Option<PathState> {
         match self.config.exploration_order {

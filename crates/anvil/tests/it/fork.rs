@@ -1317,7 +1317,7 @@ async fn test_fork_state_snapshotting_repeated() {
     let to_balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
-    let _second_state_snapshot = api.evm_snapshot().await.unwrap();
+    let second_state_snapshot = api.evm_snapshot().await.unwrap();
 
     assert!(api.evm_revert(state_snapshot).await.unwrap());
 
@@ -1329,9 +1329,8 @@ async fn test_fork_state_snapshotting_repeated() {
     assert_eq!(balance, handle.genesis_balance());
     assert_eq!(block_number, provider.get_block_number().await.unwrap());
 
-    // invalidated
-    // TODO enable after <https://github.com/foundry-rs/foundry/pull/6366>
-    // assert!(!api.evm_revert(second_snapshot).await.unwrap());
+    // The newer snapshot was invalidated by reverting to an older snapshot.
+    assert!(!api.evm_revert(second_state_snapshot).await.unwrap());
 
     // nothing is reverted, snapshot gone
     assert!(!api.evm_revert(state_snapshot).await.unwrap());

@@ -1817,7 +1817,6 @@ fn path_state_child_replaces_frame_and_resets_local_loop_state() {
         &mut cx,
         child_address,
         child_address,
-        child_address,
         Address::ZERO,
         callvalue,
         false,
