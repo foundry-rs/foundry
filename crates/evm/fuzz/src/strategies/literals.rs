@@ -241,6 +241,7 @@ impl LiteralsCollector {
                 self.insert_word(DynSolType::Uint(bits), word);
             }
         }
+        self.insert_word(DynSolType::FixedBytes(32), word);
     }
 
     /// Seeds a signed value under all `intN` sizes that can represent it.
@@ -806,6 +807,7 @@ mod tests {
 
         assert_word(&map, DynSolType::Address, addr, "Expected DAI in address set");
         assert_word(&map, DynSolType::Uint(64), num, "Expected MAGIC_NUMBER in uint64 set");
+        assert_word(&map, DynSolType::FixedBytes(32), num, "Expected MAGIC_NUMBER in bytes32 set");
         assert_word(&map, DynSolType::Int(32), int, "Expected MAGIC_INT in int32 set");
         assert_word(&map, DynSolType::FixedBytes(32), word, "Expected MAGIC_WORD in bytes32 set");
         assert!(map.strings.contains("xyzzy"), "Expected MAGIC_STRING to be collected");
@@ -872,12 +874,13 @@ mod tests {
         // - MAGIC_WORD
         // - String literals (hashed and right-padded versions)
         // - The folded EIP-1967 slot `K - 1` (`K` itself dedups with the hashed string literal)
-        assert_eq!(count(DynSolType::FixedBytes(32)), 7, "FixedBytes(32) count mismatch");
+        // - Unsigned numeric values, which use the same ABI word representation
+        assert_eq!(count(DynSolType::FixedBytes(32)), 14, "FixedBytes(32) count mismatch");
 
         // Total count check
         assert_eq!(
             literals.words.values().map(|set| set.len()).sum::<usize>(),
-            49,
+            56,
             "Total word values count mismatch"
         );
     }
