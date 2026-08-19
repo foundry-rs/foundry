@@ -64,6 +64,13 @@ struct FeeState {
     gas_price: u128,
 }
 
+/// Chain-derived fee state for the next block.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FeeSnapshot {
+    base_fee: u64,
+    blob_excess_gas_and_price: BlobExcessGasAndPrice,
+}
+
 impl FeeManager {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -106,6 +113,22 @@ impl FeeManager {
     /// Replaces all mutable fee state with a staged manager's values.
     pub(crate) fn replace_from(&self, other: &Self) {
         *self.state.write() = *other.state.read();
+    }
+
+    /// Captures the chain-derived fee state for the next block.
+    pub(crate) fn snapshot(&self) -> FeeSnapshot {
+        let state = self.state.read();
+        FeeSnapshot {
+            base_fee: state.base_fee,
+            blob_excess_gas_and_price: state.blob_excess_gas_and_price,
+        }
+    }
+
+    /// Restores the chain-derived fee state for the next block.
+    pub(crate) fn restore(&self, snapshot: FeeSnapshot) {
+        let mut state = self.state.write();
+        state.base_fee = snapshot.base_fee;
+        state.blob_excess_gas_and_price = snapshot.blob_excess_gas_and_price;
     }
 
     /// Returns the active Tempo hardfork, if running a Tempo chain.
