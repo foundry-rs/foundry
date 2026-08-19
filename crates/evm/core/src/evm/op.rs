@@ -2,7 +2,9 @@ use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_op_evm::{OpEvm, OpEvmContext, OpEvmFactory, OpTx};
 use foundry_fork_db::DatabaseError;
 use op_alloy_network::Optimism;
-use op_revm::{OpEvm as RevmEvm, OpHaltReason, OpSpecId, OpTransactionError, handler::OpHandler};
+use op_revm::{
+    L1BlockInfo, OpEvm as RevmEvm, OpHaltReason, OpSpecId, OpTransactionError, handler::OpHandler,
+};
 use revm::{
     context::{
         BlockEnv, ContextTr, LocalContextTr,
@@ -49,7 +51,7 @@ pub type OpRevmEvm<'db, I> = RevmEvm<
 >;
 
 impl FoundryEvmFactory for OpEvmFactory {
-    type ChainContext = ();
+    type Chain = L1BlockInfo;
     #[cfg(feature = "monad")]
     type TransactionState = ();
     type FoundryContext<'db> = OpEvmContext<&'db mut dyn DatabaseExt<Self>>;
@@ -61,19 +63,22 @@ impl FoundryEvmFactory for OpEvmFactory {
         &self,
         db: DB,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
     ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
-        self.create_evm(db, evm_env)
+        let mut evm = self.create_evm(db, evm_env);
+        evm.ctx_mut().chain = chain_context;
+        evm
     }
 
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let mut op_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
+        op_evm.ctx_mut().chain = chain_context;
         op_evm.cfg.tx_chain_id_check = true;
         op_evm.inspector().get_networks().inject_precompiles(op_evm.precompiles_mut());
         op_evm
@@ -83,7 +88,7 @@ impl FoundryEvmFactory for OpEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> NestedEvmFor<'db, Self> {
         Box::new(
@@ -110,7 +115,7 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
     type Spec = OpSpecId;
     type Block = BlockEnv;
     type Tx = OpTx;
-    type ChainContext = ();
+    type Chain = L1BlockInfo;
     #[cfg(feature = "monad")]
     type TransactionState = ();
 
@@ -120,6 +125,10 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
 
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx().journaled_state.inner
+    }
+
+    fn chain_mut(&mut self) -> &mut Self::Chain {
+        &mut self.ctx_mut().chain
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {

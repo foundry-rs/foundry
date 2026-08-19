@@ -414,6 +414,12 @@ impl FoundryTransaction for TempoTxEnv {
     }
 }
 
+/// Marker for a family's chain-position context type, usable as [`ContextTr::Chain`].
+///
+/// Every family that doesn't need chain metadata uses `()`
+pub trait FoundryChain: Clone + Debug + Default + Send + Sync {}
+impl<T: Clone + Debug + Default + Send + Sync> FoundryChain for T {}
+
 /// Extension trait providing mutable field access to block, tx, and cfg environments.
 ///
 /// [`ContextTr`] only exposes immutable references for block, tx, and cfg.
@@ -424,6 +430,7 @@ pub trait FoundryContextExt:
         Tx: FoundryTransaction + Clone,
         Cfg: Cfg<Spec = Self::Spec> + Clone + From<CfgEnv<Self::Spec>> + Into<CfgEnv<Self::Spec>>,
         Journal: JournalExt,
+        Chain: FoundryChain,
     >
 {
     /// Specification id type
@@ -456,6 +463,13 @@ pub trait FoundryContextExt:
     fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
         self.cfg_env_mut().set_spec_and_mainnet_gas_params(spec);
     }
+
+    /// Resyncs family-owned state that depends on the current chain-position context.
+    ///
+    /// Called after the chain context is replaced or the journal changes underneath it.
+    /// Families without chain-dependent state (the default) have nothing to do here; Monad
+    /// overrides this to rebase its reserve-balance tracker against the live chain and state.
+    fn refresh_chain_dependent_state(&mut self) {}
 
     /// Sets block environment.
     fn set_block(&mut self, block: Self::Block) {
@@ -499,7 +513,7 @@ impl<
     TX: FoundryTransaction + Clone,
     SPEC: Into<SpecId> + Copy + Debug,
     DB: Database,
-    C,
+    C: FoundryChain,
 > FoundryContextExt for Context<BLOCK, TX, CfgEnv<SPEC>, DB, Journal<DB>, C>
 {
     type Spec = <Self::Cfg as Cfg>::Spec;
@@ -561,6 +575,10 @@ impl<DB: Database> FoundryContextExt
         let mut cfg = self.cfg.clone().into_inner();
         cfg.spec = spec;
         self.cfg = MonadCfgEnv::from(cfg);
+    }
+
+    fn refresh_chain_dependent_state(&mut self) {
+        crate::evm::monad::rebase_monad_context(self);
     }
 
     fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {

@@ -29,8 +29,8 @@ use foundry_evm::{
         FoundryBlock as _,
         decode::RevertDecoder,
         evm::{
-            BlockContext, BlockEnvFor, BlockResponseFor, ChainContextFor, EvmEnvFor,
-            FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor,
+            BlockContext, BlockEnvFor, BlockResponseFor, ChainFor, EvmEnvFor, FoundryEvmFactory,
+            FoundryEvmNetwork, TxEnvFor,
         },
     },
     executors::TracingExecutor,
@@ -407,7 +407,7 @@ pub fn deploy_contract<FEN>(
     evm_env: &EvmEnvFor<FEN>,
     tx_env: &TxEnvFor<FEN>,
     to: TxKind,
-    chain_context: ChainContextFor<FEN>,
+    chain_context: ChainFor<FEN>,
 ) -> Result<Address, eyre::ErrReport>
 where
     FEN: FoundryEvmNetwork,
@@ -466,7 +466,7 @@ where
 pub fn synthetic_deployment_context<FEN>(
     block_context: Option<&BlockContext<FEN>>,
     tx_env: &TxEnvFor<FEN>,
-) -> ChainContextFor<FEN>
+) -> ChainFor<FEN>
 where
     FEN: FoundryEvmNetwork,
 {

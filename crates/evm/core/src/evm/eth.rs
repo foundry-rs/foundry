@@ -35,7 +35,7 @@ pub type EthRevmEvm<'db, I> = RevmEvm<
 >;
 
 impl FoundryEvmFactory for EthEvmFactory {
-    type ChainContext = ();
+    type Chain = ();
     #[cfg(feature = "monad")]
     type TransactionState = ();
     type FoundryContext<'db> = EthEvmContext<&'db mut dyn DatabaseExt<Self>>;
@@ -47,7 +47,7 @@ impl FoundryEvmFactory for EthEvmFactory {
         &self,
         db: DB,
         evm_env: EvmEnv,
-        _chain_context: Self::ChainContext,
+        _chain_context: Self::Chain,
     ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
         self.create_evm(db, evm_env)
     }
@@ -56,7 +56,7 @@ impl FoundryEvmFactory for EthEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv,
-        _chain_context: Self::ChainContext,
+        _chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let chain_id = evm_env.cfg_env.chain_id;
@@ -73,7 +73,7 @@ impl FoundryEvmFactory for EthEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> NestedEvmFor<'db, Self> {
         Box::new(
@@ -89,7 +89,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
     type Spec = SpecId;
     type Block = BlockEnv;
     type Tx = TxEnv;
-    type ChainContext = ();
+    type Chain = ();
     #[cfg(feature = "monad")]
     type TransactionState = ();
 
@@ -99,6 +99,10 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
 
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx_mut().journaled_state.inner
+    }
+
+    fn chain_mut(&mut self) -> &mut Self::Chain {
+        &mut self.ctx_mut().chain
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {

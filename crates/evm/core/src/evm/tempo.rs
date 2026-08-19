@@ -78,7 +78,7 @@ pub(crate) fn initialize_tempo_evm<
 }
 
 impl FoundryEvmFactory for TempoEvmFactory {
-    type ChainContext = ();
+    type Chain = ();
     #[cfg(feature = "monad")]
     type TransactionState = ();
     type FoundryContext<'db> = TempoContext<&'db mut dyn DatabaseExt<Self>>;
@@ -90,7 +90,7 @@ impl FoundryEvmFactory for TempoEvmFactory {
         &self,
         db: DB,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::ChainContext,
+        _chain_context: Self::Chain,
     ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
         self.create_evm(db, evm_env)
     }
@@ -99,7 +99,7 @@ impl FoundryEvmFactory for TempoEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::ChainContext,
+        _chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let is_forked = db.is_forked_mode();
@@ -131,7 +131,7 @@ impl FoundryEvmFactory for TempoEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> NestedEvmFor<'db, Self> {
         Box::new(
@@ -166,7 +166,7 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
     type Spec = TempoHardfork;
     type Block = TempoBlockEnv;
     type Tx = TempoTxEnv;
-    type ChainContext = ();
+    type Chain = ();
     #[cfg(feature = "monad")]
     type TransactionState = ();
 
@@ -176,6 +176,10 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
 
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx_mut().journaled_state.inner
+    }
+
+    fn chain_mut(&mut self) -> &mut Self::Chain {
+        &mut self.ctx_mut().chain
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {

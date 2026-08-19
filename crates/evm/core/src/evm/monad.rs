@@ -85,7 +85,7 @@ pub fn monad_context_from_participants(
     }
 }
 
-fn rebase_monad_context<DB: alloy_evm::Database>(context: &mut MonadContext<DB>) {
+pub(crate) fn rebase_monad_context<DB: revm::Database>(context: &mut MonadContext<DB>) {
     let chain = context.chain.clone();
     let mut tracker = std::mem::take(context.journaled_state.reserve_balance_mut());
     tracker.rebase(&chain, &context.journaled_state.inner.state);
@@ -336,7 +336,7 @@ impl FoundryEvmFactory for MonadEvmFactory {
 
     const NEEDS_BLOCK_CONTEXT: bool = true;
 
-    type ChainContext = MonadChainContext;
+    type Chain = MonadChainContext;
     type TransactionState = ReserveBalanceTracker;
 
     type FoundryContext<'db> = MonadContext<&'db mut dyn DatabaseExt<Self>>;
@@ -348,10 +348,6 @@ impl FoundryEvmFactory for MonadEvmFactory {
         ecx.journaled_state.reserve_balance().clone()
     }
 
-    fn capture_chain_context(&self, ecx: &Self::FoundryContext<'_>) -> Self::ChainContext {
-        ecx.chain.clone()
-    }
-
     fn restore_transaction_state(
         &self,
         ecx: &mut Self::FoundryContext<'_>,
@@ -361,7 +357,7 @@ impl FoundryEvmFactory for MonadEvmFactory {
         rebase_monad_context(ecx);
     }
 
-    fn chain_context_for_transaction(&self, tx: &Self::Tx) -> Self::ChainContext {
+    fn chain_context_for_transaction(&self, tx: &Self::Tx) -> Self::Chain {
         monad_context_from_participants(
             Default::default(),
             Default::default(),
@@ -376,7 +372,7 @@ impl FoundryEvmFactory for MonadEvmFactory {
         parent: &[Self::Tx],
         current: &[Self::Tx],
         current_tx_index: usize,
-    ) -> Self::ChainContext {
+    ) -> Self::Chain {
         monad_context_from_participants(
             monad_block_participants(grandparent),
             monad_block_participants(parent),
@@ -389,7 +385,7 @@ impl FoundryEvmFactory for MonadEvmFactory {
         &self,
         db: DB,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
     ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
         let mut evm = self.create_evm(db, evm_env);
         evm.ctx_mut().chain = chain_context;
@@ -400,7 +396,7 @@ impl FoundryEvmFactory for MonadEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let mut monad_evm = self.create_evm_with_inspector(db, evm_env, inspector);
@@ -408,17 +404,6 @@ impl FoundryEvmFactory for MonadEvmFactory {
         monad_evm.cfg.tx_chain_id_check = true;
         monad_evm.inspector().get_networks().inject_precompiles(monad_evm.precompiles_mut());
         monad_evm
-    }
-
-    fn apply_context_transition<'db>(
-        &self,
-        ecx: &mut Self::FoundryContext<'db>,
-        replacement: Option<&Self::ChainContext>,
-    ) {
-        if let Some(replacement) = replacement {
-            ecx.chain = replacement.clone();
-        }
-        rebase_monad_context(ecx);
     }
 
     fn try_transact_system_replay<DB, I>(
@@ -448,7 +433,7 @@ impl FoundryEvmFactory for MonadEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> NestedEvmFor<'db, Self> {
         let spec = evm_env.cfg_env.spec;
@@ -473,7 +458,7 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
     type Spec = MonadHardfork;
     type Block = BlockEnv;
     type Tx = TxEnv;
-    type ChainContext = MonadChainContext;
+    type Chain = MonadChainContext;
     type TransactionState = ReserveBalanceTracker;
 
     fn tx_mut(&mut self) -> &mut Self::Tx {
@@ -484,8 +469,8 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
         &mut self.ctx_mut().journaled_state.inner
     }
 
-    fn capture_chain_context(&self) -> Self::ChainContext {
-        self.ctx_ref().chain.clone()
+    fn chain_mut(&mut self) -> &mut Self::Chain {
+        &mut self.ctx_mut().chain
     }
 
     fn capture_transaction_state(&self) -> Self::TransactionState {
