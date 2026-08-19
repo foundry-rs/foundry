@@ -173,8 +173,18 @@ pub async fn get_func_etherscan(
 pub fn find_source(
     client: Client,
     address: Address,
-) -> Pin<Box<dyn Future<Output = Result<ContractMetadata>>>> {
-    find_source_inner(client, address, HashSet::default(), 0)
+) -> Pin<Box<dyn Future<Output = Result<ContractMetadata>> + Send>> {
+    Box::pin(async move {
+        find_source_inner(client, address, HashSet::default(), 0, true).await.map_err(Into::into)
+    })
+}
+
+/// The same as [`find_source`], but does not report proxy traversal status to the user.
+pub fn find_source_quiet(
+    client: Client,
+    address: Address,
+) -> Pin<Box<dyn Future<Output = Result<ContractMetadata, EtherscanError>> + Send>> {
+    find_source_inner(client, address, HashSet::default(), 0, false)
 }
 
 fn find_source_inner(
@@ -182,41 +192,49 @@ fn find_source_inner(
     address: Address,
     mut visited: HashSet<Address>,
     depth: usize,
-) -> Pin<Box<dyn Future<Output = Result<ContractMetadata>>>> {
+    report_proxy: bool,
+) -> Pin<Box<dyn Future<Output = Result<ContractMetadata, EtherscanError>> + Send>> {
     Box::pin(async move {
         if depth >= MAX_PROXY_DEPTH {
-            eyre::bail!("proxy chain exceeds maximum depth of {MAX_PROXY_DEPTH}");
+            return Err(EtherscanError::Unknown(format!(
+                "proxy chain exceeds maximum depth of {MAX_PROXY_DEPTH}"
+            )));
         }
         if !visited.insert(address) {
-            eyre::bail!("proxy cycle detected at {address}");
+            return Err(EtherscanError::Unknown(format!("proxy cycle detected at {address}")));
         }
 
         trace!(%address, "find Etherscan source");
         let source = client.contract_source_code(address).await?;
-        let metadata = source.items.first().wrap_err("Etherscan returned no data")?;
+        let metadata = source
+            .items
+            .first()
+            .ok_or_else(|| EtherscanError::Unknown("Etherscan returned no data".to_string()))?;
         if metadata.proxy == 0 {
             Ok(source)
         } else {
-            let implementation = metadata
-                .implementation
-                .ok_or_else(|| eyre::eyre!("proxy at {address} has no implementation address"))?;
-            sh_status!(
-                "Contract at {address} is a proxy, trying to fetch source at {implementation}..."
-            )?;
-            match find_source_inner(client, implementation, visited, depth + 1).await {
+            let implementation = metadata.implementation.ok_or_else(|| {
+                EtherscanError::Unknown(format!("proxy at {address} has no implementation address"))
+            })?;
+            if report_proxy {
+                sh_status!(
+                    "Contract at {address} is a proxy, trying to fetch source at {implementation}..."
+                )
+                .map_err(|err| EtherscanError::Unknown(err.to_string()))?;
+            }
+            match find_source_inner(client, implementation, visited, depth + 1, report_proxy).await
+            {
                 Ok(mut impl_source) => {
                     impl_source.items.extend(source.items);
                     Ok(impl_source)
                 }
-                Err(e) => {
-                    let err = EtherscanError::ContractCodeNotVerified(implementation).to_string();
-                    if e.to_string() == err {
-                        error!(%err);
-                        Ok(source)
-                    } else {
-                        Err(e)
-                    }
+                Err(EtherscanError::ContractCodeNotVerified(unverified))
+                    if unverified == implementation =>
+                {
+                    error!(%implementation, "implementation source code not verified");
+                    Ok(source)
                 }
+                Err(err) => Err(err),
             }
         }
     })

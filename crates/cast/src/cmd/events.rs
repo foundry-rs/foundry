@@ -1,7 +1,10 @@
 use super::logs::LogQueryArgs;
 use crate::{
     Cast,
-    traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
+    traces::{
+        CallTraceDecoderBuilder,
+        identifier::{ExternalIdentifier, SignaturesIdentifier},
+    },
 };
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
@@ -14,9 +17,8 @@ use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
 };
-use foundry_common::{abi::find_source, shell};
+use foundry_common::shell;
 use foundry_config::{Chain, Config};
-use futures::{StreamExt, stream};
 use serde::Serialize;
 use std::{collections::BTreeSet, fmt::Write as _};
 
@@ -123,37 +125,17 @@ async fn decode_logs(
         .with_networks(config.networks)
         .with_chain_id(config.chain.map(|chain| chain.id()));
 
-    if !config.offline && config.get_etherscan_config_with_chain(Some(explorer_chain))?.is_some() {
-        let addresses = logs.iter().map(Log::address).collect::<BTreeSet<_>>();
-        let abis = stream::iter(addresses)
-            .map(|address| async move {
-                let result = async {
-                    let client = config
-                        .get_etherscan_config_with_chain(Some(explorer_chain))?
-                        .ok_or_else(|| {
-                            eyre::eyre!(
-                                "No Etherscan API key configured for chain {explorer_chain}"
-                            )
-                        })?
-                        .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
-                    let source = find_source(client, address).await?;
-                    source
-                        .items
-                        .into_iter()
-                        .map(|item| item.abi().map_err(Into::into))
-                        .collect::<Result<Vec<_>>>()
+    if let Some(mut identifier) = ExternalIdentifier::new(config, Some(explorer_chain))? {
+        let addresses =
+            logs.iter().map(Log::address).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>();
+        for (address, result) in identifier.get_abis(&addresses).await {
+            match result {
+                Ok(abis) => {
+                    for abi in abis {
+                        builder = builder.with_address_abi(address, &abi);
+                    }
                 }
-                .await;
-                (address, result)
-            })
-            .buffer_unordered(5)
-            .collect::<Vec<_>>()
-            .await;
-        for (address, abis) in abis {
-            if let Ok(abis) = abis {
-                for abi in abis {
-                    builder = builder.with_address_abi(address, &abi);
-                }
+                Err(err) => sh_warn!("Failed to fetch ABI for {address}: {err}")?,
             }
         }
     }
