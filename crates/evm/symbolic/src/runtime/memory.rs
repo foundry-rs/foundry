@@ -180,17 +180,24 @@ impl SymMemory {
         self.symbolic_writes.push(SymbolicMemoryWrite { offset, bytes });
     }
 
-    fn store_materialized_bytes(&mut self, offset: SymExpr, bytes: SymBytes) {
-        if bytes.is_empty() {
-            return;
-        }
-        if let Some(offset) = offset.as_const()
-            && let Ok(offset) = usize::try_from(offset)
+    fn store_symbolic_sized_bytes(
+        &mut self,
+        cx: &mut SymCx,
+        offset: SymExpr,
+        bytes: SymBytes,
+        access_size: SymExpr,
+    ) {
+        if !bytes.is_empty()
+            && let Some(offset) = offset.eval().and_then(|offset| usize::try_from(offset).ok())
         {
-            self.materialized_size =
-                self.materialized_size.max(Self::size_after_access(offset, bytes.len()));
+            let size = Self::size_after_access(offset, bytes.len());
+            self.materialized_size = self.materialized_size.max(size);
         }
-        self.symbolic_writes.push(SymbolicMemoryWrite { offset, bytes });
+        if !bytes.is_empty() {
+            self.symbolic_writes.push(SymbolicMemoryWrite { offset: offset.clone(), bytes });
+        }
+        let size = Self::size_after_range_word(cx, offset, access_size);
+        self.expand_to(cx, size);
     }
 
     pub(crate) fn store_bytes_offset(&mut self, cx: &mut SymCx, offset: SymExpr, bytes: SymBytes) {
@@ -512,7 +519,7 @@ impl SymMemory {
                     .collect::<Vec<_>>();
                 let bytes = SymBytes::exprs(cx, bytes);
                 let dest = SymExpr::constant(cx, U256::from(dest));
-                self.store_materialized_bytes(dest, bytes);
+                self.store_symbolic_sized_bytes(cx, dest, bytes, size);
             }
         } else {
             let bytes = (0..src.len())
@@ -523,10 +530,8 @@ impl SymMemory {
                 })
                 .collect();
             let bytes = SymBytes::exprs(cx, bytes);
-            self.store_materialized_bytes(dest.clone(), bytes);
+            self.store_symbolic_sized_bytes(cx, dest, bytes, size);
         }
-        let access_size = Self::size_after_range_word(cx, dest, size);
-        self.expand_to(cx, access_size);
         Ok(())
     }
 
@@ -655,32 +660,32 @@ impl SymMemory {
     ) -> Result<(), SymbolicError> {
         match size {
             BoundedCopySize::Concrete(size) => {
-                let size = (*size).min(return_data.len());
-                if size != 0 {
-                    if return_data.has_symbolic_len() {
-                        let bytes = (0..size)
+                if *size != 0 {
+                    let copy_size = (*size).min(return_data.len());
+                    let bytes = if return_data.has_symbolic_len() {
+                        let bytes = (0..copy_size)
                             .map(|idx| self.call_output_byte(cx, &dest, idx, None, return_data))
                             .collect::<Vec<_>>();
-                        let bytes = SymBytes::exprs(cx, bytes);
-                        self.store_bytes_offset(cx, dest, bytes);
+                        SymBytes::exprs(cx, bytes)
                     } else {
                         let offset = SymExpr::zero(cx);
-                        let bytes = return_data.read_bytes_offset(cx, offset, size);
-                        self.store_bytes_offset(cx, dest, bytes);
-                    }
+                        return_data.read_bytes_offset(cx, offset, copy_size)
+                    };
+                    let size = SymExpr::constant(cx, U256::from(*size));
+                    self.store_symbolic_sized_bytes(cx, dest, bytes, size);
                 }
             }
             BoundedCopySize::Symbolic { size, max_size } => {
                 let output_size = size.clone();
-                let max_size = (*max_size).min(return_data.len());
-                if max_size != 0 {
-                    let bytes = (0..max_size)
+                if *max_size != 0 {
+                    let copy_size = (*max_size).min(return_data.len());
+                    let bytes = (0..copy_size)
                         .map(|idx| {
                             self.call_output_byte(cx, &dest, idx, Some(&output_size), return_data)
                         })
                         .collect::<Vec<_>>();
                     let bytes = SymBytes::exprs(cx, bytes);
-                    self.store_bytes_offset(cx, dest, bytes);
+                    self.store_symbolic_sized_bytes(cx, dest, bytes, output_size);
                 }
             }
         }

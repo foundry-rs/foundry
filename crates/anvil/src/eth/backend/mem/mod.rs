@@ -38,7 +38,7 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
-        fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
+        fees::{FeeDetails, FeeManager, FeeSnapshot, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         pool::transactions::PoolTransaction,
         preserve_simulation_request_fields,
@@ -87,7 +87,7 @@ use alloy_network::{
 #[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
-    Address, B256, Bloom, Bytes, Signature, TxHash, TxKind, U64, U256, address, hex, keccak256,
+    Address, B256, Bloom, Bytes, Signature, TxKind, U64, U256, address, hex, keccak256,
     map::{AddressMap, B256Set, HashMap, HashSet},
 };
 use alloy_rlp::Decodable;
@@ -979,6 +979,12 @@ impl<T> BlockRequest<T> {
     }
 }
 
+struct StateSnapshot {
+    block_number: u64,
+    block_hash: B256,
+    fees: FeeSnapshot,
+}
+
 /// Gives access to the [revm::Database]
 pub struct Backend<N: Network> {
     /// Access to [`revm::Database`] abstraction.
@@ -1027,7 +1033,7 @@ pub struct Backend<N: Network> {
     /// removed from the canonical chain due to a reorg.
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<ChainNotification>>>>,
     /// Keeps track of active state snapshots at a specific block.
-    active_state_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
+    active_state_snapshots: Arc<Mutex<HashMap<U256, StateSnapshot>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
     print_traces: bool,
@@ -1923,12 +1929,19 @@ impl<N: Network> Backend<N> {
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot_state();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
-        self.active_state_snapshots.lock().insert(id, (num, hash));
+        self.active_state_snapshots.lock().insert(
+            id,
+            StateSnapshot { block_number: num, block_hash: hash, fees: self.fees.snapshot() },
+        );
         id
     }
 
     pub fn list_state_snapshots(&self) -> BTreeMap<U256, (u64, B256)> {
-        self.active_state_snapshots.lock().clone().into_iter().collect()
+        self.active_state_snapshots
+            .lock()
+            .iter()
+            .map(|(&id, snapshot)| (id, (snapshot.block_number, snapshot.block_hash)))
+            .collect()
     }
 
     /// Returns the environment for the next block
@@ -5098,10 +5111,14 @@ impl<N: Network> Backend<N> {
 
     /// Reverts the state to the state snapshot identified by the given `id`.
     pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
-        let Some((num, hash)) = self.active_state_snapshots.lock().remove(&id) else {
+        let Some(snapshot) = self.active_state_snapshots.lock().remove(&id) else {
             return Ok(false);
         };
+        let StateSnapshot { block_number: num, block_hash: hash, fees } = snapshot;
         let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        if !self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove) {
+            return Ok(false);
+        }
 
         {
             // revert the storage that's newer than the snapshot
@@ -5146,7 +5163,8 @@ impl<N: Network> Backend<N> {
                 ..Default::default()
             };
         }
-        Ok(self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove))
+        self.fees.restore(fees);
+        Ok(true)
     }
 
     /// executes the transactions without writing to the underlying database
@@ -7488,23 +7506,6 @@ where
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| self.geth_trace(tx, opts))
     }
 
-    /// returns all receipts for the given transactions
-    fn get_receipts(
-        &self,
-        tx_hashes: impl IntoIterator<Item = TxHash>,
-    ) -> Vec<FoundryReceiptEnvelope> {
-        let storage = self.blockchain.storage.read();
-        let mut receipts = vec![];
-
-        for hash in tx_hashes {
-            if let Some(tx) = storage.transactions.get(&hash) {
-                receipts.push(tx.receipt.clone());
-            }
-        }
-
-        receipts
-    }
-
     pub async fn transaction_receipt(
         &self,
         hash: B256,
@@ -7578,19 +7579,22 @@ where
         &self,
         hash: B256,
     ) -> Option<MinedTransactionReceipt<FoundryNetwork>> {
-        let transaction = self.blockchain.get_transaction_by_hash(&hash)?;
+        let storage = self.blockchain.storage.read();
+        let transaction = storage.transactions.get(&hash)?;
 
         let index = transaction.info.transaction_index as usize;
-        let block = self.blockchain.get_block_by_hash(&transaction.block_hash)?;
-        let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
-        let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
+        let block = storage.blocks.get(&transaction.block_hash)?;
+        let mut next_log_index = 0;
+        for block_transaction in &block.body.transactions[..index] {
+            next_log_index +=
+                storage.transactions.get(&block_transaction.hash())?.receipt.logs().len();
+        }
 
-        let MinedTransaction { info, receipt, block_hash, .. } = transaction;
         Some(self.build_mined_transaction_receipt(
-            &info,
-            receipt,
-            block_hash,
-            &block,
+            &transaction.info,
+            transaction.receipt.clone(),
+            transaction.block_hash,
+            block,
             next_log_index,
         ))
     }

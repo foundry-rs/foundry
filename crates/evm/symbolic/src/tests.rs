@@ -731,6 +731,26 @@ fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
 }
 
 #[test]
+fn memory_symbolic_copy_size_controls_extent() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+    let dest = SymExpr::constant(&mut cx, U256::from(0x100));
+    let size = SymExpr::var(&mut cx, "size");
+    let bytes = (0u8..4).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
+    let bytes = SymBytes::exprs(&mut cx, bytes);
+    memory.copy_bytes_size_offset(&mut cx, dest, size, bytes).unwrap();
+    let memory_size = memory.size_word(&mut cx);
+
+    let size_zero = symbolic_model(&mut cx, [("size".to_string(), U256::ZERO)]);
+    assert_eq!(memory_size.eval_model(&size_zero).unwrap(), U256::ZERO);
+
+    for size in 1..=4 {
+        let model = symbolic_model(&mut cx, [("size".to_string(), U256::from(size))]);
+        assert_eq!(memory_size.eval_model(&model).unwrap(), U256::from(0x120));
+    }
+}
+
+#[test]
 fn memory_copies_folded_symbolic_size_prefix_only() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
@@ -1308,6 +1328,42 @@ fn memory_call_output_accepts_symbolic_size_with_guarded_tail() {
         memory.read_bytes(&mut cx, 0, 4).eval_model(&mut cx, &size_four).unwrap(),
         vec![1, 2, 3, 4]
     );
+}
+
+#[test]
+fn memory_call_output_size_controls_extent() {
+    let mut cx = SymCx::new();
+    let return_data = SymReturnData::empty(&mut cx);
+    let mut memory = SymMemory::default();
+    let dest = SymExpr::constant(&mut cx, U256::from(0x100));
+    let size = SymExpr::var(&mut cx, "size");
+    let copy_size = BoundedCopySize::Symbolic { size, max_size: 4 };
+
+    memory.copy_call_output_offset(&mut cx, dest, &copy_size, &return_data).unwrap();
+    let memory_size = memory.size_word(&mut cx);
+
+    let size_zero = symbolic_model(&mut cx, [("size".to_string(), U256::ZERO)]);
+    assert_eq!(memory_size.eval_model(&size_zero).unwrap(), U256::ZERO);
+
+    let size_one = symbolic_model(&mut cx, [("size".to_string(), U256::from(1))]);
+    assert_eq!(memory_size.eval_model(&size_one).unwrap(), U256::from(0x120));
+}
+
+#[test]
+fn memory_call_output_preserves_symbolic_read_bound() {
+    let mut cx = SymCx::new();
+    let return_data = SymReturnData::from_concrete_bytes(&mut cx, vec![1]);
+    let mut memory = SymMemory::default();
+    let dest = SymExpr::constant(&mut cx, U256::from(0x100));
+
+    memory
+        .copy_call_output_offset(&mut cx, dest, &BoundedCopySize::Concrete(1), &return_data)
+        .unwrap();
+
+    let offset = SymExpr::var(&mut cx, "offset");
+    let value = memory.load_word_offset(&mut cx, offset).unwrap();
+    let model = symbolic_model(&mut cx, [("offset".to_string(), U256::from(0x100))]);
+    assert_eq!(value.eval_model(&model).unwrap(), U256::from(1) << 248);
 }
 
 #[test]
@@ -2694,6 +2750,279 @@ fn expression_simplifies_saturating_select_idiom() {
 }
 
 #[test]
+fn expression_simplifies_xor_bool_select_idiom() {
+    let mut cx = SymCx::new();
+    let base = SymExpr::var(&mut cx, "base");
+    let selected = SymExpr::var(&mut cx, "selected");
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+    let condition_word = SymExpr::bool_word(&mut cx, condition.clone());
+    let expected = SymExpr::ite(&mut cx, condition, selected.clone(), base.clone());
+
+    for reverse_delta in [false, true] {
+        let delta = if reverse_delta {
+            SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selected.clone())
+        } else {
+            SymExpr::binop(&mut cx, SymBinOp::Xor, selected.clone(), base.clone())
+        };
+        for reverse_mul in [false, true] {
+            let selector = if reverse_mul {
+                SymExpr::binop(&mut cx, SymBinOp::Mul, delta.clone(), condition_word.clone())
+            } else {
+                SymExpr::binop(&mut cx, SymBinOp::Mul, condition_word.clone(), delta.clone())
+            };
+            for reverse_outer in [false, true] {
+                let actual = if reverse_outer {
+                    SymExpr::binop(&mut cx, SymBinOp::Xor, selector.clone(), base.clone())
+                } else {
+                    SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selector.clone())
+                };
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn expression_simplifies_xor_inverted_bool_select_idiom() {
+    let mut cx = SymCx::new();
+    let base = SymExpr::var(&mut cx, "base");
+    let selected = SymExpr::var(&mut cx, "selected");
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+    let zero = SymExpr::zero(&mut cx);
+    let one = SymExpr::one(&mut cx);
+    let condition_word = SymExpr::ite(&mut cx, condition.clone(), zero, one);
+    let delta = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selected.clone());
+    let selector = SymExpr::binop(&mut cx, SymBinOp::Mul, condition_word, delta);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selector);
+    let inverted = condition.not(&mut cx);
+    let expected = SymExpr::ite(&mut cx, inverted, selected, base);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn expression_simplifies_xor_composite_bool_select_idiom() {
+    let mut cx = SymCx::new();
+    let base = SymExpr::var(&mut cx, "base");
+    let selected = SymExpr::var(&mut cx, "selected");
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+    let second = SymBoolExpr::cmp(&mut cx, SymCmpOp::Eq, x, y);
+    let first_word = SymExpr::bool_word(&mut cx, first.clone());
+    let second_word = SymExpr::bool_word(&mut cx, second.clone());
+    let condition_word = SymExpr::binop(&mut cx, SymBinOp::Or, first_word, second_word);
+    let delta = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selected.clone());
+    let selector = SymExpr::binop(&mut cx, SymBinOp::Mul, condition_word, delta);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selector);
+    let condition = SymBoolExpr::or(&mut cx, vec![first, second]);
+    let expected = SymExpr::ite(&mut cx, condition, selected, base);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn expression_simplifies_xor_composite_inverted_bool_select_idiom() {
+    let mut cx = SymCx::new();
+    let base = SymExpr::var(&mut cx, "base");
+    let selected = SymExpr::var(&mut cx, "selected");
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+    let second = SymBoolExpr::cmp(&mut cx, SymCmpOp::Eq, x, y);
+    let zero = SymExpr::zero(&mut cx);
+    let one = SymExpr::one(&mut cx);
+    let first_word = SymExpr::ite(&mut cx, first.clone(), zero.clone(), one.clone());
+    let second_word = SymExpr::ite(&mut cx, second.clone(), zero, one);
+    let condition_word = SymExpr::binop(&mut cx, SymBinOp::Or, first_word, second_word);
+    let delta = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selected.clone());
+    let selector = SymExpr::binop(&mut cx, SymBinOp::Mul, condition_word, delta);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selector);
+    let first = first.not(&mut cx);
+    let second = second.not(&mut cx);
+    let condition = SymBoolExpr::or(&mut cx, vec![second, first]);
+    let expected = SymExpr::ite(&mut cx, condition, selected, base);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn expression_does_not_treat_max_mask_as_bool_select() {
+    let mut cx = SymCx::new();
+    let base = SymExpr::var(&mut cx, "base");
+    let selected = SymExpr::var(&mut cx, "selected");
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let zero = SymExpr::zero(&mut cx);
+    let mask = SymExpr::ite(&mut cx, condition.clone(), max, zero);
+    let delta = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selected.clone());
+    let selector = SymExpr::binop(&mut cx, SymBinOp::Mul, mask, delta);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selector);
+    let bool_select = SymExpr::ite(&mut cx, condition, selected, base);
+
+    assert_ne!(actual, bool_select);
+}
+
+#[test]
+fn expression_simplifies_bool_word_multiplication() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+    let condition_word = SymExpr::bool_word(&mut cx, condition.clone());
+    let actual = SymExpr::binop(&mut cx, SymBinOp::Mul, condition_word, value.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let expected = SymExpr::ite(&mut cx, condition, value, zero);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn expression_bool_word_multiplication_handles_polarity_and_masks() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+    let direct = SymExpr::bool_word(&mut cx, condition.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let one = SymExpr::one(&mut cx);
+    let inverted = SymExpr::ite(&mut cx, condition.clone(), zero.clone(), one);
+
+    let direct_expected = SymExpr::ite(&mut cx, condition.clone(), value.clone(), zero.clone());
+    let inverted_condition = condition.clone().not(&mut cx);
+    let inverted_expected = SymExpr::ite(&mut cx, inverted_condition, value.clone(), zero.clone());
+    for (word, expected) in [(direct, direct_expected), (inverted, inverted_expected)] {
+        let word_first = SymExpr::binop(&mut cx, SymBinOp::Mul, word.clone(), value.clone());
+        let word_last = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), word);
+        assert_eq!(word_first, expected);
+        assert_eq!(word_last, expected);
+    }
+
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let max_mask = SymExpr::ite(&mut cx, condition.clone(), max, zero.clone());
+    let mask_first = SymExpr::binop(&mut cx, SymBinOp::Mul, max_mask.clone(), value.clone());
+    let mask_last = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), max_mask);
+    let bool_product = SymExpr::ite(&mut cx, condition, value, zero);
+    assert_eq!(mask_first, mask_last);
+    assert_ne!(mask_first, bool_product);
+}
+
+#[test]
+fn expression_simplifies_bool_word_offset_arithmetic() {
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let one = SymExpr::one(&mut cx);
+    let low_bit = SymExpr::binop(&mut cx, SymBinOp::And, value, one);
+    let zero = SymExpr::zero(&mut cx);
+    let low_bit_is_set = SymBoolExpr::eq(&mut cx, low_bit.clone(), zero).not(&mut cx);
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+
+    let added = SymExpr::binop(&mut cx, SymBinOp::Add, low_bit.clone(), two.clone());
+    let three = SymExpr::constant(&mut cx, U256::from(3));
+    let expected = SymExpr::ite(&mut cx, low_bit_is_set.clone(), three, two.clone());
+    assert_eq!(added, expected);
+
+    let subtracted = SymExpr::binop(&mut cx, SymBinOp::Sub, two.clone(), low_bit.clone());
+    let one = SymExpr::one(&mut cx);
+    let expected = SymExpr::ite(&mut cx, low_bit_is_set.clone(), one, two);
+    assert_eq!(subtracted, expected);
+
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let wrapped = SymExpr::binop(&mut cx, SymBinOp::Add, max.clone(), low_bit.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let expected = SymExpr::ite(&mut cx, low_bit_is_set.clone(), zero.clone(), max.clone());
+    assert_eq!(wrapped, expected);
+    let wrapped_reverse = SymExpr::binop(&mut cx, SymBinOp::Add, low_bit.clone(), max);
+    assert_eq!(wrapped_reverse, expected);
+
+    let wrapped_sub = SymExpr::binop(&mut cx, SymBinOp::Sub, zero.clone(), low_bit);
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let expected = SymExpr::ite(&mut cx, low_bit_is_set, max, zero);
+    assert_eq!(wrapped_sub, expected);
+}
+
+#[test]
+fn expression_simplifies_xor_over_conditional_zero() {
+    let mut cx = SymCx::new();
+    let base = SymExpr::var(&mut cx, "base");
+    let selected = SymExpr::var(&mut cx, "selected");
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+    let zero = SymExpr::zero(&mut cx);
+    let conditional = SymExpr::ite(&mut cx, condition.clone(), selected.clone(), zero);
+    let actual = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), conditional);
+    let selected = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selected);
+    let expected = SymExpr::ite(&mut cx, condition, selected, base);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn expression_normalizes_direct_and_inverted_bool_word_arithmetic() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+    let inverted_condition = condition.clone().not(&mut cx);
+    let direct = SymExpr::bool_word(&mut cx, condition.clone());
+    let zero = SymExpr::zero(&mut cx);
+    let one = SymExpr::one(&mut cx);
+    let inverted = SymExpr::ite(&mut cx, condition.clone(), zero.clone(), one.clone());
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let three = SymExpr::constant(&mut cx, U256::from(3));
+
+    let direct_sum = SymExpr::ite(&mut cx, condition.clone(), three.clone(), two.clone());
+    let inverted_sum = SymExpr::ite(&mut cx, inverted_condition.clone(), three, two.clone());
+    for (left, right) in [(direct.clone(), two.clone()), (two.clone(), direct.clone())] {
+        assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Add, left, right), direct_sum);
+    }
+    for (left, right) in [(inverted.clone(), two.clone()), (two.clone(), inverted.clone())] {
+        assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Add, left, right), inverted_sum);
+    }
+
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let direct_minus_one = SymExpr::ite(&mut cx, condition.clone(), zero.clone(), max.clone());
+    let inverted_minus_one = SymExpr::ite(&mut cx, inverted_condition.clone(), zero, max);
+    assert_eq!(
+        SymExpr::binop(&mut cx, SymBinOp::Sub, direct.clone(), one.clone()),
+        direct_minus_one
+    );
+    assert_eq!(
+        SymExpr::binop(&mut cx, SymBinOp::Sub, inverted.clone(), one.clone()),
+        inverted_minus_one
+    );
+
+    let direct_subtrahend = SymExpr::ite(&mut cx, condition, one.clone(), two.clone());
+    let inverted_subtrahend = SymExpr::ite(&mut cx, inverted_condition, one, two.clone());
+    assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Sub, two.clone(), direct), direct_subtrahend);
+    assert_eq!(SymExpr::binop(&mut cx, SymBinOp::Sub, two, inverted), inverted_subtrahend);
+}
+
+#[test]
+fn expression_construction_sizes_shared_arithmetic_dag_once() {
+    let mut cx = SymCx::new();
+    let source = SymExpr::var(&mut cx, "source");
+    let one = SymExpr::one(&mut cx);
+    let mut shared = SymExpr::binop(&mut cx, SymBinOp::And, source, one);
+    for _ in 0..64 {
+        shared = SymExpr::binop(&mut cx, SymBinOp::Add, shared.clone(), shared);
+    }
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let expression = SymExpr::binop(&mut cx, SymBinOp::Add, shared, two);
+
+    assert_eq!(expression.unsigned_bits(), 66);
+}
+
+#[test]
 fn ite_equality_with_selected_arm_exposes_branch_condition() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
@@ -2718,6 +3047,39 @@ fn ite_equality_with_selected_arm_exposes_branch_condition() {
         normalize_constraints_for_solver(&mut cx, &[condition_is_false.clone(), other_failure]);
     assert!(normalized.contains(&condition_is_false));
     assert!(normalized.contains(&condition));
+}
+
+#[test]
+fn ite_equality_with_constant_expands_selected_branch() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let outer = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+    let inner = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, y, x);
+    let one = SymExpr::one(&mut cx);
+    let two = SymExpr::constant(&mut cx, U256::from(2));
+    let three = SymExpr::constant(&mut cx, U256::from(3));
+    let inner_value = SymExpr::ite(&mut cx, inner.clone(), three.clone(), two);
+    let value = SymExpr::ite(&mut cx, outer.clone(), inner_value, one);
+    let matches = SymBoolExpr::eq(&mut cx, value, three);
+    let expected = SymBoolExpr::and(&mut cx, vec![outer, inner]);
+
+    assert_eq!(matches, expected);
+}
+
+#[test]
+fn ite_equality_with_constant_keeps_nonconstant_leaf() {
+    let mut cx = SymCx::new();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+    let leaf = SymExpr::var(&mut cx, "leaf");
+    let zero = SymExpr::zero(&mut cx);
+    let conditional = SymExpr::ite(&mut cx, condition, leaf, zero);
+    let one = SymExpr::one(&mut cx);
+    let matches = SymBoolExpr::eq(&mut cx, conditional.clone(), one);
+
+    assert!(matches.visit_bool(|expr| expr == &conditional));
 }
 
 #[test]

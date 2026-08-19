@@ -1,5 +1,5 @@
 use crate::{
-    cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch},
+    cmd::{cache::CacheSubcommands, watch},
     opts::{Forge, ForgeSubcommand},
 };
 use clap::{CommandFactory, Parser};
@@ -139,9 +139,6 @@ pub fn run_command(args: Forge) -> Result<()> {
             }
         }
         ForgeSubcommand::Selectors { command } => global.block_on(command.run()),
-        ForgeSubcommand::Generate(cmd) => match cmd.sub {
-            GenerateSubcommands::Test(cmd) => cmd.run(),
-        },
         ForgeSubcommand::Compiler(cmd) => cmd.run(),
         ForgeSubcommand::Soldeer(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Eip712(cmd) => cmd.run(),

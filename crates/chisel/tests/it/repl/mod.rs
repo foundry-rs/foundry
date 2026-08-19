@@ -195,6 +195,51 @@ repl_test!(int_min_values, |repl| {
     repl.expect("-57896044618658097711785492504343953926634992332820282019728792003956564819968");
 });
 
+// Issue #5370: The last evaluated result can be reused in subsequent input.
+repl_test!(last_result, |repl| {
+    repl.sendln("type(uint256).max");
+    repl.sendln("uint256 MAX = $_");
+    repl.sendln("MAX");
+    repl.expect(
+        "Decimal: 115792089237316195423570985008687907853269984665640564039457584007913129639935",
+    );
+
+    repl.sendln("uint256 value = 1");
+    repl.sendln("value = 2");
+    repl.sendln("uint256 assigned = $_");
+    repl.sendln("assigned");
+    repl.expect("Decimal: 2");
+
+    repl.sendln(r#""hello""#);
+    repl.sendln("string memory greeting = $_");
+    repl.sendln("greeting");
+    repl.expect("UTF-8: hello");
+});
+
+repl_test!(last_result_resets_with_session, |repl| {
+    let saved_id = unique_cache_id("last-result-saved");
+    let loaded_id = unique_cache_id("last-result-loaded");
+    let _cleanup = CacheCleanup(vec![saved_id.clone(), loaded_id.clone()]);
+
+    repl.sendln("uint256 persisted = 7");
+    repl.sendln(&format!("!save {saved_id}"));
+    std::fs::copy(cache_file(&saved_id), cache_file(&loaded_id)).unwrap();
+
+    repl.sendln(r#""stale""#);
+    repl.sendln_raw(&format!("!load {loaded_id}"));
+    repl.expect(&format!("Loaded Chisel session! (ID = {saved_id})"));
+    repl.expect_prompt();
+    repl.sendln_raw("$_");
+    repl.expect("no previous result");
+    repl.expect_prompt();
+
+    repl.sendln("persisted");
+    repl.sendln("!clear");
+    repl.sendln_raw("$_");
+    repl.expect("no previous result");
+    repl.expect_prompt();
+});
+
 // Issue #4393: Test edit command with traces.
 // TODO: test `!edit`
 // repl_test!(edit_with_traces, |repl| {
