@@ -38,7 +38,7 @@ use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
     constants::MONAD_CHEATCODE_ADDRESS,
-    evm::{FoundryEvmFactory, NestedEvm},
+    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor},
 };
 
 type MonadEvmHandler<'db, I> =
@@ -450,15 +450,7 @@ impl FoundryEvmFactory for MonadEvmFactory {
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         chain_context: Self::ChainContext,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> Box<
-        dyn NestedEvm<
-                Spec = MonadHardfork,
-                Block = BlockEnv,
-                Tx = TxEnv,
-                ChainContext = MonadChainContext,
-                TransactionState = ReserveBalanceTracker,
-            > + 'db,
-    > {
+    ) -> NestedEvmFor<'db, Self> {
         let spec = evm_env.cfg_env.spec;
         let monad_cfg = MonadCfgEnv::from(evm_env.cfg_env);
         let mut evm = monad_context_with_db(db)

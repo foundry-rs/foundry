@@ -26,7 +26,7 @@ use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
     constants::{CALLER, TEST_CONTRACT_ADDRESS},
-    evm::{FoundryEvmFactory, NestedEvm},
+    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor},
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
 };
 
@@ -79,6 +79,7 @@ pub(crate) fn initialize_tempo_evm<
 
 impl FoundryEvmFactory for TempoEvmFactory {
     type ChainContext = ();
+    #[cfg(feature = "monad")]
     type TransactionState = ();
     type FoundryContext<'db> = TempoContext<&'db mut dyn DatabaseExt<Self>>;
 
@@ -132,15 +133,7 @@ impl FoundryEvmFactory for TempoEvmFactory {
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         chain_context: Self::ChainContext,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> Box<
-        dyn NestedEvm<
-                Spec = TempoHardfork,
-                Block = TempoBlockEnv,
-                Tx = TempoTxEnv,
-                ChainContext = (),
-                TransactionState = (),
-            > + 'db,
-    > {
+    ) -> NestedEvmFor<'db, Self> {
         Box::new(
             self.create_foundry_evm_with_inspector(db, evm_env, chain_context, inspector)
                 .into_inner(),
@@ -174,6 +167,7 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
     type Block = TempoBlockEnv;
     type Tx = TempoTxEnv;
     type ChainContext = ();
+    #[cfg(feature = "monad")]
     type TransactionState = ();
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx_mut().journaled_state.inner

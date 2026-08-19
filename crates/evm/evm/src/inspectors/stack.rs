@@ -19,7 +19,7 @@ use foundry_evm_core::{
     evm::{
         BlockEnvFor, ChainContextFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
         FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, get_create2_factory_call_inputs,
-        refresh_context_after_state_change, with_cloned_context,
+        with_cloned_context,
     },
     precompiles::P256_VERIFY,
 };
@@ -469,26 +469,43 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let factory = FEN::EvmFactory::default();
+        #[cfg(feature = "monad")]
         let chain_context = factory.capture_chain_context(ecx);
+        #[cfg(not(feature = "monad"))]
+        let chain_context = Default::default();
+        #[cfg(feature = "monad")]
         let state = factory.capture_transaction_state(ecx);
+        #[cfg(feature = "monad")]
         let mut nested_chain_context = None;
+        #[cfg(feature = "monad")]
         let mut transaction_state = None;
         with_cloned_context(ecx, |db, evm_env, journaled_state| {
             let mut evm =
                 factory.create_foundry_nested_evm(db, evm_env, chain_context, &mut inspector);
             *evm.journal_inner_mut() = journaled_state;
-            evm.restore_transaction_state(state);
+            #[cfg(feature = "monad")]
+            {
+                evm.restore_transaction_state(state);
+            }
             f(&mut *evm)?;
-            nested_chain_context = Some(evm.capture_chain_context());
-            transaction_state = Some(evm.capture_transaction_state());
+            #[cfg(feature = "monad")]
+            {
+                nested_chain_context = Some(evm.capture_chain_context());
+            }
+            #[cfg(feature = "monad")]
+            {
+                transaction_state = Some(evm.capture_transaction_state());
+            }
             let sub_inner = evm.journal_inner_mut().clone();
             let sub_evm_env = evm.to_evm_env();
             Ok((sub_evm_env, sub_inner))
         })?;
+        #[cfg(feature = "monad")]
         factory.apply_context_transition(
             ecx,
             Some(&nested_chain_context.expect("nested EVM chain context was captured")),
         );
+        #[cfg(feature = "monad")]
         factory.restore_transaction_state(
             ecx,
             transaction_state.expect("nested EVM state was captured"),
@@ -1008,7 +1025,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let evm_env = ecx.evm_clone();
         let tx_env = ecx.tx_clone();
         let factory = FEN::EvmFactory::default();
+        #[cfg(feature = "monad")]
         let chain_context = factory.capture_chain_context(ecx);
+        #[cfg(not(feature = "monad"))]
+        let chain_context = Default::default();
 
         let isolated_state = {
             let journal = ecx.journal_inner();
@@ -1031,41 +1051,48 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             state
         };
 
+        #[cfg(feature = "monad")]
         let state = factory.capture_transaction_state(ecx);
-        let (res, nested_chain_context, transaction_state) =
-            self.with_inspector(|mut inspector| {
-                let (res, nested_env, chain_context, transaction_state) = {
-                    let (db, _) = ecx.db_journal_inner_mut();
-                    let mut evm = factory.create_foundry_nested_evm(
-                        db,
-                        evm_env,
-                        chain_context,
-                        &mut inspector,
-                    );
-                    evm.journal_inner_mut().state = isolated_state;
+        #[cfg(feature = "monad")]
+        let mut transaction_state = None;
+        #[cfg(feature = "monad")]
+        let mut nested_chain_context = None;
+        let res = self.with_inspector(|mut inspector| {
+            let (res, nested_env) = {
+                let (db, _) = ecx.db_journal_inner_mut();
+                let mut evm =
+                    factory.create_foundry_nested_evm(db, evm_env, chain_context, &mut inspector);
+                evm.journal_inner_mut().state = isolated_state;
+                #[cfg(feature = "monad")]
+                {
                     evm.restore_transaction_state(state);
                     evm.preserve_transaction_state_on_next_transaction();
-                    // Set depth to 1 to make sure traces are collected correctly.
-                    evm.journal_inner_mut().depth = 1;
-                    let res = evm.transact_raw(tx_env);
-                    (
-                        res,
-                        evm.to_evm_env(),
-                        evm.capture_chain_context(),
-                        evm.capture_transaction_state(),
-                    )
-                };
+                }
+                // Set depth to 1 to make sure traces are collected correctly.
+                evm.journal_inner_mut().depth = 1;
+                let res = evm.transact_raw(tx_env);
+                #[cfg(feature = "monad")]
+                {
+                    nested_chain_context = Some(evm.capture_chain_context());
+                    transaction_state = Some(evm.capture_transaction_state());
+                }
+                (res, evm.to_evm_env())
+            };
 
-                // Restore env, preserving cheatcode cfg/block changes from the nested EVM
-                // but restoring the original tx and basefee (which we zeroed for the nested call).
-                let mut restored_evm_env = nested_env;
-                restored_evm_env.block_env.set_basefee(cached_evm_env.block_env.basefee());
-                ecx.set_evm(restored_evm_env);
-                ecx.set_tx(cached_tx_env);
+            // Restore env, preserving cheatcode cfg/block changes from the nested EVM
+            // but restoring the original tx and basefee (which we zeroed for the nested call).
+            let mut restored_evm_env = nested_env;
+            restored_evm_env.block_env.set_basefee(cached_evm_env.block_env.basefee());
+            ecx.set_evm(restored_evm_env);
+            ecx.set_tx(cached_tx_env);
 
-                (res, chain_context, transaction_state)
-            });
-        factory.apply_context_transition(ecx, Some(&nested_chain_context));
+            res
+        });
+        #[cfg(feature = "monad")]
+        factory.apply_context_transition(
+            ecx,
+            Some(&nested_chain_context.expect("nested EVM chain context was captured")),
+        );
 
         self.in_inner_context = false;
         self.inner_context_data = None;
@@ -1080,8 +1107,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let was_precompile_called = self.isolated_call_was_precompile.take().unwrap_or(false);
 
         let Ok(res) = res else {
-            factory.restore_transaction_state(ecx, transaction_state);
-            refresh_context_after_state_change::<FEN>(ecx);
+            #[cfg(feature = "monad")]
+            factory.restore_transaction_state(
+                ecx,
+                transaction_state.expect("isolated transaction state was captured"),
+            );
+            #[cfg(feature = "monad")]
+            FEN::EvmFactory::default().apply_context_transition(ecx, None);
             // Should we match, encode and propagate error as a revert reason?
             let result =
                 InterpreterResult { result: InstructionResult::Revert, output: Bytes::new(), gas };
@@ -1114,7 +1146,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 slot_mut.is_cold &= val.is_cold;
             }
         }
-        factory.restore_transaction_state(ecx, transaction_state);
+        #[cfg(feature = "monad")]
+        factory.restore_transaction_state(
+            ecx,
+            transaction_state.expect("isolated transaction state was captured"),
+        );
 
         let (result, address, output) = match res.result {
             ExecutionResult::Success { reason, gas: result_gas, logs: _, output } => {
@@ -1136,7 +1172,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
         };
         if rolled_back {
-            refresh_context_after_state_change::<FEN>(ecx);
+            #[cfg(feature = "monad")]
+            FEN::EvmFactory::default().apply_context_transition(ecx, None);
         }
         (InterpreterResult { result, output, gas }, address, was_precompile_called)
     }
@@ -1201,7 +1238,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             *ecx.journal_mut().evm_state_mut() = std::mem::take(&mut self.top_frame_journal);
         }
 
-        refresh_context_after_state_change::<FEN>(ecx);
+        #[cfg(feature = "monad")]
+        FEN::EvmFactory::default().apply_context_transition(ecx, None);
     }
 
     // We take extra care in optimizing `step` and `step_end`, as they're are likely the most

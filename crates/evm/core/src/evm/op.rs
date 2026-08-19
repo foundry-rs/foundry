@@ -19,7 +19,7 @@ use revm::{
 use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
-    evm::{FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm},
+    evm::{FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor},
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -50,6 +50,7 @@ pub type OpRevmEvm<'db, I> = RevmEvm<
 
 impl FoundryEvmFactory for OpEvmFactory {
     type ChainContext = ();
+    #[cfg(feature = "monad")]
     type TransactionState = ();
     type FoundryContext<'db> = OpEvmContext<&'db mut dyn DatabaseExt<Self>>;
 
@@ -84,15 +85,7 @@ impl FoundryEvmFactory for OpEvmFactory {
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         chain_context: Self::ChainContext,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> Box<
-        dyn NestedEvm<
-                Spec = OpSpecId,
-                Block = BlockEnv,
-                Tx = OpTx,
-                ChainContext = (),
-                TransactionState = (),
-            > + 'db,
-    > {
+    ) -> NestedEvmFor<'db, Self> {
         Box::new(
             self.create_foundry_evm_with_inspector(db, evm_env, chain_context, inspector)
                 .into_inner(),
@@ -118,6 +111,7 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
     type Block = BlockEnv;
     type Tx = OpTx;
     type ChainContext = ();
+    #[cfg(feature = "monad")]
     type TransactionState = ();
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx().journaled_state.inner

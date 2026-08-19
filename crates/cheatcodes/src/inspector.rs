@@ -38,6 +38,8 @@ use foundry_common::{
         record_hash as record_mapping_hash, step as mapping_step,
     },
 };
+#[cfg(feature = "monad")]
+use foundry_evm_core::evm::TransactionStateFor;
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
@@ -46,8 +48,8 @@ use foundry_evm_core::{
     env::FoundryContextExt,
     evm::{
         BlockEnvFor, ChainContextFor, EthEvmNetwork, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, NestedEvmClosureFor, SpecFor, TransactionRequestFor,
-        TransactionStateFor, TxEnvFor, with_cloned_context,
+        FoundryEvmNetwork, NestedEvmClosureFor, SpecFor, TransactionRequestFor, TxEnvFor,
+        with_cloned_context,
     },
 };
 use foundry_evm_traces::{
@@ -183,25 +185,42 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let factory = FEN::EvmFactory::default();
+        #[cfg(feature = "monad")]
         let chain_context = factory.capture_chain_context(ecx);
+        #[cfg(not(feature = "monad"))]
+        let chain_context = Default::default();
+        #[cfg(feature = "monad")]
         let state = factory.capture_transaction_state(ecx);
+        #[cfg(feature = "monad")]
         let mut nested_chain_context = None;
+        #[cfg(feature = "monad")]
         let mut transaction_state = None;
         with_cloned_context(ecx, |db, evm_env, journaled_state| {
             let mut evm = factory.create_foundry_nested_evm(db, evm_env, chain_context, cheats);
             *evm.journal_inner_mut() = journaled_state;
-            evm.restore_transaction_state(state);
+            #[cfg(feature = "monad")]
+            {
+                evm.restore_transaction_state(state);
+            }
             f(&mut *evm)?;
-            nested_chain_context = Some(evm.capture_chain_context());
-            transaction_state = Some(evm.capture_transaction_state());
+            #[cfg(feature = "monad")]
+            {
+                nested_chain_context = Some(evm.capture_chain_context());
+            }
+            #[cfg(feature = "monad")]
+            {
+                transaction_state = Some(evm.capture_transaction_state());
+            }
             let sub_inner = evm.journal_inner_mut().clone();
             let sub_evm_env = evm.to_evm_env();
             Ok((sub_evm_env, sub_inner))
         })?;
+        #[cfg(feature = "monad")]
         factory.apply_context_transition(
             ecx,
             Some(&nested_chain_context.expect("nested EVM chain context was captured")),
         );
+        #[cfg(feature = "monad")]
         factory.restore_transaction_state(
             ecx,
             transaction_state.expect("nested EVM state was captured"),
@@ -888,6 +907,7 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 
     /// Transaction-position context and family-owned execution state captured atomically alongside
     /// state snapshots.
+    #[cfg(feature = "monad")]
     pub context_snapshots: HashMap<U256, (ChainContextFor<FEN>, TransactionStateFor<FEN>)>,
 
     /// Whether we are currently executing inside an isolation context, i.e.
@@ -978,6 +998,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             env_overrides: Default::default(),
             env_overrides_snapshots: Default::default(),
             fork_block_number_override_snapshots: Default::default(),
+            #[cfg(feature = "monad")]
             context_snapshots: Default::default(),
             in_isolation_context: false,
         }
