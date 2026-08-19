@@ -13,11 +13,11 @@ use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
-    backend::{ContextUpdate, DatabaseError, DatabaseExt, JournaledState},
+    backend::{ContextUpdateFor, DatabaseError, DatabaseExt, JournaledState},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     env::FoundryContextExt,
     evm::{
-        BlockEnvFor, ChainContextFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
+        BlockEnvFor, ChainContextFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryContextFor,
         FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, get_create2_factory_call_inputs,
         with_cloned_context,
     },
@@ -538,7 +538,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>> {
         let evm_env = ecx.evm_clone();
         let outer_tx_env = ecx.tx_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
