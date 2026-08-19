@@ -500,14 +500,8 @@ mod tests {
 
     #[test]
     fn cancellation_does_not_record_call_end_rewrite_as_invariant_failure() {
-        let cheats_config = Arc::new(CheatsConfig::new(
-            &Config::default(),
-            EvmOpts::default(),
-            None,
-            None,
-            None,
-            false,
-        ));
+        let cheats_config =
+            Arc::new(CheatsConfig::new(&Config::default(), EvmOpts::default(), None, None, false));
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default()
             .inspectors(|stack| stack.cheatcodes(cheats_config))
