@@ -37,6 +37,8 @@ use tempo_alloy::TempoNetwork;
 use tempo_evm::evm::TempoEvmFactory;
 use tempo_revm::TempoHaltReason;
 
+#[cfg(feature = "base")]
+pub mod base;
 pub mod eth;
 #[cfg(feature = "monad")]
 pub mod monad;
@@ -47,6 +49,8 @@ pub mod tempo;
 mod block_context;
 pub use block_context::*;
 
+#[cfg(feature = "base")]
+pub use base::*;
 pub use eth::*;
 #[cfg(feature = "monad")]
 pub use monad::*;

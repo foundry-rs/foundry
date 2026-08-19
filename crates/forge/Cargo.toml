@@ -143,6 +143,19 @@ monad = [
     "forge-script/monad",
     "forge-verify/monad",
 ]
+base = [
+    "anvil/base",
+    "foundry-evm/base",
+    "foundry-evm-networks/base",
+    "foundry-evm-symbolic/base",
+    "foundry-common/base",
+    "foundry-config/base",
+    "foundry-cli/base",
+    "foundry-debugger/base",
+    "foundry-test-utils/base",
+    "forge-script/base",
+    "forge-verify/base",
+]
 optimism = [
     "foundry-evm/optimism",
     "foundry-evm-networks/optimism",

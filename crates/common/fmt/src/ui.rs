@@ -18,6 +18,12 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
+#[cfg(feature = "base")]
+use base_common_consensus::{
+    BaseReceipt, BaseTxEnvelope, Eip8130Signed, TxDeposit as BaseTxDeposit,
+};
+#[cfg(feature = "base")]
+use base_common_rpc_types::{BaseTransactionReceipt, Transaction as BaseRpcTransaction};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{OpTxEnvelope, TxDeposit, TxPostExec};
 use revm::context_interface::transaction::SignedAuthorization;
@@ -227,6 +233,55 @@ blobGasUsed          {}",
 impl UIfmt for TransactionReceipt {
     fn pretty(&self) -> String {
         pretty_receipt(self, self.transaction_type() as u8)
+    }
+}
+
+#[cfg(feature = "base")]
+impl UIfmt for BaseTransactionReceipt {
+    fn pretty(&self) -> String {
+        let (deposit_nonce, deposit_receipt_version) = match &self.inner.inner.receipt {
+            BaseReceipt::Deposit(receipt) => {
+                (receipt.deposit_nonce, receipt.deposit_receipt_version)
+            }
+            _ => (None, None),
+        };
+        format!(
+            "{}
+l1GasPrice           {}
+l1GasUsed            {}
+l1Fee                {}
+l1FeeScalar          {}
+l1BaseFeeScalar      {}
+l1BlobBaseFee        {}
+l1BlobBaseFeeScalar  {}
+operatorFeeScalar    {}
+operatorFeeConstant  {}
+daFootprintGasScalar {}
+depositNonce         {}
+depositReceiptVersion {}
+payer                {}
+phaseStatuses        {}
+metadata             {}",
+            pretty_receipt(&self.inner, self.inner.inner.receipt.tx_type() as u8).trim_end(),
+            self.l1_block_info.l1_gas_price.pretty(),
+            self.l1_block_info.l1_gas_used.pretty(),
+            self.l1_block_info.l1_fee.pretty(),
+            self.l1_block_info.l1_fee_scalar.map(|value| value.to_string()).unwrap_or_default(),
+            self.l1_block_info.l1_base_fee_scalar.pretty(),
+            self.l1_block_info.l1_blob_base_fee.pretty(),
+            self.l1_block_info.l1_blob_base_fee_scalar.pretty(),
+            self.l1_block_info.operator_fee_scalar.pretty(),
+            self.l1_block_info.operator_fee_constant.pretty(),
+            self.l1_block_info
+                .da_footprint_gas_scalar
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+            deposit_nonce.pretty(),
+            deposit_receipt_version.pretty(),
+            self.payer.pretty(),
+            self.phase_statuses.pretty(),
+            self.metadata.pretty(),
+        )
     }
 }
 
@@ -474,6 +529,75 @@ input                {}",
     }
 }
 
+#[cfg(feature = "base")]
+impl UIfmt for BaseTxDeposit {
+    fn pretty(&self) -> String {
+        format!(
+            "
+sourceHash           {}
+from                 {}
+to                   {}
+mint                 {}
+value                {}
+gasLimit             {}
+isSystemTransaction  {}
+input                {}",
+            self.source_hash.pretty(),
+            self.from.pretty(),
+            self.to().pretty(),
+            self.mint.pretty(),
+            self.value.pretty(),
+            self.gas_limit.pretty(),
+            self.is_system_transaction,
+            self.input.pretty(),
+        )
+    }
+}
+
+#[cfg(feature = "base")]
+impl UIfmt for Eip8130Signed {
+    fn pretty(&self) -> String {
+        let tx = self.tx();
+        // `calls` is grouped into phases, and `accountChanges` can be long, so both are summarized
+        // by count rather than dumped inline.
+        format!(
+            "
+chainId              {}
+sender               {}
+payer                {}
+nonceKey             {}
+nonceSequence        {}
+validAfter           {}
+validBefore          {}
+maxFeePerGas         {}
+maxPriorityFeePerGas {}
+gasLimit             {}
+accountChanges       {}
+callPhases           {}
+calls                {}
+metadata             {}
+senderAuth           {}
+payerAuth            {}",
+            tx.chain_id.pretty(),
+            tx.sender.pretty(),
+            tx.payer.pretty(),
+            tx.nonce_key.pretty(),
+            tx.nonce_sequence.pretty(),
+            tx.valid_after.pretty(),
+            tx.valid_before.pretty(),
+            tx.max_fee_per_gas.pretty(),
+            tx.max_priority_fee_per_gas.pretty(),
+            tx.gas_limit.pretty(),
+            tx.account_changes.len(),
+            tx.calls.len(),
+            tx.calls.iter().map(Vec::len).sum::<usize>(),
+            tx.metadata.pretty(),
+            self.sender_auth().pretty(),
+            self.payer_auth().pretty(),
+        )
+    }
+}
+
 #[cfg(feature = "optimism")]
 impl UIfmt for TxPostExec {
     fn pretty(&self) -> String {
@@ -589,6 +713,20 @@ impl UIfmt for TxEnvelope {
     }
 }
 
+#[cfg(feature = "base")]
+impl UIfmt for BaseTxEnvelope {
+    fn pretty(&self) -> String {
+        match self {
+            Self::Legacy(tx) => tx.pretty(),
+            Self::Eip2930(tx) => tx.pretty(),
+            Self::Eip1559(tx) => tx.pretty(),
+            Self::Eip7702(tx) => tx.pretty(),
+            Self::Deposit(tx) => tx.inner().pretty(),
+            Self::Eip8130(tx) => tx.pretty(),
+        }
+    }
+}
+
 impl UIfmt for AnyTxEnvelope {
     fn pretty(&self) -> String {
         match self {
@@ -651,6 +789,21 @@ effectiveGasPrice    {}
             self.transaction_index.pretty(),
             self.effective_gas_price.pretty(),
             self.inner.inner().pretty().trim_start(),
+        )
+    }
+}
+
+#[cfg(feature = "base")]
+impl UIfmt for BaseRpcTransaction {
+    fn pretty(&self) -> String {
+        format!(
+            "
+depositNonce         {}
+depositReceiptVersion {}
+{}",
+            self.deposit_nonce.pretty(),
+            self.deposit_receipt_version.pretty(),
+            self.inner.pretty().trim_start(),
         )
     }
 }
@@ -791,6 +944,19 @@ impl UIfmtSignatureExt for AnyTxEnvelope {
     }
 }
 
+#[cfg(feature = "base")]
+impl UIfmtSignatureExt for BaseTxEnvelope {
+    fn signature_pretty(&self) -> Option<(String, String, String)> {
+        self.signature().map(|sig| {
+            (
+                FixedBytes::from(sig.r()).pretty(),
+                FixedBytes::from(sig.s()).pretty(),
+                U8::from_le_slice(&sig.as_bytes()[64..]).pretty(),
+            )
+        })
+    }
+}
+
 #[cfg(feature = "optimism")]
 impl UIfmtSignatureExt for OpTxEnvelope {
     fn signature_pretty(&self) -> Option<(String, String, String)> {
@@ -854,6 +1020,21 @@ impl UIfmtReceiptExt for TransactionReceipt {
 
     fn tx_type_pretty(&self) -> String {
         self.transaction_type().to_string()
+    }
+}
+
+#[cfg(feature = "base")]
+impl UIfmtReceiptExt for BaseTransactionReceipt {
+    fn logs_pretty(&self) -> String {
+        receipt_logs_pretty(&self.inner)
+    }
+
+    fn logs_bloom_pretty(&self) -> String {
+        receipt_logs_bloom_pretty(&self.inner)
+    }
+
+    fn tx_type_pretty(&self) -> String {
+        self.inner.inner.receipt.tx_type().to_string()
     }
 }
 
@@ -1139,6 +1320,90 @@ mod tests {
         );
         let b: Bytes = val.into();
         assert_eq!(b.pretty(), b32.pretty());
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_pretty_print_eip8130_transaction() {
+        use base_common_consensus::{Call as BaseCall, TxEip8130};
+
+        let base_call = BaseCall { to: Address::ZERO, data: Bytes::new() };
+        let tx = TxEip8130 {
+            chain_id: 8453,
+            sender: Some(Address::with_last_byte(0x11)),
+            payer: Some(Address::with_last_byte(0x22)),
+            nonce_key: U256::from(7),
+            nonce_sequence: 3,
+            valid_after: 100,
+            valid_before: 200,
+            max_fee_per_gas: 1_000,
+            max_priority_fee_per_gas: 10,
+            gas_limit: 21_000,
+            metadata: Bytes::from_static(&[0xab]),
+            calls: vec![vec![base_call.clone(), base_call.clone()], vec![base_call]],
+            ..Default::default()
+        };
+        let signed =
+            Eip8130Signed::new(tx, Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02]));
+
+        assert_eq!(
+            signed.pretty().trim(),
+            r"chainId              8453
+sender               0x0000000000000000000000000000000000000011
+payer                0x0000000000000000000000000000000000000022
+nonceKey             7
+nonceSequence        3
+validAfter           100
+validBefore          200
+maxFeePerGas         1000
+maxPriorityFeePerGas 10
+gasLimit             21000
+accountChanges       0
+callPhases           2
+calls                3
+metadata             0xab
+senderAuth           0x01
+payerAuth            0x02"
+        );
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_pretty_print_base_deposit_receipt_fields() {
+        let receipt: BaseTransactionReceipt = serde_json::from_value(serde_json::json!({
+            "blockHash": "0x9e6a0fb7e22159d943d760608cc36a0fb596d1ab3c997146f5b7c55c8c718c67",
+            "blockNumber": "0x6cfef89",
+            "contractAddress": null,
+            "cumulativeGasUsed": "0xfa0d",
+            "depositNonce": "0x8a2d11",
+            "depositReceiptVersion": "0x1",
+            "effectiveGasPrice": "0x0",
+            "from": "0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001",
+            "gasUsed": "0xfa0d",
+            "logs": [],
+            "logsBloom": format!("0x{}", "00".repeat(256)),
+            "status": "0x1",
+            "to": "0x4200000000000000000000000000000000000015",
+            "transactionHash": "0xb7c74afdeb7c89fb9de2c312f49b38cb7a850ba36e064734c5223a477e83fdc9",
+            "transactionIndex": "0x0",
+            "type": "0x7e",
+            "l1GasPrice": "0x3ef12787",
+            "l1GasUsed": "0x1177",
+            "l1Fee": "0x5bf1ab43d",
+            "l1BaseFeeScalar": "0x1",
+            "l1BlobBaseFee": "0x600ab8f05e64",
+            "l1BlobBaseFeeScalar": "0x1",
+            "operatorFeeScalar": "0x1",
+            "operatorFeeConstant": "0x1",
+            "daFootprintGasScalar": "0x1"
+        }))
+        .unwrap();
+
+        let pretty = receipt.pretty();
+        assert!(pretty.contains("l1Fee                24681034813"), "{pretty}");
+        assert!(pretty.contains("operatorFeeScalar    1"), "{pretty}");
+        assert!(pretty.contains("depositNonce         9055505"), "{pretty}");
+        assert!(pretty.contains("depositReceiptVersion 1"), "{pretty}");
     }
 
     #[cfg(feature = "optimism")]

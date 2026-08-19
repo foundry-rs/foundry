@@ -81,6 +81,12 @@ monad = [
     "foundry-evm-networks/monad",
     "foundry-evm/monad",
 ]
+base = [
+    "foundry-config/base",
+    "foundry-evm-networks/base",
+    "foundry-common/base",
+    "foundry-evm/base",
+]
 optimism = [
     "foundry-evm-networks/optimism",
     "foundry-common/optimism",

@@ -82,7 +82,7 @@ async fn test_deposits_not_supported_if_optimism_disabled() {
 
     let err = provider.send_transaction(tx).await.unwrap_err();
     let s = err.to_string();
-    assert!(s.contains("op-stack deposit tx received but is not supported"), "{s:?}");
+    assert!(s.contains("deposit transaction received but is not supported"), "{s:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

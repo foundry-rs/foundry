@@ -10,6 +10,8 @@ use foundry_evm_core::{
     fork::CreateFork,
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
 };
+#[cfg(feature = "base")]
+use foundry_evm_hardforks::BaseSpecId;
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
@@ -138,8 +140,16 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         });
         #[cfg(not(feature = "monad"))]
         let monad_hardfork = None;
-
         config.labels.extend(networks.precompiles_label(tempo_hardfork, monad_hardfork));
+
+        #[cfg(feature = "base")]
+        {
+            let base_upgrade = resolved_hardfork.and_then(|hardfork| match hardfork {
+                FoundryHardfork::Base(upgrade) => Some(upgrade),
+                _ => None,
+            });
+            config.labels.extend(networks.base_precompiles_label(base_upgrade));
+        }
     }
 
     /// uses the fork block number from the config
@@ -180,6 +190,10 @@ fn network_hardfork_from_evm_version(
 ) -> Option<FoundryHardfork> {
     if networks.is_tempo() {
         return Some(FoundryHardfork::Tempo(evm_spec_id::<TempoHardfork>(evm_version)));
+    }
+    #[cfg(feature = "base")]
+    if networks.is_base() {
+        return Some(FoundryHardfork::Base(evm_spec_id::<BaseSpecId>(evm_version).upgrade()));
     }
     #[cfg(feature = "monad")]
     if networks.is_monad() {

@@ -109,6 +109,12 @@ jobs:
     permissions:
       contents: read
 
+  base:
+    name: Base
+    uses: ./.github/workflows/base.yml
+    permissions:
+      contents: read
+
   typos:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
@@ -261,6 +267,7 @@ jobs:
       - no-default-features
       - touch-id-link
       - monad
+      - base
       - typos
       - github-scripts
       - clippy

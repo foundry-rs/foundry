@@ -29,4 +29,5 @@ solar.workspace = true
 [features]
 default = ["optimism"]
 monad = ["foundry-evm-core/monad"]
+base = ["foundry-common/base", "foundry-evm-core/base"]
 optimism = ["foundry-common/optimism", "foundry-evm-core/optimism"]

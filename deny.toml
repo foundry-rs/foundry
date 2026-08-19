@@ -114,6 +114,8 @@ allow-git = [
     # Tempo
     "https://github.com/tempoxyz/tempo",
     "https://github.com/tempoxyz/mpp-rs",
+    # Base
+    "https://github.com/base/base",
     # Transitive dependency of Tempo
     "https://github.com/commonwarexyz/monorepo",
     "https://github.com/paradigmxyz/reth",

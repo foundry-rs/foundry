@@ -21,6 +21,8 @@ use eyre::Result;
 use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::{Config, InlineConfig};
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
@@ -636,6 +638,18 @@ fn compile_and_test(
             isolate,
         )
     } else {
+        #[cfg(feature = "base")]
+        if evm_opts.networks.is_base() {
+            return compile_and_test_inner::<BaseEvmNetwork>(
+                config,
+                evm_opts,
+                create2_deployer_available,
+                filter_args,
+                rerun_failures,
+                selected_sources_relative,
+                isolate,
+            );
+        }
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
             return compile_and_test_inner::<MonadEvmNetwork>(

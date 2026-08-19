@@ -46,6 +46,8 @@ use foundry_config::{
     },
 };
 use foundry_debugger::DebuggerLayout;
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
@@ -406,6 +408,11 @@ impl ScriptArgs {
                 Ok(())
             })
             .await;
+        }
+
+        #[cfg(feature = "base")]
+        if evm_opts.networks.is_base() {
+            return Box::pin(self.run_generic_script::<BaseEvmNetwork>(config, evm_opts)).await;
         }
 
         #[cfg(feature = "monad")]

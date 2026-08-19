@@ -442,6 +442,28 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
     assert!(stdout.contains("Runtime code matched"), "{stdout}");
     assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
 
+    #[cfg(feature = "base")]
+    {
+        cmd.forge_fuse();
+        cmd.unset_env("ETHERSCAN_API_KEY");
+        cmd.unset_env("VERIFIER_API_KEY");
+        cmd.unset_env("VERIFIER_URL");
+        let output = cmd
+            .args([
+                "verify-bytecode",
+                &address,
+                "Counter",
+                "--rpc-url",
+                rpc.as_str(),
+                "--network",
+                "base",
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        assert!(output.contains("Runtime code matched"), "{output}");
+    }
+
     // Dependencies and projects with Vyper sources retain full-project compilation. The unrelated
     // invalid source therefore makes both builds fail.
     prj.create_file("lib/Dependency.sol", "contract Dependency {}");

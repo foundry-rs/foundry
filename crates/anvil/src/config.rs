@@ -44,6 +44,8 @@ use foundry_common::{
 use foundry_config::Config;
 #[cfg(feature = "monad")]
 use foundry_evm::hardfork::MonadHardfork;
+#[cfg(feature = "base")]
+use foundry_evm::hardforks::BaseUpgrade;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
@@ -271,6 +273,9 @@ pub struct NodeConfig {
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Networks to enable features for.
     pub networks: NetworkConfigs,
+    /// Overrides the Base activation-registry administrator.
+    #[cfg(feature = "base")]
+    pub base_activation_admin: Option<Address>,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where persisted states are cached (used with `max_persisted_states`).
@@ -521,6 +526,15 @@ impl NodeConfig {
         Self { networks: NetworkConfigs::with_monad(), ..Self::test() }
     }
 
+    /// Returns a test config with Base network enabled.
+    #[cfg(feature = "base")]
+    #[doc(hidden)]
+    pub fn test_base() -> Self {
+        Self::test()
+            .with_networks(NetworkConfigs::with_base())
+            .with_chain_id(Some(NamedChain::Base as u64))
+    }
+
     /// Returns a new config which does not initialize any accounts on node startup.
     pub fn empty_state() -> Self {
         Self {
@@ -598,6 +612,8 @@ impl Default for NodeConfig {
             memory_limit: None,
             precompile_factory: None,
             networks: Default::default(),
+            #[cfg(feature = "base")]
+            base_activation_admin: None,
             silent: false,
             cache_path: None,
             funded_accounts: HashMap::default(),
@@ -696,6 +712,15 @@ impl NodeConfig {
         {
             return hardfork.into();
         }
+        #[cfg(feature = "base")]
+        if self.networks.is_base()
+            && let Some(hardfork) = BaseUpgrade::from_chain_and_timestamp(
+                self.protocol_chain_id(),
+                self.get_genesis_timestamp(),
+            )
+        {
+            return hardfork.into();
+        }
         #[cfg(feature = "optimism")]
         if self.networks.is_optimism() {
             return foundry_evm::hardforks::OpHardfork::default().into();
@@ -706,6 +731,10 @@ impl NodeConfig {
         #[cfg(feature = "monad")]
         if self.networks.is_monad() {
             return MonadHardfork::default().into();
+        }
+        #[cfg(feature = "base")]
+        if self.networks.is_base() {
+            return BaseUpgrade::Azul.into();
         }
         EthereumHardfork::default().into()
     }
@@ -1246,6 +1275,24 @@ impl NodeConfig {
         self
     }
 
+    /// Enable Base network features.
+    #[cfg(feature = "base")]
+    #[must_use]
+    pub fn with_base(mut self) -> Self {
+        self.networks = NetworkConfigs::with_base();
+        self.inferred_fork_network = None;
+        self.chain_id_network_base = None;
+        self
+    }
+
+    /// Sets the Base activation-registry administrator override.
+    #[cfg(feature = "base")]
+    #[must_use]
+    pub const fn with_base_activation_admin(mut self, admin: Option<Address>) -> Self {
+        self.base_activation_admin = admin;
+        self
+    }
+
     /// Enable Optimism network features.
     #[cfg(feature = "optimism")]
     #[must_use]
@@ -1409,6 +1456,12 @@ impl NodeConfig {
         {
             decoder_builder = decoder_builder.with_monad_hardfork(
                 self.networks.is_monad().then(|| MonadHardfork::from(active_hardfork)),
+            );
+        }
+        #[cfg(feature = "base")]
+        {
+            decoder_builder = decoder_builder.with_base_upgrade(
+                self.networks.is_base().then(|| BaseUpgrade::from(active_hardfork)),
             );
         }
         if self.print_traces {
@@ -2602,6 +2655,27 @@ mod tests {
         let config = NodeConfig::test_tempo();
 
         assert_eq!(config.get_hardfork(), FoundryHardfork::Tempo(latest_active_tempo_hardfork()));
+    }
+
+    #[test]
+    #[cfg(feature = "base")]
+    fn test_base_config_uses_base_network_and_chain_id() {
+        let config = NodeConfig::test_base();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.get_chain_id(), NamedChain::Base as u64);
+    }
+
+    #[test]
+    #[cfg(feature = "base")]
+    fn get_hardfork_on_base_fork_uses_source_chain_timestamp_mapping() {
+        let mut config = NodeConfig::test_base()
+            .with_chain_id(Some(1u64))
+            .with_genesis_timestamp(Some(u64::MAX));
+        config.fork_source_chain_id = Some(NamedChain::Base as u64);
+
+        assert_eq!(config.get_chain_id(), 1);
+        assert_eq!(config.get_hardfork(), FoundryHardfork::Base(BaseUpgrade::Beryl));
     }
 
     #[test]

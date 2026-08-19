@@ -452,7 +452,7 @@ pub(crate) fn build_trace_decoder_for_context<FEN: FoundryEvmNetwork>(
     let mut tracing = script_config.config.tracing.clone();
     tracing.labels.extend(execution_result.labeled_addresses.clone());
 
-    #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
+    #[cfg_attr(not(any(feature = "base", feature = "monad")), allow(unused_mut))]
     let mut builder = CallTraceDecoderBuilder::new()
         .with_tracing_config(&tracing)
         .with_known_contracts(known_contracts)
@@ -468,6 +468,14 @@ pub(crate) fn build_trace_decoder_for_context<FEN: FoundryEvmNetwork>(
         builder =
             builder.with_monad_hardfork(resolved_hardfork.and_then(|hardfork| match hardfork {
                 FoundryHardfork::Monad(hardfork) => Some(hardfork),
+                _ => None,
+            }));
+    }
+    #[cfg(feature = "base")]
+    {
+        builder =
+            builder.with_base_upgrade(resolved_hardfork.and_then(|hardfork| match hardfork {
+                FoundryHardfork::Base(upgrade) => Some(upgrade),
                 _ => None,
             }));
     }

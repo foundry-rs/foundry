@@ -5,10 +5,14 @@
 //! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
 //! [`foundry_config::Config`].
 
+use alloy_network::AnyNetwork;
+use alloy_provider::Provider;
 use eyre::Result;
 use foundry_cli::utils::load_config_from_provider;
+use foundry_common::provider::ProviderBuilder;
 use foundry_config::{Config, figment::Figment};
 use foundry_evm::opts::EvmOpts;
+use foundry_evm_networks::NetworkVariant;
 
 /// Loads Cast's config and applies its normalized network to the EVM options.
 pub(crate) fn load_cast_config_and_evm_opts(figment: Figment) -> Result<(Box<Config>, EvmOpts)> {
@@ -30,7 +34,7 @@ pub mod call_overrides;
 pub mod constructor_args;
 pub mod create2;
 pub mod creation_code;
-#[cfg(feature = "optimism")]
+#[cfg(any(feature = "base", feature = "optimism"))]
 pub mod da_estimate;
 pub mod erc20;
 pub mod estimate;
@@ -55,10 +59,35 @@ pub mod txpool;
 pub mod vaddr;
 pub mod wallet;
 
-#[cfg(all(test, feature = "monad"))]
+/// Resolves the configured network, falling back to the RPC chain ID.
+pub(crate) async fn resolve_network(config: &Config) -> eyre::Result<NetworkVariant> {
+    if let Some(network) = config.networks.resolved_network() {
+        return Ok(network);
+    }
+    if let Some(chain) = config.chain {
+        return network_for_chain_id(chain.id());
+    }
+
+    let provider = ProviderBuilder::<AnyNetwork>::from_config(config)?.build()?;
+    network_for_chain_id(provider.get_chain_id().await?)
+}
+
+/// Resolves a chain ID to its network family, reporting a disabled family as an error.
+///
+/// The infallible `From<ChainId>` conversion swallows that error and degrades to Ethereum, which
+/// would make `cast tx` and `cast block --raw` disagree with `cast call` on the same input. Unknown
+/// chain IDs still fall back to Ethereum, as before.
+fn network_for_chain_id(chain_id: u64) -> eyre::Result<NetworkVariant> {
+    NetworkVariant::from_known_chain_id(chain_id)
+        .map_err(eyre::Report::msg)
+        .map(|network| network.unwrap_or(NetworkVariant::Ethereum))
+}
+
+#[cfg(all(test, any(feature = "base", feature = "monad")))]
 mod tests {
     use super::*;
 
+    #[cfg(feature = "monad")]
     #[test]
     fn normalized_hardfork_network_is_applied_to_evm_opts() {
         let figment = Config::figment().merge(("hardfork", "monad:MonadNine"));
@@ -66,5 +95,43 @@ mod tests {
 
         assert!(config.networks.is_monad());
         assert!(evm_opts.networks.is_monad());
+    }
+
+    #[cfg(feature = "base")]
+    #[tokio::test]
+    async fn resolve_network_preserves_explicit_base() {
+        let config = Config { networks: NetworkVariant::Base.into(), ..Default::default() };
+        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Base);
+    }
+
+    #[cfg(feature = "base")]
+    #[tokio::test]
+    async fn resolve_network_infers_base_from_chain_id() {
+        let config = Config {
+            chain: Some(foundry_config::Chain::from_named(alloy_chains::NamedChain::Base)),
+            ..Default::default()
+        };
+        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Base);
+    }
+
+    /// A disabled family has to surface here too, otherwise `cast tx` reports Ethereum for input
+    /// that `cast call` rejects.
+    #[cfg(all(feature = "base", not(feature = "monad")))]
+    #[tokio::test]
+    async fn resolve_network_reports_disabled_family() {
+        let config = Config {
+            chain: Some(foundry_config::Chain::from_named(alloy_chains::NamedChain::Monad)),
+            ..Default::default()
+        };
+        let err = resolve_network(&config).await.unwrap_err().to_string();
+        assert!(err.contains("`monad` is not enabled"), "unexpected error: {err}");
+    }
+
+    #[cfg(feature = "base")]
+    #[tokio::test]
+    async fn resolve_network_still_defaults_unknown_chain_ids_to_ethereum() {
+        let config =
+            Config { chain: Some(foundry_config::Chain::from_id(u64::MAX)), ..Default::default() };
+        assert_eq!(resolve_network(&config).await.unwrap(), NetworkVariant::Ethereum);
     }
 }

@@ -33,6 +33,10 @@ use alloy_primitives::{Address, B256, Bytes, Log, U256};
 use anvil_core::eth::transaction::{
     MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
+#[cfg(feature = "base")]
+use base_common_consensus::Eip8130Receipt;
+#[cfg(feature = "base")]
+use base_common_evm::Eip8130PhaseStatuses;
 use foundry_evm::core::{env::FoundryTransaction, evm::IntoInstructionResult};
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, FoundryTxType};
 use revm::{
@@ -141,7 +145,8 @@ fn append_deposit_requests(
 pub struct FoundryReceiptBuilder;
 
 impl FoundryReceiptBuilder {
-    const fn wrap_receipt(
+    #[cfg_attr(not(feature = "base"), allow(clippy::missing_const_for_fn))]
+    fn wrap_receipt(
         tx_type: FoundryTxType,
         receipt: ReceiptWithBloom<Receipt>,
     ) -> FoundryReceiptEnvelope {
@@ -151,12 +156,17 @@ impl FoundryReceiptBuilder {
             FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
             FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
             FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             FoundryTxType::Deposit => {
                 panic!("deposit receipts require fork-specific metadata")
             }
             #[cfg(feature = "optimism")]
             FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
+            #[cfg(feature = "base")]
+            FoundryTxType::Eip8130 => FoundryReceiptEnvelope::Eip8130(ReceiptWithBloom {
+                receipt: Eip8130Receipt::new(receipt.receipt, Eip8130PhaseStatuses::take()),
+                logs_bloom: receipt.logs_bloom,
+            }),
             FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
         }
     }
@@ -173,7 +183,7 @@ impl FoundryReceiptBuilder {
         let receipt =
             Receipt { status: Eip658Value::Eip658(result.is_success()), cumulative_gas_used, logs }
                 .with_bloom();
-        #[cfg(feature = "optimism")]
+        #[cfg(any(feature = "base", feature = "optimism"))]
         if tx_type == FoundryTxType::Deposit {
             return FoundryReceiptEnvelope::Deposit(
                 op_alloy_consensus::OpDepositReceiptWithBloom {
@@ -186,7 +196,7 @@ impl FoundryReceiptBuilder {
                 },
             );
         }
-        #[cfg(not(feature = "optimism"))]
+        #[cfg(not(any(feature = "base", feature = "optimism")))]
         let _ = (deposit_nonce, deposit_receipt_version);
         Self::wrap_receipt(tx_type, receipt)
     }
@@ -415,7 +425,7 @@ where
     fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
         let AnvilTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
-            #[cfg_attr(not(feature = "optimism"), allow(unused_variables))]
+            #[cfg_attr(not(any(feature = "base", feature = "optimism")), allow(unused_variables))]
             sender,
         } = output;
 
@@ -426,7 +436,7 @@ where
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas_used);
         }
 
-        #[cfg(feature = "optimism")]
+        #[cfg(any(feature = "base", feature = "optimism"))]
         let receipt = if tx_type == FoundryTxType::Deposit {
             let deposit_nonce = state.get(&sender).map(|acc| acc.info.nonce);
             let receipt = alloy_consensus::Receipt {
@@ -452,7 +462,7 @@ where
                 cumulative_gas_used: self.gas_used,
             })
         };
-        #[cfg(not(feature = "optimism"))]
+        #[cfg(not(any(feature = "base", feature = "optimism")))]
         let receipt = self.receipt_builder.build_receipt(ReceiptBuilderCtx {
             tx_type,
             evm: &self.evm,

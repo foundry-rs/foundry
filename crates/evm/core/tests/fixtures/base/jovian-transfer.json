@@ -1,0 +1,43 @@
+{
+  "chain_id": "0x2105",
+  "upgrade": "Jovian",
+  "block": {
+    "number": "0x2bf82ef",
+    "timestamp": "0x6a0962c1",
+    "gas_limit": "0x17d78400",
+    "base_fee_per_gas": "0x4c4b40",
+    "beneficiary": "0x4200000000000000000000000000000000000011",
+    "prevrandao": "0x9219110ff1635fa6bc52a073ed7ddd139eb2768ad02585acabb3204ca7a8ee77",
+    "excess_blob_gas": "0x0",
+    "parent_beacon_block_root": "0x4fe0ecb40aefa1691fb36b87dda0cee747b27030465c28ff8f5ee51796dacc85",
+    "receipts_root": "0xd451d2a3af6cfc6985d2919d6dae871790420642201e91ec20ccf7f07f9de7ba",
+    "state_root": "0x289628c5fa503e60838930880925807314bdb08e49dab41d2cb0035fd89a85b3"
+  },
+  "transaction": {
+    "hash": "0xae293444da78703ad63bf2517f8f083770fff67e79dcce72279e0a503748c86c",
+    "raw": "0x02f86e8221055e830f4240838b04eb826aa494a2baf0592072bd884d0b2ece27f88c29ec18dd1b843b9aca0080c001a0e046d4b6295ce98ad0bcd8ece87deb34c49db3b34e38359b5095252000b99329a03b6bcd33274e14607f3362ccc1cb9d0ea10d5de2ec2a7e468adc0cf873e18cb4",
+    "from": "0x89583a150b8c7f6b3405e3aa35a03dd77bd806b4",
+    "to": "0xa2baf0592072bd884d0b2ece27f88c29ec18dd1b",
+    "value": "0x3b9aca00"
+  },
+  "parent_state": {
+    "caller_balance": "0x1fc9c3b78abf",
+    "caller_nonce": "0x5e",
+    "recipient_balance": "0x301f3fc354906b1",
+    "recipient_code": "0x",
+    "l1_block_info_storage": [
+      ["0x1", "0x0000000000000000000000000000000000000000000000000000000006b6114e"],
+      ["0x3", "0x00000000000000000000000000000000000008dd00101c120000000000000000"],
+      ["0x7", "0x000000000000000000000000000000000000000000000000000000000052ca80"],
+      ["0x8", "0x0000000000000000000000000000000000000094000000000000000000000000"]
+    ]
+  },
+  "expected": {
+    "status": true,
+    "gas_used": "0x5208",
+    "effective_gas_price": "0x5b8d80",
+    "l1_gas_used": "0x640",
+    "l1_fee": "0x3a82088e",
+    "log_count": 0
+  }
+}

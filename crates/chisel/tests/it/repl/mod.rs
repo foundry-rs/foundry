@@ -317,6 +317,20 @@ repl_test!(
     }
 );
 
+#[cfg(feature = "base")]
+repl_test!(
+    eval_base_network_uses_base_executor,
+    "--network base --hardfork base:Beryl --chain 8453",
+    |repl| {
+        repl.sendln_raw(
+            "interface IActivationRegistry { function admin() external view returns (address); }",
+        );
+        repl.expect_prompt();
+        repl.sendln("IActivationRegistry(0x8453000000000000000000000000000000000001).admin()");
+        repl.expect("Data: 0xcE3a3bEE7E72E2A24079f3c0Cb3b97740ED425A9");
+    }
+);
+
 repl_test!(
     eval_tempo_named_chain_uses_tempo_executor,
     "--chain tempo eval address(0xfeEC000000000000000000000000000000000000).code.length",

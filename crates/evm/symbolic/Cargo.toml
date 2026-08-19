@@ -39,4 +39,5 @@ wait-timeout.workspace = true
 
 [features]
 default = ["optimism"]
+base = ["foundry-evm/base"]
 optimism = ["foundry-evm/optimism"]

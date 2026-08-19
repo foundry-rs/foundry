@@ -3279,6 +3279,8 @@ mod tests {
         ModelCheckerEngine, YulDetails,
         vyper::{VyperOptimizationLevel, VyperOptimizationMode, VyperVenomSettings},
     };
+    #[cfg(feature = "base")]
+    use foundry_evm_hardforks::BaseUpgrade;
     #[cfg(feature = "monad")]
     use foundry_evm_hardforks::MonadHardfork;
     use foundry_evm_hardforks::{TempoHardfork, latest_active_tempo_hardfork};
@@ -5761,6 +5763,26 @@ mod tests {
             let config = Config::load().unwrap();
             assert_eq!(config.hardfork, Some(FoundryHardfork::Tempo(TempoHardfork::T3)));
             assert!(config.networks.is_tempo());
+
+            Ok(())
+        });
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn base_upgrade_infers_base_network() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                hardfork = "base:Beryl"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.hardfork, Some(FoundryHardfork::Base(BaseUpgrade::Beryl)));
+            assert!(config.networks.is_base());
 
             Ok(())
         });

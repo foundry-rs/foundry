@@ -62,3 +62,4 @@ tempfile.workspace = true
 
 [features]
 monad = ["foundry-evm-hardforks/monad", "foundry-evm-networks/monad"]
+base = ["foundry-evm-hardforks/base", "foundry-evm-networks/base"]

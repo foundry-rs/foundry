@@ -1,3 +1,5 @@
+#[cfg(feature = "base")]
+use super::BaseUpgrade;
 use super::MonadHardfork;
 use crate::{CallTrace, DecodedCallData};
 use alloy_primitives::{Address, B256, U256, hex};
@@ -15,6 +17,8 @@ use foundry_evm_hardforks::TempoHardfork;
 use foundry_evm_networks::NetworkConfigs;
 #[cfg(feature = "monad")]
 use foundry_evm_networks::is_monad_precompile_active_at;
+#[cfg(feature = "base")]
+use foundry_evm_networks::{BASE_PRECOMPILE_ADDRESSES, is_base_precompile_active_at};
 use itertools::Itertools;
 #[cfg(feature = "monad")]
 use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
@@ -67,6 +71,7 @@ pub(crate) fn is_known_precompile(
     chain_id: Option<u64>,
     tempo_hardfork: Option<TempoHardfork>,
     monad_hardfork: Option<MonadHardfork>,
+    #[cfg(feature = "base")] base_upgrade: Option<BaseUpgrade>,
 ) -> bool {
     #[cfg(not(feature = "monad"))]
     let _ = monad_hardfork;
@@ -140,6 +145,30 @@ pub(crate) fn is_known_precompile(
             }
         }
     }
+    // Base precompiles (only on a Base chain or in an explicitly configured Base context).
+    #[cfg(feature = "base")]
+    {
+        let is_base_context = networks.map_or_else(
+            || {
+                chain_id.is_some_and(|id| {
+                    matches!(
+                        Chain::from_id(id).named(),
+                        Some(NamedChain::Base | NamedChain::BaseSepolia)
+                    )
+                }) || base_upgrade.is_some()
+            },
+            |networks| networks.is_base(),
+        );
+        if is_base_context {
+            let installed = match base_upgrade {
+                Some(upgrade) => is_base_precompile_active_at(address, upgrade),
+                None => BASE_PRECOMPILE_ADDRESSES.contains(&address),
+            };
+            if installed {
+                return true;
+            }
+        }
+    }
     // Celo transfer precompile (only on Celo chains).
     let is_celo_context = networks.map_or_else(
         || {
@@ -164,13 +193,22 @@ pub(crate) fn is_known_precompile_call(
     chain_id: Option<u64>,
     tempo_hardfork: Option<TempoHardfork>,
     monad_hardfork: Option<MonadHardfork>,
+    #[cfg(feature = "base")] base_upgrade: Option<BaseUpgrade>,
 ) -> bool {
     // Unlike the long-established low addresses, P256 is hardfork-dependent. Traces without an
     // execution classification, such as RPC callTracer frames, cannot safely infer it by address.
     if trace.address == P256_VERIFY && trace.maybe_precompile != Some(true) {
         return false;
     }
-    is_known_precompile(trace.address, networks, chain_id, tempo_hardfork, monad_hardfork)
+    is_known_precompile(
+        trace.address,
+        networks,
+        chain_id,
+        tempo_hardfork,
+        monad_hardfork,
+        #[cfg(feature = "base")]
+        base_upgrade,
+    )
 }
 
 /// Tries to decode a precompile call. Returns `Some` if successful.
@@ -180,8 +218,17 @@ pub(super) fn decode(
     chain_id: Option<u64>,
     tempo_hardfork: Option<TempoHardfork>,
     monad_hardfork: Option<MonadHardfork>,
+    #[cfg(feature = "base")] base_upgrade: Option<BaseUpgrade>,
 ) -> Option<DecodedCallTrace> {
-    if !is_known_precompile_call(trace, networks, chain_id, tempo_hardfork, monad_hardfork) {
+    if !is_known_precompile_call(
+        trace,
+        networks,
+        chain_id,
+        tempo_hardfork,
+        monad_hardfork,
+        #[cfg(feature = "base")]
+        base_upgrade,
+    ) {
         return None;
     }
 
@@ -635,12 +682,22 @@ mod tests {
 
     #[test]
     fn known_precompile_boundaries() {
-        assert!(is_known_precompile(P256_VERIFY, None, None, None, None));
+        assert!(is_known_precompile(
+            P256_VERIFY,
+            None,
+            None,
+            None,
+            None,
+            #[cfg(feature = "base")]
+            None
+        ));
         assert!(!is_known_precompile(
             address!("0x0000000000000000000000000000000000000101"),
             None,
             None,
             None,
+            None,
+            #[cfg(feature = "base")]
             None
         ));
         assert!(!is_known_precompile(
@@ -648,6 +705,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            #[cfg(feature = "base")]
             None
         ));
     }
@@ -656,19 +715,52 @@ mod tests {
     fn decodes_only_confirmed_p256_precompile_calls() {
         for maybe_precompile in [None, Some(false)] {
             let trace = CallTrace { address: P256_VERIFY, maybe_precompile, ..Default::default() };
-            assert!(decode(&trace, None, None, None, None).is_none());
+            assert!(
+                decode(
+                    &trace,
+                    None,
+                    None,
+                    None,
+                    None,
+                    #[cfg(feature = "base")]
+                    None
+                )
+                .is_none()
+            );
         }
 
         let trace =
             CallTrace { address: P256_VERIFY, maybe_precompile: Some(true), ..Default::default() };
-        assert!(decode(&trace, None, None, None, None).is_some());
+        assert!(
+            decode(
+                &trace,
+                None,
+                None,
+                None,
+                None,
+                #[cfg(feature = "base")]
+                None
+            )
+            .is_some()
+        );
     }
 
     #[test]
     fn decodes_established_precompile_despite_negative_execution_classification() {
         let trace =
             CallTrace { address: SHA_256, maybe_precompile: Some(false), ..Default::default() };
-        assert!(decode(&trace, None, None, None, None).is_some());
+        assert!(
+            decode(
+                &trace,
+                None,
+                None,
+                None,
+                None,
+                #[cfg(feature = "base")]
+                None
+            )
+            .is_some()
+        );
     }
 
     #[test]

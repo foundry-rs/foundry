@@ -7,6 +7,8 @@ use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
+#[cfg(feature = "base")]
+use base_common_network::Base as BaseNetwork;
 use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
@@ -25,7 +27,10 @@ use tempo_alloy::TempoNetwork;
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 
 use crate::{
-    cmd::{auth::confirm_auth_rpc_disclosure_during_build, tip20::iso4217_warning_message},
+    cmd::{
+        auth::confirm_auth_rpc_disclosure_during_build, resolve_network,
+        tip20::iso4217_warning_message,
+    },
     tempo,
     tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
 };
@@ -114,10 +119,20 @@ impl SendTxArgs {
                 .await?;
 
         if is_tempo {
-            self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
-        } else {
-            self.run_generic::<Ethereum>(signer, None).await
+            return self.run_generic::<TempoNetwork>(signer, tempo_access_key).await;
         }
+
+        let config = self.send_tx.eth.load_config()?;
+        let network = resolve_network(&config).await?;
+        if network.is_tempo() {
+            return self.run_generic::<TempoNetwork>(signer, tempo_access_key).await;
+        }
+        #[cfg(feature = "base")]
+        if network.is_base() {
+            return self.run_generic::<BaseNetwork>(signer, None).await;
+        }
+
+        self.run_generic::<Ethereum>(signer, None).await
     }
 
     pub async fn run_generic<N: Network>(

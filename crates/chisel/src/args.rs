@@ -7,6 +7,8 @@ use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
 use foundry_config::Config;
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
@@ -63,6 +65,18 @@ pub async fn run_command(args: Chisel) -> Result<()> {
 
     if evm_opts.networks.is_tempo() {
         return Box::pin(run_command_with_network::<TempoEvmNetwork>(
+            args,
+            config,
+            evm_opts,
+            local_networks,
+            local_chain_id,
+        ))
+        .await;
+    }
+
+    #[cfg(feature = "base")]
+    if evm_opts.networks.is_base() {
+        return Box::pin(run_command_with_network::<BaseEvmNetwork>(
             args,
             config,
             evm_opts,
@@ -275,6 +289,17 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "base"))]
+    fn chain_id_rejects_disabled_base_network() {
+        let error = infer_network_from_chain_id(NetworkConfigs::default(), Some(8453)).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cannot infer execution network from chain ID 8453: network family `base` is not \
+             enabled in this build"
+        );
+    }
+
+    #[test]
     #[cfg(not(feature = "monad"))]
     fn chain_id_rejects_disabled_monad_network() {
         let error = infer_network_from_chain_id(NetworkConfigs::default(), Some(143)).unwrap_err();
@@ -289,8 +314,8 @@ mod tests {
     #[test]
     fn explicit_ethereum_overrides_chain_id_inference() {
         let ethereum = NetworkConfigs::with_ethereum();
-        let inferred = infer_network_from_chain_id(ethereum, Some(143)).unwrap();
-
-        assert_eq!(inferred, ethereum);
+        for chain_id in [8453, 143] {
+            assert_eq!(infer_network_from_chain_id(ethereum, Some(chain_id)).unwrap(), ethereum);
+        }
     }
 }

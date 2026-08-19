@@ -1,4 +1,4 @@
-#[cfg(feature = "optimism")]
+#[cfg(any(feature = "base", feature = "optimism"))]
 use crate::cmd::da_estimate::DAEstimateArgs;
 use crate::cmd::{
     access_list::AccessListArgs,
@@ -1348,7 +1348,7 @@ pub enum CastSubcommand {
         command: TxPoolSubcommands,
     },
     /// Estimates the data availability size of a given opstack block.
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     #[command(name = "da-estimate")]
     DAEstimate(DAEstimateArgs),
 

@@ -1273,6 +1273,12 @@ dependencies = [
  "anvil-server",
  "async-trait",
  "axum",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-common-evm",
+ "base-common-precompiles",
+ "base-common-rpc-types",
+ "base-execution-eip8130",
  "chrono",
  "clap",
  "clap_complete",
@@ -2393,6 +2399,214 @@ dependencies = [
 ]
 
 [[package]]
+name = "base-common-chains"
+version = "0.0.0"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
+dependencies = [
+ "alloy-chains",
+ "alloy-eips",
+ "alloy-genesis",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "auto_impl",
+ "base-common-genesis",
+ "revm",
+ "spin",
+]
+
+[[package]]
+name = "base-common-consensus"
+version = "0.0.0"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-eth",
+ "alloy-serde",
+ "bytes",
+ "reth-codecs",
+ "reth-primitives-traits",
+ "reth-zstd-compressors",
+ "revm",
+ "serde",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "base-common-evm"
+version = "0.0.0"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-primitives",
+ "auto_impl",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-common-flz",
+ "base-common-genesis",
+ "base-common-precompiles",
+ "base-execution-eip8130",
+ "base-metrics",
+ "base-precompile-storage",
+ "revm",
+ "serde",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "base-common-flz"
+version = "0.0.0"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
+
+[[package]]
+name = "base-common-genesis"
+version = "0.0.0"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
+dependencies = [
+ "alloy-chains",
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-hardforks",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "derive_more",
+ "serde",
+ "spin",
+ "thiserror 2.0.19",
+ "tracing",
+]
+
+[[package]]
+name = "base-common-network"
+version = "0.0.0"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
+dependencies = [
+ "alloy-consensus",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types-engine",
+ "alloy-transport",
+ "async-trait",
+ "base-common-consensus",
+ "base-common-rpc-types",
+ "base-common-rpc-types-engine",
+]
+
+[[package]]
+name = "base-common-precompiles"
+version = "0.0.0"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
+dependencies = [
+ "alloy-evm",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "base-common-chains",
+ "base-common-genesis",
+ "base-precompile-macros",
+ "base-precompile-storage",
+ "revm",
+]
+
+[[package]]
+name = "base-common-rpc-types"
+version = "0.0.0"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-network",
+ "alloy-network-primitives",
+ "alloy-primitives",
+ "alloy-rpc-types-eth",
+ "alloy-serde",
+ "base-common-consensus",
+ "base-common-evm",
+ "derive_more",
+ "reth-primitives-traits",
+ "revm",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "base-common-rpc-types-engine"
+version = "0.0.0"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-engine",
+ "alloy-serde",
+ "base-common-consensus",
+ "ethereum_ssz",
+ "ethereum_ssz_derive",
+ "serde",
+ "sha2 0.10.9",
+ "snap",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "base-execution-eip8130"
+version = "0.0.0"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "base-common-consensus",
+ "base-common-precompiles",
+ "base-precompile-macros",
+ "base-precompile-storage",
+ "base64 0.22.1",
+ "k256",
+ "p256 0.13.2",
+ "revm",
+ "sha2 0.10.9",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "base-metrics"
+version = "0.0.0"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
+
+[[package]]
+name = "base-precompile-macros"
+version = "0.0.0"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
+dependencies = [
+ "alloy-primitives",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "base-precompile-storage"
+version = "0.0.0"
+source = "git+https://github.com/base/base?rev=aa8745e8ae78bab2a1342829147eb758a7c5985c#aa8745e8ae78bab2a1342829147eb758a7c5985c"
+dependencies = [
+ "alloy-evm",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "base-precompile-macros",
+ "derive_more",
+ "revm",
+ "thiserror 2.0.19",
+ "tracing",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2960,6 +3174,7 @@ dependencies = [
  "alloy-transport",
  "anvil",
  "axum",
+ "base-common-network",
  "chrono",
  "clap",
  "clap_complete",
@@ -5713,6 +5928,8 @@ dependencies = [
  "anstream",
  "anstyle",
  "axum",
+ "base-common-network",
+ "base-common-rpc-types",
  "base64 0.23.1",
  "chrono",
  "ciborium",
@@ -5766,6 +5983,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-rpc-types",
  "alloy-serde",
+ "base-common-consensus",
+ "base-common-rpc-types",
  "chrono",
  "comfy-table",
  "eyre",
@@ -6015,6 +6234,12 @@ dependencies = [
  "alloy-sol-types",
  "anvil",
  "auto_impl",
+ "base-common-chains",
+ "base-common-consensus",
+ "base-common-evm",
+ "base-common-network",
+ "base-common-precompiles",
+ "base-common-rpc-types",
  "eyre",
  "foundry-cheatcodes-spec",
  "foundry-common",
@@ -6098,6 +6323,8 @@ dependencies = [
  "alloy-hardforks",
  "alloy-op-hardforks",
  "alloy-rpc-types",
+ "base-common-evm",
+ "base-common-genesis",
  "foundry-compilers",
  "monad-revm",
  "op-revm",
@@ -6115,6 +6342,7 @@ dependencies = [
  "alloy-evm",
  "alloy-op-hardforks",
  "alloy-primitives",
+ "base-common-precompiles",
  "clap",
  "foundry-evm-hardforks",
  "monad-revm",
@@ -6162,6 +6390,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "async-trait",
+ "base-common-precompiles",
  "eyre",
  "foundry-block-explorers",
  "foundry-common",
@@ -6250,6 +6479,9 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-serde",
  "alloy-signer",
+ "base-common-consensus",
+ "base-common-evm",
+ "base-common-rpc-types",
  "derive_more",
  "op-alloy-consensus",
  "op-alloy-rpc-types",
@@ -12106,6 +12338,9 @@ name = "spin"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
+dependencies = [
+ "lock_api",
+]
 
 [[package]]
 name = "spinning_top"
