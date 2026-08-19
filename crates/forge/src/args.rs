@@ -244,9 +244,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Eip712(cmd) => cmd.run(),
         ForgeSubcommand::BindJson(cmd) => cmd.run(),
         ForgeSubcommand::Lint(cmd) => global.block_on(cmd.run()),
-        ForgeSubcommand::Lsp(_) => {
-            unreachable!("LSP invocations are dispatched before run_command")
-        }
+        ForgeSubcommand::Lsp(cmd) => global.block_on(crate::cmd::lsp::run(cmd)),
     }
 }
 
