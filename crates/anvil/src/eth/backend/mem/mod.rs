@@ -87,7 +87,7 @@ use alloy_network::{
 #[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
-    Address, B256, Bloom, Bytes, Signature, TxHash, TxKind, U64, U256, address, hex, keccak256,
+    Address, B256, Bloom, Bytes, Signature, TxKind, U64, U256, address, hex, keccak256,
     map::{AddressMap, B256Set, HashMap, HashSet},
 };
 use alloy_rlp::Decodable;
@@ -7488,23 +7488,6 @@ where
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| self.geth_trace(tx, opts))
     }
 
-    /// returns all receipts for the given transactions
-    fn get_receipts(
-        &self,
-        tx_hashes: impl IntoIterator<Item = TxHash>,
-    ) -> Vec<FoundryReceiptEnvelope> {
-        let storage = self.blockchain.storage.read();
-        let mut receipts = vec![];
-
-        for hash in tx_hashes {
-            if let Some(tx) = storage.transactions.get(&hash) {
-                receipts.push(tx.receipt.clone());
-            }
-        }
-
-        receipts
-    }
-
     pub async fn transaction_receipt(
         &self,
         hash: B256,
@@ -7578,19 +7561,22 @@ where
         &self,
         hash: B256,
     ) -> Option<MinedTransactionReceipt<FoundryNetwork>> {
-        let transaction = self.blockchain.get_transaction_by_hash(&hash)?;
+        let storage = self.blockchain.storage.read();
+        let transaction = storage.transactions.get(&hash)?;
 
         let index = transaction.info.transaction_index as usize;
-        let block = self.blockchain.get_block_by_hash(&transaction.block_hash)?;
-        let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
-        let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
+        let block = storage.blocks.get(&transaction.block_hash)?;
+        let mut next_log_index = 0;
+        for block_transaction in &block.body.transactions[..index] {
+            next_log_index +=
+                storage.transactions.get(&block_transaction.hash())?.receipt.logs().len();
+        }
 
-        let MinedTransaction { info, receipt, block_hash, .. } = transaction;
         Some(self.build_mined_transaction_receipt(
-            &info,
-            receipt,
-            block_hash,
-            &block,
+            &transaction.info,
+            transaction.receipt.clone(),
+            transaction.block_hash,
+            block,
             next_log_index,
         ))
     }
