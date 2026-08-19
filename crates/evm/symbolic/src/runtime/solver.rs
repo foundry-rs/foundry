@@ -25,6 +25,8 @@ use opt::{constraints_are_directly_unsat, sorted_bool_exprs_are_subset, write_sm
 #[cfg(test)]
 pub(crate) use opt::{normalize_bool_for_solver, normalize_expr_for_solver};
 
+const Z3_QUERY_END: &str = "foundry-query-complete";
+
 /// Errors that arise when parsing or constructing solver commands from configuration.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SolverConfigError {
@@ -1614,8 +1616,6 @@ fn format_solver_portfolio_summaries(summaries: &[SolverRunSummary]) -> String {
     }
     output
 }
-
-const Z3_QUERY_END: &str = "foundry-query-complete";
 
 struct Z3Session {
     child: SolverChild,
