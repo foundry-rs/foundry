@@ -8,7 +8,7 @@ use foundry_cli::utils::{Git, LoadConfig};
 use foundry_common::shell;
 use foundry_config::{Config, impl_figment_convert_basic};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// CLI arguments for `forge dependencies`.
 #[derive(Clone, Debug, Parser)]
@@ -100,13 +100,17 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     }
 
     // `install_lib_dir` is absolute, but `git submodule status` reports paths relative to the
-    // Git root, so bring both onto the same (relative) footing before comparing. Assumes the
-    // project root is the Git root - a nested-monorepo project (root below the repo's top level)
-    // will report zero submodules here rather than misreporting a wrong one, since a mismatched
-    // prefix simply never matches `starts_with(lib)`.
+    // Git root, so bring both onto the same (relative) footing before comparing.
     let git_root = Git::root_of(&config.root).unwrap_or_else(|_| config.root.clone());
     let lib = config.install_lib_dir();
     let lib = lib.strip_prefix(&git_root).unwrap_or(lib);
+
+    // When the project root sits below the Git root (a nested monorepo layout), submodule paths
+    // from `git submodule status` are still Git-root-relative - rebase onto the project root so
+    // the displayed path matches what the user configured (e.g. `lib/forge-std`, not
+    // `apps/contracts/lib/forge-std`) rather than leaking the enclosing repo's layout.
+    let project_root = dunce::canonicalize(&config.root).unwrap_or_else(|_| config.root.clone());
+    let project_prefix = project_root.strip_prefix(&git_root).unwrap_or(Path::new(""));
 
     let mut out = Vec::new();
     for submodule in &submodules {
@@ -131,12 +135,13 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
             .get(path)
             .map(ToString::to_string)
             .unwrap_or_else(|| format!("rev={}", submodule.rev()));
+        let display_path = path.strip_prefix(project_prefix).unwrap_or(path);
 
         out.push(DependencyInfo {
             name: name.to_string(),
             source: "submodule",
             version,
-            path: path.display().to_string(),
+            path: display_path.display().to_string(),
             url,
         });
     }
@@ -161,8 +166,13 @@ fn soldeer_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
 
     let mut out = Vec::new();
     for entry in &lockfile.entries {
-        let path = entry.install_path(&deps_dir);
-        let path = path.strip_prefix(&config.root).unwrap_or(&path);
+        let install_path = entry.install_path(&deps_dir);
+        // A fresh clone (before `forge soldeer install`) or a manually deleted package still has
+        // a `soldeer.lock` entry - only report what's actually present on disk.
+        if !install_path.exists() {
+            continue;
+        }
+        let path = install_path.strip_prefix(&config.root).unwrap_or(&install_path);
 
         let url = match entry {
             soldeer_core::lock::LockEntry::Git(dep) => Some(dep.git.clone()),

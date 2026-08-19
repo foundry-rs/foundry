@@ -5,7 +5,9 @@ use soldeer_core::lock::{GitLockEntry, HttpLockEntry, LockEntry};
 use std::fs;
 
 /// Writes a synthetic `soldeer.lock` with an HTTP-sourced and a Git-sourced dependency, using
-/// Soldeer's own lockfile serializer so the fixture always matches the real on-disk schema.
+/// Soldeer's own lockfile serializer so the fixture always matches the real on-disk schema. Also
+/// creates each entry's install-path directory - `forge dependencies` only reports what's
+/// actually present on disk, so a lockfile-only fixture would now be silently excluded.
 fn write_soldeer_lock(root: &std::path::Path) {
     let entries = vec![
         LockEntry::from(
@@ -26,6 +28,10 @@ fn write_soldeer_lock(root: &std::path::Path) {
                 .build(),
         ),
     ];
+    let deps_dir = root.join("dependencies");
+    for entry in &entries {
+        fs::create_dir_all(entry.install_path(&deps_dir)).unwrap();
+    }
     let contents = soldeer_core::lock::generate_lockfile_contents(entries);
     fs::write(root.join("soldeer.lock"), contents).unwrap();
 }
@@ -156,4 +162,31 @@ forgetest_init!(dependencies_reports_lockfile_pinned_version, |prj, cmd| {
         output.contains("tag=v1.9.4@680ee6692649dcc7c617e05b2144932618264a83"),
         "expected forge-std to report its foundry.lock pin, not a bare rev:\n{output}"
     );
+});
+
+// A `soldeer.lock` entry survives a fresh clone (Soldeer packages aren't checked into Git) or a
+// package can be manually deleted from `dependencies/` without touching the lockfile. Either way,
+// the entry is no longer actually installed, so it must not be reported as a dependency.
+forgetest_init!(dependencies_excludes_soldeer_entry_missing_from_disk, |prj, cmd| {
+    write_soldeer_lock(prj.root());
+    fs::remove_dir_all(prj.root().join("dependencies/test-dep-1.0.0")).unwrap();
+
+    let output = cmd.arg("dependencies").assert_success().get_output().stdout_lossy();
+    assert!(
+        !output.contains("test-dep"),
+        "test-dep has no install directory and should not be listed:\n{output}"
+    );
+    assert!(output.contains("git-dep"), "git-dep is still on disk and should be listed:\n{output}");
+
+    let json = cmd
+        .forge_fuse()
+        .args(["dependencies", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let names: Vec<&str> =
+        parsed.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert!(!names.contains(&"test-dep"), "test-dep leaked into --json output:\n{json}");
+    assert!(names.contains(&"git-dep"), "git-dep missing from --json output:\n{json}");
 });
