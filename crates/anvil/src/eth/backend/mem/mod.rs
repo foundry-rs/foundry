@@ -134,7 +134,7 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use foundry_evm::core::{
     FromAnyRpcTransaction,
     evm::{
-        FoundryEvmFactory, MonadBlockParticipants,
+        FoundryEvmFactory, MonadBlockParticipants, MonadEvmNetwork,
         monad_block_participants as collect_monad_block_participants,
         monad_context_from_participants, protocol_system_call,
     },
@@ -2888,6 +2888,18 @@ impl<N: Network> Backend<N> {
         )
     }
 
+    /// Builds the Monad [`EvmEnv`] (spec and gas params) from a base env.
+    #[cfg(feature = "monad")]
+    fn build_monad_evm_env(
+        evm_env: &EvmEnv,
+        hardfork: MonadHardfork,
+    ) -> EvmEnvFor<MonadEvmNetwork> {
+        EvmEnv::new(
+            evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
+            evm_env.block_env.clone(),
+        )
+    }
+
     /// Creates a Tempo EVM, injects precompiles, and transacts with a native [`TempoTxEnv`].
     fn transact_tempo_with_inspector_ref<'db, I, DB>(
         &self,
@@ -2933,13 +2945,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let monad_env = EvmEnv::new(
-            evm_env
-                .cfg_env
-                .clone()
-                .with_spec_and_gas_params(execution.hardfork, monad_gas_params(execution.hardfork)),
-            evm_env.block_env.clone(),
-        );
+        let monad_env = Self::build_monad_evm_env(evm_env, execution.hardfork);
         let factory = MonadEvmFactory::default();
         let context = execution.context.unwrap_or_else(|| {
             monad_context_from_participants(
@@ -3059,13 +3065,7 @@ impl<N: Network> Backend<N> {
         #[cfg(feature = "monad")]
         if self.is_monad() {
             let hardfork = MonadHardfork::from(hardfork);
-            let monad_env = EvmEnv::new(
-                evm_env
-                    .cfg_env
-                    .clone()
-                    .with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
-                evm_env.block_env.clone(),
-            );
+            let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
             let mut evm =
                 MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
             let transaction_context = self
@@ -5708,13 +5708,7 @@ where
         #[cfg(feature = "monad")]
         if self.is_monad() {
             let hardfork = MonadHardfork::from(hardfork);
-            let monad_env = EvmEnv::new(
-                evm_env
-                    .cfg_env
-                    .clone()
-                    .with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
-                evm_env.block_env.clone(),
-            );
+            let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
             let mut evm =
                 MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
             let transaction_context = monad_context
