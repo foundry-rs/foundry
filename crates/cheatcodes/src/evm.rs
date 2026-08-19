@@ -355,7 +355,7 @@ impl Cheatcode for loadAllocsCall {
         // Then, load the allocs into the database.
         let (db, inner) = ccx.ecx.db_journal_inner_mut();
         db.load_allocs(&allocs, inner).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
-        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+        ccx.ecx.refresh_chain_dependent_state();
         Ok(Default::default())
     }
 }
@@ -370,7 +370,7 @@ impl Cheatcode for cloneAccountCall {
         db.clone_account(&genesis, target, inner)?;
         // Cloned account should persist in forked envs.
         ccx.ecx.db_mut().add_persistent_account(*target);
-        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+        ccx.ecx.refresh_chain_dependent_state();
         Ok(Default::default())
     }
 }
@@ -773,7 +773,7 @@ impl Cheatcode for dealCall {
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
-        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+        ccx.ecx.refresh_chain_dependent_state();
         Ok(Default::default())
     }
 }
@@ -1086,6 +1086,7 @@ impl Cheatcode for deleteSnapshotCall {
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
         ccx.state.fork_block_number_override_snapshots.remove(snapshotId);
+        #[cfg(feature = "monad")]
         ccx.state.context_snapshots.remove(snapshotId);
         ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
@@ -1098,6 +1099,7 @@ impl Cheatcode for deleteStateSnapshotCall {
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
         ccx.state.fork_block_number_override_snapshots.remove(snapshotId);
+        #[cfg(feature = "monad")]
         ccx.state.context_snapshots.remove(snapshotId);
         ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
@@ -1111,6 +1113,7 @@ impl Cheatcode for deleteSnapshotsCall {
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
         ccx.state.fork_block_number_override_snapshots.clear();
+        #[cfg(feature = "monad")]
         ccx.state.context_snapshots.clear();
         ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
@@ -1123,6 +1126,7 @@ impl Cheatcode for deleteStateSnapshotsCall {
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
         ccx.state.fork_block_number_override_snapshots.clear();
+        #[cfg(feature = "monad")]
         ccx.state.context_snapshots.clear();
         ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
@@ -1275,7 +1279,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         let from = sender;
 
         executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
-        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+        ccx.ecx.refresh_chain_dependent_state();
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1452,7 +1456,7 @@ impl Cheatcode for executeTransactionCall {
 
         // Keep network-specific caches aligned with the state merged from the nested EVM while
         // preserving the outer transaction's execution context.
-        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+        ccx.ecx.refresh_chain_dependent_state();
 
         // Return output bytes.
         let output = match res.result {
@@ -1593,11 +1597,13 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
     // `Cheatcodes::env_overrides_snapshots`.
     ccx.state.env_overrides_snapshots.insert(id, all_env_overrides);
     ccx.state.fork_block_number_override_snapshots.insert(id, ccx.state.fork_block_number_override);
-    let factory = FEN::EvmFactory::default();
-    ccx.state.context_snapshots.insert(
-        id,
-        (factory.capture_chain_context(ccx.ecx), factory.capture_transaction_state(ccx.ecx)),
-    );
+    #[cfg(feature = "monad")]
+    {
+        let factory = FEN::EvmFactory::default();
+        ccx.state
+            .context_snapshots
+            .insert(id, (ccx.ecx.chain().clone(), factory.capture_transaction_state(ccx.ecx)));
+    }
     ccx.state.snapshot_created_accounts(id, fork_id);
     Ok(id.abi_encode())
 }
@@ -1657,11 +1663,12 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertKeep,
     ) {
         ccx.ecx.set_journal_inner(restored);
+        #[cfg(feature = "monad")]
         if let Some((context, state)) = ccx.state.context_snapshots.get(&snapshot_id) {
-            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, Some(context));
+            *ccx.ecx.chain_mut() = context.clone();
             FEN::EvmFactory::default().restore_transaction_state(ccx.ecx, state.clone());
         } else {
-            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+            ccx.ecx.refresh_chain_dependent_state();
         }
         ccx.ecx.set_evm(evm_env);
         // `RevertKeep` keeps the backend snapshot alive for further
@@ -1697,11 +1704,12 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         RevertStateSnapshotAction::RevertRemove,
     ) {
         ccx.ecx.set_journal_inner(restored);
+        #[cfg(feature = "monad")]
         if let Some((context, state)) = ccx.state.context_snapshots.remove(&snapshot_id) {
-            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, Some(&context));
+            *ccx.ecx.chain_mut() = context;
             FEN::EvmFactory::default().restore_transaction_state(ccx.ecx, state);
         } else {
-            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+            ccx.ecx.refresh_chain_dependent_state();
         }
         ccx.ecx.set_evm(evm_env);
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {

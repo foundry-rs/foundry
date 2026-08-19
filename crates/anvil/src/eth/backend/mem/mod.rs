@@ -38,7 +38,7 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
-        fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
+        fees::{FeeDetails, FeeManager, FeeSnapshot, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         pool::transactions::PoolTransaction,
         preserve_simulation_request_fields,
@@ -87,7 +87,7 @@ use alloy_network::{
 #[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
-    Address, B256, Bloom, Bytes, Signature, TxHash, TxKind, U64, U256, address, hex, keccak256,
+    Address, B256, Bloom, Bytes, Signature, TxKind, U64, U256, address, hex, keccak256,
     map::{AddressMap, B256Set, HashMap, HashSet},
 };
 use alloy_rlp::Decodable;
@@ -134,7 +134,7 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use foundry_evm::core::{
     FromAnyRpcTransaction,
     evm::{
-        FoundryEvmFactory, MonadBlockParticipants,
+        FoundryEvmFactory, MonadBlockParticipants, MonadEvmNetwork,
         monad_block_participants as collect_monad_block_participants,
         monad_context_from_participants, protocol_system_call,
     },
@@ -514,13 +514,23 @@ struct PreparedMonadExecution {
 }
 
 #[cfg(feature = "monad")]
-fn exact_monad_context_at(
-    context: &MonadReplayContext,
+fn monad_execution_context_at(
+    context: Option<&MonadReplayContext>,
     current_tx_index: usize,
-) -> MonadExecutionContext<'static> {
-    let mut context = context.clone();
-    context.current_tx_index = current_tx_index;
-    MonadExecutionContext::Exact(Box::new(context))
+) -> Option<MonadExecutionContext<'static>> {
+    context.map(|context| {
+        let mut context = context.clone();
+        context.current_tx_index = current_tx_index;
+        MonadExecutionContext::Exact(Box::new(context))
+    })
+}
+
+#[cfg(not(feature = "monad"))]
+const fn monad_execution_context_at(
+    _context: Option<&MonadReplayContext>,
+    _current_tx_index: usize,
+) -> Option<MonadExecutionContext<'static>> {
+    None
 }
 
 #[cfg(feature = "monad")]
@@ -979,6 +989,12 @@ impl<T> BlockRequest<T> {
     }
 }
 
+struct StateSnapshot {
+    block_number: u64,
+    block_hash: B256,
+    fees: FeeSnapshot,
+}
+
 /// Gives access to the [revm::Database]
 pub struct Backend<N: Network> {
     /// Access to [`revm::Database`] abstraction.
@@ -1027,7 +1043,7 @@ pub struct Backend<N: Network> {
     /// removed from the canonical chain due to a reorg.
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<ChainNotification>>>>,
     /// Keeps track of active state snapshots at a specific block.
-    active_state_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
+    active_state_snapshots: Arc<Mutex<HashMap<U256, StateSnapshot>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
     print_traces: bool,
@@ -1563,6 +1579,22 @@ impl<N: Network> Backend<N> {
         Ok(monad_context_from_participants(grandparent, parent, &current, 0))
     }
 
+    #[cfg(feature = "monad")]
+    fn active_monad_context_for_mined_block(
+        &self,
+        block: &Block,
+    ) -> Result<Option<MonadReplayContext>, BlockchainError> {
+        self.is_monad().then(|| self.monad_context_for_mined_block(block)).transpose()
+    }
+
+    #[cfg(not(feature = "monad"))]
+    fn active_monad_context_for_mined_block(
+        &self,
+        _block: &Block,
+    ) -> Result<Option<MonadReplayContext>, BlockchainError> {
+        Ok(None)
+    }
+
     /// Builds context immediately before a synthetic transaction at `current_tx_index`.
     #[cfg(feature = "monad")]
     fn monad_context_before_mined_transaction(
@@ -1923,12 +1955,19 @@ impl<N: Network> Backend<N> {
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot_state();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
-        self.active_state_snapshots.lock().insert(id, (num, hash));
+        self.active_state_snapshots.lock().insert(
+            id,
+            StateSnapshot { block_number: num, block_hash: hash, fees: self.fees.snapshot() },
+        );
         id
     }
 
     pub fn list_state_snapshots(&self) -> BTreeMap<U256, (u64, B256)> {
-        self.active_state_snapshots.lock().clone().into_iter().collect()
+        self.active_state_snapshots
+            .lock()
+            .iter()
+            .map(|(&id, snapshot)| (id, (snapshot.block_number, snapshot.block_hash)))
+            .collect()
     }
 
     /// Returns the environment for the next block
@@ -2032,19 +2071,11 @@ impl<N: Network> Backend<N> {
     where
         DB: DatabaseRef<Error = DatabaseError> + Debug,
     {
-        #[cfg(feature = "monad")]
-        let monad_context =
-            self.is_monad().then(|| self.monad_context_for_mined_block(block)).transpose()?;
+        let monad_context = self.active_monad_context_for_mined_block(block)?;
         for (index, transaction) in block.body.transactions[..end].iter().enumerate() {
-            #[cfg(not(feature = "monad"))]
-            let _ = index;
             let pending = self.pending_mined_transaction(transaction.clone())?;
             let mut inspector = AnvilInspector::default();
-            #[cfg(feature = "monad")]
-            let transaction_context =
-                monad_context.as_ref().map(|context| exact_monad_context_at(context, index));
-            #[cfg(not(feature = "monad"))]
-            let transaction_context = None;
+            let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
             let (result, _) = self.replay_envelope_with_inspector_ref_and_context(
                 cache_db,
                 evm_env,
@@ -2857,6 +2888,18 @@ impl<N: Network> Backend<N> {
         )
     }
 
+    /// Builds the Monad [`EvmEnv`] (spec and gas params) from a base env.
+    #[cfg(feature = "monad")]
+    fn build_monad_evm_env(
+        evm_env: &EvmEnv,
+        hardfork: MonadHardfork,
+    ) -> EvmEnvFor<MonadEvmNetwork> {
+        EvmEnv::new(
+            evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
+            evm_env.block_env.clone(),
+        )
+    }
+
     /// Creates a Tempo EVM, injects precompiles, and transacts with a native [`TempoTxEnv`].
     fn transact_tempo_with_inspector_ref<'db, I, DB>(
         &self,
@@ -2902,13 +2945,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let monad_env = EvmEnv::new(
-            evm_env
-                .cfg_env
-                .clone()
-                .with_spec_and_gas_params(execution.hardfork, monad_gas_params(execution.hardfork)),
-            evm_env.block_env.clone(),
-        );
+        let monad_env = Self::build_monad_evm_env(evm_env, execution.hardfork);
         let factory = MonadEvmFactory::default();
         let context = execution.context.unwrap_or_else(|| {
             monad_context_from_participants(
@@ -3028,13 +3065,7 @@ impl<N: Network> Backend<N> {
         #[cfg(feature = "monad")]
         if self.is_monad() {
             let hardfork = MonadHardfork::from(hardfork);
-            let monad_env = EvmEnv::new(
-                evm_env
-                    .cfg_env
-                    .clone()
-                    .with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
-                evm_env.block_env.clone(),
-            );
+            let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
             let mut evm =
                 MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
             let transaction_context = self
@@ -4121,9 +4152,7 @@ impl<N: Network> Backend<N> {
     ) -> Result<Vec<TraceResultsWithTransactionHash>, BlockchainError> {
         let (mut cache_db, evm_env, hardfork) = self.prepare_block_replay(block, parent_state)?;
         let mut results = Vec::new();
-        #[cfg(feature = "monad")]
-        let monad_context =
-            self.is_monad().then(|| self.monad_context_for_mined_block(block)).transpose()?;
+        let monad_context = self.active_monad_context_for_mined_block(block)?;
 
         // Execute each transaction in the block with tracing
         for tx_envelope in &block.body.transactions {
@@ -4134,12 +4163,8 @@ impl<N: Network> Backend<N> {
 
             // Prepare transaction environment and execute
             let pending_tx = self.pending_mined_transaction(tx_envelope.clone())?;
-            #[cfg(feature = "monad")]
-            let transaction_context = monad_context
-                .as_ref()
-                .map(|context| exact_monad_context_at(context, results.len()));
-            #[cfg(not(feature = "monad"))]
-            let transaction_context = None;
+            let transaction_context =
+                monad_execution_context_at(monad_context.as_ref(), results.len());
             let (result, _) = self.replay_envelope_with_inspector_ref_and_context(
                 &cache_db,
                 &evm_env,
@@ -5098,11 +5123,23 @@ impl<N: Network> Backend<N> {
 
     /// Reverts the state to the state snapshot identified by the given `id`.
     pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
-        let Some((num, hash)) = self.active_state_snapshots.lock().remove(&id) else {
+        let Some((num, hash, fees)) = self
+            .active_state_snapshots
+            .lock()
+            .get(&id)
+            .map(|snapshot| (snapshot.block_number, snapshot.block_hash, snapshot.fees))
+        else {
             return Ok(false);
         };
         let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
-
+        if !self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove) {
+            return Ok(false);
+        }
+        {
+            let mut snapshots = self.active_state_snapshots.lock();
+            snapshots.remove(&id);
+            snapshots.retain(|snapshot_id, _| *snapshot_id < id);
+        }
         {
             // revert the storage that's newer than the snapshot
             let current_height = self.best_number();
@@ -5146,7 +5183,8 @@ impl<N: Network> Backend<N> {
                 ..Default::default()
             };
         }
-        Ok(self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove))
+        self.fees.restore(fees);
+        Ok(true)
     }
 
     /// executes the transactions without writing to the underlying database
@@ -5670,13 +5708,7 @@ where
         #[cfg(feature = "monad")]
         if self.is_monad() {
             let hardfork = MonadHardfork::from(hardfork);
-            let monad_env = EvmEnv::new(
-                evm_env
-                    .cfg_env
-                    .clone()
-                    .with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
-                evm_env.block_env.clone(),
-            );
+            let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
             let mut evm =
                 MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
             let transaction_context = monad_context
@@ -6816,14 +6848,8 @@ where
 
             let target_tx = block.body.transactions[index].clone();
             let target_tx = self.pending_mined_transaction(target_tx)?;
-            #[cfg(feature = "monad")]
-            let monad_context =
-                self.is_monad().then(|| self.monad_context_for_mined_block(&block)).transpose()?;
-            #[cfg(feature = "monad")]
-            let transaction_context =
-                monad_context.as_ref().map(|context| exact_monad_context_at(context, index));
-            #[cfg(not(feature = "monad"))]
-            let transaction_context = None;
+            let monad_context = self.active_monad_context_for_mined_block(&block)?;
+            let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
             let (result, base_tx_env) = self.replay_envelope_with_inspector_ref_and_context(
                 &cache_db,
                 &evm_env,
@@ -7001,19 +7027,13 @@ where
             let (mut cache_db, evm_env, hardfork) =
                 self.prepare_block_replay(block, parent_state)?;
             let mut transactions = Vec::with_capacity(block.body.transactions.len());
-            #[cfg(feature = "monad")]
-            let monad_context =
-                self.is_monad().then(|| self.monad_context_for_mined_block(block)).transpose()?;
+            let monad_context = self.active_monad_context_for_mined_block(block)?;
 
             for tx_envelope in &block.body.transactions {
                 let mut inspector = OpcodeGasInspector::default();
                 let pending_tx = self.pending_mined_transaction(tx_envelope.clone())?;
-                #[cfg(feature = "monad")]
-                let transaction_context = monad_context
-                    .as_ref()
-                    .map(|context| exact_monad_context_at(context, transactions.len()));
-                #[cfg(not(feature = "monad"))]
-                let transaction_context = None;
+                let transaction_context =
+                    monad_execution_context_at(monad_context.as_ref(), transactions.len());
                 let (result, _) = self.replay_envelope_with_inspector_ref_and_context(
                     &cache_db,
                     &evm_env,
@@ -7488,23 +7508,6 @@ where
         self.blockchain.storage.read().transactions.get(&hash).map(|tx| self.geth_trace(tx, opts))
     }
 
-    /// returns all receipts for the given transactions
-    fn get_receipts(
-        &self,
-        tx_hashes: impl IntoIterator<Item = TxHash>,
-    ) -> Vec<FoundryReceiptEnvelope> {
-        let storage = self.blockchain.storage.read();
-        let mut receipts = vec![];
-
-        for hash in tx_hashes {
-            if let Some(tx) = storage.transactions.get(&hash) {
-                receipts.push(tx.receipt.clone());
-            }
-        }
-
-        receipts
-    }
-
     pub async fn transaction_receipt(
         &self,
         hash: B256,
@@ -7578,19 +7581,22 @@ where
         &self,
         hash: B256,
     ) -> Option<MinedTransactionReceipt<FoundryNetwork>> {
-        let transaction = self.blockchain.get_transaction_by_hash(&hash)?;
+        let storage = self.blockchain.storage.read();
+        let transaction = storage.transactions.get(&hash)?;
 
         let index = transaction.info.transaction_index as usize;
-        let block = self.blockchain.get_block_by_hash(&transaction.block_hash)?;
-        let receipts = self.get_receipts(block.body.transactions.iter().map(|tx| tx.hash()));
-        let next_log_index = receipts[..index].iter().map(|r| r.logs().len()).sum::<usize>();
+        let block = storage.blocks.get(&transaction.block_hash)?;
+        let mut next_log_index = 0;
+        for block_transaction in &block.body.transactions[..index] {
+            next_log_index +=
+                storage.transactions.get(&block_transaction.hash())?.receipt.logs().len();
+        }
 
-        let MinedTransaction { info, receipt, block_hash, .. } = transaction;
         Some(self.build_mined_transaction_receipt(
-            &info,
-            receipt,
-            block_hash,
-            &block,
+            &transaction.info,
+            transaction.receipt.clone(),
+            transaction.block_hash,
+            block,
             next_log_index,
         ))
     }

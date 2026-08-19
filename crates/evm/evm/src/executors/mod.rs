@@ -35,8 +35,8 @@ use foundry_evm_core::{
         history_window_start,
     },
     evm::{
-        BlockContext, ChainContextFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory,
-        FoundryEvmNetwork, HaltReasonFor, IntoInstructionResult, SpecFor, TxEnvFor,
+        BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork,
+        HaltReasonFor, IntoInstructionResult, SpecFor, TxEnvFor,
     },
     utils::StateChangeset,
 };
@@ -266,7 +266,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     fn chain_context_for_synthetic_transaction(
         &self,
         tx: &TxEnvFor<FEN>,
-    ) -> eyre::Result<ChainContextFor<FEN>> {
+    ) -> eyre::Result<ChainFor<FEN>> {
         self.block_context.as_ref().map_or_else(
             || self.backend().chain_context_for_synthetic_transaction(tx),
             |context| Ok(context.next_transaction(tx)),
@@ -505,7 +505,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         from: Address,
         code: Bytes,
         value: U256,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
         let (evm_env, tx_env) = self.build_test_env(from, TxKind::Create, code, value);
@@ -539,7 +539,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &mut self,
         evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
         assert!(
@@ -691,7 +691,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         to: Address,
         calldata: Bytes,
         value: U256,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let (evm_env, tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
         self.transact_with_env_and_context(evm_env, tx_env, chain_context)
@@ -763,7 +763,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &self,
         mut evm_env: EvmEnvFor<FEN>,
         mut tx_env: TxEnvFor<FEN>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
         let sancov_edges = stack.inner.sancov_edges;
@@ -811,7 +811,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &mut self,
         mut evm_env: EvmEnvFor<FEN>,
         mut tx_env: TxEnvFor<FEN>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
         let sancov_edges = stack.inner.sancov_edges;
@@ -852,7 +852,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         &mut self,
         mut evm_env: EvmEnvFor<FEN>,
         mut tx_env: TxEnvFor<FEN>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
     ) -> eyre::Result<Option<RawCallResult<FEN>>> {
         let mut stack = self.inspector().clone();
         let mut backend = CowBackend::new_borrowed(self.backend());

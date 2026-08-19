@@ -628,8 +628,7 @@ where
         self,
         sender: impl Into<SenderKind<'_>>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
-        let fill = self.fill;
-        self._build(sender, fill, None).await
+        self.build_inner(sender, None).await
     }
 
     /// Builds a transaction that will be signed by a Tempo access key.
@@ -641,18 +640,18 @@ where
         self,
         wallet: &TempoAccountsWallet,
     ) -> Result<(N::TransactionRequest, Option<Function>, TempoAccountsWallet)> {
-        let fill = self.fill;
         let mut prepared = wallet.clone();
-        let (tx, func) = self._build(wallet.account(), fill, Some(&mut prepared)).await?;
+        let (tx, func) = self.build_inner(wallet.account(), Some(&mut prepared)).await?;
         Ok((tx, func, prepared))
     }
 
-    async fn _build(
+    async fn build_inner(
         mut self,
         sender: impl Into<SenderKind<'_>>,
-        fill: bool,
         tempo_wallet: Option<&mut TempoAccountsWallet>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
+        let fill = self.fill;
+
         // prepare
         let sender = sender.into();
         self.prepare(&sender);

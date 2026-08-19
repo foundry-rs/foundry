@@ -750,6 +750,39 @@ async fn test_fork_revert_next_block_timestamp() {
     assert!(block.header.timestamp >= latest_block.header.timestamp);
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_revert_invalidates_newer_snapshots() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let initial_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    let first_snapshot = api.evm_snapshot().await.unwrap();
+    api.mine_one().await.unwrap();
+    let second_snapshot = api.evm_snapshot().await.unwrap();
+
+    assert!(api.evm_revert(first_snapshot).await.unwrap());
+    assert!(!api.evm_revert(second_snapshot).await.unwrap());
+
+    let latest_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(latest_block, initial_block);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_revert_restores_next_block_base_fee() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let base_fee = api.base_fee().unwrap();
+    let state_snapshot = api.evm_snapshot().await.unwrap();
+
+    api.mine_one().await.unwrap();
+    let first_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_ne!(api.base_fee().unwrap(), base_fee);
+    api.evm_revert(state_snapshot).await.unwrap();
+    assert_eq!(api.base_fee().unwrap(), base_fee);
+
+    api.mine_one().await.unwrap();
+    let remined_block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert_eq!(remined_block.header.base_fee_per_gas, first_block.header.base_fee_per_gas);
+}
+
 // Tests that `anvil_setNextBlockPrevRandao` overrides the `prevrandao` (block header `mixHash`) of
 // the next mined block, and that the override is one-shot: subsequent blocks fall back to anvil's
 // default per-block `prevrandao` derivation.
