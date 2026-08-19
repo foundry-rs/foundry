@@ -68,37 +68,6 @@ pub struct LogQueryArgs {
     query_size: Option<u64>,
 }
 
-impl LogQueryArgs {
-    /// Resolves names and block tags and builds the RPC filter.
-    pub async fn resolve<P, N>(self, provider: &P) -> Result<(Filter, Option<u64>)>
-    where
-        P: Provider<N> + Clone + Unpin,
-        N: Network,
-    {
-        let Self { from_block, to_block, address, sig_or_topic, topics_or_args, query_size } = self;
-
-        let cast = Cast::new(&provider);
-        let addresses = match address {
-            Some(addresses) => Some(
-                futures::future::try_join_all(addresses.into_iter().map(|address| {
-                    let provider = provider.clone();
-                    async move { address.resolve(&provider).await }
-                }))
-                .await?,
-            ),
-            None => None,
-        };
-
-        let from_block =
-            cast.convert_block_number(Some(from_block.unwrap_or_else(BlockId::earliest))).await?;
-        let to_block =
-            cast.convert_block_number(Some(to_block.unwrap_or_else(BlockId::latest))).await?;
-        let filter = build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
-
-        Ok((filter, query_size))
-    }
-}
-
 impl LogsArgs {
     pub async fn run(self) -> Result<()> {
         let Self { query, subscribe, rpc } = self;
@@ -131,6 +100,37 @@ impl LogsArgs {
         cast.subscribe(filter, &mut stdout).await?;
 
         Ok(())
+    }
+}
+
+impl LogQueryArgs {
+    /// Resolves names and block tags and builds the RPC filter.
+    pub async fn resolve<P, N>(self, provider: &P) -> Result<(Filter, Option<u64>)>
+    where
+        P: Provider<N> + Clone + Unpin,
+        N: Network,
+    {
+        let Self { from_block, to_block, address, sig_or_topic, topics_or_args, query_size } = self;
+
+        let cast = Cast::new(&provider);
+        let addresses = match address {
+            Some(addresses) => Some(
+                futures::future::try_join_all(addresses.into_iter().map(|address| {
+                    let provider = provider.clone();
+                    async move { address.resolve(&provider).await }
+                }))
+                .await?,
+            ),
+            None => None,
+        };
+
+        let from_block =
+            cast.convert_block_number(Some(from_block.unwrap_or_else(BlockId::earliest))).await?;
+        let to_block =
+            cast.convert_block_number(Some(to_block.unwrap_or_else(BlockId::latest))).await?;
+        let filter = build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
+
+        Ok((filter, query_size))
     }
 }
 

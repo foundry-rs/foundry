@@ -947,6 +947,20 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     }
 }
 
+impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P, AnyNetwork> {
+    /// Retrieves all logs from a transaction receipt.
+    pub async fn get_transaction_logs(&self, tx_hash: TxHash) -> Result<Vec<Log>> {
+        Ok(self
+            .provider
+            .get_transaction_receipt(tx_hash)
+            .await?
+            .ok_or_else(|| eyre::eyre!("tx receipt not found: {tx_hash}"))?
+            .inner
+            .logs()
+            .to_vec())
+    }
+}
+
 /// Returns `true` if `err` is a provider range/result-size limit that retrying over a smaller
 /// range can fix. Network, auth, rate-limit, and malformed-response errors return `false`.
 fn is_range_limit_error(err: &RpcError<TransportErrorKind>) -> bool {

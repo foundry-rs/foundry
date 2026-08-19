@@ -1,12 +1,11 @@
 use super::logs::LogQueryArgs;
 use crate::{
-    Cast,
+    Cast, MAX_CONCURRENT_RPC_REQUESTS,
     traces::{
         CallTraceDecoderBuilder,
         identifier::{ExternalIdentifier, SignaturesIdentifier},
     },
 };
-use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
 use alloy_provider::Provider;
 use alloy_rpc_types::Log;
@@ -19,6 +18,7 @@ use foundry_cli::{
 };
 use foundry_common::shell;
 use foundry_config::{Chain, Config};
+use futures::StreamExt;
 use serde::Serialize;
 use std::{collections::BTreeSet, fmt::Write as _};
 
@@ -68,7 +68,16 @@ impl EventsArgs {
         let (rpc_chain, explorer_chain) = resolve_chains(config.chain, Chain::from(chain_id));
         config.chain = Some(rpc_chain);
 
-        let logs = fetch_logs(&provider, tx_hash, query).await?;
+        let cast = Cast::new(&provider);
+        let logs = if let Some(tx_hash) = tx_hash {
+            cast.get_transaction_logs(tx_hash).await?
+        } else {
+            let (filter, query_size) = query.resolve(&provider).await?;
+            match query_size {
+                Some(chunk_size) => cast.get_logs_chunked(&filter, chunk_size).await?,
+                None => cast.get_logs(&filter).await?,
+            }
+        };
 
         let events = decode_logs(logs, &config, explorer_chain).await?;
         if shell::is_json() {
@@ -86,32 +95,6 @@ impl EventsArgs {
 
 fn resolve_chains(configured_chain: Option<Chain>, rpc_chain: Chain) -> (Chain, Chain) {
     (rpc_chain, configured_chain.unwrap_or(rpc_chain))
-}
-
-async fn fetch_logs<P>(
-    provider: &P,
-    tx_hash: Option<TxHash>,
-    query: LogQueryArgs,
-) -> Result<Vec<Log>>
-where
-    P: Provider<AnyNetwork> + Clone + Unpin,
-{
-    if let Some(tx_hash) = tx_hash {
-        return Ok(provider
-            .get_transaction_receipt(tx_hash)
-            .await?
-            .ok_or_else(|| eyre::eyre!("tx receipt not found: {tx_hash}"))?
-            .inner
-            .logs()
-            .to_vec());
-    }
-
-    let (filter, query_size) = query.resolve(provider).await?;
-    let cast = Cast::new(provider);
-    match query_size {
-        Some(chunk_size) => cast.get_logs_chunked(&filter, chunk_size).await,
-        None => cast.get_logs(&filter).await,
-    }
 }
 
 async fn decode_logs(
@@ -141,12 +124,14 @@ async fn decode_logs(
     }
 
     let decoder = builder.build();
-    let mut events = Vec::with_capacity(logs.len());
-    for log in logs {
-        let decoded = decoder.decode_event_with_address(log.address(), log.data()).await;
-        events.push(EventOutput::new(log, decoded.name, decoded.params));
-    }
-    Ok(events)
+    Ok(futures::stream::iter(logs)
+        .map(|log| async {
+            let decoded = decoder.decode_event_with_address(log.address(), log.data()).await;
+            EventOutput::new(log, decoded.name, decoded.params)
+        })
+        .buffered(MAX_CONCURRENT_RPC_REQUESTS)
+        .collect()
+        .await)
 }
 
 #[derive(Debug, Serialize)]
@@ -201,6 +186,16 @@ struct EventParam {
     value: String,
 }
 
+/// Formats decoded and raw events for human-readable output.
+///
+/// # Example
+///
+/// ```text
+/// [block 1, tx 0xabc..., log 0] 0x123...::Transfer(from: 0x456..., value: 1)
+/// 0x789...
+///   topic 0: 0xdef...
+///   data: 0x
+/// ```
 fn format_events(events: &[EventOutput]) -> String {
     let mut output = String::new();
     for event in events {
@@ -252,6 +247,7 @@ fn format_events(events: &[EventOutput]) -> String {
 mod tests {
     use super::*;
     use alloy_json_abi::{Event, JsonAbi};
+    use alloy_network::AnyNetwork;
     use alloy_primitives::{LogData, U256};
     use alloy_provider::{ProviderBuilder, mock::Asserter};
     use alloy_sol_types::SolValue;
@@ -342,10 +338,9 @@ mod tests {
         asserter.push_success(&receipt);
         let provider =
             ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter.clone());
-        let EventsArgs { query, .. } =
-            EventsArgs::try_parse_from(["events", "--tx-hash", &tx_hash.to_string()]).unwrap();
+        let cast = Cast::new(&provider);
 
-        let logs = fetch_logs(&provider, Some(tx_hash), query).await.unwrap();
+        let logs = cast.get_transaction_logs(tx_hash).await.unwrap();
         assert_eq!(logs.len(), 1);
         assert_eq!(logs[0].address(), log_address);
         assert_eq!(logs[0].block_number, Some(7));
@@ -353,9 +348,7 @@ mod tests {
 
         let missing: Option<serde_json::Value> = None;
         asserter.push_success(&missing);
-        let EventsArgs { query, .. } =
-            EventsArgs::try_parse_from(["events", "--tx-hash", &tx_hash.to_string()]).unwrap();
-        let err = fetch_logs(&provider, Some(tx_hash), query).await.unwrap_err();
+        let err = cast.get_transaction_logs(tx_hash).await.unwrap_err();
         assert!(err.to_string().contains("tx receipt not found"));
     }
 
@@ -379,7 +372,9 @@ mod tests {
         ])
         .unwrap();
 
-        let logs = fetch_logs(&provider, None, query).await.unwrap();
+        let (filter, query_size) = query.resolve(&provider).await.unwrap();
+        let logs =
+            Cast::new(&provider).get_logs_chunked(&filter, query_size.unwrap()).await.unwrap();
         assert_eq!(logs.iter().map(|log| log.block_number).collect::<Vec<_>>(), [Some(1), Some(2)]);
     }
 
