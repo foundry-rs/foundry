@@ -38,6 +38,10 @@ pub struct ExternalIdentifier {
     remaining_budget: Duration,
 }
 
+fn implementation_metadata(source: &ContractMetadata) -> Option<&Metadata> {
+    source.items.first()
+}
+
 impl ExternalIdentifier {
     /// Creates a new external identifier with the given client
     pub fn new(config: &Config, mut chain: Option<Chain>) -> eyre::Result<Option<Self>> {
@@ -99,7 +103,7 @@ impl ExternalIdentifier {
             .iter()
             // filter out vyper files and contracts without metadata
             .filter_map(|(addr, (_, source))| {
-                if let Some(metadata) = source.as_ref().and_then(|source| source.items.last())
+                if let Some(metadata) = source.as_ref().and_then(implementation_metadata)
                     && !metadata.is_vyper()
                 {
                     Some((*addr, metadata))
@@ -149,7 +153,7 @@ impl ExternalIdentifier {
         address: Address,
         source: &ContractMetadata,
     ) -> IdentifiedAddress<'static> {
-        let metadata = source.items.last().expect("fetched source has metadata");
+        let metadata = implementation_metadata(source).expect("fetched source has metadata");
         let label = metadata.contract_name.clone();
         let abi = metadata.abi().ok().map(Cow::Owned);
         IdentifiedAddress {
@@ -905,7 +909,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_abis_returns_all_proxy_metadata() {
+    async fn proxy_metadata_uses_implementation_identity_and_all_abis() {
         let address = Address::with_last_byte(1);
         let source = ContractMetadata {
             items: vec![
@@ -914,6 +918,8 @@ mod tests {
             ],
         };
         let mut identifier = test_identifier(Vec::new(), Duration::from_secs(1));
+        let identity = identifier.identify_from_metadata(address, &source);
+        assert_eq!(identity.contract.as_deref(), Some("Implementation"));
         identifier.cache_fetched(address, (FetcherKind::Etherscan, Some(source)));
 
         let mut results = identifier.get_abis(&[address]).await;
