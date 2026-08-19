@@ -533,7 +533,7 @@ fn fallback_model_satisfies_all_constraints(
     constraints: &[SymBoolExpr],
     model: &(impl SymbolicModelLookup + ?Sized),
 ) -> bool {
-    constraints.iter().all(|constraint| constraint.eval_model(model).unwrap_or(false))
+    eval_model_constraints(constraints, model)
 }
 
 fn complete_fallback_support_model(
@@ -886,7 +886,7 @@ pub(crate) fn fallback_single_var_model(constraints: &[SymBoolExpr]) -> Option<S
     for candidate in candidates {
         let mut model = SymbolicModel::default();
         model.insert(var, candidate);
-        if constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap_or(false)) {
+        if eval_model_constraints(constraints, &model) {
             return Some(model);
         }
     }
