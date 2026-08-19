@@ -2,7 +2,10 @@ use crate::{
     cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch},
     opts::{Forge, ForgeSubcommand},
 };
-use clap::{CommandFactory, Parser, builder::OsStringValueParser, parser::ValueSource};
+use clap::{
+    Command, CommandFactory, FromArgMatches, Parser, builder::OsStringValueParser,
+    parser::ValueSource,
+};
 use clap_complete::generate;
 use eyre::Result;
 use foundry_cli::utils;
@@ -18,7 +21,7 @@ pub fn run() -> Result<()> {
     // inspect dotenv files before clap has parsed the command, since an approval prompt would
     // consume an LSP message from stdin.
     if is_lsp_invocation(std::env::args_os()) {
-        let args = Forge::parse();
+        let args = parse_lsp_args(std::env::args_os());
         return run_lsp(args);
     }
 
@@ -68,6 +71,25 @@ where
         .is_some_and(|matches| matches.subcommand_name() == Some("lsp"))
 }
 
+fn lsp_command() -> Command {
+    let mut command = Forge::command();
+    // Clap propagates global arguments while building the command tree, so hide them afterward.
+    command.build();
+    let lsp = command.find_subcommand_mut("lsp").expect("forge must define the lsp subcommand");
+    *lsp =
+        std::mem::take(lsp).mut_args(|arg| if arg.is_global_set() { arg.hide(true) } else { arg });
+    command
+}
+
+fn parse_lsp_args<I>(args: I) -> Forge
+where
+    I: IntoIterator,
+    I::Item: Into<OsString> + Clone,
+{
+    let mut matches = lsp_command().get_matches_from(args);
+    Forge::from_arg_matches_mut(&mut matches).unwrap_or_else(|err| err.exit())
+}
+
 fn reject_unsupported_lsp_globals<I>(args: I) -> Result<()>
 where
     I: IntoIterator,
@@ -81,7 +103,7 @@ where
 
     let unsupported = command
         .get_arguments()
-        .filter(|arg| arg.is_global_set() && arg.get_id().as_str() != "threads")
+        .filter(|arg| arg.is_global_set())
         .filter(|arg| matches.value_source(arg.get_id().as_str()) == Some(ValueSource::CommandLine))
         .map(|arg| {
             arg.get_long()
@@ -238,7 +260,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{is_lsp_invocation, reject_unsupported_lsp_globals};
+    use super::{is_lsp_invocation, lsp_command, reject_unsupported_lsp_globals};
 
     #[test]
     fn detects_lsp_after_global_options() {
@@ -274,6 +296,32 @@ mod tests {
     fn rejects_lsp_globals_that_solar_does_not_consume() {
         assert!(reject_unsupported_lsp_globals(["forge", "lsp", "--profile", "ci"]).is_err());
         assert!(reject_unsupported_lsp_globals(["forge", "lsp", "--quiet"]).is_err());
-        assert!(reject_unsupported_lsp_globals(["forge", "lsp", "--threads", "2"]).is_ok());
+        assert!(reject_unsupported_lsp_globals(["forge", "lsp", "--threads", "2"]).is_err());
+        assert!(reject_unsupported_lsp_globals(["forge", "lsp", "--jobs", "2"]).is_err());
+    }
+
+    #[test]
+    fn hides_unsupported_lsp_globals_from_help() {
+        let mut command = lsp_command();
+        let help = command
+            .find_subcommand_mut("lsp")
+            .expect("forge must define the lsp subcommand")
+            .render_long_help()
+            .to_string();
+
+        for option in [
+            "--profile",
+            "--quiet",
+            "--json",
+            "--md",
+            "--color",
+            "--verbosity",
+            "--allow-local-compiler",
+            "--allow-project-env",
+            "--threads",
+            "--jobs",
+        ] {
+            assert!(!help.contains(option), "unexpected {option} in LSP help");
+        }
     }
 }

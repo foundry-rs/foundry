@@ -284,9 +284,22 @@ fn lsp_help_skips_project_env_setup() {
             .unwrap();
 
         assert!(output.status.success());
-        assert!(
-            String::from_utf8_lossy(&output.stdout).contains("Start the Solar language server")
-        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("Start the Solar language server"));
+        for option in [
+            "--profile",
+            "--quiet",
+            "--json",
+            "--md",
+            "--color",
+            "--verbosity",
+            "--allow-local-compiler",
+            "--allow-project-env",
+            "--threads",
+            "--jobs",
+        ] {
+            assert!(!stdout.contains(option), "unexpected {option} in LSP help");
+        }
         assert!(output.stderr.is_empty(), "unexpected stderr: {:?}", output.stderr);
     }
 }
@@ -298,7 +311,7 @@ fn lsp_rejects_unsupported_global_options() {
     let output = Command::new(env!("CARGO_BIN_EXE_forge"))
         .current_dir(project.path())
         .env("PATH", empty_path.path())
-        .args(["lsp", "--profile", "ci"])
+        .args(["lsp", "--threads", "2"])
         .output()
         .unwrap();
 
