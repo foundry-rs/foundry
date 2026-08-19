@@ -1318,16 +1318,16 @@ impl TestArgs {
         self.fuzz_only = FuzzOnlyMode::WithAutoFuzzCorpus;
     }
 
-    fn apply_auto_fuzz_corpus_dir(&self, config: &mut Config) {
-        if !self.fuzz_only.uses_auto_fuzz_corpus() {
-            return;
-        }
-
-        if config.fuzz.corpus.corpus_dir.is_none() {
+    fn apply_test_config_overrides(&self, config: &mut Config) {
+        if self.fuzz_only.uses_auto_fuzz_corpus() && config.fuzz.corpus.corpus_dir.is_none() {
             config.fuzz.corpus.corpus_dir = Some(match &config.fuzz.failure_persist_dir {
                 Some(root) => root.join(AUTO_CORPUS_DIR),
                 None => config.cache_path.join(AUTO_FUZZ_FAILURE_DIR).join(AUTO_CORPUS_DIR),
             });
+        }
+
+        if self.debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+            config.extra_output.push(ContractOutputSelection::StorageLayout);
         }
     }
 
@@ -1725,7 +1725,7 @@ impl TestArgs {
         let test_failures_file = config.test_failures_file.clone();
         let mut config = workspace::rebase_config_paths(&config, temp_path).sanitized();
         config.test_failures_file = test_failures_file;
-        self.apply_auto_fuzz_corpus_dir(&mut config);
+        self.apply_test_config_overrides(&mut config);
         let project = config.project()?;
         let project_root = project.paths.root.clone();
         let replay_symbolic_artifact = self.load_symbolic_artifact_replay()?;
@@ -1776,11 +1776,7 @@ impl TestArgs {
             apply_mutation_compiler_overrides(&mut config);
         }
 
-        self.apply_auto_fuzz_corpus_dir(&mut config);
-
-        if self.debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
-            config.extra_output.push(ContractOutputSelection::StorageLayout);
-        }
+        self.apply_test_config_overrides(&mut config);
 
         // Set up the project.
         let mut project = config.project()?;
@@ -4595,7 +4591,7 @@ mod tests {
         args.enable_fuzz_only_with_auto_fuzz_corpus();
         let mut config = Config::default();
 
-        args.apply_auto_fuzz_corpus_dir(&mut config);
+        args.apply_test_config_overrides(&mut config);
 
         assert_eq!(
             config.fuzz.corpus.corpus_dir,
@@ -4611,7 +4607,7 @@ mod tests {
         let mut config = Config::default();
         config.fuzz.failure_persist_dir = Some(PathBuf::from("custom_fuzz_failures"));
 
-        args.apply_auto_fuzz_corpus_dir(&mut config);
+        args.apply_test_config_overrides(&mut config);
 
         assert_eq!(
             config.fuzz.corpus.corpus_dir,
@@ -4628,7 +4624,7 @@ mod tests {
         config.fuzz.corpus.corpus_dir = Some(PathBuf::from("configured_fuzz_corpus"));
         config.invariant.corpus.corpus_dir = Some(PathBuf::from("configured_invariant_corpus"));
 
-        args.apply_auto_fuzz_corpus_dir(&mut config);
+        args.apply_test_config_overrides(&mut config);
 
         assert_eq!(config.fuzz.corpus.corpus_dir, Some(PathBuf::from("configured_fuzz_corpus")));
         assert_eq!(
@@ -4643,10 +4639,20 @@ mod tests {
         args.enable_fuzz_only();
         let mut config = Config::default();
 
-        args.apply_auto_fuzz_corpus_dir(&mut config);
+        args.apply_test_config_overrides(&mut config);
 
         assert_eq!(config.fuzz.corpus.corpus_dir, None);
         assert_eq!(config.invariant.corpus.corpus_dir, None);
+    }
+
+    #[test]
+    fn debug_brutalize_includes_storage_layout_output() {
+        let args = TestArgs::parse_from(["foundry-cli", "--debug", "--brutalize"]);
+        let mut config = Config::default();
+
+        args.apply_test_config_overrides(&mut config);
+
+        assert_eq!(config.extra_output, vec![ContractOutputSelection::StorageLayout]);
     }
 
     #[test]
