@@ -216,6 +216,30 @@ repl_test!(last_result, |repl| {
     repl.expect("UTF-8: hello");
 });
 
+repl_test!(last_result_resets_with_session, |repl| {
+    let saved_id = unique_cache_id("last-result-saved");
+    let loaded_id = unique_cache_id("last-result-loaded");
+    let _cleanup = CacheCleanup(vec![saved_id.clone(), loaded_id.clone()]);
+
+    repl.sendln("uint256 persisted = 7");
+    repl.sendln(&format!("!save {saved_id}"));
+    std::fs::copy(cache_file(&saved_id), cache_file(&loaded_id)).unwrap();
+
+    repl.sendln(r#""stale""#);
+    repl.sendln_raw(&format!("!load {loaded_id}"));
+    repl.expect(&format!("Loaded Chisel session! (ID = {saved_id})"));
+    repl.expect_prompt();
+    repl.sendln_raw("$_");
+    repl.expect("no previous result");
+    repl.expect_prompt();
+
+    repl.sendln("persisted");
+    repl.sendln("!clear");
+    repl.sendln_raw("$_");
+    repl.expect("no previous result");
+    repl.expect_prompt();
+});
+
 // Issue #4393: Test edit command with traces.
 // TODO: test `!edit`
 // repl_test!(edit_with_traces, |repl| {

@@ -4,6 +4,7 @@
 //! of both builtin commands and Solidity snippets.
 
 use crate::{
+    executor::InspectResult,
     prelude::{ChiselCommand, ChiselResult, ChiselSession, SessionSourceConfig, SolidityHelper},
     source::SessionSource,
 };
@@ -137,23 +138,21 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         // Create new source with exact input appended and parse
         let (new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
 
-        let (cf, res, last_result) = source.inspect(input).await?;
-        if let Some(res) = &res {
+        let InspectResult { control_flow, formatted_output, last_result } =
+            source.inspect(input).await?;
+        if let Some(last_result) = last_result {
+            self.last_result = Some(last_result);
+        }
+        if let Some(res) = &formatted_output {
             let _ = sh_println!("{res}");
         }
-        if cf.is_break() {
-            if last_result.is_some() {
-                self.last_result = last_result;
-            }
-            debug!(%input, ?res, "inspect success");
+        if control_flow.is_break() {
+            debug!(%input, ?formatted_output, "inspect success");
             return Ok(ControlFlow::Continue(()));
         }
 
         if do_execute {
             self.execute_and_replace(new_source).await?;
-            if last_result.is_some() {
-                self.last_result = last_result;
-            }
         } else {
             let out = new_source.build()?;
             debug!(%input, ?out, "skipped execute and rebuild source");
@@ -297,6 +296,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
 
     pub(crate) fn clear_source(&mut self) -> Result<()> {
         self.source_mut().clear();
+        self.last_result = None;
         sh_println!("Cleared session!")
     }
 
@@ -353,6 +353,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         new_session.source.config.initialize_local_context();
         new_session.source.build()?;
         self.session = new_session;
+        self.last_result = None;
         sh_println!("Loaded Chisel session! (ID = {})", self.session.id.as_ref().unwrap())
     }
 
@@ -608,7 +609,8 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         let source = self.source_mut();
         let line = format!("bytes32 __raw__; assembly {{ __raw__ := {var} }}");
         if let Ok((new_source, _)) = source.clone_with_new_line(line)
-            && let (_, Some(res), _) = new_source.inspect("__raw__").await?
+            && let InspectResult { formatted_output: Some(res), .. } =
+                new_source.inspect("__raw__").await?
         {
             sh_println!("{res}")?;
             return Ok(());
