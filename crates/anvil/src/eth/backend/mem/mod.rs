@@ -77,7 +77,7 @@ use alloy_evm::{
 #[cfg(feature = "monad")]
 use alloy_evm::{RecoveredTx, block::BlockExecutionError};
 #[cfg(feature = "monad")]
-use alloy_monad_evm::{MonadContext, MonadEvm, MonadEvmFactory};
+use alloy_monad_evm::{MonadContext, MonadEvmFactory};
 #[cfg(feature = "monad")]
 use alloy_network::BlockResponse;
 use alloy_network::{
@@ -134,7 +134,7 @@ use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use foundry_evm::core::{
     FromAnyRpcTransaction,
     evm::{
-        FoundryEvmFactory, MonadBlockParticipants, MonadEvmNetwork,
+        FoundryEvmFactory, MonadBlockParticipants,
         monad_block_participants as collect_monad_block_participants,
         monad_context_from_participants, protocol_system_call,
     },
@@ -178,6 +178,8 @@ use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID};
 #[cfg(feature = "optimism")]
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+#[cfg(feature = "monad")]
+use revm::context_interface::result::InvalidTransaction;
 use revm::{
     Database as RevmDatabase, DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, ContextSetters, ContextTr, TxEnv},
@@ -195,11 +197,6 @@ use revm::{
     precompile::{PrecompileSpecId, Precompiles},
     primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
-};
-#[cfg(feature = "monad")]
-use revm::{
-    context::Transaction as RevmTransaction,
-    context_interface::{result::InvalidTransaction, transaction::AuthorizationTr},
 };
 use revm_inspectors::opcode::OpcodeGasInspector;
 use std::{
@@ -507,13 +504,6 @@ impl<'a> EnvelopeExecution<'a> {
 }
 
 #[cfg(feature = "monad")]
-struct PreparedMonadExecution {
-    context: Option<MonadChainContext>,
-    kind: EnvelopeExecutionKind,
-    hardfork: MonadHardfork,
-}
-
-#[cfg(feature = "monad")]
 fn monad_execution_context_at(
     context: Option<&MonadReplayContext>,
     current_tx_index: usize,
@@ -546,76 +536,6 @@ const fn next_monad_context(_context: &mut MonadReplayContext) -> MonadExecution
 const fn noop_before_transaction<E, T>(_evm: &mut E, _tx: &T) {}
 
 const fn noop_on_execution_error<E>(_evm: &mut E) {}
-
-/// Caches the fork blocks needed to construct the next Monad block's ancestor context.
-#[cfg(feature = "monad")]
-async fn cache_monad_fork_context(fork: &ClientFork) -> Result<(), BlockchainError> {
-    let block_number = fork.block_number();
-    let block =
-        fork.block_by_number_full(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
-    let parent_hash = block.header().parent_hash();
-    if !parent_hash.is_zero() {
-        fork.block_by_hash_full(parent_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
-    }
-    Ok(())
-}
-
-/// Adds a candidate transaction to the current Monad block context.
-#[cfg(feature = "monad")]
-fn append_monad_transaction(chain: &mut MonadChainContext, tx: &TxEnv) {
-    chain.current_tx_index = chain.current_block_senders.len();
-    chain.current_block_senders.push(tx.caller());
-    chain.current_block_authorities.push(
-        tx.authorization_list().filter_map(|authorization| authorization.authority()).collect(),
-    );
-}
-
-#[cfg(feature = "monad")]
-fn prepare_monad_transaction<DB: alloy_evm::Database>(
-    evm: &mut MonadEvm<DB, AnvilInspector>,
-    tx: &TxEnv,
-) {
-    append_monad_transaction(&mut evm.ctx_mut().chain, tx);
-}
-
-#[cfg(feature = "monad")]
-fn resolve_monad_execution_context(
-    context: Option<MonadExecutionContext<'_>>,
-    tx: &TxEnv,
-) -> Option<MonadChainContext> {
-    match context {
-        Some(MonadExecutionContext::Exact(context)) => Some(*context),
-        Some(MonadExecutionContext::Next(context)) => {
-            append_monad_transaction(context, tx);
-            Some(context.clone())
-        }
-        None => None,
-    }
-}
-
-#[cfg(feature = "monad")]
-fn advance_monad_block(context: &mut MonadChainContext) {
-    let current = context
-        .current_block_senders
-        .iter()
-        .copied()
-        .chain(context.current_block_authorities.iter().flatten().copied())
-        .collect();
-    context.grandparent_senders_and_authorities =
-        std::mem::replace(&mut context.parent_senders_and_authorities, current);
-    context.current_block_senders.clear();
-    context.current_block_authorities.clear();
-    context.current_tx_index = 0;
-}
-
-/// Removes a candidate transaction that failed before block inclusion.
-#[cfg(feature = "monad")]
-fn rollback_monad_transaction<DB: alloy_evm::Database>(evm: &mut MonadEvm<DB, AnvilInspector>) {
-    let chain = &mut evm.ctx_mut().chain;
-    chain.current_block_senders.pop();
-    chain.current_block_authorities.pop();
-    chain.current_tx_index = chain.current_block_senders.len();
-}
 
 /// Maximum cumulative gas available to one `eth_simulateV1` request.
 const SIMULATE_GAS_CAP: u64 = 50_000_000;
@@ -848,6 +768,8 @@ pub mod cache;
 pub mod fork_db;
 pub mod in_memory_db;
 pub mod inspector;
+#[cfg(feature = "monad")]
+mod monad;
 #[cfg(feature = "optimism")]
 pub mod optimism;
 pub mod state;
@@ -2854,13 +2776,13 @@ impl<N: Network> Backend<N> {
         let base = tx_env.clone();
         #[cfg(feature = "monad")]
         let result = if self.is_monad() {
-            let context = resolve_monad_execution_context(execution.monad_context, &tx_env);
+            let context = monad::resolve_execution_context(execution.monad_context, &tx_env);
             self.transact_monad_with_inspector_ref(
                 db,
                 evm_env,
                 inspector,
                 tx_env,
-                PreparedMonadExecution {
+                monad::PreparedExecution {
                     context,
                     kind: execution.kind,
                     hardfork: MonadHardfork::from(execution.hardfork),
@@ -2885,18 +2807,6 @@ impl<N: Network> Backend<N> {
                 timestamp_millis_part: 0,
                 ..Default::default()
             },
-        )
-    }
-
-    /// Builds the Monad [`EvmEnv`] (spec and gas params) from a base env.
-    #[cfg(feature = "monad")]
-    fn build_monad_evm_env(
-        evm_env: &EvmEnv,
-        hardfork: MonadHardfork,
-    ) -> EvmEnvFor<MonadEvmNetwork> {
-        EvmEnv::new(
-            evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
-            evm_env.block_env.clone(),
         )
     }
 
@@ -2928,46 +2838,6 @@ impl<N: Network> Backend<N> {
             }),
             state: result.state,
         })
-    }
-
-    /// Monad path of [`Backend::transact_call_with_inspector_ref`].
-    #[cfg(feature = "monad")]
-    fn transact_monad_with_inspector_ref<'db, I, DB>(
-        &self,
-        db: &'db DB,
-        evm_env: &EvmEnv,
-        inspector: &mut I,
-        tx_env: TxEnv,
-        execution: PreparedMonadExecution,
-    ) -> Result<ResultAndState<HaltReason>, BlockchainError>
-    where
-        DB: DatabaseRef + ?Sized,
-        I: Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
-        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
-    {
-        let monad_env = Self::build_monad_evm_env(evm_env, execution.hardfork);
-        let factory = MonadEvmFactory::default();
-        let context = execution.context.unwrap_or_else(|| {
-            monad_context_from_participants(
-                Default::default(),
-                Default::default(),
-                std::slice::from_ref(&tx_env),
-                0,
-            )
-        });
-        let mut evm = factory.create_evm_with_inspector(WrapDatabaseRef(db), monad_env, inspector);
-        evm.ctx_mut().chain = context;
-        self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        match execution.kind {
-            EnvelopeExecutionKind::Transaction => Ok(evm.transact(tx_env)?),
-            EnvelopeExecutionKind::Replay => {
-                if let Some(result) = factory.try_transact_system_replay(&mut evm, &tx_env)? {
-                    Ok(result)
-                } else {
-                    Ok(evm.transact(tx_env)?)
-                }
-            }
-        }
     }
 
     /// Creates a concrete EVM + [`AnvilBlockExecutor`], runs pre-execution changes, and
@@ -3074,7 +2944,7 @@ impl<N: Network> Backend<N> {
             evm.ctx_mut().chain = transaction_context;
             return run!(
                 evm,
-                prepare_monad_transaction,
+                monad::prepare_transaction,
                 |executor: &mut AnvilBlockExecutor<_>,
                  tx_env: TxEnv,
                  recovered: Recovered<FoundryTxEnvelope>,
@@ -3110,7 +2980,7 @@ impl<N: Network> Backend<N> {
                         },
                     )
                 },
-                rollback_monad_transaction
+                monad::rollback_transaction
             );
         }
         let mut evm =
@@ -3561,13 +3431,13 @@ impl<N: Network> Backend<N> {
             }
             #[cfg(feature = "monad")]
             CallTxEnv::Monad(tx_env) => {
-                let context = resolve_monad_execution_context(monad_context, &tx_env);
+                let context = monad::resolve_execution_context(monad_context, &tx_env);
                 self.transact_monad_with_inspector_ref(
                     db,
                     evm_env,
                     inspector,
                     tx_env,
-                    PreparedMonadExecution {
+                    monad::PreparedExecution {
                         context,
                         kind: EnvelopeExecutionKind::Transaction,
                         hardfork: MonadHardfork::from(hardfork),
@@ -4420,7 +4290,7 @@ impl<N: Network> Backend<N> {
             if backend.networks.is_monad() { backend.fork.read().clone() } else { None };
         #[cfg(feature = "monad")]
         if let Some(fork) = monad_fork {
-            cache_monad_fork_context(&fork).await?;
+            monad::cache_fork_context(&fork).await?;
         }
 
         if let Some(interval_block_time) = automine_block_time {
@@ -4794,7 +4664,7 @@ impl<N: Network> Backend<N> {
 
             #[cfg(feature = "monad")]
             if self.is_monad() {
-                cache_monad_fork_context(&staged_fork).await?;
+                monad::cache_fork_context(&staged_fork).await?;
             }
 
             if !staged_config
@@ -5720,7 +5590,7 @@ where
                     transactions,
                     inspector_tx_config,
                     |evm, tx_env, _transaction_hash| {
-                        prepare_monad_transaction(evm, &tx_env);
+                        monad::prepare_transaction(evm, &tx_env);
                         let result = match MonadEvmFactory::default()
                             .try_transact_system_replay(evm, &tx_env)
                             .map_err(BlockExecutionError::msg)
@@ -5730,7 +5600,7 @@ where
                             Err(err) => Err(err),
                         };
                         if result.is_err() {
-                            rollback_monad_transaction(evm);
+                            monad::rollback_transaction(evm);
                         }
                         result
                     },
@@ -8213,7 +8083,7 @@ impl Backend<FoundryNetwork> {
                     block_env.timestamp = block_env.timestamp.saturating_add(U256::ONE);
                     #[cfg(feature = "monad")]
                     if let Some(context) = monad_context.as_mut() {
-                        advance_monad_block(context);
+                        monad::advance_block(context);
                     }
                 }
 
@@ -8821,7 +8691,7 @@ impl Backend<FoundryNetwork> {
 
                 #[cfg(feature = "monad")]
                 if let Some(context) = monad_context.as_mut() {
-                    advance_monad_block(context);
+                    monad::advance_block(context);
                 }
             }
 
@@ -8843,7 +8713,7 @@ impl Backend<FoundryNetwork> {
                             &block.block,
                             block.block.body.transactions.len(),
                         )?;
-                        advance_monad_block(&mut context);
+                        monad::advance_block(&mut context);
                         Some(context)
                     } else {
                         None
