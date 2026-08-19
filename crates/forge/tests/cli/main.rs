@@ -21,6 +21,7 @@ mod eip712;
 mod failure_assertions;
 mod inline_config;
 mod install;
+mod lsp;
 
 mod json;
 mod lint;

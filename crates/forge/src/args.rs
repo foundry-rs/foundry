@@ -8,10 +8,19 @@ use eyre::Result;
 use foundry_cli::utils;
 use foundry_common::{sh_warn, shell};
 use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
+use std::ffi::OsStr;
 
 /// Run the `forge` command line interface.
 pub fn run() -> Result<()> {
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Forge>();
+
+    // LSP owns stdin/stdout for the lifetime of the process. Do not let the normal setup path
+    // inspect dotenv files before clap has parsed the command, since an approval prompt would
+    // consume an LSP message from stdin.
+    if is_lsp_invocation(std::env::args_os()) {
+        let args = Forge::parse();
+        return run_lsp(args);
+    }
 
     setup()?;
 
@@ -19,6 +28,86 @@ pub fn run() -> Result<()> {
     args.global.init()?;
 
     run_command(args)
+}
+
+fn run_lsp(args: Forge) -> Result<()> {
+    let Forge { global, cmd: ForgeSubcommand::Lsp(cmd) } = args else {
+        unreachable!("LSP invocation must parse the LSP subcommand");
+    };
+
+    global.block_on(crate::cmd::lsp::run(cmd))
+}
+
+fn is_lsp_invocation<I>(args: I) -> bool
+where
+    I: IntoIterator,
+    I::Item: AsRef<OsStr>,
+{
+    let mut args = args.into_iter();
+    let _program = args.next();
+    let mut skip_next = false;
+
+    for arg in args {
+        let arg = arg.as_ref();
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+
+        if arg == "--" {
+            return false;
+        }
+
+        if matches!(
+            arg,
+            s if s == "-q"
+                || s == "--quiet"
+                || s == "--silent"
+                || s == "--json"
+                || s == "--format-json"
+                || s == "--md"
+                || s == "--markdown"
+                || s == "--allow-local-compiler"
+                || s == "--allow-project-env"
+        ) {
+            continue;
+        }
+
+        if matches!(
+            arg,
+            s if s == "--color"
+                || s == "--threads"
+                || s == "--jobs"
+                || s == "--profile"
+                || s == "-j"
+        ) {
+            skip_next = true;
+            continue;
+        }
+
+        let Some(arg) = arg.to_str() else {
+            return false;
+        };
+
+        if arg.starts_with("--color=")
+            || arg.starts_with("--threads=")
+            || arg.starts_with("--jobs=")
+            || arg.starts_with("--profile=")
+            || arg.starts_with("-j")
+            || arg.starts_with("-v")
+            || arg == "--verbosity"
+        {
+            continue;
+        }
+
+        if arg.starts_with('-') {
+            return false;
+        }
+
+        return arg == "lsp";
+    }
+
+    false
 }
 
 /// Setup the global logger and other utilities.
@@ -147,6 +236,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Eip712(cmd) => cmd.run(),
         ForgeSubcommand::BindJson(cmd) => cmd.run(),
         ForgeSubcommand::Lint(cmd) => global.block_on(cmd.run()),
+        ForgeSubcommand::Lsp(cmd) => global.block_on(crate::cmd::lsp::run(cmd)),
     }
 }
 
@@ -158,4 +248,32 @@ where
     Fut: std::future::Future,
 {
     global.block_on(make_future())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_lsp_invocation;
+
+    #[test]
+    fn detects_lsp_after_global_options() {
+        assert!(is_lsp_invocation([
+            "forge",
+            "--quiet",
+            "--threads",
+            "2",
+            "--profile=ci",
+            "lsp",
+            "--stdio",
+        ]));
+        assert!(is_lsp_invocation(["forge", "--jobs", "2", "lsp"]));
+        assert!(is_lsp_invocation(["forge", "--jobs=2", "lsp"]));
+    }
+
+    #[test]
+    fn does_not_treat_option_values_or_other_commands_as_lsp() {
+        assert!(!is_lsp_invocation(["forge", "--profile", "lsp", "test"]));
+        assert!(!is_lsp_invocation(["forge", "build", "lsp"]));
+        assert!(!is_lsp_invocation(["forge", "--", "lsp"]));
+        assert!(!is_lsp_invocation(["forge", "--version"]));
+    }
 }

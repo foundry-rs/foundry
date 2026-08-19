@@ -83,7 +83,8 @@ revm = { workspace = true, features = ["parse"] }
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "3", features = ["inline"] }
-solar.workspace = true
+solar = { workspace = true, features = ["clap"] }
+solar-lsp.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time", "signal"] }
 toml_edit.workspace = true

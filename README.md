@@ -68,6 +68,17 @@ anvil --fork-url https://eth.merkle.io
 
 Read the [Foundry Docs][foundry-docs] to learn more.
 
+### Solidity editor integration
+
+Configure your editor's Solidity language server command as `forge lsp`. The
+server is embedded in Forge, so the standalone `solar` executable is not
+required. Solar uses `foundry.toml`, workspace folders, remappings, and
+`evm_version` from the project automatically.
+
+Solar's default flycheck runs `forge lint --json` from `PATH`. When Forge is
+started through an absolute path instead, set Solar's existing
+`initializationOptions.forgePath` option to that Forge binary.
+
 ## Contributing
 
 Contributions are welcome and highly appreciated. To get started, check out the [contributing guidelines](./CONTRIBUTING.md).
