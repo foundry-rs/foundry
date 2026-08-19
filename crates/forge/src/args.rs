@@ -49,7 +49,7 @@ where
     I::Item: Into<OsString>,
 {
     let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
-    args.iter().skip(1).any(|arg| arg == "lsp") && parse_lsp_subcommand(args)
+    parse_lsp_subcommand(args)
 }
 
 fn parse_lsp_subcommand<I>(args: I) -> bool
@@ -244,7 +244,9 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Eip712(cmd) => cmd.run(),
         ForgeSubcommand::BindJson(cmd) => cmd.run(),
         ForgeSubcommand::Lint(cmd) => global.block_on(cmd.run()),
-        ForgeSubcommand::Lsp(cmd) => global.block_on(crate::cmd::lsp::run(cmd)),
+        ForgeSubcommand::Lsp(_) => {
+            unreachable!("LSP invocations are dispatched before run_command")
+        }
     }
 }
 
