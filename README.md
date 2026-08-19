@@ -79,6 +79,11 @@ Solar's default flycheck runs `forge lint --json` from `PATH`. When Forge is
 started through an absolute path instead, set Solar's existing
 `initializationOptions.forgePath` option to that Forge binary.
 
+`forge lsp` also accepts `--threads`/`--jobs` to size its Tokio runtime. Other
+Forge-wide output, profile, compiler-approval, and dotenv-approval options are
+rejected because the LSP owns stdio and Solar currently reads the default
+Foundry profile only.
+
 ## Contributing
 
 Contributions are welcome and highly appreciated. To get started, check out the [contributing guidelines](./CONTRIBUTING.md).

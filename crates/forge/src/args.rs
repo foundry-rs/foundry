@@ -2,13 +2,13 @@ use crate::{
     cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch},
     opts::{Forge, ForgeSubcommand},
 };
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, Parser, builder::OsStringValueParser, parser::ValueSource};
 use clap_complete::generate;
 use eyre::Result;
 use foundry_cli::utils;
 use foundry_common::{sh_warn, shell};
 use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
-use std::ffi::OsStr;
+use std::ffi::OsString;
 
 /// Run the `forge` command line interface.
 pub fn run() -> Result<()> {
@@ -31,6 +31,8 @@ pub fn run() -> Result<()> {
 }
 
 fn run_lsp(args: Forge) -> Result<()> {
+    reject_unsupported_lsp_globals(std::env::args_os())?;
+
     let Forge { global, cmd: ForgeSubcommand::Lsp(cmd) } = args else {
         unreachable!("LSP invocation must parse the LSP subcommand");
     };
@@ -41,73 +43,57 @@ fn run_lsp(args: Forge) -> Result<()> {
 fn is_lsp_invocation<I>(args: I) -> bool
 where
     I: IntoIterator,
-    I::Item: AsRef<OsStr>,
+    I::Item: Into<OsString>,
 {
-    let mut args = args.into_iter();
-    let _program = args.next();
-    let mut skip_next = false;
+    let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
+    args.iter().skip(1).any(|arg| arg == "lsp") && parse_lsp_subcommand(args)
+}
 
-    for arg in args {
-        let arg = arg.as_ref();
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
+fn parse_lsp_subcommand<I>(args: I) -> bool
+where
+    I: IntoIterator<Item = OsString>,
+{
+    Forge::command()
+        .disable_help_flag(true)
+        .ignore_errors(true)
+        .mut_args(|arg| {
+            if arg.get_action().takes_values() {
+                arg.value_parser(OsStringValueParser::new())
+            } else {
+                arg
+            }
+        })
+        .try_get_matches_from(args)
+        .ok()
+        .is_some_and(|matches| matches.subcommand_name() == Some("lsp"))
+}
 
-        if arg == "--" {
-            return false;
-        }
+fn reject_unsupported_lsp_globals<I>(args: I) -> Result<()>
+where
+    I: IntoIterator,
+    I::Item: Into<OsString>,
+{
+    let args = args.into_iter().map(Into::into).collect::<Vec<_>>();
+    let mut command = Forge::command().disable_help_flag(true).ignore_errors(true);
+    let Ok(matches) = command.try_get_matches_from_mut(args) else {
+        return Ok(());
+    };
 
-        if matches!(
-            arg,
-            s if s == "-q"
-                || s == "--quiet"
-                || s == "--silent"
-                || s == "--json"
-                || s == "--format-json"
-                || s == "--md"
-                || s == "--markdown"
-                || s == "--allow-local-compiler"
-                || s == "--allow-project-env"
-        ) {
-            continue;
-        }
-
-        if matches!(
-            arg,
-            s if s == "--color"
-                || s == "--threads"
-                || s == "--jobs"
-                || s == "--profile"
-                || s == "-j"
-        ) {
-            skip_next = true;
-            continue;
-        }
-
-        let Some(arg) = arg.to_str() else {
-            return false;
-        };
-
-        if arg.starts_with("--color=")
-            || arg.starts_with("--threads=")
-            || arg.starts_with("--jobs=")
-            || arg.starts_with("--profile=")
-            || arg.starts_with("-j")
-            || arg.starts_with("-v")
-            || arg == "--verbosity"
-        {
-            continue;
-        }
-
-        if arg.starts_with('-') {
-            return false;
-        }
-
-        return arg == "lsp";
+    let unsupported = command
+        .get_arguments()
+        .filter(|arg| arg.is_global_set() && arg.get_id().as_str() != "threads")
+        .filter(|arg| matches.value_source(arg.get_id().as_str()) == Some(ValueSource::CommandLine))
+        .map(|arg| {
+            arg.get_long()
+                .map(|long| format!("--{long}"))
+                .or_else(|| arg.get_short().map(|short| format!("-{short}")))
+                .unwrap_or_else(|| arg.get_id().as_str().to_string())
+        })
+        .collect::<Vec<_>>();
+    if !unsupported.is_empty() {
+        eyre::bail!("forge lsp does not support global option(s): {}", unsupported.join(", "));
     }
-
-    false
+    Ok(())
 }
 
 /// Setup the global logger and other utilities.
@@ -252,7 +238,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::is_lsp_invocation;
+    use super::{is_lsp_invocation, reject_unsupported_lsp_globals};
 
     #[test]
     fn detects_lsp_after_global_options() {
@@ -265,8 +251,14 @@ mod tests {
             "lsp",
             "--stdio",
         ]));
+        assert!(is_lsp_invocation(["forge", "--threads", "2", "lsp"]));
         assert!(is_lsp_invocation(["forge", "--jobs", "2", "lsp"]));
         assert!(is_lsp_invocation(["forge", "--jobs=2", "lsp"]));
+        assert!(is_lsp_invocation(["forge", "--threads=bad", "lsp"]));
+        assert!(is_lsp_invocation(["forge", "--color=bogus", "lsp"]));
+        assert!(is_lsp_invocation(["forge", "lsp", "--stdio"]));
+        assert!(is_lsp_invocation(["forge", "lsp", "--help"]));
+        assert!(is_lsp_invocation(["forge", "lsp", "-qh"]));
     }
 
     #[test]
@@ -274,6 +266,14 @@ mod tests {
         assert!(!is_lsp_invocation(["forge", "--profile", "lsp", "test"]));
         assert!(!is_lsp_invocation(["forge", "build", "lsp"]));
         assert!(!is_lsp_invocation(["forge", "--", "lsp"]));
+        assert!(!is_lsp_invocation(["forge", "--help", "lsp"]));
         assert!(!is_lsp_invocation(["forge", "--version"]));
+    }
+
+    #[test]
+    fn rejects_lsp_globals_that_solar_does_not_consume() {
+        assert!(reject_unsupported_lsp_globals(["forge", "lsp", "--profile", "ci"]).is_err());
+        assert!(reject_unsupported_lsp_globals(["forge", "lsp", "--quiet"]).is_err());
+        assert!(reject_unsupported_lsp_globals(["forge", "lsp", "--threads", "2"]).is_ok());
     }
 }
