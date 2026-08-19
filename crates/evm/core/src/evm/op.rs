@@ -7,7 +7,7 @@ use op_revm::{
 };
 use revm::{
     context::{
-        BlockEnv, ContextTr, LocalContextTr,
+        BlockEnv, ContextTr, Journal, LocalContextTr,
         result::{EVMError, HaltReason, ResultAndState},
     },
     handler::{EthFrame, EvmTr, FrameResult, Handler, instructions::EthInstructions},
@@ -52,8 +52,6 @@ pub type OpRevmEvm<'db, I> = RevmEvm<
 
 impl FoundryEvmFactory for OpEvmFactory {
     type Chain = L1BlockInfo;
-    #[cfg(feature = "monad")]
-    type TransactionState = ();
     type FoundryContext<'db> = OpEvmContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
@@ -116,8 +114,7 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
     type Block = BlockEnv;
     type Tx = OpTx;
     type Chain = L1BlockInfo;
-    #[cfg(feature = "monad")]
-    type TransactionState = ();
+    type Journal = Journal<&'db mut dyn DatabaseExt<OpEvmFactory>>;
 
     fn tx_mut(&mut self) -> &mut Self::Tx {
         self.ctx_mut().tx_mut()
@@ -129,6 +126,10 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
 
     fn chain_mut(&mut self) -> &mut Self::Chain {
         &mut self.ctx_mut().chain
+    }
+
+    fn journal_mut(&mut self) -> &mut Self::Journal {
+        &mut self.ctx_mut().journaled_state
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {

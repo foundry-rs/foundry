@@ -5,14 +5,13 @@ use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use monad_revm::{
     MonadBuilder, MonadCfgEnv, MonadChainContext, MonadContext, MonadEvm as RevmMonadEvm,
-    MonadHardfork, MonadJournalTr,
+    MonadHardfork, MonadJournal, MonadJournalTr,
     api::block::{
         syscall_on_epoch_change_calldata, syscall_reward_calldata, syscall_snapshot_calldata,
     },
     handler::MonadHandler,
     instructions::MonadInstructions,
     monad_context_with_db,
-    reserve_balance::tracker::ReserveBalanceTracker,
     staking::{
         STAKING_ADDRESS,
         constants::SYSTEM_ADDRESS,
@@ -337,25 +336,11 @@ impl FoundryEvmFactory for MonadEvmFactory {
     const NEEDS_BLOCK_CONTEXT: bool = true;
 
     type Chain = MonadChainContext;
-    type TransactionState = ReserveBalanceTracker;
 
     type FoundryContext<'db> = MonadContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         MonadEvm<&'db mut dyn DatabaseExt<Self>, I>;
-
-    fn capture_transaction_state(&self, ecx: &Self::FoundryContext<'_>) -> Self::TransactionState {
-        ecx.journaled_state.reserve_balance().clone()
-    }
-
-    fn restore_transaction_state(
-        &self,
-        ecx: &mut Self::FoundryContext<'_>,
-        state: Self::TransactionState,
-    ) {
-        *ecx.journaled_state.reserve_balance_mut() = state;
-        rebase_monad_context(ecx);
-    }
 
     fn chain_context_for_transaction(&self, tx: &Self::Tx) -> Self::Chain {
         monad_context_from_participants(
@@ -459,7 +444,7 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
     type Block = BlockEnv;
     type Tx = TxEnv;
     type Chain = MonadChainContext;
-    type TransactionState = ReserveBalanceTracker;
+    type Journal = MonadJournal<&'db mut dyn DatabaseExt<MonadEvmFactory>>;
 
     fn tx_mut(&mut self) -> &mut Self::Tx {
         self.ctx_mut().tx_mut()
@@ -473,17 +458,12 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
         &mut self.ctx_mut().chain
     }
 
-    fn capture_transaction_state(&self) -> Self::TransactionState {
-        self.ctx_ref().journaled_state.reserve_balance().clone()
+    fn journal_mut(&mut self) -> &mut Self::Journal {
+        &mut self.ctx_mut().journaled_state
     }
 
-    fn restore_transaction_state(&mut self, state: Self::TransactionState) {
-        *self.ctx_mut().journaled_state.reserve_balance_mut() = state;
+    fn refresh_chain_dependent_state(&mut self) {
         rebase_monad_context(self.ctx_mut());
-    }
-
-    fn preserve_transaction_state_on_next_transaction(&mut self) {
-        self.ctx_mut().journaled_state.set_preserve_reserve_balance_tracker(true);
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {

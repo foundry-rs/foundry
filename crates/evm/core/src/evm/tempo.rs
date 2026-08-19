@@ -4,7 +4,7 @@ use foundry_evm_hardforks::TempoHardfork;
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
-        ContextTr, LocalContextTr,
+        ContextTr, Journal, LocalContextTr,
         result::{EVMError, HaltReason, ResultAndState},
     },
     handler::{EvmTr, FrameResult, Handler},
@@ -79,8 +79,6 @@ pub(crate) fn initialize_tempo_evm<
 
 impl FoundryEvmFactory for TempoEvmFactory {
     type Chain = ();
-    #[cfg(feature = "monad")]
-    type TransactionState = ();
     type FoundryContext<'db> = TempoContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
@@ -167,8 +165,7 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
     type Block = TempoBlockEnv;
     type Tx = TempoTxEnv;
     type Chain = ();
-    #[cfg(feature = "monad")]
-    type TransactionState = ();
+    type Journal = Journal<&'db mut dyn DatabaseExt<TempoEvmFactory>>;
 
     fn tx_mut(&mut self) -> &mut Self::Tx {
         self.ctx_mut().tx_mut()
@@ -180,6 +177,10 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
 
     fn chain_mut(&mut self) -> &mut Self::Chain {
         &mut self.ctx_mut().chain
+    }
+
+    fn journal_mut(&mut self) -> &mut Self::Journal {
+        &mut self.ctx_mut().journaled_state
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {

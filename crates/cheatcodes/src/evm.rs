@@ -23,6 +23,8 @@ use foundry_common::{
     },
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
+#[cfg(feature = "monad")]
+use foundry_evm_core::FoundryJournal;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction,
     backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
@@ -1599,10 +1601,9 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
     ccx.state.fork_block_number_override_snapshots.insert(id, ccx.state.fork_block_number_override);
     #[cfg(feature = "monad")]
     {
-        let factory = FEN::EvmFactory::default();
         ccx.state
             .context_snapshots
-            .insert(id, (ccx.ecx.chain().clone(), factory.capture_transaction_state(ccx.ecx)));
+            .insert(id, (ccx.ecx.chain().clone(), ccx.ecx.journal().capture_reserve_balance()));
     }
     ccx.state.snapshot_created_accounts(id, fork_id);
     Ok(id.abi_encode())
@@ -1666,10 +1667,9 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         #[cfg(feature = "monad")]
         if let Some((context, state)) = ccx.state.context_snapshots.get(&snapshot_id) {
             *ccx.ecx.chain_mut() = context.clone();
-            FEN::EvmFactory::default().restore_transaction_state(ccx.ecx, state.clone());
-        } else {
-            ccx.ecx.refresh_chain_dependent_state();
+            ccx.ecx.journal_mut().restore_reserve_balance(state.clone());
         }
+        ccx.ecx.refresh_chain_dependent_state();
         ccx.ecx.set_evm(evm_env);
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
@@ -1707,10 +1707,9 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         #[cfg(feature = "monad")]
         if let Some((context, state)) = ccx.state.context_snapshots.remove(&snapshot_id) {
             *ccx.ecx.chain_mut() = context;
-            FEN::EvmFactory::default().restore_transaction_state(ccx.ecx, state);
-        } else {
-            ccx.ecx.refresh_chain_dependent_state();
+            ccx.ecx.journal_mut().restore_reserve_balance(state);
         }
+        ccx.ecx.refresh_chain_dependent_state();
         ccx.ecx.set_evm(evm_env);
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
             ccx.state.env_overrides = snap;
