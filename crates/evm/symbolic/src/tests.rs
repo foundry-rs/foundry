@@ -731,6 +731,26 @@ fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
 }
 
 #[test]
+fn memory_symbolic_copy_size_controls_extent() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+    let dest = SymExpr::constant(&mut cx, U256::from(0x100));
+    let size = SymExpr::var(&mut cx, "size");
+    let bytes = (0u8..4).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
+    let bytes = SymBytes::exprs(&mut cx, bytes);
+    memory.copy_bytes_size_offset(&mut cx, dest, size, bytes).unwrap();
+    let memory_size = memory.size_word(&mut cx);
+
+    let size_zero = symbolic_model(&mut cx, [("size".to_string(), U256::ZERO)]);
+    assert_eq!(memory_size.eval_model(&size_zero).unwrap(), U256::ZERO);
+
+    for size in 1..=4 {
+        let model = symbolic_model(&mut cx, [("size".to_string(), U256::from(size))]);
+        assert_eq!(memory_size.eval_model(&model).unwrap(), U256::from(0x120));
+    }
+}
+
+#[test]
 fn memory_copies_folded_symbolic_size_prefix_only() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
@@ -1291,6 +1311,42 @@ fn memory_call_output_accepts_symbolic_size_with_guarded_tail() {
         memory.read_bytes(&mut cx, 0, 4).eval_model(&mut cx, &size_four).unwrap(),
         vec![1, 2, 3, 4]
     );
+}
+
+#[test]
+fn memory_call_output_size_controls_extent() {
+    let mut cx = SymCx::new();
+    let return_data = SymReturnData::empty(&mut cx);
+    let mut memory = SymMemory::default();
+    let dest = SymExpr::constant(&mut cx, U256::from(0x100));
+    let size = SymExpr::var(&mut cx, "size");
+    let copy_size = BoundedCopySize::Symbolic { size, max_size: 4 };
+
+    memory.copy_call_output_offset(&mut cx, dest, &copy_size, &return_data).unwrap();
+    let memory_size = memory.size_word(&mut cx);
+
+    let size_zero = symbolic_model(&mut cx, [("size".to_string(), U256::ZERO)]);
+    assert_eq!(memory_size.eval_model(&size_zero).unwrap(), U256::ZERO);
+
+    let size_one = symbolic_model(&mut cx, [("size".to_string(), U256::from(1))]);
+    assert_eq!(memory_size.eval_model(&size_one).unwrap(), U256::from(0x120));
+}
+
+#[test]
+fn memory_call_output_preserves_symbolic_read_bound() {
+    let mut cx = SymCx::new();
+    let return_data = SymReturnData::from_concrete_bytes(&mut cx, vec![1]);
+    let mut memory = SymMemory::default();
+    let dest = SymExpr::constant(&mut cx, U256::from(0x100));
+
+    memory
+        .copy_call_output_offset(&mut cx, dest, &BoundedCopySize::Concrete(1), &return_data)
+        .unwrap();
+
+    let offset = SymExpr::var(&mut cx, "offset");
+    let value = memory.load_word_offset(&mut cx, offset).unwrap();
+    let model = symbolic_model(&mut cx, [("offset".to_string(), U256::from(0x100))]);
+    assert_eq!(value.eval_model(&model).unwrap(), U256::from(1) << 248);
 }
 
 #[test]
