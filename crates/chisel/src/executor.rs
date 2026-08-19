@@ -57,16 +57,20 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     ///
     /// ### Returns
     ///
-    /// If the input is valid `Ok((continue, formatted_output))` where:
+    /// If the input is valid `Ok((continue, formatted_output, last_result))` where:
     /// - `continue` is true if the input should be appended to the source
     /// - `formatted_output` is the formatted value, if any
-    pub async fn inspect(&self, input: &str) -> Result<(ControlFlow<()>, Option<String>)> {
+    /// - `last_result` is an expression that recreates the inspected value, if any
+    pub async fn inspect(
+        &self,
+        input: &str,
+    ) -> Result<(ControlFlow<()>, Option<String>, Option<String>)> {
         let line = format!("bytes memory inspectoor = abi.encode({input});");
         let mut source = match self.clone_with_new_line(line) {
             Ok((source, _)) => source,
             Err(err) => {
                 debug!(%err, "failed to build new source for inspection");
-                return Ok((ControlFlow::Continue(()), None));
+                return Ok((ControlFlow::Continue(()), None, None));
             }
         };
 
@@ -96,7 +100,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                     })
                     .unwrap_or(false);
                 if should_execute {
-                    return Ok((ControlFlow::Continue(()), None));
+                    return Ok((ControlFlow::Continue(()), None, None));
                 }
                 match source_without_inspector.execute().await {
                     Ok(res) => (res, Some(err)),
@@ -104,7 +108,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                         if self.config.foundry_config.verbosity >= 3 {
                             sh_err!("Could not inspect: {err}")?;
                         }
-                        return Ok((ControlFlow::Continue(()), None));
+                        return Ok((ControlFlow::Continue(()), None, None));
                     }
                 }
             }
@@ -119,7 +123,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                 output.get_event(input).map(|eid| format_event_definition(gcx, gcx.hir.event(eid)))
             });
             if let Some(formatted_event) = formatted_event {
-                return Ok((ControlFlow::Break(()), Some(formatted_event?)));
+                return Ok((ControlFlow::Break(()), Some(formatted_event?), None));
             }
 
             // we were unable to check the event
@@ -128,7 +132,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             }
 
             debug!(%err, %input, "failed abi encode input");
-            return Ok((ControlFlow::Break(()), None));
+            return Ok((ControlFlow::Break(()), None, None));
         }
         drop(source_without_inspector);
 
@@ -172,7 +176,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         });
 
         let Some((cont, ty)) = res_ty else {
-            return Ok((ControlFlow::Continue(()), None));
+            return Ok((ControlFlow::Continue(()), None, None));
         };
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
@@ -188,9 +192,10 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         let Some(data) = data else {
             eyre::bail!("Failed to inspect last expression: could not retrieve data from memory");
         };
+        let last_result = format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(data));
         let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
         let c = if cont { ControlFlow::Continue(()) } else { ControlFlow::Break(()) };
-        Ok((c, Some(format_token(token))))
+        Ok((c, Some(format_token(token)), Some(last_result)))
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner<FEN>> {

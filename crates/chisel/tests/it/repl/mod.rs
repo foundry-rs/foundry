@@ -195,6 +195,27 @@ repl_test!(int_min_values, |repl| {
     repl.expect("-57896044618658097711785492504343953926634992332820282019728792003956564819968");
 });
 
+// Issue #5370: The last evaluated result can be reused in subsequent input.
+repl_test!(last_result, |repl| {
+    repl.sendln("type(uint256).max");
+    repl.sendln("uint256 MAX = $_");
+    repl.sendln("MAX");
+    repl.expect(
+        "Decimal: 115792089237316195423570985008687907853269984665640564039457584007913129639935",
+    );
+
+    repl.sendln("uint256 value = 1");
+    repl.sendln("value = 2");
+    repl.sendln("uint256 assigned = $_");
+    repl.sendln("assigned");
+    repl.expect("Decimal: 2");
+
+    repl.sendln(r#""hello""#);
+    repl.sendln("string memory greeting = $_");
+    repl.sendln("greeting");
+    repl.expect("UTF-8: hello");
+});
+
 // Issue #4393: Test edit command with traces.
 // TODO: test `!edit`
 // repl_test!(edit_with_traces, |repl| {

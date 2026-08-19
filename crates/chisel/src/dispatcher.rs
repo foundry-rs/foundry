@@ -53,6 +53,7 @@ pub const CHISEL_CHAR: &str = "⚒️";
 pub struct ChiselDispatcher<FEN: FoundryEvmNetwork> {
     pub session: ChiselSession<FEN>,
     pub helper: SolidityHelper,
+    last_result: Option<String>,
 }
 
 /// Helper function that formats solidity source with the given [FormatterConfig]
@@ -65,7 +66,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
     /// Associated public function to create a new Dispatcher instance
     pub fn new(config: SessionSourceConfig<FEN>) -> eyre::Result<Self> {
         let session = ChiselSession::new(config)?;
-        Ok(Self { session, helper: Default::default() })
+        Ok(Self { session, helper: Default::default(), last_result: None })
     }
 
     /// Returns the optional ID of the current session.
@@ -118,11 +119,11 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             };
         }
 
-        let source = self.source_mut();
-
         input = input.trim();
-        let (only_trivia, new_input) = preprocess(input);
+        let (only_trivia, new_input) = preprocess(input, self.last_result.as_deref())?;
         input = &*new_input;
+
+        let source = self.source_mut();
 
         // If the input is a comment, add it to the run code so we avoid running with empty input
         if only_trivia {
@@ -136,23 +137,29 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         // Create new source with exact input appended and parse
         let (new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
 
-        let (cf, res) = source.inspect(input).await?;
+        let (cf, res, last_result) = source.inspect(input).await?;
         if let Some(res) = &res {
             let _ = sh_println!("{res}");
         }
         if cf.is_break() {
+            if last_result.is_some() {
+                self.last_result = last_result;
+            }
             debug!(%input, ?res, "inspect success");
             return Ok(ControlFlow::Continue(()));
         }
 
         if do_execute {
-            self.execute_and_replace(new_source).await.map(ControlFlow::Continue)
+            self.execute_and_replace(new_source).await?;
+            if last_result.is_some() {
+                self.last_result = last_result;
+            }
         } else {
             let out = new_source.build()?;
             debug!(%input, ?out, "skipped execute and rebuild source");
             *self.source_mut() = new_source;
-            Ok(ControlFlow::Continue(()))
         }
+        Ok(ControlFlow::Continue(()))
     }
 
     /// Decodes traces in the given [`ChiselResult`].
@@ -601,7 +608,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         let source = self.source_mut();
         let line = format!("bytes32 __raw__; assembly {{ __raw__ := {var} }}");
         if let Ok((new_source, _)) = source.clone_with_new_line(line)
-            && let (_, Some(res)) = new_source.inspect("__raw__").await?
+            && let (_, Some(res), _) = new_source.inspect("__raw__").await?
         {
             sh_println!("{res}")?;
             return Ok(());
@@ -645,11 +652,11 @@ fn ensure_loaded_session_network_matches(
     Ok(())
 }
 
-/// Preprocesses addresses to ensure they are correctly checksummed and returns whether the input
-/// only contained trivia (comments, whitespace).
-fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
+/// Expands the previous result, checksums addresses, and returns whether the input only contained
+/// trivia (comments, whitespace).
+fn preprocess<'a>(input: &'a str, last_result: Option<&str>) -> Result<(bool, Cow<'a, str>)> {
     let mut only_trivia = true;
-    let mut new_input = Cow::Borrowed(input);
+    let mut replacements = Vec::new();
     for (pos, token) in solar::parse::Cursor::new(input).with_position() {
         use RawTokenKind::{BlockComment, LineComment, Literal, Whitespace};
 
@@ -658,17 +665,31 @@ fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
         }
         only_trivia = false;
 
+        let range = pos..pos + token.len as usize;
+        if &input[range.clone()] == "$_" {
+            let last_result = last_result.ok_or_else(|| eyre::eyre!("no previous result"))?;
+            replacements.push((range, format!("({last_result})")));
+            continue;
+        }
+
         // Ensure that addresses are correctly checksummed.
         if let Literal { kind: RawLiteralKind::Int { base: Base::Hexadecimal, .. } } = token.kind
             && token.len == 42
+            && let Ok(addr) = input[range.clone()].parse::<Address>()
         {
-            let range = pos..pos + 42;
-            if let Ok(addr) = input[range.clone()].parse::<Address>() {
-                new_input.to_mut().replace_range(range, addr.to_checksum_buffer(None).as_str());
-            }
+            replacements.push((range, addr.to_checksum_buffer(None).to_string()));
         }
     }
-    (only_trivia, new_input)
+
+    if replacements.is_empty() {
+        Ok((only_trivia, Cow::Borrowed(input)))
+    } else {
+        let mut new_input = input.to_string();
+        for (range, replacement) in replacements.into_iter().rev() {
+            new_input.replace_range(range, &replacement);
+        }
+        Ok((only_trivia, Cow::Owned(new_input)))
+    }
 }
 
 #[cfg(test)]
@@ -813,7 +834,7 @@ mod tests {
     #[test]
     fn test_trivia() {
         fn only_trivia(s: &str) -> bool {
-            let (only_trivia, _new_input) = preprocess(s);
+            let (only_trivia, _new_input) = preprocess(s, None).unwrap();
             only_trivia
         }
         assert!(only_trivia("// line comment"));
@@ -823,5 +844,18 @@ mod tests {
         assert!(only_trivia("/* block comment */"));
         assert!(only_trivia(" \t\n  /* block \n \t comment */\n"));
         assert!(!only_trivia("/* block \n \t comment */\nwith \tother"));
+    }
+
+    #[test]
+    fn test_last_result_preprocessing() {
+        let result = "abi.decode(hex\"2a\", (uint256))";
+        let (_, input) = preprocess("uint256 answer = $_;", Some(result)).unwrap();
+        assert_eq!(input, format!("uint256 answer = ({result});"));
+
+        let literal = r#"string memory value = "$_"; // $_"#;
+        let (_, input) = preprocess(literal, Some(result)).unwrap();
+        assert_eq!(input, literal);
+
+        assert_eq!(preprocess("$_", None).unwrap_err().to_string(), "no previous result");
     }
 }
