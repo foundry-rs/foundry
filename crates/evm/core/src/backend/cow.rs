@@ -4,7 +4,7 @@ use super::BackendError;
 use crate::{
     FoundryInspectorExt,
     backend::{
-        Backend, ContextUpdate, DatabaseExt, JournaledState, LocalForkId,
+        Backend, ContextUpdateFor, DatabaseExt, JournaledState, LocalForkId,
         RevertStateSnapshotAction, diagnostic::RevertDiagnostic,
     },
     evm::{
@@ -238,7 +238,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         self.backend_mut().select_fork(id, evm_env, tx_env, journaled_state)
     }
 
@@ -249,7 +249,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &TxEnvFor<FEN>,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         self.backend_mut().roll_fork(id, block_number, evm_env, tx_env, journaled_state)
     }
 
@@ -260,7 +260,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &TxEnvFor<FEN>,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         self.backend_mut().roll_fork_to_transaction(
             id,
             transaction,
@@ -280,7 +280,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         inspector: &mut dyn for<'db> FoundryInspectorExt<
             <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
         >,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         self.backend_mut().transact(
             id,
             transaction,

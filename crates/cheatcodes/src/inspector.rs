@@ -43,13 +43,13 @@ use foundry_evm_core::evm::TransactionStateFor;
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{ContextUpdate, DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
+    backend::{ContextUpdateFor, DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
     evm::{
-        BlockEnvFor, ChainContextFor, EthEvmNetwork, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, NestedEvmClosureFor, SpecFor, TransactionRequestFor, TxEnvFor,
-        with_cloned_context,
+        BlockEnvFor, ChainContextFor, EthEvmNetwork, EvmFactoryFor, FoundryContextFor,
+        FoundryEvmFactory, FoundryEvmNetwork, NestedEvmClosureFor, SpecFor, TransactionRequestFor,
+        TxEnvFor, with_cloned_context,
     },
 };
 use foundry_evm_traces::{
@@ -107,7 +107,7 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>>;
+    ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>>;
 
     /// Executes a `TransactionRequest` on the database. Inspector is assembled internally.
     fn transact_from_tx_on_db(
@@ -254,7 +254,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>> {
         let evm_env = ecx.evm_clone();
         let outer_tx_env = ecx.tx_clone();
         let (db, inner) = ecx.db_journal_inner_mut();
