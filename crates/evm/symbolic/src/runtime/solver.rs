@@ -1,5 +1,10 @@
 use super::*;
-use std::process::{Child, Output};
+use std::{
+    io::{BufRead, BufReader, Read},
+    process::{Child, ChildStdin, Output},
+    sync::mpsc::{Receiver, RecvTimeoutError},
+    thread::JoinHandle,
+};
 use wait_timeout::ChildExt;
 
 mod hard_arith_fallback;
@@ -235,6 +240,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     smt_max_query_bytes: u64,
     smt_build_time: Duration,
     smt_max_query_time: Duration,
+    z3_session: Option<Z3Session>,
 }
 
 impl SmtLibSubprocessSolver {
@@ -268,6 +274,7 @@ impl SmtLibSubprocessSolver {
             smt_max_query_bytes: 0,
             smt_build_time: Duration::ZERO,
             smt_max_query_time: Duration::ZERO,
+            z3_session: None,
         }
     }
 
@@ -779,13 +786,29 @@ impl SmtLibSubprocessSolver {
         }
 
         let started = Instant::now();
-        let result = run_solver_commands(
-            cx,
-            &commands,
-            &smt,
-            self.timeout,
-            model.then_some(model_constraints),
-        );
+        let result = if let [command] = commands.as_slice()
+            && command.program == "z3"
+            && command.args == ["-in", "-smt2"]
+        {
+            let output = match self.run_z3_session(command, &smt) {
+                SolverProcessOutcome::Output(output) => Ok(output),
+                SolverProcessOutcome::Unknown => Err(SymbolicError::SolverUnknown),
+                SolverProcessOutcome::Cancelled => {
+                    warn!("solver query was cancelled");
+                    Err(SymbolicError::Solver("solver query was cancelled".to_string()))
+                }
+                SolverProcessOutcome::Error(err) => Err(SymbolicError::Solver(err)),
+            };
+            SolverCommandRun { output, summaries: Vec::new() }
+        } else {
+            run_solver_commands(
+                cx,
+                &commands,
+                &smt,
+                self.timeout,
+                model.then_some(model_constraints),
+            )
+        };
         let query_time = started.elapsed();
         self.solver_time += query_time;
         self.smt_max_query_time = self.smt_max_query_time.max(query_time);
@@ -800,6 +823,29 @@ impl SmtLibSubprocessSolver {
             }
         }
         result.output
+    }
+
+    fn run_z3_session(&mut self, command: &SolverCommand, smt: &str) -> SolverProcessOutcome {
+        let mut session = match self.z3_session.take() {
+            Some(session) => session,
+            None => match Z3Session::spawn(command.clone()) {
+                Ok(session) => session,
+                Err(err) => return SolverProcessOutcome::Error(err),
+            },
+        };
+        let outcome = session.query(smt, self.queries, self.timeout);
+        match outcome {
+            output @ SolverProcessOutcome::Output(_) => {
+                self.z3_session = Some(session);
+                output
+            }
+            SolverProcessOutcome::Error(err) => {
+                drop(session);
+                warn!(%err, "persistent z3 session failed; retrying query in a fresh process");
+                run_solver_process(command, smt, self.timeout, &AtomicBool::new(false))
+            }
+            other => other,
+        }
     }
 }
 
@@ -1570,6 +1616,130 @@ fn format_solver_portfolio_summaries(summaries: &[SolverRunSummary]) -> String {
     output
 }
 
+struct Z3Session {
+    command: SolverCommand,
+    child: Child,
+    stdin: ChildStdin,
+    stdout: Receiver<Result<String, String>>,
+    stderr: Receiver<Result<String, String>>,
+    stdout_thread: Option<JoinHandle<()>>,
+    stderr_thread: Option<JoinHandle<()>>,
+}
+
+impl Z3Session {
+    fn spawn(command: SolverCommand) -> Result<Self, String> {
+        let mut child = Command::new(&command.program)
+            .args(&command.args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|err| format!("failed to spawn `{}`: {err}", command.display))?;
+        let stdin = child.stdin.take().expect("piped solver stdin is available");
+        let stdout = child.stdout.take().expect("piped solver stdout is available");
+        let stderr = child.stderr.take().expect("piped solver stderr is available");
+
+        let (stdout_tx, stdout_rx) = mpsc::channel();
+        let stdout_thread = thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let line = line.map_err(|err| format!("failed to read solver output: {err}"));
+                let failed = line.is_err();
+                if stdout_tx.send(line).is_err() || failed {
+                    break;
+                }
+            }
+        });
+        let (stderr_tx, stderr_rx) = mpsc::channel();
+        let stderr_thread = thread::spawn(move || {
+            let mut stderr = BufReader::new(stderr);
+            let mut output = String::new();
+            let result = stderr
+                .read_to_string(&mut output)
+                .map(|_| output)
+                .map_err(|err| format!("failed to read solver stderr: {err}"));
+            let _ = stderr_tx.send(result);
+        });
+
+        Ok(Self {
+            command,
+            child,
+            stdin,
+            stdout: stdout_rx,
+            stderr: stderr_rx,
+            stdout_thread: Some(stdout_thread),
+            stderr_thread: Some(stderr_thread),
+        })
+    }
+
+    fn query(&mut self, smt: &str, query: usize, timeout: Option<u32>) -> SolverProcessOutcome {
+        let marker = format!("foundry-query-{query}-complete");
+        if let Err(err) = self
+            .stdin
+            .write_all(b"(reset)\n")
+            .and_then(|_| self.stdin.write_all(smt.as_bytes()))
+            .and_then(|_| writeln!(self.stdin, "(echo \"{marker}\")"))
+            .and_then(|_| self.stdin.flush())
+        {
+            return SolverProcessOutcome::Error(format!("failed to write solver query: {err}"));
+        }
+
+        let started_at = Instant::now();
+        let timeout = timeout
+            .filter(|seconds| *seconds > 0)
+            .map(|seconds| Duration::from_secs(seconds.into()));
+        let mut output = String::new();
+        loop {
+            let Some(wait) = solver_wait_duration(started_at.elapsed(), timeout) else {
+                return SolverProcessOutcome::Unknown;
+            };
+            match self.stdout.recv_timeout(wait) {
+                Ok(Ok(line)) if line == marker => return SolverProcessOutcome::Output(output),
+                Ok(Ok(line)) => {
+                    output.push_str(&line);
+                    output.push('\n');
+                }
+                Ok(Err(err)) => return SolverProcessOutcome::Error(err),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    let stderr = self
+                        .stderr
+                        .recv_timeout(SOLVER_CANCEL_CHECK_INTERVAL)
+                        .ok()
+                        .and_then(Result::ok)
+                        .unwrap_or_default();
+                    return match self.child.try_wait() {
+                        Ok(Some(status)) => SolverProcessOutcome::Error(solver_exit_error(
+                            &self.command,
+                            status,
+                            &output,
+                            &stderr,
+                        )),
+                        Ok(None) => SolverProcessOutcome::Error(
+                            "solver stdout closed before the query completed".to_string(),
+                        ),
+                        Err(err) => SolverProcessOutcome::Error(format!(
+                            "failed to query solver process status: {err}"
+                        )),
+                    };
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Z3Session {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(thread) = self.stdout_thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.stderr_thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 /// Runs one solver process to completion, timeout, or cooperative cancellation.
 fn run_solver_process(
     command: &SolverCommand,
@@ -1833,4 +2003,35 @@ fn model_symbols_for_constraints(
         constraint.collect_vars(&mut vars);
     }
     vars.into_iter().map(|symbol| (cx.symbol_name(symbol).to_owned(), symbol)).collect()
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    #[test]
+    fn z3_session_resets_and_reuses_the_process() {
+        if !Command::new("z3").arg("--version").output().is_ok_and(|output| output.status.success())
+        {
+            return;
+        }
+
+        let command = named_solver_command("z3").unwrap();
+        let mut solver = SmtLibSubprocessSolver::new(Ok(vec![command]), Some(5), 2, false);
+        let mut cx = SymCx::new();
+        let value = SymExpr::var(&mut cx, "value");
+        let one = SymExpr::one(&mut cx);
+        let constraints = vec![SymBoolExpr::eq(&mut cx, value, one)];
+
+        assert_eq!(
+            solver.query_normalized(&cx, &constraints, false, &constraints).unwrap(),
+            "sat\n"
+        );
+        let pid = solver.z3_session.as_ref().unwrap().child.id();
+        assert_eq!(
+            solver.query_normalized(&cx, &constraints, false, &constraints).unwrap(),
+            "sat\n"
+        );
+        assert_eq!(solver.z3_session.as_ref().unwrap().child.id(), pid);
+    }
 }
