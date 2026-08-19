@@ -2,7 +2,7 @@
 
 use super::{
     context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext},
-    storage::{StorageAccess, StorageSpace, hex_u256, storage_access_at},
+    storage::{StorageAccess, StorageSpace, hex_u256, storage_access_at, storage_values},
 };
 use crate::{DebuggerLayout, debugger::DebuggerStats, op::OpcodeParam};
 use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
@@ -619,7 +619,9 @@ impl TUIContext<'_> {
 
     fn current_storage_access_line(&self) -> Option<Line<'static>> {
         storage_access_at(self.debug_steps(), self.current_step).map(|access| {
-            let label = self.storage_label(access.space(), access.slot());
+            let values = (access.space() == StorageSpace::Persistent)
+                .then(|| storage_values(&self.storage_accesses(access.space())));
+            let label = self.storage_label(access.space(), access.slot(), values.as_ref());
             storage_access_line(access, label.as_deref())
         })
     }
@@ -634,6 +636,7 @@ impl TUIContext<'_> {
 
     fn draw_storage(&mut self, f: &mut Frame<'_>, area: Rect, space: StorageSpace) {
         let accesses = self.storage_accesses(space);
+        let values = (space == StorageSpace::Persistent).then(|| storage_values(&accesses));
         let current_slot = storage_access_at(self.debug_steps(), self.current_step)
             .filter(|access| access.space() == space)
             .map(StorageAccess::slot);
@@ -647,7 +650,7 @@ impl TUIContext<'_> {
             .enumerate()
             .skip(self.draw_memory.current_storage_startline)
             .flat_map(|(index, access)| {
-                let label = self.storage_label(space, access.slot());
+                let label = self.storage_label(space, access.slot(), values.as_ref());
                 storage_slot_lines(
                     index,
                     index_width,

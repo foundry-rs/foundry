@@ -1,7 +1,10 @@
 //! Storage access helpers for debugger TUI views and commands.
 
 use crate::DebugNode;
-use alloy_primitives::{U256, map::IndexMap};
+use alloy_primitives::{
+    B256, U256,
+    map::{B256Map, IndexMap},
+};
 use revm::{bytecode::opcode, interpreter::InstructionResult};
 use revm_inspectors::tracing::types::{CallTraceStep, StorageChangeReason};
 
@@ -121,6 +124,10 @@ pub(super) fn storage_accesses_until(
     }
 
     accesses
+}
+
+pub(super) fn storage_values(accesses: &IndexMap<U256, StorageAccess>) -> B256Map<B256> {
+    accesses.iter().map(|(slot, access)| (B256::from(*slot), B256::from(access.value()))).collect()
 }
 
 pub(super) fn storage_access_at(
