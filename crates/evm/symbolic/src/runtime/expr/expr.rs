@@ -1,5 +1,7 @@
 use super::{hashcons::HashConsed, *};
 
+// Boolean selector recovery is an optional expression rewrite. Bound it to one word's worth of
+// unique nodes so adversarial expression trees cannot make construction unbounded.
 const MAX_BITWISE_BOOL_WORD_VISITS: usize = 256;
 
 pub(crate) fn keccak_word(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymExpr {
@@ -602,7 +604,31 @@ impl SymExpr {
                     let max = Self::constant(cx, U256::MAX);
                     Self::ite(cx, condition, zero, max)
                 }
-                _ => Self::commutative_binop(cx, binop, left, right),
+                // `one_bit_word(c) + k => ite(c, k + 1, k)`.
+                (SymExprKind::Const(value), _)
+                    if let Some(condition) = right.bitwise_bool_word_condition(cx) =>
+                {
+                    let incremented = Self::constant(cx, value.wrapping_add(U256::ONE));
+                    let value = Self::constant(cx, *value);
+                    Self::ite(cx, condition, incremented, value)
+                }
+                (_, SymExprKind::Const(value))
+                    if let Some(condition) = left.bitwise_bool_word_condition(cx) =>
+                {
+                    let incremented = Self::constant(cx, value.wrapping_add(U256::ONE));
+                    let value = Self::constant(cx, *value);
+                    Self::ite(cx, condition, incremented, value)
+                }
+                _ => {
+                    let (left, right) = Self::ordered_commutative_operands(left, right);
+                    if let Some(value) = Self::add_with_const_ite(cx, &left, &right) {
+                        value
+                    } else if let Some(value) = Self::add_with_const_ite(cx, &right, &left) {
+                        value
+                    } else {
+                        Self::from_kind(cx, SymExprKind::BinOp(binop, left, right))
+                    }
+                }
             },
             SymBinOp::Sub => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
@@ -622,6 +648,14 @@ impl SymExpr {
                     let max = Self::constant(cx, U256::MAX);
                     Self::ite(cx, condition, zero, max)
                 }
+                // `k - bool_word(c) => ite(c, k - 1, k)`.
+                (SymExprKind::Const(value), _)
+                    if let Some(condition) = right.bitwise_bool_word_condition(cx) =>
+                {
+                    let decremented = Self::constant(cx, value.wrapping_sub(U256::ONE));
+                    let value = Self::constant(cx, *value);
+                    Self::ite(cx, condition, decremented, value)
+                }
                 _ => Self::from_kind(cx, SymExprKind::BinOp(binop, left, right)),
             },
             SymBinOp::Mul => match (left.kind(), right.kind()) {
@@ -639,17 +673,24 @@ impl SymExpr {
                 (SymExprKind::Const(value), _) if *value == U256::ONE => right,
                 // `a * 1 => a`.
                 (_, SymExprKind::Const(value)) if *value == U256::ONE => left,
-                // `2**n * a => a << n`.
-                (SymExprKind::Const(value), _) if let Some(shift) = power_of_two_shift(*value) => {
-                    let shift = Self::constant(cx, U256::from(shift));
-                    Self::binop(cx, SymBinOp::Shl, right, shift)
+                _ => {
+                    let (left, right) = Self::ordered_commutative_operands(left, right);
+                    if let Some(condition) = left.direct_bool_word_condition(cx) {
+                        // `bool_word(c) * a => ite(c, a, 0)`.
+                        let zero = Self::zero(cx);
+                        Self::ite(cx, condition, right, zero)
+                    } else if let Some(condition) = right.direct_bool_word_condition(cx) {
+                        // `a * bool_word(c) => ite(c, a, 0)`.
+                        let zero = Self::zero(cx);
+                        Self::ite(cx, condition, left, zero)
+                    } else if let Some(shift) = right.as_const().and_then(power_of_two_shift) {
+                        // `a * 2**n => a << n`.
+                        let shift = Self::constant(cx, U256::from(shift));
+                        Self::binop(cx, SymBinOp::Shl, left, shift)
+                    } else {
+                        Self::from_kind(cx, SymExprKind::BinOp(binop, left, right))
+                    }
                 }
-                // `a * 2**n => a << n`.
-                (_, SymExprKind::Const(value)) if let Some(shift) = power_of_two_shift(*value) => {
-                    let shift = Self::constant(cx, U256::from(shift));
-                    Self::binop(cx, SymBinOp::Shl, left, shift)
-                }
-                _ => Self::commutative_binop(cx, binop, left, right),
             },
             SymBinOp::UDiv | SymBinOp::SDiv => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
@@ -750,7 +791,27 @@ impl SymExpr {
                 (_, SymExprKind::Const(value)) if value.is_zero() => left,
                 // `a ^ a => 0`.
                 _ if left == right => Self::zero(cx),
-                _ => Self::commutative_binop(cx, binop, left, right),
+                _ => {
+                    let (left, right) = Self::ordered_commutative_operands(left, right);
+                    // `a ^ (a ^ b) => b`.
+                    if let Some(value) = Self::xor_with_shared_operand(&left, &right)
+                        .or_else(|| Self::xor_with_shared_operand(&right, &left))
+                    {
+                        value
+                    // `a ^ ((a ^ b) * bool_word(c)) => ite(c, b, a)`.
+                    } else if let Some(value) = Self::xor_with_bool_select(cx, &left, &right) {
+                        value
+                    } else if let Some(value) = Self::xor_with_bool_select(cx, &right, &left) {
+                        value
+                    // `a ^ ite(c, b, 0) => ite(c, a ^ b, a)`.
+                    } else if let Some(value) = Self::xor_with_zero_ite(cx, &left, &right) {
+                        value
+                    } else if let Some(value) = Self::xor_with_zero_ite(cx, &right, &left) {
+                        value
+                    } else {
+                        Self::from_kind(cx, SymExprKind::BinOp(binop, left, right))
+                    }
+                }
             },
             SymBinOp::Shl => match (left.kind(), right.kind()) {
                 (SymExprKind::Const(left_value), SymExprKind::Const(right_value)) => {
@@ -908,6 +969,105 @@ impl SymExpr {
             return Some(Self::ite(cx, condition.clone(), then_expr.clone(), other));
         }
         None
+    }
+
+    fn add_with_const_ite(cx: &mut SymCx, other: &Self, conditional: &Self) -> Option<Self> {
+        if other.as_const().is_some() {
+            return None;
+        }
+        let SymExprKind::Ite(condition, then_expr, else_expr) = conditional.kind() else {
+            return None;
+        };
+        if then_expr.as_const().is_none() || else_expr.as_const().is_none() {
+            return None;
+        }
+        if !Self::duplicating_branchless_rewrite_fits(other, conditional) {
+            return None;
+        }
+        let then_expr = Self::binop(cx, SymBinOp::Add, other.clone(), then_expr.clone());
+        let else_expr = Self::binop(cx, SymBinOp::Add, other.clone(), else_expr.clone());
+        Some(Self::ite(cx, condition.clone(), then_expr, else_expr))
+    }
+
+    fn xor_with_bool_select(cx: &mut SymCx, base: &Self, selector: &Self) -> Option<Self> {
+        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = selector.kind() else { return None };
+        let (condition_word, selected) = match left.kind() {
+            SymExprKind::BinOp(SymBinOp::Xor, delta_left, delta_right) if delta_left == base => {
+                (right, delta_right.clone())
+            }
+            SymExprKind::BinOp(SymBinOp::Xor, delta_left, delta_right) if delta_right == base => {
+                (right, delta_left.clone())
+            }
+            _ => match right.kind() {
+                SymExprKind::BinOp(SymBinOp::Xor, delta_left, delta_right)
+                    if delta_left == base =>
+                {
+                    (left, delta_right.clone())
+                }
+                SymExprKind::BinOp(SymBinOp::Xor, delta_left, delta_right)
+                    if delta_right == base =>
+                {
+                    (left, delta_left.clone())
+                }
+                _ => return None,
+            },
+        };
+        let condition = condition_word.bitwise_bool_word_condition(cx)?;
+        Some(Self::ite(cx, condition, selected, base.clone()))
+    }
+
+    fn xor_with_shared_operand(base: &Self, nested: &Self) -> Option<Self> {
+        let SymExprKind::BinOp(SymBinOp::Xor, left, right) = nested.kind() else { return None };
+        if left == base {
+            Some(right.clone())
+        } else if right == base {
+            Some(left.clone())
+        } else {
+            None
+        }
+    }
+
+    fn xor_with_zero_ite(cx: &mut SymCx, base: &Self, conditional: &Self) -> Option<Self> {
+        let SymExprKind::Ite(condition, then_expr, else_expr) = conditional.kind() else {
+            return None;
+        };
+        if then_expr.as_const().is_some_and(|value| value.is_zero()) {
+            if !Self::duplicating_branchless_rewrite_fits(base, conditional) {
+                return None;
+            }
+            let selected = Self::binop(cx, SymBinOp::Xor, base.clone(), else_expr.clone());
+            return Some(Self::ite(cx, condition.clone(), base.clone(), selected));
+        }
+        if else_expr.as_const().is_some_and(|value| value.is_zero()) {
+            if !Self::duplicating_branchless_rewrite_fits(base, conditional) {
+                return None;
+            }
+            let selected = Self::binop(cx, SymBinOp::Xor, base.clone(), then_expr.clone());
+            return Some(Self::ite(cx, condition.clone(), selected, base.clone()));
+        }
+        None
+    }
+
+    /// Checks the occurrence cost of a rewrite that places one operand in both ITE arms.
+    ///
+    /// Hash-consing keeps the stored DAG compact, but solver normalization folds occurrences and
+    /// would revisit a shared operand twice after every rewrite. Count that unfolded result before
+    /// constructing it so a linear series of branchless operations cannot become exponential.
+    fn duplicating_branchless_rewrite_fits(operand: &Self, conditional: &Self) -> bool {
+        let mut counter = UnfoldedNodeCounter::new();
+        let Some(operand_nodes) = counter.expr_nodes(operand) else {
+            return false;
+        };
+        let Some(conditional_nodes) = counter.expr_nodes(conditional) else {
+            return false;
+        };
+
+        operand_nodes
+            .checked_mul(2)
+            .and_then(|duplicated| conditional_nodes.checked_add(duplicated))
+            // The rewritten ITE adds at most two operation wrappers around the original arms.
+            .and_then(|nodes| nodes.checked_add(2))
+            .is_some_and(|nodes| nodes <= MAX_BRANCHLESS_REWRITE_UNFOLDED_NODES)
     }
 
     fn commutative_binop(cx: &mut SymCx, op: SymBinOp, left: Self, right: Self) -> Self {
@@ -1324,36 +1484,66 @@ impl SymExpr {
         &self,
         cx: &mut SymCx,
     ) -> Option<SymBoolExpr> {
-        let mut visited = HashSet::default();
-        let mut conditions = Vec::new();
-        let mut remaining_visits = MAX_BITWISE_BOOL_WORD_VISITS;
-        self.collect_bitwise_bool_word_conditions(
-            &mut visited,
-            &mut remaining_visits,
-            &mut conditions,
-        )?;
-        Some(SymBoolExpr::or(cx, conditions))
-    }
+        let mut pending = vec![self.clone()];
+        let mut seen_words = HashSet::<Self>::default();
+        let mut leaf_conditions = IndexSet::<SymBoolExpr>::default();
+        let mut bit_widths = HashMap::default();
+        let mut remaining = MAX_BITWISE_BOOL_WORD_VISITS;
+        while let Some(word) = pending.pop() {
+            if !seen_words.insert(word.clone()) {
+                continue;
+            }
+            if remaining == 0 {
+                return None;
+            }
+            remaining -= 1;
 
-    fn collect_bitwise_bool_word_conditions(
-        &self,
-        visited: &mut HashSet<Self>,
-        remaining_visits: &mut usize,
-        conditions: &mut Vec<SymBoolExpr>,
-    ) -> Option<()> {
-        if !visited.insert(self.clone()) {
-            return Some(());
-        }
-        *remaining_visits = remaining_visits.checked_sub(1)?;
-        if let Some(condition) = self.bool_word_condition() {
-            conditions.push(condition);
-        } else if let SymExprKind::BinOp(SymBinOp::Or, left, right) = self.kind() {
-            left.collect_bitwise_bool_word_conditions(visited, remaining_visits, conditions)?;
-            right.collect_bitwise_bool_word_conditions(visited, remaining_visits, conditions)?;
-        } else {
+            if let Some(condition) = word.direct_bool_word_condition(cx) {
+                leaf_conditions.insert(condition);
+                continue;
+            }
+            if let SymExprKind::BinOp(SymBinOp::Or, left, right) = word.kind() {
+                pending.push(right.clone());
+                pending.push(left.clone());
+                continue;
+            }
+
+            if word.unsigned_bits_cached(&mut bit_widths, &mut remaining) == Some(1) {
+                let zero = Self::zero(cx);
+                let (word, zero) = Self::ordered_commutative_operands(word, zero);
+                let zero_check =
+                    SymBoolExpr::from_kind(cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, word, zero));
+                leaf_conditions.insert(zero_check.not(cx));
+                continue;
+            }
             return None;
         }
-        Some(())
+
+        Some(SymBoolExpr::or(cx, leaf_conditions.into_iter().collect()))
+    }
+
+    /// Returns the condition represented by a direct `0`/`1` ITE, preserving its polarity.
+    ///
+    /// Unlike [`Self::bitwise_bool_word_condition`], this deliberately does not infer a boolean
+    /// word from arbitrary one-bit expressions. Callers that run during expression construction
+    /// use this bounded structural check to avoid recursively sizing a shared expression DAG.
+    fn direct_bool_word_condition(&self, cx: &mut SymCx) -> Option<SymBoolExpr> {
+        let SymExprKind::Ite(condition, then_expr, else_expr) = self.kind() else {
+            return None;
+        };
+        match (then_expr.as_const(), else_expr.as_const()) {
+            (Some(then_value), Some(else_value))
+                if then_value == U256::ONE && else_value.is_zero() =>
+            {
+                Some(condition.clone())
+            }
+            (Some(then_value), Some(else_value))
+                if then_value.is_zero() && else_value == U256::ONE =>
+            {
+                Some(condition.clone().not(cx))
+            }
+            _ => None,
+        }
     }
 
     fn bool_word_condition_from_parts(
@@ -1515,42 +1705,92 @@ impl SymExpr {
     }
 
     pub(crate) fn unsigned_bits(&self) -> usize {
-        match self.kind() {
-            SymExprKind::Const(value) => value.bit_len().max(1),
-            SymExprKind::BinOp(SymBinOp::And, left, right) => {
-                if let Some(mask) = right.as_const() {
-                    left.unsigned_bits().min(mask.bit_len())
-                } else {
-                    256
-                }
-            }
-            SymExprKind::BinOp(SymBinOp::Add, left, right) => {
-                left.unsigned_bits().max(right.unsigned_bits()).saturating_add(1).min(256)
-            }
-            SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
-                left.unsigned_bits().saturating_add(right.unsigned_bits()).min(256)
-            }
-            SymExprKind::BinOp(SymBinOp::Shl, left, right) => {
-                if let Some(shift) = right.as_const().and_then(|shift| usize::try_from(shift).ok())
-                {
-                    left.unsigned_bits().saturating_add(shift).min(256)
-                } else {
-                    256
-                }
-            }
-            SymExprKind::BinOp(SymBinOp::Shr, left, right) => {
-                if let Some(shift) = right.as_const().and_then(|shift| usize::try_from(shift).ok())
-                {
-                    left.unsigned_bits().saturating_sub(shift).max(1)
-                } else {
-                    256
-                }
-            }
-            SymExprKind::BinOp(SymBinOp::UDiv, left, _) => left.unsigned_bits(),
-            SymExprKind::TernOp(_, _, _, modulus) => modulus.unsigned_bits(),
-            SymExprKind::Ite(_, left, right) => left.unsigned_bits().max(right.unsigned_bits()),
-            _ => 256,
+        let mut bit_widths = HashMap::default();
+        let mut remaining = usize::MAX;
+        self.unsigned_bits_cached(&mut bit_widths, &mut remaining).unwrap_or(256)
+    }
+
+    fn unsigned_bits_cached(
+        &self,
+        bit_widths: &mut HashMap<Self, usize>,
+        remaining: &mut usize,
+    ) -> Option<usize> {
+        if let Some(bits) = bit_widths.get(self) {
+            return Some(*bits);
         }
+
+        let mut pending = vec![(self.clone(), false)];
+        while let Some((expr, children_visited)) = pending.pop() {
+            if bit_widths.contains_key(&expr) {
+                continue;
+            }
+            if !children_visited {
+                if *remaining == 0 {
+                    return None;
+                }
+                *remaining -= 1;
+                pending.push((expr.clone(), true));
+                match expr.kind() {
+                    SymExprKind::BinOp(SymBinOp::And, left, right)
+                        if right.as_const().is_some() =>
+                    {
+                        pending.push((left.clone(), false));
+                    }
+                    SymExprKind::BinOp(SymBinOp::Add | SymBinOp::Mul, left, right)
+                    | SymExprKind::Ite(_, left, right) => {
+                        pending.push((right.clone(), false));
+                        pending.push((left.clone(), false));
+                    }
+                    SymExprKind::BinOp(SymBinOp::Shl | SymBinOp::Shr, left, right)
+                        if right
+                            .as_const()
+                            .and_then(|shift| usize::try_from(shift).ok())
+                            .is_some() =>
+                    {
+                        pending.push((left.clone(), false));
+                    }
+                    SymExprKind::BinOp(SymBinOp::UDiv, left, _) => {
+                        pending.push((left.clone(), false));
+                    }
+                    SymExprKind::TernOp(_, _, _, modulus) => {
+                        pending.push((modulus.clone(), false));
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
+            let bits = match expr.kind() {
+                SymExprKind::Const(value) => value.bit_len().max(1),
+                SymExprKind::BinOp(SymBinOp::And, left, right) => {
+                    if let Some(mask) = right.as_const() {
+                        bit_widths[left].min(mask.bit_len())
+                    } else {
+                        256
+                    }
+                }
+                SymExprKind::BinOp(SymBinOp::Add, left, right) => {
+                    bit_widths[left].max(bit_widths[right]).saturating_add(1).min(256)
+                }
+                SymExprKind::BinOp(SymBinOp::Mul, left, right) => {
+                    bit_widths[left].saturating_add(bit_widths[right]).min(256)
+                }
+                SymExprKind::BinOp(SymBinOp::Shl, left, right) => right
+                    .as_const()
+                    .and_then(|shift| usize::try_from(shift).ok())
+                    .map_or(256, |shift| bit_widths[left].saturating_add(shift).min(256)),
+                SymExprKind::BinOp(SymBinOp::Shr, left, right) => right
+                    .as_const()
+                    .and_then(|shift| usize::try_from(shift).ok())
+                    .map_or(256, |shift| bit_widths[left].saturating_sub(shift).max(1)),
+                SymExprKind::BinOp(SymBinOp::UDiv, left, _) => bit_widths[left],
+                SymExprKind::TernOp(_, _, _, modulus) => bit_widths[modulus],
+                SymExprKind::Ite(_, left, right) => bit_widths[left].max(bit_widths[right]),
+                _ => 256,
+            };
+            bit_widths.insert(expr, bits);
+        }
+        bit_widths.get(self).copied()
     }
 
     pub(crate) fn extracted_byte(&self, cx: &mut SymCx, index: usize) -> Self {
@@ -1929,6 +2169,104 @@ impl SymExpr {
     }
 }
 
+// Branchless expression rewrites are optional. Bound both the distinct DAG nodes inspected while
+// deciding whether to rewrite and the occurrences a later non-memoized solver fold could visit.
+const MAX_BRANCHLESS_REWRITE_NODES: usize = 256;
+const MAX_BRANCHLESS_REWRITE_UNFOLDED_NODES: usize = 8 * 1024;
+
+struct UnfoldedNodeCounter {
+    expr_nodes: HashMap<SymExpr, usize>,
+    bool_nodes: HashMap<SymBoolExpr, usize>,
+    remaining_unique_nodes: usize,
+}
+
+impl UnfoldedNodeCounter {
+    fn new() -> Self {
+        Self {
+            expr_nodes: HashMap::default(),
+            bool_nodes: HashMap::default(),
+            remaining_unique_nodes: MAX_BRANCHLESS_REWRITE_NODES,
+        }
+    }
+
+    /// Counts unfolded occurrences while memoizing the cost of each distinct expression node.
+    /// Reusing a cached cost still adds every occurrence, which exposes exponential shared DAGs.
+    fn expr_nodes(&mut self, expr: &SymExpr) -> Option<usize> {
+        if let Some(nodes) = self.expr_nodes.get(expr) {
+            return Some(*nodes);
+        }
+        if self.remaining_unique_nodes == 0 {
+            return None;
+        }
+        self.remaining_unique_nodes -= 1;
+
+        let nodes = match expr.kind() {
+            SymExprKind::Const(_) | SymExprKind::Var(_) | SymExprKind::GasLeft(_) => 1,
+            SymExprKind::Keccak { len, bytes, .. } => {
+                let mut nodes = 1usize.checked_add(self.expr_nodes(len)?)?;
+                for byte in bytes.iter() {
+                    nodes = nodes.checked_add(self.expr_nodes(byte)?)?;
+                }
+                nodes
+            }
+            SymExprKind::Hash { bytes, .. } => {
+                let mut nodes = 1usize;
+                for byte in bytes.iter() {
+                    nodes = nodes.checked_add(self.expr_nodes(byte)?)?;
+                }
+                nodes
+            }
+            SymExprKind::Not(value) => 1usize.checked_add(self.expr_nodes(value)?)?,
+            SymExprKind::BinOp(_, left, right) => {
+                1usize.checked_add(self.expr_nodes(left)?)?.checked_add(self.expr_nodes(right)?)?
+            }
+            SymExprKind::TernOp(_, left, right, modulus) => 1usize
+                .checked_add(self.expr_nodes(left)?)?
+                .checked_add(self.expr_nodes(right)?)?
+                .checked_add(self.expr_nodes(modulus)?)?,
+            SymExprKind::Ite(condition, then_expr, else_expr) => 1usize
+                .checked_add(self.bool_nodes(condition)?)?
+                .checked_add(self.expr_nodes(then_expr)?)?
+                .checked_add(self.expr_nodes(else_expr)?)?,
+        };
+        if nodes > MAX_BRANCHLESS_REWRITE_UNFOLDED_NODES {
+            return None;
+        }
+        self.expr_nodes.insert(expr.clone(), nodes);
+        Some(nodes)
+    }
+
+    fn bool_nodes(&mut self, expr: &SymBoolExpr) -> Option<usize> {
+        if let Some(nodes) = self.bool_nodes.get(expr) {
+            return Some(*nodes);
+        }
+        if self.remaining_unique_nodes == 0 {
+            return None;
+        }
+        self.remaining_unique_nodes -= 1;
+
+        let nodes = match expr.kind() {
+            SymBoolExprKind::Const(_) => 1,
+            SymBoolExprKind::Not(value) => 1usize.checked_add(self.bool_nodes(value)?)?,
+            SymBoolExprKind::And(values) => {
+                let mut nodes = 1usize;
+                for value in values.iter() {
+                    nodes = nodes.checked_add(self.bool_nodes(value)?)?;
+                }
+                nodes
+            }
+            SymBoolExprKind::Cmp(_, left, right) => {
+                1usize.checked_add(self.expr_nodes(left)?)?.checked_add(self.expr_nodes(right)?)?
+            }
+        };
+        if nodes > MAX_BRANCHLESS_REWRITE_UNFOLDED_NODES {
+            return None;
+        }
+        self.bool_nodes.insert(expr.clone(), nodes);
+        Some(nodes)
+    }
+}
+
 fn write_smt_wide_modular_arithmetic(
     cx: &SymCx,
     out: &mut String,
@@ -2102,6 +2440,226 @@ mod tests {
         let one = SymExpr::one(&mut cx);
         let mask = SymExpr::binop(&mut cx, SymBinOp::Sub, word, one);
         assert!(matches!(mask.kind(), SymExprKind::BinOp(SymBinOp::Sub, _, _)));
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_deduplicates_shared_or_dag() {
+        let mut cx = SymCx::new();
+        let base = SymExpr::var(&mut cx, "base");
+        let selected = SymExpr::var(&mut cx, "selected");
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+        let mut condition_word = SymExpr::bool_word(&mut cx, condition);
+        for _ in 0..64 {
+            condition_word = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::Or, condition_word.clone(), condition_word.clone()),
+            );
+        }
+        let delta = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selected.clone());
+        let selector = SymExpr::binop(&mut cx, SymBinOp::Mul, condition_word, delta);
+        let actual = SymExpr::binop(&mut cx, SymBinOp::Xor, base.clone(), selector);
+
+        let SymExprKind::Ite(_, then_expr, else_expr) = actual.kind() else {
+            panic!("shared boolean selector was not recovered");
+        };
+        assert_eq!(then_expr, &selected);
+        assert_eq!(else_expr, &base);
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_deduplicates_overlapping_or_dag() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+        let second = SymBoolExpr::cmp(&mut cx, SymCmpOp::Eq, x, y);
+        let mut previous = SymExpr::bool_word(&mut cx, first.clone());
+        let mut current = SymExpr::bool_word(&mut cx, second.clone());
+        for _ in 0..28 {
+            let next = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::Or, current.clone(), previous.clone()),
+            );
+            previous = current;
+            current = next;
+        }
+
+        let actual = current.bitwise_bool_word_condition(&mut cx).expect("boolean condition");
+        let expected = SymBoolExpr::or(&mut cx, vec![second, first]);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_stops_at_node_budget() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+        let bool_word = SymExpr::bool_word(&mut cx, condition);
+        let mut condition_word = bool_word.clone();
+        for _ in 0..MAX_BITWISE_BOOL_WORD_VISITS {
+            condition_word = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::Or, condition_word, bool_word.clone()),
+            );
+        }
+
+        assert!(condition_word.bitwise_bool_word_condition(&mut cx).is_none());
+    }
+
+    #[test]
+    fn commutative_branchless_rewrites_produce_canonical_ites() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let first_condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+        let second_condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Eq, x, y);
+
+        let one = SymExpr::one(&mut cx);
+        let two = SymExpr::constant(&mut cx, U256::from(2));
+        let three = SymExpr::constant(&mut cx, U256::from(3));
+        let four = SymExpr::constant(&mut cx, U256::from(4));
+        let first_offset = SymExpr::ite(&mut cx, first_condition.clone(), one, two);
+        let second_offset = SymExpr::ite(&mut cx, second_condition.clone(), three, four);
+        let add_forward =
+            SymExpr::binop(&mut cx, SymBinOp::Add, first_offset.clone(), second_offset.clone());
+        let add_reverse = SymExpr::binop(&mut cx, SymBinOp::Add, second_offset, first_offset);
+        assert_eq!(add_forward, add_reverse);
+        let SymExprKind::Ite(_, then_expr, else_expr) = add_forward.kind() else {
+            panic!("dual ITE addition did not rewrite");
+        };
+        assert!(matches!(then_expr.kind(), SymExprKind::BinOp(SymBinOp::Add, _, _)));
+        assert!(matches!(else_expr.kind(), SymExprKind::BinOp(SymBinOp::Add, _, _)));
+
+        let first_word = SymExpr::bool_word(&mut cx, first_condition.clone());
+        let second_word = SymExpr::bool_word(&mut cx, second_condition.clone());
+        let mul_forward =
+            SymExpr::binop(&mut cx, SymBinOp::Mul, first_word.clone(), second_word.clone());
+        let mul_reverse = SymExpr::binop(&mut cx, SymBinOp::Mul, second_word, first_word);
+        assert_eq!(mul_forward, mul_reverse);
+        let SymExprKind::Ite(_, then_expr, else_expr) = mul_forward.kind() else {
+            panic!("dual boolean-word multiplication did not rewrite");
+        };
+        assert!(matches!(then_expr.kind(), SymExprKind::Ite(..)));
+        assert!(else_expr.as_const().is_some_and(|value| value.is_zero()));
+
+        let zero = SymExpr::zero(&mut cx);
+        let first_value = SymExpr::var(&mut cx, "first_value");
+        let second_value = SymExpr::var(&mut cx, "second_value");
+        let first_selected = SymExpr::ite(&mut cx, first_condition, first_value, zero.clone());
+        let second_selected = SymExpr::ite(&mut cx, second_condition, second_value, zero);
+        let xor_forward =
+            SymExpr::binop(&mut cx, SymBinOp::Xor, first_selected.clone(), second_selected.clone());
+        let xor_reverse = SymExpr::binop(&mut cx, SymBinOp::Xor, second_selected, first_selected);
+        assert_eq!(xor_forward, xor_reverse);
+        let SymExprKind::Ite(_, then_expr, else_expr) = xor_forward.kind() else {
+            panic!("dual zero-ITE XOR did not rewrite");
+        };
+        assert!(matches!(then_expr.kind(), SymExprKind::Ite(..)));
+        assert!(matches!(else_expr.kind(), SymExprKind::Ite(..)));
+    }
+
+    #[test]
+    fn addition_keeps_exponentially_shared_ite_operand_raw() {
+        let mut cx = SymCx::new();
+        let mut value = SymExpr::var(&mut cx, "value");
+        for index in 0..32 {
+            let selector = SymExpr::var(&mut cx, &format!("add_selector_{index}"));
+            let condition = SymBoolExpr::eq_word_const(&mut cx, &selector, U256::ZERO);
+            let then_value = SymExpr::constant(&mut cx, U256::from(2 * index + 2));
+            let else_value = SymExpr::constant(&mut cx, U256::from(2 * index + 3));
+            let offset = SymExpr::ite(&mut cx, condition, then_value, else_value);
+            value = SymExpr::binop(&mut cx, SymBinOp::Add, value, offset);
+        }
+
+        assert!(matches!(value.kind(), SymExprKind::BinOp(SymBinOp::Add, _, _)));
+    }
+
+    #[test]
+    fn xor_keeps_exponentially_shared_ite_operand_raw() {
+        let mut cx = SymCx::new();
+        let zero = SymExpr::zero(&mut cx);
+        let mut value = SymExpr::var(&mut cx, "value");
+        for index in 0..32 {
+            let selector = SymExpr::var(&mut cx, &format!("xor_selector_{index}"));
+            let condition = SymBoolExpr::eq_word_const(&mut cx, &selector, U256::ZERO);
+            let selected = SymExpr::var(&mut cx, &format!("xor_selected_{index}"));
+            let conditional = SymExpr::ite(&mut cx, condition, selected, zero.clone());
+            value = SymExpr::binop(&mut cx, SymBinOp::Xor, value, conditional);
+        }
+
+        assert!(matches!(value.kind(), SymExprKind::BinOp(SymBinOp::Xor, _, _)));
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_bounds_bit_width_analysis() {
+        let mut cx = SymCx::new();
+        let one = SymExpr::one(&mut cx);
+        let mut expression = one.clone();
+        for _ in 0..MAX_BITWISE_BOOL_WORD_VISITS {
+            expression = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::UDiv, expression, one.clone()),
+            );
+        }
+
+        assert!(expression.bitwise_bool_word_condition(&mut cx).is_none());
+    }
+
+    #[test]
+    fn bitwise_bool_word_condition_keeps_one_bit_leaf_comparison_raw() {
+        let mut cx = SymCx::new();
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let first = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x.clone(), y.clone());
+        let second = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, x, y);
+        let zero = SymExpr::zero(&mut cx);
+        let one = SymExpr::one(&mut cx);
+        let nested = SymExpr::from_kind(&mut cx, SymExprKind::Ite(second, zero.clone(), one));
+        let leaf = SymExpr::from_kind(&mut cx, SymExprKind::Ite(first, nested, zero.clone()));
+
+        let actual =
+            leaf.bitwise_bool_word_condition(&mut cx).expect("one-bit leaf should be recovered");
+        let (leaf, zero) = SymExpr::ordered_commutative_operands(leaf, zero);
+        let raw_zero_check =
+            SymBoolExpr::from_kind(&mut cx, SymBoolExprKind::Cmp(SymCmpOp::Eq, leaf, zero));
+        let expected = raw_zero_check.not(&mut cx);
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn unsigned_bit_width_handles_deep_expression_iteratively() {
+        let mut cx = SymCx::new();
+        let one = SymExpr::one(&mut cx);
+        let mut expression = one.clone();
+        for _ in 0..2048 {
+            expression = SymExpr::from_kind(
+                &mut cx,
+                SymExprKind::BinOp(SymBinOp::UDiv, expression, one.clone()),
+            );
+        }
+
+        assert_eq!(expression.unsigned_bits(), 1);
+    }
+
+    #[test]
+    fn xor_select_rejects_delta_before_recovering_condition() {
+        let mut cx = SymCx::new();
+        let base = SymExpr::var(&mut cx, "base");
+        let unrelated_left = SymExpr::var(&mut cx, "unrelated_left");
+        let unrelated_right = SymExpr::var(&mut cx, "unrelated_right");
+        let delta = SymExpr::binop(&mut cx, SymBinOp::Xor, unrelated_left, unrelated_right);
+        let x = SymExpr::var(&mut cx, "x");
+        let y = SymExpr::var(&mut cx, "y");
+        let condition = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, x, y);
+        let condition_word = SymExpr::bool_word(&mut cx, condition);
+        let selector = SymExpr::binop(&mut cx, SymBinOp::Mul, condition_word, delta);
+
+        assert!(SymExpr::xor_with_bool_select(&mut cx, &base, &selector).is_none());
     }
 
     #[test]

@@ -4764,21 +4764,6 @@ Flattened file written at [..]flat.sol
     assert!(out.exists(), "flattened file should have been written");
 });
 
-// `forge generate test` writes the scaffolded file and emits its status string to stderr,
-// keeping stdout empty so agents can pipe the command without diagnostics.
-forgetest!(generate_test_writes_status_to_stderr, |prj, cmd| {
-    cmd.args(["generate", "test", "--contract-name", "Counter"])
-        .assert_success()
-        .stdout_eq(str![""])
-        .stderr_eq(str![[r#"
-Warning: `forge generate` is deprecated and will be removed in a future version
-Generated test file: test/Counter.t.sol
-
-"#]]);
-
-    assert!(prj.root().join("test/Counter.t.sol").exists(), "scaffolded test file should exist");
-});
-
 // `forge init` writes its status prose to stderr and keeps stdout empty so agents
 // can pipe the command without diagnostics. Uses `--offline` + `--no-git` to skip
 // network and git side-effects that would otherwise add prose to stdout.

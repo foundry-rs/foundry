@@ -41,75 +41,54 @@ impl Cheatcode for parseJson_1Call {
     }
 }
 
-impl Cheatcode for parseJsonUintCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Uint(256))
-    }
+macro_rules! impl_parse_json {
+    ($call:ident, $call_with_default:ident, $ty:expr) => {
+        impl Cheatcode for $call {
+            fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+                let Self { json, key } = self;
+                parse_json_coerce(json, key, &$ty)
+            }
+        }
+
+        impl Cheatcode for $call_with_default {
+            fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+                let Self { json, key, defaultValue } = self;
+                parse_json_coerce_default(json, key, &$ty, defaultValue)
+            }
+        }
+    };
 }
 
-impl Cheatcode for parseJsonUintArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Uint(256))))
-    }
-}
-
-impl Cheatcode for parseJsonIntCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Int(256))
-    }
-}
-
-impl Cheatcode for parseJsonIntArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Int(256))))
-    }
-}
-
-impl Cheatcode for parseJsonBoolCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Bool)
-    }
-}
-
-impl Cheatcode for parseJsonBoolArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bool)))
-    }
-}
-
-impl Cheatcode for parseJsonAddressCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Address)
-    }
-}
-
-impl Cheatcode for parseJsonAddressArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Address)))
-    }
-}
-
-impl Cheatcode for parseJsonStringCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::String)
-    }
-}
-
-impl Cheatcode for parseJsonStringArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::String)))
-    }
-}
+impl_parse_json!(parseJsonUint_0Call, parseJsonUint_1Call, DynSolType::Uint(256));
+impl_parse_json!(
+    parseJsonUintArray_0Call,
+    parseJsonUintArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Uint(256)))
+);
+impl_parse_json!(parseJsonInt_0Call, parseJsonInt_1Call, DynSolType::Int(256));
+impl_parse_json!(
+    parseJsonIntArray_0Call,
+    parseJsonIntArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Int(256)))
+);
+impl_parse_json!(parseJsonBool_0Call, parseJsonBool_1Call, DynSolType::Bool);
+impl_parse_json!(
+    parseJsonBoolArray_0Call,
+    parseJsonBoolArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Bool))
+);
+impl_parse_json!(parseJsonAddress_0Call, parseJsonAddress_1Call, DynSolType::Address);
+impl_parse_json!(
+    parseJsonAddressArray_0Call,
+    parseJsonAddressArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Address))
+);
+impl_parse_json!(parseJsonString_0Call, parseJsonString_1Call, DynSolType::String);
+impl_parse_json!(
+    parseJsonStringArray_0Call,
+    parseJsonStringArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::String))
+);
 
 impl Cheatcode for parseJsonArrayLengthCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
@@ -118,33 +97,18 @@ impl Cheatcode for parseJsonArrayLengthCall {
     }
 }
 
-impl Cheatcode for parseJsonBytesCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Bytes)
-    }
-}
-
-impl Cheatcode for parseJsonBytesArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bytes)))
-    }
-}
-
-impl Cheatcode for parseJsonBytes32Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::FixedBytes(32))
-    }
-}
-
-impl Cheatcode for parseJsonBytes32ArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
-    }
-}
+impl_parse_json!(parseJsonBytes_0Call, parseJsonBytes_1Call, DynSolType::Bytes);
+impl_parse_json!(
+    parseJsonBytesArray_0Call,
+    parseJsonBytesArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Bytes))
+);
+impl_parse_json!(parseJsonBytes32_0Call, parseJsonBytes32_1Call, DynSolType::FixedBytes(32));
+impl_parse_json!(
+    parseJsonBytes32Array_0Call,
+    parseJsonBytes32Array_1Call,
+    DynSolType::Array(Box::new(DynSolType::FixedBytes(32)))
+);
 
 impl Cheatcode for parseJsonType_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
@@ -399,6 +363,20 @@ pub(super) fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Resu
     };
 
     parse_json_as(value, ty).map(|v| v.abi_encode())
+}
+
+pub(super) fn parse_json_coerce_default<T: SolValue>(
+    json: &str,
+    path: &str,
+    ty: &DynSolType,
+    default: &T,
+) -> Result {
+    let json = parse_json_str(json)?;
+    match select(&json, path)?.as_slice() {
+        [] => Ok(default.abi_encode()),
+        [value] => parse_json_as(value, ty).map(|value| value.abi_encode()),
+        _ => bail!("path {path:?} must return exactly one JSON value"),
+    }
 }
 
 /// Parses given [serde_json::Value] as a [DynSolValue].
