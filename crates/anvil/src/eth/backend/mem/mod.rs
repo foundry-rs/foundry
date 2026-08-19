@@ -38,7 +38,7 @@ use crate::{
             validate::TransactionValidator,
         },
         error::{BlockchainError, ErrDetail, InvalidTransactionError},
-        fees::{FeeDetails, FeeManager, MIN_SUGGESTED_PRIORITY_FEE},
+        fees::{FeeDetails, FeeManager, FeeSnapshot, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         pool::transactions::PoolTransaction,
         preserve_simulation_request_fields,
@@ -979,6 +979,12 @@ impl<T> BlockRequest<T> {
     }
 }
 
+struct StateSnapshot {
+    block_number: u64,
+    block_hash: B256,
+    fees: FeeSnapshot,
+}
+
 /// Gives access to the [revm::Database]
 pub struct Backend<N: Network> {
     /// Access to [`revm::Database`] abstraction.
@@ -1027,7 +1033,7 @@ pub struct Backend<N: Network> {
     /// removed from the canonical chain due to a reorg.
     new_block_listeners: Arc<Mutex<Vec<UnboundedSender<ChainNotification>>>>,
     /// Keeps track of active state snapshots at a specific block.
-    active_state_snapshots: Arc<Mutex<HashMap<U256, (u64, B256)>>>,
+    active_state_snapshots: Arc<Mutex<HashMap<U256, StateSnapshot>>>,
     enable_steps_tracing: bool,
     print_logs: bool,
     print_traces: bool,
@@ -1923,12 +1929,19 @@ impl<N: Network> Backend<N> {
         let hash = self.best_hash();
         let id = self.db.write().await.snapshot_state();
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
-        self.active_state_snapshots.lock().insert(id, (num, hash));
+        self.active_state_snapshots.lock().insert(
+            id,
+            StateSnapshot { block_number: num, block_hash: hash, fees: self.fees.snapshot() },
+        );
         id
     }
 
     pub fn list_state_snapshots(&self) -> BTreeMap<U256, (u64, B256)> {
-        self.active_state_snapshots.lock().clone().into_iter().collect()
+        self.active_state_snapshots
+            .lock()
+            .iter()
+            .map(|(&id, snapshot)| (id, (snapshot.block_number, snapshot.block_hash)))
+            .collect()
     }
 
     /// Returns the environment for the next block
@@ -5098,10 +5111,14 @@ impl<N: Network> Backend<N> {
 
     /// Reverts the state to the state snapshot identified by the given `id`.
     pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
-        let Some((num, hash)) = self.active_state_snapshots.lock().remove(&id) else {
+        let Some(snapshot) = self.active_state_snapshots.lock().remove(&id) else {
             return Ok(false);
         };
+        let StateSnapshot { block_number: num, block_hash: hash, fees } = snapshot;
         let block = self.block_by_hash(hash).await?.ok_or(BlockchainError::BlockNotFound)?;
+        if !self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove) {
+            return Ok(false);
+        }
 
         {
             // revert the storage that's newer than the snapshot
@@ -5146,7 +5163,8 @@ impl<N: Network> Backend<N> {
                 ..Default::default()
             };
         }
-        Ok(self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove))
+        self.fees.restore(fees);
+        Ok(true)
     }
 
     /// executes the transactions without writing to the underlying database
