@@ -74,10 +74,11 @@ impl FoundryEvmFactory for OpEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::Chain,
+        chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let mut op_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
+        op_evm.ctx_mut().chain = chain_context;
         op_evm.cfg.tx_chain_id_check = true;
         op_evm.inspector().get_networks().inject_precompiles(op_evm.precompiles_mut());
         op_evm
