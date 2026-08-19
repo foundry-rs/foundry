@@ -1441,8 +1441,6 @@ mod tests {
     };
     use alloy_dyn_abi::parser::Parameters;
     use alloy_primitives::{Address, Bytes, U256, address};
-    use foundry_common::slot_identifier::SlotIdentifier;
-    use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType};
     use foundry_evm_core::Breakpoints;
     use foundry_evm_traces::debug::{ContractSources, DebugSourceScope, DebugVariable};
     use ratatui::{
@@ -1457,7 +1455,6 @@ mod tests {
         CallKind, CallTraceStep, DecodedCallData, DecodedCallTrace, DecodedInternalCall,
         DecodedTraceStep, StorageChange, StorageChangeReason,
     };
-    use std::sync::Arc;
 
     fn line_text(line: &Line<'_>) -> String {
         line.spans.iter().map(|span| span.content.as_ref()).collect()
@@ -1565,32 +1562,6 @@ mod tests {
         value.to_be_bytes::<32>()
     }
 
-    fn uint256_slot_identifier(label: &str) -> SlotIdentifier {
-        let storage_type = "t_uint256".to_string();
-        SlotIdentifier::new(Arc::new(StorageLayout {
-            storage: vec![Storage {
-                ast_id: 1,
-                contract: "StorageTest".to_string(),
-                label: label.to_string(),
-                offset: 0,
-                slot: "0".to_string(),
-                storage_type: storage_type.clone(),
-            }],
-            types: [(
-                storage_type,
-                StorageType {
-                    encoding: "inplace".to_string(),
-                    key: None,
-                    label: "uint256".to_string(),
-                    number_of_bytes: "32".to_string(),
-                    value: None,
-                    other: Default::default(),
-                },
-            )]
-            .into(),
-        }))
-    }
-
     #[test]
     fn draw_buffer_handles_missing_memory_snapshot() {
         let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
@@ -1634,8 +1605,6 @@ mod tests {
             reason: StorageChangeReason::SSTORE,
         }));
         let mut context = context_with_arena(vec![debug_node(0, 0, vec![first, second, latest])]);
-        context.slot_identifiers =
-            Some([(Address::ZERO, uint256_slot_identifier("count"))].into_iter().collect());
         let mut tui = TUIContext::new(&mut context);
         tui.current_step = 2;
         let backend = TestBackend::new(100, 6);
@@ -1653,7 +1622,7 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(screen.contains("Storage: 2 accessed slots"));
-        assert!(screen.contains("SSTORE slot 0x0 (count)"));
+        assert!(screen.contains("SSTORE slot 0x0"));
         assert!(screen.contains("value 0x2b"));
         assert!(screen.contains("SSTORE slot 0x1"));
         assert!(screen.contains("value 0xbeef"));
@@ -2124,7 +2093,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_access_line_formats_sload() {
+    fn storage_lines_format_sload_and_label() {
         let mut step = trace_step(Vec::new());
         step.storage_change = Some(Box::new(StorageChange {
             key: U256::from(1),
@@ -2136,8 +2105,12 @@ mod tests {
         let access = super::storage_access_at(&steps, 0).unwrap();
 
         assert_eq!(
-            line_text(&super::storage_access_line(access, None)),
-            "storage SLOAD slot 0x1 = 0x2a"
+            line_text(&super::storage_access_line(access, Some("count"))),
+            "storage SLOAD slot 0x1 = 0x2a (count)"
+        );
+        assert_eq!(
+            line_text(&super::storage_slot_lines(0, 2, access, Some("count"), false)[0]),
+            "00| SLOAD slot 0x1 (count)"
         );
     }
 
