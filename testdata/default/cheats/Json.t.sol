@@ -336,6 +336,19 @@ contract ParseJsonTest is Test {
         assertEq(bytesArray[1], hex"02");
     }
 
+    function test_parseJsonDefaults() public {
+        assertEq(vm.parseJsonUint("{}", ".missing", 42), 42);
+        assertEq(vm.parseJsonUint('{"value":7}', ".value", 42), 7);
+
+        uint256[] memory defaultValue = new uint256[](1);
+        defaultValue[0] = 42;
+        assertEq(abi.encode(vm.parseJsonUintArray("{}", ".missing", defaultValue)), abi.encode(defaultValue));
+
+        bytes[] memory dynamicDefault = new bytes[](1);
+        dynamicDefault[0] = hex"deadbeef";
+        assertEq(abi.encode(vm.parseJsonBytesArray("{}", ".missing", dynamicDefault)), abi.encode(dynamicDefault));
+    }
+
     struct Nested {
         uint256 number;
         string str;
