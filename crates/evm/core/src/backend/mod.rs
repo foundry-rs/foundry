@@ -4,7 +4,7 @@ use crate::{
     FoundryBlock, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
-        BlockContext, BlockEnvFor, ChainContextFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
+        BlockContext, BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
         FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId, MultiFork},
@@ -80,7 +80,7 @@ pub enum ContextUpdate<C> {
 /// Only Monad's family-owned chain context needs to observe fork operations; every other network
 /// has no use for this signal, so it collapses to `()` without the `monad` feature.
 #[cfg(feature = "monad")]
-pub type ContextUpdateFor<F> = ContextUpdate<<F as FoundryEvmFactory>::ChainContext>;
+pub type ContextUpdateFor<F> = ContextUpdate<<F as FoundryEvmFactory>::Chain>;
 #[cfg(not(feature = "monad"))]
 pub type ContextUpdateFor<F> = std::marker::PhantomData<F>;
 
@@ -92,7 +92,7 @@ type ForkLookupIndex = usize;
 struct TransactionInputs<FEN: FoundryEvmNetwork> {
     evm_env: EvmEnvFor<FEN>,
     tx_env: TxEnvFor<FEN>,
-    chain_context: ChainContextFor<FEN>,
+    chain_context: ChainFor<FEN>,
 }
 
 /// Block data required to execute or position a fork at a transaction.
@@ -325,7 +325,7 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
     ) -> eyre::Result<()>;
 
     /// Returns transaction-position context for a synthetic transaction on the active database.
-    fn chain_context_for_synthetic_transaction(&self, tx: &F::Tx) -> eyre::Result<F::ChainContext> {
+    fn chain_context_for_synthetic_transaction(&self, tx: &F::Tx) -> eyre::Result<F::Chain> {
         Ok(F::default().chain_context_for_transaction(tx))
     }
 
@@ -937,7 +937,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         &mut self,
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
         inspector: I,
     ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
         self.initialize(evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind());
@@ -1122,7 +1122,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         block_context: BlockContext<FEN>,
         position: ForkPosition,
         tx: &TxEnvFor<FEN>,
-    ) -> eyre::Result<ChainContextFor<FEN>> {
+    ) -> eyre::Result<ChainFor<FEN>> {
         let cursor = match position {
             ForkPosition::AfterBlock { .. } => block_context.into_child(),
             ForkPosition::BeforeTransaction { transaction_index, .. } => {
@@ -1138,7 +1138,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         &self,
         id: LocalForkId,
         tx: &TxEnvFor<FEN>,
-    ) -> eyre::Result<ChainContextFor<FEN>> {
+    ) -> eyre::Result<ChainFor<FEN>> {
         if !FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
             return Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx));
         }
@@ -1669,7 +1669,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     fn chain_context_for_synthetic_transaction(
         &self,
         tx: &TxEnvFor<FEN>,
-    ) -> eyre::Result<ChainContextFor<FEN>> {
+    ) -> eyre::Result<ChainFor<FEN>> {
         self.block_context_for_synthetic_transaction()?.map_or_else(
             || Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx)),
             |context| Ok(context.next_transaction(tx)),

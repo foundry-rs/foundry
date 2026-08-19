@@ -1,7 +1,7 @@
 use std::{fmt::Debug, ops::Deref};
 
 use crate::{
-    FoundryBlock, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
+    FoundryBlock, FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
     FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
 };
@@ -111,7 +111,7 @@ pub type TransactionRequestFor<FEN> = <NetworkFor<FEN> as Network>::TransactionR
 pub type TransactionResponseFor<FEN> = <NetworkFor<FEN> as Network>::TransactionResponse;
 pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
 
-pub type ChainContextFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::ChainContext;
+pub type ChainFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::Chain;
 #[cfg(feature = "monad")]
 pub type TransactionStateFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::TransactionState;
 
@@ -122,7 +122,7 @@ pub type NestedEvmFor<'db, F> = Box<
             Spec = <F as EvmFactory>::Spec,
             Block = <F as EvmFactory>::BlockEnv,
             Tx = <F as EvmFactory>::Tx,
-            ChainContext = <F as FoundryEvmFactory>::ChainContext,
+            Chain = <F as FoundryEvmFactory>::Chain,
             TransactionState = <F as FoundryEvmFactory>::TransactionState,
         > + 'db,
 >;
@@ -134,7 +134,7 @@ pub type NestedEvmFor<'db, F> = Box<
             Spec = <F as EvmFactory>::Spec,
             Block = <F as EvmFactory>::BlockEnv,
             Tx = <F as EvmFactory>::Tx,
-            ChainContext = <F as FoundryEvmFactory>::ChainContext,
+            Chain = <F as FoundryEvmFactory>::Chain,
         > + 'db,
 >;
 
@@ -151,7 +151,7 @@ pub trait FoundryEvmFactory:
     + 'static
 {
     /// Chain context required to execute at an exact transaction position.
-    type ChainContext: Clone + Debug + Default + Send + Sync + 'static;
+    type Chain: FoundryChain;
 
     #[cfg(feature = "monad")]
     /// Family-owned state scoped to the active transaction.
@@ -171,6 +171,7 @@ pub trait FoundryEvmFactory:
             Block = Self::BlockEnv,
             Tx = Self::Tx,
             Spec = Self::Spec,
+            Chain = Self::Chain,
             Db: DatabaseExt<Self>,
         >
     where
@@ -192,13 +193,13 @@ pub trait FoundryEvmFactory:
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I>;
 
     /// Builds chain context for a standalone synthetic transaction.
-    fn chain_context_for_transaction(&self, _tx: &Self::Tx) -> Self::ChainContext {
-        Self::ChainContext::default()
+    fn chain_context_for_transaction(&self, _tx: &Self::Tx) -> Self::Chain {
+        Self::Chain::default()
     }
 
     /// Builds chain context for a transaction at an exact block position.
@@ -208,23 +209,8 @@ pub trait FoundryEvmFactory:
         _parent: &[Self::Tx],
         _current: &[Self::Tx],
         _current_tx_index: usize,
-    ) -> Self::ChainContext {
-        Self::ChainContext::default()
-    }
-
-    /// Captures the active transaction position from a live EVM context.
-    #[cfg(feature = "monad")]
-    fn capture_chain_context(&self, _ecx: &Self::FoundryContext<'_>) -> Self::ChainContext {
-        Self::ChainContext::default()
-    }
-
-    /// Applies a new transaction position and refreshes family-owned state after journal changes.
-    #[cfg(feature = "monad")]
-    fn apply_context_transition<'db>(
-        &self,
-        _ecx: &mut Self::FoundryContext<'db>,
-        _replacement: Option<&Self::ChainContext>,
-    ) {
+    ) -> Self::Chain {
+        Self::Chain::default()
     }
 
     #[cfg(feature = "monad")]
@@ -288,7 +274,7 @@ pub trait FoundryEvmFactory:
         &self,
         db: DB,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
     ) -> Self::Evm<DB, NoOpInspector>;
 
     /// Creates a Foundry-wrapped EVM with a dynamic inspector, returning a boxed [`NestedEvm`].
@@ -301,7 +287,7 @@ pub trait FoundryEvmFactory:
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> NestedEvmFor<'db, Self>;
 }
@@ -318,7 +304,7 @@ pub trait NestedEvm {
     /// The transaction environment type.
     type Tx: FoundryTransaction;
     /// Chain context identifying the active transaction position.
-    type ChainContext: Clone + Debug + Default + Send + Sync + 'static;
+    type Chain: FoundryChain;
     #[cfg(feature = "monad")]
     /// Family-owned state scoped to the active transaction.
     type TransactionState: Clone + Debug + Default + Send + Sync + 'static;
@@ -328,11 +314,8 @@ pub trait NestedEvm {
     /// Returns a mutable reference to the transaction environment.
     fn tx_mut(&mut self) -> &mut Self::Tx;
 
-    /// Captures the active transaction position.
-    #[cfg(feature = "monad")]
-    fn capture_chain_context(&self) -> Self::ChainContext {
-        Self::ChainContext::default()
-    }
+    /// Returns a mutable reference to the chain-position context.
+    fn chain_mut(&mut self) -> &mut Self::Chain;
 
     #[cfg(feature = "monad")]
     /// Captures family-owned state for the active transaction.
@@ -368,13 +351,13 @@ pub trait NestedEvm {
 
 /// Closure type used by `CheatcodesExecutor` methods that run nested EVM operations.
 #[cfg(feature = "monad")]
-pub type NestedEvmClosure<'a, Spec, Block, Tx, ChainContext, TransactionState> =
+pub type NestedEvmClosure<'a, Spec, Block, Tx, Chain, TransactionState> =
     &'a mut dyn FnMut(
         &mut dyn NestedEvm<
             Spec = Spec,
             Block = Block,
             Tx = Tx,
-            ChainContext = ChainContext,
+            Chain = Chain,
             TransactionState = TransactionState,
         >,
     ) -> Result<(), EVMError<DatabaseError>>;
@@ -386,21 +369,21 @@ pub type NestedEvmClosureFor<'a, FEN> = NestedEvmClosure<
     SpecFor<FEN>,
     BlockEnvFor<FEN>,
     TxEnvFor<FEN>,
-    ChainContextFor<FEN>,
+    ChainFor<FEN>,
     TransactionStateFor<FEN>,
 >;
 
 /// Closure type used by `CheatcodesExecutor` methods that run nested EVM operations.
 #[cfg(not(feature = "monad"))]
-pub type NestedEvmClosure<'a, Spec, Block, Tx, ChainContext> =
+pub type NestedEvmClosure<'a, Spec, Block, Tx, Chain> =
     &'a mut dyn FnMut(
-        &mut dyn NestedEvm<Spec = Spec, Block = Block, Tx = Tx, ChainContext = ChainContext>,
+        &mut dyn NestedEvm<Spec = Spec, Block = Block, Tx = Tx, Chain = Chain>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
 /// Nested EVM closure for a Foundry EVM network.
 #[cfg(not(feature = "monad"))]
 pub type NestedEvmClosureFor<'a, FEN> =
-    NestedEvmClosure<'a, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ChainContextFor<FEN>>;
+    NestedEvmClosure<'a, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ChainFor<FEN>>;
 
 /// Clones the current context (env + journal), passes the database, cloned env,
 /// and cloned journal inner to the callback. The callback builds whatever EVM it

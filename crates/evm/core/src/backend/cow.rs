@@ -8,7 +8,7 @@ use crate::{
         RevertStateSnapshotAction, diagnostic::RevertDiagnostic,
     },
     evm::{
-        ChainContextFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
+        ChainFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
         HaltReasonFor, SpecFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId},
@@ -97,7 +97,7 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         &mut self,
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
         inspector: I,
     ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
@@ -129,7 +129,7 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         &mut self,
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
         inspector: I,
     ) -> eyre::Result<Option<ResultAndState<HaltReasonFor<FEN>>>> {
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
@@ -183,7 +183,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
     fn chain_context_for_synthetic_transaction(
         &self,
         tx: &TxEnvFor<FEN>,
-    ) -> eyre::Result<ChainContextFor<FEN>> {
+    ) -> eyre::Result<ChainFor<FEN>> {
         self.backend.chain_context_for_synthetic_transaction(tx)
     }
 

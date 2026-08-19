@@ -47,9 +47,9 @@ use foundry_evm_core::{
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
     evm::{
-        BlockEnvFor, ChainContextFor, EthEvmNetwork, EvmFactoryFor, FoundryContextFor,
-        FoundryEvmFactory, FoundryEvmNetwork, NestedEvmClosureFor, SpecFor, TransactionRequestFor,
-        TxEnvFor, with_cloned_context,
+        BlockEnvFor, ChainFor, EthEvmNetwork, EvmFactoryFor, FoundryContextFor, FoundryEvmFactory,
+        FoundryEvmNetwork, NestedEvmClosureFor, SpecFor, TransactionRequestFor, TxEnvFor,
+        with_cloned_context,
     },
 };
 use foundry_evm_traces::{
@@ -127,7 +127,7 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>>;
 
@@ -187,13 +187,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let factory = FEN::EvmFactory::default();
-        #[cfg(feature = "monad")]
-        let chain_context = factory.capture_chain_context(ecx);
-        #[cfg(not(feature = "monad"))]
-        let chain_context = Default::default();
+        let chain_context = ecx.chain().clone();
         #[cfg(feature = "monad")]
         let state = factory.capture_transaction_state(ecx);
-        #[cfg(feature = "monad")]
         let mut nested_chain_context = None;
         #[cfg(feature = "monad")]
         let mut transaction_state = None;
@@ -205,10 +201,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
                 evm.restore_transaction_state(state);
             }
             f(&mut *evm)?;
-            #[cfg(feature = "monad")]
-            {
-                nested_chain_context = Some(evm.capture_chain_context());
-            }
+            nested_chain_context = Some(evm.chain_mut().clone());
             #[cfg(feature = "monad")]
             {
                 transaction_state = Some(evm.capture_transaction_state());
@@ -217,11 +210,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
             let sub_evm_env = evm.to_evm_env();
             Ok((sub_evm_env, sub_inner))
         })?;
-        #[cfg(feature = "monad")]
-        factory.apply_context_transition(
-            ecx,
-            Some(&nested_chain_context.expect("nested EVM chain context was captured")),
-        );
+        *ecx.chain_mut() = nested_chain_context.expect("nested EVM chain context was captured");
+        ecx.refresh_chain_dependent_state();
         #[cfg(feature = "monad")]
         factory.restore_transaction_state(
             ecx,
@@ -235,7 +225,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
         let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
@@ -910,7 +900,7 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Transaction-position context and family-owned execution state captured atomically alongside
     /// state snapshots.
     #[cfg(feature = "monad")]
-    pub context_snapshots: HashMap<U256, (ChainContextFor<FEN>, TransactionStateFor<FEN>)>,
+    pub context_snapshots: HashMap<U256, (ChainFor<FEN>, TransactionStateFor<FEN>)>,
 
     /// Whether we are currently executing inside an isolation context, i.e.
     /// the synthetic inner transaction wrapped by
