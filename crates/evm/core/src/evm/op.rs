@@ -63,9 +63,11 @@ impl FoundryEvmFactory for OpEvmFactory {
         &self,
         db: DB,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::Chain,
+        chain_context: Self::Chain,
     ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
-        self.create_evm(db, evm_env)
+        let mut evm = self.create_evm(db, evm_env);
+        evm.ctx_mut().chain = chain_context;
+        evm
     }
 
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
