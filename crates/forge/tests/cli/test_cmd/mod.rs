@@ -3352,6 +3352,178 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/16197>
+forgetest_init!(skip_setup_after_caught_revert, |prj, cmd| {
+    prj.add_test(
+        "SkipAfterCaughtRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Reverter {
+    fallback() external {
+        revert("caught");
+    }
+}
+
+contract SkipAfterCaughtRevert is Test {
+    function setUp() public {
+        (bool success,) = address(new Reverter()).call("");
+        require(!success);
+        vm.skip(true, "skip after caught revert");
+    }
+
+    function test_neverRuns() public pure {}
+}
+    "#,
+    );
+
+    cmd.args(["test", "--isolate", "--mc", "SkipAfterCaughtRevert"]).assert_success().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/SkipAfterCaughtRevert.t.sol:SkipAfterCaughtRevert
+[SKIP: skipped: skip after caught revert] setUp() ([GAS])
+Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
+
+"#]],
+    );
+});
+
+forgetest_init!(forged_skip_payload_fails_setup, |prj, cmd| {
+    prj.add_test(
+        "ForgedSkip.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ForgedSkip is Test {
+    uint256 internal marker;
+
+    function setUp() public {
+        marker = 1;
+        bytes memory reason = bytes("FOUNDRY::SKIPnot a real skip");
+        assembly {
+            revert(add(reason, 32), mload(reason))
+        }
+    }
+
+    function test_neverRuns() public pure {}
+}
+    "#,
+    );
+
+    cmd.args(["test", "--mc", "ForgedSkip"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ForgedSkip.t.sol:ForgedSkip
+[FAIL: FOUNDRY::SKIPnot a real skip] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/ForgedSkip.t.sol:ForgedSkip
+[FAIL: FOUNDRY::SKIPnot a real skip] setUp() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+});
+
+forgetest_init!(forged_skip_after_caught_skip_fails_setup, |prj, cmd| {
+    prj.add_test(
+        "ForgedSkipAfterCaughtSkip.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ForgedSkipAfterCaughtSkip is Test {
+    function setUp() public {
+        // Catch a genuine skip so a payload is recorded, then revert with different skip bytes.
+        (bool success,) = address(vm).call(
+            abi.encodeWithSignature("skip(bool,string)", true, "genuine")
+        );
+        require(!success);
+
+        bytes memory reason = bytes("FOUNDRY::SKIPforged");
+        assembly {
+            revert(add(reason, 32), mload(reason))
+        }
+    }
+
+    function test_neverRuns() public pure {}
+}
+    "#,
+    );
+
+    cmd.args(["test", "--mc", "ForgedSkipAfterCaughtSkip"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ForgedSkipAfterCaughtSkip.t.sol:ForgedSkipAfterCaughtSkip
+[FAIL: FOUNDRY::SKIPforged] setUp() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/ForgedSkipAfterCaughtSkip.t.sol:ForgedSkipAfterCaughtSkip
+[FAIL: FOUNDRY::SKIPforged] setUp() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
+
+"#]]);
+});
+
+// A caught genuine skip that is re-raised byte-identically still counts as a skip: the payload
+// provenance is byte equality with what the skip cheatcode minted, not the revert call chain.
+forgetest_init!(caught_skip_reraised_identical_is_skipped, |prj, cmd| {
+    prj.add_test(
+        "ReraisedSkip.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ReraisedSkip is Test {
+    function setUp() public {
+        (bool success, bytes memory data) = address(vm).call(
+            abi.encodeWithSignature("skip(bool,string)", true, "reraised")
+        );
+        require(!success);
+        assembly {
+            revert(add(data, 32), mload(data))
+        }
+    }
+
+    function test_neverRuns() public pure {}
+}
+    "#,
+    );
+
+    cmd.args(["test", "--mc", "ReraisedSkip"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/ReraisedSkip.t.sol:ReraisedSkip
+[SKIP: skipped: reraised] setUp() ([GAS])
+Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
+
+"#]]);
+});
+
 forgetest_init!(should_generate_junit_xml_report, |prj, cmd| {
     prj.insert_ds_test();
     prj.insert_vm();
