@@ -1411,13 +1411,21 @@ impl CallTraceDecoder {
             .and_then(|address| self.anonymous_events_by_address.as_deref()?.get(&address))
             .and_then(|events| events.get(&log.topics().len()));
 
-        if let Some(decoded) = self.decode_event_candidates(
-            address,
-            log,
-            regular_events.into_iter().flatten(),
-            canonical_signature,
-        ) {
+        let decoded = if canonical_signature {
+            self.decode_unique_event_candidates(
+                address,
+                log,
+                regular_events.into_iter().flatten(),
+                true,
+            )
+        } else {
+            self.decode_event_candidates(address, log, regular_events.into_iter().flatten(), false)
+        };
+        if let Some(decoded) = decoded {
             return decoded;
+        }
+        if canonical_signature && regular_events.is_some() {
+            return DecodedCallLog { name: None, params: None };
         }
         if let Some(decoded) = self.decode_unique_event_candidates(
             address,
@@ -1919,6 +1927,27 @@ mod tests {
             assert_eq!(decoded.name.as_deref(), Some(event.name.as_str()));
             assert!(decoder.decode_event_with_address(Address::ZERO, &log).await.name.is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn canonical_address_events_require_a_unique_match() {
+        let address = Address::from([0x12; 20]);
+        let implementation =
+            JsonAbi::parse(["event Value(address indexed who, uint256 amount)"]).unwrap();
+        let proxy = JsonAbi::parse(["event Value(address who, uint256 indexed amount)"]).unwrap();
+        let event = proxy.events().next().unwrap();
+        let log = LogData::new_unchecked(
+            vec![event.selector(), U256::from(42).into()],
+            (Address::from([0x34; 20]),).abi_encode().into(),
+        );
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_address_events(address, &implementation)
+            .with_address_events(address, &proxy)
+            .build();
+
+        let decoded = decoder.decode_event_with_address_signature(address, &log).await;
+        assert!(decoded.name.is_none());
+        assert!(decoded.params.is_none());
     }
 
     #[tokio::test]
