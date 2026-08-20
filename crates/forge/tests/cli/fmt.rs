@@ -267,3 +267,23 @@ forgetest_init!(fmt_only_cmnts_file, |prj, cmd| {
     cmd.forge_fuse().args(["fmt", "--check", "src/FmtTest.sol"]);
     cmd.assert_success();
 });
+
+// <https://github.com/foundry-rs/foundry/issues/16268>
+forgetest_init!(fmt_keeps_disable_directive_in_every_file, |prj, cmd| {
+    const NAMES: [&str; 4] = ["A", "B", "C", "D"];
+    const SOURCE: &str = "// forgefmt: disable-next-line\ncontract  Disabled {}\n";
+
+    for name in NAMES {
+        prj.add_raw_source(&format!("Fmt{name}.sol"), SOURCE);
+    }
+
+    cmd.args(["fmt", "src"]).assert_success();
+
+    // Only the first file in the source map used to keep its directive.
+    for name in NAMES {
+        assert_data_eq!(
+            std::fs::read_to_string(prj.root().join(format!("src/Fmt{name}.sol"))).unwrap(),
+            SOURCE,
+        );
+    }
+});
