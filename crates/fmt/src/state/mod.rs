@@ -310,6 +310,26 @@ impl State<'_, '_> {
         res.sf.src.get(res.pos.to_usize()..)?.chars().next()
     }
 
+    /// Returns the position of the first `{` within the span, ignoring the ones inside comments.
+    fn find_opening_brace(&self, span: Span) -> Option<BytePos> {
+        let snip = self.sm.span_to_snippet(span).ok()?;
+        let mut idx = 0;
+        while idx < snip.len() {
+            let rest = &snip[idx..];
+            if rest.starts_with('{') {
+                return Some(span.lo() + idx as u32);
+            }
+            idx += if let Some(line) = rest.strip_prefix("//") {
+                2 + line.find('\n').unwrap_or(line.len())
+            } else if let Some(block) = rest.strip_prefix("/*") {
+                2 + block.find("*/").map_or(block.len(), |end| end + 2)
+            } else {
+                rest.chars().next().map_or(1, char::len_utf8)
+            };
+        }
+        None
+    }
+
     fn print_span(&mut self, span: Span) {
         match self.sm.span_to_snippet(span) {
             Ok(s) => self.s.word(if matches!(self.config.style, IndentStyle::Tab) {
@@ -949,6 +969,14 @@ impl<'sess> State<'sess, '_> {
         'sess: 'b,
     {
         self.comments.iter().take_while(|c| c.pos() < pos).find(|c| !c.style.is_blank())
+    }
+
+    /// Returns `true` if the next comment is a mixed comment that starts before the given
+    /// position.
+    fn peek_mixed_comment_before(&self, pos: Option<BytePos>) -> bool {
+        pos.is_some_and(|pos| {
+            self.peek_comment().is_some_and(|cmnt| cmnt.pos() < pos && cmnt.style.is_mixed())
+        })
     }
 
     fn has_comment_before_with<F>(&self, pos: BytePos, f: F) -> bool
