@@ -575,6 +575,62 @@ contract SymbolicMsizeAfterWrite {
     assert!(!stdout.contains("symbolic MSIZE after symbolic memory write"), "{stdout}");
 });
 
+forgetest_init!(symbolic_msize_tracks_read_only_memory_expansion, |prj, cmd| {
+    skip_unless_z3!("symbolic_msize_tracks_read_only_memory_expansion");
+
+    prj.add_test(
+        "SymbolicMsizeAfterRead.t.sol",
+        r#"
+contract SymbolicMsizeAfterRead {
+    function checkReadOnlyExpansion() public {
+        uint256 afterHash;
+        uint256 afterLog;
+        uint256 afterCopy;
+        assembly {
+            pop(keccak256(0x200, 1))
+            afterHash := msize()
+            log0(0x400, 1)
+            afterLog := msize()
+            mcopy(0, 0x600, 1)
+            afterCopy := msize()
+        }
+
+        assert(afterHash == 0x220);
+        assert(afterLog == 0x420);
+        assert(afterCopy == 0x620);
+    }
+
+    function checkSymbolicReadOnlyExpansion(uint16 offset) public pure {
+        uint256 afterHash;
+        assembly {
+            pop(keccak256(offset, 1))
+            afterHash := msize()
+        }
+
+        assert(afterHash > offset);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "check.*ReadOnlyExpansion"]).assert_success();
+
+    cmd.forge_fuse();
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "check.*ReadOnlyExpansion"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkReadOnlyExpansion()
+[PASS] checkSymbolicReadOnlyExpansion(uint16)
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_msize_respects_zero_symbolic_copy_size, |prj, cmd| {
     skip_unless_z3!("symbolic_msize_respects_zero_symbolic_copy_size");
 

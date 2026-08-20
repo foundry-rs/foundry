@@ -328,6 +328,15 @@ impl SymbolicExecutor {
         let memory_limit = SymExpr::constant(&mut self.cx, U256::from(memory_limit));
         let within_limit = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, local_size, memory_limit);
         let valid_access = SymBoolExpr::and(&mut self.cx, vec![representable, within_limit]);
+        self.apply_memory_access_guard(state, worklist, valid_access)
+    }
+
+    fn apply_memory_access_guard(
+        &mut self,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        valid_access: SymBoolExpr,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
         let (valid_constraints, valid_sat) =
             self.constraints_with_condition(state, valid_access.clone())?;
         let invalid = valid_access.clone().not(&mut self.cx);
@@ -368,6 +377,24 @@ impl SymbolicExecutor {
         offset: &SymExpr,
         size: &SymExpr,
     ) -> Result<Option<StepOutcome>, SymbolicError> {
+        let memory_limit = executor.evm_env().cfg_env.memory_limit();
+        if let (Some(offset_value), Some(size_value)) = (offset.as_const(), size.as_const()) {
+            let valid = size_value.is_zero()
+                || usize::try_from(offset_value)
+                    .ok()
+                    .zip(usize::try_from(size_value).ok())
+                    .and_then(|(offset, size)| offset.checked_add(size))
+                    .and_then(|end| end.checked_add(31))
+                    .and_then(|end| u64::try_from(end & !31usize).ok())
+                    .is_some_and(|end| end <= memory_limit);
+            if !valid {
+                state.return_data = SymReturnData::empty(&mut self.cx);
+                return Ok(Some(StepOutcome::Revert));
+            }
+            state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
+            return Ok(None);
+        }
+
         let zero_size = SymBoolExpr::eq_word_const(&mut self.cx, size, U256::ZERO);
         let host_max = SymExpr::constant(&mut self.cx, U256::from(usize::MAX & !31usize));
         let size_fits =
@@ -380,43 +407,17 @@ impl SymbolicExecutor {
             offset.clone(),
             size.clone(),
         );
-        let memory_limit =
-            SymExpr::constant(&mut self.cx, U256::from(executor.evm_env().cfg_env.memory_limit()));
+        let memory_limit = SymExpr::constant(&mut self.cx, U256::from(memory_limit));
         let local_fits = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, local_size, memory_limit);
         let nonzero_valid =
             SymBoolExpr::and(&mut self.cx, vec![size_fits, offset_fits, local_fits]);
         let valid_access = SymBoolExpr::or(&mut self.cx, vec![zero_size, nonzero_valid]);
 
-        let (valid_constraints, valid_sat) =
-            self.constraints_with_condition(state, valid_access.clone())?;
-        let invalid = valid_access.clone().not(&mut self.cx);
-        let (invalid_constraints, invalid_sat) = self.constraints_with_condition(state, invalid)?;
-        match (valid_sat, invalid_sat) {
-            (true, true) => {
-                let (valid_seed_models, invalid_seed_models) =
-                    state.split_corpus_seed_models(&valid_access);
-                let mut valid = state.clone();
-                valid.pc = valid.pc.saturating_sub(1);
-                valid.depth = valid.depth.saturating_sub(1);
-                valid.constraints = valid_constraints;
-                valid.set_corpus_seed_models(valid_seed_models);
-                worklist.push_back(valid);
-                state.constraints = invalid_constraints;
-                state.set_corpus_seed_models(invalid_seed_models);
-                state.return_data = SymReturnData::empty(&mut self.cx);
-                Ok(Some(StepOutcome::Revert))
-            }
-            (true, false) => {
-                state.constraints = valid_constraints;
-                Ok(None)
-            }
-            (false, true) => {
-                state.constraints = invalid_constraints;
-                state.return_data = SymReturnData::empty(&mut self.cx);
-                Ok(Some(StepOutcome::Revert))
-            }
-            (false, false) => Ok(Some(StepOutcome::AssumeRejected)),
+        let outcome = self.apply_memory_access_guard(state, worklist, valid_access)?;
+        if outcome.is_none() {
+            state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
         }
+        Ok(outcome)
     }
 
     #[expect(clippy::too_many_arguments)]
