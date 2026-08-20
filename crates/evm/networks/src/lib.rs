@@ -37,6 +37,12 @@ use tempo_contracts::precompiles::{
     VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
 };
 
+/// The Monad cheatcode handler address.
+pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");
+
+#[cfg(feature = "monad")]
+const MONAD_CHEATCODE_ADDRESSES: &[Address] = &[MONAD_CHEATCODE_ADDRESS];
+
 pub mod arbitrum;
 pub mod celo;
 
@@ -473,6 +479,15 @@ impl NetworkConfigs {
     #[cfg(not(feature = "monad"))]
     pub const fn is_monad(&self) -> bool {
         false
+    }
+
+    /// Returns additional cheatcode contract addresses for the active network.
+    pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
+        #[cfg(feature = "monad")]
+        if self.is_monad() {
+            return MONAD_CHEATCODE_ADDRESSES;
+        }
+        &[]
     }
 
     pub const fn is_celo(&self) -> bool {
@@ -1468,6 +1483,7 @@ mod tests {
         let cfg = NetworkConfigs::with_monad();
         assert_eq!(cfg.active_network_name(), Some("monad"));
         assert!(cfg.is_monad());
+        assert_eq!(cfg.extra_cheatcode_addresses(), &[MONAD_CHEATCODE_ADDRESS]);
     }
 
     #[test]
@@ -1481,7 +1497,9 @@ mod tests {
 
     #[test]
     fn active_network_name_default_is_none() {
-        assert_eq!(NetworkConfigs::default().active_network_name(), None);
+        let cfg = NetworkConfigs::default();
+        assert_eq!(cfg.active_network_name(), None);
+        assert!(cfg.extra_cheatcode_addresses().is_empty());
     }
 
     // --- Serde round-trip ---

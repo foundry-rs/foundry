@@ -1448,7 +1448,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         #[cfg(feature = "monad")]
-        if is_monad_cheatcode_call::<FEN>(call.target_address) {
+        if is_monad_cheatcode_call(
+            self.config.evm_opts.networks.extra_cheatcode_addresses(),
+            call.target_address,
+        ) {
             let checkpoint = ecx.journal_mut().checkpoint();
             return match self.apply_monad_cheatcode(ecx, call) {
                 Ok(retdata) => {
@@ -2354,7 +2357,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
         #[cfg(feature = "monad")]
-        let cheatcode_call = cheatcode_call || is_monad_cheatcode_call::<FEN>(call.target_address);
+        let cheatcode_call = cheatcode_call
+            || is_monad_cheatcode_call(
+                self.config.evm_opts.networks.extra_cheatcode_addresses(),
+                call.target_address,
+            );
         let curr_depth = ecx.journal().depth();
 
         self.finish_created_accounts_frame(

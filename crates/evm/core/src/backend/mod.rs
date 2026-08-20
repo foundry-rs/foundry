@@ -624,8 +624,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> eyre::Result<Self> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
-        let mut persistent_accounts = HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS);
-        persistent_accounts.extend(FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES);
+        let persistent_accounts = HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS);
         let inner = BackendInner { persistent_accounts, ..Default::default() };
 
         let mut backend = Self {
@@ -3033,7 +3032,6 @@ mod tests {
     use crate::fork::CreateFork;
     use crate::{
         backend::{Backend, ForkPosition},
-        constants::MONAD_CHEATCODE_ADDRESS,
         evm::EthEvmNetwork,
         fork::ForkId,
         opts::EvmOpts,
@@ -3148,18 +3146,6 @@ mod tests {
             journaled_state.state[&address].storage[&missing_slot].present_value(),
             U256::from(7)
         );
-    }
-
-    #[test]
-    fn persistent_accounts_follow_the_active_network() {
-        let ethereum = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        assert!(!ethereum.inner.persistent_accounts.contains(&MONAD_CHEATCODE_ADDRESS));
-
-        #[cfg(feature = "monad")]
-        {
-            let monad = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
-            assert!(monad.inner.persistent_accounts.contains(&MONAD_CHEATCODE_ADDRESS));
-        }
     }
 
     #[test]
