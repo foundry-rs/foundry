@@ -742,28 +742,32 @@ fn get_artifact_code<FEN: FoundryEvmNetwork>(
 impl Cheatcode for ffiCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { commandInput: input } = self;
+        let stdout = ffi_stdout(state, input)?;
+        Ok(decode_ffi_stdout(&stdout).abi_encode())
+    }
+}
 
-        let output = ffi(state, input)?;
+impl Cheatcode for ffiUintCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { commandInput: input } = self;
+        parse(&ffi_stdout(state, input)?, &DynSolType::Uint(256))
+    }
+}
 
-        // Check the exit code of the command.
-        if output.exitCode != 0 {
-            // If the command failed, return an error with the exit code and stderr.
-            return Err(fmt_err!(
-                "ffi command {:?} exited with code {}. stderr: {}",
-                input,
-                output.exitCode,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+impl Cheatcode for ffiStringCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { commandInput: input } = self;
+        Ok(ffi_stdout(state, input)?.abi_encode())
+    }
+}
 
-        // If the command succeeded but still wrote to stderr, log it as a warning.
-        if !output.stderr.is_empty() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(target: "cheatcodes", ?input, ?stderr, "ffi command wrote to stderr");
-        }
-
-        // We already hex-decoded the stdout in the `ffi` helper function.
-        Ok(output.stdout.abi_encode())
+impl Cheatcode for ffiBytesCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { commandInput: input } = self;
+        let stdout = ffi_stdout(state, input)?;
+        Ok(hex::decode(&stdout)
+            .map_err(|err| fmt_err!("failed parsing ffi stdout as bytes: {err}"))?
+            .abi_encode())
     }
 }
 
@@ -861,6 +865,43 @@ fn read_dir<FEN: FoundryEvmNetwork>(
 }
 
 fn ffi<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>, input: &[String]) -> Result<FfiResult> {
+    let output = ffi_command(state, input)?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    let stdout = stdout.trim();
+    Ok(FfiResult {
+        exitCode: output.status.code().unwrap_or(69),
+        stdout: decode_ffi_stdout(stdout),
+        stderr: output.stderr.into(),
+    })
+}
+
+fn ffi_stdout<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>, input: &[String]) -> Result<String> {
+    let output = ffi_command(state, input)?;
+    let stdout = String::from_utf8(output.stdout)?;
+    if !output.status.success() {
+        return Err(fmt_err!(
+            "ffi command {:?} exited with code {}. stderr: {}",
+            input,
+            output.status.code().unwrap_or(69),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if !output.stderr.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        warn!(target: "cheatcodes", ?input, ?stderr, "ffi command wrote to stderr");
+    }
+    Ok(stdout.trim().to_string())
+}
+
+fn decode_ffi_stdout(stdout: &str) -> Bytes {
+    hex::decode(stdout).unwrap_or_else(|_| stdout.as_bytes().to_vec()).into()
+}
+
+fn ffi_command<FEN: FoundryEvmNetwork>(
+    state: &Cheatcodes<FEN>,
+    input: &[String],
+) -> Result<std::process::Output> {
     ensure!(
         state.config.ffi,
         "FFI is disabled; add the `--ffi` flag to allow tests to call external commands"
@@ -871,25 +912,9 @@ fn ffi<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>, input: &[String]) -> Res
 
     debug!(target: "cheatcodes", ?cmd, "invoking ffi");
 
-    let output = cmd
-        .current_dir(&state.config.root)
+    cmd.current_dir(&state.config.root)
         .output()
-        .map_err(|err| fmt_err!("failed to execute command {cmd:?}: {err}"))?;
-
-    // The stdout might be encoded on valid hex, or it might just be a string,
-    // so we need to determine which it is to avoid improperly encoding later.
-    let trimmed_stdout = String::from_utf8(output.stdout)?;
-    let trimmed_stdout = trimmed_stdout.trim();
-    let encoded_stdout = if let Ok(hex) = hex::decode(trimmed_stdout) {
-        hex
-    } else {
-        trimmed_stdout.as_bytes().to_vec()
-    };
-    Ok(FfiResult {
-        exitCode: output.status.code().unwrap_or(69),
-        stdout: encoded_stdout.into(),
-        stderr: output.stderr.into(),
-    })
+        .map_err(|err| fmt_err!("failed to execute command {cmd:?}: {err}"))
 }
 
 fn prompt_input(prompt_text: &str) -> Result<String, dialoguer::Error> {

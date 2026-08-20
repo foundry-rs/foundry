@@ -1833,7 +1833,7 @@ mod tests {
             TxEnvFor::<MonadEvmNetwork>::default(),
             Backend::spawn(None).unwrap(),
         );
-        assert!(!default_network.backend().networks().needs_block_context());
+        assert!(!default_network.backend().networks().is_monad());
         assert!(!default_network.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
 
         let monad = ExecutorBuilder::<MonadEvmNetwork>::default()
@@ -1843,7 +1843,7 @@ mod tests {
                 TxEnvFor::<MonadEvmNetwork>::default(),
                 Backend::spawn(None).unwrap(),
             );
-        assert!(monad.backend().networks().needs_block_context());
+        assert!(monad.backend().networks().is_monad());
         assert!(monad.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
     }
 
