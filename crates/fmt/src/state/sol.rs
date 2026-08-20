@@ -169,7 +169,7 @@ impl<'ast> State<'_, 'ast> {
         self.print_comments(span.hi(), CommentConfig::default());
         self.print_trailing_comment(span.hi(), None);
         self.hardbreak_if_not_bol();
-        self.cursor.next_line(self.is_at_crlf());
+        self.cursor_next_line();
     }
 
     fn print_pragma(&mut self, pragma: &'ast ast::PragmaDirective<'ast>) {
@@ -416,7 +416,13 @@ impl<'ast> State<'_, 'ast> {
             {
                 self.print_sep(Separator::Hardbreak);
             }
-            self.s.offset(-self.ind);
+            // With disabled regions the body can end with verbatim source instead of a break.
+            if !self.is_beginning_of_line() {
+                self.print_sep(Separator::Hardbreak);
+            }
+            if self.last_token_is_break() {
+                self.s.offset(-self.ind);
+            }
             self.end();
             if self.config.contract_new_lines {
                 self.hardbreak_if_nonempty();
@@ -425,7 +431,9 @@ impl<'ast> State<'_, 'ast> {
             // restore block depth
             self.block_depth -= 1;
         }
-        self.print_word("}");
+        // The cursor is updated with the actual span; a disabled trailing comment of the last item
+        // may have already consumed source beyond the closing brace.
+        self.word("}");
 
         self.cursor.advance_to(span.hi(), true);
         self.contract = None;

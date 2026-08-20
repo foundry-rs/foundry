@@ -500,3 +500,17 @@ contract DisabledMemberSeparation {
     // forgefmt: disable-end
     function  third() public { number  = 3; }
 }
+
+contract TrailingDisableStart {
+    uint256   x;
+} // forgefmt: disable-start
+contract  DisabledSuffix {}
+// forgefmt: disable-end
+
+contract InlineTrailingDisableStart { uint256   y; } // forgefmt: disable-start
+contract  DisabledSuffix2 {}
+// forgefmt: disable-end
+
+struct StructTrailingDisableStart { uint256  a; } // forgefmt: disable-start
+contract  DisabledSuffix3 {}
+// forgefmt: disable-end
