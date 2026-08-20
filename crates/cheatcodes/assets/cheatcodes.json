@@ -9825,7 +9825,7 @@
         ]
       },
       "group": "evm",
-      "status": "experimental",
+      "status": "stable",
       "safety": "unsafe"
     },
     {
@@ -9845,7 +9845,7 @@
         ]
       },
       "group": "evm",
-      "status": "experimental",
+      "status": "stable",
       "safety": "unsafe"
     },
     {
@@ -9865,7 +9865,7 @@
         ]
       },
       "group": "evm",
-      "status": "experimental",
+      "status": "stable",
       "safety": "unsafe"
     },
     {
