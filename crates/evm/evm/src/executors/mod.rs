@@ -168,6 +168,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         gas_limit: u64,
         legacy_assertions: bool,
     ) -> Self {
+        backend.set_networks(inspector.networks);
         let extra_cheatcode_addresses = inspector.networks.extra_cheatcode_addresses();
         backend.extend_persistent_accounts(extra_cheatcode_addresses.iter().copied());
 
@@ -1832,6 +1833,7 @@ mod tests {
             TxEnvFor::<MonadEvmNetwork>::default(),
             Backend::spawn(None).unwrap(),
         );
+        assert!(!default_network.backend().networks().is_monad());
         assert!(!default_network.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
 
         let monad = ExecutorBuilder::<MonadEvmNetwork>::default()
@@ -1841,6 +1843,7 @@ mod tests {
                 TxEnvFor::<MonadEvmNetwork>::default(),
                 Backend::spawn(None).unwrap(),
             );
+        assert!(monad.backend().networks().is_monad());
         assert!(monad.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
     }
 

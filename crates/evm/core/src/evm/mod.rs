@@ -139,9 +139,6 @@ pub trait FoundryEvmFactory:
     /// Chain context required to execute at an exact transaction position.
     type Chain: FoundryChain;
 
-    /// Whether transaction execution needs metadata from surrounding blocks.
-    const NEEDS_BLOCK_CONTEXT: bool = false;
-
     /// Foundry Context abstraction
     type FoundryContext<'db>: FoundryContextExt<
             Block = Self::BlockEnv,
