@@ -337,9 +337,12 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| {
                 (cheats.breakpoints.clone(), cheats.deprecated.clone())
             });
-        let success =
-            should_ignore_revert::<FEN>(self.config.fail_on_revert, address, call.reverter)
-                || self.executor_f.is_raw_call_mut_success(address, &mut call, false);
+        let success = should_ignore_revert(
+            self.config.fail_on_revert,
+            address,
+            call.reverter,
+            self.executor_f.inspector().networks.extra_cheatcode_addresses(),
+        ) || self.executor_f.is_raw_call_mut_success(address, &mut call, false);
 
         let mut result = FuzzTestResult {
             success,
@@ -464,9 +467,12 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
         // Consider call success if test should not fail on reverts and reverter is not the test
         // address or one of the network's cheatcode contracts.
-        let success =
-            should_ignore_revert::<FEN>(self.config.fail_on_revert, address, call.reverter)
-                || state.0.is_raw_call_mut_success(address, &mut call, false);
+        let success = should_ignore_revert(
+            self.config.fail_on_revert,
+            address,
+            call.reverter,
+            state.0.inspector().networks.extra_cheatcode_addresses(),
+        ) || state.0.is_raw_call_mut_success(address, &mut call, false);
 
         if success {
             Ok(FuzzOutcome::Case(CaseOutcome {

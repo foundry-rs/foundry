@@ -139,9 +139,6 @@ pub trait FoundryEvmFactory:
     /// Chain context required to execute at an exact transaction position.
     type Chain: FoundryChain;
 
-    /// Additional network-specific cheatcode contract addresses.
-    const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[];
-
     /// Whether transaction execution needs metadata from surrounding blocks.
     const NEEDS_BLOCK_CONTEXT: bool = false;
 

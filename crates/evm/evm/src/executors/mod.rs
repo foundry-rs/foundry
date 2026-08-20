@@ -97,16 +97,17 @@ const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
 
 /// Returns whether a nested revert can be ignored when fail-on-revert is disabled.
 #[inline]
-pub fn should_ignore_revert<FEN: FoundryEvmNetwork>(
+pub fn should_ignore_revert(
     fail_on_revert: bool,
     target: Address,
     reverter: Option<Address>,
+    extra_cheatcode_addresses: &[Address],
 ) -> bool {
     !fail_on_revert
         && reverter.is_some_and(|reverter| {
             reverter != target
                 && reverter != CHEATCODE_ADDRESS
-                && !FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES.contains(&reverter)
+                && !extra_cheatcode_addresses.contains(&reverter)
         })
 }
 
@@ -167,6 +168,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         gas_limit: u64,
         legacy_assertions: bool,
     ) -> Self {
+        let extra_cheatcode_addresses = inspector.networks.extra_cheatcode_addresses();
+        backend.extend_persistent_accounts(extra_cheatcode_addresses.iter().copied());
+
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // do not fail.
         backend.insert_account_info(
@@ -180,7 +184,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             },
         );
 
-        for &address in FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES {
+        for &address in extra_cheatcode_addresses {
             backend.insert_account_info(
                 address,
                 revm::state::AccountInfo {
@@ -1781,6 +1785,8 @@ mod tests {
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
     #[cfg(feature = "monad")]
     use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
+    #[cfg(feature = "monad")]
+    use foundry_evm_networks::NetworkConfigs;
     use foundry_evm_traces::InternalTraceMode;
     use revm::context::TxEnv;
     use std::{sync::mpsc, thread};
@@ -1797,11 +1803,11 @@ mod tests {
         let target = Address::from([0x11; 20]);
         let nested = Address::from([0x22; 20]);
 
-        assert!(should_ignore_revert::<EthEvmNetwork>(false, target, Some(nested)));
-        assert!(!should_ignore_revert::<EthEvmNetwork>(true, target, Some(nested)));
-        assert!(!should_ignore_revert::<EthEvmNetwork>(false, target, Some(target)));
-        assert!(!should_ignore_revert::<EthEvmNetwork>(false, target, Some(CHEATCODE_ADDRESS)));
-        assert!(!should_ignore_revert::<EthEvmNetwork>(false, target, None));
+        assert!(should_ignore_revert(false, target, Some(nested), &[]));
+        assert!(!should_ignore_revert(true, target, Some(nested), &[]));
+        assert!(!should_ignore_revert(false, target, Some(target), &[]));
+        assert!(!should_ignore_revert(false, target, Some(CHEATCODE_ADDRESS), &[]));
+        assert!(!should_ignore_revert(false, target, None, &[]));
     }
 
     #[cfg(feature = "monad")]
@@ -1809,16 +1815,33 @@ mod tests {
     fn network_cheatcode_revert_handling_is_monad_specific() {
         let target = Address::from([0x11; 20]);
 
-        assert!(should_ignore_revert::<EthEvmNetwork>(
+        assert!(should_ignore_revert(false, target, Some(MONAD_CHEATCODE_ADDRESS), &[]));
+        assert!(!should_ignore_revert(
             false,
             target,
             Some(MONAD_CHEATCODE_ADDRESS),
+            NetworkConfigs::with_monad().extra_cheatcode_addresses(),
         ));
-        assert!(!should_ignore_revert::<MonadEvmNetwork>(
-            false,
-            target,
-            Some(MONAD_CHEATCODE_ADDRESS),
-        ));
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn extra_cheatcode_accounts_follow_the_active_network() {
+        let default_network = ExecutorBuilder::<MonadEvmNetwork>::default().build(
+            EvmEnvFor::<MonadEvmNetwork>::default(),
+            TxEnvFor::<MonadEvmNetwork>::default(),
+            Backend::spawn(None).unwrap(),
+        );
+        assert!(!default_network.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
+
+        let monad = ExecutorBuilder::<MonadEvmNetwork>::default()
+            .inspectors(|stack| stack.networks(NetworkConfigs::with_monad()))
+            .build(
+                EvmEnvFor::<MonadEvmNetwork>::default(),
+                TxEnvFor::<MonadEvmNetwork>::default(),
+                Backend::spawn(None).unwrap(),
+            );
+        assert!(monad.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
     }
 
     #[test]

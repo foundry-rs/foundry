@@ -711,8 +711,12 @@ fn fuzz_replay_call_succeeded<FEN: FoundryEvmNetwork>(
     call_result: &mut crate::executors::RawCallResult<FEN>,
     fail_on_revert: bool,
 ) -> bool {
-    should_ignore_revert::<FEN>(fail_on_revert, target_addr, call_result.reverter)
-        || executor.is_raw_call_mut_success(target_addr, call_result, false)
+    should_ignore_revert(
+        fail_on_revert,
+        target_addr,
+        call_result.reverter,
+        executor.inspector().networks.extra_cheatcode_addresses(),
+    ) || executor.is_raw_call_mut_success(target_addr, call_result, false)
 }
 
 fn newly_broken_invariants<FEN: FoundryEvmNetwork>(

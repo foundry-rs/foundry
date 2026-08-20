@@ -65,8 +65,7 @@ use foundry_evm::core::evm::MonadEvmNetwork;
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, SpecFor, TempoEvmNetwork,
-        TxEnvFor,
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
     executors::ShowmapDomain,
     fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
@@ -2981,7 +2980,7 @@ impl TestArgs {
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
                 config.gas_reports_include_tests,
-                FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES.iter().copied(),
+                config.networks.extra_cheatcode_addresses().iter().copied(),
             )
         });
 

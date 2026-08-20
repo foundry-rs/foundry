@@ -3335,10 +3335,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return SymbolicFuzzSeedReplay::Rejected;
         }
 
-        let success = should_ignore_revert::<FEN>(
+        let success = should_ignore_revert(
             fuzz_config.fail_on_revert,
             self.address,
             raw_call_result.reverter,
+            self.executor.inspector().networks.extra_cheatcode_addresses(),
         ) || self.executor.is_raw_call_success(
             self.address,
             Cow::Borrowed(&raw_call_result.state_changeset),
