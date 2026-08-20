@@ -1,4 +1,4 @@
-use crate::Cast;
+use crate::{Cast, encode_event_topic};
 use alloy_dyn_abi::{DynSolType, DynSolValue, Specifier};
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Event;
@@ -190,8 +190,8 @@ fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<Filter, eyr
     let (with_args, without_args): (Vec<_>, Vec<_>) = event
         .inputs
         .iter()
+        .filter(|input| input.indexed)
         .zip(args)
-        .filter(|(input, _)| input.indexed)
         .map(|(input, arg)| {
             let kind = input.resolve()?;
             Ok((kind, arg))
@@ -215,9 +215,7 @@ fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<Filter, eyr
         .chain(without_args.into_iter().map(|(i, _)| (i, None)))
         .sorted_by(|(i1, _), (i2, _)| i1.cmp(i2))
         .map(|(_, token)| {
-            token
-                .map(|token| Topic::from(B256::from_slice(token.abi_encode().as_slice())))
-                .unwrap_or(Topic::default())
+            token.map(|token| Topic::from(encode_event_topic(&token))).unwrap_or(Topic::default())
         })
         .collect::<Vec<Topic>>();
 
@@ -259,7 +257,7 @@ fn build_filter_topics(topics: Vec<String>) -> Result<Filter, eyre::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{U160, U256};
+    use alloy_primitives::{U160, U256, keccak256};
     use alloy_rpc_types::ValueOrArray;
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
@@ -346,6 +344,45 @@ mod tests {
         )
         .unwrap();
         assert_eq!(filter, expected)
+    }
+
+    #[test]
+    fn test_build_filter_sig_with_non_indexed_input_first() {
+        let event = Event::parse("event Owned(uint256 value, address indexed owner)").unwrap();
+        let address = Address::from_str(ADDRESS).unwrap();
+        let expected = Filter {
+            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
+            address: vec![].into(),
+            topics: [
+                event.selector().into(),
+                B256::left_padding_from(address.as_slice()).into(),
+                vec![].into(),
+                vec![].into(),
+            ],
+        };
+
+        let filter = build_filter_event_sig(event, vec![ADDRESS.to_string()]).unwrap();
+
+        assert_eq!(filter, expected);
+    }
+
+    #[test]
+    fn test_build_filter_sig_with_dynamic_indexed_input() {
+        let event = Event::parse("event Message(string indexed value)").unwrap();
+        let expected = Filter {
+            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
+            address: vec![].into(),
+            topics: [
+                event.selector().into(),
+                keccak256("hello").into(),
+                vec![].into(),
+                vec![].into(),
+            ],
+        };
+
+        let filter = build_filter_event_sig(event, vec!["hello".to_string()]).unwrap();
+
+        assert_eq!(filter, expected);
     }
 
     #[test]

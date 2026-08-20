@@ -2540,7 +2540,7 @@ pub(crate) fn strip_0x(s: &str) -> &str {
 /// concatenated recursively without any offsets or length prefixes.
 ///
 /// See <https://docs.soliditylang.org/en/latest/abi-spec.html#encoding-of-indexed-event-parameters>
-fn encode_event_topic(value: &DynSolValue) -> B256 {
+pub(crate) fn encode_event_topic(value: &DynSolValue) -> B256 {
     if let Some(word) = value.as_word() {
         return word;
     }

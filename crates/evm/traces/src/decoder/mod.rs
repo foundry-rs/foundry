@@ -11,8 +11,8 @@ use alloy_primitives::{
 };
 use alloy_sol_types::SolValue;
 use foundry_common::{
-    ContractsByArtifact, SELECTOR_LEN, fmt::format_token, get_contract_name,
-    selectors::SelectorKind,
+    ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
+    get_contract_name, selectors::SelectorKind,
 };
 use foundry_config::TracingConfig;
 #[cfg(feature = "monad")]
@@ -1433,9 +1433,14 @@ impl CallTraceDecoder {
             && let Some(identifier) = &self.signature_identifier
             && let Some(event) = identifier.identify_event(topic).await
         {
-            let mut decoded = indexed_event_candidates(event, log).filter_map(|event| {
-                self.decode_event_candidates(address, log, [&event], canonical_signature)
-            });
+            if !canonical_signature {
+                let event = get_indexed_event(event, log);
+                return self
+                    .decode_event_candidates(address, log, [&event], false)
+                    .unwrap_or(DecodedCallLog { name: None, params: None });
+            }
+            let mut decoded = indexed_event_candidates(event, log)
+                .filter_map(|event| self.decode_event_candidates(address, log, [&event], true));
             let event = decoded.next();
             if event.is_some() && decoded.next().is_some() {
                 return DecodedCallLog { name: None, params: None };
@@ -1959,19 +1964,27 @@ mod tests {
         assert!(decoded.params.is_none());
     }
 
-    #[test]
-    fn identified_events_require_a_unique_indexed_placement() {
-        let event = Event::parse("event Ambiguous(address owner, uint256 id)").unwrap();
+    #[tokio::test]
+    async fn identified_events_preserve_legacy_indexed_placement_for_traces() {
+        let event = Event::parse(
+            "event DecoderAmbiguousIndexedPlacement(address indexed owner, uint256 id)",
+        )
+        .unwrap();
+        let mut abi = JsonAbi::default();
+        abi.events.insert(event.name.clone(), vec![event.clone()]);
         let log = LogData::new_unchecked(
             vec![event.selector(), U256::from(42).into()],
             (Address::from([0x34; 20]),).abi_encode().into(),
         );
-        let candidates = indexed_event_candidates(event, &log).collect::<Vec<_>>();
-        let decoder = CallTraceDecoder::new();
+        let identifier = SignaturesIdentifier::new_offline_with_abis([&abi]).unwrap();
+        let decoder = CallTraceDecoderBuilder::new().with_signature_identifier(identifier).build();
 
-        let decoded = decoder.decode_unique_event_candidates(None, &log, &candidates, false);
+        let decoded = decoder.decode_event(&log).await;
+        assert_eq!(decoded.name.as_deref(), Some("DecoderAmbiguousIndexedPlacement"));
 
-        assert!(decoded.is_none());
+        let decoded = decoder.decode_event_with_address_signature(Address::ZERO, &log).await;
+        assert!(decoded.name.is_none());
+        assert!(decoded.params.is_none());
     }
 
     #[tokio::test]
