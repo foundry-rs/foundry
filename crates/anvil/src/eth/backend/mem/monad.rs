@@ -5,14 +5,18 @@ use super::{
     storage::BlockchainStorage,
 };
 use crate::eth::{
-    backend::{executor::build_tx_env_for_pending, replay::HistoricalReplayTransaction},
+    backend::{
+        db::{MonadBlockReplayProfile, SerializableState},
+        executor::build_tx_env_for_pending,
+        replay::HistoricalReplayTransaction,
+    },
     error::BlockchainError,
 };
 use alloy_consensus::{BlockHeader, constants::EMPTY_ROOT_HASH};
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory, RecoveredTx};
 use alloy_monad_evm::{MonadContext, MonadEvm, MonadEvmFactory};
 use alloy_network::{BlockResponse, Network};
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use alloy_rpc_types::{BlockNumberOrTag as BlockNumber, BlockTransactions};
 use anvil_core::eth::{
     block::Block,
@@ -27,6 +31,7 @@ use foundry_evm::{
             monad_block_participants, monad_context_from_participants,
         },
     },
+    hardfork::FoundryHardfork,
 };
 use foundry_primitives::FoundryTxEnvelope;
 use monad_revm::{MonadChainContext, MonadHardfork, instructions::monad_gas_params};
@@ -39,6 +44,34 @@ use revm::{
     },
     database_interface::WrapDatabaseRef,
 };
+use std::collections::{BTreeMap, BTreeSet};
+
+pub(super) fn store_block_metadata<N: Network>(
+    storage: &mut BlockchainStorage<N>,
+    block_hash: B256,
+    participants: MonadBlockParticipants,
+    execution_chain_id: u64,
+    hardfork: FoundryHardfork,
+) {
+    storage.monad_block_participants.insert(block_hash, participants);
+    storage.monad_block_replay_profiles.insert(
+        block_hash,
+        MonadBlockReplayProfile { execution_chain_id, hardfork: MonadHardfork::from(hardfork) },
+    );
+}
+
+#[derive(Default)]
+pub(super) struct SerializedBlockMetadata {
+    participants: BTreeMap<B256, BTreeSet<Address>>,
+    replay_profiles: BTreeMap<B256, MonadBlockReplayProfile>,
+}
+
+impl SerializedBlockMetadata {
+    pub(super) fn apply(self, state: &mut SerializableState) {
+        state.monad_block_participants = self.participants;
+        state.monad_block_replay_profiles = self.replay_profiles;
+    }
+}
 
 pub(super) struct PreparedExecution {
     pub(super) context: Option<MonadChainContext>,
@@ -113,6 +146,56 @@ pub(super) fn rollback_transaction<DB: alloy_evm::Database>(
 }
 
 impl<N: Network> Backend<N> {
+    pub(super) fn serialized_monad_block_metadata(
+        &self,
+        storage: &BlockchainStorage<N>,
+    ) -> SerializedBlockMetadata {
+        if !self.is_monad() {
+            return SerializedBlockMetadata::default();
+        }
+        SerializedBlockMetadata {
+            participants: storage
+                .monad_block_participants
+                .iter()
+                .filter(|(hash, _)| storage.blocks.contains_key(*hash))
+                .map(|(hash, participants)| (*hash, participants.iter().copied().collect()))
+                .collect(),
+            replay_profiles: storage
+                .monad_block_replay_profiles
+                .iter()
+                .filter(|(hash, _)| storage.blocks.contains_key(*hash))
+                .map(|(hash, profile)| (*hash, *profile))
+                .collect(),
+        }
+    }
+
+    pub(super) fn restore_monad_block_metadata(
+        &self,
+        storage: &mut BlockchainStorage<N>,
+        state: &SerializableState,
+    ) -> Result<(), BlockchainError> {
+        if !self.is_monad() {
+            return Ok(());
+        }
+        for (hash, profile) in &state.monad_block_replay_profiles {
+            if storage.blocks.contains_key(hash) {
+                storage.monad_block_replay_profiles.insert(*hash, *profile);
+            }
+        }
+        for (hash, participants) in &state.monad_block_participants {
+            if storage.blocks.contains_key(hash) {
+                storage
+                    .monad_block_participants
+                    .insert(*hash, participants.iter().copied().collect());
+            }
+        }
+        self.rebuild_monad_block_participant_cache(storage)?;
+        // Reject state that cannot supply the ancestor metadata required by the next block before
+        // changing the live chain, EVM environment, or database.
+        self.monad_context_for_child_of_in_storage(storage, storage.best_hash)?;
+        Ok(())
+    }
+
     /// Reconstructs a locally mined transaction using its authoritative stored sender.
     pub(super) fn monad_pending_mined_transaction_from_storage(
         storage: &BlockchainStorage<N>,

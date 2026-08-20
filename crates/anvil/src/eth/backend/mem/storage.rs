@@ -328,6 +328,13 @@ pub struct BlockchainStorage<N: Network> {
 }
 
 impl<N: Network> BlockchainStorage<N> {
+    /// Removes all metadata associated with a locally stored Monad block.
+    #[cfg(feature = "monad")]
+    pub(super) fn remove_monad_block_metadata(&mut self, block_hash: &B256) {
+        self.monad_block_participants.remove(block_hash);
+        self.monad_block_replay_profiles.remove(block_hash);
+    }
+
     /// Creates a new storage with a genesis block
     pub fn new(
         evm_env: &EvmEnv,
@@ -421,9 +428,7 @@ impl<N: Network> BlockchainStorage<N> {
                     removed.push(block);
                 }
                 #[cfg(feature = "monad")]
-                self.monad_block_participants.remove(&hash);
-                #[cfg(feature = "monad")]
-                self.monad_block_replay_profiles.remove(&hash);
+                self.remove_monad_block_metadata(&hash);
                 self.hashes.remove(&i);
             }
         }

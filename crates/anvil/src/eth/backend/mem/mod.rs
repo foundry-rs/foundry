@@ -4769,9 +4769,7 @@ impl<N: Network> Backend<N> {
                     }
                 }
                 #[cfg(feature = "monad")]
-                storage.monad_block_participants.remove(&hash);
-                #[cfg(feature = "monad")]
-                storage.monad_block_replay_profiles.remove(&hash);
+                storage.remove_monad_block_metadata(&hash);
             }
 
             storage.best_number = num;
@@ -5179,13 +5177,12 @@ where
             storage.hashes.insert(block_number, block_hash);
             #[cfg(feature = "monad")]
             if let Some(participants) = monad_participants {
-                storage.monad_block_participants.insert(block_hash, participants);
-                storage.monad_block_replay_profiles.insert(
+                monad::store_block_metadata(
+                    &mut storage,
                     block_hash,
-                    MonadBlockReplayProfile {
-                        execution_chain_id,
-                        hardfork: MonadHardfork::from(hardfork),
-                    },
+                    participants,
+                    execution_chain_id,
+                    hardfork,
                 );
             }
             for (info, receipt) in transactions.into_iter().zip(receipts) {
@@ -5578,13 +5575,12 @@ where
             storage.hashes.insert(block_number, block_hash);
             #[cfg(feature = "monad")]
             if let Some(participants) = monad_participants {
-                storage.monad_block_participants.insert(block_hash, participants);
-                storage.monad_block_replay_profiles.insert(
+                monad::store_block_metadata(
+                    &mut storage,
                     block_hash,
-                    MonadBlockReplayProfile {
-                        execution_chain_id: evm_env.cfg_env.chain_id,
-                        hardfork: hardfork.into(),
-                    },
+                    participants,
+                    evm_env.cfg_env.chain_id,
+                    hardfork,
                 );
             }
 
@@ -7363,25 +7359,12 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
     ) -> Result<SerializableState, BlockchainError> {
         let at = self.evm_env.read().block_env.clone();
         #[cfg(feature = "monad")]
-        let mut monad_block_participants = BTreeMap::new();
-        #[cfg(feature = "monad")]
-        let mut monad_block_replay_profiles = BTreeMap::new();
+        let monad_block_metadata;
         let (best_number, blocks, transactions) = {
             let storage = self.blockchain.storage.read();
             #[cfg(feature = "monad")]
-            if self.is_monad() {
-                monad_block_participants = storage
-                    .monad_block_participants
-                    .iter()
-                    .filter(|(hash, _)| storage.blocks.contains_key(*hash))
-                    .map(|(hash, participants)| (*hash, participants.iter().copied().collect()))
-                    .collect();
-                monad_block_replay_profiles = storage
-                    .monad_block_replay_profiles
-                    .iter()
-                    .filter(|(hash, _)| storage.blocks.contains_key(*hash))
-                    .map(|(hash, profile)| (*hash, *profile))
-                    .collect();
+            {
+                monad_block_metadata = self.serialized_monad_block_metadata(&storage);
             }
             (storage.best_number, storage.serialized_blocks(), storage.serialized_transactions())
         };
@@ -7401,8 +7384,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         #[cfg(feature = "monad")]
         let state = {
             let mut state = state;
-            state.monad_block_participants = monad_block_participants;
-            state.monad_block_replay_profiles = monad_block_replay_profiles;
+            monad_block_metadata.apply(&mut state);
             state
         };
         Ok(state)
@@ -7535,24 +7517,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         }
 
         #[cfg(feature = "monad")]
-        if self.is_monad() {
-            for (hash, profile) in &state.monad_block_replay_profiles {
-                if storage.blocks.contains_key(hash) {
-                    storage.monad_block_replay_profiles.insert(*hash, *profile);
-                }
-            }
-            for (hash, participants) in &state.monad_block_participants {
-                if storage.blocks.contains_key(hash) {
-                    storage
-                        .monad_block_participants
-                        .insert(*hash, participants.iter().copied().collect());
-                }
-            }
-            self.rebuild_monad_block_participant_cache(&mut storage)?;
-            // Reject state that cannot supply the ancestor metadata required by the next block
-            // before changing the live chain, EVM environment, or database.
-            self.monad_context_for_child_of_in_storage(&storage, storage.best_hash)?;
-        }
+        self.restore_monad_block_metadata(&mut storage, &state)?;
 
         // Re-anchor block time to the canonical head selected above so the next blocks continue
         // its timeline: the saved one when the loaded head stays canonical, the fork's when the
