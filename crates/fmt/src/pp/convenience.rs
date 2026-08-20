@@ -81,6 +81,8 @@ impl Printer {
 
     pub fn is_beginning_of_line(&self) -> bool {
         match self.last_token() {
+            // Verbatim-printed source can end with a line break. Regular tokens never contain one.
+            Some(Token::String(s)) => s.ends_with('\n'),
             Some(last_token) => last_token.is_hardbreak(),
             None => self.out.is_empty() || self.out.ends_with('\n'),
         }
@@ -96,6 +98,12 @@ impl Printer {
             let token = &self.buf[i].token;
             if token.is_hardbreak() {
                 return true;
+            }
+            // Verbatim-printed source can contain line breaks; judge by its last line.
+            if let Token::String(s) = token
+                && let Some(pos) = s.rfind('\n')
+            {
+                return s[pos + 1..].trim().is_empty();
             }
             if Self::token_has_non_whitespace_content(token) {
                 return false;
