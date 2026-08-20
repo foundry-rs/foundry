@@ -124,7 +124,7 @@ impl AnvilNodeInfoProbe {
                 self.identified = true;
                 Ok(Some(node_info))
             }
-            Err(_) if !self.identified => Ok(None),
+            Err(error) if !self.identified && is_rpc_method_not_found(&error) => Ok(None),
             Err(error) => {
                 Err(error).wrap_err("failed to determine network family from fork endpoint")
             }

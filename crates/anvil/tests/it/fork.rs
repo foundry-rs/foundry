@@ -89,13 +89,19 @@ pub fn fork_config() -> NodeConfig {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_allows_unavailable_anvil_node_info() {
+async fn test_fork_rejects_anvil_node_info_rpc_error() {
     let (_api, origin) =
         spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
     let fork_url =
         spawn_rpc_proxy_erroring_method_after(origin.http_endpoint(), "anvil_nodeInfo", 0).await;
 
-    try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await.unwrap();
+    let result = try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
+    let Err(error) = result else { panic!("expected fork startup to fail") };
+
+    assert!(
+        error.to_string().contains("failed to determine network family from fork endpoint"),
+        "{error}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

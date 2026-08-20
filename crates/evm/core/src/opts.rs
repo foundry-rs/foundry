@@ -197,7 +197,7 @@ impl AnvilNodeInfoProbe {
                 self.identified = true;
                 Ok(Some(node_info))
             }
-            Err(_) if !self.identified => Ok(None),
+            Err(error) if !self.identified && is_rpc_method_not_found(&error) => Ok(None),
             Err(error) => Err(error).wrap_err("failed to determine network family from endpoint"),
         }
     }
@@ -2221,32 +2221,21 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn fork_non_anvil_node_info_failure_is_optional() {
+    async fn fork_non_anvil_node_info_rpc_error_is_visible() {
         let (_api, handle) =
             anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64)))
                 .await;
         let fork_url =
             spawn_rpc_proxy_rejecting_method_after(handle.http_endpoint(), "anvil_nodeInfo", 0)
                 .await;
-        let networks = NetworkConfigs::with_ethereum();
-        let mut evm_opts =
-            EvmOpts { fork_url: Some(fork_url.clone()), networks, ..Default::default() };
+        let mut evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
 
-        evm_opts.infer_network_from_fork().await.unwrap();
+        let error = evm_opts.infer_network_from_fork().await.unwrap_err();
 
-        assert_eq!(evm_opts.env.chain_id, Some(NamedChain::Mainnet as u64));
-        assert_eq!(evm_opts.networks, networks);
-        assert_eq!(evm_opts.fork_endpoint.as_ref().unwrap().reported_hardfork, None);
-        let (_, _, fork) = evm_opts.env_resolved::<SpecId, BlockEnv, TxEnv>().await.unwrap();
-        assert_eq!(fork.unwrap().context().network, NetworkVariant::Ethereum);
-
-        #[cfg(feature = "optimism")]
-        {
-            let networks = NetworkConfigs::with_optimism();
-            let mut evm_opts = EvmOpts { fork_url: Some(fork_url), networks, ..Default::default() };
-            evm_opts.infer_network_from_fork().await.unwrap();
-            assert_eq!(evm_opts.networks, networks);
-        }
+        assert!(
+            error.to_string().contains("failed to determine network family from endpoint"),
+            "{error}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
