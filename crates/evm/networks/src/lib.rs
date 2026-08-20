@@ -481,6 +481,11 @@ impl NetworkConfigs {
         false
     }
 
+    /// Returns whether transaction execution needs metadata from surrounding blocks.
+    pub const fn needs_block_context(&self) -> bool {
+        self.is_monad()
+    }
+
     /// Returns additional cheatcode contract addresses for the active network.
     pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
         #[cfg(feature = "monad")]
@@ -1483,6 +1488,7 @@ mod tests {
         let cfg = NetworkConfigs::with_monad();
         assert_eq!(cfg.active_network_name(), Some("monad"));
         assert!(cfg.is_monad());
+        assert!(cfg.needs_block_context());
         assert_eq!(cfg.extra_cheatcode_addresses(), &[MONAD_CHEATCODE_ADDRESS]);
     }
 
@@ -1499,6 +1505,7 @@ mod tests {
     fn active_network_name_default_is_none() {
         let cfg = NetworkConfigs::default();
         assert_eq!(cfg.active_network_name(), None);
+        assert!(!cfg.needs_block_context());
         assert!(cfg.extra_cheatcode_addresses().is_empty());
     }
 

@@ -4,6 +4,7 @@ use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use eyre::{Result, WrapErr};
+use foundry_evm_networks::NetworkConfigs;
 
 use super::{BlockResponseFor, ChainFor, FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor};
 
@@ -104,12 +105,13 @@ pub async fn context_for_child_transaction<FEN, P>(
     provider: &P,
     block_number: u64,
     tx: &TxEnvFor<FEN>,
+    networks: NetworkConfigs,
 ) -> Result<ChainFor<FEN>>
 where
     FEN: FoundryEvmNetwork,
     P: Provider<FEN::Network>,
 {
-    if !FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+    if !networks.needs_block_context() {
         return Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx));
     }
 

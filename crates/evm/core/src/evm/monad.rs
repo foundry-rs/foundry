@@ -329,8 +329,6 @@ where
 }
 
 impl FoundryEvmFactory for MonadEvmFactory {
-    const NEEDS_BLOCK_CONTEXT: bool = true;
-
     type Chain = MonadChainContext;
 
     type FoundryContext<'db> = MonadContext<&'db mut dyn DatabaseExt<Self>>;

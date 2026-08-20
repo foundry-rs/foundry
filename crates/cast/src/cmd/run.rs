@@ -440,7 +440,7 @@ impl RunArgs {
         );
         TracingExecutor::<FEN>::extend_precompile_labels(&mut config, networks, resolved_hardfork);
 
-        let block_context = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+        let block_context = if networks.needs_block_context() {
             let block = block.as_ref().ok_or_else(|| {
                 eyre::eyre!(
                     "block {tx_block_number} is required to reconstruct transaction context"
