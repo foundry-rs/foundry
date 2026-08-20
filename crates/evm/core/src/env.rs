@@ -419,9 +419,13 @@ impl FoundryTransaction for TempoTxEnv {
 
 /// Foundry extension for chain context type
 ///
-/// Every family that doesn't need chain metadata uses `()`
-pub trait FoundryChain: Clone + Debug + Default + Send + Sync {}
-impl<T: Clone + Debug + Default + Send + Sync> FoundryChain for T {}
+/// Every family that doesn't need chain metadata uses `()`.
+pub trait FoundryChain: Clone + Debug + Default + Send + Sync {
+    /// Refreshes journal state derived from the active chain position.
+    fn refresh_journal<J: FoundryJournal>(&self, _journal: &mut J) {}
+}
+
+impl FoundryChain for () {}
 
 /// Foundry extension for Journal type
 pub trait FoundryJournal: JournalExt {
@@ -513,14 +517,6 @@ pub trait FoundryContextExt:
         self.cfg_env_mut().set_spec_and_mainnet_gas_params(spec);
     }
 
-    /// Resyncs Monad's reserve-balance-tracker state that depends on the current chain-position
-    /// context.
-    ///
-    /// Called after the chain context is replaced or the journal changes underneath it.
-    /// Families without chain-dependent state (the default) have nothing to do here; Monad
-    /// overrides this to rebase its reserve-balance tracker against the live chain and state.
-    fn refresh_chain_dependent_state(&mut self) {}
-
     /// Sets block environment.
     fn set_block(&mut self, block: Self::Block) {
         *self.block_mut() = block;
@@ -556,6 +552,12 @@ pub trait FoundryContextExt:
     fn evm_clone(&self) -> EvmEnv<Self::Spec, Self::Block> {
         EvmEnv::new(self.cfg().clone().into(), self.block().clone())
     }
+}
+
+/// Refreshes journal state derived from a context's active chain position.
+pub fn refresh_chain_journal<CTX: FoundryContextExt>(context: &mut CTX) {
+    let chain = context.chain().clone();
+    chain.refresh_journal(context.journal_mut());
 }
 
 impl<
@@ -625,10 +627,6 @@ impl<DB: Database> FoundryContextExt
         let mut cfg = self.cfg.clone().into_inner();
         cfg.spec = spec;
         self.cfg = MonadCfgEnv::from(cfg);
-    }
-
-    fn refresh_chain_dependent_state(&mut self) {
-        crate::evm::monad::rebase_monad_context(self);
     }
 
     fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {

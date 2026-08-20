@@ -278,13 +278,6 @@ pub trait NestedEvm {
     /// Returns a mutable reference to the Journal.
     fn journal_mut(&mut self) -> &mut Self::Journal;
 
-    /// Resyncs Monad's reserve-balance-tracker state that depends on the current chain-position
-    /// context.
-    ///
-    /// See [`FoundryContextExt::refresh_chain_dependent_state`]; this is the equivalent hook
-    /// for the object-safe nested-EVM boundary, which doesn't implement `FoundryContextExt`.
-    fn refresh_chain_dependent_state(&mut self) {}
-
     /// Runs a single execution frame (create or call) through the EVM handler loop.
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>>;
 

@@ -19,10 +19,12 @@ use revm::{
 };
 
 use crate::{
-    FoundryContextExt, FoundryInspectorExt,
+    FoundryChain, FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
     evm::{FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor},
 };
+
+impl FoundryChain for L1BlockInfo {}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OpEvmNetwork;

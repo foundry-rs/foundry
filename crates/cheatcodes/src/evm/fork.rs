@@ -17,7 +17,7 @@ use foundry_evm_core::{
     fork::CreateFork,
 };
 #[cfg(feature = "monad")]
-use foundry_evm_core::{backend::ContextUpdate, evm::ChainFor};
+use foundry_evm_core::{backend::ContextUpdate, evm::ChainFor, refresh_chain_journal};
 use revm::context::ContextTr;
 
 impl Cheatcode for activeForkCall {
@@ -433,10 +433,10 @@ fn apply_context_update<FEN: FoundryEvmNetwork>(
         ContextUpdate::Unchanged => {}
         ContextUpdate::Replace(chain_context) => {
             *ecx.chain_mut() = chain_context;
-            ecx.refresh_chain_dependent_state();
+            refresh_chain_journal(ecx);
         }
         ContextUpdate::Rebase => {
-            ecx.refresh_chain_dependent_state();
+            refresh_chain_journal(ecx);
         }
     }
 }

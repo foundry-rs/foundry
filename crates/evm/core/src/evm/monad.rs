@@ -34,10 +34,24 @@ use revm::{
 };
 
 use crate::{
-    FoundryContextExt, FoundryInspectorExt,
+    FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
     backend::{DatabaseExt, JournaledState},
     evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor},
 };
+
+impl FoundryChain for MonadChainContext {
+    fn refresh_journal<J: FoundryJournal>(&self, journal: &mut J) {
+        let mut tracker = journal.capture_reserve_balance();
+        tracker.rebase(self, journal.evm_state());
+        journal.restore_reserve_balance(tracker);
+    }
+}
+
+/// Refreshes journal state derived from a nested EVM's active Monad chain position.
+pub fn refresh_nested_chain_journal<E: NestedEvm + ?Sized>(evm: &mut E) {
+    let chain = evm.chain_mut().clone();
+    chain.refresh_journal(evm.journal_mut());
+}
 
 type MonadEvmHandler<'db, I> =
     MonadHandler<MonadRevmEvm<'db, I>, EVMError<DatabaseError>, EthFrame>;
@@ -81,13 +95,6 @@ pub fn monad_context_from_participants(
         current_tx_index,
         ..Default::default()
     }
-}
-
-pub(crate) fn rebase_monad_context<DB: revm::Database>(context: &mut MonadContext<DB>) {
-    let chain = context.chain.clone();
-    let mut tracker = std::mem::take(context.journaled_state.reserve_balance_mut());
-    tracker.rebase(&chain, &context.journaled_state.inner.state);
-    *context.journaled_state.reserve_balance_mut() = tracker;
 }
 
 /// A canonical Monad protocol system transaction.
@@ -456,10 +463,6 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
         &mut self.ctx_mut().journaled_state
     }
 
-    fn refresh_chain_dependent_state(&mut self) {
-        rebase_monad_context(self.ctx_mut());
-    }
-
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
         let mut handler = MonadEvmHandler::<I>::new();
 
@@ -647,7 +650,7 @@ mod tests {
 
         evm.ctx_mut().chain = new_chain.clone();
         evm.ctx_mut().journaled_state.inner.state = EvmState::from_iter([(sender, account)]);
-        rebase_monad_context(evm.ctx_mut());
+        crate::refresh_chain_journal(evm.ctx_mut());
 
         assert_eq!(evm.ctx().chain, new_chain);
         assert!(evm.ctx().journaled_state.reserve_balance().has_violation());
