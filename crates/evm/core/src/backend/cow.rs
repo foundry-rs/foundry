@@ -1,6 +1,8 @@
 //! A wrapper around `Backend` that is clone-on-write used for fuzzing.
 
 use super::BackendError;
+#[cfg(feature = "monad")]
+use crate::evm::protocol_system_call;
 use crate::{
     FoundryInspectorExt,
     backend::{
@@ -132,6 +134,10 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         chain_context: ChainFor<FEN>,
         inspector: I,
     ) -> eyre::Result<Option<ResultAndState<HaltReasonFor<FEN>>>> {
+        if !self.backend.networks().is_monad() || protocol_system_call(tx_env)?.is_none() {
+            return Ok(None);
+        }
+
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
         let factory = FEN::EvmFactory::default();
@@ -141,14 +147,14 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
             chain_context,
             inspector,
         );
-        let result = factory.try_transact_foundry_system_replay(&mut evm, tx_env)?;
+        let result = evm.transact_raw(tx_env.clone())?;
 
         // A successful specialized replay replaces the EVM transaction with its synthetic system
         // call. Keep the canonical envelope in `tx_env`; ordinary execution uses
         // `inspect_with_context` above and copies inspector mutations back normally.
         *evm_env = evm.finish().1;
 
-        Ok(result)
+        Ok(Some(result))
     }
 
     /// Returns whether there was a state snapshot failure in the backend.

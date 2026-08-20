@@ -192,9 +192,6 @@ pub trait FoundryEvmFactory:
     /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
     /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
     /// fall back to ordinary execution using the same EVM instance.
-    ///
-    /// Implementations that recognize a transaction here must provide equivalent recognition in
-    /// [`Self::try_transact_foundry_system_replay`].
     #[cfg(feature = "monad")]
     fn try_transact_system_replay<DB, I>(
         &self,
@@ -205,26 +202,6 @@ pub trait FoundryEvmFactory:
         DB: alloy_evm::Database,
         I: Inspector<Self::Context<DB>>,
     {
-        Ok(None)
-    }
-
-    /// Tries to execute a canonical system transaction on a Foundry-wrapped EVM with an inspector.
-    ///
-    /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
-    /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
-    /// fall back to ordinary execution using the same EVM instance.
-    ///
-    /// Implementations that recognize a transaction here must provide equivalent recognition in
-    /// [`Self::try_transact_system_replay`].
-    #[cfg(feature = "monad")]
-    fn try_transact_foundry_system_replay<
-        'db,
-        I: FoundryInspectorExt<Self::FoundryContext<'db>>,
-    >(
-        &self,
-        _evm: &mut Self::FoundryEvm<'db, I>,
-        _tx: &Self::Tx,
-    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>> {
         Ok(None)
     }
 
