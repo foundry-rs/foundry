@@ -38,7 +38,7 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
     self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_erroring_method_after,
-    spawn_rpc_proxy_rejecting_method_after, spawn_rpc_proxy_rejecting_method_before,
+    spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
 };
 use futures::StreamExt;
 use revm::{
@@ -144,7 +144,7 @@ async fn test_fork_reset_keeps_node_info_probe_strict_after_identification_durin
 async fn test_fork_retries_when_anvil_node_info_becomes_available() {
     let (_api, origin) = spawn(NodeConfig::test()).await;
     let fork_url =
-        spawn_rpc_proxy_rejecting_method_before(origin.http_endpoint(), "anvil_nodeInfo", 1).await;
+        spawn_rpc_proxy_method_not_found_before(origin.http_endpoint(), "anvil_nodeInfo", 1).await;
 
     try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await.unwrap();
 }

@@ -1545,7 +1545,7 @@ mod tests {
     use alloy_rpc_types::anvil::Forking;
     use alloy_serde::WithOtherFields;
     use foundry_test_utils::rpc::{
-        spawn_rpc_proxy_rejecting_method_after, spawn_rpc_proxy_rejecting_method_before,
+        spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
     };
     #[cfg(feature = "optimism")]
     use op_revm::OpSpecId;
@@ -2258,7 +2258,7 @@ mod tests {
     async fn fork_node_info_probe_becomes_strict_after_initial_failure() {
         let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
         let fork_url =
-            spawn_rpc_proxy_rejecting_method_before(handle.http_endpoint(), "anvil_nodeInfo", 1)
+            spawn_rpc_proxy_method_not_found_before(handle.http_endpoint(), "anvil_nodeInfo", 1)
                 .await;
         let evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
 
