@@ -24,7 +24,7 @@ use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     context::{ContextTr, Transaction},
-    context_interface::result::ResultAndState,
+    context_interface::result::{HaltReason, ResultAndState},
     database::DatabaseRef,
     primitives::AddressMap,
     state::{Account, AccountInfo, EvmState},
@@ -133,7 +133,7 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         tx_env: &mut TxEnvFor<FEN>,
         chain_context: ChainFor<FEN>,
         inspector: I,
-    ) -> eyre::Result<Option<ResultAndState<HaltReasonFor<FEN>>>> {
+    ) -> eyre::Result<Option<ResultAndState<HaltReason>>> {
         if !self.backend.networks().is_monad() || protocol_system_call(tx_env)?.is_none() {
             return Ok(None);
         }
@@ -141,18 +141,15 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
         let factory = FEN::EvmFactory::default();
-        let mut evm = factory.create_foundry_evm_with_inspector(
-            self,
-            evm_env.clone(),
-            chain_context,
-            inspector,
-        );
+        let mut inspector = inspector;
+        let mut evm =
+            factory.create_foundry_nested_evm(self, evm_env.clone(), chain_context, &mut inspector);
         let result = evm.transact_raw(tx_env.clone())?;
 
         // A successful specialized replay replaces the EVM transaction with its synthetic system
         // call. Keep the canonical envelope in `tx_env`; ordinary execution uses
         // `inspect_with_context` above and copies inspector mutations back normally.
-        *evm_env = evm.finish().1;
+        *evm_env = evm.to_evm_env();
 
         Ok(Some(result))
     }
