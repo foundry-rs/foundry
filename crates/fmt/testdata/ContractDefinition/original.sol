@@ -66,6 +66,10 @@ contract WithBaseAndHeaderComment is Base /* base */ {
 
 contract WithLayoutAndHeaderComment layout at 69 /* layout */ {}
 
+contract WithLayoutAfterBase is Base layout at erc7201("x{y") /* layout */ {
+    uint256 x;
+}
+
 contract MultipleHeaderComments /* one */ /* two */ {}
 
 contract VeryLongContractNameThatForcesTheHeaderToBreak is BaseOne, BaseTwo /* base */ {

@@ -315,11 +315,12 @@ impl<'ast> State<'_, 'ast> {
         self.cursor.advance_to(span.lo(), true);
 
         // Position of the body's opening brace, needed to identify the comments that belong to
-        // the contract header.
+        // the contract header. The `is` and `layout` clauses can appear in either order, so the
+        // header ends at whichever clause ends last.
         let header_hi = bases
             .last()
             .map(|base| base.span().hi())
-            .or_else(|| layout.as_ref().map(|layout| layout.span.hi()))
+            .max(layout.as_ref().map(|layout| layout.span.hi()))
             .unwrap_or(name.span.hi());
         let body_lo = body.first().map_or(span.hi(), |item| item.span.lo());
         let brace = self.find_opening_brace(Span::new(header_hi, body_lo));
