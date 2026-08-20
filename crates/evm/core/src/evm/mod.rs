@@ -30,7 +30,7 @@ use revm::{
     interpreter::{
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, InstructionResult,
     },
-    primitives::{eip3860::MAX_INITCODE_SIZE, hardfork::SpecId},
+    primitives::hardfork::SpecId,
 };
 use serde::{Deserialize, Serialize};
 use tempo_alloy::TempoNetwork;
@@ -141,9 +141,6 @@ pub trait FoundryEvmFactory:
 
     /// Additional network-specific cheatcode contract addresses.
     const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[];
-
-    /// Maximum initcode size enforced during nested transaction execution.
-    const CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE;
 
     /// Whether transaction execution needs metadata from surrounding blocks.
     const NEEDS_BLOCK_CONTEXT: bool = false;
@@ -395,21 +392,5 @@ impl IntoInstructionResult for TempoHaltReason {
             Self::Ethereum(eth) => eth.into(),
             _ => InstructionResult::PrecompileError,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn factories_define_nested_initcode_size_limit() {
-        assert_eq!(EthEvmFactory::CONTRACT_INITCODE_SIZE_LIMIT, MAX_INITCODE_SIZE);
-        assert_eq!(TempoEvmFactory::CONTRACT_INITCODE_SIZE_LIMIT, MAX_INITCODE_SIZE);
-        #[cfg(feature = "monad")]
-        assert_eq!(
-            MonadEvmFactory::CONTRACT_INITCODE_SIZE_LIMIT,
-            monad_revm::MONAD_MAX_INITCODE_SIZE
-        );
     }
 }
