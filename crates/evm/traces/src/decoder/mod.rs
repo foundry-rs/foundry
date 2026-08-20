@@ -3,7 +3,9 @@ use crate::{
     debug::DebugTraceIdentifier,
     identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
 };
-use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
+use alloy_dyn_abi::{
+    DecodedEvent as AlloyDecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt,
+};
 use alloy_json_abi::{Constructor, Error, Event, Function, JsonAbi};
 use alloy_primitives::{
     Address, B256, LogData, Selector, U256,
@@ -64,6 +66,26 @@ use monad::{IMonadStaking, IMonadStakingSyscalls, IReserveBalance};
 type MonadHardfork = ();
 type AddressEvents = HashMap<Address, BTreeMap<(B256, usize), Vec<Event>>>;
 type AddressAnonymousEvents = HashMap<Address, BTreeMap<usize, Vec<Event>>>;
+
+/// A decoded event with both display-formatted parameters and their underlying ABI values.
+#[derive(Debug, Default)]
+pub struct DecodedEvent {
+    /// The event name or canonical signature.
+    pub name: Option<String>,
+    /// Event parameter names, display-formatted values, and decoded ABI values.
+    pub params: Option<Vec<(String, String, DynSolValue)>>,
+}
+
+impl DecodedEvent {
+    fn into_call_log(self) -> DecodedCallLog {
+        DecodedCallLog {
+            name: self.name,
+            params: self.params.map(|params| {
+                params.into_iter().map(|(name, display, _)| (name, display)).collect()
+            }),
+        }
+    }
+}
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
@@ -1373,7 +1395,7 @@ impl CallTraceDecoder {
 
     /// Decodes an event.
     pub async fn decode_event(&self, log: &LogData) -> DecodedCallLog {
-        self.decode_event_inner(None, log, false).await
+        self.decode_event_inner(None, log, false).await.into_call_log()
     }
 
     /// Decodes an event emitted by a known address.
@@ -1382,7 +1404,7 @@ impl CallTraceDecoder {
         address: Address,
         log: &LogData,
     ) -> DecodedCallLog {
-        self.decode_event_inner(Some(address), log, false).await
+        self.decode_event_inner(Some(address), log, false).await.into_call_log()
     }
 
     /// Decodes an event emitted by a known address, using its canonical signature as the name.
@@ -1390,7 +1412,7 @@ impl CallTraceDecoder {
         &self,
         address: Address,
         log: &LogData,
-    ) -> DecodedCallLog {
+    ) -> DecodedEvent {
         self.decode_event_inner(Some(address), log, true).await
     }
 
@@ -1399,7 +1421,7 @@ impl CallTraceDecoder {
         address: Option<Address>,
         log: &LogData,
         canonical_signature: bool,
-    ) -> DecodedCallLog {
+    ) -> DecodedEvent {
         let regular_events = log.topics().first().and_then(|&topic| {
             let key = (topic, log.topics().len() - 1);
             address
@@ -1426,7 +1448,7 @@ impl CallTraceDecoder {
         }
 
         if regular_events.is_some() || anonymous_events.is_some() {
-            return DecodedCallLog { name: None, params: None };
+            return DecodedEvent::default();
         }
 
         if let Some(&topic) = log.topics().first()
@@ -1437,20 +1459,20 @@ impl CallTraceDecoder {
                 let event = get_indexed_event(event, log);
                 return self
                     .decode_event_candidates(address, log, [&event], false)
-                    .unwrap_or(DecodedCallLog { name: None, params: None });
+                    .unwrap_or_default();
             }
             let mut decoded = indexed_event_candidates(event, log)
                 .filter_map(|event| self.decode_event_candidates(address, log, [&event], true));
             let event = decoded.next();
             if event.is_some() && decoded.next().is_some() {
-                return DecodedCallLog { name: None, params: None };
+                return DecodedEvent::default();
             }
             if let Some(decoded) = event {
                 return decoded;
             }
         }
 
-        DecodedCallLog { name: None, params: None }
+        DecodedEvent::default()
     }
 
     fn decode_event_candidates<'a>(
@@ -1459,36 +1481,33 @@ impl CallTraceDecoder {
         log: &LogData,
         events: impl IntoIterator<Item = &'a Event>,
         canonical_signature: bool,
-    ) -> Option<DecodedCallLog> {
+    ) -> Option<DecodedEvent> {
         for event in events {
             if let Ok(decoded) = event.decode_log(log) {
                 let params = reconstruct_params(event, &decoded);
-                return Some(DecodedCallLog {
+                let params = params
+                    .into_iter()
+                    .zip(event.inputs.iter())
+                    .map(|(param, input)| {
+                        // Undo patched names.
+                        let name = input.name.clone();
+                        let display = self.format_param_value(
+                            address,
+                            &event.name,
+                            &input.name,
+                            &input.ty,
+                            &param,
+                        );
+                        (name, display, param)
+                    })
+                    .collect();
+                return Some(DecodedEvent {
                     name: Some(if canonical_signature {
                         event.signature()
                     } else {
                         event.name.clone()
                     }),
-                    params: Some(
-                        params
-                            .into_iter()
-                            .zip(event.inputs.iter())
-                            .map(|(param, input)| {
-                                // undo patched names
-                                let name = input.name.clone();
-                                (
-                                    name,
-                                    self.format_param_value(
-                                        address,
-                                        &event.name,
-                                        &input.name,
-                                        &input.ty,
-                                        &param,
-                                    ),
-                                )
-                            })
-                            .collect(),
-                    ),
+                    params: Some(params),
                 });
             }
         }
@@ -1501,7 +1520,7 @@ impl CallTraceDecoder {
         log: &LogData,
         events: impl IntoIterator<Item = &'a Event>,
         canonical_signature: bool,
-    ) -> Option<DecodedCallLog> {
+    ) -> Option<DecodedEvent> {
         let mut decoded = events.into_iter().filter_map(|event| {
             self.decode_event_candidates(address, log, [event], canonical_signature)
         });
@@ -1674,7 +1693,7 @@ fn is_abi_data(data: &[u8]) -> bool {
 
 /// Restore the order of the params of a decoded event,
 /// as Alloy returns the indexed and unindexed params separately.
-fn reconstruct_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue> {
+fn reconstruct_params(event: &Event, decoded: &AlloyDecodedEvent) -> Vec<DynSolValue> {
     let mut indexed = 0;
     let mut unindexed = 0;
     let mut inputs = vec![];
