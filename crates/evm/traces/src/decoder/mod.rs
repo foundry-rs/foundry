@@ -1412,20 +1412,19 @@ impl CallTraceDecoder {
             .and_then(|events| events.get(&log.topics().len()));
 
         let decoded = if canonical_signature {
-            self.decode_unique_event_candidates(
-                address,
-                log,
-                regular_events.into_iter().flatten(),
-                true,
-            )
+            let mut decoded = regular_events.into_iter().flatten().filter_map(|event| {
+                self.decode_event_candidates(address, log, [event], canonical_signature)
+            });
+            let event = decoded.next();
+            if event.is_some() && decoded.next().is_some() {
+                return DecodedCallLog { name: None, params: None };
+            }
+            event
         } else {
             self.decode_event_candidates(address, log, regular_events.into_iter().flatten(), false)
         };
         if let Some(decoded) = decoded {
             return decoded;
-        }
-        if canonical_signature && regular_events.is_some() {
-            return DecodedCallLog { name: None, params: None };
         }
         if let Some(decoded) = self.decode_unique_event_candidates(
             address,
@@ -1973,6 +1972,20 @@ mod tests {
 
         assert!(decoded.name.is_none());
         assert!(decoded.params.is_none());
+
+        let abi = JsonAbi::parse([
+            "event RegularValue(uint256 value)",
+            "event AnonymousValue(uint256 indexed value) anonymous",
+        ])
+        .unwrap();
+        let regular = abi.events().find(|event| !event.anonymous).unwrap();
+        let log = LogData::new_unchecked(vec![regular.selector()], Default::default());
+        let decoded = CallTraceDecoderBuilder::new()
+            .with_address_events(address, &abi)
+            .build()
+            .decode_event_with_address_signature(address, &log)
+            .await;
+        assert_eq!(decoded.name.as_deref(), Some("AnonymousValue(uint256)"));
     }
 
     #[test]

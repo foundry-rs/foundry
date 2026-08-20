@@ -114,7 +114,10 @@ async fn decode_logs(
             logs.iter().map(Log::address).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>();
         for (address, result) in identifier.get_abis(&addresses).await {
             match result {
-                Ok(abis) => {
+                Ok((abis, complete)) => {
+                    if !complete {
+                        sh_warn!("Only partially resolved proxy ABI chain for {address}")?;
+                    }
                     for abi in abis {
                         builder = builder.with_address_events(address, &abi);
                     }

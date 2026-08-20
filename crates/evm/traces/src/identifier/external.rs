@@ -210,17 +210,18 @@ impl ExternalIdentifier {
         }
     }
 
-    /// Fetches all verified ABIs for each address using the configured external sources.
+    /// Fetches all verified ABIs and whether each proxy chain was fully resolved.
     pub async fn get_abis(
         &mut self,
         addresses: &[Address],
-    ) -> Vec<(Address, eyre::Result<Vec<JsonAbi>>)> {
+    ) -> Vec<(Address, eyre::Result<(Vec<JsonAbi>, bool)>)> {
         const MAX_PROXY_DEPTH: usize = 16;
 
         struct Chain {
             current: Option<Address>,
             visited: HashSet<Address>,
             abis: Vec<JsonAbi>,
+            complete: bool,
         }
 
         let mut chains = addresses
@@ -229,6 +230,7 @@ impl ExternalIdentifier {
                 current: Some(address),
                 visited: HashSet::default(),
                 abis: Vec::new(),
+                complete: true,
             })
             .collect::<Vec<_>>();
 
@@ -247,16 +249,23 @@ impl ExternalIdentifier {
                 let Some(current) = chain.current else { continue };
                 if !chain.visited.insert(current) {
                     chain.current = None;
+                    chain.complete = false;
                     continue;
                 }
                 let Some((_, Some(metadata))) = self.contracts.get(&current) else {
                     chain.current = None;
+                    chain.complete = false;
                     continue;
                 };
                 if let Ok(abi) = metadata.abi() {
                     chain.abis.push(abi);
+                } else {
+                    chain.complete = false;
                 }
                 chain.current = (metadata.proxy != 0).then_some(metadata.implementation).flatten();
+                if metadata.proxy != 0 && chain.current.is_none() {
+                    chain.complete = false;
+                }
                 has_next |= chain.current.is_some();
             }
             if !has_next {
@@ -267,11 +276,12 @@ impl ExternalIdentifier {
         chains
             .into_iter()
             .zip(addresses.iter().copied())
-            .map(|(chain, address)| {
+            .map(|(mut chain, address)| {
+                chain.complete &= chain.current.is_none();
                 let result = if chain.abis.is_empty() {
                     Err(eyre::eyre!("external ABI lookup failed"))
                 } else {
-                    Ok(chain.abis.into_iter().rev().collect())
+                    Ok((chain.abis.into_iter().rev().collect(), chain.complete))
                 };
                 (address, result)
             })
@@ -932,14 +942,19 @@ mod tests {
             .cache_fetched(implementation_address, (FetcherKind::Etherscan, Some(implementation)));
 
         let mut results = identifier.get_abis(&[proxy]).await;
-        let (result_address, abis) = results.pop().unwrap();
-        let event_names = abis
-            .unwrap()
-            .into_iter()
-            .map(|abi| abi.events.into_keys().next().unwrap())
-            .collect::<Vec<_>>();
+        let (result_address, result) = results.pop().unwrap();
+        let (abis, complete) = result.unwrap();
+        let event_names =
+            abis.into_iter().map(|abi| abi.events.into_keys().next().unwrap()).collect::<Vec<_>>();
 
         assert_eq!(result_address, proxy);
+        assert!(complete);
         assert_eq!(event_names, ["ImplementationEvent", "ProxyEvent"]);
+
+        identifier.contracts.remove(&implementation_address);
+        let (_, result) = identifier.get_abis(&[proxy]).await.pop().unwrap();
+        let (abis, complete) = result.unwrap();
+        assert_eq!(abis.len(), 1);
+        assert!(!complete);
     }
 }

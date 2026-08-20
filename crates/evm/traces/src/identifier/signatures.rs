@@ -342,12 +342,17 @@ impl SignaturesIdentifier {
 
         let mut cache_r = self.0.cache.read().await;
         if let Some(client) = &self.0.client {
-            let query =
-                selectors.iter().copied().filter(|v| !cache_r.contains_key(v)).collect::<Vec<_>>();
-            if !query.is_empty() {
+            if selectors.iter().any(|selector| !cache_r.contains_key(selector)) {
                 drop(cache_r);
                 let mut cache_w = self.0.cache.write().await;
-                if let Ok(res) = client.decode_selectors(&query).await {
+                let query = selectors
+                    .iter()
+                    .copied()
+                    .filter(|selector| !cache_w.contains_key(selector))
+                    .collect::<Vec<_>>();
+                if !query.is_empty()
+                    && let Ok(res) = client.decode_selectors(&query).await
+                {
                     for (selector, signatures) in std::iter::zip(query, res) {
                         cache_w.signatures.insert(selector, signatures.into_iter().next());
                     }
