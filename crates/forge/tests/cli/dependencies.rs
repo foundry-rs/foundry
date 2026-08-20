@@ -3,6 +3,7 @@
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 use soldeer_core::lock::{GitLockEntry, HttpLockEntry, LockEntry};
 use std::fs;
+use std::process::Command;
 
 /// Writes a synthetic `soldeer.lock` with an HTTP-sourced and a Git-sourced dependency, using
 /// Soldeer's own lockfile serializer so the fixture always matches the real on-disk schema. Also
@@ -189,4 +190,71 @@ forgetest_init!(dependencies_excludes_soldeer_entry_missing_from_disk, |prj, cmd
         parsed.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
     assert!(!names.contains(&"test-dep"), "test-dep leaked into --json output:\n{json}");
     assert!(names.contains(&"git-dep"), "git-dep missing from --json output:\n{json}");
+});
+
+// `Git`'s commands (including `git submodule status`) all run with the project root as their
+// working directory, so `submodule.path()` is already relative to the project root regardless of
+// nesting - `git submodule status` prints paths relative to cwd, not the Git repository root.
+// When the project root sits below the Git root (a nested monorepo layout, e.g. a `--root
+// apps/contracts` project inside a bigger repo), the path must stay project-relative (`lib/dep`)
+// rather than leaking the Git root's view of it (`apps/contracts/lib/dep`), and the one place
+// that genuinely needs the Git-root-relative form - the `git config submodule.<path>.url` lookup,
+// since `.gitmodules` always keys on repo-root-relative paths - must still resolve correctly.
+forgetest_init!(dependencies_rebases_nested_project_submodule_paths, |prj, cmd| {
+    let remote = tempfile::tempdir().unwrap();
+    let run_git = |args: &[&str], cwd: &std::path::Path| {
+        let status = Command::new("git").args(args).current_dir(cwd).status().unwrap();
+        assert!(status.success(), "git {args:?} failed in {}", cwd.display());
+    };
+    run_git(&["init", "-q", "-b", "main"], remote.path());
+    run_git(&["commit", "-q", "--allow-empty", "-m", "init"], remote.path());
+
+    let nested_root = prj.root().join("apps/contracts");
+    fs::create_dir_all(&nested_root).unwrap();
+
+    run_git(
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            remote.path().to_str().unwrap(),
+            "apps/contracts/lib/dep",
+        ],
+        prj.root(),
+    );
+    run_git(&["add", "-A"], prj.root());
+    run_git(&["commit", "-q", "-m", "add nested submodule"], prj.root());
+
+    let output = cmd
+        .args(["dependencies", "--root"])
+        .arg(&nested_root)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("lib/dep"), "expected project-relative path lib/dep:\n{output}");
+    assert!(
+        !output.contains("apps/contracts/lib/dep"),
+        "path leaked the Git root's view instead of staying project-relative:\n{output}"
+    );
+
+    let json = cmd
+        .forge_fuse()
+        .args(["dependencies", "--json", "--root"])
+        .arg(&nested_root)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let entries = parsed.as_array().unwrap();
+    let dep = entries.iter().find(|e| e["name"] == "dep").unwrap_or_else(|| {
+        panic!("expected a submodule named 'dep' in {json}");
+    });
+    assert_eq!(dep["path"], "lib/dep");
+    assert_eq!(
+        dep["url"].as_str().unwrap(),
+        remote.path().to_str().unwrap(),
+        "submodule_url lookup must still resolve via the Git-root-relative path"
+    );
 });
