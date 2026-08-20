@@ -37,7 +37,7 @@ use foundry_common::{
     compile::ContractSizeLimits,
     shell,
 };
-use foundry_compilers::ArtifactId;
+use foundry_compilers::{ArtifactId, artifacts::output_selection::ContractOutputSelection};
 use foundry_config::{
     Config, Eip1559FeeEstimatePreset, FoundryHardfork, figment,
     figment::{
@@ -347,6 +347,9 @@ impl ScriptArgs {
 
         tempo.resolve_expires();
         config.tracing = args.tracing.resolve(&config.tracing, evm_opts.verbosity);
+        if args.debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+            config.extra_output.push(ContractOutputSelection::StorageLayout);
+        }
 
         let script_config =
             ScriptConfig::new(config, evm_opts, args.batch, tempo, args.sender_nonce).await?;

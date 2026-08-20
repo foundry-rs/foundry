@@ -139,9 +139,8 @@ impl DebuggerBuilder {
         let slot_identifiers = contract_identifiers
             .into_iter()
             .filter_map(|(address, identifier)| {
-                let (_, contract) = known_contracts
-                    .iter()
-                    .find(|(artifact, _)| artifact.identifier() == identifier)?;
+                let (_, contract) =
+                    known_contracts.find_by_name_or_identifier(&identifier).ok().flatten()?;
                 let layout = contract.storage_layout.clone()?;
                 Some((address, SlotIdentifier::new(layout)))
             })
