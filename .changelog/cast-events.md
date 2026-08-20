@@ -1,6 +1,5 @@
 ---
 cast: minor
-foundry-common: patch
 foundry-evm-traces: minor
 ---
 

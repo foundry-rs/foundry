@@ -64,7 +64,6 @@ use monad::{IMonadStaking, IMonadStakingSyscalls, IReserveBalance};
 type MonadHardfork = ();
 type AddressEvents = HashMap<Address, BTreeMap<(B256, usize), Vec<Event>>>;
 type AddressAnonymousEvents = HashMap<Address, BTreeMap<usize, Vec<Event>>>;
-type AnonymousEvents = BTreeMap<usize, Vec<Event>>;
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
@@ -94,10 +93,12 @@ impl CallTraceDecoderBuilder {
         self
     }
 
-    /// Add an ABI for a specific contract address.
+    /// Add events from an ABI for a specific contract address.
     #[inline]
-    pub fn with_address_abi(mut self, address: Address, abi: &JsonAbi) -> Self {
-        self.decoder.collect_abi(abi, Some(address), false);
+    pub fn with_address_events(mut self, address: Address, abi: &JsonAbi) -> Self {
+        for event in abi.events() {
+            self.decoder.push_address_event(address, event.clone());
+        }
         self
     }
 
@@ -249,8 +250,6 @@ pub struct CallTraceDecoder {
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// Events identified for a specific contract address.
     events_by_address: Option<Box<AddressEvents>>,
-    /// All known anonymous events, keyed by topic count.
-    anonymous_events: AnonymousEvents,
     /// Anonymous events identified for a specific contract address, keyed by topic count.
     anonymous_events_by_address: Option<Box<AddressAnonymousEvents>>,
     /// Revert decoder. Contains all known custom errors.
@@ -474,7 +473,6 @@ impl CallTraceDecoder {
             constructor_args_offsets: Default::default(),
             events,
             events_by_address: None,
-            anonymous_events: Default::default(),
             anonymous_events_by_address: None,
             // Decode Tempo precompile custom errors by name in traces.
             revert_decoder: RevertDecoder::new().with_abis(tempo_abis.iter()),
@@ -587,13 +585,6 @@ impl CallTraceDecoder {
 
     /// Adds a single event to the decoder.
     pub fn push_event(&mut self, event: Event) {
-        if event.anonymous {
-            let events = self.anonymous_events.entry(indexed_inputs(&event)).or_default();
-            if !events.contains(&event) {
-                events.push(event);
-            }
-            return;
-        }
         self.events.entry((event.selector(), indexed_inputs(&event))).or_default().push(event);
     }
 
@@ -822,17 +813,10 @@ impl CallTraceDecoder {
         {
             self.constructors_by_address.entry(address).or_insert_with(|| constructor.clone());
         }
-        for event in abi.events() {
-            if let Some(address) = address
-                && !global
-            {
-                self.push_address_event(address, event.clone());
-            }
-            if global {
+        if global {
+            for event in abi.events() {
                 self.push_event(event.clone());
             }
-        }
-        if global {
             for error in abi.errors() {
                 self.push_error(error.clone());
             }
@@ -1389,7 +1373,7 @@ impl CallTraceDecoder {
 
     /// Decodes an event.
     pub async fn decode_event(&self, log: &LogData) -> DecodedCallLog {
-        self.decode_event_inner(None, log).await
+        self.decode_event_inner(None, log, false).await
     }
 
     /// Decodes an event emitted by a known address.
@@ -1398,10 +1382,24 @@ impl CallTraceDecoder {
         address: Address,
         log: &LogData,
     ) -> DecodedCallLog {
-        self.decode_event_inner(Some(address), log).await
+        self.decode_event_inner(Some(address), log, false).await
     }
 
-    async fn decode_event_inner(&self, address: Option<Address>, log: &LogData) -> DecodedCallLog {
+    /// Decodes an event emitted by a known address, using its canonical signature as the name.
+    pub async fn decode_event_with_address_signature(
+        &self,
+        address: Address,
+        log: &LogData,
+    ) -> DecodedCallLog {
+        self.decode_event_inner(Some(address), log, true).await
+    }
+
+    async fn decode_event_inner(
+        &self,
+        address: Option<Address>,
+        log: &LogData,
+        canonical_signature: bool,
+    ) -> DecodedCallLog {
         let regular_events = log.topics().first().and_then(|&topic| {
             let key = (topic, log.topics().len() - 1);
             address
@@ -1411,18 +1409,21 @@ impl CallTraceDecoder {
         });
         let anonymous_events = address
             .and_then(|address| self.anonymous_events_by_address.as_deref()?.get(&address))
-            .and_then(|events| events.get(&log.topics().len()))
-            .or_else(|| self.anonymous_events.get(&log.topics().len()));
+            .and_then(|events| events.get(&log.topics().len()));
 
-        if let Some(decoded) =
-            self.decode_event_candidates(address, log, regular_events.into_iter().flatten())
-        {
+        if let Some(decoded) = self.decode_event_candidates(
+            address,
+            log,
+            regular_events.into_iter().flatten(),
+            canonical_signature,
+        ) {
             return decoded;
         }
         if let Some(decoded) = self.decode_unique_event_candidates(
             address,
             log,
             anonymous_events.into_iter().flatten(),
+            canonical_signature,
         ) {
             return decoded;
         }
@@ -1436,7 +1437,9 @@ impl CallTraceDecoder {
             && let Some(event) = identifier.identify_event(topic).await
         {
             let event = get_indexed_event(event, log);
-            if let Some(decoded) = self.decode_event_candidates(address, log, [&event]) {
+            if let Some(decoded) =
+                self.decode_event_candidates(address, log, [&event], canonical_signature)
+            {
                 return decoded;
             }
         }
@@ -1449,12 +1452,17 @@ impl CallTraceDecoder {
         address: Option<Address>,
         log: &LogData,
         events: impl IntoIterator<Item = &'a Event>,
+        canonical_signature: bool,
     ) -> Option<DecodedCallLog> {
         for event in events {
             if let Ok(decoded) = event.decode_log(log) {
                 let params = reconstruct_params(event, &decoded);
                 return Some(DecodedCallLog {
-                    name: Some(event.name.clone()),
+                    name: Some(if canonical_signature {
+                        event.signature()
+                    } else {
+                        event.name.clone()
+                    }),
                     params: Some(
                         params
                             .into_iter()
@@ -1486,10 +1494,11 @@ impl CallTraceDecoder {
         address: Option<Address>,
         log: &LogData,
         events: impl IntoIterator<Item = &'a Event>,
+        canonical_signature: bool,
     ) -> Option<DecodedCallLog> {
-        let mut decoded = events
-            .into_iter()
-            .filter_map(|event| self.decode_event_candidates(address, log, [event]));
+        let mut decoded = events.into_iter().filter_map(|event| {
+            self.decode_event_candidates(address, log, [event], canonical_signature)
+        });
         let event = decoded.next()?;
         decoded.next().is_none().then_some(event)
     }
@@ -1895,27 +1904,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn globally_registered_anonymous_event_decodes() {
-        let abi = JsonAbi::parse(["event AnonymousValue(uint256 value) anonymous"]).unwrap();
-        let decoder = CallTraceDecoderBuilder::new().with_abi(&abi).build();
-        let log = LogData::new_unchecked(Vec::new(), (U256::from(7),).abi_encode().into());
+    async fn address_scoped_abis_decode_all_registered_events() {
+        let address = Address::from([0x12; 20]);
+        let proxy = JsonAbi::parse(["event ProxyEvent()"]).unwrap();
+        let implementation = JsonAbi::parse(["event ImplementationEvent()"]).unwrap();
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_address_events(address, &implementation)
+            .with_address_events(address, &proxy)
+            .build();
 
-        let decoded = decoder.decode_event(&log).await;
-
-        assert_eq!(decoded.name.as_deref(), Some("AnonymousValue"));
-        assert_eq!(decoded.params.unwrap(), [("value".to_string(), "7".to_string())]);
+        for event in proxy.events().chain(implementation.events()) {
+            let log = LogData::new_unchecked(vec![event.selector()], Default::default());
+            let decoded = decoder.decode_event_with_address(address, &log).await;
+            assert_eq!(decoded.name.as_deref(), Some(event.name.as_str()));
+            assert!(decoder.decode_event_with_address(Address::ZERO, &log).await.name.is_none());
+        }
     }
 
     #[tokio::test]
-    async fn ambiguous_anonymous_events_do_not_decode() {
+    async fn address_scoped_anonymous_events_require_a_unique_match() {
         let address = Address::from([0x12; 20]);
+        let abi = JsonAbi::parse(["event AnonymousValue(uint256 value) anonymous"]).unwrap();
+        let log = LogData::new_unchecked(Vec::new(), (U256::from(7),).abi_encode().into());
+        let decoded = CallTraceDecoderBuilder::new()
+            .with_address_events(address, &abi)
+            .build()
+            .decode_event_with_address(address, &log)
+            .await;
+        assert_eq!(decoded.name.as_deref(), Some("AnonymousValue"));
+
         let abi = JsonAbi::parse([
             "event AnonymousValue(uint256 value) anonymous",
             "event AnonymousAmount(uint256 amount) anonymous",
         ])
         .unwrap();
-        let decoder = CallTraceDecoderBuilder::new().with_address_abi(address, &abi).build();
-        let log = LogData::new_unchecked(Vec::new(), (U256::from(7),).abi_encode().into());
+        let decoder = CallTraceDecoderBuilder::new().with_address_events(address, &abi).build();
 
         let decoded = decoder.decode_event_with_address(address, &log).await;
 

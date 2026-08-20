@@ -3,7 +3,7 @@ use alloy_dyn_abi::{DynSolType, DynSolValue, Specifier};
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Event;
 use alloy_network::{AnyNetwork, Network};
-use alloy_primitives::{Address, B256, hex::FromHex};
+use alloy_primitives::{Address, B256, TxHash, hex::FromHex};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet, Topic};
 use clap::Parser;
@@ -104,6 +104,21 @@ impl LogsArgs {
 }
 
 impl LogQueryArgs {
+    /// Takes a lone positional transaction hash, if present.
+    pub(super) fn take_transaction_hash(&mut self) -> Option<TxHash> {
+        if self.from_block.is_none()
+            && self.to_block.is_none()
+            && self.address.is_none()
+            && self.topics_or_args.is_empty()
+            && self.query_size.is_none()
+            && let Some(tx_hash) = self.sig_or_topic.as_deref().and_then(|value| value.parse().ok())
+        {
+            self.sig_or_topic = None;
+            return Some(tx_hash);
+        }
+        None
+    }
+
     /// Resolves names and block tags and builds the RPC filter.
     pub async fn resolve<P, N>(self, provider: &P) -> Result<(Filter, Option<u64>)>
     where

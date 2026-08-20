@@ -3560,10 +3560,10 @@ contract EventEmitter {
     let tx_hash = receipt["transactionHash"].as_str().unwrap();
 
     cmd.cast_fuse()
-        .args(["--quiet", "events", "--tx-hash", tx_hash, "--rpc-url", &endpoint])
+        .args(["--quiet", "events", tx_hash, "--rpc-url", &endpoint])
         .assert_success()
         .stdout_eq(str![[r#"
-[block 2, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3::Transfer(from: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, to: 0x5FbDB2315678afecb367f032d93F642f64180aa3, amount: 42)
+[block 2, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3::Transfer(address,address,uint256) { from: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, to: 0x5FbDB2315678afecb367f032d93F642f64180aa3, amount: 42 }
 
 "#]]);
 });
