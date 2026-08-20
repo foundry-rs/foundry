@@ -621,7 +621,14 @@ impl TUIContext<'_> {
         storage_access_at(self.debug_steps(), self.current_step).map(|access| {
             let values = (access.space() == StorageSpace::Persistent)
                 .then(|| storage_values(&self.storage_accesses(access.space())));
-            let label = self.storage_label(access.space(), access.slot(), values.as_ref());
+            let next_values = (access.space() == StorageSpace::Persistent)
+                .then(|| self.next_storage_write_values());
+            let label = self.storage_label(
+                access.space(),
+                access.slot(),
+                values.as_ref(),
+                next_values.as_ref(),
+            );
             storage_access_line(access, label.as_deref())
         })
     }
@@ -637,6 +644,8 @@ impl TUIContext<'_> {
     fn draw_storage(&mut self, f: &mut Frame<'_>, area: Rect, space: StorageSpace) {
         let accesses = self.storage_accesses(space);
         let values = (space == StorageSpace::Persistent).then(|| storage_values(&accesses));
+        let next_values =
+            (space == StorageSpace::Persistent).then(|| self.next_storage_write_values());
         let current_slot = storage_access_at(self.debug_steps(), self.current_step)
             .filter(|access| access.space() == space)
             .map(StorageAccess::slot);
@@ -650,7 +659,8 @@ impl TUIContext<'_> {
             .enumerate()
             .skip(self.draw_memory.current_storage_startline)
             .flat_map(|(index, access)| {
-                let label = self.storage_label(space, access.slot(), values.as_ref());
+                let label =
+                    self.storage_label(space, access.slot(), values.as_ref(), next_values.as_ref());
                 storage_slot_lines(
                     index,
                     index_width,

@@ -1,7 +1,8 @@
 //! Debugger context and event handler implementation.
 
 use super::storage::{
-    StorageAccess, StorageSpace, hex_u256, storage_access_at, storage_accesses_until,
+    StorageAccess, StorageSpace, hex_u256, next_storage_write_values, storage_access_at,
+    storage_accesses_until,
 };
 use crate::{DebugNode, DebuggerLayout, ExitReason, debugger::DebuggerContext};
 use alloy_primitives::{
@@ -211,6 +212,7 @@ impl<'a> TUIContext<'a> {
         space: StorageSpace,
         slot: U256,
         storage_values: Option<&B256Map<B256>>,
+        next_values: Option<&B256Map<B256>>,
     ) -> Option<String> {
         if space != StorageSpace::Persistent {
             return None;
@@ -222,7 +224,20 @@ impl<'a> TUIContext<'a> {
             .or_else(|| {
                 storage_values.and_then(|values| identifier.identify_bytes_or_string(&slot, values))
             })
+            .or_else(|| {
+                // Solc writes newly allocated string/bytes payload slots before their base-slot
+                // length, so retry with the next write values when the current state is stale.
+                next_values.and_then(|values| identifier.identify_bytes_or_string(&slot, values))
+            })
             .map(|info| info.label)
+    }
+
+    pub(super) fn next_storage_write_values(&self) -> B256Map<B256> {
+        next_storage_write_values(
+            self.debug_arena(),
+            self.draw_memory.inner_call_index,
+            self.current_step,
+        )
     }
 
     fn active_data_len(&self) -> usize {
@@ -2325,7 +2340,7 @@ mod tests {
     }
 
     #[test]
-    fn labels_long_string_data_slots() {
+    fn labels_long_string_data_slots_written_before_length() {
         let address = Address::repeat_byte(1);
         let type_id = "t_string_storage".to_string();
         let identifier = SlotIdentifier::new(Arc::new(StorageLayout {
@@ -2350,36 +2365,43 @@ mod tests {
             )]),
         }));
         let data_slot = U256::from_be_bytes(keccak256(B256::ZERO).0);
-        let mut base_access = step(1);
-        base_access.storage_change = Some(Box::new(StorageChange {
-            key: U256::ZERO,
-            value: U256::from(40 * 2 + 1),
-            had_value: None,
-            reason: StorageChangeReason::SLOAD,
-        }));
-        let mut data_access = step(2);
+        let mut data_access = step(1);
         data_access.storage_change = Some(Box::new(StorageChange {
             key: data_slot,
             value: U256::ZERO,
             had_value: None,
-            reason: StorageChangeReason::SLOAD,
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut base_access = step(2);
+        base_access.storage_change = Some(Box::new(StorageChange {
+            key: U256::ZERO,
+            value: U256::from(40 * 2 + 1),
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
         }));
         let mut context = context_with_arena(vec![DebugNode::new(
             address,
             CallKind::Call,
-            vec![base_access, data_access],
+            vec![data_access, base_access],
             Bytes::new(),
             0,
             None,
         )]);
         context.slot_identifiers = Some(AddressHashMap::from_iter([(address, identifier)]));
         let mut tui = TUIContext::new(&mut context);
-        tui.current_step = 1;
+        tui.current_step = 0;
         let accesses = tui.storage_accesses(StorageSpace::Persistent);
         let values = storage_values(&accesses);
+        let next_values = tui.next_storage_write_values();
 
         assert_eq!(
-            tui.storage_label(StorageSpace::Persistent, data_slot, Some(&values)).as_deref(),
+            tui.storage_label(
+                StorageSpace::Persistent,
+                data_slot,
+                Some(&values),
+                Some(&next_values),
+            )
+            .as_deref(),
             Some("text[0]")
         );
     }
