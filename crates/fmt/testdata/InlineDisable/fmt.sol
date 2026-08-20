@@ -540,3 +540,7 @@ struct StructTrailingDisableStart {
 }
 contract  DisabledSuffix3 {}
 // forgefmt: disable-end
+
+contract IsolationBefore {}
+
+contract  IsolationDisabledLine {} // forgefmt: disable-line

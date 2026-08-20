@@ -88,13 +88,15 @@ impl<'ast> State<'_, 'ast> {
         if !item_needs_iso(&next_item.kind) {
             return;
         }
-        // Never isolate items within a disabled region, where the source layout is preserved
-        // verbatim. The cursor sits right past the line break that follows the previous item, so
-        // check the byte that was last copied from the source.
+        // Never isolate items within a `disable-start`/`disable-end` region, where the source
+        // layout is preserved verbatim. The cursor sits right past the line break that follows the
+        // previous item, so check the byte that was last copied from the source. Line-based
+        // directives such as `disable-line` only opt out of formatting that line's contents, so
+        // they keep the isolation break.
         if self.cursor.pos > BytePos(0)
             && self
                 .inline_config
-                .is_disabled(Span::new(self.cursor.pos - BytePos(1), self.cursor.pos))
+                .is_disabled_block(Span::new(self.cursor.pos - BytePos(1), self.cursor.pos))
         {
             return;
         }

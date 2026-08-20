@@ -514,3 +514,6 @@ contract  DisabledSuffix2 {}
 struct StructTrailingDisableStart { uint256  a; } // forgefmt: disable-start
 contract  DisabledSuffix3 {}
 // forgefmt: disable-end
+
+contract IsolationBefore {}
+contract  IsolationDisabledLine {} // forgefmt: disable-line
