@@ -80,11 +80,11 @@ fn handle_revert(
         return Ok(());
     };
 
-    if !expected_reason.is_empty() && retdata.is_empty() {
-        bail!("call reverted as expected, but without data");
-    }
-
-    let mut actual_revert: Vec<u8> = retdata.to_vec();
+    let mut actual_revert = if retdata.is_empty() && !expected_reason.is_empty() {
+        RevertDecoder::new().decode(retdata, Some(status)).into_bytes()
+    } else {
+        retdata.to_vec()
+    };
 
     // Compare only the first 4 bytes if partial match.
     if revert_params.partial_match() && actual_revert.get(..4) == expected_reason.get(..4) {
