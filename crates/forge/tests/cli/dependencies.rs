@@ -370,3 +370,186 @@ forgetest_init!(dependencies_resolves_url_by_gitmodules_section_name, |prj, cmd|
         "URL lookup must resolve via the .gitmodules section name, not the path text"
     );
 });
+
+// `git submodule status` prints `U<40 zeros> path` for a submodule with an unresolved merge
+// conflict - `Submodule`'s status-line regex only recognizes ` `/`+`/`-` prefixes, not `U`, so
+// parsing the *entire* `git submodule status` output fails, not just that one line. Silently
+// falling back to an empty list here would print "No dependencies found" while the repo is
+// mid-conflict, which is exactly the "looks empty but isn't" failure mode this command exists to
+// avoid - it should fail loudly instead.
+forgetest_init!(dependencies_errors_loudly_on_conflicted_submodule, |prj, cmd| {
+    let remote = tempfile::tempdir().unwrap();
+    let run_git = |args: &[&str], cwd: &std::path::Path| {
+        let status = Command::new("git").args(args).current_dir(cwd).status().unwrap();
+        assert!(status.success(), "git {args:?} failed in {}", cwd.display());
+    };
+    let rev_parse = |cwd: &std::path::Path| -> String {
+        let output =
+            Command::new("git").args(["rev-parse", "HEAD"]).current_dir(cwd).output().unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+    // `forgetest_init!`'s project has an initialized `.git` but no commits yet (an unborn HEAD) -
+    // give it one so there's a real commit to branch from below.
+    run_git(&["add", "-A"], prj.root());
+    run_git(&["commit", "-q", "-m", "test setup"], prj.root());
+    let default_branch = {
+        let output = Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(prj.root())
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+
+    // Two divergent commits in the remote, neither an ancestor of the other, so pinning the
+    // submodule to each on separate branches produces a real (non-fast-forwardable) conflict.
+    run_git(&["init", "-q", "-b", "main"], remote.path());
+    fs::write(remote.path().join("file.txt"), "base").unwrap();
+    run_git(&["add", "-A"], remote.path());
+    run_git(&["commit", "-q", "-m", "base"], remote.path());
+    let rev_base = rev_parse(remote.path());
+    run_git(&["checkout", "-q", "-b", "branch-a"], remote.path());
+    fs::write(remote.path().join("file.txt"), "a").unwrap();
+    run_git(&["commit", "-q", "-am", "a"], remote.path());
+    let rev_a = rev_parse(remote.path());
+    run_git(&["checkout", "-q", "main"], remote.path());
+    run_git(&["checkout", "-q", "-b", "branch-b"], remote.path());
+    fs::write(remote.path().join("file.txt"), "b").unwrap();
+    run_git(&["commit", "-q", "-am", "b"], remote.path());
+    let rev_b = rev_parse(remote.path());
+
+    run_git(
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            remote.path().to_str().unwrap(),
+            "lib/dep",
+        ],
+        prj.root(),
+    );
+    let submodule_path = prj.root().join("lib/dep");
+    // `submodule add` checks out whatever the remote's HEAD happened to point at (`branch-b`,
+    // the last branch checked out above) - reset to the shared base first so `feature` and
+    // `other` below actually diverge from a common ancestor, instead of one of them being a
+    // no-op relative to what got cloned (which merges cleanly instead of conflicting).
+    run_git(&["checkout", "-q", &rev_base], &submodule_path);
+    run_git(&["add", "-A"], prj.root());
+    run_git(&["commit", "-q", "-m", "add submodule"], prj.root());
+
+    run_git(&["checkout", "-q", "-b", "feature"], prj.root());
+    run_git(&["checkout", "-q", &rev_a], &submodule_path);
+    run_git(&["commit", "-q", "-am", "pin branch-a"], prj.root());
+
+    run_git(&["checkout", "-q", &default_branch], prj.root());
+    run_git(&["checkout", "-q", "-b", "other"], prj.root());
+    run_git(&["checkout", "-q", &rev_b], &submodule_path);
+    run_git(&["commit", "-q", "-am", "pin branch-b"], prj.root());
+
+    // This merge is expected to conflict - don't assert success.
+    let _ =
+        Command::new("git").args(["merge", "feature"]).current_dir(prj.root()).output().unwrap();
+    assert!(
+        Command::new("git")
+            .args(["status", "--short"])
+            .current_dir(prj.root())
+            .output()
+            .unwrap()
+            .stdout
+            .starts_with(b"UU"),
+        "expected the merge to leave lib/dep conflicted - test setup didn't reproduce a real conflict"
+    );
+
+    cmd.arg("dependencies").assert_failure().stderr_eq(str![[r#"
+Error: Invalid submodule status format
+
+"#]]);
+});
+
+// `git submodule add` populates both `.gitmodules` and the local `.git/config` with matching
+// `submodule.<name>.url` entries, but they can drift apart in the wild - a submodule registered
+// in `.gitmodules` whose local config entry was never populated (`git submodule init` never run)
+// or got removed still has a real URL recorded in `.gitmodules` itself. The URL lookup must not
+// depend on the local config copy existing.
+forgetest_init!(dependencies_resolves_url_when_never_locally_initialized, |prj, cmd| {
+    let remote = tempfile::tempdir().unwrap();
+    let run_git = |args: &[&str], cwd: &std::path::Path| {
+        let status = Command::new("git").args(args).current_dir(cwd).status().unwrap();
+        assert!(status.success(), "git {args:?} failed in {}", cwd.display());
+    };
+    run_git(&["init", "-q", "-b", "main"], remote.path());
+    run_git(&["commit", "-q", "--allow-empty", "-m", "init"], remote.path());
+
+    run_git(
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            remote.path().to_str().unwrap(),
+            "lib/dep",
+        ],
+        prj.root(),
+    );
+    run_git(&["add", "-A"], prj.root());
+    run_git(&["commit", "-q", "-m", "add submodule"], prj.root());
+
+    // Simulate the drift: strip the local config copy, leaving only `.gitmodules`'s.
+    run_git(&["config", "--unset", "submodule.lib/dep.url"], prj.root());
+    assert!(
+        Command::new("git")
+            .args(["config", "--get", "submodule.lib/dep.url"])
+            .current_dir(prj.root())
+            .status()
+            .unwrap()
+            .code()
+            != Some(0),
+        "test setup didn't actually remove the local config entry"
+    );
+
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let dep = parsed.as_array().unwrap().iter().find(|e| e["name"] == "dep").unwrap_or_else(|| {
+        panic!("expected a 'dep' submodule in {json}");
+    });
+    assert_eq!(
+        dep["url"].as_str().unwrap(),
+        remote.path().to_str().unwrap(),
+        "URL should still resolve from .gitmodules even with no local config entry"
+    );
+});
+
+// `git submodule status` always reports the full 40-char checkout SHA, but a `foundry.lock`
+// `Rev`-variant entry (from `forge install dep@<rev>`) stores whatever the user typed verbatim -
+// an abbreviated hash is common and still accurate. A bare string-equality check between the two
+// would reject a genuinely matching pin just because it's shorter, degrading the display to a
+// bare `rev=` instead of the pinned lockfile entry.
+forgetest_init!(dependencies_matches_abbreviated_rev_lockfile_entry, |prj, cmd| {
+    let actual_rev = checked_out_rev(&prj.root().join("lib/forge-std"));
+    let abbreviated = &actual_rev[..10];
+    fs::write(
+        prj.root().join("foundry.lock"),
+        format!(
+            r#"{{
+  "lib/forge-std": {{
+    "rev": "{abbreviated}"
+  }}
+}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let output = cmd.arg("dependencies").assert_success().get_output().stdout_lossy();
+    assert!(
+        output.contains(&format!("rev={abbreviated}")),
+        "expected the pinned abbreviated rev, not a fallback to the full checkout hash:\n{output}"
+    );
+    assert!(
+        !output.contains(&format!("rev={actual_rev}")),
+        "should show the lockfile's abbreviated form, not the full hash:\n{output}"
+    );
+});

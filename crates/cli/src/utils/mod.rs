@@ -976,27 +976,45 @@ ignore them in the `.gitignore` file."
             .cmd()
             .args(["config", "--null", "--file"])
             .arg(&gitmodules)
-            .args(["--get-regexp", r"^submodule\..*\.path$"])
+            .args(["--get-regexp", r"^submodule\..*\.(path|url)$"])
             .output()?;
         if output.status.code() != Some(0) {
             return Ok(None);
         }
 
-        let mut name = None;
+        // Collect both fields per section - `--get-regexp`'s output order isn't guaranteed to
+        // put `path` before `url` for the same section, so a single-pass match-then-break (as a
+        // prior version of this function did) can miss the url.
+        let mut sections: BTreeMap<String, (Option<PathBuf>, Option<String>)> = BTreeMap::new();
         for entry in output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty()) {
             let Some(separator) = entry.iter().position(|byte| *byte == b'\n') else { continue };
             let key = std::str::from_utf8(&entry[..separator])?;
             let value = std::str::from_utf8(&entry[separator + 1..])?;
-            if Path::new(value) == path {
-                name = key
-                    .strip_prefix("submodule.")
-                    .and_then(|k| k.strip_suffix(".path"))
-                    .map(String::from);
-                break;
+            let Some(rest) = key.strip_prefix("submodule.") else { continue };
+            let Some((name, field)) = rest.rsplit_once('.') else { continue };
+            let slot = sections.entry(name.to_string()).or_default();
+            match field {
+                "path" => slot.0 = Some(PathBuf::from(value)),
+                "url" => slot.1 = Some(value.to_string()),
+                _ => {}
             }
         }
-        let Some(name) = name else { return Ok(None) };
 
+        let Some((name, (_, gitmodules_url))) =
+            sections.into_iter().find(|(_, (p, _))| p.as_deref() == Some(path))
+        else {
+            return Ok(None);
+        };
+
+        // `.gitmodules` doesn't always carry the URL itself - some setups rely on a local-only
+        // override (e.g. a `git config` `insteadOf` rewrite, or an entry from `git submodule
+        // sync` that was never re-exported to `.gitmodules`). Prefer `.gitmodules`'s copy when
+        // present; otherwise fall back to the local config entry keyed by the resolved section
+        // name, which is still correct even when `.gitmodules` has it and local config doesn't
+        // (the case a previous version of this function got backwards).
+        if let Some(url) = gitmodules_url {
+            return Ok(Some(url));
+        }
         self.cmd()
             .args(["config", "--get", &format!("submodule.{name}.url")])
             .get_stdout_lossy()

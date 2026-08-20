@@ -89,10 +89,21 @@ impl DependenciesArgs {
 /// to `foundry.lock` - listing is read-only.
 fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     let git = Git::from_config(config);
-    let Ok(submodules) = git.submodules() else {
-        // Not a Git repository, or no submodules registered.
+    let Ok(git_root) = Git::root_of(&config.root) else {
+        // Not a Git repository - no submodules possible.
         return Ok(Vec::new());
     };
+    // Unlike the not-a-repo case above, a failure here is a real problem worth surfacing loudly:
+    // `git submodule status` fails its *entire* output (not just the offending line) if any
+    // submodule anywhere in the repo is merge-conflicted (`U<all-zeros> path`) - `Submodule`'s
+    // status-line regex only recognizes ` `/`+`/`-` prefixes, not `U`. Silently falling back to
+    // an empty list here would print "No dependencies found" while the repo is mid-conflict,
+    // which is exactly the kind of "looks empty but isn't" result this command exists to avoid.
+    // Trade-off worth knowing: this means one conflicted submodule anywhere in a large repo
+    // blocks `forge dependencies` entirely, even for an unrelated project subdirectory - fixing
+    // that needs `Submodule`'s status parsing to tolerate individual bad lines, which is shared
+    // by every other caller of `Git::submodules()` and out of scope here.
+    let submodules = git.submodules()?;
 
     let mut lockfile = Lockfile::new(&config.root);
     if lockfile.exists() {
@@ -117,7 +128,6 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
 
     // `.gitmodules` always keys its `path` field relative to the Git repository root, regardless
     // of invocation cwd - so this is the one place that still needs a Git-root-relative path.
-    let git_root = Git::root_of(&config.root).unwrap_or_else(|_| project_root.clone());
     let project_prefix = project_root.strip_prefix(&git_root).unwrap_or(Path::new(""));
 
     let mut out = Vec::new();
@@ -150,7 +160,14 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
         // misrepresent what's really on disk.
         let version = lockfile
             .get(path)
-            .filter(|dep| dep.rev() == submodule.rev())
+            // `git submodule status` always reports the full 40-char SHA, but a `DepIdentifier::Rev`
+            // entry (from `forge install dep@<rev>`) stores whatever string the user typed
+            // verbatim, abbreviated or not - `Tag`/`Branch` entries are already normalized to a
+            // full SHA via `git.get_rev()`, so a bare `==` silently rejects an accurate,
+            // still-matching abbreviated `Rev` pin. A short hash is only ever the checkout's own
+            // SHA prefixed with itself, never another commit's, so `starts_with` is exact for
+            // full-length revs and correct for abbreviated ones.
+            .filter(|dep| !dep.rev().is_empty() && submodule.rev().starts_with(dep.rev()))
             .map(ToString::to_string)
             .unwrap_or_else(|| format!("rev={}", submodule.rev()));
 
