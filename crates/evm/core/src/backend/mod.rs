@@ -1057,7 +1057,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             let fork_block = tx_block - 1;
             Ok(TransactionForkTarget { fork_block_number: fork_block, transaction: tx, block })
         } else {
-            if self.networks.needs_block_context() {
+            if self.networks.is_monad() {
                 eyre::bail!(
                     "transaction {transaction} is pending and has no canonical block context"
                 );
@@ -1162,7 +1162,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         id: LocalForkId,
         tx: &TxEnvFor<FEN>,
     ) -> eyre::Result<ChainFor<FEN>> {
-        if !self.networks.needs_block_context() {
+        if !self.networks.is_monad() {
             return Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx));
         }
 
@@ -1185,7 +1185,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     pub fn block_context_for_synthetic_transaction(
         &self,
     ) -> eyre::Result<Option<BlockContext<FEN>>> {
-        if !self.networks.needs_block_context() {
+        if !self.networks.is_monad() {
             return Ok(None);
         }
         let Some(id) = self.active_fork_id() else {
@@ -1294,7 +1294,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
         #[cfg(feature = "monad")]
         let context_update = if _affects_active && let Some(tx) = _tx_env {
-            let chain_context = if self.networks.needs_block_context() {
+            let chain_context = if self.networks.is_monad() {
                 let block = backend.get_full_block(context.block_number).wrap_err_with(|| {
                     format!("failed to fetch rolled fork block {}", context.block_number)
                 })?;
@@ -1351,7 +1351,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         tx_env: Option<&TxEnvFor<FEN>>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
-        if !self.networks.needs_block_context() {
+        if !self.networks.is_monad() {
             return self.roll_fork_to_transaction_inner(
                 id,
                 transaction,
@@ -1489,14 +1489,14 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             }
             _ => None,
         };
-        if self.networks.needs_block_context() && transaction_index.is_none() {
+        if self.networks.is_monad() && transaction_index.is_none() {
             eyre::bail!(
                 "transaction {transaction:?} is missing from block {}",
                 block.header().number()
             );
         }
 
-        let block_context = if self.networks.needs_block_context() {
+        let block_context = if self.networks.is_monad() {
             Some(self.block_context_inputs(id, &block)?)
         } else {
             None
@@ -1573,7 +1573,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let ReplayInputs { evm_env, networks } = replay;
         trace!(?tx_hash, "replay until transaction");
         eyre::ensure!(
-            !networks.needs_block_context() || block_context.is_some(),
+            !networks.is_monad() || block_context.is_some(),
             "block context is required to replay transactions for this network"
         );
 
@@ -1586,7 +1586,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let Some(target_index) = transactions.iter().position(|tx| tx.tx_hash() == tx_hash) else {
             return Ok(None);
         };
-        if networks.needs_block_context() {
+        if networks.is_monad() {
             eyre::ensure!(
                 fork.position
                     .after_transaction(full_block.header().number(), 0, transactions.len(),)
@@ -2024,7 +2024,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         update_env_block(&mut evm_env, block.header());
         self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
 
-        let current_tx_position = if self.networks.needs_block_context() {
+        let current_tx_position = if self.networks.is_monad() {
             let BlockTransactions::Full(transactions) = block.transactions() else {
                 eyre::bail!("block {} does not contain full transactions", block.header().number());
             };
@@ -2040,7 +2040,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         } else {
             None
         };
-        let block_context = if self.networks.needs_block_context() {
+        let block_context = if self.networks.is_monad() {
             Some(self.block_context_inputs(id, &block)?)
         } else {
             None
