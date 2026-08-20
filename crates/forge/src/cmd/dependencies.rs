@@ -99,6 +99,13 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
         lockfile.read()?;
     }
 
+    // `config.root` isn't guaranteed to be the canonical spelling of the project root - on
+    // macOS, `/tmp/project` (what a user or test harness typically passes) and
+    // `/private/tmp/project` (what `Config::canonic_at` resolves `install_lib_dir` and friends
+    // to) name the same directory but compare unequal as strings. Canonicalize before any
+    // `strip_prefix`/path-arithmetic, matching `Lockfile::check`'s own handling of this.
+    let project_root = dunce::canonicalize(&config.root).unwrap_or_else(|_| config.root.clone());
+
     // `Git`'s commands all run with `config.root` as their working directory (see
     // `Git::from_config`), and `git submodule status` prints paths relative to cwd - so
     // `submodule.path()` below is already relative to the project root, nested-monorepo layout
@@ -106,13 +113,11 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     // the same way, by a `Git` instance rooted the same way - see `install.rs`/`update.rs`), or
     // the displayed path.
     let install_lib_dir = config.install_lib_dir();
-    let lib = install_lib_dir.strip_prefix(&config.root).unwrap_or(install_lib_dir);
+    let lib = install_lib_dir.strip_prefix(&project_root).unwrap_or(install_lib_dir);
 
-    // `.gitmodules` (and therefore `git config submodule.<path>.url`) always keys on the path
-    // relative to the Git repository root, regardless of invocation cwd - so this is the one
-    // place that still needs a Git-root-relative path.
-    let git_root = Git::root_of(&config.root).unwrap_or_else(|_| config.root.clone());
-    let project_root = dunce::canonicalize(&config.root).unwrap_or_else(|_| config.root.clone());
+    // `.gitmodules` always keys its `path` field relative to the Git repository root, regardless
+    // of invocation cwd - so this is the one place that still needs a Git-root-relative path.
+    let git_root = Git::root_of(&config.root).unwrap_or_else(|_| project_root.clone());
     let project_prefix = project_root.strip_prefix(&git_root).unwrap_or(Path::new(""));
 
     let mut out = Vec::new();
@@ -128,14 +133,24 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
         // last-known rev. Match git's own "is this submodule populated" check
         // (`<path>/.git` existing) rather than a bare directory-existence check, since a
         // never-initialized gitlink still leaves behind an empty directory.
-        if !config.root.join(path).join(".git").exists() {
+        if !project_root.join(path).join(".git").exists() {
             continue;
         }
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
 
-        let url = git.submodule_url(&project_prefix.join(path)).ok().flatten();
+        // A `.gitmodules` section name isn't required to match its `path` field (e.g. `git
+        // submodule add --name openzeppelin <url> lib/openzeppelin`), and `git config
+        // submodule.<key>.url` is keyed by the section name - resolve it by path instead of
+        // assuming the two are the same string.
+        let url = git.submodule_url_for_path(&git_root, &project_prefix.join(path)).ok().flatten();
+
+        // Prefer `foundry.lock`'s pinned tag/branch, but only when it still matches what's
+        // actually checked out - if the submodule was manually moved to a different commit
+        // (`git submodule status`'s `+` marker), showing the stale locked version would
+        // misrepresent what's really on disk.
         let version = lockfile
             .get(path)
+            .filter(|dep| dep.rev() == submodule.rev())
             .map(ToString::to_string)
             .unwrap_or_else(|| format!("rev={}", submodule.rev()));
 
