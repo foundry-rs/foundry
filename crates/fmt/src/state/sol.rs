@@ -88,6 +88,16 @@ impl<'ast> State<'_, 'ast> {
         if !item_needs_iso(&next_item.kind) {
             return;
         }
+        // Never isolate items within a disabled region, where the source layout is preserved
+        // verbatim. The cursor sits right past the line break that follows the previous item, so
+        // check the byte that was last copied from the source.
+        if self.cursor.pos > BytePos(0)
+            && self
+                .inline_config
+                .is_disabled(Span::new(self.cursor.pos - BytePos(1), self.cursor.pos))
+        {
+            return;
+        }
         let span = next_item.span;
 
         let cmnts = self

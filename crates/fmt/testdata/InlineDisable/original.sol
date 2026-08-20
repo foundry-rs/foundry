@@ -484,3 +484,19 @@ function setNumber(uint256 newNumber, uint256 sjdfasdfasdfasdfasfsdfsadfasdfasdf
     number = newNumber;
     number1 =   newNumber1; // forgefmt: disable-line
 }
+
+// forgefmt: disable-start
+contract  DisabledItemA {}
+contract  DisabledItemB {}
+
+contract  DisabledItemC {}
+// forgefmt: disable-end
+contract EnabledAfterDisabled { uint256  number; }
+
+contract DisabledMemberSeparation {
+    // forgefmt: disable-start
+    function  first() public { number  = 1; }
+    function  second() public { number  = 2; }
+    // forgefmt: disable-end
+    function  third() public { number  = 3; }
+}
