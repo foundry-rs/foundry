@@ -155,10 +155,7 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
         Ok(frame_result)
     }
 
-    fn transact_raw(
-        &mut self,
-        tx: Self::Tx,
-    ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>> {
+    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>> {
         self.ctx().set_tx(tx);
 
         let mut handler = OpEvmHandler::<I>::new();

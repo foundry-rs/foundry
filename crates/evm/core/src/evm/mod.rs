@@ -282,16 +282,7 @@ pub trait NestedEvm {
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>>;
 
     /// Executes a full transaction with the given tx env.
-    fn transact_raw(
-        &mut self,
-        tx: Self::Tx,
-    ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
-
-    /// Executes a canonical replay transaction.
-    #[cfg(feature = "monad")]
-    fn transact_replay(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>> {
-        self.transact_raw(tx).map_err(Into::into)
-    }
+    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>>;
 
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block>;
 }
