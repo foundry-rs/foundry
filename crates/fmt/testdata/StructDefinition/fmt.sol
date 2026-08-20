@@ -5,6 +5,8 @@ struct Bar {
     string bar;
 }
 
+struct EmptyStructWithComment { /* body */ }
+
 struct MyStruct {
     // first 1
     // first 2

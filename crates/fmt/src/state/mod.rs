@@ -1080,6 +1080,12 @@ impl CommentConfig {
         Self { skip_blanks: Some(Skip::All), ..Default::default() }
     }
 
+    /// Config for comments that are the sole content of an otherwise empty block, so that they
+    /// are surrounded by spaces: `{ /* comment */ }`.
+    pub(crate) fn empty_block() -> Self {
+        Self::skip_ws().mixed_no_break().mixed_prev_space().mixed_post_nbsp()
+    }
+
     pub(crate) fn skip_leading_ws(resettable: bool) -> Self {
         Self { skip_blanks: Some(Skip::Leading { resettable }), ..Default::default() }
     }

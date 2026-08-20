@@ -2,6 +2,8 @@ struct   Foo  {
     
 } struct   Bar  {    uint foo ;string bar ;  }
 
+struct EmptyStructWithComment { /* body */ }
+
 struct MyStruct {
 // first 1
 // first 2

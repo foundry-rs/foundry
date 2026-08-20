@@ -365,13 +365,14 @@ impl<'ast> State<'_, 'ast> {
         self.print_word("{");
         self.end();
         if body.is_empty() {
-            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
+            match self.print_comments(span.hi(), CommentConfig::empty_block()) {
                 // Adjust the offset of the trailing break from comment printing
                 // so the closing brace is not indented
-                self.s.offset(-self.ind);
-            } else if self.config.bracket_spacing {
-                self.nbsp();
-            };
+                Some(_) if self.last_token_is_break() => self.s.offset(-self.ind),
+                Some(_) => {}
+                None if self.config.bracket_spacing => self.nbsp(),
+                None => {}
+            }
             self.end();
         } else {
             // update block depth
@@ -439,8 +440,10 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak();
             }
         }
-        self.print_comments(span.hi(), CommentConfig::skip_ws());
-        if ind == 0 {
+        let cmnt_config =
+            if fields.is_empty() { CommentConfig::empty_block() } else { CommentConfig::skip_ws() };
+        self.print_comments(span.hi(), cmnt_config);
+        if ind == 0 && self.last_token_is_break() {
             self.s.offset(-self.ind);
         }
         self.end();
