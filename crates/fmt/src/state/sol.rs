@@ -314,6 +314,17 @@ impl<'ast> State<'_, 'ast> {
         self.contract = Some(c);
         self.cursor.advance_to(span.lo(), true);
 
+        // Position of the body's opening brace, needed to identify the comments that belong to
+        // the contract header. The `is` and `layout` clauses can appear in either order, so the
+        // header ends at whichever clause ends last.
+        let header_hi = bases
+            .last()
+            .map(|base| base.span().hi())
+            .max(layout.as_ref().map(|layout| layout.span.hi()))
+            .unwrap_or(name.span.hi());
+        let body_lo = body.first().map_or(span.hi(), |item| item.span.lo());
+        let brace = self.find_opening_brace(Span::new(header_hi, body_lo));
+
         self.s.cbox(self.ind);
         self.ibox(0);
         self.cbox(0);
@@ -326,7 +337,8 @@ impl<'ast> State<'_, 'ast> {
         {
             self.word("layout at ");
             self.print_expr(layout.slot);
-            self.print_sep(Separator::Space);
+            let breaks = !bases.is_empty() || !self.peek_mixed_comment_before(brace);
+            self.print_sep(Separator::SpaceOrNbsp(breaks));
         }
 
         if let Some(first) = bases.first().map(|base| base.span())
@@ -355,10 +367,25 @@ impl<'ast> State<'_, 'ast> {
                     }
                 }
             }
-            if !self.print_trailing_comment(bases.last().unwrap().span().hi(), None) {
+            if self.print_trailing_comment(bases.last().unwrap().span().hi(), None) {
+                self.s.offset(-self.ind);
+            } else if self.peek_mixed_comment_before(brace) {
+                self.nbsp();
+            } else {
                 self.space();
+                self.s.offset(-self.ind);
             }
-            self.s.offset(-self.ind);
+        }
+
+        // Print the comments preceding the opening brace, otherwise they get relocated into the
+        // contract body. They are glued to both the header and the brace, as breaking them apart
+        // turns them into trailing comments, which are relocated again on the next run.
+        while self.peek_mixed_comment_before(brace) {
+            let cmnt = self.next_comment().unwrap();
+            if let Some(cmnt) = self.handle_comment(cmnt, true) {
+                self.print_comment(cmnt, CommentConfig::skip_ws().mixed_no_break());
+            }
+            self.nbsp();
         }
         self.end();
 
