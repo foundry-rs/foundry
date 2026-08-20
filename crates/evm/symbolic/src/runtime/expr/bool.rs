@@ -25,6 +25,11 @@ pub(in crate::runtime) enum SymBoolExprKind {
 }
 
 impl SymBoolExpr {
+    #[inline]
+    pub(in crate::runtime) fn stable_hash_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.kind.stable_hash_cmp(&other.kind)
+    }
+
     pub(in crate::runtime) fn kind(&self) -> &SymBoolExprKind {
         self.kind.value()
     }
