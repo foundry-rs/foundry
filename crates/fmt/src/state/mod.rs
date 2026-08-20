@@ -572,11 +572,16 @@ impl<'sess> State<'sess, '_> {
             }
 
             // Handle mixed with follow-up comment
+            let mut glue_next = false;
             if cmnt.style.is_mixed() {
                 if let Some(cmnt) = self.peek_comment_before(pos) {
                     config.mixed_no_break_prev = true;
                     config.mixed_no_break_post = true;
-                    config.mixed_post_nbsp = cmnt.style.is_mixed();
+                    config.mixed_post_nbsp = false;
+                    // The separator within a run of mixed comments must never break, even with
+                    // `wrap_comments`: a breakable space inside a broken consistent box always
+                    // breaks, which splits the run and reclassifies its comments on the next run.
+                    glue_next = cmnt.style.is_mixed();
                 }
 
                 // Ensure consecutive mixed comments don't have a double-space
@@ -594,6 +599,10 @@ impl<'sess> State<'sess, '_> {
 
             last_style = Some(cmnt.style);
             self.print_comment(cmnt, config);
+            if glue_next {
+                self.nbsp();
+                self.cursor.advance(1);
+            }
             config = config_cache;
         }
         last_style
@@ -787,7 +796,11 @@ impl<'sess> State<'sess, '_> {
                     }
                 }
                 if config.mixed_post_nbsp {
-                    config.nbsp_or_space(self.config.wrap_comments, &mut self.s);
+                    if config.mixed_post_glued {
+                        self.nbsp();
+                    } else {
+                        config.nbsp_or_space(self.config.wrap_comments, &mut self.s);
+                    }
                     self.cursor.advance(1);
                 } else if !config.mixed_no_break_post {
                     config.space(&mut self.s);
@@ -1071,6 +1084,10 @@ pub(crate) struct CommentConfig {
     // Config: mixed comments
     mixed_prev_space: bool,
     mixed_post_nbsp: bool,
+    /// Makes `mixed_post_nbsp` emit a hard space even with `wrap_comments`, which would
+    /// otherwise use a breakable one. Required when the comment is glued to a closing token, as
+    /// a break in between detaches it and reclassifies the comment on the next run.
+    mixed_post_glued: bool,
     mixed_no_break_prev: bool,
     mixed_no_break_post: bool,
 }
@@ -1083,7 +1100,7 @@ impl CommentConfig {
     /// Config for comments that are the sole content of an otherwise empty block, so that they
     /// are surrounded by spaces: `{ /* comment */ }`.
     pub(crate) fn empty_block() -> Self {
-        Self::skip_ws().mixed_no_break().mixed_prev_space().mixed_post_nbsp()
+        Self::skip_ws().mixed_no_break().mixed_prev_space().mixed_post_glued()
     }
 
     pub(crate) fn skip_leading_ws(resettable: bool) -> Self {
@@ -1130,6 +1147,12 @@ impl CommentConfig {
 
     pub(crate) const fn mixed_post_nbsp(mut self) -> Self {
         self.mixed_post_nbsp = true;
+        self
+    }
+
+    pub(crate) const fn mixed_post_glued(mut self) -> Self {
+        self.mixed_post_nbsp = true;
+        self.mixed_post_glued = true;
         self
     }
 
