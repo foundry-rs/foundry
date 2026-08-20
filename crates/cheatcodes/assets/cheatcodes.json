@@ -6166,6 +6166,66 @@
     },
     {
       "func": {
+        "id": "ffiBytes",
+        "description": "Performs a foreign function call via the terminal and decodes the output as hex bytes.",
+        "declaration": "function ffiBytes(string[] calldata commandInput) external returns (bytes memory result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "ffiBytes(string[])",
+        "selector": "0x32730d81",
+        "selectorBytes": [
+          50,
+          115,
+          13,
+          129
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ffiString",
+        "description": "Performs a foreign function call via the terminal and returns the output as a string.",
+        "declaration": "function ffiString(string[] calldata commandInput) external returns (string memory result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "ffiString(string[])",
+        "selector": "0x0d0d2f41",
+        "selectorBytes": [
+          13,
+          13,
+          47,
+          65
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ffiUint",
+        "description": "Performs a foreign function call via the terminal and parses the output as a `uint256`.",
+        "declaration": "function ffiUint(string[] calldata commandInput) external returns (uint256 result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "ffiUint(string[])",
+        "selector": "0xcdf7c6c4",
+        "selectorBytes": [
+          205,
+          247,
+          198,
+          196
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "foundryVersionAtLeast",
         "description": "Returns true if the current Foundry version is greater than or equal to the given version.\nThe given version string must be in the format `major.minor.patch`.\nThis is equivalent to `foundryVersionCmp(version) >= 0`.",
         "declaration": "function foundryVersionAtLeast(string calldata version) external view returns (bool);",

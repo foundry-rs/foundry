@@ -2228,6 +2228,18 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
 
+    /// Performs a foreign function call via the terminal and parses the output as a `uint256`.
+    #[cheatcode(group = Filesystem)]
+    function ffiUint(string[] calldata commandInput) external returns (uint256 result);
+
+    /// Performs a foreign function call via the terminal and returns the output as a string.
+    #[cheatcode(group = Filesystem)]
+    function ffiString(string[] calldata commandInput) external returns (string memory result);
+
+    /// Performs a foreign function call via the terminal and decodes the output as hex bytes.
+    #[cheatcode(group = Filesystem)]
+    function ffiBytes(string[] calldata commandInput) external returns (bytes memory result);
+
     /// Performs a foreign function call via terminal and returns the exit code, stdout, and stderr.
     #[cheatcode(group = Filesystem)]
     function tryFfi(string[] calldata commandInput) external returns (FfiResult memory result);
