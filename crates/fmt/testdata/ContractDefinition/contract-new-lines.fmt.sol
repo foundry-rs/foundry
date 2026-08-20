@@ -11,6 +11,11 @@ contract EmptyBodyWithComment { /* body */ }
 
 contract EmptyBodyWithComments { /* one */ /* two */ }
 
+contract NonEmptyBodyTrailingComments {
+
+    uint256 x;
+    /* one */ /* two */ }
+
 // comment 7
 contract SampleContract {
 

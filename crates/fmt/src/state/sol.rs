@@ -401,15 +401,20 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
 
-            if let Some(cmnt) = self.print_comments(span.hi(), CommentConfig::skip_trailing_ws())
-                && self.config.contract_new_lines
-                && !cmnt.is_blank()
-            {
-                self.print_sep(Separator::Hardbreak);
+            let cmnt = self.print_comments(span.hi(), CommentConfig::skip_trailing_ws());
+            let glued = !self.last_token_is_break();
+            if glued {
+                // A trailing run of mixed comments ends in a string token; glue the brace to it,
+                // as a break in between would reclassify the last comment on the next run.
+                self.nbsp();
+            } else {
+                if self.config.contract_new_lines && cmnt.is_some_and(|cmnt| !cmnt.is_blank()) {
+                    self.print_sep(Separator::Hardbreak);
+                }
+                self.s.offset(-self.ind);
             }
-            self.s.offset(-self.ind);
             self.end();
-            if self.config.contract_new_lines {
+            if self.config.contract_new_lines && !glued {
                 self.hardbreak_if_nonempty();
             }
 
@@ -442,9 +447,14 @@ impl<'ast> State<'_, 'ast> {
         }
         let cmnt_config =
             if fields.is_empty() { CommentConfig::empty_block() } else { CommentConfig::skip_ws() };
-        self.print_comments(span.hi(), cmnt_config);
-        if ind == 0 && self.last_token_is_break() {
-            self.s.offset(-self.ind);
+        let printed = self.print_comments(span.hi(), cmnt_config).is_some();
+        if self.last_token_is_break() {
+            if ind == 0 {
+                self.s.offset(-self.ind);
+            }
+        } else if printed && !self.last_token_is_space() {
+            // A trailing run of mixed comments ends in a string token; glue the brace to it.
+            self.nbsp();
         }
         self.end();
         self.end();
@@ -469,7 +479,12 @@ impl<'ast> State<'_, 'ast> {
             }
         }
         self.print_comments(span.hi(), CommentConfig::skip_ws());
-        self.s.offset(-self.ind);
+        if self.last_token_is_break() {
+            self.s.offset(-self.ind);
+        } else {
+            // A trailing run of mixed comments ends in a string token; glue the brace to it.
+            self.nbsp();
+        }
         self.end();
         self.word("}");
     }
