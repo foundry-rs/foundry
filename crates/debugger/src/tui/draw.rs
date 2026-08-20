@@ -2,7 +2,8 @@
 
 use super::{
     context::{
-        ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext, pretty_opcode,
+        ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext,
+        write_pretty_opcode,
     },
     storage::{StorageAccess, StorageSpace, hex_u256, storage_access_at},
 };
@@ -524,10 +525,9 @@ impl TUIContext<'_> {
         let start = end.saturating_sub(visible_rows);
         let pc_width = hex_digits(self.opcode_max_pc());
         let items = debug_steps[start..end].iter().map(|step| {
-            let opcode = pretty_opcode(step);
-            let mut row = String::with_capacity(pc_width + 1 + opcode.len());
+            let mut row = String::with_capacity(pc_width + 1 + 8);
             write!(row, "{:0>pc_width$x}|", step.pc).unwrap();
-            row.push_str(&opcode);
+            write_pretty_opcode(&mut row, step);
             ListItem::new(Span::styled(row, Style::new().fg(Color::White)))
         });
 

@@ -13,7 +13,7 @@ use foundry_tui::TuiApp;
 use ratatui::Frame;
 use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
-use std::ops::ControlFlow;
+use std::{fmt::Write, ops::ControlFlow};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StatusKind {
@@ -1693,10 +1693,16 @@ fn find_opcode_match(
 }
 
 pub(super) fn pretty_opcode(step: &CallTraceStep) -> String {
+    let mut buf = String::new();
+    write_pretty_opcode(&mut buf, step);
+    buf
+}
+
+pub(super) fn write_pretty_opcode(buf: &mut String, step: &CallTraceStep) {
     if let Some(immediate) = step.immediate_bytes.as_ref().filter(|b| !b.is_empty()) {
-        format!("{}(0x{})", step.op, hex::encode(immediate))
+        write!(buf, "{}(0x{})", step.op, hex::encode(immediate)).unwrap();
     } else {
-        step.op.to_string()
+        write!(buf, "{}", step.op).unwrap();
     }
 }
 

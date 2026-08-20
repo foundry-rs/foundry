@@ -803,6 +803,12 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Test-scoped context holding data that needs to be reset every test run
     pub test_context: TestContext,
 
+    /// Revert payloads minted by the `skip` cheatcode during the current test call.
+    ///
+    /// A top-level revert is only classified as a skip when its data byte-equals one of these
+    /// payloads, so user-crafted `FOUNDRY::SKIP` revert data never skips a test on its own.
+    pub skip_payloads: Vec<Bytes>,
+
     /// Whether to commit FS changes such as file creations, writes and deletes.
     /// Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
@@ -963,6 +969,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             broadcastable_transactions: Default::default(),
             access_list: Default::default(),
             test_context: Default::default(),
+            skip_payloads: Default::default(),
             serialized_jsons: Default::default(),
             eth_deals: Default::default(),
             gas_metering: Default::default(),
@@ -1448,7 +1455,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         #[cfg(feature = "monad")]
-        if is_monad_cheatcode_call::<FEN>(call.target_address) {
+        if is_monad_cheatcode_call(
+            self.config.evm_opts.networks.extra_cheatcode_addresses(),
+            call.target_address,
+        ) {
             let checkpoint = ecx.journal_mut().checkpoint();
             return match self.apply_monad_cheatcode(ecx, call) {
                 Ok(retdata) => {
@@ -2354,7 +2364,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
         #[cfg(feature = "monad")]
-        let cheatcode_call = cheatcode_call || is_monad_cheatcode_call::<FEN>(call.target_address);
+        let cheatcode_call = cheatcode_call
+            || is_monad_cheatcode_call(
+                self.config.evm_opts.networks.extra_cheatcode_addresses(),
+                call.target_address,
+            );
         let curr_depth = ecx.journal().depth();
 
         self.finish_created_accounts_frame(

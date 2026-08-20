@@ -117,6 +117,7 @@ use alloy_rpc_types::{
 use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse};
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use alloy_serde::{OtherFields, WithOtherFields};
+use alloy_sol_types::SolCall;
 use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
 use anvil_core::eth::{
     block::{Block, BlockInfo, canonical_block, create_block},
@@ -5803,6 +5804,46 @@ where
             Some(Output::Call(data)) if data.len() >= 32 => Ok(U256::from_be_slice(&data[..32])),
             _ => Ok(U256::ZERO),
         }
+    }
+
+    /// Returns the account used to sponsor Tempo fee-payer requests handled by this node.
+    ///
+    /// Returns `None` on non-Tempo networks.
+    pub async fn tempo_fee_payer(&self) -> Option<Address> {
+        if !self.is_tempo() {
+            return None;
+        }
+        self.node_config.read().await.tempo_fee_payer_address()
+    }
+
+    /// Returns the fee token an account pays with, as stored in the Tempo fee manager.
+    ///
+    /// Falls back to PathUSD when the account has no stored preference or the lookup fails.
+    pub async fn tempo_user_fee_token(&self, account: Address) -> Result<Address, BlockchainError> {
+        let calldata = IFeeManager::userTokensCall { user: account }.abi_encode();
+
+        let request = WithOtherFields::new(TransactionRequest {
+            from: Some(Address::ZERO),
+            to: Some(TxKind::Call(TIP_FEE_MANAGER_ADDRESS)),
+            input: calldata.into(),
+            ..Default::default()
+        });
+
+        let (exit, out, _, _) =
+            self.call(request, FeeDetails::zero(), None, Default::default()).await?;
+
+        let token = if exit == InstructionResult::Return
+            && let Some(Output::Call(data)) = out
+        {
+            IFeeManager::userTokensCall::abi_decode_returns(&data).unwrap_or(Address::ZERO)
+        } else {
+            Address::ZERO
+        };
+
+        if token.is_zero() {
+            return Ok(foundry_evm::core::tempo::PATH_USD_ADDRESS);
+        }
+        Ok(token)
     }
 
     /// Executes the [TransactionRequest] without writing to the DB
