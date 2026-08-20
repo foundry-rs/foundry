@@ -271,6 +271,10 @@ pub struct NodeConfig {
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Networks to enable features for.
     pub networks: NetworkConfigs,
+    /// The account used to sponsor Tempo fee-payer requests.
+    ///
+    /// Must be an unlocked signer account. Defaults to the last dev account on Tempo networks.
+    pub tempo_fee_payer: Option<Address>,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where persisted states are cached (used with `max_persisted_states`).
@@ -326,6 +330,18 @@ Derivation path:   {}
 "#,
                 generator.phrase,
                 generator.get_derivation_path()
+            );
+        }
+
+        if let Some(fee_payer) = self.tempo_fee_payer_address() {
+            let _ = write!(
+                s,
+                r#"
+
+Tempo Fee Payer
+==================
+{fee_payer}
+"#
             );
         }
 
@@ -598,6 +614,7 @@ impl Default for NodeConfig {
             memory_limit: None,
             precompile_factory: None,
             networks: Default::default(),
+            tempo_fee_payer: None,
             silent: false,
             cache_path: None,
             funded_accounts: HashMap::default(),
@@ -1234,6 +1251,25 @@ impl NodeConfig {
         self.inferred_fork_network = None;
         self.chain_id_network_base = None;
         self
+    }
+
+    /// Sets the account used to sponsor Tempo fee-payer requests.
+    #[must_use]
+    pub const fn with_tempo_fee_payer(mut self, fee_payer: Option<Address>) -> Self {
+        self.tempo_fee_payer = fee_payer;
+        self
+    }
+
+    /// Returns the effective account used to sponsor Tempo fee-payer requests.
+    ///
+    /// Defaults to the last dev account so it rarely collides with the sender accounts commonly
+    /// used in tests, mirroring the dedicated sponsor account of hosted fee payer services.
+    /// Returns `None` on non-Tempo networks.
+    pub fn tempo_fee_payer_address(&self) -> Option<Address> {
+        if !self.networks.is_tempo() {
+            return None;
+        }
+        self.tempo_fee_payer.or_else(|| self.genesis_accounts.last().map(|wallet| wallet.address()))
     }
 
     /// Enable Monad network features.
