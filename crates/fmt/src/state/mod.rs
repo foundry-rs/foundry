@@ -205,6 +205,7 @@ impl Separator {
 impl<'sess> State<'sess, '_> {
     pub(super) fn new(
         sm: &'sess SourceMap,
+        start_pos: BytePos,
         config: Arc<FormatterConfig>,
         inline_config: InlineConfig<()>,
         comments: Comments,
@@ -219,7 +220,7 @@ impl<'sess> State<'sess, '_> {
             comments,
             config,
             inline_config,
-            cursor: SourcePos { pos: BytePos::from_u32(0), enabled: true },
+            cursor: SourcePos { pos: start_pos, enabled: true },
             has_crlf: false,
             contract: None,
             single_line_stmt: None,
