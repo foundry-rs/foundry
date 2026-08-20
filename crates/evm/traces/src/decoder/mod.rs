@@ -11,8 +11,8 @@ use alloy_primitives::{
 };
 use alloy_sol_types::SolValue;
 use foundry_common::{
-    ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
-    get_contract_name, selectors::SelectorKind,
+    ContractsByArtifact, SELECTOR_LEN, fmt::format_token, get_contract_name,
+    selectors::SelectorKind,
 };
 use foundry_config::TracingConfig;
 #[cfg(feature = "monad")]
@@ -1411,27 +1411,17 @@ impl CallTraceDecoder {
             .and_then(|address| self.anonymous_events_by_address.as_deref()?.get(&address))
             .and_then(|events| events.get(&log.topics().len()));
 
-        let decoded = if canonical_signature {
-            let mut decoded = regular_events.into_iter().flatten().filter_map(|event| {
-                self.decode_event_candidates(address, log, [event], canonical_signature)
-            });
-            let event = decoded.next();
-            if event.is_some() && decoded.next().is_some() {
-                return DecodedCallLog { name: None, params: None };
-            }
-            event
+        let decoded = if canonical_signature || anonymous_events.is_some() {
+            self.decode_unique_event_candidates(
+                address,
+                log,
+                regular_events.into_iter().flatten().chain(anonymous_events.into_iter().flatten()),
+                canonical_signature,
+            )
         } else {
             self.decode_event_candidates(address, log, regular_events.into_iter().flatten(), false)
         };
         if let Some(decoded) = decoded {
-            return decoded;
-        }
-        if let Some(decoded) = self.decode_unique_event_candidates(
-            address,
-            log,
-            anonymous_events.into_iter().flatten(),
-            canonical_signature,
-        ) {
             return decoded;
         }
 
@@ -1443,10 +1433,14 @@ impl CallTraceDecoder {
             && let Some(identifier) = &self.signature_identifier
             && let Some(event) = identifier.identify_event(topic).await
         {
-            let event = get_indexed_event(event, log);
-            if let Some(decoded) =
+            let mut decoded = indexed_event_candidates(event, log).filter_map(|event| {
                 self.decode_event_candidates(address, log, [&event], canonical_signature)
-            {
+            });
+            let event = decoded.next();
+            if event.is_some() && decoded.next().is_some() {
+                return DecodedCallLog { name: None, params: None };
+            }
+            if let Some(decoded) = event {
                 return decoded;
             }
         }
@@ -1699,6 +1693,22 @@ fn indexed_inputs(event: &Event) -> usize {
     event.inputs.iter().filter(|param| param.indexed).count()
 }
 
+fn indexed_event_candidates(mut event: Event, log: &LogData) -> impl Iterator<Item = Event> {
+    for (index, input) in event.inputs.iter_mut().enumerate() {
+        if input.name.is_empty() {
+            input.name = format!("param{index}");
+        }
+        input.indexed = false;
+    }
+    (0..event.inputs.len()).combinations(log.topics().len() - 1).map(move |indexed| {
+        let mut event = event.clone();
+        for index in indexed {
+            event.inputs[index].indexed = true;
+        }
+        event
+    })
+}
+
 fn constructor_signature(constructor: &Constructor) -> String {
     format!(
         "constructor({})",
@@ -1949,6 +1959,21 @@ mod tests {
         assert!(decoded.params.is_none());
     }
 
+    #[test]
+    fn identified_events_require_a_unique_indexed_placement() {
+        let event = Event::parse("event Ambiguous(address owner, uint256 id)").unwrap();
+        let log = LogData::new_unchecked(
+            vec![event.selector(), U256::from(42).into()],
+            (Address::from([0x34; 20]),).abi_encode().into(),
+        );
+        let candidates = indexed_event_candidates(event, &log).collect::<Vec<_>>();
+        let decoder = CallTraceDecoder::new();
+
+        let decoded = decoder.decode_unique_event_candidates(None, &log, &candidates, false);
+
+        assert!(decoded.is_none());
+    }
+
     #[tokio::test]
     async fn address_scoped_anonymous_events_require_a_unique_match() {
         let address = Address::from([0x12; 20]);
@@ -1986,6 +2011,21 @@ mod tests {
             .decode_event_with_address_signature(address, &log)
             .await;
         assert_eq!(decoded.name.as_deref(), Some("AnonymousValue(uint256)"));
+
+        let abi = JsonAbi::parse([
+            "event RegularValue()",
+            "event AnonymousValue(bytes32 indexed value) anonymous",
+        ])
+        .unwrap();
+        let regular = abi.events().find(|event| !event.anonymous).unwrap();
+        let log = LogData::new_unchecked(vec![regular.selector()], Default::default());
+        let decoder = CallTraceDecoderBuilder::new().with_address_events(address, &abi).build();
+        let decoded = decoder.decode_event_with_address_signature(address, &log).await;
+        assert!(decoded.name.is_none());
+        assert!(decoded.params.is_none());
+        let decoded = decoder.decode_event_with_address(address, &log).await;
+        assert!(decoded.name.is_none());
+        assert!(decoded.params.is_none());
     }
 
     #[test]
