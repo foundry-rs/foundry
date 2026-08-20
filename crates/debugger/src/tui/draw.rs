@@ -1,7 +1,9 @@
 //! TUI draw implementation.
 
 use super::{
-    context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext},
+    context::{
+        ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext, pretty_opcode,
+    },
     storage::{StorageAccess, StorageSpace, hex_u256, storage_access_at},
 };
 use crate::{DebuggerLayout, debugger::DebuggerStats, op::OpcodeParam};
@@ -513,21 +515,21 @@ impl TUIContext<'_> {
 
     fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {
         let debug_steps = self.debug_steps();
-        let max_pc = debug_steps.iter().map(|step| step.pc).max().unwrap_or(0);
-        let max_pc_len = hex_digits(max_pc);
-
-        let items = debug_steps
-            .iter()
-            .enumerate()
-            .map(|(i, step)| {
-                let mut content = String::with_capacity(64);
-                write!(content, "{:0>max_pc_len$x}|", step.pc).unwrap();
-                if let Some(op) = self.opcode_list.get(i) {
-                    content.push_str(op);
-                }
-                ListItem::new(Span::styled(content, Style::new().fg(Color::White)))
-            })
-            .collect::<Vec<_>>();
+        // Opcode items are one line each; window them before `List::new` collects the iterator.
+        let visible_rows = area.height.saturating_sub(2) as usize;
+        let scroll_padding = usize::from(visible_rows >= 3);
+        let end = debug_steps
+            .len()
+            .min(visible_rows.max(self.current_step.saturating_add(scroll_padding + 1)));
+        let start = end.saturating_sub(visible_rows);
+        let pc_width = hex_digits(self.opcode_max_pc());
+        let items = debug_steps[start..end].iter().map(|step| {
+            let opcode = pretty_opcode(step);
+            let mut row = String::with_capacity(pc_width + 1 + opcode.len());
+            write!(row, "{:0>pc_width$x}|", step.pc).unwrap();
+            row.push_str(&opcode);
+            ListItem::new(Span::styled(row, Style::new().fg(Color::White)))
+        });
 
         let step = self.current_step();
         let call_gas_used = self.debug_call().gas_limit.saturating_sub(step.gas_remaining);
@@ -544,8 +546,9 @@ impl TUIContext<'_> {
             .block(block)
             .highlight_symbol("▶")
             .highlight_style(Style::new().fg(Color::White).bg(Color::DarkGray))
-            .scroll_padding(1);
-        let mut state = ListState::default().with_selected(Some(self.current_step));
+            .scroll_padding(scroll_padding);
+        let mut state =
+            ListState::default().with_selected(Some(self.current_step.saturating_sub(start)));
         f.render_stateful_widget(list, area, &mut state);
     }
 
@@ -1551,6 +1554,50 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn opcode_list_draws_visible_window() {
+        let steps = (0..64)
+            .chain([0x100])
+            .map(|pc| {
+                let mut step = trace_step(Vec::new());
+                step.pc = pc;
+                step.op = OpCode::ADD;
+                step
+            })
+            .collect();
+        let mut context = context_with_arena(vec![debug_node(0, 0, steps)]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.current_step = 50;
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_op_list(f, Rect::new(0, 0, 80, 20))).unwrap();
+
+        let lines = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|cells| cells.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>();
+        assert!(lines[1].contains("022|ADD"));
+        assert!(lines[17].contains("▶032|ADD"));
+        assert!(lines[18].contains("033|ADD"));
+
+        let backend = TestBackend::new(80, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| tui.draw_op_list(f, Rect::new(0, 0, 80, 3))).unwrap();
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("▶032|ADD"));
     }
 
     #[test]
