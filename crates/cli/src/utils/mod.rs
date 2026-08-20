@@ -901,6 +901,48 @@ ignore them in the `.gitignore` file."
             .map(|url| Some(url.trim().to_string()))
     }
 
+    /// Resolves a submodule's URL by its recorded `path` rather than assuming the `.gitmodules`
+    /// section name equals the path - they aren't required to match (e.g. `git submodule add
+    /// --name openzeppelin <url> lib/openzeppelin` records `path = lib/openzeppelin` under
+    /// section `openzeppelin`, so `git config submodule.<path>.url` finds nothing). `git_root`
+    /// is the directory containing `.gitmodules`.
+    pub fn submodule_url_for_path(self, git_root: &Path, path: &Path) -> Result<Option<String>> {
+        let gitmodules = git_root.join(".gitmodules");
+        if !gitmodules.exists() {
+            return Ok(None);
+        }
+
+        let output = self
+            .cmd()
+            .args(["config", "--null", "--file"])
+            .arg(&gitmodules)
+            .args(["--get-regexp", r"^submodule\..*\.path$"])
+            .output()?;
+        if output.status.code() != Some(0) {
+            return Ok(None);
+        }
+
+        let mut name = None;
+        for entry in output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty()) {
+            let Some(separator) = entry.iter().position(|byte| *byte == b'\n') else { continue };
+            let key = std::str::from_utf8(&entry[..separator])?;
+            let value = std::str::from_utf8(&entry[separator + 1..])?;
+            if Path::new(value) == path {
+                name = key
+                    .strip_prefix("submodule.")
+                    .and_then(|k| k.strip_suffix(".path"))
+                    .map(String::from);
+                break;
+            }
+        }
+        let Some(name) = name else { return Ok(None) };
+
+        self.cmd()
+            .args(["config", "--get", &format!("submodule.{name}.url")])
+            .get_stdout_lossy()
+            .map(|url| Some(url.trim().to_string()))
+    }
+
     /// Returns whether `.gitmodules` contains the default section name or an exact path mapping.
     pub fn has_submodule_mapping(self, path: &Path) -> Result<bool> {
         let (names, paths) = self.submodule_mappings()?;

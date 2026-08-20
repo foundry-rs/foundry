@@ -141,16 +141,56 @@ forgetest_init!(dependencies_excludes_uninitialized_submodule, |prj, cmd| {
     assert_eq!(parsed.as_array().unwrap().len(), 0, "expected no dependencies:\n{json}");
 });
 
+/// The commit `path` (a submodule directory) is actually checked out at.
+fn checked_out_rev(path: &std::path::Path) -> String {
+    let output =
+        Command::new("git").args(["rev-parse", "HEAD"]).current_dir(path).output().unwrap();
+    assert!(output.status.success(), "git rev-parse HEAD failed in {}", path.display());
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
 // A submodule pinned in `foundry.lock` (via a prior `forge install <dep>@<tag>`) reports the
-// pinned tag/rev pair instead of the bare checked-out rev.
+// pinned tag/rev pair instead of the bare checked-out rev - but only when the pin still matches
+// what's actually checked out; see `dependencies_falls_back_to_actual_rev_on_checkout_mismatch`
+// for the drifted case.
 forgetest_init!(dependencies_reports_lockfile_pinned_version, |prj, cmd| {
+    let actual_rev = checked_out_rev(&prj.root().join("lib/forge-std"));
+    fs::write(
+        prj.root().join("foundry.lock"),
+        format!(
+            r#"{{
+  "lib/forge-std": {{
+    "tag": {{
+      "name": "v1.9.4",
+      "rev": "{actual_rev}"
+    }}
+  }}
+}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let output = cmd.arg("dependencies").assert_success().get_output().stdout_lossy();
+    assert!(
+        output.contains(&format!("tag=v1.9.4@{actual_rev}")),
+        "expected forge-std to report its foundry.lock pin, not a bare rev:\n{output}"
+    );
+});
+
+// If a submodule was manually moved to a different commit than what's recorded in `foundry.lock`
+// (`git submodule status`'s `+` marker - the superproject's index hasn't been updated to match),
+// showing the stale locked tag would misrepresent what's actually checked out on disk. Falls back
+// to the real rev instead.
+forgetest_init!(dependencies_falls_back_to_actual_rev_on_checkout_mismatch, |prj, cmd| {
+    let actual_rev = checked_out_rev(&prj.root().join("lib/forge-std"));
     fs::write(
         prj.root().join("foundry.lock"),
         r#"{
   "lib/forge-std": {
     "tag": {
       "name": "v1.9.4",
-      "rev": "680ee6692649dcc7c617e05b2144932618264a83"
+      "rev": "0000000000000000000000000000000000000000"
     }
   }
 }
@@ -160,8 +200,12 @@ forgetest_init!(dependencies_reports_lockfile_pinned_version, |prj, cmd| {
 
     let output = cmd.arg("dependencies").assert_success().get_output().stdout_lossy();
     assert!(
-        output.contains("tag=v1.9.4@680ee6692649dcc7c617e05b2144932618264a83"),
-        "expected forge-std to report its foundry.lock pin, not a bare rev:\n{output}"
+        output.contains(&format!("rev={actual_rev}")),
+        "expected the real checked-out rev, not the stale foundry.lock pin:\n{output}"
+    );
+    assert!(
+        !output.contains("tag=v1.9.4"),
+        "must not report the foundry.lock tag once it no longer matches the checkout:\n{output}"
     );
 });
 
@@ -256,5 +300,73 @@ forgetest_init!(dependencies_rebases_nested_project_submodule_paths, |prj, cmd| 
         dep["url"].as_str().unwrap(),
         remote.path().to_str().unwrap(),
         "submodule_url lookup must still resolve via the Git-root-relative path"
+    );
+});
+
+// On macOS, `--root /tmp/project` and the canonical `/private/tmp/project` name the same
+// directory but compare unequal as strings. `install_lib_dir` gets canonicalized by
+// `Config::canonic_at`; `config.root` does not. A naive `strip_prefix` between the two silently
+// falls back to the absolute path, which then never matches any submodule's project-relative
+// path - excluding every submodule from a symlinked project root.
+#[cfg(unix)]
+forgetest_init!(dependencies_resolves_symlinked_project_root, |prj, cmd| {
+    let symlink_parent = tempfile::tempdir().unwrap();
+    let symlinked_root = symlink_parent.path().join("project");
+    std::os::unix::fs::symlink(prj.root(), &symlinked_root).unwrap();
+
+    let output = cmd
+        .args(["dependencies", "--root"])
+        .arg(&symlinked_root)
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        output.contains("forge-std"),
+        "a symlinked project root excluded a real submodule:\n{output}"
+    );
+});
+
+// `.gitmodules` doesn't require a submodule's section name to match its `path` field - `git
+// submodule add --name openzeppelin <url> lib/openzeppelin` records `path = lib/openzeppelin`
+// under section `openzeppelin`. `git config submodule.<key>.url` is keyed by the section name, so
+// looking it up by path text alone finds nothing.
+forgetest_init!(dependencies_resolves_url_by_gitmodules_section_name, |prj, cmd| {
+    let remote = tempfile::tempdir().unwrap();
+    let run_git = |args: &[&str], cwd: &std::path::Path| {
+        let status = Command::new("git").args(args).current_dir(cwd).status().unwrap();
+        assert!(status.success(), "git {args:?} failed in {}", cwd.display());
+    };
+    run_git(&["init", "-q", "-b", "main"], remote.path());
+    run_git(&["commit", "-q", "--allow-empty", "-m", "init"], remote.path());
+
+    run_git(
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            "--name",
+            "openzeppelin",
+            remote.path().to_str().unwrap(),
+            "lib/openzeppelin",
+        ],
+        prj.root(),
+    );
+    run_git(&["add", "-A"], prj.root());
+    run_git(&["commit", "-q", "-m", "add submodule with a renamed section"], prj.root());
+
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let dep =
+        parsed.as_array().unwrap().iter().find(|e| e["name"] == "openzeppelin").unwrap_or_else(
+            || {
+                panic!("expected an 'openzeppelin' submodule in {json}");
+            },
+        );
+    assert_eq!(
+        dep["url"].as_str().unwrap(),
+        remote.path().to_str().unwrap(),
+        "URL lookup must resolve via the .gitmodules section name, not the path text"
     );
 });
