@@ -179,7 +179,7 @@ use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID};
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
-    Database as RevmDatabase, DatabaseCommit, Inspector,
+    Database as RevmDatabase, DatabaseCommit, DatabaseRef as RevmDatabaseRef, Inspector,
     context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, ContextSetters, ContextTr, TxEnv},
     context_interface::{
         JournalTr,
@@ -7064,20 +7064,45 @@ where
         &self,
         block: BlockId,
     ) -> Result<ExecutionWitness, BlockchainError> {
-        let number = self.ensure_block_number(Some(block)).await?;
-        let Some(parent) = number.checked_sub(1) else {
+        // Resolve hashes to the exact block they name instead of reducing them to a number: a
+        // hash can refer to a block that was since replaced at the same height (e.g. via
+        // `anvil_loadState`) and must not be conflated with the canonical block at that number.
+        let block = match block {
+            BlockId::Hash(id) => {
+                let block =
+                    self.get_block_by_hash(id.block_hash).ok_or(BlockchainError::BlockNotFound)?;
+                if id.require_canonical == Some(true)
+                    && self.block_hash_by_number(block.header.number()) != Some(id.block_hash)
+                {
+                    return Err(BlockchainError::Message(
+                        "hash is not currently canonical".to_string(),
+                    ));
+                }
+                block
+            }
+            BlockId::Number(number) => {
+                let number = self.ensure_block_number(Some(number)).await?;
+                self.get_block(number).ok_or(BlockchainError::BlockNotFound)?
+            }
+        };
+
+        if block.header.number() == self.genesis_number() {
             return Err(BlockchainError::Message(
                 "genesis block has no parent state to build a witness from".to_string(),
             ));
-        };
+        }
 
+        // Walk ancestors by parent hash so a non-canonical block collects its own chain of
+        // headers.
         let mut headers = Vec::new();
-        for ancestor in (number.saturating_sub(BLOCKHASH_HISTORY)..number).rev() {
-            let Some(block) = self.get_block(ancestor) else { break };
+        let mut ancestor = block.header.parent_hash;
+        while (headers.len() as u64) < BLOCKHASH_HISTORY {
+            let Some(block) = self.get_block_by_hash(ancestor) else { break };
+            ancestor = block.header.parent_hash;
             headers.push(alloy_rlp::encode(&block.header).into());
         }
 
-        self.with_database_at(Some(BlockRequest::Number(parent)), |state, _| {
+        let build = |state: &StateDb| -> Result<ExecutionWitness, BlockchainError> {
             let Some(accounts) = state.maybe_full_db() else {
                 return Err(BlockchainError::Message(
                     "debug_executionWitness is not supported while forking".to_string(),
@@ -7107,8 +7132,21 @@ where
             keys.dedup();
 
             Ok(ExecutionWitness { state: nodes, codes, keys, headers })
-        })
-        .await?
+        };
+
+        // The witness is built from the parent block's state, looked up by the parent hash so
+        // the state matches the requested block even off the canonical chain.
+        let parent_hash = block.header.parent_hash;
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&parent_hash) {
+            build(state)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard
+                .get_on_disk_state(&parent_hash)
+                .ok_or(BlockchainError::BlockNotFound)?;
+            build(state)
+        }
     }
 
     /// Returns account information after replaying a block through the transaction at `tx_index`.

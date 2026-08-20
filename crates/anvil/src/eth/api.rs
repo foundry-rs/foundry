@@ -86,7 +86,7 @@ use alloy_serde::WithOtherFields;
 use alloy_sol_types::{SolCall, SolValue, sol};
 use anvil_core::{
     eth::{
-        EthRequest, ExecutionWitnessMode,
+        EthRequest,
         block::{BlockInfo, canonical_block},
         transaction::{MaybeImpersonatedTransaction, PendingTransaction},
     },
@@ -1628,11 +1628,7 @@ impl EthApi<FoundryNetwork> {
     /// contents and limitations.
     ///
     /// Handler for RPC call: `debug_executionWitness`.
-    pub async fn debug_execution_witness(
-        &self,
-        block: BlockId,
-        _mode: Option<ExecutionWitnessMode>,
-    ) -> Result<ExecutionWitness> {
+    pub async fn debug_execution_witness(&self, block: BlockId) -> Result<ExecutionWitness> {
         node_info!("debug_executionWitness");
         self.backend.debug_execution_witness(block).await
     }
@@ -2133,8 +2129,8 @@ impl EthApi<FoundryNetwork> {
             EthRequest::DebugAccountInfoAt(block_id, tx_index, address) => {
                 self.debug_account_info_at(block_id, tx_index, address).await.to_rpc_result()
             }
-            EthRequest::DebugExecutionWitness(block, mode) => {
-                self.debug_execution_witness(block, mode).await.to_rpc_result()
+            EthRequest::DebugExecutionWitness(block) => {
+                self.debug_execution_witness(block).await.to_rpc_result()
             }
             EthRequest::DebugTraceBlock(rlp_block, opts) => {
                 self.debug_trace_block(rlp_block, opts).await.to_rpc_result()

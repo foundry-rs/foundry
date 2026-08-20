@@ -1200,7 +1200,7 @@ async fn can_get_execution_witness() {
     let number = receipt.block_number.unwrap();
 
     // No witness exists for the genesis block since it has no parent state.
-    api.debug_execution_witness(BlockId::number(0), None).await.unwrap_err();
+    api.debug_execution_witness(BlockId::number(0)).await.unwrap_err();
 
     let witness: ExecutionWitness = provider
         .client()
@@ -1211,17 +1211,14 @@ async fn can_get_execution_witness() {
     let block = provider.get_block(BlockId::number(number)).await.unwrap().unwrap();
     let by_hash: ExecutionWitness = provider
         .client()
-        .request("debug_executionWitness", (BlockId::hash(block.header.hash), Some("legacy")))
+        .request("debug_executionWitness", (BlockId::hash(block.header.hash),))
         .await
         .unwrap();
     assert_eq!(by_hash, witness);
 
     let by_eip1898: ExecutionWitness = provider
         .client()
-        .request(
-            "debug_executionWitness",
-            (BlockId::hash_canonical(block.header.hash), Option::<&str>::None),
-        )
+        .request("debug_executionWitness", (BlockId::hash_canonical(block.header.hash),))
         .await
         .unwrap();
     assert_eq!(by_eip1898, witness);
@@ -1251,4 +1248,70 @@ async fn can_get_execution_witness() {
         .await
         .unwrap();
     assert_eq!(historical, witness);
+}
+
+// After `anvil_loadState` replaces a block at the same height, the replaced block remains
+// addressable by hash and must resolve to its own witness instead of the canonical block's.
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_execution_witness_for_replaced_block() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    let from = accounts[0].address();
+    let to = accounts[1].address();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    let genesis_dump = api.anvil_dump_state(None).await.unwrap();
+
+    // A transfer in block 1 so the parent state of block 2 differs from the replacement chain.
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(100));
+    provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let stale = provider.get_block(BlockId::number(2)).await.unwrap().unwrap();
+    let stale_witness: ExecutionWitness = provider
+        .client()
+        .request("debug_executionWitness", (BlockId::hash(stale.header.hash),))
+        .await
+        .unwrap();
+
+    // Rewind to genesis and mine a different chain to the same height: block 2 is replaced, but
+    // the old block remains addressable by hash.
+    assert!(api.anvil_load_state(genesis_dump).await.unwrap());
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
+
+    let canonical = provider.get_block(BlockId::number(2)).await.unwrap().unwrap();
+    assert_ne!(canonical.header.hash, stale.header.hash);
+
+    // The stale hash still resolves to its own witness, not the canonical block's.
+    let by_stale_hash: ExecutionWitness = provider
+        .client()
+        .request("debug_executionWitness", (BlockId::hash(stale.header.hash),))
+        .await
+        .unwrap();
+    assert_eq!(by_stale_hash, stale_witness);
+
+    let canonical_witness: ExecutionWitness =
+        provider.client().request("debug_executionWitness", (BlockId::number(2),)).await.unwrap();
+    assert_ne!(canonical_witness, stale_witness);
+
+    // The replaced block is no longer canonical, so `requireCanonical` must reject it while
+    // still serving the canonical block at the same height.
+    provider
+        .client()
+        .request::<_, ExecutionWitness>(
+            "debug_executionWitness",
+            (BlockId::hash_canonical(stale.header.hash),),
+        )
+        .await
+        .unwrap_err();
+
+    let by_canonical_hash: ExecutionWitness = provider
+        .client()
+        .request("debug_executionWitness", (BlockId::hash_canonical(canonical.header.hash),))
+        .await
+        .unwrap();
+    assert_eq!(by_canonical_hash, canonical_witness);
 }
