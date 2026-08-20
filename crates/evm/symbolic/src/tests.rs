@@ -3381,8 +3381,13 @@ fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
     ];
 
     let normalized = normalize_constraints_for_solver(&mut cx, &grouped);
+    let reversed =
+        normalize_constraints_for_solver(&mut cx, &grouped.into_iter().rev().collect::<Vec<_>>());
 
-    assert_eq!(normalized, vec![b, a]);
+    assert_eq!(normalized.len(), 2);
+    assert_eq!(normalized, reversed);
+    assert!(normalized.contains(&a));
+    assert!(normalized.contains(&b));
 
     let x_eq_y = SymBoolExpr::eq(&mut cx, x, y);
     let false_expr = SymBoolExpr::constant(&mut cx, false);
