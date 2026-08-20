@@ -4,7 +4,7 @@ use alloy_evm::{
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
-        BlockEnv, ContextTr, Evm as RevmEvm, LocalContextTr, TxEnv,
+        BlockEnv, ContextTr, Evm as RevmEvm, Journal, LocalContextTr, TxEnv,
         result::{EVMError, ResultAndState},
     },
     handler::{
@@ -36,8 +36,6 @@ pub type EthRevmEvm<'db, I> = RevmEvm<
 
 impl FoundryEvmFactory for EthEvmFactory {
     type Chain = ();
-    #[cfg(feature = "monad")]
-    type TransactionState = ();
     type FoundryContext<'db> = EthEvmContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
@@ -90,8 +88,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
     type Block = BlockEnv;
     type Tx = TxEnv;
     type Chain = ();
-    #[cfg(feature = "monad")]
-    type TransactionState = ();
+    type Journal = Journal<&'db mut dyn DatabaseExt<EthEvmFactory>>;
 
     fn tx_mut(&mut self) -> &mut Self::Tx {
         self.ctx_mut().tx_mut()
@@ -103,6 +100,10 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
 
     fn chain_mut(&mut self) -> &mut Self::Chain {
         &mut self.ctx_mut().chain
+    }
+
+    fn journal_mut(&mut self) -> &mut Self::Journal {
+        &mut self.ctx_mut().journaled_state
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {

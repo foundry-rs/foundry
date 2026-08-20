@@ -88,6 +88,18 @@ impl<'ast> State<'_, 'ast> {
         if !item_needs_iso(&next_item.kind) {
             return;
         }
+        // Never isolate items within a `disable-start`/`disable-end` region, where the source
+        // layout is preserved verbatim. The cursor sits right past the line break that follows the
+        // previous item, so check the byte that was last copied from the source. Line-based
+        // directives such as `disable-line` only opt out of formatting that line's contents, so
+        // they keep the isolation break.
+        if self.cursor.pos > BytePos(0)
+            && self
+                .inline_config
+                .is_disabled_block(Span::new(self.cursor.pos - BytePos(1), self.cursor.pos))
+        {
+            return;
+        }
         let span = next_item.span;
 
         let cmnts = self
@@ -120,24 +132,22 @@ impl<'ast> State<'_, 'ast> {
         let ast::Item { ref docs, span, ref kind } = *item;
         self.print_docs(docs);
 
-        if self.handle_span(item.span, skip_ws) {
+        // The comments preceding the item are printed before checking whether it is disabled,
+        // because printing a disabled item copies the source verbatim and drops every comment
+        // that ends before it.
+        let cmnt = self.print_comments(
+            span.lo(),
+            if skip_ws { CommentConfig::skip_leading_ws(false) } else { CommentConfig::default() },
+        );
+
+        if self.print_span_if_disabled(span) {
             if !self.print_trailing_comment(span.hi(), None) {
                 self.print_sep(Separator::Hardbreak);
             }
             return;
         }
 
-        if self
-            .print_comments(
-                span.lo(),
-                if skip_ws {
-                    CommentConfig::skip_leading_ws(false)
-                } else {
-                    CommentConfig::default()
-                },
-            )
-            .is_some_and(|cmnt| cmnt.is_mixed())
-        {
+        if cmnt.is_some_and(|cmnt| cmnt.is_mixed()) {
             self.zerobreak();
         }
 
@@ -159,7 +169,7 @@ impl<'ast> State<'_, 'ast> {
         self.print_comments(span.hi(), CommentConfig::default());
         self.print_trailing_comment(span.hi(), None);
         self.hardbreak_if_not_bol();
-        self.cursor.next_line(self.is_at_crlf());
+        self.cursor_next_line();
     }
 
     fn print_pragma(&mut self, pragma: &'ast ast::PragmaDirective<'ast>) {
@@ -429,17 +439,20 @@ impl<'ast> State<'_, 'ast> {
             }
 
             let cmnt = self.print_comments(span.hi(), CommentConfig::skip_trailing_ws());
-            let glued = !self.last_token_is_break();
-            if glued {
-                // A trailing run of mixed comments ends in a string token; glue the brace to it,
-                // as a break in between would reclassify the last comment on the next run.
-                self.nbsp();
-            } else {
+            let mut glued = false;
+            if self.last_token_is_break() {
                 if self.config.contract_new_lines && cmnt.is_some_and(|cmnt| !cmnt.is_blank()) {
                     self.print_sep(Separator::Hardbreak);
                 }
                 self.s.offset(-self.ind);
+            } else if !self.is_beginning_of_line() {
+                // A trailing run of mixed comments ends in a string token; glue the brace to it,
+                // as a break in between would reclassify the last comment on the next run.
+                glued = true;
+                self.nbsp();
             }
+            // Otherwise the body ended with verbatim source that already broke the line; print
+            // the brace as-is.
             self.end();
             if self.config.contract_new_lines && !glued {
                 self.hardbreak_if_nonempty();
@@ -448,7 +461,9 @@ impl<'ast> State<'_, 'ast> {
             // restore block depth
             self.block_depth -= 1;
         }
-        self.print_word("}");
+        // The cursor is updated with the actual span; a disabled trailing comment of the last item
+        // may have already consumed source beyond the closing brace.
+        self.word("}");
 
         self.cursor.advance_to(span.hi(), true);
         self.contract = None;
@@ -3359,7 +3374,13 @@ mod tests {
                     Comments::new(&source_obj.file, gcx.sess.source_map(), true, false, None);
                 let config = Arc::new(FormatterConfig::default());
                 let inline_config = InlineConfig::default();
-                let mut state = State::new(gcx.sess.source_map(), config, inline_config, comments);
+                let mut state = State::new(
+                    gcx.sess.source_map(),
+                    source_obj.file.start_pos,
+                    config,
+                    inline_config,
+                    comments,
+                );
 
                 // Extract the first function header (either top-level or inside a contract)
                 let func = ast

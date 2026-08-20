@@ -429,7 +429,7 @@ interface Vm {
     /// staticness. The callback runs as an ordinary call frame and consumes one of the 1024
     /// protocol call-depth slots; a load at the maximum legal call depth can have its callback
     /// rejected as too deep, propagating as a failure of the load.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function registerSloadHook(address target, bytes4 callback) external;
 
     /// Registers a callback invoked after each SSTORE against `target`'s effective storage account,
@@ -445,7 +445,7 @@ interface Vm {
     /// staticness. The callback runs as an ordinary call frame and consumes one of the 1024
     /// protocol call-depth slots; a store at the maximum legal call depth can have its callback
     /// rejected as too deep, propagating as a failure of the store.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function registerSstoreHook(address target, bytes4 callback) external;
 
     /// Registers a callback after exact mapping-element SSTOREs rooted at `rootSlot` in `target`'s effective storage account.
@@ -463,7 +463,7 @@ interface Vm {
     /// callback subtrees. The callback must authenticate `msg.sender == address(vm)` to prevent
     /// external spoofing. Raw and mapping SSTORE hooks conflict per target, while multiple mapping
     /// roots may be registered.
-    #[cheatcode(group = Evm, safety = Unsafe, status = Experimental)]
+    #[cheatcode(group = Evm, safety = Unsafe)]
     function registerMappingSstoreHook(address target, bytes32 rootSlot, bytes4 callback) external;
 
     /// Record all account accesses as part of CREATE, CALL or SELFDESTRUCT opcodes in order,
@@ -2227,6 +2227,18 @@ interface Vm {
     /// Performs a foreign function call via the terminal.
     #[cheatcode(group = Filesystem)]
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
+
+    /// Performs a foreign function call via the terminal and parses the output as a `uint256`.
+    #[cheatcode(group = Filesystem)]
+    function ffiUint(string[] calldata commandInput) external returns (uint256 result);
+
+    /// Performs a foreign function call via the terminal and returns the output as a string.
+    #[cheatcode(group = Filesystem)]
+    function ffiString(string[] calldata commandInput) external returns (string memory result);
+
+    /// Performs a foreign function call via the terminal and decodes the output as hex bytes.
+    #[cheatcode(group = Filesystem)]
+    function ffiBytes(string[] calldata commandInput) external returns (bytes memory result);
 
     /// Performs a foreign function call via terminal and returns the exit code, stdout, and stderr.
     #[cheatcode(group = Filesystem)]
