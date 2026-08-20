@@ -163,13 +163,19 @@ struct SourcePos {
 }
 
 impl SourcePos {
+    /// While `enabled`, the position is a loose lower bound that is resynced by `advance_to`.
+    /// While disabled, it is the exact start of the not-yet-printed source of a disabled region.
     pub(super) fn advance(&mut self, bytes: u32) {
         self.pos += BytePos(bytes);
     }
 
     pub(super) fn advance_to(&mut self, pos: BytePos, enabled: bool) {
-        self.pos = std::cmp::max(pos, self.pos);
-        self.enabled = enabled;
+        // Ignore stale updates while disabled, as the exact position must be preserved until the
+        // remainder of the disabled region has been printed.
+        if self.enabled || pos >= self.pos {
+            self.pos = std::cmp::max(pos, self.pos);
+            self.enabled = enabled;
+        }
     }
 
     pub(super) fn next_line(&mut self, is_at_crlf: bool) {
@@ -189,15 +195,13 @@ pub(super) enum Separator {
 }
 
 impl Separator {
-    fn print(&self, p: &mut pp::Printer, cursor: &mut SourcePos, is_at_crlf: bool) {
+    fn print(&self, p: &mut pp::Printer) {
         match self {
             Self::Nbsp => p.nbsp(),
             Self::Space => p.space(),
             Self::Hardbreak => p.hardbreak(),
             Self::SpaceOrNbsp(breaks) => p.space_or_nbsp(*breaks),
         }
-
-        cursor.next_line(is_at_crlf);
     }
 }
 
@@ -253,6 +257,17 @@ impl<'sess> State<'sess, '_> {
     /// The check is only meaningful if `self.has_crlf` is true.
     fn is_at_crlf(&self) -> bool {
         self.has_crlf && self.char_at(self.cursor.pos) == Some('\r')
+    }
+
+    /// Advances the cursor past the line break assumed to be represented by a printed separator.
+    ///
+    /// While the cursor is disabled it marks the exact start of not-yet-printed source, so it may
+    /// only advance if it actually sits at a line break; otherwise the separator does not consume
+    /// any source (e.g. it was already printed verbatim by a disabled trailing comment).
+    fn cursor_next_line(&mut self) {
+        if self.cursor.enabled || matches!(self.char_at(self.cursor.pos), Some('\n' | '\r')) {
+            self.cursor.next_line(self.is_at_crlf());
+        }
     }
 
     /// Computes the space left, bounded by the max space left.
@@ -404,8 +419,8 @@ impl State<'_, '_> {
     }
 
     fn print_sep_unhandled(&mut self, sep: Separator) {
-        let is_at_crlf = self.is_at_crlf();
-        sep.print(&mut self.s, &mut self.cursor, is_at_crlf);
+        sep.print(&mut self.s);
+        self.cursor_next_line();
     }
 
     fn print_ident(&mut self, ident: &ast::Ident) {

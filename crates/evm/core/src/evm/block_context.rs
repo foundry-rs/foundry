@@ -111,7 +111,7 @@ where
     FEN: FoundryEvmNetwork,
     P: Provider<FEN::Network>,
 {
-    if !networks.needs_block_context() {
+    if !networks.is_monad() {
         return Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx));
     }
 
