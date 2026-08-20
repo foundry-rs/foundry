@@ -448,9 +448,17 @@ forgetest_init!(dependencies_errors_loudly_on_conflicted_submodule, |prj, cmd| {
     run_git(&["checkout", "-q", &rev_b], &submodule_path);
     run_git(&["commit", "-q", "-am", "pin branch-b"], prj.root());
 
-    // This merge is expected to conflict - don't assert success.
-    let _ =
-        Command::new("git").args(["merge", "feature"]).current_dir(prj.root()).output().unwrap();
+    // This merge is expected to conflict - don't assert success. `-c merge.ff=false` pins the
+    // merge strategy so this doesn't depend on the running machine's ambient git config: with
+    // `merge.ff=only` set globally (a real policy some teams/CI templates enforce), `git merge`
+    // refuses outright instead of attempting the merge, and `lib/dep` never becomes conflicted -
+    // the assertion below does catch that (it fails loudly rather than passing vacuously), but
+    // there's no reason to depend on ambient config for a merge this test controls entirely.
+    let _ = Command::new("git")
+        .args(["-c", "merge.ff=false", "merge", "feature"])
+        .current_dir(prj.root())
+        .output()
+        .unwrap();
     assert!(
         Command::new("git")
             .args(["status", "--short"])
@@ -463,7 +471,10 @@ forgetest_init!(dependencies_errors_loudly_on_conflicted_submodule, |prj, cmd| {
     );
 
     cmd.arg("dependencies").assert_failure().stderr_eq(str![[r#"
-Error: Invalid submodule status format
+Error: failed to parse `git submodule status` - a merge-conflicted submodule can cause this
+
+Context:
+- Invalid submodule status format
 
 "#]]);
 });

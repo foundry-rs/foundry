@@ -3,7 +3,7 @@ use clap::{Parser, ValueHint};
 use comfy_table::{
     Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
 };
-use eyre::Result;
+use eyre::{Context, Result};
 use foundry_cli::utils::{Git, LoadConfig};
 use foundry_common::shell;
 use foundry_config::{Config, impl_figment_convert_basic};
@@ -103,7 +103,9 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     // blocks `forge dependencies` entirely, even for an unrelated project subdirectory - fixing
     // that needs `Submodule`'s status parsing to tolerate individual bad lines, which is shared
     // by every other caller of `Git::submodules()` and out of scope here.
-    let submodules = git.submodules()?;
+    let submodules = git.submodules().wrap_err(
+        "failed to parse `git submodule status` - a merge-conflicted submodule can cause this",
+    )?;
 
     let mut lockfile = Lockfile::new(&config.root);
     if lockfile.exists() {
