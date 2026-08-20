@@ -57,6 +57,10 @@ forgetest_init!(dependencies_lists_submodules_and_soldeer, |prj, cmd| {
         output.contains("tag=") || output.contains("branch="),
         "expected forge-std to report its foundry.lock pin, not a bare rev:\n{output}"
     );
+    assert!(
+        output.contains("https://github.com/foundry-rs/forge-std"),
+        "the table output must show a URL column, not just --json:\n{output}"
+    );
 
     // Soldeer dependencies, read from `soldeer.lock`.
     assert!(output.contains("test-dep"), "missing test-dep entry:\n{output}");
@@ -64,6 +68,10 @@ forgetest_init!(dependencies_lists_submodules_and_soldeer, |prj, cmd| {
     assert!(output.contains("soldeer"), "missing soldeer source label:\n{output}");
     assert!(output.contains("1.0.0"), "missing test-dep version:\n{output}");
     assert!(output.contains("2.0.0"), "missing git-dep version:\n{output}");
+    assert!(
+        output.contains("https://example.com/test-dep-1.0.0.zip"),
+        "missing test-dep URL in table output:\n{output}"
+    );
 });
 
 // `--json` (the global flag shared by every `forge` subcommand) emits a machine-readable array
