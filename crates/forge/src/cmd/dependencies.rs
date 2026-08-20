@@ -62,11 +62,14 @@ impl DependenciesArgs {
         } else {
             table.apply_modifier(UTF8_ROUND_CORNERS);
         }
+        // Long URLs would otherwise stretch every row to the widest one.
+        table.set_content_arrangement(comfy_table::ContentArrangement::Dynamic);
         table.set_header(vec![
             Cell::new("Name").fg(Color::Cyan),
             Cell::new("Source").fg(Color::Cyan),
             Cell::new("Version").fg(Color::Cyan),
             Cell::new("Path").fg(Color::Cyan),
+            Cell::new("URL").fg(Color::Cyan),
         ]);
         for dep in &dependencies {
             let mut row = Row::new();
@@ -74,6 +77,7 @@ impl DependenciesArgs {
             row.add_cell(Cell::new(dep.source));
             row.add_cell(Cell::new(&dep.version));
             row.add_cell(Cell::new(&dep.path));
+            row.add_cell(Cell::new(dep.url.as_deref().unwrap_or("-")));
             table.add_row(row);
         }
         sh_println!("{table}")?;
@@ -132,6 +136,10 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     // of invocation cwd - so this is the one place that still needs a Git-root-relative path.
     let project_prefix = project_root.strip_prefix(&git_root).unwrap_or(Path::new(""));
 
+    // Parsed once and reused for every submodule below, instead of re-parsing `.gitmodules` (and
+    // spawning a fresh `git config` subprocess) per submodule.
+    let gitmodules_entries = git.submodule_gitmodules_entries(&git_root).unwrap_or_default();
+
     let mut out = Vec::new();
     for submodule in &submodules {
         let path = submodule.path();
@@ -154,7 +162,10 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
         // submodule add --name openzeppelin <url> lib/openzeppelin`), and `git config
         // submodule.<key>.url` is keyed by the section name - resolve it by path instead of
         // assuming the two are the same string.
-        let url = git.submodule_url_for_path(&git_root, &project_prefix.join(path)).ok().flatten();
+        let url = git
+            .submodule_url_for_path(&gitmodules_entries, &project_prefix.join(path))
+            .ok()
+            .flatten();
 
         // Prefer `foundry.lock`'s pinned tag/branch, but only when it still matches what's
         // actually checked out - if the submodule was manually moved to a different commit
