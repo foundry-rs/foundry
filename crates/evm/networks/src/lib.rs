@@ -15,7 +15,11 @@ use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
 use clap::Parser;
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
-use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
+#[cfg(feature = "optimism")]
+use foundry_evm_hardforks::OpHardfork;
+use foundry_evm_hardforks::{
+    EthereumHardfork, FoundryHardfork, TempoHardfork, latest_active_tempo_hardfork,
+};
 #[cfg(not(feature = "monad"))]
 type MonadHardfork = ();
 #[cfg(feature = "monad")]
@@ -287,6 +291,33 @@ impl NetworkVariant {
     /// Parses a hardfork name reported by an RPC endpoint in this network's namespace.
     pub fn parse_hardfork(self, hardfork: &str) -> Result<FoundryHardfork, String> {
         format!("{}:{hardfork}", self.name()).parse()
+    }
+
+    /// Returns the active hardfork for this network at the given chain and timestamp.
+    ///
+    /// Unknown chain IDs fall back to the network's default hardfork. The selected network owns
+    /// the lookup so an explicit network choice is not overridden by the chain ID's family.
+    pub fn hardfork_at(self, chain_id: ChainId, timestamp: u64) -> FoundryHardfork {
+        match self {
+            Self::Ethereum => {
+                EthereumHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
+                    .unwrap_or_default()
+                    .into()
+            }
+            Self::Tempo => TempoHardfork::from_chain_and_timestamp(chain_id, timestamp)
+                .unwrap_or_else(latest_active_tempo_hardfork)
+                .into(),
+            #[cfg(feature = "optimism")]
+            Self::Optimism => {
+                OpHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
+                    .unwrap_or_default()
+                    .into()
+            }
+            #[cfg(feature = "monad")]
+            Self::Monad => MonadHardfork::from_chain_and_timestamp(chain_id, timestamp)
+                .unwrap_or_default()
+                .into(),
+        }
     }
 
     /// Returns `true` if this is the Ethereum network variant.

@@ -289,6 +289,7 @@ async fn test_fee_history_ignores_stale_cache_after_reset() {
 async fn test_memory_reset_restores_explicit_genesis_base_fee() {
     let (api, handle) = spawn(
         NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::default().into()))
             .with_genesis(Some(Genesis { base_fee_per_gas: Some(0), ..Default::default() })),
     )
     .await;
