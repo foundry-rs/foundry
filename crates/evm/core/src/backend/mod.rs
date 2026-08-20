@@ -3068,7 +3068,6 @@ mod tests {
     use anvil::{NodeConfig, spawn};
     use foundry_common::{SYSTEM_TRANSACTION_TYPE, provider::get_http_provider};
     use foundry_config::{Config, NamedChain};
-    #[cfg(feature = "monad")]
     use foundry_evm_networks::NetworkConfigs;
     use foundry_fork_db::{
         SharedBackend,
