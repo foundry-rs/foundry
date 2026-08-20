@@ -12,11 +12,7 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-#[cfg(feature = "monad")]
-use foundry_evm::hardfork::MonadHardfork;
-#[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
-use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
+use foundry_evm::hardfork::FoundryHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
@@ -33,7 +29,6 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tempo_hardfork::TempoHardfork;
 use tokio::time::{Instant, Interval};
 
 #[derive(Clone, Debug, Parser)]
@@ -905,20 +900,7 @@ fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHa
         return Ok(hardfork);
     }
 
-    #[cfg(feature = "optimism")]
-    if networks.is_optimism() {
-        return Ok(OpHardfork::from_str(hf)?.into());
-    }
-    if networks.is_tempo() {
-        return Ok(TempoHardfork::from_str(hf)?.into());
-    }
-    #[cfg(feature = "monad")]
-    if networks.is_monad() {
-        return Ok(MonadHardfork::from_str(hf)
-            .map_err(|err| eyre::eyre!("unknown monad hardfork '{hf}': {err:?}"))?
-            .into());
-    }
-    Ok(EthereumHardfork::from_str(hf)?.into())
+    networks.execution_network().parse_hardfork(hf).map_err(eyre::Report::msg)
 }
 
 /// Clap's value parser for genesis. Loads a genesis.json file.
@@ -937,7 +919,13 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_evm::hardfork::EthereumHardfork;
+    #[cfg(feature = "monad")]
+    use foundry_evm::hardfork::MonadHardfork;
+    #[cfg(feature = "optimism")]
+    use foundry_evm::hardfork::OpHardfork;
     use std::{env, net::Ipv4Addr};
+    use tempo_hardfork::TempoHardfork;
 
     #[test]
     fn test_parse_fork_url() {
