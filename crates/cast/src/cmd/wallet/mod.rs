@@ -1003,6 +1003,7 @@ flag to set your key via:
                 args.run()?;
             }
             Self::Remove { name, dir, unsafe_password } => {
+                ensure_account_name_available(&name)?;
                 let dir = if let Some(path) = dir {
                     Path::new(&path).to_path_buf()
                 } else {
@@ -1089,6 +1090,7 @@ flag to set your key via:
                 }
             }
             Self::DecryptKeystore { account_name, keystore_dir, unsafe_password } => {
+                ensure_account_name_available(&account_name)?;
                 // Set up keystore directory
                 let dir = if let Some(path) = keystore_dir {
                     Path::new(&path).to_path_buf()
@@ -1131,6 +1133,7 @@ flag to set your key via:
                 unsafe_password,
                 unsafe_new_password,
             } => {
+                ensure_account_name_available(&account_name)?;
                 // Set up keystore directory
                 let dir = if let Some(path) = keystore_dir {
                     Path::new(&path).to_path_buf()
@@ -1321,6 +1324,10 @@ fn ensure_touch_id_available(touch_id: bool) -> Result<()> {
 const TOUCH_ID_SIDECAR_SUFFIX: &str = ".touchid";
 
 fn ensure_account_name_available(name: &str) -> Result<()> {
+    let file_name = Path::new(name).file_name().and_then(|s| s.to_str());
+    if name.is_empty() || name.contains('\\') || file_name != Some(name) {
+        eyre::bail!("account name must be a single path segment");
+    }
     if name.ends_with(TOUCH_ID_SIDECAR_SUFFIX) {
         eyre::bail!("account names ending in `{TOUCH_ID_SIDECAR_SUFFIX}` are reserved");
     }
@@ -2324,5 +2331,18 @@ mod tests {
             result.is_err(),
             "expected error when both --nonce and --self-broadcast are provided"
         );
+    }
+
+    #[test]
+    fn rejects_path_keystore_account_name() {
+        assert!(ensure_account_name_available("dev").is_ok());
+        assert!(ensure_account_name_available("testAccount").is_ok());
+        assert!(ensure_account_name_available("../pwned").is_err());
+        assert!(ensure_account_name_available("nested/alias").is_err());
+        assert!(ensure_account_name_available("foo/../bar").is_err());
+        assert!(ensure_account_name_available("..").is_err());
+        assert!(ensure_account_name_available(".").is_err());
+        assert!(ensure_account_name_available("").is_err());
+        assert!(ensure_account_name_available("foo\\bar").is_err());
     }
 }

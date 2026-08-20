@@ -731,6 +731,26 @@ fn memory_copies_symbolic_bytecode_size_with_guarded_tail() {
 }
 
 #[test]
+fn memory_symbolic_copy_size_controls_extent() {
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+    let dest = SymExpr::constant(&mut cx, U256::from(0x100));
+    let size = SymExpr::var(&mut cx, "size");
+    let bytes = (0u8..4).map(|idx| SymExpr::constant(&mut cx, U256::from(idx + 1))).collect();
+    let bytes = SymBytes::exprs(&mut cx, bytes);
+    memory.copy_bytes_size_offset(&mut cx, dest, size, bytes).unwrap();
+    let memory_size = memory.size_word(&mut cx);
+
+    let size_zero = symbolic_model(&mut cx, [("size".to_string(), U256::ZERO)]);
+    assert_eq!(memory_size.eval_model(&size_zero).unwrap(), U256::ZERO);
+
+    for size in 1..=4 {
+        let model = symbolic_model(&mut cx, [("size".to_string(), U256::from(size))]);
+        assert_eq!(memory_size.eval_model(&model).unwrap(), U256::from(0x120));
+    }
+}
+
+#[test]
 fn memory_copies_folded_symbolic_size_prefix_only() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
@@ -1294,6 +1314,42 @@ fn memory_call_output_accepts_symbolic_size_with_guarded_tail() {
 }
 
 #[test]
+fn memory_call_output_size_controls_extent() {
+    let mut cx = SymCx::new();
+    let return_data = SymReturnData::empty(&mut cx);
+    let mut memory = SymMemory::default();
+    let dest = SymExpr::constant(&mut cx, U256::from(0x100));
+    let size = SymExpr::var(&mut cx, "size");
+    let copy_size = BoundedCopySize::Symbolic { size, max_size: 4 };
+
+    memory.copy_call_output_offset(&mut cx, dest, &copy_size, &return_data).unwrap();
+    let memory_size = memory.size_word(&mut cx);
+
+    let size_zero = symbolic_model(&mut cx, [("size".to_string(), U256::ZERO)]);
+    assert_eq!(memory_size.eval_model(&size_zero).unwrap(), U256::ZERO);
+
+    let size_one = symbolic_model(&mut cx, [("size".to_string(), U256::from(1))]);
+    assert_eq!(memory_size.eval_model(&size_one).unwrap(), U256::from(0x120));
+}
+
+#[test]
+fn memory_call_output_preserves_symbolic_read_bound() {
+    let mut cx = SymCx::new();
+    let return_data = SymReturnData::from_concrete_bytes(&mut cx, vec![1]);
+    let mut memory = SymMemory::default();
+    let dest = SymExpr::constant(&mut cx, U256::from(0x100));
+
+    memory
+        .copy_call_output_offset(&mut cx, dest, &BoundedCopySize::Concrete(1), &return_data)
+        .unwrap();
+
+    let offset = SymExpr::var(&mut cx, "offset");
+    let value = memory.load_word_offset(&mut cx, offset).unwrap();
+    let model = symbolic_model(&mut cx, [("offset".to_string(), U256::from(0x100))]);
+    assert_eq!(value.eval_model(&model).unwrap(), U256::from(1) << 248);
+}
+
+#[test]
 fn memory_call_output_accepts_symbolic_destination_and_size() {
     let mut cx = SymCx::new();
     let return_data = SymReturnData::from_concrete_bytes(&mut cx, vec![1, 2, 3, 4]);
@@ -1759,7 +1815,6 @@ fn path_state_child_replaces_frame_and_resets_local_loop_state() {
     let child_address = Address::from([0x11; 20]);
     let frame = CallFrame::new(
         &mut cx,
-        child_address,
         child_address,
         child_address,
         Address::ZERO,
@@ -2526,6 +2581,34 @@ fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
     let model = fallback_single_var_model(&constraints).unwrap();
 
     assert!(constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap()));
+}
+
+#[test]
+fn fallback_model_uses_direct_bound_witness() {
+    let mut cx = SymCx::new();
+    let calldata = SymExpr::var(&mut cx, "calldata_0");
+    let upper_bound = SymExpr::constant(&mut cx, U256::from(512));
+    let constraint = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, calldata, upper_bound);
+
+    let model = fallback_single_var_model(&[constraint]).unwrap();
+
+    assert_eq!(model_value(&cx, &model, "calldata_0"), Some(U256::from(512)));
+}
+
+#[test]
+fn fallback_model_uses_boundary_witness() {
+    let mut cx = SymCx::new();
+    let calldata = SymExpr::var(&mut cx, "calldata_0");
+    let mut constraints = Vec::new();
+    for excluded in 0..3 {
+        let value = SymExpr::constant(&mut cx, U256::from(excluded));
+        let equals = SymBoolExpr::eq(&mut cx, calldata.clone(), value);
+        constraints.push(equals.not(&mut cx));
+    }
+
+    let model = fallback_single_var_model(&constraints).unwrap();
+
+    assert_eq!(model_value(&cx, &model, "calldata_0"), Some(U256::MAX));
 }
 
 #[test]

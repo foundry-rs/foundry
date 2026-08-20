@@ -1254,6 +1254,36 @@ Error: account names ending in `.touchid` are reserved
 "#]]);
 });
 
+// `cast wallet import` treats ACCOUNT_NAME as a file name under the keystore dir.
+// A path segment would write the encrypted keystore outside that directory.
+casttest!(wallet_import_rejects_path_account_name, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    fs::create_dir_all(&keystore_dir).unwrap();
+    let escaped = prj.root().join("pwned_foundry_alias");
+
+    cmd.set_current_dir(prj.root());
+    cmd.args([
+        "wallet",
+        "import",
+        "../pwned_foundry_alias",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: account name must be a single path segment
+
+"#]]);
+
+    assert!(!escaped.exists());
+    assert!(!keystore_dir.join("../pwned_foundry_alias").exists());
+});
+
 // tests that `cast wallet sign message` outputs the expected signature
 casttest!(wallet_sign_message_utf8_data, |_prj, cmd| {
     let pk = "0x0000000000000000000000000000000000000000000000000000000000000001";

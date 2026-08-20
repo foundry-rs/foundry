@@ -1,5 +1,10 @@
 use super::*;
-use std::process::{Child, Output};
+use std::{
+    io::{BufRead, BufReader, Read},
+    process::{Child, ChildStdin, Output},
+    sync::mpsc::{Receiver, RecvTimeoutError},
+    thread::JoinHandle,
+};
 use wait_timeout::ChildExt;
 
 mod hard_arith_fallback;
@@ -19,6 +24,8 @@ pub(crate) use opt::normalize_constraints_for_solver;
 use opt::{constraints_are_directly_unsat, sorted_bool_exprs_are_subset, write_smt_assertions};
 #[cfg(test)]
 pub(crate) use opt::{normalize_bool_for_solver, normalize_expr_for_solver};
+
+const Z3_QUERY_END: &str = "foundry-query-complete";
 
 /// Errors that arise when parsing or constructing solver commands from configuration.
 #[derive(Debug, thiserror::Error)]
@@ -235,6 +242,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     smt_max_query_bytes: u64,
     smt_build_time: Duration,
     smt_max_query_time: Duration,
+    z3_session: Option<Z3Session>,
 }
 
 impl SmtLibSubprocessSolver {
@@ -268,6 +276,7 @@ impl SmtLibSubprocessSolver {
             smt_max_query_bytes: 0,
             smt_build_time: Duration::ZERO,
             smt_max_query_time: Duration::ZERO,
+            z3_session: None,
         }
     }
 
@@ -779,13 +788,22 @@ impl SmtLibSubprocessSolver {
         }
 
         let started = Instant::now();
-        let result = run_solver_commands(
-            cx,
-            &commands,
-            &smt,
-            self.timeout,
-            model.then_some(model_constraints),
-        );
+        let result = if let [command] = commands.as_slice()
+            && command.smt_timeout
+            && command.program == "z3"
+            && command.args == ["-in", "-smt2"]
+        {
+            let output = self.query_z3(command, &smt).into_result();
+            SolverCommandRun { output, summaries: Vec::new() }
+        } else {
+            run_solver_commands(
+                cx,
+                &commands,
+                &smt,
+                self.timeout,
+                model.then_some(model_constraints),
+            )
+        };
         let query_time = started.elapsed();
         self.solver_time += query_time;
         self.smt_max_query_time = self.smt_max_query_time.max(query_time);
@@ -800,6 +818,28 @@ impl SmtLibSubprocessSolver {
             }
         }
         result.output
+    }
+
+    fn query_z3(&mut self, command: &SolverCommand, smt: &str) -> SolverProcessOutcome {
+        let mut session = match self.z3_session.take() {
+            Some(session) => session,
+            None => match Z3Session::spawn(command) {
+                Ok(session) => session,
+                Err(err) => return SolverProcessOutcome::Error(err),
+            },
+        };
+        let outcome = session.query(command, smt, self.timeout);
+        match outcome {
+            output @ SolverProcessOutcome::Output(_) => {
+                self.z3_session = Some(session);
+                output
+            }
+            SolverProcessOutcome::Error(_) => {
+                drop(session);
+                run_solver_process(command, smt, self.timeout, &AtomicBool::new(false))
+            }
+            other => other,
+        }
     }
 }
 
@@ -823,7 +863,7 @@ fn model_satisfies_constraints(
     model: &(impl SymbolicModelLookup + ?Sized),
     constraints: &[SymBoolExpr],
 ) -> bool {
-    constraints.iter().all(|constraint| constraint.eval_model(model).unwrap_or(false))
+    eval_model_constraints(constraints, model)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1057,6 +1097,20 @@ enum SolverProcessOutcome {
     Error(String),
 }
 
+impl SolverProcessOutcome {
+    fn into_result(self) -> Result<String, SymbolicError> {
+        match self {
+            Self::Output(output) => Ok(output),
+            Self::Unknown => Err(SymbolicError::SolverUnknown),
+            Self::Cancelled => {
+                warn!("solver query was cancelled");
+                Err(SymbolicError::Solver("solver query was cancelled".to_string()))
+            }
+            Self::Error(err) => Err(SymbolicError::Solver(err)),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct SolverProcessResult {
     index: usize,
@@ -1277,15 +1331,8 @@ fn run_solver_commands(
         };
     }
     if commands.len() == 1 {
-        let output = match run_solver_process(&commands[0], smt, timeout, &AtomicBool::new(false)) {
-            SolverProcessOutcome::Output(output) => Ok(output),
-            SolverProcessOutcome::Unknown => Err(SymbolicError::SolverUnknown),
-            SolverProcessOutcome::Cancelled => {
-                warn!("solver query was cancelled");
-                Err(SymbolicError::Solver("solver query was cancelled".to_string()))
-            }
-            SolverProcessOutcome::Error(err) => Err(SymbolicError::Solver(err)),
-        };
+        let output =
+            run_solver_process(&commands[0], smt, timeout, &AtomicBool::new(false)).into_result();
         return SolverCommandRun { output, summaries: Vec::new() };
     }
 
@@ -1570,6 +1617,128 @@ fn format_solver_portfolio_summaries(summaries: &[SolverRunSummary]) -> String {
     output
 }
 
+struct Z3Session {
+    child: SolverChild,
+    stdin: ChildStdin,
+    stdout: Receiver<Result<String, String>>,
+    stderr: Receiver<String>,
+    stdout_thread: Option<JoinHandle<()>>,
+    stderr_thread: Option<JoinHandle<()>>,
+}
+
+impl Z3Session {
+    fn spawn(command: &SolverCommand) -> Result<Self, String> {
+        let mut child = spawn_solver_process(command)?;
+        let stdin = child.child_mut().stdin.take().expect("piped solver stdin is available");
+        let stdout = child.child_mut().stdout.take().expect("piped solver stdout is available");
+        let stderr = child.child_mut().stderr.take().expect("piped solver stderr is available");
+
+        let (stdout_tx, stdout_rx) = mpsc::channel();
+        let stdout_thread = thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                let line = line.map_err(|err| format!("failed to read solver output: {err}"));
+                let failed = line.is_err();
+                if stdout_tx.send(line).is_err() || failed {
+                    break;
+                }
+            }
+        });
+        let (stderr_tx, stderr_rx) = mpsc::channel();
+        let stderr_thread = thread::spawn(move || {
+            let mut stderr = BufReader::new(stderr);
+            let mut output = String::new();
+            let _ = stderr.read_to_string(&mut output);
+            let _ = stderr_tx.send(output);
+        });
+
+        Ok(Self {
+            child,
+            stdin,
+            stdout: stdout_rx,
+            stderr: stderr_rx,
+            stdout_thread: Some(stdout_thread),
+            stderr_thread: Some(stderr_thread),
+        })
+    }
+
+    fn query(
+        &mut self,
+        command: &SolverCommand,
+        smt: &str,
+        timeout: Option<u32>,
+    ) -> SolverProcessOutcome {
+        if let Err(err) = self
+            .stdin
+            .write_all(b"(reset)\n")
+            .and_then(|_| self.stdin.write_all(smt.as_bytes()))
+            .and_then(|_| writeln!(self.stdin, "(echo \"{Z3_QUERY_END}\")"))
+            .and_then(|_| self.stdin.flush())
+        {
+            return SolverProcessOutcome::Error(format!("failed to write solver query: {err}"));
+        }
+
+        let started_at = Instant::now();
+        let timeout = timeout
+            .filter(|seconds| *seconds > 0)
+            .map(|seconds| Duration::from_secs(seconds.into()));
+        let mut output = String::new();
+        loop {
+            let Some(wait) = solver_wait_duration(started_at.elapsed(), timeout) else {
+                return SolverProcessOutcome::Unknown;
+            };
+            match self.stdout.recv_timeout(wait) {
+                Ok(Ok(line)) if line == Z3_QUERY_END => {
+                    return SolverProcessOutcome::Output(output);
+                }
+                Ok(Ok(line)) => {
+                    output.push_str(&line);
+                    output.push('\n');
+                }
+                Ok(Err(err)) => return SolverProcessOutcome::Error(err),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    let stderr =
+                        self.stderr.recv_timeout(SOLVER_CANCEL_CHECK_INTERVAL).unwrap_or_default();
+                    return match self.child.child_mut().try_wait() {
+                        Ok(Some(status)) => SolverProcessOutcome::Error(solver_exit_error(
+                            command, status, &output, &stderr,
+                        )),
+                        Ok(None) => SolverProcessOutcome::Error(
+                            "solver stdout closed before the query completed".to_string(),
+                        ),
+                        Err(err) => SolverProcessOutcome::Error(format!(
+                            "failed to query solver process status: {err}"
+                        )),
+                    };
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Z3Session {
+    fn drop(&mut self) {
+        self.child.terminate();
+        if let Some(thread) = self.stdout_thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.stderr_thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn spawn_solver_process(command: &SolverCommand) -> Result<SolverChild, String> {
+    Command::new(&command.program)
+        .args(&command.args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map(SolverChild::new)
+        .map_err(|err| format!("failed to spawn `{}`: {err}", command.display))
+}
+
 /// Runs one solver process to completion, timeout, or cooperative cancellation.
 fn run_solver_process(
     command: &SolverCommand,
@@ -1577,22 +1746,10 @@ fn run_solver_process(
     timeout: Option<u32>,
     cancel: &AtomicBool,
 ) -> SolverProcessOutcome {
-    let child = match Command::new(&command.program)
-        .args(&command.args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-    {
+    let mut child = match spawn_solver_process(command) {
         Ok(child) => child,
-        Err(err) => {
-            return SolverProcessOutcome::Error(format!(
-                "failed to spawn `{}`: {err}",
-                command.display
-            ));
-        }
+        Err(err) => return SolverProcessOutcome::Error(err),
     };
-    let mut child = SolverChild::new(child);
 
     if let Some(mut stdin) = child.child_mut().stdin.take()
         && let Err(err) = stdin.write_all(smt.as_bytes())
@@ -1666,14 +1823,18 @@ impl SolverChild {
     fn wait_with_output(mut self) -> std::io::Result<Output> {
         self.child.take().expect("solver child exists").wait_with_output()
     }
-}
 
-impl Drop for SolverChild {
-    fn drop(&mut self) {
+    fn terminate(&mut self) {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+}
+
+impl Drop for SolverChild {
+    fn drop(&mut self) {
+        self.terminate();
     }
 }
 
@@ -1718,7 +1879,7 @@ pub(crate) fn parse_and_validate_model(
 ) -> Result<SymbolicModel, SymbolicError> {
     let symbols = model_symbols_for_constraints(cx, constraints);
     let model = parse_model_with_symbols(output, &symbols)?;
-    if constraints.iter().all(|constraint| constraint.eval_model(&model).unwrap_or(false)) {
+    if eval_model_constraints(constraints, &model) {
         Ok(model)
     } else {
         let reason = if constraints.iter().any(SymBoolExpr::contains_keccak) {
@@ -1833,4 +1994,24 @@ fn model_symbols_for_constraints(
         constraint.collect_vars(&mut vars);
     }
     vars.into_iter().map(|symbol| (cx.symbol_name(symbol).to_owned(), symbol)).collect()
+}
+
+#[cfg(test)]
+#[test]
+fn z3_session_resets_and_reuses_the_process() {
+    let command = named_solver_command("z3").unwrap();
+    if solver_command_availability_error(&command).is_some() {
+        return;
+    }
+
+    let mut solver = SmtLibSubprocessSolver::new(Ok(vec![command]), Some(5), 2, false);
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let one = SymExpr::one(&mut cx);
+    let constraints = vec![SymBoolExpr::eq(&mut cx, value, one)];
+
+    assert_eq!(solver.query_normalized(&cx, &constraints, false, &constraints).unwrap(), "sat\n");
+    let pid = solver.z3_session.as_mut().unwrap().child.child_mut().id();
+    assert_eq!(solver.query_normalized(&cx, &constraints, false, &constraints).unwrap(), "sat\n");
+    assert_eq!(solver.z3_session.as_mut().unwrap().child.child_mut().id(), pid);
 }

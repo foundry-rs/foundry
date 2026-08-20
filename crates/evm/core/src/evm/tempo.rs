@@ -4,7 +4,7 @@ use foundry_evm_hardforks::TempoHardfork;
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
-        ContextTr, LocalContextTr,
+        ContextTr, Journal, LocalContextTr,
         result::{EVMError, HaltReason, ResultAndState},
     },
     handler::{EvmTr, FrameResult, Handler},
@@ -26,7 +26,7 @@ use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
     constants::{CALLER, TEST_CONTRACT_ADDRESS},
-    evm::{FoundryEvmFactory, NestedEvm},
+    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor},
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
 };
 
@@ -78,8 +78,7 @@ pub(crate) fn initialize_tempo_evm<
 }
 
 impl FoundryEvmFactory for TempoEvmFactory {
-    type ChainContext = ();
-    type TransactionState = ();
+    type Chain = ();
     type FoundryContext<'db> = TempoContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
@@ -89,7 +88,7 @@ impl FoundryEvmFactory for TempoEvmFactory {
         &self,
         db: DB,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::ChainContext,
+        _chain_context: Self::Chain,
     ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
         self.create_evm(db, evm_env)
     }
@@ -98,7 +97,7 @@ impl FoundryEvmFactory for TempoEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::ChainContext,
+        _chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let is_forked = db.is_forked_mode();
@@ -130,17 +129,9 @@ impl FoundryEvmFactory for TempoEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> Box<
-        dyn NestedEvm<
-                Spec = TempoHardfork,
-                Block = TempoBlockEnv,
-                Tx = TempoTxEnv,
-                ChainContext = (),
-                TransactionState = (),
-            > + 'db,
-    > {
+    ) -> NestedEvmFor<'db, Self> {
         Box::new(
             self.create_foundry_evm_with_inspector(db, evm_env, chain_context, inspector)
                 .into_inner(),
@@ -173,8 +164,8 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
     type Spec = TempoHardfork;
     type Block = TempoBlockEnv;
     type Tx = TempoTxEnv;
-    type ChainContext = ();
-    type TransactionState = ();
+    type Chain = ();
+    type Journal = Journal<&'db mut dyn DatabaseExt<TempoEvmFactory>>;
 
     fn tx_mut(&mut self) -> &mut Self::Tx {
         self.ctx_mut().tx_mut()
@@ -182,6 +173,14 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
 
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx_mut().journaled_state.inner
+    }
+
+    fn chain_mut(&mut self) -> &mut Self::Chain {
+        &mut self.ctx_mut().chain
+    }
+
+    fn journal_mut(&mut self) -> &mut Self::Journal {
+        &mut self.ctx_mut().journaled_state
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {

@@ -11,6 +11,7 @@ use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes};
 use forge_script_sequence::ScriptSequence;
 use foundry_compilers::artifacts::EvmVersion;
+use foundry_evm::constants::CALLER;
 use foundry_test_utils::{
     ScriptOutcome, ScriptTester,
     rpc::{self, next_http_archive_rpc_url},
@@ -4803,6 +4804,54 @@ forgetest!(can_execute_script_command_with_tempo, |prj, cmd| {
         .arg("--root")
         .arg(prj.root())
         .assert_success();
+});
+
+forgetest_async!(tempo_script_runs_with_zero_fee_token_balance, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "TempoScript.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract TempoScript is Script {
+    uint256 public value;
+
+    constructor() {
+        value = 1;
+    }
+
+    function setUp() external {
+        require(value == 1);
+        value = 2;
+    }
+
+    function run() external {
+        require(value == 2);
+        value = 3;
+    }
+}
+"#,
+    );
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let fee_token = address!("0x20c0000000000000000000000000000000000000");
+    let fee_manager = address!("0xfeec000000000000000000000000000000000000");
+    // Clear both balances so synthetic execution cannot accidentally succeed through fee
+    // accounting.
+    api.anvil_deal_tip20(CALLER, fee_token, U256::ZERO).await.unwrap();
+    api.anvil_deal_tip20(fee_manager, fee_token, U256::ZERO).await.unwrap();
+    cmd.arg("script").arg(script).args([
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--network",
+        "tempo",
+        "--tempo.fee-token",
+        "0x20c0000000000000000000000000000000000000",
+        "--with-gas-price",
+        "600000000",
+        "--block-gas-limit",
+        "18446744073709551615",
+    ]);
+    cmd.assert_success();
 });
 
 forgetest_async!(tempo_aa_script_broadcast_deploys_with_fee_token, |prj, cmd| {

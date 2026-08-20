@@ -17,7 +17,7 @@ use foundry_tui::TuiApp;
 use ratatui::Frame;
 use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
-use std::ops::ControlFlow;
+use std::{fmt::Write, ops::ControlFlow};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StatusKind {
@@ -71,6 +71,12 @@ pub(crate) struct DrawMemory {
     pub(crate) active_internal_call: Option<ActiveInternalCallCache>,
 }
 
+#[derive(Default)]
+struct OpcodeListState {
+    inner_call_index: Option<usize>,
+    max_pc: usize,
+}
+
 pub(crate) struct TUIContext<'a> {
     pub(crate) debugger_context: &'a mut DebuggerContext,
 
@@ -91,8 +97,7 @@ pub(crate) struct TUIContext<'a> {
     /// Current step in the debug steps.
     pub(crate) current_step: usize,
     pub(crate) draw_memory: DrawMemory,
-    pub(crate) opcode_list: Vec<String>,
-    pub(crate) last_index: usize,
+    opcode_list: OpcodeListState,
 
     pub(crate) stack_labels: bool,
     /// Whether to decode active buffer as utf8 or not.
@@ -122,8 +127,7 @@ impl<'a> TUIContext<'a> {
             status: None,
             current_step: 0,
             draw_memory: DrawMemory::default(),
-            opcode_list: Vec::new(),
-            last_index: 0,
+            opcode_list: OpcodeListState::default(),
 
             stack_labels: false,
             buf_utf: false,
@@ -139,7 +143,7 @@ impl<'a> TUIContext<'a> {
     }
 
     pub(crate) fn init(&mut self) {
-        self.gen_opcode_list();
+        self.refresh_opcode_list_state();
     }
 
     pub(crate) fn debug_arena(&self) -> &[DebugNode] {
@@ -174,20 +178,19 @@ impl<'a> TUIContext<'a> {
         &self.debug_steps()[self.current_step]
     }
 
-    fn gen_opcode_list(&mut self) {
-        self.opcode_list.clear();
-        let debug_steps =
-            &self.debugger_context.debug_arena[self.draw_memory.inner_call_index].steps;
-        for step in debug_steps {
-            self.opcode_list.push(pretty_opcode(step));
-        }
+    pub(super) const fn opcode_max_pc(&self) -> usize {
+        self.opcode_list.max_pc
     }
 
-    fn gen_opcode_list_if_necessary(&mut self) {
-        if self.last_index != self.draw_memory.inner_call_index {
-            self.gen_opcode_list();
-            self.last_index = self.draw_memory.inner_call_index;
+    fn refresh_opcode_list_state(&mut self) {
+        let inner_call_index = self.draw_memory.inner_call_index;
+        if self.opcode_list.inner_call_index == Some(inner_call_index) {
+            return;
         }
+
+        let debug_steps = &self.debugger_context.debug_arena[inner_call_index].steps;
+        self.opcode_list.max_pc = debug_steps.iter().map(|step| step.pc).max().unwrap_or(0);
+        self.opcode_list.inner_call_index = Some(inner_call_index);
     }
 
     fn active_buffer(&self) -> &[u8] {
@@ -284,8 +287,7 @@ impl TUIContext<'_> {
             Event::Mouse(event) => self.handle_mouse_event(event),
             _ => ControlFlow::Continue(()),
         };
-        // Generate the list after the event has been handled.
-        self.gen_opcode_list_if_necessary();
+        self.refresh_opcode_list_state();
         ret
     }
 
@@ -1727,11 +1729,17 @@ fn find_opcode_match(
     target.map(|(node_index, step_index, _, _)| (node_index, step_index))
 }
 
-fn pretty_opcode(step: &CallTraceStep) -> String {
+pub(super) fn pretty_opcode(step: &CallTraceStep) -> String {
+    let mut buf = String::new();
+    write_pretty_opcode(&mut buf, step);
+    buf
+}
+
+pub(super) fn write_pretty_opcode(buf: &mut String, step: &CallTraceStep) {
     if let Some(immediate) = step.immediate_bytes.as_ref().filter(|b| !b.is_empty()) {
-        format!("{}(0x{})", step.op, hex::encode(immediate))
+        write!(buf, "{}(0x{})", step.op, hex::encode(immediate)).unwrap();
     } else {
-        step.op.to_string()
+        write!(buf, "{}", step.op).unwrap();
     }
 }
 
