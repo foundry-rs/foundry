@@ -165,21 +165,17 @@ impl<N: Network> Backend<N> {
         storage: &BlockchainStorage<N>,
         hash: B256,
     ) -> Result<(u64, B256, MonadBlockParticipants), BlockchainError> {
-        let local = storage.blocks.get(&hash).cloned().map(|block| {
-            let participants = storage.monad_block_participants.get(&hash).cloned();
-            (block, participants)
-        });
-        if let Some((block, participants)) = local {
-            let participants = if let Some(participants) = participants {
-                participants
-            } else if block.body.transactions.is_empty()
-                && block.header.transactions_root() != EMPTY_ROOT_HASH
-            {
-                return Err(BlockchainError::DataUnavailable);
-            } else {
-                monad_block_participants(
+        if let Some(block) = storage.blocks.get(&hash) {
+            let participants = match storage.monad_block_participants.get(&hash) {
+                Some(participants) => participants.clone(),
+                None if block.body.transactions.is_empty()
+                    && block.header.transactions_root() != EMPTY_ROOT_HASH =>
+                {
+                    return Err(BlockchainError::DataUnavailable);
+                }
+                None => monad_block_participants(
                     &self.monad_tx_envs_from_storage(storage, &block.body.transactions)?,
-                )
+                ),
             };
             return Ok((block.header.number(), block.header.parent_hash, participants));
         }
