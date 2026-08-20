@@ -120,24 +120,22 @@ impl<'ast> State<'_, 'ast> {
         let ast::Item { ref docs, span, ref kind } = *item;
         self.print_docs(docs);
 
-        if self.handle_span(item.span, skip_ws) {
+        // The comments preceding the item are printed before checking whether it is disabled,
+        // because printing a disabled item copies the source verbatim and drops every comment
+        // that ends before it.
+        let cmnt = self.print_comments(
+            span.lo(),
+            if skip_ws { CommentConfig::skip_leading_ws(false) } else { CommentConfig::default() },
+        );
+
+        if self.print_span_if_disabled(span) {
             if !self.print_trailing_comment(span.hi(), None) {
                 self.print_sep(Separator::Hardbreak);
             }
             return;
         }
 
-        if self
-            .print_comments(
-                span.lo(),
-                if skip_ws {
-                    CommentConfig::skip_leading_ws(false)
-                } else {
-                    CommentConfig::default()
-                },
-            )
-            .is_some_and(|cmnt| cmnt.is_mixed())
-        {
+        if cmnt.is_some_and(|cmnt| cmnt.is_mixed()) {
             self.zerobreak();
         }
 
@@ -3314,7 +3312,13 @@ mod tests {
                     Comments::new(&source_obj.file, gcx.sess.source_map(), true, false, None);
                 let config = Arc::new(FormatterConfig::default());
                 let inline_config = InlineConfig::default();
-                let mut state = State::new(gcx.sess.source_map(), config, inline_config, comments);
+                let mut state = State::new(
+                    gcx.sess.source_map(),
+                    source_obj.file.start_pos,
+                    config,
+                    inline_config,
+                    comments,
+                );
 
                 // Extract the first function header (either top-level or inside a contract)
                 let func = ast

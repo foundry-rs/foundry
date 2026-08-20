@@ -1,10 +1,11 @@
+// forgefmt: disable-next-line
 pragma    solidity     ^0.5.2;
 
-// forgefmt: disable-next-line
 pragma    solidity     ^0.5.2;
 
 import {symbol1 as alias1, symbol2 as alias2, symbol3 as alias3, symbol4} from 'File2.sol';
 
+// comment before the directive
 // forgefmt: disable-next-line
 import {symbol1 as alias1, symbol2 as alias2, symbol3 as alias3, symbol4} from 'File2.sol';
 
