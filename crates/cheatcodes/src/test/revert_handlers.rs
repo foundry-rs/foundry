@@ -81,6 +81,9 @@ fn handle_revert(
     };
 
     let mut actual_revert = if retdata.is_empty() && !expected_reason.is_empty() {
+        if status == InstructionResult::Revert {
+            bail!("call reverted as expected, but without data");
+        }
         RevertDecoder::new().decode(retdata, Some(status)).into_bytes()
     } else {
         retdata.to_vec()
