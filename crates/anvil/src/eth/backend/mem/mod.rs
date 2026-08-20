@@ -49,8 +49,6 @@ use crate::{
     },
 };
 use alloy_chains::NamedChain;
-#[cfg(feature = "monad")]
-use alloy_consensus::constants::EMPTY_ROOT_HASH;
 use alloy_consensus::{
     Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
     TransactionEnvelope, TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, Typed2718,
@@ -67,6 +65,8 @@ use alloy_eips::{
     eip7840::BlobParams,
     eip7910::SystemContract,
 };
+#[cfg(feature = "monad")]
+use alloy_evm::block::BlockExecutionError;
 use alloy_evm::{
     Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromTxWithEncoded,
     block::{BlockExecutionResult, BlockExecutor, StateDB},
@@ -75,11 +75,7 @@ use alloy_evm::{
     precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
 };
 #[cfg(feature = "monad")]
-use alloy_evm::{RecoveredTx, block::BlockExecutionError};
-#[cfg(feature = "monad")]
 use alloy_monad_evm::{MonadContext, MonadEvmFactory};
-#[cfg(feature = "monad")]
-use alloy_network::BlockResponse;
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
     NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -131,13 +127,9 @@ use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 #[cfg(feature = "monad")]
-use foundry_evm::core::{
-    FromAnyRpcTransaction,
-    evm::{
-        FoundryEvmFactory, MonadBlockParticipants,
-        monad_block_participants as collect_monad_block_participants,
-        monad_context_from_participants, protocol_system_call,
-    },
+use foundry_evm::core::evm::{
+    FoundryEvmFactory, monad_block_participants as collect_monad_block_participants,
+    protocol_system_call,
 };
 #[cfg(feature = "optimism")]
 use foundry_evm::hardfork::OpHardfork;
@@ -1276,237 +1268,18 @@ impl<N: Network> Backend<N> {
     }
 
     /// Reconstructs a locally mined transaction using its authoritative stored sender.
-    #[cfg(feature = "monad")]
-    fn pending_mined_transaction_from_storage(
-        storage: &BlockchainStorage<N>,
-        transaction: MaybeImpersonatedTransaction<FoundryTxEnvelope>,
-    ) -> Result<PendingTransaction<FoundryTxEnvelope>, BlockchainError> {
-        let transaction_hash = transaction.hash();
-        let mined =
-            storage.transactions.get(&transaction_hash).ok_or(BlockchainError::DataUnavailable)?;
-        Ok(PendingTransaction::with_sender(transaction, mined.info.from))
-    }
-
-    /// Reconstructs a locally mined transaction using its authoritative stored sender.
     fn pending_mined_transaction(
         &self,
         transaction: MaybeImpersonatedTransaction<FoundryTxEnvelope>,
     ) -> Result<PendingTransaction<FoundryTxEnvelope>, BlockchainError> {
         #[cfg(feature = "monad")]
         if self.is_monad() {
-            return Self::pending_mined_transaction_from_storage(
+            return Self::monad_pending_mined_transaction_from_storage(
                 &self.blockchain.storage.read(),
                 transaction,
             );
         }
         Ok(PendingTransaction::from_maybe_impersonated(transaction)?)
-    }
-
-    /// Converts retained local Monad transactions using their authoritative mined senders.
-    #[cfg(feature = "monad")]
-    fn monad_tx_envs_from_storage(
-        &self,
-        storage: &BlockchainStorage<N>,
-        transactions: &[MaybeImpersonatedTransaction<FoundryTxEnvelope>],
-    ) -> Result<Vec<TxEnv>, BlockchainError> {
-        transactions
-            .iter()
-            .map(|transaction| {
-                let pending =
-                    Self::pending_mined_transaction_from_storage(storage, transaction.clone())?;
-                Ok(build_tx_env_for_pending::<FoundryTxEnvelope, TxEnv>(&pending, self.cheats()))
-            })
-            .collect()
-    }
-
-    /// Converts a historical Monad prefix using its prepared authoritative senders.
-    #[cfg(feature = "monad")]
-    fn monad_historical_replay_tx_envs(
-        &self,
-        transactions: &[HistoricalReplayTransaction],
-    ) -> Vec<TxEnv> {
-        transactions
-            .iter()
-            .map(|replay| {
-                let pending = PendingTransaction::with_sender(
-                    MaybeImpersonatedTransaction::new(replay.transaction.tx().clone()),
-                    replay.transaction.signer(),
-                );
-                build_tx_env_for_pending::<FoundryTxEnvelope, TxEnv>(&pending, self.cheats())
-            })
-            .collect()
-    }
-
-    /// Returns a block's number, parent hash, and cached Monad participants.
-    #[cfg(feature = "monad")]
-    fn monad_block_participants_from_storage(
-        &self,
-        storage: &BlockchainStorage<N>,
-        hash: B256,
-    ) -> Result<(u64, B256, MonadBlockParticipants), BlockchainError> {
-        let local = storage.blocks.get(&hash).cloned().map(|block| {
-            let participants = storage.monad_block_participants.get(&hash).cloned();
-            (block, participants)
-        });
-        if let Some((block, participants)) = local {
-            let participants = if let Some(participants) = participants {
-                participants
-            } else if block.body.transactions.is_empty()
-                && block.header.transactions_root() != EMPTY_ROOT_HASH
-            {
-                return Err(BlockchainError::DataUnavailable);
-            } else {
-                collect_monad_block_participants(
-                    &self.monad_tx_envs_from_storage(storage, &block.body.transactions)?,
-                )
-            };
-            return Ok((block.header.number(), block.header.parent_hash, participants));
-        }
-
-        let fork = self.get_fork().ok_or(BlockchainError::BlockNotFound)?;
-        let block = fork
-            .storage
-            .read()
-            .blocks
-            .get(&hash)
-            .cloned()
-            .ok_or(BlockchainError::DataUnavailable)?;
-        let BlockTransactions::Full(transactions) = block.transactions() else {
-            return Err(BlockchainError::DataUnavailable);
-        };
-        let tx_envs = transactions
-            .iter()
-            .map(TxEnv::from_any_rpc_transaction)
-            .collect::<eyre::Result<Vec<_>>>()?;
-        Ok((
-            block.header().number(),
-            block.header().parent_hash(),
-            collect_monad_block_participants(&tx_envs),
-        ))
-    }
-
-    /// Returns a block's number, parent hash, and cached Monad participants.
-    #[cfg(feature = "monad")]
-    fn monad_block_participants(
-        &self,
-        hash: B256,
-    ) -> Result<(u64, B256, MonadBlockParticipants), BlockchainError> {
-        self.monad_block_participants_from_storage(&self.blockchain.storage.read(), hash)
-    }
-
-    /// Rebuilds Monad participant metadata for locally stored blocks with transaction bodies.
-    #[cfg(feature = "monad")]
-    fn rebuild_monad_block_participant_cache(
-        &self,
-        storage: &mut BlockchainStorage<N>,
-    ) -> Result<(), BlockchainError> {
-        let participants = storage
-            .blocks
-            .iter()
-            .filter(|(hash, block)| {
-                !storage.monad_block_participants.contains_key(*hash)
-                    && (!block.body.transactions.is_empty()
-                        || block.header.transactions_root() == EMPTY_ROOT_HASH)
-            })
-            .map(|(hash, block)| (*hash, block.body.transactions.clone()))
-            .map(|(hash, transactions)| {
-                let tx_envs = self.monad_tx_envs_from_storage(storage, &transactions)?;
-                Ok((hash, collect_monad_block_participants(&tx_envs)))
-            })
-            .collect::<Result<Vec<_>, BlockchainError>>()?;
-
-        for (hash, participants) in participants {
-            if storage.blocks.contains_key(&hash) {
-                storage.monad_block_participants.insert(hash, participants);
-            }
-        }
-        Ok(())
-    }
-
-    /// Builds the initial Monad context for a block whose parent is `parent_hash`.
-    #[cfg(feature = "monad")]
-    fn monad_context_for_child_of(
-        &self,
-        parent_hash: B256,
-    ) -> Result<MonadChainContext, BlockchainError> {
-        self.monad_context_for_child_of_in_storage(&self.blockchain.storage.read(), parent_hash)
-    }
-
-    /// Builds the initial Monad context from staged storage.
-    #[cfg(feature = "monad")]
-    fn monad_context_for_child_of_in_storage(
-        &self,
-        storage: &BlockchainStorage<N>,
-        parent_hash: B256,
-    ) -> Result<MonadChainContext, BlockchainError> {
-        let (_, grandparent_hash, parent) =
-            self.monad_block_participants_from_storage(storage, parent_hash)?;
-        let grandparent = if grandparent_hash.is_zero() {
-            MonadBlockParticipants::default()
-        } else {
-            self.monad_block_participants_from_storage(storage, grandparent_hash)?.2
-        };
-        Ok(monad_context_from_participants(grandparent, parent, &[], 0))
-    }
-
-    /// Fetches the full blocks required to build context on top of `block_number`.
-    #[cfg(feature = "monad")]
-    async fn monad_context_for_child_of_block_number(
-        &self,
-        block_number: u64,
-    ) -> Result<MonadChainContext, BlockchainError> {
-        let block = self
-            .block_by_number_full(BlockNumber::Number(block_number))
-            .await?
-            .ok_or(BlockchainError::BlockNotFound)?;
-        let parent_hash = block.header().parent_hash();
-        if !parent_hash.is_zero() {
-            self.block_by_hash_full(parent_hash).await?.ok_or(BlockchainError::DataUnavailable)?;
-        }
-        self.monad_context_for_child_of(block.header().hash)
-    }
-
-    /// Fetches the full blocks required to build context on top of `block_hash`.
-    #[cfg(feature = "monad")]
-    async fn monad_context_for_child_of_block_hash(
-        &self,
-        block_hash: B256,
-    ) -> Result<MonadChainContext, BlockchainError> {
-        let block =
-            self.block_by_hash_full(block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
-        let parent_hash = block.header().parent_hash();
-        if !parent_hash.is_zero() {
-            self.block_by_hash_full(parent_hash).await?.ok_or(BlockchainError::DataUnavailable)?;
-        }
-        self.monad_context_for_child_of(block_hash)
-    }
-
-    /// Builds reusable Monad context for a locally stored block.
-    #[cfg(feature = "monad")]
-    fn monad_context_for_mined_block(
-        &self,
-        block: &Block,
-    ) -> Result<MonadChainContext, BlockchainError> {
-        let current = self.monad_tx_envs_from_storage(
-            &self.blockchain.storage.read(),
-            &block.body.transactions,
-        )?;
-        let (_, grandparent_hash, parent) =
-            self.monad_block_participants(block.header.parent_hash)?;
-        let grandparent = if grandparent_hash.is_zero() {
-            MonadBlockParticipants::default()
-        } else {
-            self.monad_block_participants(grandparent_hash)?.2
-        };
-        Ok(monad_context_from_participants(grandparent, parent, &current, 0))
-    }
-
-    #[cfg(feature = "monad")]
-    fn active_monad_context_for_mined_block(
-        &self,
-        block: &Block,
-    ) -> Result<Option<MonadReplayContext>, BlockchainError> {
-        self.is_monad().then(|| self.monad_context_for_mined_block(block)).transpose()
     }
 
     #[cfg(not(feature = "monad"))]
@@ -1515,35 +1288,6 @@ impl<N: Network> Backend<N> {
         _block: &Block,
     ) -> Result<Option<MonadReplayContext>, BlockchainError> {
         Ok(None)
-    }
-
-    /// Builds context immediately before a synthetic transaction at `current_tx_index`.
-    #[cfg(feature = "monad")]
-    fn monad_context_before_mined_transaction(
-        &self,
-        block: &Block,
-        current_tx_index: usize,
-    ) -> Result<MonadChainContext, BlockchainError> {
-        let current = self.monad_tx_envs_from_storage(
-            &self.blockchain.storage.read(),
-            &block.body.transactions,
-        )?;
-        if current_tx_index > current.len() {
-            return Err(BlockchainError::DataUnavailable);
-        }
-        let (_, grandparent_hash, parent) =
-            self.monad_block_participants(block.header.parent_hash)?;
-        let grandparent = if grandparent_hash.is_zero() {
-            MonadBlockParticipants::default()
-        } else {
-            self.monad_block_participants(grandparent_hash)?.2
-        };
-        Ok(monad_context_from_participants(
-            grandparent,
-            parent,
-            &current[..current_tx_index],
-            current_tx_index,
-        ))
     }
 
     /// Returns the active hardfork.
