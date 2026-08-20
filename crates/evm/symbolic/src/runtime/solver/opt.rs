@@ -49,7 +49,15 @@ fn normalize_constraint_batch(
 }
 
 fn sort_dedup_bool_exprs(exprs: &mut Vec<SymBoolExpr>) {
-    exprs.sort_by_cached_key(bool_structural_key);
+    // Hash-consing already caches deterministic structural hashes. Only render full structural
+    // keys for the exceedingly rare case where two distinct expressions collide.
+    exprs.sort_unstable_by(|left, right| {
+        if left == right {
+            return std::cmp::Ordering::Equal;
+        }
+        left.stable_hash_cmp(right)
+            .then_with(|| bool_structural_key(left).cmp(&bool_structural_key(right)))
+    });
     exprs.dedup();
 }
 
