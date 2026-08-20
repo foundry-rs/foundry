@@ -898,9 +898,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             // Clear broadcastable transactions
             cheats.broadcastable_transactions.clear();
             cheats.ignored_traces.ignored.clear();
-            // Skip payloads are scoped to the call they were minted in.
-            cheats.skip_payloads.clear();
-
             // if tracing was paused but never unpaused, we should begin next frame with tracing
             // still paused
             if let Some(last_pause_call) = cheats.ignored_traces.last_pause_call.as_mut() {
@@ -1300,7 +1297,7 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub reverter: Option<Address>,
     /// Revert payloads minted by the `skip` cheatcode during this call.
     ///
-    /// Copied out of the cheatcode state on conversion since `commit` moves that state back into
+    /// Moved out of the cheatcode state on conversion since `commit` moves that state back into
     /// the executor before results are classified.
     pub skip_payloads: Vec<Bytes>,
 }
@@ -1603,7 +1600,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         line_coverage,
         edge_coverage,
         evm_cmp_values,
-        cheatcodes,
+        mut cheatcodes,
         chisel_state,
         reverter,
     } = inspector.collect();
@@ -1621,7 +1618,8 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         .as_ref()
         .map(|c| c.broadcastable_transactions.clone())
         .filter(|txs| !txs.is_empty());
-    let skip_payloads = cheatcodes.as_ref().map(|c| c.skip_payloads.clone()).unwrap_or_default();
+    let skip_payloads =
+        cheatcodes.as_mut().map(|c| std::mem::take(&mut c.skip_payloads)).unwrap_or_default();
 
     Ok(RawCallResult {
         exit_reason: Some(exit_reason),
