@@ -2584,6 +2584,34 @@ fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
 }
 
 #[test]
+fn fallback_model_uses_direct_bound_witness() {
+    let mut cx = SymCx::new();
+    let calldata = SymExpr::var(&mut cx, "calldata_0");
+    let upper_bound = SymExpr::constant(&mut cx, U256::from(512));
+    let constraint = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, calldata, upper_bound);
+
+    let model = fallback_single_var_model(&[constraint]).unwrap();
+
+    assert_eq!(model_value(&cx, &model, "calldata_0"), Some(U256::from(512)));
+}
+
+#[test]
+fn fallback_model_uses_boundary_witness() {
+    let mut cx = SymCx::new();
+    let calldata = SymExpr::var(&mut cx, "calldata_0");
+    let mut constraints = Vec::new();
+    for excluded in 0..3 {
+        let value = SymExpr::constant(&mut cx, U256::from(excluded));
+        let equals = SymBoolExpr::eq(&mut cx, calldata.clone(), value);
+        constraints.push(equals.not(&mut cx));
+    }
+
+    let model = fallback_single_var_model(&constraints).unwrap();
+
+    assert_eq!(model_value(&cx, &model, "calldata_0"), Some(U256::MAX));
+}
+
+#[test]
 fn fallback_model_keeps_multi_bit_nonzero_masks_weak() {
     let mut cx = SymCx::new();
     let calldata = SymExpr::var(&mut cx, "calldata_0");
