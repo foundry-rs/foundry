@@ -985,6 +985,71 @@ casttest!(send_with_presigned_sponsor_signature_rejects_stale_digest, async |_pr
     assert!(stderr.contains("--tempo.print-sponsor-hash"), "{stderr}");
 });
 
+casttest!(send_with_sponsor_url_uses_anvil_builtin_fee_payer, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let sender = accounts[0];
+    let sponsor = *accounts.last().unwrap();
+    let recipient = accounts[3];
+    let sender_wallet = handle.dev_wallets().next().unwrap();
+    assert_eq!(sender_wallet.address(), sender);
+    let sender_pk = format!("0x{}", hex::encode(sender_wallet.credential().to_bytes()));
+    let token = PATH_USD_ADDRESS.to_string();
+    let recipient_arg = recipient.to_string();
+    let amount = U256::from(1000u64);
+
+    let tip20 = ITIP20::new(PATH_USD_ADDRESS, &provider);
+    let sender_before = tip20.balanceOf(sender).call().await.unwrap();
+    let sponsor_before = tip20.balanceOf(sponsor).call().await.unwrap();
+
+    // No local sponsor key or address: anvil's built-in fee payer signs the sponsorship request
+    // via `eth_signRawTransaction`, so the sponsor URL is simply the node itself.
+    let stdout = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            &token,
+            "transfer(address,uint256)",
+            &recipient_arg,
+            "1000",
+            "--private-key",
+            &sender_pk,
+            "--rpc-url",
+            &rpc,
+            "--sponsor-url",
+            &rpc,
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let receipt: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("receipt should be JSON");
+    assert_eq!(receipt["status"], "0x1", "unexpected receipt: {receipt}");
+    assert_eq!(
+        receipt["feePayer"],
+        serde_json::to_value(sponsor).unwrap(),
+        "fee payer should be anvil's default sponsor (last dev account): {receipt}"
+    );
+    assert_eq!(
+        receipt["feeToken"],
+        serde_json::to_value(PATH_USD_ADDRESS).unwrap(),
+        "sponsor pays with its stored fee token: {receipt}"
+    );
+
+    let sender_after = tip20.balanceOf(sender).call().await.unwrap();
+    let sponsor_after = tip20.balanceOf(sponsor).call().await.unwrap();
+    assert_eq!(
+        sender_after,
+        sender_before - amount,
+        "sender must only pay the transfer amount, fees are sponsored"
+    );
+    assert!(sponsor_after < sponsor_before, "sponsor must pay the transaction fee");
+});
+
 casttest!(tip20_logo_check_accepts_valid_values, |_prj, cmd| {
     for uri in ["", "https://example.com/logo.png", "HTTP://example.com/logo.png", "ipfs://token"] {
         cmd.cast_fuse().args(["tip20", "logo-check", uri]).assert_success();
