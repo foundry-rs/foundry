@@ -702,14 +702,18 @@ impl NetworkConfigs {
 
     /// Applies an authoritative execution profile while preserving orthogonal settings.
     pub fn with_execution_profile(self, profile: Self) -> Self {
-        let mut resolved = profile.canonical_execution_profile();
+        let mut resolved = if profile.is_celo() {
+            Self::with_celo()
+        } else {
+            profile.resolved_network().map(Into::into).unwrap_or_default()
+        };
         resolved.bypass_prevrandao = self.bypass_prevrandao;
         resolved
     }
 
     /// Applies an endpoint-reported execution profile while preserving orthogonal settings.
     pub fn with_rpc_profile(self, profile: Self) -> Self {
-        self.with_execution_profile(profile)
+        self.with_execution_profile(profile.canonical_execution_profile())
     }
 
     /// Parses the execution profile reported by `anvil_nodeInfo`.
@@ -1282,13 +1286,33 @@ mod tests {
     fn authoritative_execution_profile_preserves_orthogonal_settings() {
         let inline = NetworkConfigs { bypass_prevrandao: true, ..NetworkConfigs::with_tempo() };
 
-        let ethereum = inline.with_execution_profile(NetworkConfigs::with_ethereum());
-        assert!(ethereum.has_same_execution_profile(&NetworkConfigs::with_ethereum()));
-        assert!(ethereum.bypass_prevrandao(NamedChain::Mainnet as u64));
+        #[cfg_attr(not(any(feature = "optimism", feature = "monad")), allow(unused_mut))]
+        let mut profiles = vec![
+            NetworkConfigs::with_ethereum(),
+            NetworkConfigs::with_tempo(),
+            NetworkConfigs::with_celo(),
+        ];
+        #[cfg(feature = "optimism")]
+        profiles.push(NetworkVariant::Optimism.into());
+        #[cfg(feature = "monad")]
+        profiles.push(NetworkConfigs::with_monad());
 
-        let celo = inline.with_execution_profile(NetworkConfigs::with_celo());
-        assert!(celo.has_same_execution_profile(&NetworkConfigs::with_celo()));
-        assert!(celo.bypass_prevrandao(NamedChain::Mainnet as u64));
+        for profile in profiles {
+            let resolved = inline.with_execution_profile(profile);
+            assert!(resolved.has_same_execution_profile(&profile));
+            assert!(resolved.has_network_selection());
+            assert!(resolved.bypass_prevrandao(NamedChain::Mainnet as u64));
+        }
+
+        let ethereum = inline.with_execution_profile(NetworkConfigs::with_ethereum());
+        assert_eq!(
+            ethereum.try_with_chain_id(NamedChain::Tempo as u64).unwrap(),
+            ethereum,
+            "an authoritative Ethereum profile must prevent later endpoint inference",
+        );
+
+        let rpc_ethereum = inline.with_rpc_profile(NetworkConfigs::with_ethereum());
+        assert!(!rpc_ethereum.has_network_selection());
     }
 
     #[test]
