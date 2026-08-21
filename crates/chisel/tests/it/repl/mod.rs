@@ -301,6 +301,12 @@ repl_test!(eval_subcommand, "eval type(uint8).max", |repl| {
     repl.expect("Decimal: 255");
 });
 
+// Issue #4963: inspect the value of the final inline assembly expression.
+repl_test!(inline_assembly_expression, |repl| {
+    repl.sendln("assembly { let value := not(0) add(value, 0) }");
+    repl.expect("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+});
+
 repl_test!(
     eval_tempo_network_uses_tempo_executor,
     "--network tempo eval address(0xfeEC000000000000000000000000000000000000).code.length",

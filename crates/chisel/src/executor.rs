@@ -18,7 +18,8 @@ use foundry_evm::{
     traces::TraceRequirements,
 };
 use solar::{
-    ast::{ElementaryType, LitKind, StrKind, UnOpKind},
+    ast::{ElementaryType, LitKind, StmtKind as AstStmtKind, StrKind, UnOpKind, yul},
+    interface::Session,
     sema::{
         hir::{Event, Expr, ExprKind, StmtKind},
         ty::{Gcx, Ty, TyKind},
@@ -42,6 +43,37 @@ impl InspectResult {
     const fn empty(control_flow: ControlFlow<()>) -> Self {
         Self { control_flow, formatted_output: None, last_result: None }
     }
+}
+
+fn yul_inspector_line(input: &str) -> Option<String> {
+    let sess = Session::builder().with_buffer_emitter(Default::default()).build();
+    sess.enter_sequential(|| {
+        let arena = solar::ast::Arena::new();
+        let mut parser = solar::parse::Parser::from_source_code(
+            &sess,
+            &arena,
+            "ChiselInput.sol".to_string().into(),
+            input,
+        )
+        .ok()?;
+        let stmt = parser.parse_stmt().map_err(|err| err.emit()).ok()?;
+        let AstStmtKind::Assembly(assembly) = &stmt.kind else { return None };
+        let last = assembly.block.stmts.last()?;
+        let yul::StmtKind::Expr(expr) = &last.kind else { return None };
+
+        let stmt_range = sess.source_map().span_to_source(stmt.span).ok()?.data;
+        if !input.get(stmt_range.end..)?.trim().is_empty() {
+            return None;
+        }
+        let expr_range = sess.source_map().span_to_source(expr.span).ok()?.data;
+        let expression = input.get(expr_range.clone())?;
+
+        let mut assembly = input.to_string();
+        assembly.replace_range(expr_range, &format!("__chisel_yul_result := {expression}"));
+        Some(format!(
+            "uint256 __chisel_yul_result; {assembly} bytes memory inspectoor = abi.encode(__chisel_yul_result);"
+        ))
+    })
 }
 
 /// Executor implementation for [SessionSource]
@@ -81,7 +113,19 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             Ok((source, _)) => source,
             Err(err) => {
                 debug!(%err, "failed to build new source for inspection");
-                return Ok(InspectResult::empty(ControlFlow::Continue(())));
+                let Some(line) = yul_inspector_line(input) else {
+                    return Ok(InspectResult::empty(ControlFlow::Continue(())));
+                };
+                if self
+                    .clone_with_new_line(input.to_string())
+                    .is_ok_and(|(source, _)| source.build().is_ok())
+                {
+                    return Ok(InspectResult::empty(ControlFlow::Continue(())));
+                }
+                let Ok((source, _)) = self.clone_with_new_line(line) else {
+                    return Ok(InspectResult::empty(ControlFlow::Continue(())));
+                };
+                source
             }
         };
 
