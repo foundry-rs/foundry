@@ -6,6 +6,7 @@ use crate::{
         identifier::{ExternalIdentifier, SignaturesIdentifier},
     },
 };
+use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
 use alloy_provider::Provider;
 use alloy_rpc_types::Log;
@@ -18,9 +19,8 @@ use foundry_cli::{
 };
 use foundry_common::{fmt::serialize_value_as_json, shell};
 use foundry_config::{Chain, Config};
-use futures::{StreamExt, TryStreamExt};
-use serde::Serialize;
-use serde_json::Value;
+use futures::StreamExt;
+use serde::{Serialize, Serializer};
 use std::{collections::BTreeSet, fmt::Write as _};
 
 foundry_config::impl_figment_convert!(EventsArgs, etherscan, rpc);
@@ -129,15 +129,16 @@ async fn decode_logs(
     }
 
     let decoder = builder.build();
-    futures::stream::iter(logs)
+    let events = futures::stream::iter(logs)
         .map(|log| async {
             let decoded =
                 decoder.decode_event_with_address_signature(log.address(), log.data()).await;
             EventOutput::new(log, decoded)
         })
         .buffered(MAX_CONCURRENT_RPC_REQUESTS)
-        .try_collect()
-        .await
+        .collect()
+        .await;
+    Ok(events)
 }
 
 #[derive(Debug, Serialize)]
@@ -158,24 +159,19 @@ struct EventOutput {
 }
 
 impl EventOutput {
-    fn new(log: Log, decoded: DecodedEvent) -> Result<Self> {
-        let params = decoded
-            .params
-            .map(|params| {
-                params
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, (name, display_value, value))| {
-                        Ok(EventParam {
-                            name: if name.is_empty() { format!("param{index}") } else { name },
-                            json_value: serialize_value_as_json(value, None, true)?,
-                            display_value,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()
-            })
-            .transpose()?;
-        Ok(Self {
+    fn new(log: Log, decoded: DecodedEvent) -> Self {
+        let params = decoded.params.map(|params| {
+            params
+                .into_iter()
+                .enumerate()
+                .map(|(index, (name, display_value, value))| EventParam {
+                    name: if name.is_empty() { format!("param{index}") } else { name },
+                    value,
+                    display_value,
+                })
+                .collect()
+        });
+        Self {
             address: log.address(),
             block_hash: log.block_hash,
             block_number: log.block_number,
@@ -188,17 +184,26 @@ impl EventOutput {
             params,
             topics: log.topics().to_vec(),
             data: log.data().data.clone(),
-        })
+        }
     }
 }
 
 #[derive(Debug, Serialize)]
 struct EventParam {
     name: String,
-    #[serde(rename = "value")]
-    json_value: Value,
+    #[serde(serialize_with = "serialize_abi_value")]
+    value: DynSolValue,
     #[serde(skip)]
     display_value: String,
+}
+
+fn serialize_abi_value<S>(value: &DynSolValue, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serialize_value_as_json(value.clone(), None, true)
+        .map_err(serde::ser::Error::custom)?
+        .serialize(serializer)
 }
 
 /// Formats decoded and raw events for human-readable output.
@@ -263,8 +268,7 @@ fn format_events(events: &[EventOutput]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_dyn_abi::DynSolValue;
-    use alloy_primitives::U256;
+    use alloy_primitives::{Function, U256};
 
     #[test]
     fn validates_event_sources() {
@@ -330,12 +334,30 @@ mod tests {
                     DynSolValue::Uint(U256::from(19_705_728_070u64), 256),
                 )]),
             },
-        )
-        .unwrap();
+        );
 
         let json = serde_json::to_value(&output).unwrap();
         assert_eq!(json["params"][0]["value"], "19705728070");
         assert!(format_events(&[output]).contains("19705728070 [1.97e10]"));
+    }
+
+    #[test]
+    fn formats_function_values_without_json_serialization() {
+        let output = EventOutput::new(
+            Log::default(),
+            DecodedEvent {
+                name: Some("Callback(function)".to_string()),
+                params: Some(vec![(
+                    "callback".to_string(),
+                    "0x111111111111111111111111111111111111111111111111".to_string(),
+                    DynSolValue::Function(Function::new([0x11; 24])),
+                )]),
+            },
+        );
+
+        assert!(format_events(&[output]).contains(
+            "Callback(function) { callback: 0x111111111111111111111111111111111111111111111111 }"
+        ));
     }
 
     #[test]
@@ -352,7 +374,7 @@ mod tests {
             event: Some("Transfer(address,address,uint256)".to_string()),
             params: Some(vec![EventParam {
                 name: "value".to_string(),
-                json_value: Value::String("42".to_string()),
+                value: DynSolValue::Uint(U256::from(42), 256),
                 display_value: "42".to_string(),
             }]),
             topics: vec![B256::repeat_byte(0x11)],
