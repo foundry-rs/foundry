@@ -1806,7 +1806,6 @@ mod tests {
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
     #[cfg(feature = "monad")]
     use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
-    #[cfg(feature = "monad")]
     use foundry_evm_traces::InternalTraceMode;
     use revm::context::TxEnv;
     use std::{sync::mpsc, thread};
