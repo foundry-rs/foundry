@@ -10,6 +10,7 @@ use crate::{
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
     utils::{
+        apply_chain_and_block_specific_env_changes_for_chain,
         apply_chain_specific_tx_replay_env_changes_for_chain, get_blob_base_fee_update_fraction,
     },
 };
@@ -34,7 +35,7 @@ use revm::{
     context::{Block, BlockEnv, CfgEnv, ContextTr, JournalInner, Transaction},
     context_interface::{journaled_state::account::JournaledAccountTr, result::ResultAndState},
     database::{AccountState, CacheDB, DatabaseRef, EmptyDB},
-    primitives::{AddressMap, HashMap as Map, KECCAK_EMPTY, Log},
+    primitives::{AddressMap, HashMap as Map, KECCAK_EMPTY, Log, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use std::{
@@ -96,6 +97,7 @@ struct TransactionInputs<FEN: FoundryEvmNetwork> {
     evm_env: EvmEnvFor<FEN>,
     tx_env: TxEnvFor<FEN>,
     chain_context: ChainFor<FEN>,
+    rpc_block_number: u64,
 }
 
 /// Environment and network configuration used while replaying transactions.
@@ -597,6 +599,8 @@ pub struct Backend<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     ///
     /// If this is set, then the Backend is currently in forking mode
     active_fork_ids: Option<(LocalForkId, ForkLookupIndex)>,
+    /// RPC block number exposed while executing a historical transaction in a temporary backend.
+    fork_block_number_override: Option<u64>,
     /// holds additional Backend data
     inner: BackendInner<FEN>,
 }
@@ -609,6 +613,7 @@ impl<FEN: FoundryEvmNetwork> Clone for Backend<FEN> {
             mem_db: self.mem_db.clone(),
             fork_init_journaled_state: self.fork_init_journaled_state.clone(),
             active_fork_ids: self.active_fork_ids,
+            fork_block_number_override: self.fork_block_number_override,
             inner: self.inner.clone(),
         }
     }
@@ -657,6 +662,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             mem_db: CacheDB::new(Default::default()),
             fork_init_journaled_state: inner.new_journaled_state(),
             active_fork_ids: None,
+            fork_block_number_override: None,
             inner,
         };
 
@@ -704,6 +710,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             mem_db: CacheDB::new(Default::default()),
             fork_init_journaled_state: self.inner.new_journaled_state(),
             active_fork_ids: None,
+            fork_block_number_override: None,
             inner: Default::default(),
         }
     }
@@ -1475,7 +1482,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 );
             }
 
-            update_env_block(&mut staged_evm_env, block.header());
+            update_env_block::<AnyNetwork, _, _>(
+                &mut staged_evm_env,
+                &block,
+                staged_fork.fork.source_chain_id,
+                self.networks,
+            );
             let mut replay_env = staged_evm_env.clone();
             self.apply_fork_tx_replay_env_changes_for(
                 &staged_fork.fork_id,
@@ -1567,7 +1579,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         // The parent roll must not prepare an intermediate synthetic context.
         self.roll_fork_exact_with_context(id, fork_block, evm_env, None, journaled_state)?;
 
-        update_env_block(evm_env, block.header());
+        let source_chain_id = self.inner.get_fork_by_id(id)?.source_chain_id;
+        update_env_block::<AnyNetwork, _, _>(evm_env, &block, source_chain_id, self.networks);
 
         let mut replay_env = evm_env.clone();
         self.apply_fork_tx_replay_env_changes(id, &mut replay_env)?;
@@ -2071,7 +2084,8 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         let TransactionForkTarget { transaction: tx, block, .. } =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&tx)?;
-        update_env_block(&mut evm_env, block.header());
+        let source_chain_id = self.inner.get_fork_by_id(id)?.source_chain_id;
+        update_env_block::<AnyNetwork, _, _>(&mut evm_env, &block, source_chain_id, self.networks);
         self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
 
         let current_tx_position = if self.networks.is_monad() {
@@ -2142,7 +2156,12 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
 
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction::<FEN>(
-            TransactionInputs { evm_env, tx_env, chain_context },
+            TransactionInputs {
+                evm_env,
+                tx_env,
+                chain_context,
+                rpc_block_number: block.header().number(),
+            },
             journaled_state,
             fork,
             &fork_id,
@@ -2196,24 +2215,15 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     }
 
     fn active_fork_block_number(&self) -> Option<u64> {
-        let fork = self.inner.issued_local_fork_ids.get(&self.active_fork_id()?)?;
-        let fork_block = fork_block_number(fork);
-        let env_block = self
-            .forks
-            .get_evm_env(fork.clone())
-            .ok()
-            .flatten()
-            .map(|env| env.block_env.number().saturating_to::<u64>());
-
-        // On Arbitrum, `fork_block` is the L2 fork pin while `env_block` can be remapped to the
-        // lower L1 block number. For tx-level forks, the fork pin is the parent state block while
-        // the env is updated to the transaction's block. The larger value is the current L2 block.
-        match (fork_block, env_block) {
-            (Some(fork_block), Some(env_block)) => Some(fork_block.max(env_block)),
-            (Some(fork_block), None) => Some(fork_block),
-            (None, Some(env_block)) => Some(env_block),
-            (None, None) => None,
+        if let Some(block_number) = self.fork_block_number_override {
+            return Some(block_number);
         }
+        let fork = self.inner.get_fork_by_id(self.active_fork_id()?).ok()?;
+        Some(match fork.position {
+            ForkPosition::AfterBlock { block } | ForkPosition::BeforeTransaction { block, .. } => {
+                block.number
+            }
+        })
     }
 
     fn ensure_fork(&self, id: Option<LocalForkId>) -> eyre::Result<LocalForkId> {
@@ -2982,10 +2992,13 @@ fn is_contract_in_state(evm_state: &EvmState, acc: Address) -> bool {
 }
 
 /// Updates the evm env's block with the block's data
-fn update_env_block<SPEC, BLOCK: FoundryBlock>(
+fn update_env_block<N: Network, SPEC: Into<SpecId> + Copy, BLOCK: FoundryBlock>(
     evm_env: &mut EvmEnv<SPEC, BLOCK>,
-    header: &impl BlockHeader,
+    block: &N::BlockResponse,
+    source_chain_id: ChainId,
+    networks: NetworkConfigs,
 ) {
+    let header = block.header();
     let block_env = &mut evm_env.block_env;
     block_env.set_timestamp(U256::from(header.timestamp()));
     block_env.set_beneficiary(header.beneficiary());
@@ -3001,6 +3014,13 @@ fn update_env_block<SPEC, BLOCK: FoundryBlock>(
             get_blob_base_fee_update_fraction(evm_env.cfg_env.chain_id, header.timestamp()),
         );
     }
+
+    apply_chain_and_block_specific_env_changes_for_chain::<N, _, _>(
+        evm_env,
+        block,
+        source_chain_id,
+        networks,
+    );
 }
 
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
@@ -3016,7 +3036,7 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
         <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
     >,
 ) -> eyre::Result<()> {
-    let TransactionInputs { evm_env, tx_env, chain_context } = transaction;
+    let TransactionInputs { evm_env, tx_env, chain_context, rpc_block_number } = transaction;
     let now = Instant::now();
     let res = {
         let fork = fork.clone();
@@ -3024,6 +3044,7 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
         let depth = journaled_state.depth;
         let mut db: Backend<FEN> =
             Backend::new_with_fork(fork_id, fork, journaled_state, networks)?;
+        db.fork_block_number_override = Some(rpc_block_number);
 
         let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
             &mut db,
@@ -3091,35 +3112,28 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
     Ok(())
 }
 
-fn fork_block_number(fork: &ForkId) -> Option<u64> {
-    let (_, block) = fork.as_str().rsplit_once('@')?;
-    let block = block.split(['#', '-']).next()?;
-    let block = block.strip_prefix("0x")?;
-    u64::from_str_radix(block, 16).ok()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Fork, apply_state_changeset};
+    use super::{Fork, apply_state_changeset, update_env_block};
     #[cfg(feature = "monad")]
     use crate::evm::MonadEvmNetwork;
     #[cfg(feature = "monad")]
     use crate::fork::CreateFork;
     use crate::{
-        backend::{Backend, ForkPosition},
+        backend::{Backend, DatabaseExt, ForkPosition},
         evm::EthEvmNetwork,
-        fork::ForkId,
         opts::EvmOpts,
     };
     use alloy_consensus::transaction::Recovered;
     use alloy_eips::BlockNumHash;
+    use alloy_evm::EvmEnv;
     use alloy_network::{
-        AnyNetwork, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, UnknownTxEnvelope,
-        UnknownTypedTransaction,
+        AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope,
+        AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction,
     };
     use alloy_primitives::{Address, B256, U256, address};
     use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
-    use alloy_rpc_types::Transaction as RpcTransaction;
+    use alloy_rpc_types::{Block, BlockTransactions, Transaction as RpcTransaction};
     use alloy_serde::WithOtherFields;
     use anvil::{NodeConfig, spawn};
     use foundry_common::{SYSTEM_TRANSACTION_TYPE, provider::get_http_provider};
@@ -3290,6 +3304,30 @@ mod tests {
         assert_eq!(parent.after_transaction(block, parent_block.hash, 0, 0), None);
     }
 
+    #[test]
+    fn fork_replay_block_env_preserves_arbitrum_l1_number() {
+        let header = AnyHeader { number: 75_219_831, ..Default::default() };
+        let mut block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                BlockTransactions::Full(Vec::new()),
+            )
+            .into(),
+        );
+        block.other.insert("l1BlockNumber".to_string(), serde_json::json!("0x10276d3"));
+        let mut evm_env =
+            EvmEnv::new(revm::context::CfgEnv::<SpecId>::default(), BlockEnv::default());
+
+        update_env_block::<AnyNetwork, _, _>(
+            &mut evm_env,
+            &block,
+            NamedChain::Arbitrum as u64,
+            NetworkConfigs::default(),
+        );
+
+        assert_eq!(evm_env.block_env.number, U256::from(16_938_707));
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn temporary_backend_preserves_fork_position() {
         let (_api, handle) = spawn(NodeConfig::test()).await;
@@ -3316,7 +3354,7 @@ mod tests {
             backend.inner.get_fork_by_id_mut(id).unwrap().position = position;
             let fork = backend.active_fork().unwrap().clone();
             let journaled_state = fork.journaled_state.clone();
-            let temporary = Backend::<EthEvmNetwork>::new_with_fork(
+            let mut temporary = Backend::<EthEvmNetwork>::new_with_fork(
                 &fork_id,
                 fork,
                 journaled_state,
@@ -3325,6 +3363,13 @@ mod tests {
             .unwrap();
 
             assert_eq!(temporary.active_fork().unwrap().position, position);
+            let expected = match position {
+                ForkPosition::AfterBlock { block }
+                | ForkPosition::BeforeTransaction { block, .. } => block.number,
+            };
+            assert_eq!(temporary.active_fork_block_number(), Some(expected));
+            temporary.fork_block_number_override = Some(expected + 1);
+            assert_eq!(temporary.active_fork_block_number(), Some(expected + 1));
         }
     }
 
@@ -3445,22 +3490,5 @@ mod tests {
         assert!(db.accounts().read().contains_key(&address));
         assert!(db.storage().read().contains_key(&address));
         assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);
-    }
-
-    #[test]
-    fn parses_fork_block_number_from_fork_id() {
-        let fork = ForkId::new("https://example.com/@rpc", Some(75_219_831));
-        assert_eq!(super::fork_block_number(&fork), Some(75_219_831));
-        assert_eq!(
-            super::fork_block_number(&format!("{}-1", fork.as_str()).into()),
-            Some(75_219_831)
-        );
-        assert_eq!(
-            super::fork_block_number(
-                &format!("{}#0xdeadbeef:authenticated-source", fork.as_str()).into()
-            ),
-            Some(75_219_831)
-        );
-        assert_eq!(super::fork_block_number(&ForkId::new("https://example.com", None)), None);
     }
 }
