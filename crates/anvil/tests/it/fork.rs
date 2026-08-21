@@ -664,6 +664,7 @@ async fn test_fork_reset_restores_explicit_genesis_base_fee() {
     let (api, handle) = spawn(
         NodeConfig::test()
             .with_no_storage_caching(true)
+            .with_hardfork(Some(EthereumHardfork::default().into()))
             .with_genesis(Some(Genesis { base_fee_per_gas: Some(0), ..Default::default() }))
             .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
             .with_fork_block_number(Some(0u64)),
@@ -1317,7 +1318,7 @@ async fn test_fork_state_snapshotting_repeated() {
     let to_balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
-    let _second_state_snapshot = api.evm_snapshot().await.unwrap();
+    let second_state_snapshot = api.evm_snapshot().await.unwrap();
 
     assert!(api.evm_revert(state_snapshot).await.unwrap());
 
@@ -1329,9 +1330,8 @@ async fn test_fork_state_snapshotting_repeated() {
     assert_eq!(balance, handle.genesis_balance());
     assert_eq!(block_number, provider.get_block_number().await.unwrap());
 
-    // invalidated
-    // TODO enable after <https://github.com/foundry-rs/foundry/pull/6366>
-    // assert!(!api.evm_revert(second_snapshot).await.unwrap());
+    // The newer snapshot was invalidated by reverting to an older snapshot.
+    assert!(!api.evm_revert(second_state_snapshot).await.unwrap());
 
     // nothing is reverted, snapshot gone
     assert!(!api.evm_revert(state_snapshot).await.unwrap());
@@ -2125,11 +2125,11 @@ async fn can_override_fork_chain_id() {
 
 // <https://github.com/foundry-rs/foundry/issues/6485>
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_reset_moonbeam() {
+async fn flaky_test_fork_reset_moonbeam() {
     crate::init_tracing();
     let (api, handle) = spawn(
         fork_config()
-            .with_eth_rpc_url(Some("https://moonbeam-rpc.publicnode.com".to_string()))
+            .with_eth_rpc_url(Some("https://moonbeam.api.onfinality.io/public".to_string()))
             .with_fork_block_number(None::<u64>),
     )
     .await;
@@ -2148,7 +2148,7 @@ async fn test_fork_reset_moonbeam() {
 
     // reset to check timestamp works after resetting
     api.anvil_reset(Some(Forking {
-        json_rpc_url: Some("https://moonbeam-rpc.publicnode.com".to_string()),
+        json_rpc_url: Some("https://moonbeam.api.onfinality.io/public".to_string()),
         block_number: None,
     }))
     .await

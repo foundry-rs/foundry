@@ -581,9 +581,25 @@ echo -e "\n=== CAST SEND WITH SPONSOR (--tempo.sponsor-signature) ==="
 # Step 2: Sign it with the sponsor's private key
 # Step 3: Send with --tempo.sponsor and --tempo.sponsor-signature
 
+# The sponsor digest commits to the full transaction, including nonce, gas limit and
+# fees. Pin those fields explicitly so `cast mktx` and `cast send` build the identical
+# transaction: refilling them from live chain state (basefee moves, gas estimates change)
+# between the two invocations changes the digest and invalidates the pre-signed sponsor
+# signature. The gas limit is pinned to a padded estimate; a limit below actual usage
+# would make the transaction run out of gas during Tempo AA validation and be dropped
+# without a receipt.
+SPONSOR_TX_NONCE=$(cast nonce "$ADDR" --rpc-url "$ETH_RPC_URL")
+SPONSOR_TX_GAS=$(cast estimate --rpc-url "$ETH_RPC_URL" \
+  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --from "$ADDR")
+SPONSOR_TX_ARGS=(
+  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()'
+  --nonce "$SPONSOR_TX_NONCE" --gas-limit $((2 * SPONSOR_TX_GAS))
+  --gas-price 20gwei --priority-gas-price 1gwei
+)
+
 # Step 1: Get the hash that the sponsor needs to sign
 FEE_PAYER_HASH=$(cast mktx ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$PK" \
+  "${SPONSOR_TX_ARGS[@]}" --private-key "$PK" \
   --tempo.print-sponsor-hash)
 printf "Fee payer signature hash: %s\n" "$FEE_PAYER_HASH"
 
@@ -591,10 +607,16 @@ printf "Fee payer signature hash: %s\n" "$FEE_PAYER_HASH"
 SPONSOR_SIG=$(cast wallet sign --private-key "$SPONSOR_PK" "$FEE_PAYER_HASH" --no-hash)
 printf "Sponsor signature: %s\n" "$SPONSOR_SIG"
 
-# Step 3: Send the sponsored transaction with the signature
-RECEIPT=$(cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$PK" \
-  --tempo.sponsor "$SPONSOR_ADDR" --tempo.sponsor-signature "$SPONSOR_SIG" --json)
+# Step 3: Send the sponsored transaction with the signature. With --json, cast reports
+# errors as a JSON envelope on stdout, which the command substitution captures; print the
+# captured output on failure so the error is visible in CI logs.
+if ! RECEIPT=$(cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+  "${SPONSOR_TX_ARGS[@]}" --private-key "$PK" \
+  --tempo.sponsor "$SPONSOR_ADDR" --tempo.sponsor-signature "$SPONSOR_SIG" --json); then
+  echo "ERROR: sponsored cast send failed"
+  echo "Output: $RECEIPT"
+  exit 1
+fi
 
 # Verify the fee_payer in the receipt matches the sponsor address
 RECEIPT_FEE_PAYER=$(echo "$RECEIPT" | jq -r '.feePayer // .fee_payer // empty')

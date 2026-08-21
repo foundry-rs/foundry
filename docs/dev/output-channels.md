@@ -103,11 +103,11 @@ Each row's status is one of:
 | `cast logs`            | Pretty-printed logs                                  | JSON array                                                     | migrated |
 | `cast run`             | Trace / decoded output                               | JSON                                                           | migrated |
 | `cast trace`           | Trace                                                | JSON trace                                                     | migrated |
-| `cast wallet new`      | One record per wallet: `address` (keystore) or `address\tprivate_key` (no keystore) | JSON array of `{ address, public_key, path }` (keystore) or `{ address, public_key, private_key }` (no keystore) | migrated |
+| `cast wallet new`      | One record per wallet: `address` (keystore) or `address\tprivate_key` (no keystore); omitted when stdout is a tty, where the stderr prose already shows the values | JSON array of `{ address, public_key, path }` (keystore) or `{ address, public_key, private_key }` (no keystore) | migrated |
 | `cast wallet sign`     | Signature                                            | JSON                                                           | migrated |
 | `cast wallet sign-auth`| Signed authorization RLP                             | JSON                                                           | migrated |
 | `cast erc20 balance`   | Balance (decimal)                                    | JSON string                                                    | migrated |
-| `cast create2`         | `address\tsalt` (tab-separated)                      | n/a                                                            | migrated |
+| `cast create2`         | `address\tsalt` (tab-separated); when mining, omitted when stdout is a tty, where the stderr prose already shows the values | n/a                                                            | migrated |
 | `cast access-list`     | Access list                                          | JSON                                                           | migrated |
 | `cast interface`       | Solidity interface source                            | JSON ABI array                                                 | migrated |
 | `cast artifact`        | JSON artifact                                        | n/a                                                            | migrated |
@@ -150,7 +150,6 @@ Each row's status is one of:
 | `forge clean`          | (empty)                                              | n/a                                        | migrated |
 | `forge completions`    | Generated shell completion script                    | n/a                                        | migrated |
 | `forge doc`            | (empty)                                              | n/a                                        | migrated |
-| `forge generate`       | (empty) or generated path                            | n/a                                        | migrated |
 | `forge soldeer`        | Passthrough to `soldeer` crate; foundry adds no wrapper prose | n/a                               | migrated |
 | `forge remappings`     | One remapping per line                               | n/a                                        | migrated |
 | `forge compiler`       | Compiler info                                        | JSON                                       | migrated |

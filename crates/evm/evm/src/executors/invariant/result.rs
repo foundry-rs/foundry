@@ -54,6 +54,8 @@ pub struct InvariantFuzzTestResult {
     pub failed_corpus_replays: usize,
     /// Actual number of workers used for this logical campaign.
     pub workers: usize,
+    /// Common fork block for all recorded failures, if they agree on one.
+    pub fork_block_number: Option<u64>,
     /// For optimization mode (int256 return): the best (maximum) value achieved.
     /// None means standard invariant check mode.
     pub optimization_best_value: Option<I256>,
@@ -63,7 +65,7 @@ pub struct InvariantFuzzTestResult {
 
 impl InvariantFuzzTestResult {
     #[expect(clippy::too_many_arguments)]
-    pub(crate) const fn new(
+    pub(crate) fn new(
         errors: HashMap<String, InvariantFuzzError>,
         handler_errors: HashMap<(Address, Selector), InvariantFuzzError>,
         runs: usize,
@@ -78,6 +80,15 @@ impl InvariantFuzzTestResult {
         optimization_best_value: Option<I256>,
         optimization_best_sequence: Vec<BasicTxDetails>,
     ) -> Self {
+        let mut failure_blocks = errors
+            .values()
+            .chain(handler_errors.values())
+            .map(InvariantFuzzError::fork_block_number);
+        let fork_block_number = failure_blocks
+            .next()
+            .flatten()
+            .filter(|first| failure_blocks.all(|block| block == Some(*first)));
+
         Self {
             errors,
             handler_errors,
@@ -90,6 +101,7 @@ impl InvariantFuzzTestResult {
             metrics,
             failed_corpus_replays,
             workers,
+            fork_block_number,
             optimization_best_value,
             optimization_best_sequence,
         }
@@ -488,14 +500,8 @@ mod tests {
 
     #[test]
     fn cancellation_does_not_record_call_end_rewrite_as_invariant_failure() {
-        let cheats_config = Arc::new(CheatsConfig::new(
-            &Config::default(),
-            EvmOpts::default(),
-            None,
-            None,
-            None,
-            false,
-        ));
+        let cheats_config =
+            Arc::new(CheatsConfig::new(&Config::default(), EvmOpts::default(), None, None, false));
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default()
             .inspectors(|stack| stack.cheatcodes(cheats_config))

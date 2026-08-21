@@ -69,12 +69,27 @@ impl SymbolicExecutor {
         self.deferred_incomplete.get_or_insert(DeferredIncomplete::SolverUnknown);
     }
 
+    pub(super) fn is_sat_with_state(
+        &mut self,
+        state: &PathState,
+        constraints: &[SymBoolExpr],
+    ) -> Result<bool, SymbolicError> {
+        let replayable_storage = state.world.replay_storage_symbols();
+        self.solver.is_sat_with_replayable_storage(&mut self.cx, constraints, &replayable_storage)
+    }
+
     /// Checks branch feasibility, recording solver-unknown as an incomplete proof path.
     pub(super) fn branch_is_sat_or_defer(
         &mut self,
+        state: &PathState,
         constraints: &[SymBoolExpr],
     ) -> Result<bool, SymbolicError> {
-        match self.solver.is_sat_branch(&mut self.cx, constraints) {
+        let replayable_storage = state.world.replay_storage_symbols();
+        match self.solver.is_sat_branch_with_replayable_storage(
+            &mut self.cx,
+            constraints,
+            &replayable_storage,
+        ) {
             Ok(feasible) => Ok(feasible),
             Err(SymbolicError::SolverUnknown) => {
                 self.defer_solver_unknown();
@@ -472,7 +487,12 @@ impl SymbolicExecutor {
         function: &Function,
         state: &PathState,
     ) -> Result<SymbolicConcreteInput, SymbolicError> {
-        let model = self.solver.model(&mut self.cx, &state.constraints)?;
+        let replayable_storage = state.world.replay_storage_symbols();
+        let model = self.solver.model_with_replayable_storage(
+            &mut self.cx,
+            &state.constraints,
+            &replayable_storage,
+        )?;
         let args = calldata.model_to_args(&mut self.cx, &model)?;
         let calldata_bytes = Bytes::from(function.abi_encode_input(&args)?);
         Ok(SymbolicConcreteInput { args, calldata: calldata_bytes })
@@ -573,7 +593,7 @@ impl SymbolicExecutor {
                                 steps.push(step.clone());
 
                                 match outcome.status {
-                                    TopLevelCallStatus::Failure => {
+                                    CallStatus::Failure => {
                                         let (sequence, storage) =
                                             self.materialize_sequence(&steps, &outcome.state)?;
                                         return Ok(SymbolicInvariantRunResult::Counterexample {
@@ -583,7 +603,7 @@ impl SymbolicExecutor {
                                             stats: self.stats_with_paths(completed_paths),
                                         });
                                     }
-                                    TopLevelCallStatus::Revert => {
+                                    CallStatus::Revert => {
                                         if input.fail_on_revert {
                                             let (sequence, storage) =
                                                 self.materialize_sequence(&steps, &outcome.state)?;
@@ -604,21 +624,23 @@ impl SymbolicExecutor {
                                         // concrete campaign.
                                         let mut reverted_state = sequence.state.clone();
                                         reverted_state
-                                            .merge_reverted_top_level_effects(&outcome.state);
+                                            .take_reverted_top_level_effects(outcome.state);
                                         if symbolic_invariant_should_check(
                                             steps.len(),
                                             input.depth,
                                             input.check_interval,
                                         ) {
-                                            for invariant_outcome in self.execute_invariant_check(
-                                                input.executor,
-                                                reverted_state.clone(),
-                                                input.invariant_address,
-                                                input.sender,
-                                                input.invariant,
-                                                after_invariant_for(steps.len()),
-                                                &mut completed_paths,
-                                            )? {
+                                            for mut invariant_outcome in self
+                                                .execute_invariant_check(
+                                                    input.executor,
+                                                    reverted_state.clone(),
+                                                    input.invariant_address,
+                                                    input.sender,
+                                                    input.invariant,
+                                                    after_invariant_for(steps.len()),
+                                                    &mut completed_paths,
+                                                )?
+                                            {
                                                 if invariant_outcome.failed {
                                                     let (sequence, storage) = self
                                                         .materialize_sequence(
@@ -636,8 +658,8 @@ impl SymbolicExecutor {
                                                     );
                                                 }
                                                 let mut state = reverted_state.clone();
-                                                state.merge_noncommitting_check_constraints(
-                                                    &invariant_outcome.state,
+                                                state.take_noncommitting_check_state(
+                                                    &mut invariant_outcome.state,
                                                 );
                                                 next_frontier.push(SequencePath {
                                                     state,
@@ -651,21 +673,23 @@ impl SymbolicExecutor {
                                             });
                                         }
                                     }
-                                    TopLevelCallStatus::Success => {
+                                    CallStatus::Success => {
                                         if symbolic_invariant_should_check(
                                             steps.len(),
                                             input.depth,
                                             input.check_interval,
                                         ) {
-                                            for invariant_outcome in self.execute_invariant_check(
-                                                input.executor,
-                                                outcome.state.clone(),
-                                                input.invariant_address,
-                                                input.sender,
-                                                input.invariant,
-                                                after_invariant_for(steps.len()),
-                                                &mut completed_paths,
-                                            )? {
+                                            for mut invariant_outcome in self
+                                                .execute_invariant_check(
+                                                    input.executor,
+                                                    outcome.state.clone(),
+                                                    input.invariant_address,
+                                                    input.sender,
+                                                    input.invariant,
+                                                    after_invariant_for(steps.len()),
+                                                    &mut completed_paths,
+                                                )?
+                                            {
                                                 if invariant_outcome.failed {
                                                     let (sequence, storage) = self
                                                         .materialize_sequence(
@@ -683,8 +707,8 @@ impl SymbolicExecutor {
                                                     );
                                                 }
                                                 let mut state = outcome.state.clone();
-                                                state.merge_noncommitting_check_constraints(
-                                                    &invariant_outcome.state,
+                                                state.take_noncommitting_check_state(
+                                                    &mut invariant_outcome.state,
                                                 );
                                                 next_frontier.push(SequencePath {
                                                     state,

@@ -24,7 +24,7 @@ use foundry_evm_core::{
     precompiles::{
         BLAKE_2F, BLS12_G1ADD, BLS12_G1MSM, BLS12_G2ADD, BLS12_G2MSM, BLS12_MAP_FP_TO_G1,
         BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, CELO_TRANSFER, EC_ADD, EC_MUL, EC_PAIRING,
-        EC_RECOVER, IDENTITY, MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
+        EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
 };
 #[cfg(feature = "monad")]
@@ -386,7 +386,6 @@ impl CallTraceDecoder {
             (BLS12_PAIRING_CHECK, "BLS12_PAIRING_CHECK".to_string()),
             (BLS12_MAP_FP_TO_G1, "BLS12_MAP_FP_TO_G1".to_string()),
             (BLS12_MAP_FP2_TO_G2, "BLS12_MAP_FP2_TO_G2".to_string()),
-            (P256_VERIFY, "P256VERIFY".to_string()),
             // Tempo
             (TIP_FEE_MANAGER_ADDRESS, "FeeManager".to_string()),
             (TIP403_REGISTRY_ADDRESS, "TIP403Registry".to_string()),
@@ -554,8 +553,8 @@ impl CallTraceDecoder {
         let nodes = arena.nodes().iter().filter(|node| {
             // Skip precompile addresses, they will never resolve externally.
             if node.is_precompile()
-                || precompiles::is_known_precompile(
-                    node.trace.address,
+                || precompiles::is_known_precompile_call(
+                    &node.trace,
                     self.networks,
                     self.chain_id,
                     self.tempo_hardfork,
@@ -1436,8 +1435,8 @@ impl CallTraceDecoder {
                 // Ignore known addresses.
                 if n.trace.address == DEFAULT_CREATE2_DEPLOYER
                     || n.is_precompile()
-                    || precompiles::is_known_precompile(
-                        n.trace.address,
+                    || precompiles::is_known_precompile_call(
+                        &n.trace,
                         self.networks,
                         self.chain_id,
                         self.tempo_hardfork,
@@ -1613,6 +1612,7 @@ mod tests {
     #[cfg(feature = "monad")]
     use alloy_sol_types::TopicList;
     use alloy_sol_types::{SolCall, SolError, SolEvent};
+    use foundry_evm_core::precompiles::P256_VERIFY;
     #[cfg(feature = "monad")]
     use monad_revm::{
         reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
@@ -3067,6 +3067,32 @@ mod tests {
 
         assert_eq!(decoder.functions.get(&selector).unwrap().len(), global_functions);
         assert_eq!(decoder.functions_by_address[&address][&selector], [function]);
+    }
+
+    #[tokio::test]
+    async fn inactive_p256_address_uses_contract_identity() {
+        let abi = JsonAbi::parse(["function ordinaryCode()"]).unwrap();
+        let function = abi.functions().next().unwrap();
+        let mut arena = CallTraceArena::default();
+        arena.nodes_mut()[0].trace = CallTrace {
+            address: P256_VERIFY,
+            maybe_precompile: Some(false),
+            data: function.selector().to_vec().into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.identify(&arena, &mut AbiIdentifier { abi });
+        let decoded = decoder.decode_function(&arena.nodes()[0].trace).await;
+
+        assert_eq!(decoded.label.as_deref(), Some("Scoped"));
+        assert_eq!(decoded.call_data.unwrap().signature, "ordinaryCode()");
+    }
+
+    #[test]
+    fn p256_is_not_an_unconditional_precompile_label() {
+        assert!(!CallTraceDecoder::new().precompile_labels().contains_key(&P256_VERIFY));
     }
 
     #[test]

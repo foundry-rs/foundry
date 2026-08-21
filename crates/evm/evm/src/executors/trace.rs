@@ -12,7 +12,7 @@ use foundry_evm_core::{
 };
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
-use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
+use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::TraceRequirements;
 use revm::state::Bytecode;
@@ -127,15 +127,9 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         networks: NetworkConfigs,
         resolved_hardfork: Option<FoundryHardfork>,
     ) {
-        let tempo_hardfork = resolved_hardfork.and_then(|hardfork| match hardfork {
-            FoundryHardfork::Tempo(hardfork) => Some(hardfork),
-            _ => None,
-        });
+        let tempo_hardfork = resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork);
         #[cfg(feature = "monad")]
-        let monad_hardfork = resolved_hardfork.and_then(|hardfork| match hardfork {
-            FoundryHardfork::Monad(hardfork) => Some(hardfork),
-            _ => None,
-        });
+        let monad_hardfork = resolved_hardfork.and_then(MonadHardfork::from_foundry_hardfork);
         #[cfg(not(feature = "monad"))]
         let monad_hardfork = None;
 

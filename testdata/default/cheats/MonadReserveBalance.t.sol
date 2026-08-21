@@ -49,6 +49,18 @@ contract MonadReserveBalanceTest is Test {
         assertTrue(_dippedIntoReserve());
     }
 
+    /// forge-config: default.isolate = true
+    function test_isolation_success_updates_tracker() public {
+        this.violateReserve();
+
+        assertEq(SPENDER.balance, 9 ether);
+        assertTrue(_dippedIntoReserve());
+    }
+
+    function violateReserve() external {
+        _violateReserve(SPENDER);
+    }
+
     function test_snapshot_revert_restores_tracker() public {
         uint256 snapshot = vm.snapshotState();
 
@@ -59,6 +71,19 @@ contract MonadReserveBalanceTest is Test {
         assertTrue(vm.revertToState(snapshot));
         assertEq(SPENDER.balance, INITIAL_BALANCE);
         assertTrue(!_dippedIntoReserve());
+    }
+
+    function test_snapshot_revert_and_delete_restores_tracker() public {
+        uint256 snapshot = vm.snapshotState();
+
+        vm.prank(SPENDER);
+        RECIPIENT.transfer(INITIAL_BALANCE - 9 ether);
+        assertTrue(_dippedIntoReserve());
+
+        assertTrue(vm.revertToStateAndDelete(snapshot));
+        assertEq(SPENDER.balance, INITIAL_BALANCE);
+        assertTrue(!_dippedIntoReserve());
+        assertTrue(!vm.revertToState(snapshot));
     }
 
     function test_deal_clears_violation() public {

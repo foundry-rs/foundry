@@ -198,7 +198,6 @@ impl SymbolicExecutor {
             &mut self.cx,
             hook.callback_target,
             hook.callback_target,
-            hook.callback_target,
             CHEATCODE_ADDRESS,
             callvalue,
             false,
@@ -211,23 +210,25 @@ impl SymbolicExecutor {
         }
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
-        for outcome in outcomes {
+        for mut outcome in outcomes {
             let mut parent = state.clone();
-            parent.constraints = outcome.state.constraints.clone();
+            parent.constraints = std::mem::take(&mut outcome.state.constraints);
             parent.next_symbol = outcome.state.next_symbol;
-            parent.storage_load_hooks = outcome.state.storage_load_hooks.clone();
-            parent.storage_store_hooks = outcome.state.storage_store_hooks.clone();
-            parent.mapping_storage_store_hooks = outcome.state.mapping_storage_store_hooks.clone();
-            parent.inherit_mapping_hook_provenance(&outcome.state);
+            parent.storage_load_hooks = std::mem::take(&mut outcome.state.storage_load_hooks);
+            parent.storage_store_hooks = std::mem::take(&mut outcome.state.storage_store_hooks);
+            parent.mapping_storage_store_hooks =
+                std::mem::take(&mut outcome.state.mapping_storage_store_hooks);
+            parent.mapping_hook_keccak_preimages =
+                std::mem::take(&mut outcome.state.mapping_hook_keccak_preimages);
             parent.storage_hook_active = false;
 
             match outcome.status {
-                TopLevelCallStatus::Success => {
-                    parent.world = outcome.state.world.clone();
-                    parent.block = outcome.state.block.clone();
+                CallStatus::Success => {
+                    parent.world = outcome.state.world;
+                    parent.block = outcome.state.block;
                 }
-                TopLevelCallStatus::Revert | TopLevelCallStatus::Failure => {
-                    parent.return_data = outcome.return_data.clone();
+                CallStatus::Revert | CallStatus::Failure => {
+                    parent.return_data = outcome.state.frame.return_data;
                     parent.pending_storage_hook_revert = true;
                 }
             }
@@ -282,7 +283,7 @@ impl SymbolicExecutor {
             if target.result() { condition.clone().not(&mut self.cx) } else { condition.clone() };
         let mut constraints = state.constraints.clone();
         constraints.push(desired);
-        if !self.branch_is_sat_or_defer(&constraints)? {
+        if !self.branch_is_sat_or_defer(state, &constraints)? {
             return Ok(false);
         }
         state.constraints = constraints;
@@ -1204,7 +1205,7 @@ impl SymbolicExecutor {
             None => {
                 let mut constraints = state.constraints.clone();
                 constraints.push(in_bounds);
-                if self.solver.is_sat(&mut self.cx, &constraints)? {
+                if self.is_sat_with_state(state, &constraints)? {
                     state.constraints = constraints;
                     Ok(true)
                 } else {

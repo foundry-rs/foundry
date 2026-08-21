@@ -6,6 +6,7 @@ use alloy_hardforks::EthereumHardfork;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, I256, U256, address, b256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rlp::Header;
 use alloy_rpc_types::{
     Authorization, BlockNumberOrTag, Index, TransactionRequest, engine::JwtSecret,
 };
@@ -27,6 +28,8 @@ use foundry_test_utils::{
     str,
     util::OutputExt,
 };
+#[cfg(unix)]
+use rexpect::{Encoding, reader::Options, spawn_with_options};
 use serde_json::json;
 use std::{fs, io::ErrorKind, net::TcpListener, path::Path, process::Command, str::FromStr};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
@@ -139,6 +142,14 @@ Display options:
           - 5 (-vvvvv): Print execution and setup traces for all tests, including storage changes
           and
             backtraces with line numbers.
+
+Compiler options:
+      --allow-local-compiler
+          Allow use of local compiler executables without prompting
+
+Project options:
+      --allow-project-env
+          Allow loading project dotenv files without prompting
 
 Find more information in the book: https://getfoundry.sh/cast/overview
 
@@ -376,6 +387,38 @@ Successfully created new keypair.
 
 "#]]);
 });
+
+// tests that the machine-readable stdout record is omitted on an interactive terminal, where it
+// would duplicate the stderr prose
+casttest!(
+    #[cfg(unix)]
+    new_wallet_tty_omits_stdout_record,
+    |_prj, _cmd| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cast"));
+        command.env("NO_COLOR", "1").env("TERM", "dumb").args(["wallet", "new"]);
+
+        let mut session = spawn_with_options(
+            command,
+            Options {
+                timeout_ms: Some(30_000),
+                strip_ansi_escape_codes: true,
+                encoding: Encoding::UTF8,
+            },
+        )
+        .unwrap();
+
+        session.exp_string("Successfully created new keypair.").unwrap();
+        session.exp_string("Address:").unwrap();
+        session.exp_string("Private key: 0x").unwrap();
+        // Only the private key value may follow; the `address\tprivate_key` record must not be
+        // printed to a tty.
+        let rest = session.exp_eof().unwrap();
+        assert!(
+            !rest.contains("0x") && !rest.contains('\t'),
+            "unexpected stdout record on tty: {rest:?}"
+        );
+    }
+);
 
 // tests that we can create a new wallet with json output
 casttest!(new_wallet_json, |_prj, cmd| {
@@ -1209,6 +1252,36 @@ casttest!(wallet_import_rejects_touch_id_suffix, |prj, cmd| {
 Error: account names ending in `.touchid` are reserved
 
 "#]]);
+});
+
+// `cast wallet import` treats ACCOUNT_NAME as a file name under the keystore dir.
+// A path segment would write the encrypted keystore outside that directory.
+casttest!(wallet_import_rejects_path_account_name, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    fs::create_dir_all(&keystore_dir).unwrap();
+    let escaped = prj.root().join("pwned_foundry_alias");
+
+    cmd.set_current_dir(prj.root());
+    cmd.args([
+        "wallet",
+        "import",
+        "../pwned_foundry_alias",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: account name must be a single path segment
+
+"#]]);
+
+    assert!(!escaped.exists());
+    assert!(!keystore_dir.join("../pwned_foundry_alias").exists());
 });
 
 // tests that `cast wallet sign message` outputs the expected signature
@@ -2805,6 +2878,24 @@ casttest!(rlp, |_prj, cmd| {
 [["0x55556666"],[],[],[[[]]]]
 
 "#]]);
+
+    // Build the RLP encoding of 10,000 nested single-item lists without recursively encoding it.
+    const NESTING_DEPTH: usize = 10_000;
+    let mut encoded_len = 1;
+    let mut headers = Vec::with_capacity(NESTING_DEPTH);
+    for _ in 0..NESTING_DEPTH {
+        let mut header = Vec::new();
+        Header { list: true, payload_length: encoded_len }.encode(&mut header);
+        encoded_len += header.len();
+        headers.push(header);
+    }
+    let mut deeply_nested = Vec::with_capacity(encoded_len);
+    for header in headers.iter().rev() {
+        deeply_nested.extend_from_slice(header);
+    }
+    deeply_nested.push(0x80);
+
+    cmd.cast_fuse().arg("--from-rlp").stdin(hex::encode_prefixed(deeply_nested)).assert_success();
 });
 
 // test that `cast impl` works correctly for both the implementation slot and the beacon slot
@@ -3424,6 +3515,44 @@ casttest!(create2_output_channels, |_prj, cmd| {
 
 "#]]);
 });
+
+// tests that the machine-readable stdout record is omitted on an interactive terminal, where it
+// would duplicate the stderr prose
+casttest!(
+    #[cfg(unix)]
+    create2_tty_omits_stdout_record,
+    |_prj, _cmd| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cast"));
+        command.env("NO_COLOR", "1").env("TERM", "dumb").args([
+            "create2",
+            "--starts-with",
+            "cc",
+            "--init-code-hash",
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+        ]);
+
+        let mut session = spawn_with_options(
+            command,
+            Options {
+                timeout_ms: Some(30_000),
+                strip_ansi_escape_codes: true,
+                encoding: Encoding::UTF8,
+            },
+        )
+        .unwrap();
+
+        session.exp_string("Successfully found contract address").unwrap();
+        session.exp_string("Address: 0x").unwrap();
+        session.exp_string("Salt: 0x").unwrap();
+        // Only the salt value and its decimal representation may follow; the `address\tsalt`
+        // record must not be printed to a tty.
+        let rest = session.exp_eof().unwrap();
+        assert!(
+            !rest.contains("0x") && !rest.contains('\t'),
+            "unexpected stdout record on tty: {rest:?}"
+        );
+    }
+);
 
 // tests that `cast create2 --salt` writes `address\tsalt` to stdout
 casttest!(create2_fixed_salt_output_channels, |_prj, cmd| {
@@ -6892,6 +7021,86 @@ forgetest_async!(cast_call_debug_trace_call_local_artifacts_json_stdout, |prj, c
     });
 });
 
+casttest!(cast_call_decodes_custom_error, async |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    let signature = "RequestLimitExceeded(uint256,uint256)";
+    let selector = keccak256(signature);
+    let mut revert_data = selector[..4].to_vec();
+    revert_data.extend((U256::from(5), U256::from(3)).abi_encode());
+
+    // Runtime bytecode that copies the appended revert payload into memory and reverts with it.
+    let payload_len = u8::try_from(revert_data.len()).unwrap();
+    let mut runtime =
+        vec![0x60, payload_len, 0x60, 0x0a, 0x5f, 0x39, 0x60, payload_len, 0x5f, 0xfd];
+    runtime.extend(revert_data);
+
+    // Isolate and seed the signature cache so decoding is deterministic and offline.
+    let home = prj.root().join("home");
+    let cache_dir = home.join(".foundry/cache");
+    fs::create_dir_all(&cache_dir).unwrap();
+    let selector = format!("0x{}", hex::encode(&selector[..4]));
+    let mut errors = serde_json::Map::new();
+    errors.insert(selector, json!(signature));
+    fs::write(
+        cache_dir.join("signatures"),
+        serde_json::to_vec(&json!({
+            "functions": {},
+            "errors": errors,
+            "events": {},
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let target = "0x000000000000000000000000000000000000dead";
+    let code_override = format!("{target}:0x{}", hex::encode(runtime));
+    let endpoint = handle.http_endpoint();
+
+    cmd.env("HOME", &home);
+    cmd.env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+        "call",
+        target,
+        "--data",
+        "0x",
+        "--override-code",
+        &code_override,
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: execution reverted: RequestLimitExceeded(5, 3)
+
+Context:
+- server returned an error response:[..]
+
+"#]]);
+
+    cmd.cast_fuse();
+    cmd.env("HOME", &home);
+    cmd.env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+            "call",
+            target,
+            "--data",
+            "0x",
+            "--override-code",
+            &code_override,
+            "--rpc-url",
+            &endpoint,
+            "--json",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"cast.error","message":"execution reverted: RequestLimitExceeded(5, 3)"},{"level":"error","code":"cast.error.context","message":"server returned an error response:[..]"}],"warnings":[]}
+
+"#]])
+        .stderr_eq(str![""]);
+});
+
 // `cast call --trace` decodes custom errors through the local signatures cache that `forge build`
 // populates, without requiring `--with-local-artifacts`.
 // <https://github.com/foundry-rs/foundry/issues/11085>
@@ -7344,8 +7553,8 @@ Traces:
     │   │   │   │   └─ ← [Return] 0xc13089327d3c20c0ce35f2f058c423de29977e6950e406c095e366a8fabd463f
     │   │   │   ├─ [96] PRECOMPILES::sha256(0x424242424242424242424242424242424242424242424242424242424242424201000000c13089327d3c20c0ce35f2f058c423de29977e6950e406c095e366a8fabd463f) [staticcall]
     │   │   │   │   └─ ← [Return] 0xc544bd9a4ea526dda3a008f43c21b6f0be3031b1ff71832b9876915dc91deea0
-    │   │   │   ├─ [..] P256VERIFY::c544bd9a(4ea526dda3a008f43c21b6f0be3031b1ff71832b9876915dc91deea0dd519280ec730727f07aa36550bde31a1d5f3097818f3425c2f083ed33a91f080fa2afac0071f6e1af9a0e9c09b851bf01e68bc8a1c1f89f686c48205762f925bf54fa13f88658092efa36c51b1e3c4db31d3afb92812fb852dac7cf9614bc479bf5da7241d9c4ab1b431b57ec3369587b4c831d7a564438990da053708c3289) [staticcall]
-    │   │   │   │   └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000001
+    │   │   │   ├─ [..] PRECOMPILES::p256Verify(0xc544bd9a4ea526dda3a008f43c21b6f0be3031b1ff71832b9876915dc91deea0, 100105265279889746367868033207795503835004638867404470555471132548343465058056, 7072134396011491412722047857354424388694374548663828422239323654972225288485, 86541895207843662984465061939919839471417016180185784541173973900783506472007, 70542876722349398371292179791476581686494250953390952520841573290937254949513) [staticcall]
+    │   │   │   │   └─ ← [Return] true
     │   │   │   └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000000011bde17b8de18819c9eb86cefc3920ddb5d3d4254de276e3d6e18dd2b399f732b
     │   │   └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000000011bde17b8de18819c9eb86cefc3920ddb5d3d4254de276e3d6e18dd2b399f732b
     │   ├─ [..] 0xA12384c5E52fD646E7BC7F6B3b33A605651F566E::checkAndIncrementNonce(23)
@@ -7779,7 +7988,7 @@ casttest!(monad_run_traces_protocol_system_call, async |_prj, cmd| {
         original.stdout_lossy()
     );
 
-    let canonical_endpoint = spawn_canonical_monad_system_rpc(endpoint, tx_hash).await;
+    let canonical_endpoint = spawn_canonical_monad_system_rpc(endpoint.clone(), tx_hash).await;
     let output = cmd
         .cast_fuse()
         .args(["run", &tx_hash_string, "--rpc-url", &canonical_endpoint, "--quick"])
@@ -7790,6 +7999,37 @@ casttest!(monad_run_traces_protocol_system_call, async |_prj, cmd| {
     assert!(output.contains("Staking::syscallSnapshot()"), "{output}");
     assert!(output.contains("Transaction successfully executed."), "{output}");
     assert!(!output.contains("0x0000000000000000000000000000000000000000::fallback()"), "{output}");
+
+    let unrelated_system = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
+    api.anvil_impersonate_account(unrelated_system).await.unwrap();
+    api.anvil_set_balance(unrelated_system, mon(1)).await.unwrap();
+    let unrelated_receipt = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(unrelated_system)
+                .with_to(Address::with_last_byte(1))
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(unrelated_receipt.status());
+    let unrelated_hash = unrelated_receipt.transaction_hash.to_string();
+
+    cmd.cast_fuse()
+        .args(["run", &unrelated_hash, "--rpc-url", &endpoint, "--quick"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: 0x[..] is a system transaction.
+Replaying system transactions is currently not supported.
+
+"#]]);
+    cmd.cast_fuse()
+        .args(["run", &unrelated_hash, "--rpc-url", &endpoint, "--quick", "--replay-system-txes"])
+        .assert_success();
 });
 
 #[cfg(feature = "monad")]

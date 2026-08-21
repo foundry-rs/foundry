@@ -800,7 +800,7 @@ async fn create_fork<
         resolved.number(),
         resolved.hash(),
     );
-    let (backend, handler) = SharedBackend::new_with_anchor(provider, db, anchor);
+    let (backend, handler) = SharedBackend::new_with_anchor(provider, db, anchor)?;
     let fork_id = ForkId::resolved(&fork.url, &resolved);
     fork.resolved = Some(resolved);
     let fork = CreatedFork::new(fork, evm_env, backend);

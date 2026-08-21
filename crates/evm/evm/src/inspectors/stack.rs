@@ -8,19 +8,22 @@ use alloy_primitives::{
     map::{AddressHashMap, AddressHashSet, AddressMap},
 };
 
-use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, NestedEvmClosure, Wallets};
+use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, NestedEvmClosureFor, Wallets};
 use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
+#[cfg(feature = "monad")]
+use foundry_evm_core::FoundryJournal;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
-    backend::{ContextAuxUpdate, DatabaseError, DatabaseExt, JournaledState},
+    backend::{ContextUpdateFor, DatabaseError, DatabaseExt, JournaledState},
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     env::FoundryContextExt,
     evm::{
-        BlockEnvFor, ContextAuxFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, SpecFor, TxEnvFor, get_create2_factory_call_inputs,
-        refresh_context_after_state_change, with_cloned_context,
+        BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, EvmFactoryFor, FoundryContextFor,
+        FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, get_create2_factory_call_inputs,
+        with_cloned_context,
     },
+    precompiles::P256_VERIFY,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
@@ -378,6 +381,12 @@ struct PendingCreate2Redirect {
     charged_create_state_gas: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct PendingCallTrace {
+    trace_idx: usize,
+    executed_address: Option<Address>,
+}
+
 /// All used inspectors besides [Cheatcodes].
 ///
 /// See [`InspectorStack`].
@@ -416,10 +425,14 @@ pub struct InspectorStackInner {
     pub top_frame_journal: AddressMap<Account>,
     /// Whether the top-level frame failed before inspector result rewriting.
     top_level_frame_failed_before_rewrite: bool,
+    /// Whether the root call of the active isolated transaction executed as a precompile.
+    isolated_call_was_precompile: Option<bool>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
     /// LIFO stack tracking CREATE2 frames that were redirected to the CREATE2 factory.
     pending_create2_redirects: Vec<PendingCreate2Redirect>,
+    /// LIFO stack tracking the effective address of traced calls delegated to the EVM provider.
+    pending_call_traces: Vec<PendingCallTrace>,
     /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
     /// it goes through the normal inspector lifecycle (tracing, etc.).
     pub pending_create2_error: Option<CreateOutcome>,
@@ -454,23 +467,41 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
+        f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        with_cloned_context(ecx, |db, evm_env, context_state| {
-            let context_aux = context_state.auxiliary.clone();
-            let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
-                db,
-                evm_env,
-                context_aux,
-                &mut inspector,
-            );
-            evm.set_context_state(context_state);
+        let factory = FEN::EvmFactory::default();
+        let chain_context = ecx.chain().clone();
+        #[cfg(feature = "monad")]
+        let state = ecx.journal().capture_reserve_balance();
+        let mut nested_chain_context = None;
+        #[cfg(feature = "monad")]
+        let mut reserve_balance = None;
+        with_cloned_context(ecx, |db, evm_env, journaled_state| {
+            let mut evm =
+                factory.create_foundry_nested_evm(db, evm_env, chain_context, &mut inspector);
+            *evm.journal_inner_mut() = journaled_state;
+            #[cfg(feature = "monad")]
+            {
+                evm.journal_mut().restore_reserve_balance(state);
+                evm.refresh_chain_dependent_state();
+            }
             f(&mut *evm)?;
-            let sub_state = evm.context_state();
+            nested_chain_context = Some(evm.chain_mut().clone());
+            #[cfg(feature = "monad")]
+            {
+                reserve_balance = Some(evm.journal_mut().capture_reserve_balance());
+            }
+            let sub_inner = evm.journal_inner_mut().clone();
             let sub_evm_env = evm.to_evm_env();
-            Ok((sub_evm_env, sub_state))
-        })
+            Ok((sub_evm_env, sub_inner))
+        })?;
+        *ecx.chain_mut() = nested_chain_context.expect("nested EVM chain context was captured");
+        #[cfg(feature = "monad")]
+        ecx.journal_mut()
+            .restore_reserve_balance(reserve_balance.expect("nested EVM state was captured"));
+        ecx.refresh_chain_dependent_state();
+        Ok(())
     }
 
     fn with_fresh_nested_evm(
@@ -478,14 +509,14 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnvFor<FEN>,
-        context_aux: ContextAuxFor<FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ContextAuxFor<FEN>>,
+        chain_context: ChainFor<FEN>,
+        f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnvFor<FEN>, EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
             db,
             evm_env,
-            context_aux,
+            chain_context,
             &mut inspector,
         );
         f(&mut *evm)?;
@@ -498,7 +529,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<ContextAuxUpdate<ContextAuxFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>> {
         let evm_env = ecx.evm_clone();
         let outer_tx_env = ecx.tx_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
@@ -928,9 +959,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         input: Bytes,
         gas_limit: u64,
         value: U256,
-    ) -> (InterpreterResult, Option<Address>) {
+    ) -> (InterpreterResult, Option<Address>, bool) {
         let cached_evm_env = ecx.evm_clone();
         let cached_tx_env = ecx.tx_clone();
+        self.isolated_call_was_precompile = None;
 
         ecx.block_mut().set_basefee(0);
 
@@ -983,48 +1015,56 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let evm_env = ecx.evm_clone();
         let tx_env = ecx.tx_clone();
-        let context_aux = ecx.aux_state();
+        let factory = FEN::EvmFactory::default();
+        let chain_context = ecx.chain().clone();
 
+        let isolated_state = {
+            let journal = ecx.journal_inner();
+            let mut state = journal.state.clone();
+            for (addr, acc_mut) in &mut state {
+                // Preserve revm's per-transaction creation flag for accounts created in
+                // the parent context in initialize_interp. A cold load in the nested
+                // context clears local flags, but keeping accounts cold preserves gas
+                // accounting for isolated calls.
+                if journal.warm_addresses.is_cold(addr) {
+                    acc_mut.mark_cold();
+                }
+
+                // Mark all slots cold.
+                for slot_mut in acc_mut.storage.values_mut() {
+                    slot_mut.is_cold = true;
+                    slot_mut.original_value = slot_mut.present_value;
+                }
+            }
+            state
+        };
+
+        #[cfg(feature = "monad")]
+        let state = ecx.journal().capture_reserve_balance();
+        #[cfg(feature = "monad")]
+        let mut reserve_balance = None;
+        let mut nested_chain_context = None;
         let res = self.with_inspector(|mut inspector| {
-            let (res, nested_env, nested_aux) = {
-                let (db, journal) = ecx.db_journal_inner_mut();
-                let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
-                    db,
-                    evm_env,
-                    context_aux,
-                    &mut inspector,
-                );
-                evm.preserve_aux_state_on_transaction();
-
-                evm.journal_inner_mut().state = {
-                    let mut state = journal.state.clone();
-
-                    for (addr, acc_mut) in &mut state {
-                        // Preserve revm's per-transaction creation flag for accounts created in
-                        // the parent context in initialize_interp. A cold load in the nested
-                        // context clears local flags, but keeping accounts cold preserves gas
-                        // accounting for isolated calls.
-                        if journal.warm_addresses.is_cold(addr) {
-                            acc_mut.mark_cold();
-                        }
-
-                        // mark all slots cold
-                        for slot_mut in acc_mut.storage.values_mut() {
-                            slot_mut.is_cold = true;
-                            slot_mut.original_value = slot_mut.present_value;
-                        }
-                    }
-
-                    state
-                };
-
-                // set depth to 1 to make sure traces are collected correctly
+            let (res, nested_env) = {
+                let (db, _) = ecx.db_journal_inner_mut();
+                let mut evm =
+                    factory.create_foundry_nested_evm(db, evm_env, chain_context, &mut inspector);
+                evm.journal_inner_mut().state = isolated_state;
+                #[cfg(feature = "monad")]
+                {
+                    evm.journal_mut().restore_reserve_balance(state);
+                    evm.refresh_chain_dependent_state();
+                    evm.journal_mut().set_preserve_reserve_balance(true);
+                }
+                // Set depth to 1 to make sure traces are collected correctly.
                 evm.journal_inner_mut().depth = 1;
-
                 let res = evm.transact_raw(tx_env);
-                let nested_evm_env = evm.to_evm_env();
-                let nested_aux = evm.aux_state();
-                (res, nested_evm_env, nested_aux)
+                nested_chain_context = Some(evm.chain_mut().clone());
+                #[cfg(feature = "monad")]
+                {
+                    reserve_balance = Some(evm.journal_mut().capture_reserve_balance());
+                }
+                (res, evm.to_evm_env())
             };
 
             // Restore env, preserving cheatcode cfg/block changes from the nested EVM
@@ -1033,10 +1073,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             restored_evm_env.block_env.set_basefee(cached_evm_env.block_env.basefee());
             ecx.set_evm(restored_evm_env);
             ecx.set_tx(cached_tx_env);
-            ecx.set_aux_state(nested_aux);
 
             res
         });
+        *ecx.chain_mut() = nested_chain_context.expect("nested EVM chain context was captured");
 
         self.in_inner_context = false;
         self.inner_context_data = None;
@@ -1048,13 +1088,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
 
         let mut gas = Gas::new(gas_limit);
+        let was_precompile_called = self.isolated_call_was_precompile.take().unwrap_or(false);
 
         let Ok(res) = res else {
-            refresh_context_after_state_change::<FEN>(ecx);
+            #[cfg(feature = "monad")]
+            ecx.journal_mut().restore_reserve_balance(
+                reserve_balance.expect("isolated transaction state was captured"),
+            );
+            ecx.refresh_chain_dependent_state();
             // Should we match, encode and propagate error as a revert reason?
             let result =
                 InterpreterResult { result: InstructionResult::Revert, output: Bytes::new(), gas };
-            return (result, None);
+            return (result, None, was_precompile_called);
         };
 
         let rolled_back = !res.result.is_success();
@@ -1083,6 +1128,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 slot_mut.is_cold &= val.is_cold;
             }
         }
+        #[cfg(feature = "monad")]
+        ecx.journal_mut().restore_reserve_balance(
+            reserve_balance.expect("isolated transaction state was captured"),
+        );
+        ecx.refresh_chain_dependent_state();
 
         let (result, address, output) = match res.result {
             ExecutionResult::Success { reason, gas: result_gas, logs: _, output } => {
@@ -1104,9 +1154,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
         };
         if rolled_back {
-            refresh_context_after_state_change::<FEN>(ecx);
+            ecx.refresh_chain_dependent_state();
         }
-        (InterpreterResult { result, output, gas }, address)
+        (InterpreterResult { result, output, gas }, address, was_precompile_called)
     }
 
     /// Moves out of references, constructs a new [`InspectorStackRefMut`] and runs the given
@@ -1169,7 +1219,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             *ecx.journal_mut().evm_state_mut() = std::mem::take(&mut self.top_frame_journal);
         }
 
-        refresh_context_after_state_change::<FEN>(ecx);
+        ecx.refresh_chain_dependent_state();
     }
 
     // We take extra care in optimizing `step` and `step_end`, as they're are likely the most
@@ -1517,6 +1567,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 let output = tracer.call(ecx, call);
                 (output, tracer.traces().nodes().len() - 1)
             };
+            self.pending_call_traces.push(PendingCallTrace { trace_idx, executed_address: None });
             if let Some(revert_diag) = self.revert_diag.as_deref_mut() {
                 revert_diag.set_trace_node(trace_idx);
             }
@@ -1539,6 +1590,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         // Storage hook callbacks are instrumentation frames, not user calls. Let revm execute the
         // callback after tracing it, but do not apply mocks, pranks, broadcasts, or isolation.
         if storage_hook_callback {
+            if let Some(pending) = self.pending_call_traces.last_mut() {
+                pending.executed_address = Some(call.bytecode_address);
+            }
             return None;
         }
 
@@ -1591,12 +1645,16 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             return Some(outcome);
         }
 
+        if let Some(pending) = self.pending_call_traces.last_mut() {
+            pending.executed_address = Some(call.bytecode_address);
+        }
+
         if self.enable_isolation && !self.in_inner_context && ecx.journal().depth() == 1 {
             match call.scheme {
                 // Isolate CALLs
                 CallScheme::Call => {
                     let input = call.input.bytes(ecx);
-                    let (result, _) = self.transact_inner(
+                    let (result, _, was_precompile_called) = self.transact_inner(
                         ecx,
                         TxKind::Call(call.target_address),
                         call.caller,
@@ -1607,7 +1665,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                     return Some(CallOutcome {
                         result,
                         memory_offset: call.return_memory_offset.clone(),
-                        was_precompile_called: true,
+                        was_precompile_called,
                         precompile_call_logs: vec![],
                         charged_new_account_state_gas: call.charged_new_account_state_gas,
                     });
@@ -1650,11 +1708,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         // We are processing inner context outputs in the outer context, so need to avoid processing
         // twice.
         if self.in_inner_context && ecx.journal().depth() == 1 {
+            self.isolated_call_was_precompile = Some(outcome.was_precompile_called);
             return;
         }
 
         if ecx.journal().depth() == 0 {
             self.inner.top_level_frame_failed_before_rewrite |= !outcome.result.result.is_ok();
+        }
+
+        if let Some(pending) = self.pending_call_traces.pop()
+            && let Some(tracer) = self.tracer.as_deref_mut()
+        {
+            let trace = &mut tracer.traces_mut().nodes_mut()[pending.trace_idx].trace;
+            if trace.address == P256_VERIFY {
+                trace.maybe_precompile = Some(
+                    pending.executed_address == Some(P256_VERIFY) && outcome.was_precompile_called,
+                );
+            }
         }
 
         self.do_call_end(ecx, inputs, outcome);
@@ -1741,7 +1811,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 .get(&create.caller())
                 .map(|acc| create.caller().create(acc.info.nonce));
 
-            let (result, address) = self.transact_inner(
+            let (result, address, _) = self.transact_inner(
                 ecx,
                 TxKind::Create,
                 create.caller(),

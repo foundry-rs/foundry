@@ -540,6 +540,288 @@ contract SymbolicPass {
     );
 });
 
+forgetest_init!(symbolic_proves_bounded_carry_after_shift, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_proves_bounded_carry_after_shift because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicBoundedCarry.t.sol",
+        r#"
+contract SymbolicBoundedCarry {
+    function checkCarryBounds(uint248 limb, uint8 carry) public pure {
+        if (carry < 58) {
+            uint256 accumulator = uint256(limb) * 58 + uint256(carry);
+            assert((accumulator >> 248) < 58);
+        }
+    }
+
+    function checkCarryBoundary(uint248 limb, uint8 carry) public pure {
+        if (limb == type(uint248).max && carry == 58) {
+            uint256 accumulator = uint256(limb) * 58 + uint256(carry);
+            assert((accumulator >> 248) < 58);
+        }
+    }
+
+    function checkMulDivBoundary(uint256 value) public pure {
+        uint256 factor = 58;
+        uint256 boundary = type(uint256).max / factor;
+        if (value == boundary) {
+            unchecked {
+                assert(value * factor / factor == value);
+            }
+        }
+    }
+
+    function checkMulDivPastBoundary(uint256 value) public pure {
+        uint256 factor = 58;
+        uint256 boundary = type(uint256).max / factor;
+        if (value == boundary + 1) {
+            unchecked {
+                assert(value * factor / factor == value);
+            }
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--optimizer-runs",
+            "1000",
+            "--evm-version",
+            "paris",
+            "--match-test",
+            "checkCarryBounds",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkCarryBounds(uint248,uint8)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkCarryBoundary"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkCarryBoundary(uint248,uint8)");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkMulDivBoundary"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkMulDivBoundary(uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkMulDivPastBoundary",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkMulDivPastBoundary(uint256)");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+});
+
+forgetest_init!(symbolic_proves_saturating_mul_equivalence, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_proves_saturating_mul_equivalence because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSaturatingMul.t.sol",
+        r#"
+library SaturatingMath {
+    function saturatingMul(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        assembly {
+            z := or(sub(or(iszero(x), eq(div(mul(x, y), x), y)), 1), mul(x, y))
+        }
+    }
+}
+
+contract SymbolicSaturatingMul {
+    function mul(uint256 x, uint256 y) external pure returns (uint256) {
+        return x * y;
+    }
+
+    function checkSaturatingMul(uint256 x, uint256 y) public view {
+        (bool success,) = address(this).staticcall(abi.encodeCall(this.mul, (x, y)));
+        uint256 expected = success ? x * y : type(uint256).max;
+        assert(SaturatingMath.saturatingMul(x, y) == expected);
+    }
+
+    function checkWrongOverflowResult(uint256 x, uint256 y) public pure {
+        if (x == type(uint256).max && y == 2) {
+            assert(SaturatingMath.saturatingMul(x, y) == 0);
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkSaturatingMul"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkSaturatingMul(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0);
+    assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--optimize",
+            "--match-test",
+            "checkWrongOverflowResult",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkWrongOverflowResult(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+});
+
+forgetest_init!(symbolic_proves_p256_normalization, |prj, cmd| {
+    if !z3_available() {
+        let _ =
+            sh_eprintln!("skipping symbolic_proves_p256_normalization because z3 is not available");
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicP256.t.sol",
+        r#"
+contract SymbolicP256 {
+    uint256 constant N =
+        0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551;
+    uint256 constant HALF_N =
+        0x7fffffff800000007fffffffffffffffde737d56d38bcf4279dce5617e3192a8;
+
+    function checkP256Normalized(uint256 s) public pure {
+        uint256 result;
+        assembly {
+            result := xor(s, mul(xor(sub(N, s), s), gt(s, HALF_N)))
+        }
+        unchecked {
+            uint256 expected = s > N / 2 ? N - s : s;
+            assert(result == expected);
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkP256Normalized"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkP256Normalized(uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+});
+
+forgetest_init!(symbolic_proves_branchless_operation_state, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_proves_branchless_operation_state because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicOperationState.t.sol",
+        r#"
+contract SymbolicOperationState {
+    function checkOperationState(uint256 packed, uint256 time) public pure {
+        if (!isReadyOriginal(packed ^ 1, time) && isDoneOriginal(packed, time)) {
+            packed ^= 1;
+            assert(!isReadyOriginal(packed, time));
+        }
+        uint256 optimized;
+        assembly {
+            optimized := mul(
+                iszero(iszero(packed)),
+                add(and(packed, 1), sub(2, lt(time, shr(1, packed))))
+            )
+        }
+        assert(optimized == original(packed, time));
+    }
+
+    function isReadyOriginal(uint256 packed, uint256 time) internal pure returns (bool) {
+        return original(packed, time) == 2;
+    }
+
+    function isDoneOriginal(uint256 packed, uint256 time) internal pure returns (bool) {
+        return original(packed, time) == 3;
+    }
+
+    function original(uint256 packed, uint256 time) internal pure returns (uint256) {
+        if (packed == 0) return 0;
+        if (packed & 1 == 1) return 3;
+        if (packed >> 1 > time) return 1;
+        return 2;
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--optimize", "--match-test", "checkOperationState"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkOperationState(uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "pass");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+});
+
 forgetest_init!(symbolic_json_schema_reports_pass, |prj, cmd| {
     if !z3_available() {
         let _ =

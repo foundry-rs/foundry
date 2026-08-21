@@ -209,6 +209,10 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendRawTransactionConditional")]
     EthSendRawTransactionConditional(Bytes, TransactionConditional),
 
+    /// Signs a raw Tempo transaction as the node's fee payer (sponsor) without broadcasting it.
+    #[serde(rename = "eth_signRawTransaction", with = "sequence")]
+    EthSignRawTransaction(Bytes),
+
     #[serde(rename = "anvil_classifyTransaction", with = "sequence")]
     AnvilClassifyTransaction(Bytes),
 
@@ -271,6 +275,10 @@ pub enum EthRequest {
     /// Returns the genesis time for the chain
     #[serde(rename = "anvil_getGenesisTime", with = "empty_params")]
     GetGenesisTime(()),
+
+    /// Returns the UNIX wall time in milliseconds when the current head was installed.
+    #[serde(rename = "anvil_getLastBlockWallTime", with = "empty_params")]
+    GetLastBlockWallTime(()),
 
     #[serde(rename = "eth_getTransactionByBlockHashAndIndex")]
     EthGetTransactionByBlockHashAndIndex(B256, Index),
@@ -408,6 +416,10 @@ pub enum EthRequest {
     /// reth's `debug_accountInfoAt` endpoint.
     #[serde(rename = "debug_accountInfoAt")]
     DebugAccountInfoAt(BlockId, Index, Address),
+
+    /// reth's `debug_executionWitness` endpoint.
+    #[serde(rename = "debug_executionWitness", with = "sequence")]
+    DebugExecutionWitness(BlockNumber),
 
     /// geth's `debug_traceBlock` endpoint.
     #[serde(rename = "debug_traceBlock")]
@@ -909,11 +921,28 @@ pub enum EthPubSub {
 }
 
 /// Container type for either a request or a pub sub
-#[derive(Clone, Debug, serde::Deserialize)]
-#[serde(untagged)]
+#[derive(Clone, Debug)]
 pub enum EthRpcCall {
     Request(Box<EthRequest>),
     PubSub(EthPubSub),
+}
+
+impl<'de> serde::Deserialize<'de> for EthRpcCall {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.get("method").and_then(serde_json::Value::as_str) {
+            Some("eth_subscribe" | "eth_unsubscribe") => serde_json::from_value(value)
+                .map(Self::PubSub)
+                .map_err(<D::Error as serde::de::Error>::custom),
+            _ => serde_json::from_value(value)
+                .map(Box::new)
+                .map(Self::Request)
+                .map_err(<D::Error as serde::de::Error>::custom),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -932,6 +961,14 @@ mod tests {
         let s = r#"{"method": "web3_sha3", "params":["0x68656c6c6f20776f726c64"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn unknown_rpc_call_preserves_method_error() {
+        let err = serde_json::from_str::<EthRpcCall>(r#"{"method":"no_such_method","params":[]}"#)
+            .unwrap_err();
+
+        assert!(err.to_string().contains("unknown variant"));
     }
 
     #[test]
@@ -1103,6 +1140,16 @@ mod tests {
         let s = r#"{"method": "anvil_getAutomine", "params": []}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_custom_get_last_block_wall_time() {
+        let s = r#"{"method": "anvil_getLastBlockWallTime", "params": []}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        assert!(matches!(
+            serde_json::from_value::<EthRequest>(value).unwrap(),
+            EthRequest::GetLastBlockWallTime(())
+        ));
     }
 
     #[test]
@@ -1770,6 +1817,7 @@ mod tests {
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["newHeads"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthPubSub>(value).unwrap();
+        assert!(matches!(serde_json::from_str(s).unwrap(), EthRpcCall::PubSub(_)));
 
         let s = r#"{"id": 1, "method": "eth_subscribe", "params": ["logs", {"address":
 "0x8320fe7702b96808f7bbc0d4a888ed1468216cfd", "topics":
@@ -1883,6 +1931,17 @@ true}]}"#;
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
 
         let s = r#"{"method": "debug_accountInfoAt", "params": [{"blockHash": "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3"}, 0, "0xd84de507f3fada7df80908082d3239466db55a71"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_serde_debug_execution_witness() {
+        let s = r#"{"method": "debug_executionWitness", "params": ["0x1"]}"#;
+        let value: serde_json::Value = serde_json::from_str(s).unwrap();
+        let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+
+        let s = r#"{"method": "debug_executionWitness", "params": ["latest"]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
     }

@@ -476,6 +476,9 @@ ratatui = { version = "0.30", default-features = false }
 rayon = "1"
 regex = { version = "1", default-features = false }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+# PTY-based CLI tests.
+# https://github.com/rust-cli/rexpect/pull/106
+rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6a85bedbae71a01cc578958fc" }
 ron = "0.12"
 rustls = "0.23"
 semver = "1"
@@ -512,33 +515,33 @@ flate2 = "1.1"
 ethereum_ssz = "0.10"
 
 # Tempo
-alloy-transport-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "63171c2", default-features = false, features = [
+alloy-transport-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "85c62c59205789d6506ad0c77f543a8680f02612", default-features = false, features = [
     "aws-lc-rs",
 ] }
-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "63171c2", default-features = false, features = [
+mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "85c62c59205789d6506ad0c77f543a8680f02612", default-features = false, features = [
     "tempo",
     "client",
     "sqlite",
     "reqwest-rustls-tls",
     "ws",
 ] }
-tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42c86665142432337865d1adc04238e7", default-features = false, features = [
+tempo-hardfork = { git = "https://github.com/tempoxyz/tempo", rev = "4d248169172ff2602b1bc95930c70bbc72d23bb0", default-features = false, features = [
     "serde",
     "std",
 ] }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42c86665142432337865d1adc04238e7", default-features = false, features = [
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "4d248169172ff2602b1bc95930c70bbc72d23bb0", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42c86665142432337865d1adc04238e7", default-features = false }
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42c86665142432337865d1adc04238e7", default-features = false }
-tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42c86665142432337865d1adc04238e7", default-features = false, features = [
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "4d248169172ff2602b1bc95930c70bbc72d23bb0", default-features = false }
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "4d248169172ff2602b1bc95930c70bbc72d23bb0", default-features = false }
+tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "4d248169172ff2602b1bc95930c70bbc72d23bb0", default-features = false, features = [
     "serde",
 ] }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42c86665142432337865d1adc04238e7" }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42c86665142432337865d1adc04238e7" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "4d248169172ff2602b1bc95930c70bbc72d23bb0" }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "4d248169172ff2602b1bc95930c70bbc72d23bb0" }
 
 # Monad
-alloy-monad-evm = { version = "0.5.0", default-features = false, features = [
+alloy-monad-evm = { version = "0.6.0", default-features = false, features = [
     "std",
     "memory_limit",
 ] }
@@ -563,15 +566,11 @@ solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4
 solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
 
-## monad
-alloy-monad-evm = { git = "https://github.com/category-labs/alloy-monad-evm", rev = "334bda1826996118d40872af35c27316a01889a2" }
-monad-revm = { git = "https://github.com/category-labs/monad-revm", rev = "8ba4a51b221357105465cbe6d410906d3f12baeb" }
-
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "8b3ea9453789ba0d9d8ebf0fc4ee0fed9e4add8f" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "8b3ea9453789ba0d9d8ebf0fc4ee0fed9e4add8f" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "8b3ea9453789ba0d9d8ebf0fc4ee0fed9e4add8f" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "d654e3e51c2e27d61d94d287d1cab993be7139ce" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "78e5b57f86986eabd969a5fdf238b8159f7086fd" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "78e5b57f86986eabd969a5fdf238b8159f7086fd" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "78e5b57f86986eabd969a5fdf238b8159f7086fd" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "78e5b57f86986eabd969a5fdf238b8159f7086fd" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
@@ -630,9 +629,9 @@ op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", rev = "56
 alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", rev = "566d19ee21aef0b1235c028bd1a4a98eacb95753" }
 
 ## tempo — unify crates.io versions (pulled by mpp/foundry-wallets) with git rev
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42c86665142432337865d1adc04238e7" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42c86665142432337865d1adc04238e7" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "0f87fa6b42c86665142432337865d1adc04238e7" }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "4d248169172ff2602b1bc95930c70bbc72d23bb0" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "4d248169172ff2602b1bc95930c70bbc72d23bb0" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "4d248169172ff2602b1bc95930c70bbc72d23bb0" }
 
 [workspace.metadata.cargo-shear]
 ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]

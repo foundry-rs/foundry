@@ -18,11 +18,11 @@ use std::{
 #[cfg(feature = "cli")]
 use crate::utils::http_provider;
 use alloy_consensus::{
-    BlockHeader, Eip658Value, Receipt, Sealable, Typed2718,
+    BlockHeader, Eip658Value, Receipt, Sealable, TxEip1559, Typed2718,
     proofs::{calculate_receipt_root, calculate_transaction_root},
-    transaction::SignerRecoverable,
+    transaction::{SignableTransaction, SignerRecoverable},
 };
-use alloy_eips::eip2718::Encodable2718;
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_genesis::Genesis;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{
@@ -67,7 +67,8 @@ use tempo_precompiles::{
 use tempo_primitives::{
     AASigned, TempoHeader, TempoSignature, TempoTransaction,
     transaction::{
-        Call, KeyAuthorization, KeychainSignature, PrimitiveSignature, SignatureType, TokenLimit,
+        Call, FEE_PAYER_SIGNATURE_MARKER, KeyAuthorization, KeychainSignature, PrimitiveSignature,
+        SignatureType, TokenLimit,
     },
 };
 
@@ -165,12 +166,7 @@ fn anvil_binary() -> PathBuf {
         return PathBuf::from(path);
     }
 
-    std::env::current_exe()
-        .expect("test executable path")
-        .parent()
-        .and_then(|deps| deps.parent())
-        .expect("target/debug directory")
-        .join("anvil")
+    foundry_test_utils::cargo_profile_dir().join("anvil")
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2366,6 +2362,298 @@ async fn test_tempo_send_transaction_preserves_signed_identity() {
     assert_eq!(transaction.recover_signer().unwrap(), from);
     assert_eq!(transaction.tx().fee_payer_signature, Some(fee_payer_signature));
     assert_eq!(transaction.tx().recover_fee_payer(from).unwrap(), fee_payer);
+}
+
+/// Builds a sender-signed Tempo AA PathUSD transfer that requests sponsorship through the fee
+/// payer signature marker.
+async fn sponsorship_requested_transfer(
+    chain_id: u64,
+    gas_price: u128,
+    sender_index: u32,
+    recipient: Address,
+    amount: U256,
+    fee_token: Option<Address>,
+    nonce: u64,
+) -> AASigned {
+    let tempo_tx = TempoTransaction {
+        chain_id,
+        fee_token,
+        max_priority_fee_per_gas: gas_price / 10,
+        max_fee_per_gas: gas_price * 2,
+        gas_limit: TIP20_TRANSFER_GAS,
+        calls: vec![tempo_transfer(recipient, amount)],
+        access_list: Default::default(),
+        nonce_key: U256::ZERO,
+        nonce,
+        fee_payer_signature: Some(FEE_PAYER_SIGNATURE_MARKER),
+        valid_before: None,
+        valid_after: None,
+        key_authorization: None,
+        tempo_authorization_list: vec![],
+    };
+    let signature = dev_key(sender_index).sign_hash(&tempo_tx.signature_hash()).await.unwrap();
+    AASigned::new_unhashed(
+        tempo_tx,
+        TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
+    )
+}
+
+/// Encodes a Tempo AA transaction the way fee payer service clients submit it: the fee payer
+/// signature field carries the `0x00` placeholder and the fee token is omitted.
+fn fee_payer_service_encoded(tx: &AASigned) -> Bytes {
+    let mut buf = Vec::new();
+    tx.encode_for_fee_payer_service(&mut buf);
+    buf.into()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_sign_raw_transaction_sponsors_transaction() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let sender = accounts[0];
+    let sponsor = *accounts.last().unwrap();
+    let recipient = Address::random();
+    let amount = U256::from(100_000);
+
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let unsigned =
+        sponsorship_requested_transfer(chain_id, gas_price, 0, recipient, amount, None, 0).await;
+
+    let signed_raw = provider
+        .raw_request::<_, Bytes>(
+            "eth_signRawTransaction".into(),
+            (fee_payer_service_encoded(&unsigned),),
+        )
+        .await
+        .unwrap();
+
+    let TempoTxEnvelope::AA(signed) =
+        TempoTxEnvelope::decode_2718(&mut signed_raw.as_ref()).unwrap()
+    else {
+        panic!("expected a Tempo AA transaction");
+    };
+    assert_eq!(signed.signature(), unsigned.signature(), "sender signature must be preserved");
+    assert_eq!(signed.tx().calls, unsigned.tx().calls);
+    assert_eq!(signed.tx().fee_token, Some(PATH_USD), "sponsor pays with its stored fee token");
+    assert_eq!(signed.recover_signer().unwrap(), sender);
+    assert_eq!(signed.tx().recover_fee_payer(sender).unwrap(), sponsor);
+
+    // The returned transaction is fully signed and broadcasts through the regular path.
+    let token = IERC20::new(PATH_USD, &provider);
+    let sender_before = token.balanceOf(sender).call().await.unwrap();
+    let sponsor_before = token.balanceOf(sponsor).call().await.unwrap();
+
+    let receipt =
+        provider.send_raw_transaction(&signed_raw).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status(), "sponsored transaction should succeed");
+
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), amount);
+    assert_eq!(
+        token.balanceOf(sender).call().await.unwrap(),
+        sender_before - amount,
+        "sender must only pay the transfer amount"
+    );
+    assert!(
+        token.balanceOf(sponsor).call().await.unwrap() < sponsor_before,
+        "sponsor must pay the transaction fee"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_send_raw_transaction_auto_sponsors_placeholder() {
+    let sponsor = dev_key(1).address();
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_tempo_fee_payer(Some(sponsor))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let amount = U256::from(50_000);
+
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    let token = IERC20::new(PATH_USD, &provider);
+    let sender_before = token.balanceOf(sender).call().await.unwrap();
+    let sponsor_token = IERC20::new(BETA_USD, &provider);
+    let sponsor_before = sponsor_token.balanceOf(sponsor).call().await.unwrap();
+
+    // Sign-and-relay mode: the placeholder-marked raw transaction is sponsored on submission.
+    let unsigned =
+        sponsorship_requested_transfer(chain_id, gas_price, 0, recipient, amount, None, 0).await;
+    let receipt = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_sendRawTransactionSync".into(),
+            (fee_payer_service_encoded(&unsigned),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipt["status"], "0x1", "unexpected receipt: {receipt}");
+
+    let hash: B256 = serde_json::from_value(receipt["transactionHash"].clone()).unwrap();
+    let transaction = provider
+        .raw_request::<_, serde_json::Value>("eth_getTransactionByHash".into(), (hash,))
+        .await
+        .unwrap();
+    let transaction = serde_json::from_value::<AASigned>(transaction).unwrap();
+    assert_eq!(transaction.recover_signer().unwrap(), sender);
+    assert_eq!(transaction.tx().recover_fee_payer(sender).unwrap(), sponsor);
+    // The configured sponsor (dev account 1) pays with its stored fee token, BetaUSD.
+    assert_eq!(transaction.tx().fee_token, Some(BETA_USD));
+
+    // The same works for a placeholder signature in the standard encoding.
+    let unsigned =
+        sponsorship_requested_transfer(chain_id, gas_price, 0, recipient, amount, None, 1).await;
+    let receipt = provider
+        .send_raw_transaction(&TempoTxEnvelope::AA(unsigned).encoded_2718())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status(), "sponsored transaction should succeed");
+
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), amount * U256::from(2));
+    assert_eq!(
+        token.balanceOf(sender).call().await.unwrap(),
+        sender_before - amount * U256::from(2),
+        "sender must only pay the transfer amounts"
+    );
+    assert!(
+        sponsor_token.balanceOf(sponsor).call().await.unwrap() < sponsor_before,
+        "sponsor must pay the transaction fees"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_sign_raw_transaction_preserves_fee_token() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    // The standard encoding keeps the sender's fee token choice, which the sponsor must honor.
+    let unsigned = sponsorship_requested_transfer(
+        chain_id,
+        gas_price,
+        0,
+        Address::random(),
+        U256::from(1),
+        Some(ALPHA_USD),
+        0,
+    )
+    .await;
+
+    let signed_raw = provider
+        .raw_request::<_, Bytes>(
+            "eth_signRawTransaction".into(),
+            (Bytes::from(TempoTxEnvelope::AA(unsigned).encoded_2718()),),
+        )
+        .await
+        .unwrap();
+
+    let TempoTxEnvelope::AA(signed) =
+        TempoTxEnvelope::decode_2718(&mut signed_raw.as_ref()).unwrap()
+    else {
+        panic!("expected a Tempo AA transaction");
+    };
+    assert_eq!(signed.tx().fee_token, Some(ALPHA_USD));
+    assert_eq!(
+        signed.tx().recover_fee_payer(sender).unwrap(),
+        dev_key(9).address(),
+        "default sponsor is the last dev account"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_sign_raw_transaction_rejects_invalid_requests() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let recipient = Address::random();
+
+    // The sponsor must not equal the transaction sender (the default sponsor is account 9).
+    let from_sponsor =
+        sponsorship_requested_transfer(chain_id, gas_price, 9, recipient, U256::from(1), None, 0)
+            .await;
+    let err = provider
+        .raw_request::<_, Bytes>(
+            "eth_signRawTransaction".into(),
+            (fee_payer_service_encoded(&from_sponsor),),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("must not equal the transaction sender"),
+        "unexpected error: {err}"
+    );
+
+    // Transactions that already carry a real fee payer signature are rejected.
+    let mut sponsored =
+        sponsorship_requested_transfer(chain_id, gas_price, 0, recipient, U256::from(1), None, 0)
+            .await;
+    let (mut tx, signature, _) = sponsored.into_parts();
+    let sender = dev_key(0).address();
+    tx.fee_payer_signature =
+        Some(dev_key(2).sign_hash(&tx.fee_payer_signature_hash(sender)).await.unwrap());
+    sponsored = tx.into_signed(signature);
+    let err = provider
+        .raw_request::<_, Bytes>(
+            "eth_signRawTransaction".into(),
+            (Bytes::from(TempoTxEnvelope::AA(sponsored).encoded_2718()),),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("already fee-payer signed"), "unexpected error: {err}");
+
+    // Transactions signed without the sponsorship placeholder are rejected: the sender signature
+    // commits to whether a fee payer is present, so sponsoring them would invalidate it.
+    let unsponsored =
+        sponsorship_requested_transfer(chain_id, gas_price, 0, recipient, U256::from(1), None, 0)
+            .await;
+    let (mut tx, signature, _) = unsponsored.into_parts();
+    tx.fee_payer_signature = None;
+    let unsponsored = tx.into_signed(signature);
+    let err = provider
+        .raw_request::<_, Bytes>(
+            "eth_signRawTransaction".into(),
+            (Bytes::from(TempoTxEnvelope::AA(unsponsored).encoded_2718()),),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("does not request sponsorship"), "unexpected error: {err}");
+
+    // Non-Tempo transactions cannot be fee-payer signed.
+    let eip1559 = TxEip1559 {
+        chain_id,
+        nonce: 0,
+        gas_limit: 21_000,
+        max_fee_per_gas: gas_price * 2,
+        max_priority_fee_per_gas: gas_price / 10,
+        to: TxKind::Call(recipient),
+        ..Default::default()
+    };
+    let signature = dev_key(0).sign_hash(&eip1559.signature_hash()).await.unwrap();
+    let raw = FoundryTxEnvelope::Eip1559(eip1559.into_signed(signature)).encoded_2718();
+    let err = provider
+        .raw_request::<_, Bytes>("eth_signRawTransaction".into(), (Bytes::from(raw),))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("only Tempo (0x76) transactions"), "unexpected error: {err}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_sign_raw_transaction_unsupported_without_tempo() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let err = provider
+        .raw_request::<_, Bytes>("eth_signRawTransaction".into(), (Bytes::from_static(&[0x76]),))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Not implemented"), "unexpected error: {err}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

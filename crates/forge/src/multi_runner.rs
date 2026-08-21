@@ -612,7 +612,6 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             self.evm_opts.clone(),
             Some(known_contracts),
             Some(artifact_id.clone()),
-            None,
             false,
         );
         cheats_config.isolate = self.isolation;

@@ -29,6 +29,8 @@ pub struct HandlerAssertionFailure {
     pub original_sequence_len: usize,
     /// Decoded revert/assert reason.
     pub revert_reason: String,
+    /// Active fork block when the handler assertion failed, if any.
+    pub fork_block_number: Option<u64>,
     /// Stable hash of edge coverage at the asserting call (falls back to `(reverter,
     /// selector)`). Used by the shrinker to preserve path identity, not for dedup.
     pub edge_fingerprint: B256,
@@ -50,6 +52,7 @@ impl HandlerAssertionFailure {
             call_sequence,
             original_sequence_len,
             revert_reason,
+            fork_block_number: None,
             edge_fingerprint,
         }
     }
@@ -94,6 +97,7 @@ impl<'a> InvariantRunCtx<'a> {
             shrink_run_limit: self.config.shrink_run_limit,
             fail_on_revert,
             assertion_failure,
+            fork_block_number: call_result.fork_block_number,
         }
     }
 
@@ -176,6 +180,7 @@ pub(crate) fn record_handler_assertion_bug<FEN: FoundryEvmNetwork>(
             call_sequence,
             original_sequence_len,
             revert_reason,
+            fork_block_number: call_result.fork_block_number,
             edge_fingerprint: fingerprint,
         });
     }
@@ -399,6 +404,49 @@ pub enum InvariantFuzzError {
 }
 
 impl InvariantFuzzError {
+    /// Reconstructs a predicate failure from a persisted sequence that still reproduces.
+    #[expect(clippy::too_many_arguments)]
+    pub fn from_replayed_invariant(
+        invariant_address: Address,
+        invariant: &Function,
+        call_sequence: Vec<BasicTxDetails>,
+        reason: Option<String>,
+        config: &InvariantConfig,
+        fail_on_revert: bool,
+        assertion_failure: bool,
+        is_revert: bool,
+    ) -> Self {
+        let revert_reason = reason.unwrap_or_default();
+        let origin = invariant.name.as_str();
+        let failure = FailedInvariantCaseData {
+            test_error: TestError::Fail(
+                format!("{origin}, reason: {revert_reason}").into(),
+                call_sequence,
+            ),
+            return_reason: "".into(),
+            revert_reason,
+            addr: invariant_address,
+            calldata: invariant.selector().to_vec().into(),
+            inner_sequence: Vec::new(),
+            shrink_run_limit: config.shrink_run_limit,
+            fail_on_revert,
+            assertion_failure,
+            fork_block_number: None,
+        };
+        if is_revert { Self::Revert(failure) } else { Self::BrokenInvariant(failure) }
+    }
+
+    /// Active fork block when this invariant failure was observed, if any.
+    pub const fn fork_block_number(&self) -> Option<u64> {
+        match self {
+            Self::BrokenInvariant(case_data) | Self::Revert(case_data) => {
+                case_data.fork_block_number
+            }
+            Self::HandlerAssertion(failure) => failure.fork_block_number,
+            Self::MaxAssumeRejects(_) => None,
+        }
+    }
+
     pub fn revert_reason(&self) -> Option<String> {
         match self {
             Self::BrokenInvariant(case_data) | Self::Revert(case_data) => {
@@ -450,6 +498,8 @@ pub struct FailedInvariantCaseData {
     pub fail_on_revert: bool,
     /// Whether this failure originated from a handler assertion.
     pub assertion_failure: bool,
+    /// Active fork block when the failure was observed, if any.
+    pub fork_block_number: Option<u64>,
 }
 
 #[cfg(test)]

@@ -138,6 +138,7 @@ impl tokio_util::codec::Decoder for JsonRpcCodec {
 
         for idx in 0..buf.as_ref().len() {
             let byte = buf.as_ref()[idx];
+            let mut malformed = false;
 
             if (byte == b'{' || byte == b'[') && !in_str {
                 if depth == 0 {
@@ -145,7 +146,11 @@ impl tokio_util::codec::Decoder for JsonRpcCodec {
                 }
                 depth += 1;
             } else if (byte == b'}' || byte == b']') && !in_str {
-                depth -= 1;
+                if depth == 0 {
+                    malformed = true;
+                } else {
+                    depth -= 1;
+                }
             } else if byte == b'"' && !is_escaped {
                 in_str = !in_str;
             } else if is_whitespace(byte) {
@@ -153,7 +158,7 @@ impl tokio_util::codec::Decoder for JsonRpcCodec {
             }
             is_escaped = byte == b'\\' && !is_escaped && in_str;
 
-            if depth == 0 && idx != start_idx && idx - start_idx + 1 > whitespaces {
+            if malformed || (depth == 0 && idx != start_idx && idx - start_idx + 1 > whitespaces) {
                 let bts = buf.split_to(idx + 1);
                 return match String::from_utf8(bts.as_ref().to_vec()) {
                     Ok(val) => Ok(Some(val)),
