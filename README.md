@@ -75,20 +75,13 @@ server is embedded in Forge, so the standalone `solar` executable is not
 required. Solar uses `foundry.toml`, workspace folders, remappings, and
 `evm_version` from the project automatically.
 
-Solar's default flycheck runs `forge lint --json` from `PATH`. When Forge is
-started through an absolute path instead, set Solar's existing
-`initializationOptions.forgePath` option to that Forge binary. The flycheck is a
-separate Forge process and still follows Foundry's project dotenv approval
-policy. Because Solar starts it with non-interactive stdin, an unapproved
-`.env` file can prevent `forge-lint` diagnostics from being returned even while
-the LSP's core analysis continues. Do not grant dotenv access implicitly; use
-an explicit, trusted flycheck configuration if your editor workflow needs
-`--allow-project-env`.
+Solar's default flycheck runs `forge lint --json` with the same Forge executable
+that started the server. Solar's existing `initializationOptions.forgePath`
+option overrides that executable.
 
-`forge lsp` accepts only LSP-specific options. Forge-wide options, including
-`--threads`/`--jobs`, output and profile settings, compiler approval, and dotenv
-approval, are rejected because the LSP owns stdio and Solar currently reads the
-default Foundry profile only.
+`forge lsp` follows Forge's normal environment setup, global-option parsing, and
+command dispatch. It retains all process-wide setup while skipping project
+dotenv loading so the LSP transport can own stdin safely.
 
 ## Contributing
 

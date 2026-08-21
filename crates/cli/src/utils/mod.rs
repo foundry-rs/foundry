@@ -200,17 +200,31 @@ pub fn now() -> Duration {
 
 /// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
 pub fn common_setup<C: clap::CommandFactory>() -> Result<()> {
+    common_setup_with_project_env::<C>(|_| true)
+}
+
+/// Common setup with command-aware control over loading project dotenv files.
+pub fn common_setup_with_project_env<C: clap::CommandFactory>(
+    should_load_project_env: impl FnOnce(&clap::ArgMatches) -> bool,
+) -> Result<()> {
     install_crypto_provider();
     crate::handler::install();
     // Use the concrete command grammar so option-like positional values cannot grant approval.
-    // Ignore unrelated errors because dotenv may supply values before the strict CLI parse.
-    let allow_project_env = C::command()
+    // Ignore unrelated errors because dotenv may supply values before the strict CLI parse. Help
+    // is intentionally disabled because it short-circuits partial parsing before setup can inspect
+    // the selected subcommand.
+    let matches = C::command()
+        .disable_help_flag(true)
+        .disable_version_flag(true)
         .ignore_errors(true)
         .try_get_matches()
-        .ok()
-        .and_then(|matches| matches.get_one::<bool>("allow_project_env").copied())
-        .unwrap_or(false);
-    load_dotenv(allow_project_env)?;
+        .ok();
+    if matches.as_ref().is_none_or(should_load_project_env) {
+        let allow_project_env = matches
+            .and_then(|matches| matches.get_one::<bool>("allow_project_env").copied())
+            .unwrap_or(false);
+        load_dotenv(allow_project_env)?;
+    }
     enable_paint();
     Ok(())
 }
