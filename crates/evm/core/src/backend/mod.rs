@@ -1,7 +1,7 @@
 //! Foundry's main executor backend abstraction and implementation.
 
 use crate::{
-    FoundryBlock, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
+    FoundryBlock, FoundryChain, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
         BlockContext, BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
@@ -332,7 +332,7 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
 
     /// Returns transaction-position context for a synthetic transaction on the active database.
     fn chain_context_for_synthetic_transaction(&self, tx: &F::Tx) -> eyre::Result<F::Chain> {
-        Ok(F::default().chain_context_for_transaction(tx))
+        Ok(F::Chain::for_transaction(tx))
     }
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -1163,7 +1163,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         tx: &TxEnvFor<FEN>,
     ) -> eyre::Result<ChainFor<FEN>> {
         if !self.networks.is_monad() {
-            return Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx));
+            return Ok(ChainFor::<FEN>::for_transaction(tx));
         }
 
         let fork = self.inner.get_fork_by_id(id)?;
@@ -1301,7 +1301,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 let block_context = Self::block_context_inputs_from_backend(&backend, &block)?;
                 block_context.into_child().next_transaction(tx)
             } else {
-                FEN::EvmFactory::default().chain_context_for_transaction(tx)
+                ChainFor::<FEN>::for_transaction(tx)
             };
             ContextUpdate::Replace(chain_context)
         } else {
@@ -1510,7 +1510,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 };
                 Self::context_for_block_position(context.clone(), position, tx)?
             } else {
-                FEN::EvmFactory::default().chain_context_for_transaction(tx)
+                ChainFor::<FEN>::for_transaction(tx)
             };
             ContextUpdate::Replace(chain_context)
         } else if _affects_active {
@@ -1687,7 +1687,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         tx: &TxEnvFor<FEN>,
     ) -> eyre::Result<ChainFor<FEN>> {
         self.block_context_for_synthetic_transaction()?.map_or_else(
-            || Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx)),
+            || Ok(ChainFor::<FEN>::for_transaction(tx)),
             |context| Ok(context.next_transaction(tx)),
         )
     }
@@ -2048,7 +2048,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         let chain_context = if let Some((current_tx_index, _)) = current_tx_position {
             block_context.as_ref().expect("created above").transaction(current_tx_index)
         } else {
-            FEN::EvmFactory::default().chain_context_for_transaction(&tx_env)
+            ChainFor::<FEN>::for_transaction(&tx_env)
         };
 
         let next_position = if let Some((current_tx_index, transaction_count)) = current_tx_position
@@ -2077,7 +2077,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
                     _outer_tx_env,
                 )?
             } else {
-                FEN::EvmFactory::default().chain_context_for_transaction(_outer_tx_env)
+                ChainFor::<FEN>::for_transaction(_outer_tx_env)
             })
         } else {
             ContextUpdate::Rebase
