@@ -1,10 +1,14 @@
 //! Debugger context and event handler implementation.
 
 use super::storage::{
-    StorageAccess, StorageSpace, hex_u256, storage_access_at, storage_accesses_until,
+    StorageAccess, StorageSpace, hex_u256, next_storage_write_values, storage_access_at,
+    storage_accesses_until,
 };
 use crate::{DebugNode, DebuggerLayout, ExitReason, debugger::DebuggerContext};
-use alloy_primitives::{Address, U256, hex, map::IndexMap};
+use alloy_primitives::{
+    Address, B256, U256, hex,
+    map::{B256Map, IndexMap},
+};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
@@ -203,6 +207,39 @@ impl<'a> TUIContext<'a> {
             self.draw_memory.inner_call_index,
             self.current_step,
             space,
+        )
+    }
+
+    pub(super) fn storage_label(
+        &self,
+        space: StorageSpace,
+        slot: U256,
+        storage_values: Option<&B256Map<B256>>,
+        next_values: Option<&B256Map<B256>>,
+    ) -> Option<String> {
+        if space != StorageSpace::Persistent {
+            return None;
+        }
+        let identifier = self.debugger_context.slot_identifiers.as_ref()?.get(self.address())?;
+        let slot = B256::from(slot);
+        identifier
+            .identify(&slot, None)
+            .or_else(|| {
+                storage_values.and_then(|values| identifier.identify_bytes_or_string(&slot, values))
+            })
+            .or_else(|| {
+                // Solc writes newly allocated string/bytes payload slots before their base-slot
+                // length, so retry with the next write values when the current state is stale.
+                next_values.and_then(|values| identifier.identify_bytes_or_string(&slot, values))
+            })
+            .map(|info| info.label)
+    }
+
+    pub(super) fn next_storage_write_values(&self) -> B256Map<B256> {
+        next_storage_write_values(
+            self.debug_arena(),
+            self.draw_memory.inner_call_index,
+            self.current_step,
         )
     }
 
@@ -1733,13 +1770,15 @@ fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Bytes;
-    use foundry_compilers::artifacts::sourcemap::Parser;
+    use crate::tui::storage::storage_values;
+    use alloy_primitives::{Bytes, keccak256, map::AddressHashMap};
+    use foundry_common::slot_identifier::{ENCODING_BYTES, SlotIdentifier};
+    use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType, sourcemap::Parser};
     use foundry_evm_core::{Breakpoints, ic::PcIcMap};
     use foundry_evm_traces::debug::{ArtifactData, ContractSources};
     use revm::interpreter::InstructionResult;
     use revm_inspectors::tracing::types::{StorageChange, StorageChangeReason};
-    use std::{path::PathBuf, sync::Arc};
+    use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
     fn step(pc: usize) -> CallTraceStep {
         step_with_stack(pc, OpCode::STOP, &[])
@@ -1789,6 +1828,7 @@ mod tests {
             debug_arena: arena,
             stats: None,
             identified_contracts: Default::default(),
+            slot_identifiers: None,
             contracts_sources: ContractSources::default(),
             breakpoints: Breakpoints::default(),
             layout: Default::default(),
@@ -2305,6 +2345,73 @@ mod tests {
         assert_eq!(tui.active_buffer, BufferKind::Calldata);
         assert_eq!(tui.draw_memory.current_buf_startline, 2);
         assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to calldata offset 0x40 (64)");
+    }
+
+    #[test]
+    fn labels_long_string_data_slots_written_before_length() {
+        let address = Address::repeat_byte(1);
+        let type_id = "t_string_storage".to_string();
+        let identifier = SlotIdentifier::new(Arc::new(StorageLayout {
+            storage: vec![Storage {
+                ast_id: 1,
+                contract: "StorageTest".to_string(),
+                label: "text".to_string(),
+                offset: 0,
+                slot: "0".to_string(),
+                storage_type: type_id.clone(),
+            }],
+            types: BTreeMap::from([(
+                type_id,
+                StorageType {
+                    encoding: ENCODING_BYTES.to_string(),
+                    key: None,
+                    label: "string".to_string(),
+                    number_of_bytes: "32".to_string(),
+                    value: None,
+                    other: BTreeMap::new(),
+                },
+            )]),
+        }));
+        let data_slot = U256::from_be_bytes(keccak256(B256::ZERO).0);
+        let mut data_access = step(1);
+        data_access.storage_change = Some(Box::new(StorageChange {
+            key: data_slot,
+            value: U256::ZERO,
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut base_access = step(2);
+        base_access.storage_change = Some(Box::new(StorageChange {
+            key: U256::ZERO,
+            value: U256::from(40 * 2 + 1),
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![data_access, base_access],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        context.slot_identifiers = Some(AddressHashMap::from_iter([(address, identifier)]));
+        let mut tui = TUIContext::new(&mut context);
+        tui.current_step = 0;
+        let accesses = tui.storage_accesses(StorageSpace::Persistent);
+        let values = storage_values(&accesses);
+        let next_values = tui.next_storage_write_values();
+
+        assert_eq!(
+            tui.storage_label(
+                StorageSpace::Persistent,
+                data_slot,
+                Some(&values),
+                Some(&next_values),
+            )
+            .as_deref(),
+            Some("text[0]")
+        );
     }
 
     #[test]
