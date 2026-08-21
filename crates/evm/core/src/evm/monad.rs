@@ -5,14 +5,13 @@ use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
 use monad_revm::{
     MonadBuilder, MonadCfgEnv, MonadChainContext, MonadContext, MonadEvm as RevmMonadEvm,
-    MonadHardfork, MonadJournalTr,
+    MonadHardfork, MonadJournal, MonadJournalTr,
     api::block::{
         syscall_on_epoch_change_calldata, syscall_reward_calldata, syscall_snapshot_calldata,
     },
     handler::MonadHandler,
     instructions::MonadInstructions,
     monad_context_with_db,
-    reserve_balance::tracker::ReserveBalanceTracker,
     staking::{
         STAKING_ADDRESS,
         constants::SYSTEM_ADDRESS,
@@ -35,11 +34,47 @@ use revm::{
 };
 
 use crate::{
-    FoundryContextExt, FoundryInspectorExt,
+    FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
     backend::{DatabaseExt, JournaledState},
-    constants::MONAD_CHEATCODE_ADDRESS,
     evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor},
 };
+
+impl FoundryChain<TxEnv> for MonadChainContext {
+    fn for_transaction(tx: &TxEnv) -> Self {
+        monad_context_from_participants(
+            Default::default(),
+            Default::default(),
+            std::slice::from_ref(tx),
+            0,
+        )
+    }
+
+    fn for_block(
+        grandparent: &[TxEnv],
+        parent: &[TxEnv],
+        current: &[TxEnv],
+        current_tx_index: usize,
+    ) -> Self {
+        monad_context_from_participants(
+            monad_block_participants(grandparent),
+            monad_block_participants(parent),
+            current,
+            current_tx_index,
+        )
+    }
+
+    fn refresh_journal<J: FoundryJournal>(&self, journal: &mut J) {
+        let mut tracker = journal.capture_reserve_balance();
+        tracker.rebase(self, journal.evm_state());
+        journal.restore_reserve_balance(tracker);
+    }
+}
+
+/// Refreshes journal state derived from a nested EVM's active Monad chain position.
+pub fn refresh_nested_chain_journal<E: NestedEvm + ?Sized>(evm: &mut E) {
+    let chain = evm.chain_mut().clone();
+    chain.refresh_journal(evm.journal_mut());
+}
 
 type MonadEvmHandler<'db, I> =
     MonadHandler<MonadRevmEvm<'db, I>, EVMError<DatabaseError>, EthFrame>;
@@ -83,13 +118,6 @@ pub fn monad_context_from_participants(
         current_tx_index,
         ..Default::default()
     }
-}
-
-fn rebase_monad_context<DB: alloy_evm::Database>(context: &mut MonadContext<DB>) {
-    let chain = context.chain.clone();
-    let mut tracker = std::mem::take(context.journaled_state.reserve_balance_mut());
-    tracker.rebase(&chain, &context.journaled_state.inner.state);
-    *context.journaled_state.reserve_balance_mut() = tracker;
 }
 
 /// A canonical Monad protocol system transaction.
@@ -166,7 +194,7 @@ impl ProtocolSystemCall {
 ///
 /// Returns an error when the transaction uses Monad's reserved protocol sender but does not
 /// satisfy the canonical envelope rules.
-pub fn protocol_system_call(tx: &TxEnv) -> eyre::Result<Option<ProtocolSystemCall>> {
+pub fn protocol_system_call<T: Transaction>(tx: &T) -> eyre::Result<Option<ProtocolSystemCall>> {
     if tx.caller() != SYSTEM_ADDRESS {
         return Ok(None);
     }
@@ -188,23 +216,23 @@ pub fn protocol_system_call(tx: &TxEnv) -> eyre::Result<Option<ProtocolSystemCal
         "invalid Monad protocol system transaction: gas price must be zero"
     );
     eyre::ensure!(
-        tx.gas_priority_fee.is_none(),
+        tx.max_priority_fee_per_gas().is_none(),
         "invalid Monad protocol system transaction: priority fee must be absent"
     );
     eyre::ensure!(
-        tx.access_list.0.is_empty(),
+        tx.access_list().is_none_or(|mut list| list.next().is_none()),
         "invalid Monad protocol system transaction: access list must be empty"
     );
     eyre::ensure!(
-        tx.blob_hashes.is_empty(),
+        tx.blob_versioned_hashes().is_empty(),
         "invalid Monad protocol system transaction: blob hashes must be empty"
     );
     eyre::ensure!(
-        tx.max_fee_per_blob_gas == 0,
+        tx.max_fee_per_blob_gas() == 0,
         "invalid Monad protocol system transaction: blob gas fee must be zero"
     );
     eyre::ensure!(
-        tx.authorization_list.is_empty(),
+        tx.authorization_list_len() == 0,
         "invalid Monad protocol system transaction: authorization list must be empty"
     );
 
@@ -331,65 +359,18 @@ where
 }
 
 impl FoundryEvmFactory for MonadEvmFactory {
-    const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[MONAD_CHEATCODE_ADDRESS];
-    const CONTRACT_INITCODE_SIZE_LIMIT: usize = monad_revm::MONAD_MAX_INITCODE_SIZE;
-
-    const NEEDS_BLOCK_CONTEXT: bool = true;
-
-    type ChainContext = MonadChainContext;
-    type TransactionState = ReserveBalanceTracker;
+    type Chain = MonadChainContext;
 
     type FoundryContext<'db> = MonadContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         MonadEvm<&'db mut dyn DatabaseExt<Self>, I>;
 
-    fn capture_transaction_state(&self, ecx: &Self::FoundryContext<'_>) -> Self::TransactionState {
-        ecx.journaled_state.reserve_balance().clone()
-    }
-
-    fn capture_chain_context(&self, ecx: &Self::FoundryContext<'_>) -> Self::ChainContext {
-        ecx.chain.clone()
-    }
-
-    fn restore_transaction_state(
-        &self,
-        ecx: &mut Self::FoundryContext<'_>,
-        state: Self::TransactionState,
-    ) {
-        *ecx.journaled_state.reserve_balance_mut() = state;
-        rebase_monad_context(ecx);
-    }
-
-    fn chain_context_for_transaction(&self, tx: &Self::Tx) -> Self::ChainContext {
-        monad_context_from_participants(
-            Default::default(),
-            Default::default(),
-            std::slice::from_ref(tx),
-            0,
-        )
-    }
-
-    fn chain_context_for_block(
-        &self,
-        grandparent: &[Self::Tx],
-        parent: &[Self::Tx],
-        current: &[Self::Tx],
-        current_tx_index: usize,
-    ) -> Self::ChainContext {
-        monad_context_from_participants(
-            monad_block_participants(grandparent),
-            monad_block_participants(parent),
-            current,
-            current_tx_index,
-        )
-    }
-
     fn create_evm_with_context<DB: alloy_evm::Database>(
         &self,
         db: DB,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
     ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
         let mut evm = self.create_evm(db, evm_env);
         evm.ctx_mut().chain = chain_context;
@@ -400,7 +381,7 @@ impl FoundryEvmFactory for MonadEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let mut monad_evm = self.create_evm_with_inspector(db, evm_env, inspector);
@@ -408,17 +389,6 @@ impl FoundryEvmFactory for MonadEvmFactory {
         monad_evm.cfg.tx_chain_id_check = true;
         monad_evm.inspector().get_networks().inject_precompiles(monad_evm.precompiles_mut());
         monad_evm
-    }
-
-    fn apply_context_transition<'db>(
-        &self,
-        ecx: &mut Self::FoundryContext<'db>,
-        replacement: Option<&Self::ChainContext>,
-    ) {
-        if let Some(replacement) = replacement {
-            ecx.chain = replacement.clone();
-        }
-        rebase_monad_context(ecx);
     }
 
     fn try_transact_system_replay<DB, I>(
@@ -433,22 +403,11 @@ impl FoundryEvmFactory for MonadEvmFactory {
         try_transact_monad_system_replay(evm, tx)
     }
 
-    fn try_transact_foundry_system_replay<
-        'db,
-        I: FoundryInspectorExt<Self::FoundryContext<'db>>,
-    >(
-        &self,
-        evm: &mut Self::FoundryEvm<'db, I>,
-        tx: &Self::Tx,
-    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>> {
-        try_transact_monad_system_replay(evm, tx)
-    }
-
     fn create_foundry_nested_evm<'db>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> NestedEvmFor<'db, Self> {
         let spec = evm_env.cfg_env.spec;
@@ -473,8 +432,8 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
     type Spec = MonadHardfork;
     type Block = BlockEnv;
     type Tx = TxEnv;
-    type ChainContext = MonadChainContext;
-    type TransactionState = ReserveBalanceTracker;
+    type Chain = MonadChainContext;
+    type Journal = MonadJournal<&'db mut dyn DatabaseExt<MonadEvmFactory>>;
 
     fn tx_mut(&mut self) -> &mut Self::Tx {
         self.ctx_mut().tx_mut()
@@ -484,21 +443,12 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
         &mut self.ctx_mut().journaled_state.inner
     }
 
-    fn capture_chain_context(&self) -> Self::ChainContext {
-        self.ctx_ref().chain.clone()
+    fn chain_mut(&mut self) -> &mut Self::Chain {
+        &mut self.ctx_mut().chain
     }
 
-    fn capture_transaction_state(&self) -> Self::TransactionState {
-        self.ctx_ref().journaled_state.reserve_balance().clone()
-    }
-
-    fn restore_transaction_state(&mut self, state: Self::TransactionState) {
-        *self.ctx_mut().journaled_state.reserve_balance_mut() = state;
-        rebase_monad_context(self.ctx_mut());
-    }
-
-    fn preserve_transaction_state_on_next_transaction(&mut self) {
-        self.ctx_mut().journaled_state.set_preserve_reserve_balance_tracker(true);
+    fn journal_mut(&mut self) -> &mut Self::Journal {
+        &mut self.ctx_mut().journaled_state
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
@@ -520,18 +470,17 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
         Ok(frame_result)
     }
 
-    fn transact_raw(&mut self, tx: Self::Tx) -> Result<ResultAndState, EVMError<DatabaseError>> {
-        ContextSetters::set_tx(&mut self.0.ctx, tx);
-
-        let mut handler = MonadEvmHandler::<I>::new();
-        let result = handler.inspect_run(self)?;
-
-        Ok(ResultAndState::new(result, self.ctx_ref().journaled_state.inner.state.clone()))
-    }
-
-    fn transact_replay(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
+    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
         let Some(system_call) = protocol_system_call(&tx)? else {
-            return self.transact_raw(tx).map_err(Into::into);
+            ContextSetters::set_tx(&mut self.0.ctx, tx);
+
+            let mut handler = MonadEvmHandler::<I>::new();
+            let result = handler.inspect_run(self)?;
+
+            return Ok(ResultAndState::new(
+                result,
+                self.ctx_ref().journaled_state.inner.state.clone(),
+            ));
         };
 
         system_call.validate_chain_id(self.ctx_ref().cfg().chain_id())?;
@@ -688,7 +637,7 @@ mod tests {
 
         evm.ctx_mut().chain = new_chain.clone();
         evm.ctx_mut().journaled_state.inner.state = EvmState::from_iter([(sender, account)]);
-        rebase_monad_context(evm.ctx_mut());
+        crate::refresh_chain_journal(evm.ctx_mut());
 
         assert_eq!(evm.ctx().chain, new_chain);
         assert!(evm.ctx().journaled_state.reserve_balance().has_violation());

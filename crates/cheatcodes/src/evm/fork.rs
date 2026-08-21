@@ -10,14 +10,14 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
-#[cfg(feature = "monad")]
-use foundry_evm_core::evm::FoundryEvmFactory;
 use foundry_evm_core::{
     FoundryContextExt,
-    backend::{ContextUpdate, JournaledState, LocalForkId},
-    evm::{BlockEnvFor, ChainContextFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    backend::{ContextUpdateFor, JournaledState, LocalForkId},
+    evm::{BlockEnvFor, EvmFactoryFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     fork::CreateFork,
 };
+#[cfg(feature = "monad")]
+use foundry_evm_core::{backend::ContextUpdate, evm::ChainFor, refresh_chain_journal};
 use revm::context::ContextTr;
 
 impl Cheatcode for activeForkCall {
@@ -423,6 +423,24 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
     Ok(fork)
 }
 
+/// Applies a fork/roll/transact context update to the active EVM context.
+#[cfg(feature = "monad")]
+fn apply_context_update<FEN: FoundryEvmNetwork>(
+    ecx: &mut FoundryContextFor<'_, FEN>,
+    context_update: ContextUpdate<ChainFor<FEN>>,
+) {
+    match context_update {
+        ContextUpdate::Unchanged => {}
+        ContextUpdate::Replace(chain_context) => {
+            *ecx.chain_mut() = chain_context;
+            refresh_chain_journal(ecx);
+        }
+        ContextUpdate::Rebase => {
+            refresh_chain_journal(ecx);
+        }
+    }
+}
+
 /// Clones the EVM and tx environments, runs a fork operation that may modify them, then writes
 /// them back. This is the common pattern for all fork-switching cheatcodes (rollFork, selectFork,
 /// createSelectFork).
@@ -433,7 +451,7 @@ fn fork_env_op<FEN: FoundryEvmNetwork, T: SolValue>(
         &mut EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
         &mut TxEnvFor<FEN>,
         &mut JournaledState,
-    ) -> eyre::Result<(T, ContextUpdate<ChainContextFor<FEN>>)>,
+    ) -> eyre::Result<(T, ContextUpdateFor<EvmFactoryFor<FEN>>)>,
 ) -> Result {
     let mut evm_env = ecx.evm_clone();
     let mut tx_env = ecx.tx_clone();
@@ -441,18 +459,10 @@ fn fork_env_op<FEN: FoundryEvmNetwork, T: SolValue>(
     let (result, context_update) = f(db, &mut evm_env, &mut tx_env, inner)?;
     ecx.set_evm(evm_env);
     ecx.set_tx(tx_env);
-    match context_update {
-        ContextUpdate::Unchanged => {}
-        ContextUpdate::Replace(chain_context) => {
-            let _ = &chain_context;
-            #[cfg(feature = "monad")]
-            FEN::EvmFactory::default().apply_context_transition(ecx, Some(&chain_context));
-        }
-        ContextUpdate::Rebase => {
-            #[cfg(feature = "monad")]
-            FEN::EvmFactory::default().apply_context_transition(ecx, None);
-        }
-    }
+    #[cfg(not(feature = "monad"))]
+    let _ = context_update;
+    #[cfg(feature = "monad")]
+    apply_context_update::<FEN>(ecx, context_update);
     Ok(result.abi_encode())
 }
 
@@ -508,18 +518,10 @@ fn transact<FEN: FoundryEvmNetwork>(
     fork_id: Option<U256>,
 ) -> Result {
     let context_update = executor.transact_on_db(ccx.state, ccx.ecx, fork_id, transaction)?;
-    match context_update {
-        ContextUpdate::Unchanged => {}
-        ContextUpdate::Replace(chain_context) => {
-            let _ = &chain_context;
-            #[cfg(feature = "monad")]
-            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, Some(&chain_context));
-        }
-        ContextUpdate::Rebase => {
-            #[cfg(feature = "monad")]
-            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
-        }
-    }
+    #[cfg(not(feature = "monad"))]
+    let _ = context_update;
+    #[cfg(feature = "monad")]
+    apply_context_update::<FEN>(ccx.ecx, context_update);
     Ok(Default::default())
 }
 

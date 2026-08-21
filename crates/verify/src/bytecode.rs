@@ -39,10 +39,9 @@ use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
-        FoundryTransaction as _,
+        FoundryChain, FoundryTransaction as _,
         evm::{
-            BlockContext, ChainContextFor, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork,
-            TempoEvmNetwork, TxEnvFor,
+            BlockContext, ChainFor, EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor,
         },
     },
     executors::EvmError,
@@ -531,7 +530,7 @@ impl VerifyBytecodeArgs {
 
             let kind = TxKind::Create;
             let block_context =
-                if !maybe_predeploy && deploy_block != 0 && FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+                if !maybe_predeploy && deploy_block != 0 && config.networks.is_monad() {
                     let block = deploy_block_info.as_ref().ok_or_else(|| {
                         eyre::eyre!(
                             "block {deploy_block} is required to reconstruct deployment context"
@@ -784,13 +783,12 @@ impl VerifyBytecodeArgs {
                 provider.get_transaction_count(transaction.from()).block_id(prev_block_id).await?;
 
             apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain.id());
-            let factory = FEN::EvmFactory::default();
-            let mut target_context = None::<ChainContextFor<FEN>>;
+            let mut target_context = None::<ChainFor<FEN>>;
             if let Some(ref block) = block {
                 let BlockTransactions::Full(txs) = block.transactions() else {
                     return Err(eyre::eyre!("Could not get block txs"));
                 };
-                let block_context = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+                let block_context = if config.networks.is_monad() {
                     Some(BlockContext::<FEN>::fetch(&provider, block).await?)
                 } else {
                     None
@@ -804,7 +802,7 @@ impl VerifyBytecodeArgs {
                     txs[target_index].from(),
                 );
                 target_context = Some(block_context.as_ref().map_or_else(
-                    || factory.chain_context_for_transaction(&target_tx_env),
+                    || ChainFor::<FEN>::for_transaction(&target_tx_env),
                     |context| context.transaction(target_index),
                 ));
 
@@ -819,7 +817,7 @@ impl VerifyBytecodeArgs {
                     let is_system = is_known_system_sender(tx.from())
                         || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
                     let chain_context = block_context.as_ref().map_or_else(
-                        || factory.chain_context_for_transaction(&tx_env),
+                        || ChainFor::<FEN>::for_transaction(&tx_env),
                         |context| context.transaction(index),
                     );
 
@@ -876,7 +874,7 @@ impl VerifyBytecodeArgs {
                         }
                     }
                 }
-            } else if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+            } else if config.networks.is_monad() {
                 eyre::bail!(
                     "block {simulation_block} is required to reconstruct transaction context"
                 );
@@ -887,7 +885,7 @@ impl VerifyBytecodeArgs {
                 TxEnvFor::<FEN>::from_recovered_tx(transaction.as_ref(), transaction.from());
             tx_env.set_nonce(prev_block_nonce);
             let target_context =
-                target_context.unwrap_or_else(|| factory.chain_context_for_transaction(&tx_env));
+                target_context.unwrap_or_else(|| ChainFor::<FEN>::for_transaction(&tx_env));
 
             // Replace the `input` with local creation code in the creation tx.
             if let TxKind::Call(to) = kind {

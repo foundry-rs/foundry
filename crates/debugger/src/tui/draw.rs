@@ -1,8 +1,11 @@
 //! TUI draw implementation.
 
 use super::{
-    context::{ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext},
-    storage::{StorageAccess, StorageSpace, hex_u256, storage_access_at},
+    context::{
+        ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext,
+        write_pretty_opcode,
+    },
+    storage::{StorageAccess, StorageSpace, hex_u256, storage_access_at, storage_values},
 };
 use crate::{DebuggerLayout, debugger::DebuggerStats, op::OpcodeParam};
 use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
@@ -513,21 +516,20 @@ impl TUIContext<'_> {
 
     fn draw_op_list(&self, f: &mut Frame<'_>, area: Rect) {
         let debug_steps = self.debug_steps();
-        let max_pc = debug_steps.iter().map(|step| step.pc).max().unwrap_or(0);
-        let max_pc_len = hex_digits(max_pc);
-
-        let items = debug_steps
-            .iter()
-            .enumerate()
-            .map(|(i, step)| {
-                let mut content = String::with_capacity(64);
-                write!(content, "{:0>max_pc_len$x}|", step.pc).unwrap();
-                if let Some(op) = self.opcode_list.get(i) {
-                    content.push_str(op);
-                }
-                ListItem::new(Span::styled(content, Style::new().fg(Color::White)))
-            })
-            .collect::<Vec<_>>();
+        // Opcode items are one line each; window them before `List::new` collects the iterator.
+        let visible_rows = area.height.saturating_sub(2) as usize;
+        let scroll_padding = usize::from(visible_rows >= 3);
+        let end = debug_steps
+            .len()
+            .min(visible_rows.max(self.current_step.saturating_add(scroll_padding + 1)));
+        let start = end.saturating_sub(visible_rows);
+        let pc_width = hex_digits(self.opcode_max_pc());
+        let items = debug_steps[start..end].iter().map(|step| {
+            let mut row = String::with_capacity(pc_width + 1 + 8);
+            write!(row, "{:0>pc_width$x}|", step.pc).unwrap();
+            write_pretty_opcode(&mut row, step);
+            ListItem::new(Span::styled(row, Style::new().fg(Color::White)))
+        });
 
         let step = self.current_step();
         let call_gas_used = self.debug_call().gas_limit.saturating_sub(step.gas_remaining);
@@ -544,8 +546,9 @@ impl TUIContext<'_> {
             .block(block)
             .highlight_symbol("▶")
             .highlight_style(Style::new().fg(Color::White).bg(Color::DarkGray))
-            .scroll_padding(1);
-        let mut state = ListState::default().with_selected(Some(self.current_step));
+            .scroll_padding(scroll_padding);
+        let mut state =
+            ListState::default().with_selected(Some(self.current_step.saturating_sub(start)));
         f.render_stateful_widget(list, area, &mut state);
     }
 
@@ -618,7 +621,19 @@ impl TUIContext<'_> {
     }
 
     fn current_storage_access_line(&self) -> Option<Line<'static>> {
-        storage_access_at(self.debug_steps(), self.current_step).map(storage_access_line)
+        storage_access_at(self.debug_steps(), self.current_step).map(|access| {
+            let values = (access.space() == StorageSpace::Persistent)
+                .then(|| storage_values(&self.storage_accesses(access.space())));
+            let next_values = (access.space() == StorageSpace::Persistent)
+                .then(|| self.next_storage_write_values());
+            let label = self.storage_label(
+                access.space(),
+                access.slot(),
+                values.as_ref(),
+                next_values.as_ref(),
+            );
+            storage_access_line(access, label.as_deref())
+        })
     }
 
     fn draw_data(&mut self, f: &mut Frame<'_>, area: Rect) {
@@ -631,6 +646,9 @@ impl TUIContext<'_> {
 
     fn draw_storage(&mut self, f: &mut Frame<'_>, area: Rect, space: StorageSpace) {
         let accesses = self.storage_accesses(space);
+        let values = (space == StorageSpace::Persistent).then(|| storage_values(&accesses));
+        let next_values =
+            (space == StorageSpace::Persistent).then(|| self.next_storage_write_values());
         let current_slot = storage_access_at(self.debug_steps(), self.current_step)
             .filter(|access| access.space() == space)
             .map(StorageAccess::slot);
@@ -644,7 +662,15 @@ impl TUIContext<'_> {
             .enumerate()
             .skip(self.draw_memory.current_storage_startline)
             .flat_map(|(index, access)| {
-                storage_slot_lines(index, index_width, access, current_slot == Some(access.slot()))
+                let label =
+                    self.storage_label(space, access.slot(), values.as_ref(), next_values.as_ref());
+                storage_slot_lines(
+                    index,
+                    index_width,
+                    access,
+                    label.as_deref(),
+                    current_slot == Some(access.slot()),
+                )
             })
             .collect::<Vec<_>>();
         if lines.is_empty() {
@@ -1167,14 +1193,23 @@ fn scope_variable_line(variable: ScopeVariable) -> Line<'static> {
     Line::from(spans)
 }
 
-fn storage_access_line(access: StorageAccess) -> Line<'static> {
-    Line::from(Span::styled(access.describe(), Style::new().fg(Color::Yellow)))
+fn storage_access_line(access: StorageAccess, label: Option<&str>) -> Line<'static> {
+    let mut spans = vec![Span::styled(access.describe(), Style::new().fg(Color::Yellow))];
+    if let Some(label) = label {
+        spans.extend([
+            Span::raw(" ("),
+            Span::styled(label.to_string(), Color::Cyan),
+            Span::raw(")"),
+        ]);
+    }
+    Line::from(spans)
 }
 
 fn storage_slot_lines(
     index: usize,
     index_width: usize,
     access: StorageAccess,
+    label: Option<&str>,
     current: bool,
 ) -> [Line<'static>; 2] {
     let value_style = if current {
@@ -1183,13 +1218,21 @@ fn storage_slot_lines(
         Style::new().fg(Color::White)
     };
     let prefix_width = index_width + 2;
+    let mut slot_spans = vec![
+        Span::styled(format!("{index:0index_width$}| "), Style::new().fg(Color::Gray)),
+        Span::styled(access.op(), value_style),
+        Span::raw(" slot "),
+        Span::styled(hex_u256(access.slot()), value_style),
+    ];
+    if let Some(label) = label {
+        slot_spans.extend([
+            Span::raw(" ("),
+            Span::styled(label.to_string(), Style::new().fg(Color::Cyan)),
+            Span::raw(")"),
+        ]);
+    }
     [
-        Line::from(vec![
-            Span::styled(format!("{index:0index_width$}| "), Style::new().fg(Color::Gray)),
-            Span::styled(access.op(), value_style),
-            Span::raw(" slot "),
-            Span::styled(hex_u256(access.slot()), value_style),
-        ]),
+        Line::from(slot_spans),
         Line::from(vec![
             Span::raw(" ".repeat(prefix_width)),
             Span::raw("value "),
@@ -1524,6 +1567,7 @@ mod tests {
             debug_arena: arena,
             stats: None,
             identified_contracts: Default::default(),
+            slot_identifiers: None,
             contracts_sources: ContractSources::default(),
             breakpoints: Breakpoints::default(),
             layout: Default::default(),
@@ -1551,6 +1595,50 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn opcode_list_draws_visible_window() {
+        let steps = (0..64)
+            .chain([0x100])
+            .map(|pc| {
+                let mut step = trace_step(Vec::new());
+                step.pc = pc;
+                step.op = OpCode::ADD;
+                step
+            })
+            .collect();
+        let mut context = context_with_arena(vec![debug_node(0, 0, steps)]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.current_step = 50;
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| tui.draw_op_list(f, Rect::new(0, 0, 80, 20))).unwrap();
+
+        let lines = terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(80)
+            .map(|cells| cells.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>();
+        assert!(lines[1].contains("022|ADD"));
+        assert!(lines[17].contains("▶032|ADD"));
+        assert!(lines[18].contains("033|ADD"));
+
+        let backend = TestBackend::new(80, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| tui.draw_op_list(f, Rect::new(0, 0, 80, 3))).unwrap();
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("▶032|ADD"));
     }
 
     #[test]
@@ -2065,7 +2153,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_access_line_formats_sload() {
+    fn storage_lines_format_sload_and_label() {
         let mut step = trace_step(Vec::new());
         step.storage_change = Some(Box::new(StorageChange {
             key: U256::from(1),
@@ -2076,7 +2164,14 @@ mod tests {
         let steps = [step];
         let access = super::storage_access_at(&steps, 0).unwrap();
 
-        assert_eq!(line_text(&super::storage_access_line(access)), "storage SLOAD slot 0x1 = 0x2a");
+        assert_eq!(
+            line_text(&super::storage_access_line(access, Some("count"))),
+            "storage SLOAD slot 0x1 = 0x2a (count)"
+        );
+        assert_eq!(
+            line_text(&super::storage_slot_lines(0, 2, access, Some("count"), false)[0]),
+            "00| SLOAD slot 0x1 (count)"
+        );
     }
 
     #[test]
@@ -2092,7 +2187,7 @@ mod tests {
         let access = super::storage_access_at(&steps, 0).unwrap();
 
         assert_eq!(
-            line_text(&super::storage_access_line(access)),
+            line_text(&super::storage_access_line(access, None)),
             "storage SSTORE slot 0x1: 0x7 -> 0x2a"
         );
     }

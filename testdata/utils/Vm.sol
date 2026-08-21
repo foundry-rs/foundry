@@ -301,6 +301,9 @@ interface Vm {
     function expectTip20LogoURIUpdated(address token, address updater, string calldata newLogoURI) external;
     function fee(uint256 newBasefee) external;
     function ffi(string[] calldata commandInput) external returns (bytes memory result);
+    function ffiBytes(string[] calldata commandInput) external returns (bytes memory result);
+    function ffiString(string[] calldata commandInput) external returns (string memory result);
+    function ffiUint(string[] calldata commandInput) external returns (uint256 result);
     function foundryVersionAtLeast(string calldata version) external view returns (bool);
     function foundryVersionCmp(string calldata version) external view returns (int256);
     function fromRlp(bytes calldata rlp) external pure returns (bytes[] memory data);

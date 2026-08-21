@@ -628,8 +628,7 @@ where
         self,
         sender: impl Into<SenderKind<'_>>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
-        let fill = self.fill;
-        self._build(sender, fill, None).await
+        self.build_inner(sender, None).await
     }
 
     /// Builds a transaction that will be signed by a Tempo access key.
@@ -641,18 +640,18 @@ where
         self,
         wallet: &TempoAccountsWallet,
     ) -> Result<(N::TransactionRequest, Option<Function>, TempoAccountsWallet)> {
-        let fill = self.fill;
         let mut prepared = wallet.clone();
-        let (tx, func) = self._build(wallet.account(), fill, Some(&mut prepared)).await?;
+        let (tx, func) = self.build_inner(wallet.account(), Some(&mut prepared)).await?;
         Ok((tx, func, prepared))
     }
 
-    async fn _build(
+    async fn build_inner(
         mut self,
         sender: impl Into<SenderKind<'_>>,
-        fill: bool,
         tempo_wallet: Option<&mut TempoAccountsWallet>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
+        let fill = self.fill;
+
         // prepare
         let sender = sender.into();
         self.prepare(&sender);
@@ -953,14 +952,18 @@ where
 
 /// Helper function that tries to decode custom error name and inputs from error payload data.
 async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
-    let err_data = serde_json::from_str::<Bytes>(data.get())?;
-    let Some(selector) = err_data.get(..4) else { return Ok(None) };
+    let data = serde_json::from_str::<Bytes>(data.get())?;
+    decode_custom_error(&data).await
+}
+
+pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
+    let Some(selector) = data.get(..4) else { return Ok(None) };
     if let Some(known_error) =
         SignaturesIdentifier::new(false)?.identify_error(selector.try_into().unwrap()).await
     {
         let mut decoded_error = known_error.name.clone();
         if !known_error.inputs.is_empty()
-            && let Ok(error) = known_error.decode_error(&err_data)
+            && let Ok(error) = known_error.decode_error(data)
         {
             write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
         }

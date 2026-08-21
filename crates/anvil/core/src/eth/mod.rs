@@ -209,6 +209,10 @@ pub enum EthRequest {
     #[serde(rename = "eth_sendRawTransactionConditional")]
     EthSendRawTransactionConditional(Bytes, TransactionConditional),
 
+    /// Signs a raw Tempo transaction as the node's fee payer (sponsor) without broadcasting it.
+    #[serde(rename = "eth_signRawTransaction", with = "sequence")]
+    EthSignRawTransaction(Bytes),
+
     #[serde(rename = "anvil_classifyTransaction", with = "sequence")]
     AnvilClassifyTransaction(Bytes),
 

@@ -23,6 +23,8 @@ use foundry_common::{
     },
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
+#[cfg(feature = "monad")]
+use foundry_evm_core::FoundryJournal;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction,
     backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
@@ -32,7 +34,8 @@ use foundry_evm_core::{
         history_storage_slot, history_storage_value,
     },
     env::FoundryContextExt,
-    evm::{FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
+    evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
+    refresh_chain_journal,
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceRequirements;
@@ -43,7 +46,7 @@ use revm::{
     bytecode::Bytecode,
     context::{Block, Cfg, ContextTr, Host, JournalTr, Transaction, result::ExecutionResult},
     inspector::JournalExt,
-    primitives::{KECCAK_EMPTY, hardfork::SpecId},
+    primitives::{KECCAK_EMPTY, eip3860::MAX_INITCODE_SIZE, hardfork::SpecId},
     state::{Account, AccountStatus},
 };
 use std::{
@@ -355,8 +358,7 @@ impl Cheatcode for loadAllocsCall {
         // Then, load the allocs into the database.
         let (db, inner) = ccx.ecx.db_journal_inner_mut();
         db.load_allocs(&allocs, inner).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
-        #[cfg(feature = "monad")]
-        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+        refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
     }
 }
@@ -371,8 +373,7 @@ impl Cheatcode for cloneAccountCall {
         db.clone_account(&genesis, target, inner)?;
         // Cloned account should persist in forked envs.
         ccx.ecx.db_mut().add_persistent_account(*target);
-        #[cfg(feature = "monad")]
-        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+        refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
     }
 }
@@ -775,8 +776,7 @@ impl Cheatcode for dealCall {
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
-        #[cfg(feature = "monad")]
-        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+        refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
     }
 }
@@ -1282,8 +1282,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         let from = sender;
 
         executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
-        #[cfg(feature = "monad")]
-        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+        refresh_chain_journal(ccx.ecx);
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1358,8 +1357,14 @@ impl Cheatcode for executeTransactionCall {
         ccx.ecx.cfg_env_mut().disable_nonce_check = false;
 
         // Enforce the active EVM's initcode size limit.
-        ccx.ecx.cfg_env_mut().limit_contract_initcode_size =
-            Some(FEN::EvmFactory::CONTRACT_INITCODE_SIZE_LIMIT);
+        let initcode_size_limit = ccx
+            .state
+            .config
+            .evm_opts
+            .networks
+            .contract_size_limits()
+            .map_or(MAX_INITCODE_SIZE, |limits| limits.initcode);
+        ccx.ecx.cfg_env_mut().limit_contract_initcode_size = Some(initcode_size_limit);
 
         // Reset the tx gas limit cap so revm applies the spec-defined default (EIP-7825).
         // Normal test execution sets `Some(u64::MAX)` to disable the cap; clearing it here
@@ -1460,8 +1465,7 @@ impl Cheatcode for executeTransactionCall {
 
         // Keep network-specific caches aligned with the state merged from the nested EVM while
         // preserving the outer transaction's execution context.
-        #[cfg(feature = "monad")]
-        FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+        refresh_chain_journal(ccx.ecx);
 
         // Return output bytes.
         let output = match res.result {
@@ -1604,11 +1608,9 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
     ccx.state.fork_block_number_override_snapshots.insert(id, ccx.state.fork_block_number_override);
     #[cfg(feature = "monad")]
     {
-        let factory = FEN::EvmFactory::default();
-        ccx.state.context_snapshots.insert(
-            id,
-            (factory.capture_chain_context(ccx.ecx), factory.capture_transaction_state(ccx.ecx)),
-        );
+        ccx.state
+            .context_snapshots
+            .insert(id, (ccx.ecx.chain().clone(), ccx.ecx.journal().capture_reserve_balance()));
     }
     ccx.state.snapshot_created_accounts(id, fork_id);
     Ok(id.abi_encode())
@@ -1671,12 +1673,10 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]
         if let Some((context, state)) = ccx.state.context_snapshots.get(&snapshot_id) {
-            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, Some(context));
-            FEN::EvmFactory::default().restore_transaction_state(ccx.ecx, state.clone());
-        } else {
-            #[cfg(feature = "monad")]
-            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+            *ccx.ecx.chain_mut() = context.clone();
+            ccx.ecx.journal_mut().restore_reserve_balance(state.clone());
         }
+        refresh_chain_journal(ccx.ecx);
         ccx.ecx.set_evm(evm_env);
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
@@ -1713,12 +1713,10 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]
         if let Some((context, state)) = ccx.state.context_snapshots.remove(&snapshot_id) {
-            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, Some(&context));
-            FEN::EvmFactory::default().restore_transaction_state(ccx.ecx, state);
-        } else {
-            #[cfg(feature = "monad")]
-            FEN::EvmFactory::default().apply_context_transition(ccx.ecx, None);
+            *ccx.ecx.chain_mut() = context;
+            ccx.ecx.journal_mut().restore_reserve_balance(state);
         }
+        refresh_chain_journal(ccx.ecx);
         ccx.ecx.set_evm(evm_env);
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
             ccx.state.env_overrides = snap;

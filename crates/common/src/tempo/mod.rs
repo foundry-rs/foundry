@@ -352,7 +352,13 @@ impl TempoSponsor {
             .recover_address_from_prehash(&digest)
             .context("failed to recover Tempo sponsor signature")?;
         if recovered != self.sponsor {
-            eyre::bail!("Tempo sponsor signature recovered {recovered}, expected {}", self.sponsor);
+            eyre::bail!(
+                "Tempo sponsor signature recovered {recovered}, expected {}; the signature must \
+                 cover this exact transaction's sponsor digest — when signing a digest produced \
+                 with `--tempo.print-sponsor-hash`, pin --nonce, --gas-limit, --gas-price and \
+                 --priority-gas-price on both commands so the digest does not change in between",
+                self.sponsor
+            );
         }
         if recovered == sender {
             eyre::bail!(

@@ -695,7 +695,7 @@ impl<'ast> State<'_, 'ast> {
             CommentConfig::skip_trailing_ws().mixed_no_break().mixed_prev_space(),
         );
         if !block_format.breaks() {
-            if !self.last_token_is_break() {
+            if !self.last_token_is_break() && !self.is_beginning_of_line() {
                 self.hardbreak();
             }
             self.s.offset(-self.ind);

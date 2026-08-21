@@ -48,10 +48,9 @@ use foundry_evm::core::evm::MonadEvmNetwork;
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
-        FoundryBlock as _,
+        FoundryBlock as _, FoundryChain,
         evm::{
-            BlockContext, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, TempoEvmNetwork,
-            TxEnvFor,
+            BlockContext, ChainFor, EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor,
         },
     },
     executors::{EvmError, Executor, TracingExecutor},
@@ -374,7 +373,6 @@ impl RunArgs {
             return Ok(());
         }
 
-        let factory = FEN::EvmFactory::default();
         let target_tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
         let target_is_system = is_known_system_sender(tx.from())
             || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
@@ -440,7 +438,7 @@ impl RunArgs {
         );
         TracingExecutor::<FEN>::extend_precompile_labels(&mut config, networks, resolved_hardfork);
 
-        let block_context = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+        let block_context = if networks.is_monad() {
             let block = block.as_ref().ok_or_else(|| {
                 eyre::eyre!(
                     "block {tx_block_number} is required to reconstruct transaction context"
@@ -525,7 +523,7 @@ impl RunArgs {
                     let is_system = is_known_system_sender(tx.from())
                         || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
                     let chain_context = block_context.as_ref().map_or_else(
-                        || factory.chain_context_for_transaction(&tx_env),
+                        || ChainFor::<FEN>::for_transaction(&tx_env),
                         |context| context.transaction(index),
                     );
 
@@ -633,7 +631,7 @@ impl RunArgs {
                 0
             };
             let chain_context = block_context.as_ref().map_or_else(
-                || factory.chain_context_for_transaction(&tx_env),
+                || ChainFor::<FEN>::for_transaction(&tx_env),
                 |context| context.transaction(target_index),
             );
 

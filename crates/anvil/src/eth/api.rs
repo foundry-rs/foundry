@@ -39,7 +39,7 @@ use crate::{
 };
 use alloy_consensus::{
     Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt,
-    transaction::Recovered,
+    transaction::{Recovered, SignerRecoverable},
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
@@ -56,6 +56,7 @@ use alloy_primitives::{
     Address, B64, B256, Bytes, TxHash, TxKind, U64, U256,
     map::{HashMap, HashSet},
 };
+use alloy_rlp::{Encodable, Header, PayloadView};
 use alloy_rpc_types::{
     AccessListResult, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log, Work,
@@ -95,6 +96,7 @@ use anvil_rpc::{
     response::ResponseResult,
 };
 use foundry_common::{
+    provider::redact_url,
     tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
@@ -126,6 +128,7 @@ use revm::{
 };
 use std::{sync::Arc, time::Duration};
 use tempo_hardfork::TempoHardfork;
+use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, transaction::FEE_PAYER_SIGNATURE_MARKER};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, unbounded_channel},
     try_join,
@@ -634,7 +637,7 @@ impl<N: Network> EthApi<N> {
         let mut node_config = self.backend.node_config.write().await;
         if let Some((fork, provider, endpoint_identity)) = staged_fork {
             let mut config = fork.config.write();
-            trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url().unwrap_or("none"), url);
+            trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url().map(redact_url).unwrap_or_else(|| "none".to_string()), redact_url(&url));
             config.provider = provider;
             config.fork_urls = vec![url.clone()];
             config.fork_chain_id = None;
@@ -2031,6 +2034,9 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EthSendRawTransactionConditional(tx, condition) => {
                 self.send_raw_transaction_conditional(tx, condition).await.to_rpc_result()
             }
+            EthRequest::EthSignRawTransaction(tx) => {
+                self.sign_raw_transaction(tx).await.to_rpc_result()
+            }
             EthRequest::AnvilClassifyTransaction(tx) => {
                 self.anvil_classify_transaction(tx).to_rpc_result()
             }
@@ -2926,18 +2932,38 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_sendRawTransaction`
     pub async fn send_raw_transaction(&self, tx: Bytes) -> Result<TxHash> {
         node_info!("eth_sendRawTransaction");
-        let mut data = tx.as_ref();
-        if data.is_empty() {
+        if tx.is_empty() {
             return Err(BlockchainError::EmptyRawTransactionData);
         }
 
+        // Built-in Tempo fee payer: raw transactions submitted in the fee payer service encoding
+        // or carrying the sponsorship placeholder ask the node to sponsor them before submission
+        // (the sign-and-relay mode of the fee payer service contract).
+        let service_encoded = if self.backend.is_tempo() {
+            normalize_fee_payer_service_encoding(tx.as_ref())
+        } else {
+            None
+        };
+        let raw = service_encoded.as_deref().unwrap_or(tx.as_ref());
+
+        let mut data = raw;
         let transaction = FoundryTxEnvelope::decode_2718(&mut data)
             .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
         self.ensure_typed_transaction_supported(&transaction)?;
 
+        let transaction = match transaction {
+            FoundryTxEnvelope::Tempo(aa_tx)
+                if self.backend.is_tempo()
+                    && aa_tx.tx().fee_payer_signature == Some(FEE_PAYER_SIGNATURE_MARKER) =>
+            {
+                FoundryTxEnvelope::Tempo(self.sponsor_sign_tempo_transaction(aa_tx).await?)
+            }
+            transaction => transaction,
+        };
+
         if self.backend.is_tempo() && TempoHardfork::from(self.backend.hardfork()).is_t5() {
-            let classification = classify_payment_lane(tx.as_ref());
+            let classification = classify_payment_lane(raw);
             trace!(target: "node", tx = ?transaction.hash(), ?classification, "classified transaction lane");
         }
 
@@ -3020,6 +3046,98 @@ impl EthApi<FoundryNetwork> {
         let receipt = self.check_transaction_inclusion(hash, timeout_ms).await?;
 
         Ok(receipt)
+    }
+
+    /// Signs a raw Tempo transaction as the node's fee payer (sponsor) and returns the fully
+    /// signed raw transaction without broadcasting it.
+    ///
+    /// This is the sign-only mode of the Tempo fee payer service contract, so
+    /// `cast send --sponsor-url` and the tempo SDK relay transport can point directly at this
+    /// node. Only available on Tempo networks.
+    ///
+    /// Handler for ETH RPC call: `eth_signRawTransaction`
+    pub async fn sign_raw_transaction(&self, tx: Bytes) -> Result<Bytes> {
+        node_info!("eth_signRawTransaction");
+        if !self.backend.is_tempo() {
+            return Err(BlockchainError::RpcUnimplemented);
+        }
+
+        if tx.is_empty() {
+            return Err(BlockchainError::EmptyRawTransactionData);
+        }
+
+        // Fee payer service clients submit the request in the service encoding, which carries a
+        // `0x00` placeholder in the fee payer signature field.
+        let service_encoded = normalize_fee_payer_service_encoding(tx.as_ref());
+        let mut data = service_encoded.as_deref().unwrap_or(tx.as_ref());
+
+        let transaction = FoundryTxEnvelope::decode_2718(&mut data)
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+
+        let FoundryTxEnvelope::Tempo(aa_tx) = transaction else {
+            return Err(RpcError::invalid_params(
+                "only Tempo (0x76) transactions can be fee-payer signed",
+            )
+            .into());
+        };
+
+        let signed = self.sponsor_sign_tempo_transaction(aa_tx).await?;
+        Ok(FoundryTxEnvelope::Tempo(signed).encoded_2718().into())
+    }
+
+    /// Fills the sponsor-owned fields of a sender-signed Tempo AA transaction.
+    ///
+    /// Mirrors the hosted Tempo fee payer service: the node's fee payer account selects the fee
+    /// token when the sender left it open and signs the fee payer digest. Only the fee token and
+    /// fee payer signature are touched, so the sender signature stays valid.
+    async fn sponsor_sign_tempo_transaction(&self, tx: AASigned) -> Result<AASigned> {
+        // The sender must have signed in the sponsored state (fee payer placeholder set): the
+        // sender signature commits to whether a fee payer is present, so sponsoring a
+        // transaction signed without the placeholder would invalidate it.
+        match tx.tx().fee_payer_signature {
+            Some(FEE_PAYER_SIGNATURE_MARKER) => {}
+            Some(_) => {
+                return Err(
+                    RpcError::invalid_params("transaction is already fee-payer signed").into()
+                );
+            }
+            None => {
+                return Err(RpcError::invalid_params(
+                    "transaction does not request sponsorship; sign it with the fee payer \
+                     signature placeholder",
+                )
+                .into());
+            }
+        }
+
+        let sender = tx.recover_signer().map_err(|_| {
+            BlockchainError::RpcError(RpcError::invalid_params(
+                "transaction must be signed by the sender before fee-payer signing",
+            ))
+        })?;
+
+        let Some(sponsor) = self.backend.tempo_fee_payer().await else {
+            return Err(RpcError::invalid_params("no Tempo fee payer account available").into());
+        };
+        if sponsor == sender {
+            return Err(RpcError::invalid_params(format!(
+                "Tempo fee payer {sponsor} must not equal the transaction sender"
+            ))
+            .into());
+        }
+        let signer = self.get_signer(sponsor).ok_or(BlockchainError::NoSignerAvailable)?;
+
+        let (mut tx, sender_signature, _) = tx.into_parts();
+        // The fee payer digest commits to the fee token, so it must be resolved first. The
+        // service encoding omits the sender's fee token preference, letting the sponsor pick the
+        // token it pays with.
+        if tx.fee_token.is_none() {
+            tx.fee_token = Some(self.backend.tempo_user_fee_token(sponsor).await?);
+        }
+        let digest = tx.fee_payer_signature_hash(sender);
+        tx.fee_payer_signature = Some(signer.sign_hash(sponsor, digest).await?);
+
+        Ok(tx.into_signed(sender_signature))
     }
 
     /// Call contract, returning the output data.
@@ -4914,6 +5032,53 @@ fn nonce_markers(
     tempo_parallel_nonce_markers(pending_transaction).unwrap_or_else(|| {
         (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
     })
+}
+
+/// Rewrites the Tempo fee payer service encoding of a raw transaction into the standard envelope
+/// encoding.
+///
+/// Fee payer service clients submit sponsorship requests with a `0x00` placeholder in the fee
+/// payer signature field (and the fee token left empty for the sponsor to fill), which the
+/// standard envelope decoder rejects. The placeholder is rewritten to the standard encoding of
+/// [`FEE_PAYER_SIGNATURE_MARKER`], preserving the sponsored signing state the sender committed
+/// to. Returns the normalized raw transaction when the input carries the placeholder and `None`
+/// for any other encoding.
+fn normalize_fee_payer_service_encoding(raw: &[u8]) -> Option<Vec<u8>> {
+    let (tx_type, mut encoded_fields) = raw.split_first()?;
+    if *tx_type != TEMPO_TX_TYPE_ID {
+        return None;
+    }
+    let PayloadView::List(fields) = Header::decode_raw(&mut encoded_fields).ok()? else {
+        return None;
+    };
+    if !encoded_fields.is_empty() {
+        return None;
+    }
+    // The fee payer signature is the twelfth field of a Tempo AA transaction.
+    if fields.get(11).is_none_or(|field| *field != [0x00]) {
+        return None;
+    }
+
+    // The standard encoding of the marker signature, mirroring the fee payer signature closure of
+    // `TempoTransaction::rlp_encode_fields_default`.
+    let marker = FEE_PAYER_SIGNATURE_MARKER;
+    let mut marker_field = Vec::new();
+    Header { list: true, payload_length: marker.rlp_rs_len() + marker.v().length() }
+        .encode(&mut marker_field);
+    marker.write_rlp_vrs(&mut marker_field, marker.v());
+
+    let mut payload = Vec::new();
+    for (index, field) in fields.into_iter().enumerate() {
+        if index == 11 {
+            payload.extend_from_slice(&marker_field);
+        } else {
+            payload.extend_from_slice(field);
+        }
+    }
+    let mut normalized = vec![TEMPO_TX_TYPE_ID];
+    Header { list: true, payload_length: payload.len() }.encode(&mut normalized);
+    normalized.extend_from_slice(&payload);
+    Some(normalized)
 }
 
 fn txpool_transaction_key(pending_transaction: &PendingTransaction<FoundryTxEnvelope>) -> String {

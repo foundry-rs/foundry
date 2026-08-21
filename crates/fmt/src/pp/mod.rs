@@ -299,10 +299,15 @@ impl Printer {
 
     #[track_caller]
     pub(crate) fn offset(&mut self, offset: isize) {
+        // Verbatim-printed source can leave a string (or a flushed buffer) where a break is
+        // normally expected; there is no break to adjust in that case.
+        if self.buf.is_empty() {
+            return;
+        }
         match &mut self.buf.last_mut().token {
             Token::Break(token) => token.offset += offset,
-            Token::Begin(_) => {}
-            Token::String(_) | Token::End => unreachable!(),
+            Token::Begin(_) | Token::String(_) => {}
+            Token::End => unreachable!(),
         }
     }
 

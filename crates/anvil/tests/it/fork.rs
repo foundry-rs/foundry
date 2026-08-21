@@ -38,7 +38,7 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
     self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_erroring_method_after,
-    spawn_rpc_proxy_rejecting_method_after, spawn_rpc_proxy_rejecting_method_before,
+    spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
 };
 use futures::StreamExt;
 use revm::{
@@ -89,13 +89,19 @@ pub fn fork_config() -> NodeConfig {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_allows_unavailable_anvil_node_info() {
+async fn test_fork_rejects_anvil_node_info_rpc_error() {
     let (_api, origin) =
         spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
     let fork_url =
         spawn_rpc_proxy_erroring_method_after(origin.http_endpoint(), "anvil_nodeInfo", 0).await;
 
-    try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await.unwrap();
+    let result = try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
+    let Err(error) = result else { panic!("expected fork startup to fail") };
+
+    assert!(
+        error.to_string().contains("failed to determine network family from fork endpoint"),
+        "{error}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -138,7 +144,7 @@ async fn test_fork_reset_keeps_node_info_probe_strict_after_identification_durin
 async fn test_fork_retries_when_anvil_node_info_becomes_available() {
     let (_api, origin) = spawn(NodeConfig::test()).await;
     let fork_url =
-        spawn_rpc_proxy_rejecting_method_before(origin.http_endpoint(), "anvil_nodeInfo", 1).await;
+        spawn_rpc_proxy_method_not_found_before(origin.http_endpoint(), "anvil_nodeInfo", 1).await;
 
     try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await.unwrap();
 }
@@ -664,6 +670,7 @@ async fn test_fork_reset_restores_explicit_genesis_base_fee() {
     let (api, handle) = spawn(
         NodeConfig::test()
             .with_no_storage_caching(true)
+            .with_hardfork(Some(EthereumHardfork::default().into()))
             .with_genesis(Some(Genesis { base_fee_per_gas: Some(0), ..Default::default() }))
             .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
             .with_fork_block_number(Some(0u64)),
@@ -1317,7 +1324,7 @@ async fn test_fork_state_snapshotting_repeated() {
     let to_balance = provider.get_balance(to).await.unwrap();
     assert_eq!(balance_before.saturating_add(amount), to_balance);
 
-    let _second_state_snapshot = api.evm_snapshot().await.unwrap();
+    let second_state_snapshot = api.evm_snapshot().await.unwrap();
 
     assert!(api.evm_revert(state_snapshot).await.unwrap());
 
@@ -1329,9 +1336,8 @@ async fn test_fork_state_snapshotting_repeated() {
     assert_eq!(balance, handle.genesis_balance());
     assert_eq!(block_number, provider.get_block_number().await.unwrap());
 
-    // invalidated
-    // TODO enable after <https://github.com/foundry-rs/foundry/pull/6366>
-    // assert!(!api.evm_revert(second_snapshot).await.unwrap());
+    // The newer snapshot was invalidated by reverting to an older snapshot.
+    assert!(!api.evm_revert(second_state_snapshot).await.unwrap());
 
     // nothing is reverted, snapshot gone
     assert!(!api.evm_revert(state_snapshot).await.unwrap());

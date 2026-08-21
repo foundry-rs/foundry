@@ -57,3 +57,30 @@ contract ERC7201Short layout at erc7201("s") is Base { }
 contract ERC7201Mid layout at erc7201("openzeppelin.med") is Base { }
 
 contract ERC7201OverMax layout at erc7201("openzeppelin.storage.exceeds.max") is Base { }
+
+interface IERC721 /* is IERC165 */ {
+    function balanceOf(address owner) external view returns (uint256);
+}
+
+interface IERC721Empty /* is IERC165 */ { }
+
+contract WithBaseAndHeaderComment is Base /* base */ {
+    uint256 x;
+}
+
+contract WithLayoutAndHeaderComment layout at 69 /* layout */ { }
+
+contract WithLayoutAfterBase layout at erc7201("x{y") is Base /* layout */ {
+    uint256 x;
+}
+
+contract MultipleHeaderComments /* one */ /* two */ { }
+
+contract VeryLongContractNameThatForcesTheHeaderToBreak is BaseOne, BaseTwo /* base */ {
+    uint256 x;
+}
+
+contract HeaderCommentOnItsOwnLine {
+    // isolated
+    uint256 x;
+}

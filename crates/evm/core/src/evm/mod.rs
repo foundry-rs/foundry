@@ -1,8 +1,8 @@
 use std::{fmt::Debug, ops::Deref};
 
 use crate::{
-    FoundryBlock, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
-    FromAnyRpcTransaction,
+    FoundryBlock, FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
+    FoundryTransaction, FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
 };
 use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
@@ -22,7 +22,7 @@ use revm::inspector::Inspector;
 use revm::{
     Database,
     context::{
-        JournalTr,
+        ContextTr, JournalTr,
         result::{EVMError, HaltReason, ResultAndState},
     },
     handler::FrameResult,
@@ -30,7 +30,7 @@ use revm::{
     interpreter::{
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, InstructionResult,
     },
-    primitives::{eip3860::MAX_INITCODE_SIZE, hardfork::SpecId},
+    primitives::hardfork::SpecId,
 };
 use serde::{Deserialize, Serialize};
 use tempo_alloy::TempoNetwork;
@@ -111,30 +111,16 @@ pub type TransactionRequestFor<FEN> = <NetworkFor<FEN> as Network>::TransactionR
 pub type TransactionResponseFor<FEN> = <NetworkFor<FEN> as Network>::TransactionResponse;
 pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
 
-pub type ChainContextFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::ChainContext;
-#[cfg(feature = "monad")]
-pub type TransactionStateFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::TransactionState;
+pub type ChainFor<FEN> = <EvmFactoryFor<FEN> as FoundryEvmFactory>::Chain;
 
 /// Boxed nested EVM produced by a Foundry EVM factory.
-#[cfg(feature = "monad")]
 pub type NestedEvmFor<'db, F> = Box<
     dyn NestedEvm<
             Spec = <F as EvmFactory>::Spec,
             Block = <F as EvmFactory>::BlockEnv,
             Tx = <F as EvmFactory>::Tx,
-            ChainContext = <F as FoundryEvmFactory>::ChainContext,
-            TransactionState = <F as FoundryEvmFactory>::TransactionState,
-        > + 'db,
->;
-
-/// Boxed nested EVM produced by a Foundry EVM factory.
-#[cfg(not(feature = "monad"))]
-pub type NestedEvmFor<'db, F> = Box<
-    dyn NestedEvm<
-            Spec = <F as EvmFactory>::Spec,
-            Block = <F as EvmFactory>::BlockEnv,
-            Tx = <F as EvmFactory>::Tx,
-            ChainContext = <F as FoundryEvmFactory>::ChainContext,
+            Chain = <F as FoundryEvmFactory>::Chain,
+            Journal = <<F as FoundryEvmFactory>::FoundryContext<'db> as ContextTr>::Journal,
         > + 'db,
 >;
 
@@ -150,27 +136,16 @@ pub trait FoundryEvmFactory:
     + Default
     + 'static
 {
-    /// Chain context required to execute at an exact transaction position.
-    type ChainContext: Clone + Debug + Default + Send + Sync + 'static;
-
-    #[cfg(feature = "monad")]
-    /// Family-owned state scoped to the active transaction.
-    type TransactionState: Clone + Debug + Default + Send + Sync + 'static;
-
-    /// Additional network-specific cheatcode contract addresses.
-    const EXTRA_CHEATCODE_ADDRESSES: &'static [Address] = &[];
-
-    /// Maximum initcode size enforced during nested transaction execution.
-    const CONTRACT_INITCODE_SIZE_LIMIT: usize = MAX_INITCODE_SIZE;
-
-    /// Whether transaction execution needs metadata from surrounding blocks.
-    const NEEDS_BLOCK_CONTEXT: bool = false;
+    /// Chain type for EVM's context created by this factory.
+    type Chain: FoundryChain<Self::Tx>;
 
     /// Foundry Context abstraction
     type FoundryContext<'db>: FoundryContextExt<
             Block = Self::BlockEnv,
             Tx = Self::Tx,
             Spec = Self::Spec,
+            Chain = Self::Chain,
+            Journal: FoundryJournal,
             Db: DatabaseExt<Self>,
         >
     where
@@ -192,64 +167,15 @@ pub trait FoundryEvmFactory:
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I>;
-
-    /// Builds chain context for a standalone synthetic transaction.
-    fn chain_context_for_transaction(&self, _tx: &Self::Tx) -> Self::ChainContext {
-        Self::ChainContext::default()
-    }
-
-    /// Builds chain context for a transaction at an exact block position.
-    fn chain_context_for_block(
-        &self,
-        _grandparent: &[Self::Tx],
-        _parent: &[Self::Tx],
-        _current: &[Self::Tx],
-        _current_tx_index: usize,
-    ) -> Self::ChainContext {
-        Self::ChainContext::default()
-    }
-
-    /// Captures the active transaction position from a live EVM context.
-    #[cfg(feature = "monad")]
-    fn capture_chain_context(&self, _ecx: &Self::FoundryContext<'_>) -> Self::ChainContext {
-        Self::ChainContext::default()
-    }
-
-    /// Applies a new transaction position and refreshes family-owned state after journal changes.
-    #[cfg(feature = "monad")]
-    fn apply_context_transition<'db>(
-        &self,
-        _ecx: &mut Self::FoundryContext<'db>,
-        _replacement: Option<&Self::ChainContext>,
-    ) {
-    }
-
-    #[cfg(feature = "monad")]
-    /// Captures family-owned state for the active transaction.
-    fn capture_transaction_state(&self, _ecx: &Self::FoundryContext<'_>) -> Self::TransactionState {
-        Self::TransactionState::default()
-    }
-
-    #[cfg(feature = "monad")]
-    /// Restores family-owned state for the active transaction.
-    fn restore_transaction_state(
-        &self,
-        _ecx: &mut Self::FoundryContext<'_>,
-        _state: Self::TransactionState,
-    ) {
-    }
 
     /// Tries to execute a canonical system transaction on a regular Alloy EVM during replay.
     ///
     /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
     /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
     /// fall back to ordinary execution using the same EVM instance.
-    ///
-    /// Implementations that recognize a transaction here must provide equivalent recognition in
-    /// [`Self::try_transact_foundry_system_replay`].
     #[cfg(feature = "monad")]
     fn try_transact_system_replay<DB, I>(
         &self,
@@ -263,32 +189,12 @@ pub trait FoundryEvmFactory:
         Ok(None)
     }
 
-    /// Tries to execute a canonical system transaction on a Foundry-wrapped EVM with an inspector.
-    ///
-    /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
-    /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
-    /// fall back to ordinary execution using the same EVM instance.
-    ///
-    /// Implementations that recognize a transaction here must provide equivalent recognition in
-    /// [`Self::try_transact_system_replay`].
-    #[cfg(feature = "monad")]
-    fn try_transact_foundry_system_replay<
-        'db,
-        I: FoundryInspectorExt<Self::FoundryContext<'db>>,
-    >(
-        &self,
-        _evm: &mut Self::FoundryEvm<'db, I>,
-        _tx: &Self::Tx,
-    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>> {
-        Ok(None)
-    }
-
     /// Creates an uninspected EVM with explicit transaction-position context.
     fn create_evm_with_context<DB: alloy_evm::Database>(
         &self,
         db: DB,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
     ) -> Self::Evm<DB, NoOpInspector>;
 
     /// Creates a Foundry-wrapped EVM with a dynamic inspector, returning a boxed [`NestedEvm`].
@@ -301,7 +207,7 @@ pub trait FoundryEvmFactory:
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::ChainContext,
+        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> NestedEvmFor<'db, Self>;
 }
@@ -318,89 +224,44 @@ pub trait NestedEvm {
     /// The transaction environment type.
     type Tx: FoundryTransaction;
     /// Chain context identifying the active transaction position.
-    type ChainContext: Clone + Debug + Default + Send + Sync + 'static;
-    #[cfg(feature = "monad")]
-    /// Family-owned state scoped to the active transaction.
-    type TransactionState: Clone + Debug + Default + Send + Sync + 'static;
+    type Chain: FoundryChain<Self::Tx>;
+    /// The Journal type, which may own Monad's reserve-balance-tracker state.
+    type Journal: FoundryJournal;
     /// Returns a mutable reference to the journal inner state (`JournaledState`).
     fn journal_inner_mut(&mut self) -> &mut JournaledState;
 
     /// Returns a mutable reference to the transaction environment.
     fn tx_mut(&mut self) -> &mut Self::Tx;
 
-    /// Captures the active transaction position.
-    #[cfg(feature = "monad")]
-    fn capture_chain_context(&self) -> Self::ChainContext {
-        Self::ChainContext::default()
-    }
+    /// Returns a mutable reference to the chain-position context.
+    fn chain_mut(&mut self) -> &mut Self::Chain;
 
-    #[cfg(feature = "monad")]
-    /// Captures family-owned state for the active transaction.
-    fn capture_transaction_state(&self) -> Self::TransactionState {
-        Self::TransactionState::default()
-    }
-
-    #[cfg(feature = "monad")]
-    /// Restores family-owned state for the active transaction.
-    fn restore_transaction_state(&mut self, _state: Self::TransactionState) {}
-
-    #[cfg(feature = "monad")]
-    /// Preserves transaction-scoped state across the next transaction boundary.
-    fn preserve_transaction_state_on_next_transaction(&mut self) {}
+    /// Returns a mutable reference to the Journal.
+    fn journal_mut(&mut self) -> &mut Self::Journal;
 
     /// Runs a single execution frame (create or call) through the EVM handler loop.
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>>;
 
     /// Executes a full transaction with the given tx env.
-    fn transact_raw(
-        &mut self,
-        tx: Self::Tx,
-    ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
-
-    /// Executes a canonical replay transaction.
-    #[cfg(feature = "monad")]
-    fn transact_replay(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>> {
-        self.transact_raw(tx).map_err(Into::into)
-    }
+    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>>;
 
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block>;
 }
 
 /// Closure type used by `CheatcodesExecutor` methods that run nested EVM operations.
-#[cfg(feature = "monad")]
-pub type NestedEvmClosure<'a, Spec, Block, Tx, ChainContext, TransactionState> =
-    &'a mut dyn FnMut(
-        &mut dyn NestedEvm<
-            Spec = Spec,
-            Block = Block,
-            Tx = Tx,
-            ChainContext = ChainContext,
-            TransactionState = TransactionState,
-        >,
-    ) -> Result<(), EVMError<DatabaseError>>;
+pub type NestedEvmClosure<'a, F> = &'a mut dyn for<'j> FnMut(
+    &mut dyn NestedEvm<
+        Spec = <F as EvmFactory>::Spec,
+        Block = <F as EvmFactory>::BlockEnv,
+        Tx = <F as EvmFactory>::Tx,
+        Chain = <F as FoundryEvmFactory>::Chain,
+        Journal = <<F as FoundryEvmFactory>::FoundryContext<'j> as ContextTr>::Journal,
+    >,
+)
+    -> Result<(), EVMError<DatabaseError>>;
 
 /// Nested EVM closure for a Foundry EVM network.
-#[cfg(feature = "monad")]
-pub type NestedEvmClosureFor<'a, FEN> = NestedEvmClosure<
-    'a,
-    SpecFor<FEN>,
-    BlockEnvFor<FEN>,
-    TxEnvFor<FEN>,
-    ChainContextFor<FEN>,
-    TransactionStateFor<FEN>,
->;
-
-/// Closure type used by `CheatcodesExecutor` methods that run nested EVM operations.
-#[cfg(not(feature = "monad"))]
-pub type NestedEvmClosure<'a, Spec, Block, Tx, ChainContext> =
-    &'a mut dyn FnMut(
-        &mut dyn NestedEvm<Spec = Spec, Block = Block, Tx = Tx, ChainContext = ChainContext>,
-    ) -> Result<(), EVMError<DatabaseError>>;
-
-/// Nested EVM closure for a Foundry EVM network.
-#[cfg(not(feature = "monad"))]
-pub type NestedEvmClosureFor<'a, FEN> =
-    NestedEvmClosure<'a, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>, ChainContextFor<FEN>>;
+pub type NestedEvmClosureFor<'a, FEN> = NestedEvmClosure<'a, EvmFactoryFor<FEN>>;
 
 /// Clones the current context (env + journal), passes the database, cloned env,
 /// and cloned journal inner to the callback. The callback builds whatever EVM it
@@ -470,21 +331,5 @@ impl IntoInstructionResult for TempoHaltReason {
             Self::Ethereum(eth) => eth.into(),
             _ => InstructionResult::PrecompileError,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn factories_define_nested_initcode_size_limit() {
-        assert_eq!(EthEvmFactory::CONTRACT_INITCODE_SIZE_LIMIT, MAX_INITCODE_SIZE);
-        assert_eq!(TempoEvmFactory::CONTRACT_INITCODE_SIZE_LIMIT, MAX_INITCODE_SIZE);
-        #[cfg(feature = "monad")]
-        assert_eq!(
-            MonadEvmFactory::CONTRACT_INITCODE_SIZE_LIMIT,
-            monad_revm::MONAD_MAX_INITCODE_SIZE
-        );
     }
 }
