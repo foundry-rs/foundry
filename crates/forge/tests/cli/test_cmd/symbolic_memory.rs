@@ -214,6 +214,44 @@ contract SymbolicMsizeAfterWrite {
     assert!(!stdout.contains("symbolic MSIZE after symbolic memory write"), "{stdout}");
 });
 
+forgetest_init!(symbolic_msize_respects_zero_symbolic_copy_size, |prj, cmd| {
+    skip_unless_z3!("symbolic_msize_respects_zero_symbolic_copy_size");
+
+    prj.add_test(
+        "SymbolicMsizeAfterCopy.t.sol",
+        r#"
+contract SymbolicMsizeAfterCopy {
+    function checkZeroLengthCopy(uint8 n) public pure {
+        uint256 size = uint256(n & 3);
+        uint256 beforeSize;
+        uint256 afterSize;
+        assembly {
+            beforeSize := msize()
+            calldatacopy(0x100, 0, size)
+            afterSize := msize()
+        }
+
+        assert(size != 0 || afterSize != beforeSize);
+    }
+}
+"#,
+    );
+
+    let stdout =
+        assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkZeroLengthCopy"]))
+            .failure()
+            .get_output()
+            .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[FAIL: panic: assertion failed
+"#]],
+    );
+    assert!(!stdout.contains("symbolic counterexample did not replay"), "{stdout}");
+});
+
 forgetest_init!(symbolic_sha3_accepts_symbolic_offset, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

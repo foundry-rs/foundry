@@ -15,7 +15,11 @@ use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
 use clap::Parser;
 #[cfg(feature = "monad")]
 use foundry_evm_hardforks::MonadHardfork;
-use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
+#[cfg(feature = "optimism")]
+use foundry_evm_hardforks::OpHardfork;
+use foundry_evm_hardforks::{
+    EthereumHardfork, FoundryHardfork, TempoHardfork, latest_active_tempo_hardfork,
+};
 #[cfg(not(feature = "monad"))]
 type MonadHardfork = ();
 #[cfg(feature = "monad")]
@@ -36,6 +40,12 @@ use tempo_contracts::precompiles::{
     TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
     VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
 };
+
+/// The Monad cheatcode handler address.
+pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");
+
+#[cfg(feature = "monad")]
+const MONAD_CHEATCODE_ADDRESSES: &[Address] = &[MONAD_CHEATCODE_ADDRESS];
 
 pub mod arbitrum;
 pub mod celo;
@@ -283,6 +293,33 @@ impl NetworkVariant {
         format!("{}:{hardfork}", self.name()).parse()
     }
 
+    /// Returns the active hardfork for this network at the given chain and timestamp.
+    ///
+    /// Unknown chain IDs fall back to the network's default hardfork. The selected network owns
+    /// the lookup so an explicit network choice is not overridden by the chain ID's family.
+    pub fn hardfork_at(self, chain_id: ChainId, timestamp: u64) -> FoundryHardfork {
+        match self {
+            Self::Ethereum => {
+                EthereumHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
+                    .unwrap_or_default()
+                    .into()
+            }
+            Self::Tempo => TempoHardfork::from_chain_and_timestamp(chain_id, timestamp)
+                .unwrap_or_else(latest_active_tempo_hardfork)
+                .into(),
+            #[cfg(feature = "optimism")]
+            Self::Optimism => {
+                OpHardfork::from_chain_and_timestamp(Chain::from_id(chain_id), timestamp)
+                    .unwrap_or_default()
+                    .into()
+            }
+            #[cfg(feature = "monad")]
+            Self::Monad => MonadHardfork::from_chain_and_timestamp(chain_id, timestamp)
+                .unwrap_or_default()
+                .into(),
+        }
+    }
+
     /// Returns `true` if this is the Ethereum network variant.
     pub const fn is_ethereum(&self) -> bool {
         matches!(self, Self::Ethereum)
@@ -473,6 +510,15 @@ impl NetworkConfigs {
     #[cfg(not(feature = "monad"))]
     pub const fn is_monad(&self) -> bool {
         false
+    }
+
+    /// Returns additional cheatcode contract addresses for the active network.
+    pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
+        #[cfg(feature = "monad")]
+        if self.is_monad() {
+            return MONAD_CHEATCODE_ADDRESSES;
+        }
+        &[]
     }
 
     pub const fn is_celo(&self) -> bool {
@@ -1468,6 +1514,7 @@ mod tests {
         let cfg = NetworkConfigs::with_monad();
         assert_eq!(cfg.active_network_name(), Some("monad"));
         assert!(cfg.is_monad());
+        assert_eq!(cfg.extra_cheatcode_addresses(), &[MONAD_CHEATCODE_ADDRESS]);
     }
 
     #[test]
@@ -1481,7 +1528,9 @@ mod tests {
 
     #[test]
     fn active_network_name_default_is_none() {
-        assert_eq!(NetworkConfigs::default().active_network_name(), None);
+        let cfg = NetworkConfigs::default();
+        assert_eq!(cfg.active_network_name(), None);
+        assert!(cfg.extra_cheatcode_addresses().is_empty());
     }
 
     // --- Serde round-trip ---

@@ -1,7 +1,7 @@
 use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
     compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
-    fmt::FmtArgs, fuzz::FuzzArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
+    fmt::FmtArgs, fuzz::FuzzArgs, geiger, init::InitArgs, inspect, install::InstallArgs,
     lint::LintArgs, lsp::LspArgs, remappings::RemappingArgs, remove::RemoveArgs,
     selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
 };
@@ -222,10 +222,6 @@ pub enum ForgeSubcommand {
         #[command(subcommand)]
         command: SelectorsSubcommands,
     },
-
-    /// Generate scaffold files.
-    #[command(hide = true)]
-    Generate(generate::GenerateArgs),
 
     /// Compiler utilities.
     Compiler(CompilerArgs),

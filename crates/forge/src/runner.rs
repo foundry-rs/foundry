@@ -38,7 +38,7 @@ use foundry_config::{
     Config, FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig, InlineConfig, InvariantConfig,
 };
 use foundry_evm::{
-    constants::{CALLER, CHEATCODE_ADDRESS, MAGIC_ASSUME},
+    constants::{CALLER, MAGIC_ASSUME},
     core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
     decode::{RevertDecoder, SkipReason},
     executors::{
@@ -90,10 +90,6 @@ use std::{
 use tokio::signal;
 use tracing::Span;
 
-fn should_symbolically_seed_fuzz_corpus(config: &Config, func: &Function) -> bool {
-    config.symbolic.seed_corpus && func.test_function_kind().is_fuzz_test()
-}
-
 fn should_symbolically_import_fuzz_corpus(config: &Config, func: &Function) -> bool {
     config.symbolic.use_fuzz_corpus && func.test_function_kind().is_fuzz_test()
 }
@@ -108,10 +104,6 @@ pub(crate) fn effective_test_function_kind(
     } else {
         kind
     }
-}
-
-fn should_symbolically_use_fuzz_frontiers(config: &Config, func: &Function) -> bool {
-    config.symbolic.use_fuzz_frontiers && func.test_function_kind().is_fuzz_test()
 }
 
 fn symbolic_invariant_unsupported_domain_reason(
@@ -184,13 +176,6 @@ const fn symbolic_invariant_failure_site(
     }
 }
 
-fn symbolic_invariant_failure_site_matches(
-    expected: SymbolicInvariantFailureSite,
-    actual: Option<CheckSequenceFailureSite>,
-) -> bool {
-    actual.is_some_and(|actual| symbolic_invariant_failure_site(actual) == expected)
-}
-
 fn symbolic_artifact_predicate_failure_matches(
     failure: Option<&SymbolicInvariantArtifactFailure>,
     outcome: &CheckSequenceOutcome,
@@ -199,7 +184,7 @@ fn symbolic_artifact_predicate_failure_matches(
     else {
         return false;
     };
-    symbolic_invariant_failure_site_matches(*expected, outcome.failure_site)
+    outcome.failure_site.is_some_and(|actual| symbolic_invariant_failure_site(actual) == *expected)
 }
 
 const FUZZ_BRANCH_FRONTIER_SCHEMA: &str = "foundry:fuzz.branch-frontiers@v1";
@@ -1549,32 +1534,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         kind: SymbolicCounterexampleArtifactKind,
         calls: Vec<SymbolicCounterexampleCall>,
     ) -> Option<SymbolicArtifactRef> {
-        self.persist_symbolic_counterexample_artifact_with_replay_semantics(
+        self.persist_symbolic_counterexample_artifact_with_replay_metadata(
             test_name,
             artifact_file_name,
             symbolic,
             SymbolicCounterexampleReplaySemantics {
                 fail_on_revert: self.config.invariant.fail_on_revert,
             },
-            kind,
-            calls,
-        )
-    }
-
-    fn persist_symbolic_counterexample_artifact_with_replay_semantics(
-        &self,
-        test_name: &str,
-        artifact_file_name: &str,
-        symbolic: &SymbolicResult,
-        replay_semantics: SymbolicCounterexampleReplaySemantics,
-        kind: SymbolicCounterexampleArtifactKind,
-        calls: Vec<SymbolicCounterexampleCall>,
-    ) -> Option<SymbolicArtifactRef> {
-        self.persist_symbolic_counterexample_artifact_with_replay_metadata(
-            test_name,
-            artifact_file_name,
-            symbolic,
-            replay_semantics,
             kind,
             calls,
             &[],
@@ -1701,14 +1667,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         )
     }
 
-    fn symbolic_single_call_preserves_failure(
-        &self,
-        call: &SymbolicCounterexampleCall,
-        expected_reason: Option<&str>,
-    ) -> bool {
-        self.replay_confirmed_symbolic_single_call(call, expected_reason).is_ok()
-    }
-
     fn replay_confirmed_symbolic_single_call(
         &self,
         call: &SymbolicCounterexampleCall,
@@ -1746,9 +1704,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self,
         raw_call_result: &RawCallResult<FEN>,
     ) -> Result<Option<String>, String> {
-        if raw_call_result.reverter == Some(CHEATCODE_ADDRESS)
-            && let Some(reason) = SkipReason::decode(&raw_call_result.result)
-        {
+        if let Some(reason) = raw_call_result.skip_reason() {
             return Err(format!("vm.skip during concrete replay: {reason}"));
         }
 
@@ -2736,10 +2692,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &original_call,
                             self.tcfg.config.invariant.shrink_run_limit as usize,
                             |candidate| {
-                                self.symbolic_single_call_preserves_failure(
+                                self.replay_confirmed_symbolic_single_call(
                                     candidate,
                                     final_reason.as_deref(),
                                 )
+                                .is_ok()
                             },
                         )
                     {
@@ -3186,7 +3143,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     }
 
     fn try_seed_fuzz_corpus_from_frontiers(&self, func: &Function, fuzz_config: &FuzzConfig) {
-        if !should_symbolically_use_fuzz_frontiers(&self.config, func) {
+        if !self.config.symbolic.use_fuzz_frontiers || !func.test_function_kind().is_fuzz_test() {
             return;
         }
         if fuzz_config.corpus.corpus_dir.is_none() {
@@ -3285,7 +3242,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     }
 
     fn try_seed_fuzz_corpus_symbolically(&self, func: &Function, fuzz_config: &FuzzConfig) {
-        if !should_symbolically_seed_fuzz_corpus(&self.config, func) {
+        if !self.config.symbolic.seed_corpus || !func.test_function_kind().is_fuzz_test() {
             return;
         }
         if fuzz_config.corpus.corpus_dir.is_none() {
@@ -3376,10 +3333,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return SymbolicFuzzSeedReplay::Rejected;
         }
 
-        let success = should_ignore_revert::<FEN>(
+        let success = should_ignore_revert(
             fuzz_config.fail_on_revert,
             self.address,
             raw_call_result.reverter,
+            self.executor.inspector().networks.extra_cheatcode_addresses(),
         ) || self.executor.is_raw_call_success(
             self.address,
             Cow::Borrowed(&raw_call_result.state_changeset),

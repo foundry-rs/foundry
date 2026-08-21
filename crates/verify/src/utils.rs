@@ -29,8 +29,8 @@ use foundry_evm::{
         FoundryBlock as _,
         decode::RevertDecoder,
         evm::{
-            BlockContext, BlockEnvFor, BlockResponseFor, ChainContextFor, EvmEnvFor,
-            FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor,
+            BlockContext, BlockEnvFor, BlockResponseFor, ChainFor, EvmEnvFor, FoundryEvmFactory,
+            FoundryEvmNetwork, TxEnvFor,
         },
     },
     executors::TracingExecutor,
@@ -226,12 +226,13 @@ fn find_mismatch_in_settings(
         );
         mismatches.push(str);
     }
-    if local_settings.optimizer_runs.is_some_and(|runs| etherscan_settings.runs != runs as u64)
-        || (local_settings.optimizer_runs.is_none() && etherscan_settings.runs > 0)
+    // The only caller reaches this with a `Config` from `load_config`, which has run
+    // `normalize_optimizer_settings`, so `optimizer_runs` is always set by now.
+    if let Some(local_runs) = local_settings.optimizer_runs
+        && etherscan_settings.runs != local_runs as u64
     {
         let str = format!(
-            "Optimizer runs mismatch: local={}, onchain={}",
-            local_settings.optimizer_runs.map_or("unknown".to_string(), |runs| runs.to_string()),
+            "Optimizer runs mismatch: local={local_runs}, onchain={}",
             etherscan_settings.runs
         );
         mismatches.push(str);
@@ -406,7 +407,7 @@ pub fn deploy_contract<FEN>(
     evm_env: &EvmEnvFor<FEN>,
     tx_env: &TxEnvFor<FEN>,
     to: TxKind,
-    chain_context: ChainContextFor<FEN>,
+    chain_context: ChainFor<FEN>,
 ) -> Result<Address, eyre::ErrReport>
 where
     FEN: FoundryEvmNetwork,
@@ -465,7 +466,7 @@ where
 pub fn synthetic_deployment_context<FEN>(
     block_context: Option<&BlockContext<FEN>>,
     tx_env: &TxEnvFor<FEN>,
-) -> ChainContextFor<FEN>
+) -> ChainFor<FEN>
 where
     FEN: FoundryEvmNetwork,
 {

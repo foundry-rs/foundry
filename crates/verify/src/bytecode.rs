@@ -41,7 +41,7 @@ use foundry_evm::{
     core::{
         FoundryTransaction as _,
         evm::{
-            BlockContext, ChainContextFor, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork,
+            BlockContext, ChainFor, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork,
             TempoEvmNetwork, TxEnvFor,
         },
     },
@@ -531,7 +531,7 @@ impl VerifyBytecodeArgs {
 
             let kind = TxKind::Create;
             let block_context =
-                if !maybe_predeploy && deploy_block != 0 && FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+                if !maybe_predeploy && deploy_block != 0 && config.networks.is_monad() {
                     let block = deploy_block_info.as_ref().ok_or_else(|| {
                         eyre::eyre!(
                             "block {deploy_block} is required to reconstruct deployment context"
@@ -785,12 +785,12 @@ impl VerifyBytecodeArgs {
 
             apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain.id());
             let factory = FEN::EvmFactory::default();
-            let mut target_context = None::<ChainContextFor<FEN>>;
+            let mut target_context = None::<ChainFor<FEN>>;
             if let Some(ref block) = block {
                 let BlockTransactions::Full(txs) = block.transactions() else {
                     return Err(eyre::eyre!("Could not get block txs"));
                 };
-                let block_context = if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+                let block_context = if config.networks.is_monad() {
                     Some(BlockContext::<FEN>::fetch(&provider, block).await?)
                 } else {
                     None
@@ -876,7 +876,7 @@ impl VerifyBytecodeArgs {
                         }
                     }
                 }
-            } else if FEN::EvmFactory::NEEDS_BLOCK_CONTEXT {
+            } else if config.networks.is_monad() {
                 eyre::bail!(
                     "block {simulation_block} is required to reconstruct transaction context"
                 );

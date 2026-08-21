@@ -1,5 +1,5 @@
 use crate::{
-    EthereumHardfork, FeeManager, PrecompileFactory,
+    FeeManager, PrecompileFactory,
     eth::{
         backend::{
             db::{Db, SerializableState},
@@ -48,7 +48,6 @@ use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     hardfork::FoundryHardfork,
-    hardforks::latest_active_tempo_hardfork,
     utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
 use parking_lot::RwLock;
@@ -271,6 +270,10 @@ pub struct NodeConfig {
     pub precompile_factory: Option<Arc<dyn PrecompileFactory>>,
     /// Networks to enable features for.
     pub networks: NetworkConfigs,
+    /// The account used to sponsor Tempo fee-payer requests.
+    ///
+    /// Must be an unlocked signer account. Defaults to the last dev account on Tempo networks.
+    pub tempo_fee_payer: Option<Address>,
     /// Do not print log messages.
     pub silent: bool,
     /// The path where persisted states are cached (used with `max_persisted_states`).
@@ -326,6 +329,18 @@ Derivation path:   {}
 "#,
                 generator.phrase,
                 generator.get_derivation_path()
+            );
+        }
+
+        if let Some(fee_payer) = self.tempo_fee_payer_address() {
+            let _ = write!(
+                s,
+                r#"
+
+Tempo Fee Payer
+==================
+{fee_payer}
+"#
             );
         }
 
@@ -598,6 +613,7 @@ impl Default for NodeConfig {
             memory_limit: None,
             precompile_factory: None,
             networks: Default::default(),
+            tempo_fee_payer: None,
             silent: false,
             cache_path: None,
             funded_accounts: HashMap::default(),
@@ -679,35 +695,9 @@ impl NodeConfig {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
-        if self.networks.is_tempo()
-            && let Some(hardfork) = TempoHardfork::from_chain_and_timestamp(
-                self.protocol_chain_id(),
-                self.get_genesis_timestamp(),
-            )
-        {
-            return hardfork.into();
-        }
-        #[cfg(feature = "monad")]
-        if self.networks.is_monad()
-            && let Some(hardfork) = MonadHardfork::from_chain_and_timestamp(
-                self.protocol_chain_id(),
-                self.get_genesis_timestamp(),
-            )
-        {
-            return hardfork.into();
-        }
-        #[cfg(feature = "optimism")]
-        if self.networks.is_optimism() {
-            return foundry_evm::hardforks::OpHardfork::default().into();
-        }
-        if self.networks.is_tempo() {
-            return latest_active_tempo_hardfork().into();
-        }
-        #[cfg(feature = "monad")]
-        if self.networks.is_monad() {
-            return MonadHardfork::default().into();
-        }
-        EthereumHardfork::default().into()
+        self.networks
+            .execution_network()
+            .hardfork_at(self.protocol_chain_id(), self.get_genesis_timestamp())
     }
 
     /// Sets a custom code size limit
@@ -1234,6 +1224,25 @@ impl NodeConfig {
         self.inferred_fork_network = None;
         self.chain_id_network_base = None;
         self
+    }
+
+    /// Sets the account used to sponsor Tempo fee-payer requests.
+    #[must_use]
+    pub const fn with_tempo_fee_payer(mut self, fee_payer: Option<Address>) -> Self {
+        self.tempo_fee_payer = fee_payer;
+        self
+    }
+
+    /// Returns the effective account used to sponsor Tempo fee-payer requests.
+    ///
+    /// Defaults to the last dev account so it rarely collides with the sender accounts commonly
+    /// used in tests, mirroring the dedicated sponsor account of hosted fee payer services.
+    /// Returns `None` on non-Tempo networks.
+    pub fn tempo_fee_payer_address(&self) -> Option<Address> {
+        if !self.networks.is_tempo() {
+            return None;
+        }
+        self.tempo_fee_payer.or_else(|| self.genesis_accounts.last().map(|wallet| wallet.address()))
     }
 
     /// Enable Monad network features.
@@ -2421,6 +2430,10 @@ async fn find_latest_fork_block<P: Provider<AnyNetwork>>(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "optimism")]
+    use foundry_evm::hardfork::OpHardfork;
+    use foundry_evm::{hardfork::EthereumHardfork, hardforks::latest_active_tempo_hardfork};
+
     use super::*;
 
     #[test]
@@ -2595,6 +2608,28 @@ mod tests {
 
         assert!(config.networks.is_tempo());
         assert!(matches!(config.get_hardfork(), FoundryHardfork::Tempo(_)));
+    }
+
+    #[test]
+    fn get_hardfork_on_ethereum_uses_genesis_timestamp() {
+        let timestamp = EthereumHardfork::Shanghai.mainnet_activation_timestamp().unwrap();
+        let config =
+            NodeConfig::test().with_chain_id(Some(1u64)).with_genesis_timestamp(Some(timestamp));
+
+        assert_eq!(config.get_hardfork(), FoundryHardfork::Ethereum(EthereumHardfork::Shanghai));
+    }
+
+    #[test]
+    #[cfg(feature = "optimism")]
+    fn get_hardfork_on_optimism_uses_genesis_timestamp() {
+        // OP Mainnet Canyon activation timestamp.
+        let timestamp = 1_704_992_401u64;
+        let config = NodeConfig::test()
+            .with_optimism()
+            .with_chain_id(Some(10u64))
+            .with_genesis_timestamp(Some(timestamp));
+
+        assert_eq!(config.get_hardfork(), FoundryHardfork::Optimism(OpHardfork::Canyon));
     }
 
     #[test]

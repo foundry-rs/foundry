@@ -1,14 +1,16 @@
 //! A wrapper around `Backend` that is clone-on-write used for fuzzing.
 
 use super::BackendError;
+#[cfg(feature = "monad")]
+use crate::evm::protocol_system_call;
 use crate::{
     FoundryInspectorExt,
     backend::{
-        Backend, ContextUpdate, DatabaseExt, JournaledState, LocalForkId,
+        Backend, ContextUpdateFor, DatabaseExt, JournaledState, LocalForkId,
         RevertStateSnapshotAction, diagnostic::RevertDiagnostic,
     },
     evm::{
-        ChainContextFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
+        ChainFor, EvmEnvFor, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
         HaltReasonFor, SpecFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId},
@@ -22,7 +24,7 @@ use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     context::{ContextTr, Transaction},
-    context_interface::result::ResultAndState,
+    context_interface::result::{HaltReason, ResultAndState},
     database::DatabaseRef,
     primitives::AddressMap,
     state::{Account, AccountInfo, EvmState},
@@ -97,7 +99,7 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         &mut self,
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
         inspector: I,
     ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
         // this is a new call to inspect with a new env, so even if we've cloned the backend
@@ -129,26 +131,27 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         &mut self,
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
-        chain_context: ChainContextFor<FEN>,
+        chain_context: ChainFor<FEN>,
         inspector: I,
-    ) -> eyre::Result<Option<ResultAndState<HaltReasonFor<FEN>>>> {
+    ) -> eyre::Result<Option<ResultAndState<HaltReason>>> {
+        if !self.backend.networks().is_monad() || protocol_system_call(tx_env)?.is_none() {
+            return Ok(None);
+        }
+
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
         let factory = FEN::EvmFactory::default();
-        let mut evm = factory.create_foundry_evm_with_inspector(
-            self,
-            evm_env.clone(),
-            chain_context,
-            inspector,
-        );
-        let result = factory.try_transact_foundry_system_replay(&mut evm, tx_env)?;
+        let mut inspector = inspector;
+        let mut evm =
+            factory.create_foundry_nested_evm(self, evm_env.clone(), chain_context, &mut inspector);
+        let result = evm.transact_raw(tx_env.clone())?;
 
         // A successful specialized replay replaces the EVM transaction with its synthetic system
         // call. Keep the canonical envelope in `tx_env`; ordinary execution uses
         // `inspect_with_context` above and copies inspector mutations back normally.
-        *evm_env = evm.finish().1;
+        *evm_env = evm.to_evm_env();
 
-        Ok(result)
+        Ok(Some(result))
     }
 
     /// Returns whether there was a state snapshot failure in the backend.
@@ -183,7 +186,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
     fn chain_context_for_synthetic_transaction(
         &self,
         tx: &TxEnvFor<FEN>,
-    ) -> eyre::Result<ChainContextFor<FEN>> {
+    ) -> eyre::Result<ChainFor<FEN>> {
         self.backend.chain_context_for_synthetic_transaction(tx)
     }
 
@@ -238,7 +241,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         self.backend_mut().select_fork(id, evm_env, tx_env, journaled_state)
     }
 
@@ -249,7 +252,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &TxEnvFor<FEN>,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         self.backend_mut().roll_fork(id, block_number, evm_env, tx_env, journaled_state)
     }
 
@@ -260,7 +263,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &TxEnvFor<FEN>,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         self.backend_mut().roll_fork_to_transaction(
             id,
             transaction,
@@ -280,7 +283,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         inspector: &mut dyn for<'db> FoundryInspectorExt<
             <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
         >,
-    ) -> eyre::Result<ContextUpdate<ChainContextFor<FEN>>> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         self.backend_mut().transact(
             id,
             transaction,

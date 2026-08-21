@@ -778,6 +778,278 @@ casttest!(mktx_rejects_remote_sponsor_instead_of_ignoring_it, |_prj, cmd| {
     assert!(stderr.contains("--sponsor-url is not supported by cast mktx"), "{stderr}");
 });
 
+casttest!(send_with_presigned_sponsor_signature_keeps_digest_stable, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let sender = accounts[0];
+    let sponsor = accounts[1];
+    let filler = accounts[2];
+    let recipient = accounts[3];
+    let sender_wallet = handle.dev_wallets().next().unwrap();
+    assert_eq!(sender_wallet.address(), sender);
+    let sender_pk = format!("0x{}", hex::encode(sender_wallet.credential().to_bytes()));
+    let sponsor_wallet = handle.dev_wallets().nth(1).unwrap();
+    assert_eq!(sponsor_wallet.address(), sponsor);
+    let sponsor_pk = format!("0x{}", hex::encode(sponsor_wallet.credential().to_bytes()));
+    let token = PATH_USD_ADDRESS.to_string();
+    let recipient_arg = recipient.to_string();
+    let sponsor_arg = sponsor.to_string();
+
+    // The sponsor digest commits to the full transaction, so nonce, gas limit and fees must be
+    // pinned for `cast mktx` and `cast send` to build the identical transaction. The gas limit
+    // must cover actual usage: a Tempo transaction that runs out of gas during AA validation is
+    // dropped without a receipt.
+    let nonce = provider.get_transaction_count(sender).await.unwrap().to_string();
+    let pinned = [
+        "--nonce",
+        nonce.as_str(),
+        "--gas-limit",
+        "1000000",
+        "--gas-price",
+        "40gwei",
+        "--priority-gas-price",
+        "1gwei",
+    ];
+
+    let mut mktx_args = vec![
+        "mktx",
+        &token,
+        "transfer(address,uint256)",
+        &recipient_arg,
+        "1",
+        "--private-key",
+        &sender_pk,
+        "--rpc-url",
+        &rpc,
+        "--tempo.print-sponsor-hash",
+    ];
+    mktx_args.extend(pinned);
+    let hash = cmd
+        .cast_fuse()
+        .args(&mktx_args)
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+    assert!(hash.starts_with("0x") && hash.len() == 66, "unexpected sponsor hash: {hash}");
+
+    let sig = cmd
+        .cast_fuse()
+        .args(["wallet", "sign", "--private-key", &sponsor_pk, "--no-hash", &hash])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    // Mine an unrelated transaction between hash generation and send; the pinned fields must
+    // keep the digest stable across the chain-state change.
+    let tip20 = ITIP20::new(PATH_USD_ADDRESS, &provider);
+    let filler_tx = TransactionRequest::default()
+        .from(filler)
+        .to(PATH_USD_ADDRESS)
+        .with_input(tip20.transfer(recipient, U256::from(5u64)).calldata().clone())
+        .with_gas_limit(10_000_000);
+    let filler_receipt = provider
+        .send_transaction(WithOtherFields::new(filler_tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(filler_receipt.status(), "filler transfer should succeed");
+
+    let mut send_args = vec![
+        "send",
+        &token,
+        "transfer(address,uint256)",
+        &recipient_arg,
+        "1",
+        "--private-key",
+        &sender_pk,
+        "--rpc-url",
+        &rpc,
+        "--tempo.sponsor",
+        &sponsor_arg,
+        "--tempo.sponsor-signature",
+        &sig,
+        "--json",
+    ];
+    send_args.extend(pinned);
+    let send_assert = cmd.cast_fuse().args(&send_args).assert_success();
+    let output = send_assert.get_output();
+
+    let stderr = output.stderr_lossy();
+    assert!(
+        stderr.to_lowercase().contains(&format!("tempo sponsor digest: {}", hash.to_lowercase())),
+        "sponsor digest drifted from the pre-signed hash {hash}:\n{stderr}"
+    );
+
+    let receipt: serde_json::Value =
+        serde_json::from_str(output.stdout_lossy().trim()).expect("receipt should be JSON");
+    assert_eq!(receipt["status"], "0x1", "unexpected receipt: {receipt}");
+    let fee_payer: Address =
+        receipt["feePayer"].as_str().expect("receipt has feePayer").parse().unwrap();
+    assert_eq!(fee_payer, sponsor, "receipt fee payer should be the sponsor");
+});
+
+casttest!(send_with_presigned_sponsor_signature_rejects_stale_digest, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let sender = accounts[0];
+    let sponsor = accounts[1];
+    let recipient = accounts[2];
+    let sender_wallet = handle.dev_wallets().next().unwrap();
+    assert_eq!(sender_wallet.address(), sender);
+    let sender_pk = format!("0x{}", hex::encode(sender_wallet.credential().to_bytes()));
+    let sponsor_wallet = handle.dev_wallets().nth(1).unwrap();
+    assert_eq!(sponsor_wallet.address(), sponsor);
+    let sponsor_pk = format!("0x{}", hex::encode(sponsor_wallet.credential().to_bytes()));
+    let token = PATH_USD_ADDRESS.to_string();
+    let recipient_arg = recipient.to_string();
+    let sponsor_arg = sponsor.to_string();
+
+    // Without pinned fields, both commands fill nonce and fees from live chain state.
+    let hash = cmd
+        .cast_fuse()
+        .args([
+            "mktx",
+            &token,
+            "transfer(address,uint256)",
+            &recipient_arg,
+            "1",
+            "--private-key",
+            &sender_pk,
+            "--rpc-url",
+            &rpc,
+            "--tempo.print-sponsor-hash",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    let sig = cmd
+        .cast_fuse()
+        .args(["wallet", "sign", "--private-key", &sponsor_pk, "--no-hash", &hash])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    // Consume the sender nonce so the refilled transaction no longer matches the signed digest.
+    let tip20 = ITIP20::new(PATH_USD_ADDRESS, &provider);
+    let bump_tx = TransactionRequest::default()
+        .from(sender)
+        .to(PATH_USD_ADDRESS)
+        .with_input(tip20.transfer(recipient, U256::from(1u64)).calldata().clone())
+        .with_gas_limit(10_000_000);
+    let bump_receipt = provider
+        .send_transaction(WithOtherFields::new(bump_tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(bump_receipt.status(), "nonce bump transfer should succeed");
+
+    let stderr = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            &token,
+            "transfer(address,uint256)",
+            &recipient_arg,
+            "1",
+            "--private-key",
+            &sender_pk,
+            "--rpc-url",
+            &rpc,
+            "--tempo.sponsor",
+            &sponsor_arg,
+            "--tempo.sponsor-signature",
+            &sig,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(stderr.contains("Tempo sponsor signature recovered"), "{stderr}");
+    assert!(stderr.contains("--tempo.print-sponsor-hash"), "{stderr}");
+});
+
+casttest!(send_with_sponsor_url_uses_anvil_builtin_fee_payer, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let sender = accounts[0];
+    let sponsor = *accounts.last().unwrap();
+    let recipient = accounts[3];
+    let sender_wallet = handle.dev_wallets().next().unwrap();
+    assert_eq!(sender_wallet.address(), sender);
+    let sender_pk = format!("0x{}", hex::encode(sender_wallet.credential().to_bytes()));
+    let token = PATH_USD_ADDRESS.to_string();
+    let recipient_arg = recipient.to_string();
+    let amount = U256::from(1000u64);
+
+    let tip20 = ITIP20::new(PATH_USD_ADDRESS, &provider);
+    let sender_before = tip20.balanceOf(sender).call().await.unwrap();
+    let sponsor_before = tip20.balanceOf(sponsor).call().await.unwrap();
+
+    // No local sponsor key or address: anvil's built-in fee payer signs the sponsorship request
+    // via `eth_signRawTransaction`, so the sponsor URL is simply the node itself.
+    let stdout = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            &token,
+            "transfer(address,uint256)",
+            &recipient_arg,
+            "1000",
+            "--private-key",
+            &sender_pk,
+            "--rpc-url",
+            &rpc,
+            "--sponsor-url",
+            &rpc,
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let receipt: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("receipt should be JSON");
+    assert_eq!(receipt["status"], "0x1", "unexpected receipt: {receipt}");
+    assert_eq!(
+        receipt["feePayer"],
+        serde_json::to_value(sponsor).unwrap(),
+        "fee payer should be anvil's default sponsor (last dev account): {receipt}"
+    );
+    assert_eq!(
+        receipt["feeToken"],
+        serde_json::to_value(PATH_USD_ADDRESS).unwrap(),
+        "sponsor pays with its stored fee token: {receipt}"
+    );
+
+    let sender_after = tip20.balanceOf(sender).call().await.unwrap();
+    let sponsor_after = tip20.balanceOf(sponsor).call().await.unwrap();
+    assert_eq!(
+        sender_after,
+        sender_before - amount,
+        "sender must only pay the transfer amount, fees are sponsored"
+    );
+    assert!(sponsor_after < sponsor_before, "sponsor must pay the transaction fee");
+});
+
 casttest!(tip20_logo_check_accepts_valid_values, |_prj, cmd| {
     for uri in ["", "https://example.com/logo.png", "HTTP://example.com/logo.png", "ipfs://token"] {
         cmd.cast_fuse().args(["tip20", "logo-check", uri]).assert_success();

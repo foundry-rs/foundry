@@ -8,7 +8,10 @@ use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256};
 #[cfg(feature = "monad")]
-use monad_revm::{MonadCfgEnv, MonadChainContext, MonadJournal};
+use monad_revm::{
+    MonadCfgEnv, MonadChainContext, MonadJournal, MonadJournalTr,
+    reserve_balance::tracker::ReserveBalanceTracker,
+};
 #[cfg(feature = "optimism")]
 use op_revm::transaction::deposit::DEPOSIT_TRANSACTION_TYPE;
 use revm::{
@@ -414,6 +417,62 @@ impl FoundryTransaction for TempoTxEnv {
     }
 }
 
+/// Foundry extension for chain context type
+///
+/// Every family that doesn't need chain metadata uses `()`.
+pub trait FoundryChain: Clone + Debug + Default + Send + Sync {
+    /// Refreshes journal state derived from the active chain position.
+    fn refresh_journal<J: FoundryJournal>(&self, _journal: &mut J) {}
+}
+
+impl FoundryChain for () {}
+
+/// Foundry extension for Journal type
+pub trait FoundryJournal: JournalExt {
+    /// Captures Monad's reserve-balance tracker for the active transaction.
+    #[cfg(feature = "monad")]
+    fn capture_reserve_balance(&self) -> ReserveBalanceTracker {
+        ReserveBalanceTracker::default()
+    }
+
+    /// Restores Monad's reserve-balance tracker for the active transaction.
+    #[cfg(feature = "monad")]
+    fn restore_reserve_balance(&mut self, _tracker: ReserveBalanceTracker) {}
+
+    /// Whether transaction boundaries currently preserve the reserve-balance tracker, e.g. for
+    /// an isolated call that models an inner call of the enclosing transaction rather than a
+    /// new one.
+    #[cfg(feature = "monad")]
+    fn preserves_reserve_balance(&self) -> bool {
+        false
+    }
+
+    /// Sets whether transaction boundaries preserve the reserve-balance tracker.
+    #[cfg(feature = "monad")]
+    fn set_preserve_reserve_balance(&mut self, _preserve: bool) {}
+}
+
+impl<DB: Database> FoundryJournal for Journal<DB> {}
+
+#[cfg(feature = "monad")]
+impl<DB: Database> FoundryJournal for MonadJournal<DB> {
+    fn capture_reserve_balance(&self) -> ReserveBalanceTracker {
+        self.reserve_balance().clone()
+    }
+
+    fn restore_reserve_balance(&mut self, tracker: ReserveBalanceTracker) {
+        *self.reserve_balance_mut() = tracker;
+    }
+
+    fn preserves_reserve_balance(&self) -> bool {
+        self.preserves_reserve_balance_tracker()
+    }
+
+    fn set_preserve_reserve_balance(&mut self, preserve: bool) {
+        self.set_preserve_reserve_balance_tracker(preserve);
+    }
+}
+
 /// Extension trait providing mutable field access to block, tx, and cfg environments.
 ///
 /// [`ContextTr`] only exposes immutable references for block, tx, and cfg.
@@ -423,7 +482,8 @@ pub trait FoundryContextExt:
         Block: FoundryBlock + Clone,
         Tx: FoundryTransaction + Clone,
         Cfg: Cfg<Spec = Self::Spec> + Clone + From<CfgEnv<Self::Spec>> + Into<CfgEnv<Self::Spec>>,
-        Journal: JournalExt,
+        Journal: FoundryJournal,
+        Chain: FoundryChain,
     >
 {
     /// Specification id type
@@ -494,12 +554,18 @@ pub trait FoundryContextExt:
     }
 }
 
+/// Refreshes journal state derived from a context's active chain position.
+pub fn refresh_chain_journal<CTX: FoundryContextExt>(context: &mut CTX) {
+    let chain = context.chain().clone();
+    chain.refresh_journal(context.journal_mut());
+}
+
 impl<
     BLOCK: FoundryBlock + Clone,
     TX: FoundryTransaction + Clone,
     SPEC: Into<SpecId> + Copy + Debug,
     DB: Database,
-    C,
+    C: FoundryChain,
 > FoundryContextExt for Context<BLOCK, TX, CfgEnv<SPEC>, DB, Journal<DB>, C>
 {
     type Spec = <Self::Cfg as Cfg>::Spec;
