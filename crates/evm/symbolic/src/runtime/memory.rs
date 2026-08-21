@@ -227,7 +227,6 @@ impl SymMemory {
         if let Some(offset) = offset.as_const() {
             let Ok(offset) = usize::try_from(offset) else { return Ok(SymExpr::zero(cx)) };
             let size = Self::size_after_access(offset, 32);
-            self.materialized_size = self.materialized_size.max(size);
             let size = SymExpr::constant(cx, U256::from(size));
             self.expand_to(cx, size);
             self.load_word(cx, offset)

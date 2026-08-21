@@ -309,6 +309,15 @@ impl SymbolicExecutor {
             return Ok(Some(StepOutcome::Revert));
         }
 
+        let expanded_size_bound = state
+            .upper_bound_usize(&mut self.cx, offset)
+            .and_then(|offset| offset.checked_add(size))
+            .and_then(|end| end.checked_add(31))
+            .and_then(|end| u64::try_from(end & !31usize).ok());
+        if expanded_size_bound.is_some_and(|size| size <= memory_limit) {
+            return Ok(None);
+        }
+
         let representable = if let Some(host_max_offset) = host_max_offset {
             let host_max_offset = SymExpr::constant(&mut self.cx, U256::from(host_max_offset));
             SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, offset.clone(), host_max_offset)
@@ -391,6 +400,19 @@ impl SymbolicExecutor {
                 state.return_data = SymReturnData::empty(&mut self.cx);
                 return Ok(Some(StepOutcome::Revert));
             }
+            state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
+            return Ok(None);
+        }
+
+        let offset_bound = state.upper_bound_usize(&mut self.cx, offset);
+        let size_bound = state.upper_bound_usize(&mut self.cx, size);
+        if offset_bound
+            .zip(size_bound)
+            .and_then(|(offset, size)| offset.checked_add(size))
+            .and_then(|end| end.checked_add(31))
+            .and_then(|end| u64::try_from(end & !31usize).ok())
+            .is_some_and(|end| end <= memory_limit)
+        {
             state.memory.expand_range(&mut self.cx, offset.clone(), size.clone());
             return Ok(None);
         }
