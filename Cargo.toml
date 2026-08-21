@@ -573,15 +573,15 @@ foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", 
 foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "eabd2e218a7606505430d84bfeacd145e2c1eff3" }
 
 ## alloy-core
-# alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
-# alloy-json-abi = { path = "../../alloy-rs/core/crates/json-abi" }
-# alloy-primitives = { path = "../../alloy-rs/core/crates/primitives" }
-# alloy-sol-macro = { path = "../../alloy-rs/core/crates/sol-macro" }
-# alloy-sol-macro-expander = { path = "../../alloy-rs/core/crates/sol-macro-expander" }
-# alloy-sol-macro-input = { path = "../../alloy-rs/core/crates/sol-macro-input" }
-# alloy-sol-type-parser = { path = "../../alloy-rs/core/crates/sol-type-parser" }
-# alloy-sol-types = { path = "../../alloy-rs/core/crates/sol-types" }
-# syn-solidity = { path = "../../alloy-rs/core/crates/syn-solidity" }
+alloy-dyn-abi = { git = "https://github.com/alloy-rs/core", rev = "2d5870c3d62b8b9229d33160cbcc431aeb2cdc21" }
+alloy-json-abi = { git = "https://github.com/alloy-rs/core", rev = "2d5870c3d62b8b9229d33160cbcc431aeb2cdc21" }
+alloy-primitives = { git = "https://github.com/alloy-rs/core", rev = "2d5870c3d62b8b9229d33160cbcc431aeb2cdc21" }
+alloy-sol-macro = { git = "https://github.com/alloy-rs/core", rev = "2d5870c3d62b8b9229d33160cbcc431aeb2cdc21" }
+alloy-sol-macro-expander = { git = "https://github.com/alloy-rs/core", rev = "2d5870c3d62b8b9229d33160cbcc431aeb2cdc21" }
+alloy-sol-macro-input = { git = "https://github.com/alloy-rs/core", rev = "2d5870c3d62b8b9229d33160cbcc431aeb2cdc21" }
+alloy-sol-type-parser = { git = "https://github.com/alloy-rs/core", rev = "2d5870c3d62b8b9229d33160cbcc431aeb2cdc21" }
+alloy-sol-types = { git = "https://github.com/alloy-rs/core", rev = "2d5870c3d62b8b9229d33160cbcc431aeb2cdc21" }
+syn-solidity = { git = "https://github.com/alloy-rs/core", rev = "2d5870c3d62b8b9229d33160cbcc431aeb2cdc21" }
 
 ## alloy
 # alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "395521c" }
