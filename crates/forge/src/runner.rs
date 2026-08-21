@@ -2183,11 +2183,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         let mut fuzz_config = self.config.fuzz.clone();
+        let test_name = fuzz_test_path_name(&self.cr.contract.abi, func);
         let _ = test_paths(
             &mut fuzz_config.corpus,
             fuzz_config.failure_persist_dir.clone().unwrap(),
             self.cr.name,
-            &func.name,
+            &test_name,
         );
         let limit = self.config.symbolic.corpus_seed_limit;
         let mut metadata = SymbolicCorpusSeedMetadata {
@@ -3591,6 +3592,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             let invariant_address = self.address;
             return self.run_showmap(
                 func,
+                &func.name,
                 corpus_dir,
                 &showmap,
                 ShowmapReplayTarget {
@@ -4888,11 +4890,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let runner = self.fuzz_runner();
         let mut fuzz_config = self.config.fuzz.clone();
+        let test_name = fuzz_test_path_name(&self.cr.contract.abi, func);
         let (failure_dir, failure_file) = test_paths(
             &mut fuzz_config.corpus,
             fuzz_config.failure_persist_dir.clone().unwrap(),
             self.cr.name,
-            &func.name,
+            &test_name,
         );
         let fuzz_input = self.cr.mcr.tcfg.fuzz_input.as_ref();
         let is_explicit_target = fuzz_input
@@ -4911,12 +4914,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 .corpus_dir
                 .clone()
                 .map(|corpus_dir| {
-                    narrow_generated_fuzz_corpus_root(corpus_dir, self.cr.name, &func.name)
+                    narrow_generated_fuzz_corpus_root(corpus_dir, self.cr.name, &test_name)
                 })
                 .or_else(|| fuzz_config.corpus.corpus_dir.clone());
             let fuzzed_address = self.address;
             return self.run_showmap(
                 func,
+                &test_name,
                 corpus_dir,
                 &showmap,
                 ShowmapReplayTarget {
@@ -4991,7 +4995,23 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let persisted_failure = if is_explicit_target {
             fuzz_input.map(|input| input.failure.as_ref().clone())
         } else {
-            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok()
+            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path())
+                .ok()
+                .or_else(|| {
+                    if test_name.as_ref() == func.name {
+                        return None;
+                    }
+                    let legacy_file = canonicalized(failure_dir.join(&func.name));
+                    let failure = foundry_common::fs::read_json_file::<BaseCounterExample>(
+                        legacy_file.as_path(),
+                    )
+                    .ok()?;
+                    failure
+                        .calldata
+                        .get(..4)
+                        .is_some_and(|selector| func.selector() == selector)
+                        .then_some(failure)
+                })
         };
         if self.cr.mcr.tcfg.fuzz_failure_replay {
             let Some(failure) = persisted_failure.as_ref() else {
@@ -5151,6 +5171,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     fn run_showmap(
         mut self,
         func: &Function,
+        test_name: &str,
         corpus_dir: Option<PathBuf>,
         showmap: &crate::multi_runner::ShowmapConfig,
         target: ShowmapReplayTarget<'_>,
@@ -5178,7 +5199,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // (which `File::create_new` would reject). Distinct anchors sharing one
         // corpus simply produce equivalent, separately-named approach dirs.
         let safe_id = self.cr.name.replace(['/', '\\', ':'], "_");
-        let safe_fn = func.name.replace(['/', '\\', ':', '(', ')', ',', ' '], "_");
+        let safe_fn = test_name.replace(['/', '\\', ':', '(', ')', ',', ' '], "_");
         let approach = format!("{}__{safe_id}__{safe_fn}", showmap.approach);
         let opts = ShowmapOpts {
             out_dir: showmap.out_dir.clone(),
@@ -5558,6 +5579,15 @@ fn parse_frontier_selector(selector: &str) -> Option<Selector> {
 
 fn frontier_filter_display<T: std::fmt::Display>(values: &[T]) -> String {
     if values.is_empty() { "any".to_string() } else { values.iter().format(", ").to_string() }
+}
+
+/// Returns a stable path component that distinguishes overloaded fuzz tests.
+fn fuzz_test_path_name<'a>(abi: &JsonAbi, func: &'a Function) -> Cow<'a, str> {
+    if abi.functions.get(&func.name).is_some_and(|functions| functions.len() > 1) {
+        Cow::Owned(format!("{}-{}", func.name, hex::encode(func.selector())))
+    } else {
+        Cow::Borrowed(&func.name)
+    }
 }
 
 /// Helper function to set test corpus dir and to compose persisted failure paths.
