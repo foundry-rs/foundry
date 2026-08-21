@@ -2977,12 +2977,7 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
             inspector,
         );
         evm.journal_inner_mut().depth = depth + 1;
-        #[cfg(feature = "monad")]
-        let result =
-            evm.transact_replay(tx_env).wrap_err("backend: failed committing transaction")?;
-        #[cfg(not(feature = "monad"))]
-        let result = evm.transact_raw(tx_env).wrap_err("backend: failed committing transaction")?;
-        result
+        evm.transact_raw(tx_env).wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 

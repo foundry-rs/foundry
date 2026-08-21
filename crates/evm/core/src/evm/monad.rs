@@ -482,18 +482,17 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
         Ok(frame_result)
     }
 
-    fn transact_raw(&mut self, tx: Self::Tx) -> Result<ResultAndState, EVMError<DatabaseError>> {
-        ContextSetters::set_tx(&mut self.0.ctx, tx);
-
-        let mut handler = MonadEvmHandler::<I>::new();
-        let result = handler.inspect_run(self)?;
-
-        Ok(ResultAndState::new(result, self.ctx_ref().journaled_state.inner.state.clone()))
-    }
-
-    fn transact_replay(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
+    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
         let Some(system_call) = protocol_system_call(&tx)? else {
-            return self.transact_raw(tx).map_err(Into::into);
+            ContextSetters::set_tx(&mut self.0.ctx, tx);
+
+            let mut handler = MonadEvmHandler::<I>::new();
+            let result = handler.inspect_run(self)?;
+
+            return Ok(ResultAndState::new(
+                result,
+                self.ctx_ref().journaled_state.inner.state.clone(),
+            ));
         };
 
         system_call.validate_chain_id(self.ctx_ref().cfg().chain_id())?;
