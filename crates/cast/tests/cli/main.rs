@@ -7021,6 +7021,86 @@ forgetest_async!(cast_call_debug_trace_call_local_artifacts_json_stdout, |prj, c
     });
 });
 
+casttest!(cast_call_decodes_custom_error, async |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    let signature = "RequestLimitExceeded(uint256,uint256)";
+    let selector = keccak256(signature);
+    let mut revert_data = selector[..4].to_vec();
+    revert_data.extend((U256::from(5), U256::from(3)).abi_encode());
+
+    // Runtime bytecode that copies the appended revert payload into memory and reverts with it.
+    let payload_len = u8::try_from(revert_data.len()).unwrap();
+    let mut runtime =
+        vec![0x60, payload_len, 0x60, 0x0a, 0x5f, 0x39, 0x60, payload_len, 0x5f, 0xfd];
+    runtime.extend(revert_data);
+
+    // Isolate and seed the signature cache so decoding is deterministic and offline.
+    let home = prj.root().join("home");
+    let cache_dir = home.join(".foundry/cache");
+    fs::create_dir_all(&cache_dir).unwrap();
+    let selector = format!("0x{}", hex::encode(&selector[..4]));
+    let mut errors = serde_json::Map::new();
+    errors.insert(selector, json!(signature));
+    fs::write(
+        cache_dir.join("signatures"),
+        serde_json::to_vec(&json!({
+            "functions": {},
+            "errors": errors,
+            "events": {},
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let target = "0x000000000000000000000000000000000000dead";
+    let code_override = format!("{target}:0x{}", hex::encode(runtime));
+    let endpoint = handle.http_endpoint();
+
+    cmd.env("HOME", &home);
+    cmd.env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+        "call",
+        target,
+        "--data",
+        "0x",
+        "--override-code",
+        &code_override,
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: execution reverted: RequestLimitExceeded(5, 3)
+
+Context:
+- server returned an error response:[..]
+
+"#]]);
+
+    cmd.cast_fuse();
+    cmd.env("HOME", &home);
+    cmd.env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+            "call",
+            target,
+            "--data",
+            "0x",
+            "--override-code",
+            &code_override,
+            "--rpc-url",
+            &endpoint,
+            "--json",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"cast.error","message":"execution reverted: RequestLimitExceeded(5, 3)"},{"level":"error","code":"cast.error.context","message":"server returned an error response:[..]"}],"warnings":[]}
+
+"#]])
+        .stderr_eq(str![""]);
+});
+
 // `cast call --trace` decodes custom errors through the local signatures cache that `forge build`
 // populates, without requiring `--with-local-artifacts`.
 // <https://github.com/foundry-rs/foundry/issues/11085>

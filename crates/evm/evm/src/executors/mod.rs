@@ -36,7 +36,7 @@ use foundry_evm_core::{
     },
     evm::{
         BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork,
-        HaltReasonFor, IntoInstructionResult, SpecFor, TxEnvFor,
+        IntoInstructionResult, SpecFor, TxEnvFor,
     },
     utils::StateChangeset,
 };
@@ -97,16 +97,17 @@ const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
 
 /// Returns whether a nested revert can be ignored when fail-on-revert is disabled.
 #[inline]
-pub fn should_ignore_revert<FEN: FoundryEvmNetwork>(
+pub fn should_ignore_revert(
     fail_on_revert: bool,
     target: Address,
     reverter: Option<Address>,
+    extra_cheatcode_addresses: &[Address],
 ) -> bool {
     !fail_on_revert
         && reverter.is_some_and(|reverter| {
             reverter != target
                 && reverter != CHEATCODE_ADDRESS
-                && !FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES.contains(&reverter)
+                && !extra_cheatcode_addresses.contains(&reverter)
         })
 }
 
@@ -167,6 +168,10 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         gas_limit: u64,
         legacy_assertions: bool,
     ) -> Self {
+        backend.set_networks(inspector.networks);
+        let extra_cheatcode_addresses = inspector.networks.extra_cheatcode_addresses();
+        backend.extend_persistent_accounts(extra_cheatcode_addresses.iter().copied());
+
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
         // do not fail.
         backend.insert_account_info(
@@ -180,7 +185,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             },
         );
 
-        for &address in FEN::EvmFactory::EXTRA_CHEATCODE_ADDRESSES {
+        for &address in extra_cheatcode_addresses {
             backend.insert_account_info(
                 address,
                 revm::state::AccountInfo {
@@ -897,7 +902,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             // Clear broadcastable transactions
             cheats.broadcastable_transactions.clear();
             cheats.ignored_traces.ignored.clear();
-
             // if tracing was paused but never unpaused, we should begin next frame with tracing
             // still paused
             if let Some(last_pause_call) = cheats.ignored_traces.last_pause_call.as_mut() {
@@ -1295,6 +1299,11 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The chisel state
     pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
     pub reverter: Option<Address>,
+    /// Revert payloads minted by the `skip` cheatcode during this call.
+    ///
+    /// Moved out of the cheatcode state on conversion since `commit` moves that state back into
+    /// the executor before results are classified.
+    pub skip_payloads: Vec<Bytes>,
 }
 
 impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
@@ -1327,6 +1336,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             fork_block_number: None,
             chisel_state: None,
             reverter: None,
+            skip_payloads: Vec::new(),
         }
     }
 }
@@ -1341,11 +1351,20 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
         }
     }
 
+    /// Returns the skip reason if this call reverted with a genuine `vm.skip` payload.
+    ///
+    /// The revert data must byte-equal a payload recorded by the skip cheatcode during this call;
+    /// a matching `FOUNDRY::SKIP` prefix alone (user-crafted revert data) does not count.
+    pub fn skip_reason(&self) -> Option<SkipReason> {
+        if !self.reverted || !self.skip_payloads.contains(&self.result) {
+            return None;
+        }
+        SkipReason::decode(&self.result)
+    }
+
     /// Converts the result of the call into an `EvmError`.
     pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError<FEN> {
-        if self.reverter == Some(CHEATCODE_ADDRESS)
-            && let Some(reason) = SkipReason::decode(&self.result)
-        {
+        if let Some(reason) = self.skip_reason() {
             return EvmError::Skip(reason);
         }
         let reason = rd.unwrap_or_default().decode(&self.result, self.exit_reason);
@@ -1540,11 +1559,11 @@ fn calculate_stipend(tx_env: &impl Transaction, spec: SpecId, eip2780_enabled: b
 }
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`.
-fn convert_executed_result<FEN: FoundryEvmNetwork>(
+fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
     evm_env: EvmEnvFor<FEN>,
     tx_env: TxEnvFor<FEN>,
     mut inspector: InspectorStack<FEN>,
-    ResultAndState { result, state: state_changeset }: ResultAndState<HaltReasonFor<FEN>>,
+    ResultAndState { result, state: state_changeset }: ResultAndState<H>,
     db: &dyn DatabaseRef<Error = DatabaseError>,
     has_state_snapshot_failure: bool,
     fork_block_number: Option<u64>,
@@ -1585,7 +1604,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         line_coverage,
         edge_coverage,
         evm_cmp_values,
-        cheatcodes,
+        mut cheatcodes,
         chisel_state,
         reverter,
     } = inspector.collect();
@@ -1603,6 +1622,8 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         .as_ref()
         .map(|c| c.broadcastable_transactions.clone())
         .filter(|txs| !txs.is_empty());
+    let skip_payloads =
+        cheatcodes.as_mut().map(|c| std::mem::take(&mut c.skip_payloads)).unwrap_or_default();
 
     Ok(RawCallResult {
         exit_reason: Some(exit_reason),
@@ -1632,6 +1653,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         fork_block_number,
         chisel_state,
         reverter,
+        skip_payloads,
     })
 }
 
@@ -1781,6 +1803,8 @@ mod tests {
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
     #[cfg(feature = "monad")]
     use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
+    #[cfg(feature = "monad")]
+    use foundry_evm_networks::NetworkConfigs;
     use foundry_evm_traces::InternalTraceMode;
     use revm::context::TxEnv;
     use std::{sync::mpsc, thread};
@@ -1797,11 +1821,11 @@ mod tests {
         let target = Address::from([0x11; 20]);
         let nested = Address::from([0x22; 20]);
 
-        assert!(should_ignore_revert::<EthEvmNetwork>(false, target, Some(nested)));
-        assert!(!should_ignore_revert::<EthEvmNetwork>(true, target, Some(nested)));
-        assert!(!should_ignore_revert::<EthEvmNetwork>(false, target, Some(target)));
-        assert!(!should_ignore_revert::<EthEvmNetwork>(false, target, Some(CHEATCODE_ADDRESS)));
-        assert!(!should_ignore_revert::<EthEvmNetwork>(false, target, None));
+        assert!(should_ignore_revert(false, target, Some(nested), &[]));
+        assert!(!should_ignore_revert(true, target, Some(nested), &[]));
+        assert!(!should_ignore_revert(false, target, Some(target), &[]));
+        assert!(!should_ignore_revert(false, target, Some(CHEATCODE_ADDRESS), &[]));
+        assert!(!should_ignore_revert(false, target, None, &[]));
     }
 
     #[cfg(feature = "monad")]
@@ -1809,16 +1833,35 @@ mod tests {
     fn network_cheatcode_revert_handling_is_monad_specific() {
         let target = Address::from([0x11; 20]);
 
-        assert!(should_ignore_revert::<EthEvmNetwork>(
+        assert!(should_ignore_revert(false, target, Some(MONAD_CHEATCODE_ADDRESS), &[]));
+        assert!(!should_ignore_revert(
             false,
             target,
             Some(MONAD_CHEATCODE_ADDRESS),
+            NetworkConfigs::with_monad().extra_cheatcode_addresses(),
         ));
-        assert!(!should_ignore_revert::<MonadEvmNetwork>(
-            false,
-            target,
-            Some(MONAD_CHEATCODE_ADDRESS),
-        ));
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn extra_cheatcode_accounts_follow_the_active_network() {
+        let default_network = ExecutorBuilder::<MonadEvmNetwork>::default().build(
+            EvmEnvFor::<MonadEvmNetwork>::default(),
+            TxEnvFor::<MonadEvmNetwork>::default(),
+            Backend::spawn(None).unwrap(),
+        );
+        assert!(!default_network.backend().networks().is_monad());
+        assert!(!default_network.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
+
+        let monad = ExecutorBuilder::<MonadEvmNetwork>::default()
+            .inspectors(|stack| stack.networks(NetworkConfigs::with_monad()))
+            .build(
+                EvmEnvFor::<MonadEvmNetwork>::default(),
+                TxEnvFor::<MonadEvmNetwork>::default(),
+                Backend::spawn(None).unwrap(),
+            );
+        assert!(monad.backend().networks().is_monad());
+        assert!(monad.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
     }
 
     #[test]
@@ -1870,8 +1913,9 @@ mod tests {
     #[test]
     fn cheatcode_skip_payload_is_classified_as_skip() {
         let raw = RawCallResult::<EthEvmNetwork> {
+            reverted: true,
             result: Bytes::from_static(b"FOUNDRY::SKIPwith reason"),
-            reverter: Some(CHEATCODE_ADDRESS),
+            skip_payloads: vec![Bytes::from_static(b"FOUNDRY::SKIPwith reason")],
             ..Default::default()
         };
 
@@ -1880,10 +1924,11 @@ mod tests {
     }
 
     #[test]
-    fn forged_skip_payload_from_non_cheatcode_is_execution_error() {
+    fn forged_skip_payload_is_execution_error() {
         let raw = RawCallResult::<EthEvmNetwork> {
+            reverted: true,
             result: Bytes::from_static(MAGIC_SKIP),
-            reverter: Some(CALLER),
+            reverter: Some(CHEATCODE_ADDRESS),
             ..Default::default()
         };
 
@@ -1892,10 +1937,11 @@ mod tests {
     }
 
     #[test]
-    fn skip_payload_without_reverter_is_execution_error() {
+    fn mismatched_skip_payload_is_execution_error() {
         let raw = RawCallResult::<EthEvmNetwork> {
-            result: Bytes::from_static(MAGIC_SKIP),
-            reverter: None,
+            reverted: true,
+            result: Bytes::from_static(b"FOUNDRY::SKIPforged"),
+            skip_payloads: vec![Bytes::from_static(b"FOUNDRY::SKIPgenuine")],
             ..Default::default()
         };
 

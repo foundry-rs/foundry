@@ -35,6 +35,7 @@ use foundry_evm_core::{
     },
     env::FoundryContextExt,
     evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
+    refresh_chain_journal,
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceRequirements;
@@ -357,7 +358,7 @@ impl Cheatcode for loadAllocsCall {
         // Then, load the allocs into the database.
         let (db, inner) = ccx.ecx.db_journal_inner_mut();
         db.load_allocs(&allocs, inner).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
-        ccx.ecx.refresh_chain_dependent_state();
+        refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
     }
 }
@@ -372,7 +373,7 @@ impl Cheatcode for cloneAccountCall {
         db.clone_account(&genesis, target, inner)?;
         // Cloned account should persist in forked envs.
         ccx.ecx.db_mut().add_persistent_account(*target);
-        ccx.ecx.refresh_chain_dependent_state();
+        refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
     }
 }
@@ -775,7 +776,7 @@ impl Cheatcode for dealCall {
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
-        ccx.ecx.refresh_chain_dependent_state();
+        refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
     }
 }
@@ -1281,7 +1282,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         let from = sender;
 
         executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
-        ccx.ecx.refresh_chain_dependent_state();
+        refresh_chain_journal(ccx.ecx);
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1464,7 +1465,7 @@ impl Cheatcode for executeTransactionCall {
 
         // Keep network-specific caches aligned with the state merged from the nested EVM while
         // preserving the outer transaction's execution context.
-        ccx.ecx.refresh_chain_dependent_state();
+        refresh_chain_journal(ccx.ecx);
 
         // Return output bytes.
         let output = match res.result {
@@ -1675,7 +1676,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
             *ccx.ecx.chain_mut() = context.clone();
             ccx.ecx.journal_mut().restore_reserve_balance(state.clone());
         }
-        ccx.ecx.refresh_chain_dependent_state();
+        refresh_chain_journal(ccx.ecx);
         ccx.ecx.set_evm(evm_env);
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
@@ -1715,7 +1716,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
             *ccx.ecx.chain_mut() = context;
             ccx.ecx.journal_mut().restore_reserve_balance(state);
         }
-        ccx.ecx.refresh_chain_dependent_state();
+        refresh_chain_journal(ccx.ecx);
         ccx.ecx.set_evm(evm_env);
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
             ccx.state.env_overrides = snap;

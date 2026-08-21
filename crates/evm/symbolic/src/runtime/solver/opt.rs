@@ -49,8 +49,18 @@ fn normalize_constraint_batch(
 }
 
 fn sort_dedup_bool_exprs(exprs: &mut Vec<SymBoolExpr>) {
-    exprs.sort_by_cached_key(bool_structural_key);
+    // Hash-consing already caches deterministic structural hashes. Only render full structural
+    // keys for the exceedingly rare case where two distinct expressions collide.
+    exprs.sort_unstable_by(bool_expr_cmp);
     exprs.dedup();
+}
+
+fn bool_expr_cmp(left: &SymBoolExpr, right: &SymBoolExpr) -> std::cmp::Ordering {
+    if left == right {
+        return std::cmp::Ordering::Equal;
+    }
+    left.stable_hash_cmp(right)
+        .then_with(|| bool_structural_key(left).cmp(&bool_structural_key(right)))
 }
 
 fn bool_structural_key(expr: &SymBoolExpr) -> String {
@@ -178,7 +188,7 @@ const fn expr_ternop_key(op: SymTernOp) -> u8 {
     }
 }
 
-/// Returns whether normalized conjunctive constraints contain a direct contradiction.
+/// Returns whether canonically ordered normalized constraints contain a direct contradiction.
 pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> bool {
     let mut derived = Vec::new();
     for constraint in constraints {
@@ -190,8 +200,10 @@ pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymB
         }
         derived.push(fact);
     }
-    let contains =
-        |expected: &SymBoolExpr| constraints.contains(expected) || derived.contains(expected);
+    let contains = |expected: &SymBoolExpr| {
+        constraints.binary_search_by(|candidate| bool_expr_cmp(candidate, expected)).is_ok()
+            || derived.contains(expected)
+    };
     constraints.iter().chain(&derived).any(|constraint| match constraint.kind() {
         SymBoolExprKind::Const(false) => true,
         SymBoolExprKind::Not(inner)
@@ -1852,7 +1864,8 @@ mod tests {
         let either_word = SymExpr::binop(&mut cx, SymBinOp::Or, x_word, y_word);
         let neither_is_zero = SymBoolExpr::eq(&mut cx, either_word, zero);
 
-        assert!(constraints_are_directly_unsat(&mut cx, &[neither_is_zero, x_is_zero]));
+        let constraints = normalize_constraints_for_solver(&mut cx, &[neither_is_zero, x_is_zero]);
+        assert!(constraints_are_directly_unsat(&mut cx, &constraints));
     }
 
     #[test]
@@ -1868,7 +1881,8 @@ mod tests {
         let both_word = SymExpr::binop(&mut cx, SymBinOp::And, x_word, y_word);
         let not_both = SymBoolExpr::eq(&mut cx, both_word, zero);
 
-        assert!(!constraints_are_directly_unsat(&mut cx, &[not_both, x_is_zero]));
+        let constraints = normalize_constraints_for_solver(&mut cx, &[not_both, x_is_zero]);
+        assert!(!constraints_are_directly_unsat(&mut cx, &constraints));
     }
 
     #[test]

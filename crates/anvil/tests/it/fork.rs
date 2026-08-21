@@ -670,6 +670,7 @@ async fn test_fork_reset_restores_explicit_genesis_base_fee() {
     let (api, handle) = spawn(
         NodeConfig::test()
             .with_no_storage_caching(true)
+            .with_hardfork(Some(EthereumHardfork::default().into()))
             .with_genesis(Some(Genesis { base_fee_per_gas: Some(0), ..Default::default() }))
             .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
             .with_fork_block_number(Some(0u64)),
