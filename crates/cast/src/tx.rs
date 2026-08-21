@@ -952,14 +952,18 @@ where
 
 /// Helper function that tries to decode custom error name and inputs from error payload data.
 async fn decode_execution_revert(data: &RawValue) -> Result<Option<String>> {
-    let err_data = serde_json::from_str::<Bytes>(data.get())?;
-    let Some(selector) = err_data.get(..4) else { return Ok(None) };
+    let data = serde_json::from_str::<Bytes>(data.get())?;
+    decode_custom_error(&data).await
+}
+
+pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
+    let Some(selector) = data.get(..4) else { return Ok(None) };
     if let Some(known_error) =
         SignaturesIdentifier::new(false)?.identify_error(selector.try_into().unwrap()).await
     {
         let mut decoded_error = known_error.name.clone();
         if !known_error.inputs.is_empty()
-            && let Ok(error) = known_error.decode_error(&err_data)
+            && let Ok(error) = known_error.decode_error(data)
         {
             write!(decoded_error, "({})", format_tokens(&error.body).format(", "))?;
         }

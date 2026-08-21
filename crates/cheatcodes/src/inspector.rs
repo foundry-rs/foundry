@@ -38,8 +38,6 @@ use foundry_common::{
         record_hash as record_mapping_hash, step as mapping_step,
     },
 };
-#[cfg(feature = "monad")]
-use foundry_evm_core::FoundryJournal;
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
@@ -51,7 +49,10 @@ use foundry_evm_core::{
         FoundryEvmNetwork, NestedEvmClosureFor, SpecFor, TransactionRequestFor, TxEnvFor,
         with_cloned_context,
     },
+    refresh_chain_journal,
 };
+#[cfg(feature = "monad")]
+use foundry_evm_core::{FoundryJournal, evm::refresh_nested_chain_journal};
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
 };
@@ -201,7 +202,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
             #[cfg(feature = "monad")]
             {
                 evm.journal_mut().restore_reserve_balance(state);
-                evm.refresh_chain_dependent_state();
+                refresh_nested_chain_journal(&mut *evm);
             }
             f(&mut *evm)?;
             nested_chain_context = Some(evm.chain_mut().clone());
@@ -217,7 +218,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         #[cfg(feature = "monad")]
         ecx.journal_mut()
             .restore_reserve_balance(reserve_balance.expect("nested EVM state was captured"));
-        ecx.refresh_chain_dependent_state();
+        refresh_chain_journal(ecx);
         Ok(())
     }
 
@@ -803,6 +804,12 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Test-scoped context holding data that needs to be reset every test run
     pub test_context: TestContext,
 
+    /// Revert payloads minted by the `skip` cheatcode during the current test call.
+    ///
+    /// A top-level revert is only classified as a skip when its data byte-equals one of these
+    /// payloads, so user-crafted `FOUNDRY::SKIP` revert data never skips a test on its own.
+    pub skip_payloads: Vec<Bytes>,
+
     /// Whether to commit FS changes such as file creations, writes and deletes.
     /// Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
@@ -963,6 +970,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             broadcastable_transactions: Default::default(),
             access_list: Default::default(),
             test_context: Default::default(),
+            skip_payloads: Default::default(),
             serialized_jsons: Default::default(),
             eth_deals: Default::default(),
             gas_metering: Default::default(),

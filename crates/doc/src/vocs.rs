@@ -324,25 +324,40 @@ fn build_source_to_url(pages: &[PathBuf]) -> SourceToUrl {
 /// HTML-like tokens like `<TOKEN>` would be interpreted as MDX expressions/JSX
 /// and break `vocs dev` / `vocs build`.
 fn escape_mdx_outside_code_fences(text: &str) -> String {
+    struct Fence {
+        marker: char,
+        len: usize,
+    }
+
     let mut out = String::with_capacity(text.len());
-    let mut in_fence = false;
-    let mut fence_marker = "";
+    let mut fence: Option<Fence> = None;
     for line in text.split_inclusive('\n') {
         let trimmed = line.trim_start();
-        if in_fence {
+        if let Some(open) = fence.as_ref() {
             out.push_str(line);
-            if trimmed.starts_with(fence_marker) {
-                in_fence = false;
+            let marker_len = trimmed.chars().take_while(|&ch| ch == open.marker).count();
+            // Fence markers are ASCII, so their character count is also the byte index.
+            let suffix = &trimmed[marker_len..];
+            if marker_len >= open.len && suffix.trim().is_empty() {
+                fence = None;
             }
-        } else if trimmed.starts_with("```") {
-            in_fence = true;
-            fence_marker = "```";
-            out.push_str(line);
-        } else if trimmed.starts_with("~~~") {
-            in_fence = true;
-            fence_marker = "~~~";
-            out.push_str(line);
         } else {
+            let opening = trimmed.chars().next().and_then(|marker| {
+                if !matches!(marker, '`' | '~') {
+                    return None;
+                }
+                let len = trimmed.chars().take_while(|&ch| ch == marker).count();
+                if len < 3 || marker == '`' && trimmed[len..].contains('`') {
+                    return None;
+                }
+                Some(Fence { marker, len })
+            });
+            if let Some(opening) = opening {
+                fence = Some(opening);
+                out.push_str(line);
+                continue;
+            }
+
             // Escape `{` and bare `<` (not already `&lt;` or a known entity).
             let mut inline_code_ticks = 0usize;
             let mut pending_ticks = 0usize;
@@ -628,6 +643,30 @@ End {brace}.
 
         // Inside ~~~ fences: untouched.
         assert!(out.contains("echo {not escaped}"), "~~~ fence content must be unchanged");
+    }
+
+    #[test]
+    fn escape_mdx_supports_longer_backtick_fences() {
+        let input = "````markdown\n```solidity\ncontract Test {\n    function value() external returns (uint256) {\n        return 1;\n    }\n}\n```\n````\n\nOutside {text}.\n";
+        let out = escape_mdx_outside_code_fences(input);
+
+        assert_eq!(out, input.replace("Outside {text}", r"Outside \{text}"));
+    }
+
+    #[test]
+    fn escape_mdx_supports_longer_tilde_fences() {
+        let input = "~~~~markdown\n~~~solidity\ncontract Test {\n    function value() external returns (uint256) {\n        return 1;\n    }\n}\n~~~\n~~~~\n\nOutside {text}.\n";
+        let out = escape_mdx_outside_code_fences(input);
+
+        assert_eq!(out, input.replace("Outside {text}", r"Outside \{text}"));
+    }
+
+    #[test]
+    fn escape_mdx_rejects_backticks_in_fence_info() {
+        let input = "```bad`\n```still-bad`\n{process.exit(42)}\n";
+        let out = escape_mdx_outside_code_fences(input);
+
+        assert_eq!(out, input.replace("{process.exit(42)}", r"\{process.exit(42)}"));
     }
 
     #[test]

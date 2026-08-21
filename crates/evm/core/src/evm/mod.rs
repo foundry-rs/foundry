@@ -192,9 +192,6 @@ pub trait FoundryEvmFactory:
     /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
     /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
     /// fall back to ordinary execution using the same EVM instance.
-    ///
-    /// Implementations that recognize a transaction here must provide equivalent recognition in
-    /// [`Self::try_transact_foundry_system_replay`].
     #[cfg(feature = "monad")]
     fn try_transact_system_replay<DB, I>(
         &self,
@@ -205,26 +202,6 @@ pub trait FoundryEvmFactory:
         DB: alloy_evm::Database,
         I: Inspector<Self::Context<DB>>,
     {
-        Ok(None)
-    }
-
-    /// Tries to execute a canonical system transaction on a Foundry-wrapped EVM with an inspector.
-    ///
-    /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
-    /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
-    /// fall back to ordinary execution using the same EVM instance.
-    ///
-    /// Implementations that recognize a transaction here must provide equivalent recognition in
-    /// [`Self::try_transact_system_replay`].
-    #[cfg(feature = "monad")]
-    fn try_transact_foundry_system_replay<
-        'db,
-        I: FoundryInspectorExt<Self::FoundryContext<'db>>,
-    >(
-        &self,
-        _evm: &mut Self::FoundryEvm<'db, I>,
-        _tx: &Self::Tx,
-    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>> {
         Ok(None)
     }
 
@@ -278,27 +255,11 @@ pub trait NestedEvm {
     /// Returns a mutable reference to the Journal.
     fn journal_mut(&mut self) -> &mut Self::Journal;
 
-    /// Resyncs Monad's reserve-balance-tracker state that depends on the current chain-position
-    /// context.
-    ///
-    /// See [`FoundryContextExt::refresh_chain_dependent_state`]; this is the equivalent hook
-    /// for the object-safe nested-EVM boundary, which doesn't implement `FoundryContextExt`.
-    fn refresh_chain_dependent_state(&mut self) {}
-
     /// Runs a single execution frame (create or call) through the EVM handler loop.
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>>;
 
     /// Executes a full transaction with the given tx env.
-    fn transact_raw(
-        &mut self,
-        tx: Self::Tx,
-    ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
-
-    /// Executes a canonical replay transaction.
-    #[cfg(feature = "monad")]
-    fn transact_replay(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>> {
-        self.transact_raw(tx).map_err(Into::into)
-    }
+    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>>;
 
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block>;
 }

@@ -93,7 +93,10 @@ impl<'a, M: SymbolicModelLookup + ?Sized> ModelEvaluator<'a, M> {
         if let SymBoolExprKind::Const(value) = kind {
             return Ok(*value);
         }
-        if let Some(value) = self.bools.get(expr) {
+        // `Not` and `Cmp` cheaply recombine child results, so memoizing them adds one-use entries
+        // for ordinary path constraints. Conjunctions can share additional Boolean work.
+        let cache_result = matches!(kind, SymBoolExprKind::And(_));
+        if cache_result && let Some(value) = self.bools.get(expr) {
             return Ok(*value);
         }
 
@@ -114,7 +117,9 @@ impl<'a, M: SymbolicModelLookup + ?Sized> ModelEvaluator<'a, M> {
                 op.eval(self.eval_word(left)?, self.eval_word(right)?)
             }
         };
-        self.bools.insert(expr.clone(), value);
+        if cache_result {
+            self.bools.insert(expr.clone(), value);
+        }
         Ok(value)
     }
 }
@@ -125,4 +130,25 @@ pub(crate) fn eval_model_constraints<M: SymbolicModelLookup + ?Sized>(
 ) -> bool {
     let mut evaluator = ModelEvaluator::new(model);
     constraints.iter().all(|constraint| evaluator.eval_bool(constraint).unwrap_or(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_evaluator_only_caches_conjunctions() {
+        let mut cx = SymCx::new();
+        let value = SymExpr::var(&mut cx, "value");
+        let one = SymExpr::constant(&mut cx, U256::from(1));
+        let condition = SymBoolExpr::eq(&mut cx, value, one).not(&mut cx);
+        let model = SymbolicModel::default();
+        let mut evaluator = ModelEvaluator::new(&model);
+
+        assert!(evaluator.eval_bool(&condition).unwrap());
+        assert!(evaluator.bools.is_empty());
+        let conjunction = SymBoolExpr::and(&mut cx, vec![condition.clone(), condition]);
+        assert!(evaluator.eval_bool(&conjunction).unwrap());
+        assert_eq!(evaluator.bools.len(), 1);
+    }
 }

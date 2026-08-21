@@ -12,10 +12,13 @@ use alloy_primitives::{Address, hex};
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_cli::utils::fetch_abi_from_etherscan;
-use foundry_config::{Chain, Config, FoundryHardfork, RpcEndpointUrl};
+use foundry_config::{Chain, Config, RpcEndpointUrl};
+#[cfg(feature = "monad")]
+use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
+    hardforks::{ExecutionSpec, TempoHardfork},
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
@@ -179,19 +182,12 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             )?)
             .with_networks(session_config.foundry_config.networks)
             .with_chain_id(chain_id.map(|c| c.id()))
-            .with_tempo_hardfork(resolved_hardfork.and_then(|hardfork| match hardfork {
-                FoundryHardfork::Tempo(hardfork) => Some(hardfork),
-                _ => None,
-            }));
+            .with_tempo_hardfork(resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork));
         #[cfg(feature = "monad")]
         {
-            builder =
-                builder.with_monad_hardfork(resolved_hardfork.and_then(
-                    |hardfork| match hardfork {
-                        FoundryHardfork::Monad(hardfork) => Some(hardfork),
-                        _ => None,
-                    },
-                ));
+            builder = builder.with_monad_hardfork(
+                resolved_hardfork.and_then(MonadHardfork::from_foundry_hardfork),
+            );
         }
         let mut decoder = builder.build();
 

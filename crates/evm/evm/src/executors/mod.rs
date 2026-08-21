@@ -36,7 +36,7 @@ use foundry_evm_core::{
     },
     evm::{
         BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork,
-        HaltReasonFor, IntoInstructionResult, SpecFor, TxEnvFor,
+        IntoInstructionResult, SpecFor, TxEnvFor,
     },
     utils::StateChangeset,
 };
@@ -902,7 +902,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             // Clear broadcastable transactions
             cheats.broadcastable_transactions.clear();
             cheats.ignored_traces.ignored.clear();
-
             // if tracing was paused but never unpaused, we should begin next frame with tracing
             // still paused
             if let Some(last_pause_call) = cheats.ignored_traces.last_pause_call.as_mut() {
@@ -1300,6 +1299,11 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The chisel state
     pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
     pub reverter: Option<Address>,
+    /// Revert payloads minted by the `skip` cheatcode during this call.
+    ///
+    /// Moved out of the cheatcode state on conversion since `commit` moves that state back into
+    /// the executor before results are classified.
+    pub skip_payloads: Vec<Bytes>,
 }
 
 impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
@@ -1332,6 +1336,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             fork_block_number: None,
             chisel_state: None,
             reverter: None,
+            skip_payloads: Vec::new(),
         }
     }
 }
@@ -1346,11 +1351,20 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
         }
     }
 
+    /// Returns the skip reason if this call reverted with a genuine `vm.skip` payload.
+    ///
+    /// The revert data must byte-equal a payload recorded by the skip cheatcode during this call;
+    /// a matching `FOUNDRY::SKIP` prefix alone (user-crafted revert data) does not count.
+    pub fn skip_reason(&self) -> Option<SkipReason> {
+        if !self.reverted || !self.skip_payloads.contains(&self.result) {
+            return None;
+        }
+        SkipReason::decode(&self.result)
+    }
+
     /// Converts the result of the call into an `EvmError`.
     pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError<FEN> {
-        if self.reverter == Some(CHEATCODE_ADDRESS)
-            && let Some(reason) = SkipReason::decode(&self.result)
-        {
+        if let Some(reason) = self.skip_reason() {
             return EvmError::Skip(reason);
         }
         let reason = rd.unwrap_or_default().decode(&self.result, self.exit_reason);
@@ -1545,11 +1559,11 @@ fn calculate_stipend(tx_env: &impl Transaction, spec: SpecId, eip2780_enabled: b
 }
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`.
-fn convert_executed_result<FEN: FoundryEvmNetwork>(
+fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
     evm_env: EvmEnvFor<FEN>,
     tx_env: TxEnvFor<FEN>,
     mut inspector: InspectorStack<FEN>,
-    ResultAndState { result, state: state_changeset }: ResultAndState<HaltReasonFor<FEN>>,
+    ResultAndState { result, state: state_changeset }: ResultAndState<H>,
     db: &dyn DatabaseRef<Error = DatabaseError>,
     has_state_snapshot_failure: bool,
     fork_block_number: Option<u64>,
@@ -1590,7 +1604,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         line_coverage,
         edge_coverage,
         evm_cmp_values,
-        cheatcodes,
+        mut cheatcodes,
         chisel_state,
         reverter,
     } = inspector.collect();
@@ -1608,6 +1622,8 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         .as_ref()
         .map(|c| c.broadcastable_transactions.clone())
         .filter(|txs| !txs.is_empty());
+    let skip_payloads =
+        cheatcodes.as_mut().map(|c| std::mem::take(&mut c.skip_payloads)).unwrap_or_default();
 
     Ok(RawCallResult {
         exit_reason: Some(exit_reason),
@@ -1637,6 +1653,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         fork_block_number,
         chisel_state,
         reverter,
+        skip_payloads,
     })
 }
 
@@ -1896,8 +1913,9 @@ mod tests {
     #[test]
     fn cheatcode_skip_payload_is_classified_as_skip() {
         let raw = RawCallResult::<EthEvmNetwork> {
+            reverted: true,
             result: Bytes::from_static(b"FOUNDRY::SKIPwith reason"),
-            reverter: Some(CHEATCODE_ADDRESS),
+            skip_payloads: vec![Bytes::from_static(b"FOUNDRY::SKIPwith reason")],
             ..Default::default()
         };
 
@@ -1906,10 +1924,11 @@ mod tests {
     }
 
     #[test]
-    fn forged_skip_payload_from_non_cheatcode_is_execution_error() {
+    fn forged_skip_payload_is_execution_error() {
         let raw = RawCallResult::<EthEvmNetwork> {
+            reverted: true,
             result: Bytes::from_static(MAGIC_SKIP),
-            reverter: Some(CALLER),
+            reverter: Some(CHEATCODE_ADDRESS),
             ..Default::default()
         };
 
@@ -1918,10 +1937,11 @@ mod tests {
     }
 
     #[test]
-    fn skip_payload_without_reverter_is_execution_error() {
+    fn mismatched_skip_payload_is_execution_error() {
         let raw = RawCallResult::<EthEvmNetwork> {
-            result: Bytes::from_static(MAGIC_SKIP),
-            reverter: None,
+            reverted: true,
+            result: Bytes::from_static(b"FOUNDRY::SKIPforged"),
+            skip_payloads: vec![Bytes::from_static(b"FOUNDRY::SKIPgenuine")],
             ..Default::default()
         };
 
