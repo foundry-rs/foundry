@@ -226,7 +226,7 @@ fn endpoint_hardfork(
 /// Identity and block context of the remote chain backing a fork.
 ///
 /// The source chain ID remains distinct from the configured `CHAINID` opcode override.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct ForkContext {
     /// Chain ID exposed through `eth_chainId`.
     pub execution_chain_id: ChainId,
