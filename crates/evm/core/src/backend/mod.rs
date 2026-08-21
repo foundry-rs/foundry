@@ -1135,11 +1135,18 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let parent_block = if parent_hash.is_zero() {
             None
         } else {
-            Some(
-                backend
-                    .get_full_block(parent_hash)
-                    .wrap_err_with(|| format!("failed to fetch parent block {parent_hash}"))?,
-            )
+            let parent_number = block.header().number().checked_sub(1).ok_or_else(|| {
+                eyre::eyre!("genesis block has non-zero parent hash {parent_hash}")
+            })?;
+            let parent = backend
+                .get_full_block(parent_hash)
+                .wrap_err_with(|| format!("failed to fetch parent block {parent_hash}"))?;
+            ensure_block_identity(
+                &parent,
+                BlockNumHash::new(parent_number, parent_hash),
+                "parent",
+            )?;
+            Some(parent)
         };
         let parent =
             parent_block.as_ref().map(Self::full_block_tx_envs).transpose()?.unwrap_or_default();
@@ -1152,6 +1159,15 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 let block = backend.get_full_block(grandparent_hash).wrap_err_with(|| {
                     format!("failed to fetch grandparent block {grandparent_hash}")
                 })?;
+                let grandparent_number =
+                    parent_block.header().number().checked_sub(1).ok_or_else(|| {
+                        eyre::eyre!("genesis block has non-zero parent hash {grandparent_hash}")
+                    })?;
+                ensure_block_identity(
+                    &block,
+                    BlockNumHash::new(grandparent_number, grandparent_hash),
+                    "grandparent",
+                )?;
                 Self::full_block_tx_envs(&block)?
             }
         } else {
@@ -1199,13 +1215,17 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         }
 
         let fork = self.inner.get_fork_by_id(id)?;
-        let (block, position) = match fork.position {
+        let (position_block, position) = match fork.position {
             position @ (ForkPosition::AfterBlock { block }
             | ForkPosition::BeforeTransaction { block, .. }) => (block, position),
         };
-        let block = fork.backend().get_full_block(block.hash).wrap_err_with(|| {
-            format!("failed to fetch fork block {} ({})", block.number, block.hash)
+        let block = fork.backend().get_full_block(position_block.hash).wrap_err_with(|| {
+            format!(
+                "failed to fetch fork block {} ({})",
+                position_block.number, position_block.hash
+            )
         })?;
+        ensure_block_identity(&block, position_block, "fork")?;
         let context = Self::block_context_inputs_from_backend(fork.backend(), &block)?;
         Self::context_for_block_position(context, position, tx)
     }
@@ -1222,15 +1242,19 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         };
 
         let fork = self.inner.get_fork_by_id(id)?;
-        let (block, transaction_index) = match fork.position {
+        let (position_block, transaction_index) = match fork.position {
             ForkPosition::AfterBlock { block } => (block, None),
             ForkPosition::BeforeTransaction { block, transaction_index } => {
                 (block, Some(transaction_index))
             }
         };
-        let block = fork.backend().get_full_block(block.hash).wrap_err_with(|| {
-            format!("failed to fetch active fork block {} ({})", block.number, block.hash)
+        let block = fork.backend().get_full_block(position_block.hash).wrap_err_with(|| {
+            format!(
+                "failed to fetch active fork block {} ({})",
+                position_block.number, position_block.hash
+            )
         })?;
+        ensure_block_identity(&block, position_block, "active fork")?;
         let context = Self::block_context_inputs_from_backend(fork.backend(), &block)?;
 
         match transaction_index {
@@ -1352,6 +1376,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 let block_data = backend.get_full_block(block.hash).wrap_err_with(|| {
                     format!("failed to fetch rolled fork block {} ({})", block.number, block.hash)
                 })?;
+                ensure_block_identity(&block_data, block, "rolled fork")?;
                 let block_context = Self::block_context_inputs_from_backend(&backend, &block_data)?;
                 block_context.into_child().next_transaction(tx)
             } else {
@@ -1740,6 +1765,22 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
         Ok(Some(target_tx))
     }
+}
+
+fn ensure_block_identity(
+    block: &AnyRpcBlock,
+    expected: BlockNumHash,
+    relation: &str,
+) -> eyre::Result<()> {
+    eyre::ensure!(
+        block.header().number() == expected.number && block.header().hash == expected.hash,
+        "{relation} block changed: expected {} ({}), got {} ({})",
+        expected.number,
+        expected.hash,
+        block.header().number(),
+        block.header().hash
+    );
+    Ok(())
 }
 
 impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
@@ -3115,7 +3156,7 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
 
 #[cfg(test)]
 mod tests {
-    use super::{Fork, apply_state_changeset, update_env_block};
+    use super::{Fork, apply_state_changeset, ensure_block_identity, update_env_block};
     #[cfg(feature = "monad")]
     use crate::evm::MonadEvmNetwork;
     #[cfg(feature = "monad")]
@@ -3167,6 +3208,33 @@ mod tests {
             source_chain_id: 1,
             position: ForkPosition::AfterBlock { block: BlockNumHash::default() },
         }
+    }
+
+    fn rpc_block(number: u64, hash: B256, parent_hash: B256) -> AnyRpcBlock {
+        let header = AnyHeader { number, parent_hash, ..Default::default() };
+        AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(header.seal(hash)),
+                BlockTransactions::Full(Vec::new()),
+            )
+            .into(),
+        )
+    }
+
+    #[test]
+    fn validates_block_identity() {
+        let hash = B256::with_last_byte(2);
+        let block = rpc_block(2, hash, B256::with_last_byte(1));
+        assert!(ensure_block_identity(&block, BlockNumHash::new(2, hash), "parent").is_ok());
+
+        let err =
+            ensure_block_identity(&block, BlockNumHash::new(2, B256::with_last_byte(3)), "parent")
+                .unwrap_err();
+        assert!(err.to_string().contains("parent block changed"));
+
+        let err =
+            ensure_block_identity(&block, BlockNumHash::new(1, hash), "grandparent").unwrap_err();
+        assert!(err.to_string().contains("grandparent block changed"));
     }
 
     #[test]

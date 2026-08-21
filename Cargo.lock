@@ -1058,7 +1058,7 @@ dependencies = [
 [[package]]
 name = "alloy-transport-mpp"
 version = "0.2.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=85c62c59205789d6506ad0c77f543a8680f02612#85c62c59205789d6506ad0c77f543a8680f02612"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=63171c2#63171c2ad2161829fa787e798603d2fc8feaf2e3"
 dependencies = [
  "alloy-json-rpc",
  "alloy-pubsub",
@@ -5541,7 +5541,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=8d88d5b2ded889848a3f6de791ef1a8c60da918b#8d88d5b2ded889848a3f6de791ef1a8c60da918b"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -5784,7 +5784,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=8d88d5b2ded889848a3f6de791ef1a8c60da918b#8d88d5b2ded889848a3f6de791ef1a8c60da918b"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5794,7 +5794,7 @@ dependencies = [
  "foundry-compilers-artifacts",
  "foundry-compilers-core",
  "fs_extra",
- "itertools 0.15.0",
+ "itertools 0.13.0",
  "path-slash",
  "rand 0.10.2",
  "rayon",
@@ -5815,7 +5815,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=8d88d5b2ded889848a3f6de791ef1a8c60da918b#8d88d5b2ded889848a3f6de791ef1a8c60da918b"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -5824,7 +5824,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=8d88d5b2ded889848a3f6de791ef1a8c60da918b#8d88d5b2ded889848a3f6de791ef1a8c60da918b"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5844,7 +5844,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=8d88d5b2ded889848a3f6de791ef1a8c60da918b#8d88d5b2ded889848a3f6de791ef1a8c60da918b"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5857,7 +5857,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=8d88d5b2ded889848a3f6de791ef1a8c60da918b#8d88d5b2ded889848a3f6de791ef1a8c60da918b"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -6195,7 +6195,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=8d88d5b2ded889848a3f6de791ef1a8c60da918b#8d88d5b2ded889848a3f6de791ef1a8c60da918b"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -6303,7 +6303,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=8d88d5b2ded889848a3f6de791ef1a8c60da918b#8d88d5b2ded889848a3f6de791ef1a8c60da918b"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -8011,7 +8011,7 @@ dependencies = [
 [[package]]
 name = "mpp"
 version = "0.11.0"
-source = "git+https://github.com/tempoxyz/mpp-rs?rev=85c62c59205789d6506ad0c77f543a8680f02612#85c62c59205789d6506ad0c77f543a8680f02612"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=63171c2#63171c2ad2161829fa787e798603d2fc8feaf2e3"
 dependencies = [
  "alloy",
  "async-stream",
@@ -12473,8 +12473,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-alloy"
-version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=4d248169172ff2602b1bc95930c70bbc72d23bb0#4d248169172ff2602b1bc95930c70bbc72d23bb0"
+version = "1.10.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=0f87fa6b42c86665142432337865d1adc04238e7#0f87fa6b42c86665142432337865d1adc04238e7"
 dependencies = [
  "alloy-consensus",
  "alloy-contract",
@@ -12513,8 +12513,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-chainspec"
-version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=4d248169172ff2602b1bc95930c70bbc72d23bb0#4d248169172ff2602b1bc95930c70bbc72d23bb0"
+version = "1.10.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=0f87fa6b42c86665142432337865d1adc04238e7#0f87fa6b42c86665142432337865d1adc04238e7"
 dependencies = [
  "alloy-eips",
  "alloy-evm",
@@ -12536,8 +12536,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-contracts"
-version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=4d248169172ff2602b1bc95930c70bbc72d23bb0#4d248169172ff2602b1bc95930c70bbc72d23bb0"
+version = "1.10.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=0f87fa6b42c86665142432337865d1adc04238e7#0f87fa6b42c86665142432337865d1adc04238e7"
 dependencies = [
  "alloy-contract",
  "alloy-primitives",
@@ -12548,8 +12548,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-dkg-onchain-artifacts"
-version = "1.13.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=4d248169172ff2602b1bc95930c70bbc72d23bb0#4d248169172ff2602b1bc95930c70bbc72d23bb0"
+version = "1.11.0"
+source = "git+https://github.com/tempoxyz/tempo?rev=0f87fa6b42c86665142432337865d1adc04238e7#0f87fa6b42c86665142432337865d1adc04238e7"
 dependencies = [
  "bytes",
  "commonware-codec",
@@ -12560,8 +12560,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-evm"
-version = "1.13.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=4d248169172ff2602b1bc95930c70bbc72d23bb0#4d248169172ff2602b1bc95930c70bbc72d23bb0"
+version = "1.11.0"
+source = "git+https://github.com/tempoxyz/tempo?rev=0f87fa6b42c86665142432337865d1adc04238e7#0f87fa6b42c86665142432337865d1adc04238e7"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -12591,8 +12591,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-hardfork"
-version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=4d248169172ff2602b1bc95930c70bbc72d23bb0#4d248169172ff2602b1bc95930c70bbc72d23bb0"
+version = "1.10.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=0f87fa6b42c86665142432337865d1adc04238e7#0f87fa6b42c86665142432337865d1adc04238e7"
 dependencies = [
  "alloy-eips",
  "alloy-evm",
@@ -12603,23 +12603,19 @@ dependencies = [
 
 [[package]]
 name = "tempo-precompiles"
-version = "1.13.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=4d248169172ff2602b1bc95930c70bbc72d23bb0#4d248169172ff2602b1bc95930c70bbc72d23bb0"
+version = "1.11.0"
+source = "git+https://github.com/tempoxyz/tempo?rev=0f87fa6b42c86665142432337865d1adc04238e7#0f87fa6b42c86665142432337865d1adc04238e7"
 dependencies = [
  "alloy",
  "alloy-evm",
- "alloy-json-abi",
  "alloy-primitives",
  "bitflags 2.13.1",
  "commonware-codec",
  "commonware-cryptography",
  "derive_more",
- "itertools 0.14.0",
  "paste",
  "revm",
  "scoped-tls",
- "serde",
- "serde_json",
  "tempo-chainspec",
  "tempo-contracts",
  "tempo-precompiles-macros",
@@ -12630,8 +12626,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-precompiles-macros"
-version = "1.13.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=4d248169172ff2602b1bc95930c70bbc72d23bb0#4d248169172ff2602b1bc95930c70bbc72d23bb0"
+version = "1.11.0"
+source = "git+https://github.com/tempoxyz/tempo?rev=0f87fa6b42c86665142432337865d1adc04238e7#0f87fa6b42c86665142432337865d1adc04238e7"
 dependencies = [
  "alloy",
  "proc-macro2",
@@ -12641,8 +12637,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-primitives"
-version = "1.11.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=4d248169172ff2602b1bc95930c70bbc72d23bb0#4d248169172ff2602b1bc95930c70bbc72d23bb0"
+version = "1.10.1"
+source = "git+https://github.com/tempoxyz/tempo?rev=0f87fa6b42c86665142432337865d1adc04238e7#0f87fa6b42c86665142432337865d1adc04238e7"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -12669,8 +12665,8 @@ dependencies = [
 
 [[package]]
 name = "tempo-revm"
-version = "1.13.1"
-source = "git+https://github.com/tempoxyz/tempo?rev=4d248169172ff2602b1bc95930c70bbc72d23bb0#4d248169172ff2602b1bc95930c70bbc72d23bb0"
+version = "1.11.0"
+source = "git+https://github.com/tempoxyz/tempo?rev=0f87fa6b42c86665142432337865d1adc04238e7#0f87fa6b42c86665142432337865d1adc04238e7"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
