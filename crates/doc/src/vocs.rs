@@ -347,7 +347,10 @@ fn escape_mdx_outside_code_fences(text: &str) -> String {
                     return None;
                 }
                 let len = trimmed.chars().take_while(|&ch| ch == marker).count();
-                (len >= 3).then_some(Fence { marker, len })
+                if len < 3 || marker == '`' && trimmed[len..].contains('`') {
+                    return None;
+                }
+                Some(Fence { marker, len })
             });
             if let Some(opening) = opening {
                 fence = Some(opening);
@@ -656,6 +659,14 @@ End {brace}.
         let out = escape_mdx_outside_code_fences(input);
 
         assert_eq!(out, input.replace("Outside {text}", r"Outside \{text}"));
+    }
+
+    #[test]
+    fn escape_mdx_rejects_backticks_in_fence_info() {
+        let input = "```bad`\n```still-bad`\n{process.exit(42)}\n";
+        let out = escape_mdx_outside_code_fences(input);
+
+        assert_eq!(out, input.replace("{process.exit(42)}", r"\{process.exit(42)}"));
     }
 
     #[test]
