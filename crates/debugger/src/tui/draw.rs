@@ -5,7 +5,7 @@ use super::{
         ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext,
         write_pretty_opcode,
     },
-    storage::{StorageAccess, StorageSpace, hex_u256, storage_access_at},
+    storage::{StorageAccess, StorageSpace, hex_u256, storage_access_at, storage_values},
 };
 use crate::{DebuggerLayout, debugger::DebuggerStats, op::OpcodeParam};
 use alloy_dyn_abi::{DynSolType, Specifier, parser::Parameters};
@@ -621,7 +621,19 @@ impl TUIContext<'_> {
     }
 
     fn current_storage_access_line(&self) -> Option<Line<'static>> {
-        storage_access_at(self.debug_steps(), self.current_step).map(storage_access_line)
+        storage_access_at(self.debug_steps(), self.current_step).map(|access| {
+            let values = (access.space() == StorageSpace::Persistent)
+                .then(|| storage_values(&self.storage_accesses(access.space())));
+            let next_values = (access.space() == StorageSpace::Persistent)
+                .then(|| self.next_storage_write_values());
+            let label = self.storage_label(
+                access.space(),
+                access.slot(),
+                values.as_ref(),
+                next_values.as_ref(),
+            );
+            storage_access_line(access, label.as_deref())
+        })
     }
 
     fn draw_data(&mut self, f: &mut Frame<'_>, area: Rect) {
@@ -634,6 +646,9 @@ impl TUIContext<'_> {
 
     fn draw_storage(&mut self, f: &mut Frame<'_>, area: Rect, space: StorageSpace) {
         let accesses = self.storage_accesses(space);
+        let values = (space == StorageSpace::Persistent).then(|| storage_values(&accesses));
+        let next_values =
+            (space == StorageSpace::Persistent).then(|| self.next_storage_write_values());
         let current_slot = storage_access_at(self.debug_steps(), self.current_step)
             .filter(|access| access.space() == space)
             .map(StorageAccess::slot);
@@ -647,7 +662,15 @@ impl TUIContext<'_> {
             .enumerate()
             .skip(self.draw_memory.current_storage_startline)
             .flat_map(|(index, access)| {
-                storage_slot_lines(index, index_width, access, current_slot == Some(access.slot()))
+                let label =
+                    self.storage_label(space, access.slot(), values.as_ref(), next_values.as_ref());
+                storage_slot_lines(
+                    index,
+                    index_width,
+                    access,
+                    label.as_deref(),
+                    current_slot == Some(access.slot()),
+                )
             })
             .collect::<Vec<_>>();
         if lines.is_empty() {
@@ -1170,14 +1193,23 @@ fn scope_variable_line(variable: ScopeVariable) -> Line<'static> {
     Line::from(spans)
 }
 
-fn storage_access_line(access: StorageAccess) -> Line<'static> {
-    Line::from(Span::styled(access.describe(), Style::new().fg(Color::Yellow)))
+fn storage_access_line(access: StorageAccess, label: Option<&str>) -> Line<'static> {
+    let mut spans = vec![Span::styled(access.describe(), Style::new().fg(Color::Yellow))];
+    if let Some(label) = label {
+        spans.extend([
+            Span::raw(" ("),
+            Span::styled(label.to_string(), Color::Cyan),
+            Span::raw(")"),
+        ]);
+    }
+    Line::from(spans)
 }
 
 fn storage_slot_lines(
     index: usize,
     index_width: usize,
     access: StorageAccess,
+    label: Option<&str>,
     current: bool,
 ) -> [Line<'static>; 2] {
     let value_style = if current {
@@ -1186,13 +1218,21 @@ fn storage_slot_lines(
         Style::new().fg(Color::White)
     };
     let prefix_width = index_width + 2;
+    let mut slot_spans = vec![
+        Span::styled(format!("{index:0index_width$}| "), Style::new().fg(Color::Gray)),
+        Span::styled(access.op(), value_style),
+        Span::raw(" slot "),
+        Span::styled(hex_u256(access.slot()), value_style),
+    ];
+    if let Some(label) = label {
+        slot_spans.extend([
+            Span::raw(" ("),
+            Span::styled(label.to_string(), Style::new().fg(Color::Cyan)),
+            Span::raw(")"),
+        ]);
+    }
     [
-        Line::from(vec![
-            Span::styled(format!("{index:0index_width$}| "), Style::new().fg(Color::Gray)),
-            Span::styled(access.op(), value_style),
-            Span::raw(" slot "),
-            Span::styled(hex_u256(access.slot()), value_style),
-        ]),
+        Line::from(slot_spans),
         Line::from(vec![
             Span::raw(" ".repeat(prefix_width)),
             Span::raw("value "),
@@ -1527,6 +1567,7 @@ mod tests {
             debug_arena: arena,
             stats: None,
             identified_contracts: Default::default(),
+            slot_identifiers: None,
             contracts_sources: ContractSources::default(),
             breakpoints: Breakpoints::default(),
             layout: Default::default(),
@@ -2112,7 +2153,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_access_line_formats_sload() {
+    fn storage_lines_format_sload_and_label() {
         let mut step = trace_step(Vec::new());
         step.storage_change = Some(Box::new(StorageChange {
             key: U256::from(1),
@@ -2123,7 +2164,14 @@ mod tests {
         let steps = [step];
         let access = super::storage_access_at(&steps, 0).unwrap();
 
-        assert_eq!(line_text(&super::storage_access_line(access)), "storage SLOAD slot 0x1 = 0x2a");
+        assert_eq!(
+            line_text(&super::storage_access_line(access, Some("count"))),
+            "storage SLOAD slot 0x1 = 0x2a (count)"
+        );
+        assert_eq!(
+            line_text(&super::storage_slot_lines(0, 2, access, Some("count"), false)[0]),
+            "00| SLOAD slot 0x1 (count)"
+        );
     }
 
     #[test]
@@ -2139,7 +2187,7 @@ mod tests {
         let access = super::storage_access_at(&steps, 0).unwrap();
 
         assert_eq!(
-            line_text(&super::storage_access_line(access)),
+            line_text(&super::storage_access_line(access, None)),
             "storage SSTORE slot 0x1: 0x7 -> 0x2a"
         );
     }
