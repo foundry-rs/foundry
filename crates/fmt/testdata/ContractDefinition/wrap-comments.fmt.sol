@@ -1,4 +1,4 @@
-// config: contract_new_lines = true
+// config: wrap_comments = true
 contract ContractDefinition is
     Contract1,
     Contract2,
@@ -12,13 +12,11 @@ contract EmptyBodyWithComment { /* body */ }
 contract EmptyBodyWithComments { /* one */ /* two */ }
 
 contract NonEmptyBodyTrailingComments {
-
     uint256 x;
     /* one */ /* two */ }
 
 // comment 7
 contract SampleContract {
-
     // spaced comment 1
 
     // spaced comment 2
@@ -42,14 +40,12 @@ contract SampleContract {
         // comment 19
         return arg1 > arg2 ? arg1 : arg2;
     }
-
 }
 
 // comment 20
 contract /* comment 21 */ ExampleContract is /* comment 22 */ SampleContract {}
 
 contract ERC20DecimalsMock is ERC20 {
-
     uint8 private immutable _decimals;
 
     constructor(string memory name_, string memory symbol_, uint8 decimals_)
@@ -57,7 +53,6 @@ contract ERC20DecimalsMock is ERC20 {
     {
         _decimals = decimals_;
     }
-
 }
 
 contract SomeContract is
@@ -82,25 +77,19 @@ contract ERC7201OverMax layout at erc7201("openzeppelin.storage.exceeds.max")
 {}
 
 interface IERC721 /* is IERC165 */ {
-
     function balanceOf(address owner) external view returns (uint256);
-
 }
 
 interface IERC721Empty /* is IERC165 */ {}
 
 contract WithBaseAndHeaderComment is Base /* base */ {
-
     uint256 x;
-
 }
 
 contract WithLayoutAndHeaderComment layout at 69 /* layout */ {}
 
 contract WithLayoutAfterBase layout at erc7201("x{y") is Base /* layout */ {
-
     uint256 x;
-
 }
 
 contract MultipleHeaderComments /* one */ /* two */ {}
@@ -108,14 +97,10 @@ contract MultipleHeaderComments /* one */ /* two */ {}
 contract VeryLongContractNameThatForcesTheHeaderToBreak is
     BaseOne,
     BaseTwo /* base */ {
-
     uint256 x;
-
 }
 
 contract HeaderCommentOnItsOwnLine {
-
     // isolated
     uint256 x;
-
 }
