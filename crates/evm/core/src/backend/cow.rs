@@ -26,7 +26,7 @@ use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     context::{ContextTr, Transaction},
-    context_interface::result::ResultAndState,
+    context_interface::result::{HaltReason, ResultAndState},
     database::DatabaseRef,
     primitives::AddressMap,
     state::{Account, AccountInfo, EvmState},
