@@ -37,15 +37,22 @@ pub struct InspectResult {
     pub formatted_output: Option<String>,
     /// An expression that recreates the inspected value, if any.
     pub last_result: Option<String>,
+    /// Input to execute and persist after inspection, if it differs from the original input.
+    pub replay_input: Option<String>,
 }
 
 impl InspectResult {
     const fn empty(control_flow: ControlFlow<()>) -> Self {
-        Self { control_flow, formatted_output: None, last_result: None }
+        Self { control_flow, formatted_output: None, last_result: None, replay_input: None }
     }
 }
 
-fn yul_inspector_line(input: &str) -> Option<String> {
+struct YulInspection {
+    inspector_input: String,
+    replay_input: String,
+}
+
+fn yul_inspection(input: &str, session_source: &str) -> Option<YulInspection> {
     let sess = Session::builder().with_buffer_emitter(Default::default()).build();
     sess.enter_sequential(|| {
         let arena = solar::ast::Arena::new();
@@ -57,22 +64,28 @@ fn yul_inspector_line(input: &str) -> Option<String> {
         )
         .ok()?;
         let stmt = parser.parse_stmt().map_err(|err| err.emit()).ok()?;
+        if !parser.token.is_eof() {
+            return None;
+        }
         let AstStmtKind::Assembly(assembly) = &stmt.kind else { return None };
         let last = assembly.block.stmts.last()?;
         let yul::StmtKind::Expr(expr) = &last.kind else { return None };
 
-        let stmt_range = sess.source_map().span_to_source(stmt.span).ok()?.data;
-        if !input.get(stmt_range.end..)?.trim().is_empty() {
-            return None;
-        }
         let expr_range = sess.source_map().span_to_source(expr.span).ok()?.data;
         let expression = input.get(expr_range.clone())?;
+        let result_var = std::iter::once("__chisel_yul_result".to_string())
+            .chain((1..).map(|suffix| format!("__chisel_yul_result_{suffix}")))
+            .find(|name| !input.contains(name) && !session_source.contains(name))?;
 
         let mut assembly = input.to_string();
-        assembly.replace_range(expr_range, &format!("__chisel_yul_result := {expression}"));
-        Some(format!(
-            "uint256 __chisel_yul_result; {assembly} bytes memory inspectoor = abi.encode(__chisel_yul_result);"
-        ))
+        assembly.replace_range(expr_range.clone(), &format!("{result_var} := {expression}"));
+        let inspector_input = format!(
+            "uint256 {result_var}; {assembly}\nbytes memory inspectoor = abi.encode({result_var});"
+        );
+
+        let mut replay_input = input.to_string();
+        replay_input.replace_range(expr_range, &format!("pop({expression})"));
+        Some(YulInspection { inspector_input, replay_input })
     })
 }
 
@@ -109,11 +122,11 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     /// If the input is valid, returns its [`InspectResult`].
     pub async fn inspect(&self, input: &str) -> Result<InspectResult> {
         let line = format!("bytes memory inspectoor = abi.encode({input});");
-        let mut source = match self.clone_with_new_line(line) {
-            Ok((source, _)) => source,
+        let (mut source, replay_input) = match self.clone_with_new_line(line) {
+            Ok((source, _)) => (source, None),
             Err(err) => {
                 debug!(%err, "failed to build new source for inspection");
-                let Some(line) = yul_inspector_line(input) else {
+                let Some(inspection) = yul_inspection(input, &self.to_repl_source()) else {
                     return Ok(InspectResult::empty(ControlFlow::Continue(())));
                 };
                 if self
@@ -122,10 +135,10 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                 {
                     return Ok(InspectResult::empty(ControlFlow::Continue(())));
                 }
-                let Ok((source, _)) = self.clone_with_new_line(line) else {
+                let Ok((source, _)) = self.clone_with_new_line(inspection.inspector_input) else {
                     return Ok(InspectResult::empty(ControlFlow::Continue(())));
                 };
-                source
+                (source, Some(inspection.replay_input))
             }
         };
 
@@ -182,6 +195,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                     control_flow: ControlFlow::Break(()),
                     formatted_output: Some(formatted_event?),
                     last_result: None,
+                    replay_input: None,
                 });
             }
 
@@ -253,11 +267,16 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         };
         let last_result = format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(data));
         let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
-        let c = if cont { ControlFlow::Continue(()) } else { ControlFlow::Break(()) };
+        let c = if cont || replay_input.is_some() {
+            ControlFlow::Continue(())
+        } else {
+            ControlFlow::Break(())
+        };
         Ok(InspectResult {
             control_flow: c,
             formatted_output: Some(format_token(token)),
             last_result: Some(last_result),
+            replay_input,
         })
     }
 
