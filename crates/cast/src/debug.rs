@@ -11,7 +11,7 @@ use foundry_evm::hardforks::EthereumHardfork;
 #[cfg(feature = "monad")]
 use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
-    hardforks::TempoHardfork,
+    hardforks::{ExecutionSpec, TempoHardfork},
     opts::ForkEndpointIdentity,
     traces::{
         CallTraceDecoderBuilder, DebugTraceIdentifier,
@@ -76,18 +76,12 @@ pub(crate) async fn handle_traces(
 
     let resolved_hardfork = hardfork.or(config.hardfork);
     let execution_network = networks.execution_network();
-    let tempo_hardfork = resolved_hardfork.and_then(|hardfork| match hardfork {
-        FoundryHardfork::Tempo(hardfork) => Some(hardfork),
-        _ => None,
-    });
+    let tempo_hardfork = resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork);
     let is_tempo = execution_network.is_tempo();
     #[cfg(feature = "monad")]
     let is_monad = execution_network.is_monad();
     #[cfg(feature = "monad")]
-    let monad_hardfork = resolved_hardfork.and_then(|hardfork| match hardfork {
-        FoundryHardfork::Monad(hardfork) => Some(hardfork),
-        _ => None,
-    });
+    let monad_hardfork = resolved_hardfork.and_then(MonadHardfork::from_foundry_hardfork);
     let mut builder = CallTraceDecoderBuilder::new()
         .with_tracing_config(tracing)
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
