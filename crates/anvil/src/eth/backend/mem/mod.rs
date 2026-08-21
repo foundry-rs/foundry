@@ -7359,12 +7359,25 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
     ) -> Result<SerializableState, BlockchainError> {
         let at = self.evm_env.read().block_env.clone();
         #[cfg(feature = "monad")]
-        let monad_block_metadata;
+        let mut monad_block_participants = BTreeMap::new();
+        #[cfg(feature = "monad")]
+        let mut monad_block_replay_profiles = BTreeMap::new();
         let (best_number, blocks, transactions) = {
             let storage = self.blockchain.storage.read();
             #[cfg(feature = "monad")]
-            {
-                monad_block_metadata = self.serialized_monad_block_metadata(&storage);
+            if self.is_monad() {
+                monad_block_participants = storage
+                    .monad_block_participants
+                    .iter()
+                    .filter(|(hash, _)| storage.blocks.contains_key(*hash))
+                    .map(|(hash, participants)| (*hash, participants.iter().copied().collect()))
+                    .collect();
+                monad_block_replay_profiles = storage
+                    .monad_block_replay_profiles
+                    .iter()
+                    .filter(|(hash, _)| storage.blocks.contains_key(*hash))
+                    .map(|(hash, profile)| (*hash, *profile))
+                    .collect();
             }
             (storage.best_number, storage.serialized_blocks(), storage.serialized_transactions())
         };
@@ -7384,7 +7397,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         #[cfg(feature = "monad")]
         let state = {
             let mut state = state;
-            monad_block_metadata.apply(&mut state);
+            state.monad_block_participants = monad_block_participants;
+            state.monad_block_replay_profiles = monad_block_replay_profiles;
             state
         };
         Ok(state)
@@ -7517,7 +7531,24 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         }
 
         #[cfg(feature = "monad")]
-        self.restore_monad_block_metadata(&mut storage, &state)?;
+        if self.is_monad() {
+            for (hash, profile) in &state.monad_block_replay_profiles {
+                if storage.blocks.contains_key(hash) {
+                    storage.monad_block_replay_profiles.insert(*hash, *profile);
+                }
+            }
+            for (hash, participants) in &state.monad_block_participants {
+                if storage.blocks.contains_key(hash) {
+                    storage
+                        .monad_block_participants
+                        .insert(*hash, participants.iter().copied().collect());
+                }
+            }
+            self.rebuild_monad_block_participant_cache(&mut storage)?;
+            // Reject state that cannot supply the ancestor metadata required by the next block
+            // before changing the live chain, EVM environment, or database.
+            self.monad_context_for_child_of_in_storage(&storage, storage.best_hash)?;
+        }
 
         // Re-anchor block time to the canonical head selected above so the next blocks continue
         // its timeline: the saved one when the loaded head stays canonical, the fork's when the
