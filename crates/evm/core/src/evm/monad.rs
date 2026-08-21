@@ -171,7 +171,7 @@ impl ProtocolSystemCall {
 ///
 /// Returns an error when the transaction uses Monad's reserved protocol sender but does not
 /// satisfy the canonical envelope rules.
-pub fn protocol_system_call(tx: &TxEnv) -> eyre::Result<Option<ProtocolSystemCall>> {
+pub fn protocol_system_call<T: Transaction>(tx: &T) -> eyre::Result<Option<ProtocolSystemCall>> {
     if tx.caller() != SYSTEM_ADDRESS {
         return Ok(None);
     }
@@ -193,23 +193,23 @@ pub fn protocol_system_call(tx: &TxEnv) -> eyre::Result<Option<ProtocolSystemCal
         "invalid Monad protocol system transaction: gas price must be zero"
     );
     eyre::ensure!(
-        tx.gas_priority_fee.is_none(),
+        tx.max_priority_fee_per_gas().is_none(),
         "invalid Monad protocol system transaction: priority fee must be absent"
     );
     eyre::ensure!(
-        tx.access_list.0.is_empty(),
+        tx.access_list().is_none_or(|mut list| list.next().is_none()),
         "invalid Monad protocol system transaction: access list must be empty"
     );
     eyre::ensure!(
-        tx.blob_hashes.is_empty(),
+        tx.blob_versioned_hashes().is_empty(),
         "invalid Monad protocol system transaction: blob hashes must be empty"
     );
     eyre::ensure!(
-        tx.max_fee_per_blob_gas == 0,
+        tx.max_fee_per_blob_gas() == 0,
         "invalid Monad protocol system transaction: blob gas fee must be zero"
     );
     eyre::ensure!(
-        tx.authorization_list.is_empty(),
+        tx.authorization_list_len() == 0,
         "invalid Monad protocol system transaction: authorization list must be empty"
     );
 
@@ -401,17 +401,6 @@ impl FoundryEvmFactory for MonadEvmFactory {
         DB: alloy_evm::Database,
         I: Inspector<Self::Context<DB>>,
     {
-        try_transact_monad_system_replay(evm, tx)
-    }
-
-    fn try_transact_foundry_system_replay<
-        'db,
-        I: FoundryInspectorExt<Self::FoundryContext<'db>>,
-    >(
-        &self,
-        evm: &mut Self::FoundryEvm<'db, I>,
-        tx: &Self::Tx,
-    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>> {
         try_transact_monad_system_replay(evm, tx)
     }
 

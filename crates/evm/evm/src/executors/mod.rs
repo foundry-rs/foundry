@@ -36,7 +36,7 @@ use foundry_evm_core::{
     },
     evm::{
         BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork,
-        HaltReasonFor, IntoInstructionResult, SpecFor, TxEnvFor,
+        IntoInstructionResult, SpecFor, TxEnvFor,
     },
     utils::StateChangeset,
 };
@@ -1559,11 +1559,11 @@ fn calculate_stipend(tx_env: &impl Transaction, spec: SpecId, eip2780_enabled: b
 }
 
 /// Converts the data aggregated in the `inspector` and `call` to a `RawCallResult`.
-fn convert_executed_result<FEN: FoundryEvmNetwork>(
+fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
     evm_env: EvmEnvFor<FEN>,
     tx_env: TxEnvFor<FEN>,
     mut inspector: InspectorStack<FEN>,
-    ResultAndState { result, state: state_changeset }: ResultAndState<HaltReasonFor<FEN>>,
+    ResultAndState { result, state: state_changeset }: ResultAndState<H>,
     db: &dyn DatabaseRef<Error = DatabaseError>,
     has_state_snapshot_failure: bool,
     fork_block_number: Option<u64>,
