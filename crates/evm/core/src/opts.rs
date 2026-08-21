@@ -903,22 +903,9 @@ impl EvmOpts {
         &self,
         fork: Option<&ResolvedFork>,
     ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, TX)> {
-        let (evm_env, tx, _) = self.env_with_resolved_fork_context(fork).await?;
-        Ok((evm_env, tx))
-    }
-
-    /// Returns environments at an exact fork block together with its current endpoint identity.
-    pub async fn env_with_resolved_fork_context<
-        SPEC: Into<SpecId> + Default + Copy,
-        BLOCK: FoundryBlock + Default,
-        TX: FoundryTransaction + Default,
-    >(
-        &self,
-        fork: Option<&ResolvedFork>,
-    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, TX, Option<ForkContext>)> {
         let Some(_) = &self.fork_url else {
             eyre::ensure!(fork.is_none(), "resolved fork provided without a configured fork");
-            return Ok((self.local_evm_env(), self.local_tx_env(), None));
+            return Ok((self.local_evm_env(), self.local_tx_env()));
         };
         let fork = fork.ok_or_else(|| eyre::eyre!("fork must be resolved"))?;
         let provider = self.provider_for_resolved_fork::<AnyNetwork>(fork)?;
@@ -943,7 +930,7 @@ impl EvmOpts {
             self.ensure_expected_fork_endpoint(&identity)?;
             if endpoint == fork.context() && endpoint.matches_identity(&identity) {
                 let chain_id = self.chain_id_override().unwrap_or(endpoint.execution_chain_id);
-                return Ok((evm_env, self.fork_tx_env(gas_price, chain_id), Some(endpoint)));
+                return Ok((evm_env, self.fork_tx_env(gas_price, chain_id)));
             }
         }
         eyre::bail!(

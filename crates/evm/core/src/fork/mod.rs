@@ -3,7 +3,7 @@ use super::opts::EvmOpts;
 pub mod database;
 
 mod multi;
-pub use multi::{ForkId, MultiFork, MultiForkHandler};
+pub use multi::{ForkId, ForkResult, MultiFork, MultiForkHandler};
 
 mod resolved;
 pub use resolved::ResolvedFork;

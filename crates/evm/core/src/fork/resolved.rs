@@ -125,6 +125,18 @@ impl ResolvedFork {
         }
         keccak256(encoded)
     }
+
+    /// Returns a redacted, opaque fingerprint of the complete resolved fork identity.
+    pub fn fingerprint(&self) -> B256 {
+        let encoded = serde_json::to_vec(&(
+            "foundry-resolved-fork-v1",
+            self.source_id(),
+            self.block,
+            self.context,
+        ))
+        .expect("resolved fork identity is serializable");
+        keccak256(encoded)
+    }
 }
 
 fn encode_source_part(encoded: &mut Vec<u8>, part: &[u8]) {
@@ -220,5 +232,7 @@ mod tests {
         assert_ne!(plain.source_id(), header.source_id());
         assert_ne!(plain.source_id(), jwt.source_id());
         assert_ne!(header.source_id(), jwt.source_id());
+        assert_ne!(plain.fingerprint(), header.fingerprint());
+        assert_ne!(plain.fingerprint(), jwt.fingerprint());
     }
 }

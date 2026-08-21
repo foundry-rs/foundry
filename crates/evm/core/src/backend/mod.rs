@@ -7,7 +7,7 @@ use crate::{
         BlockContext, BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
         FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
     },
-    fork::{CreateFork, ForkId, MultiFork},
+    fork::{CreateFork, ForkId, ForkResult, MultiFork},
     state_snapshot::StateSnapshots,
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain,
@@ -122,14 +122,6 @@ struct StagedForkRoll<FEN: FoundryEvmNetwork> {
     fork_index: ForkLookupIndex,
     fork: Fork<AnyNetwork, BlockEnvFor<FEN>>,
 }
-
-type RolledFork<FEN> = (
-    ForkId,
-    SharedBackend<AnyNetwork, BlockEnvFor<FEN>>,
-    EvmEnvFor<FEN>,
-    crate::opts::ForkContext,
-    BlockNumHash,
-);
 
 /// Canonical chain position used to reconstruct network-specific transaction context.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -667,7 +659,10 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         };
 
         if let Some(fork) = fork {
-            let (fork_id, fork, _, context, block) = backend.forks.create_fork(fork)?;
+            let ForkResult { id: fork_id, backend: fork, resolved, .. } =
+                backend.forks.create_fork(fork)?;
+            let context = resolved.context();
+            let block = resolved.block();
             let fork_db = ForkDB::new(fork);
             let fork_ids = backend.inner.insert_new_fork(
                 fork_id.clone(),
@@ -1341,11 +1336,14 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     fn apply_rolled_fork_with_context(
         &mut self,
         id: LocalForkId,
-        (fork_id, backend, fork_env, context, block): RolledFork<FEN>,
+        rolled: ForkResult<AnyNetwork, SpecFor<FEN>, BlockEnvFor<FEN>>,
         evm_env: &mut EvmEnvFor<FEN>,
         _tx_env: Option<&TxEnvFor<FEN>>,
         journaled_state: &mut JournaledState,
     ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
+        let ForkResult { id: fork_id, backend, env: fork_env, resolved } = rolled;
+        let context = resolved.context();
+        let block = resolved.block();
         let _affects_active = self.is_active_fork(id);
 
         #[cfg(feature = "monad")]
@@ -1452,7 +1450,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             };
 
             let current_fork_id = self.inner.ensure_fork_id(id).cloned()?;
-            let (fork_id, backend, fork_env, context, _) =
+            let ForkResult { id: fork_id, backend, env: fork_env, resolved } =
                 self.forks.roll_fork_exact(current_fork_id, fork_block)?;
             let staged_fork_journaled_state = if affects_active {
                 self.fork_init_journaled_state.clone()
@@ -1463,7 +1461,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 id,
                 fork_id,
                 fork_block,
-                context.source_chain_id,
+                resolved.context().source_chain_id,
                 backend,
                 staged_fork_journaled_state,
             )?;
@@ -1845,7 +1843,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
 
     fn create_fork(&mut self, create_fork: CreateFork) -> eyre::Result<LocalForkId> {
         trace!("create fork");
-        let (fork_id, fork, _, context, block) = self.forks.create_fork(create_fork)?;
+        let ForkResult { id: fork_id, backend: fork, resolved, .. } =
+            self.forks.create_fork(create_fork)?;
+        let context = resolved.context();
+        let block = resolved.block();
         let fork_db = ForkDB::new(fork);
         let (id, _) = self.inner.insert_new_fork(
             fork_id,

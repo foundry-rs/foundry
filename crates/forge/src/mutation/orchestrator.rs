@@ -52,17 +52,11 @@ struct ExecutionCacheFingerprint<'a> {
     schema: &'static str,
     config: &'a Config,
     evm_opts: &'a EvmOpts,
-    resolved_fork: Option<ResolvedForkFingerprint>,
+    resolved_fork: Option<alloy_primitives::B256>,
     filter_args: FilterArgsFingerprint<'a>,
     rerun_failures: Option<&'a [RerunFailure]>,
     num_workers: usize,
     artifacts: &'a [ArtifactCacheFingerprint],
-}
-
-#[derive(Clone, Copy, serde::Serialize)]
-struct ResolvedForkFingerprint {
-    hash: alloy_primitives::B256,
-    context: foundry_evm::opts::ForkContext,
 }
 
 #[derive(serde::Serialize)]
@@ -433,8 +427,7 @@ fn mutation_execution_cache_key(
     mutation_execution_cache_key_from_parts_with_rerun_failures(
         config,
         evm_opts,
-        resolved_fork
-            .map(|fork| ResolvedForkFingerprint { hash: fork.hash(), context: fork.context() }),
+        resolved_fork.map(ResolvedFork::fingerprint),
         filter_args,
         rerun_failures,
         num_workers,
@@ -464,7 +457,7 @@ fn mutation_execution_cache_key_from_parts(
 fn mutation_execution_cache_key_from_parts_with_rerun_failures(
     config: &Config,
     evm_opts: &EvmOpts,
-    resolved_fork: Option<ResolvedForkFingerprint>,
+    resolved_fork: Option<alloy_primitives::B256>,
     filter_args: &FilterArgs,
     rerun_failures: Option<&[RerunFailure]>,
     num_workers: usize,
@@ -644,8 +637,6 @@ fn resolve_mutate_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm::opts::ForkContext;
-    use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
     use std::str::FromStr;
 
     use crate::mutation::mutant::MutationType;
@@ -682,23 +673,6 @@ mod tests {
             source_line: "number++;".to_string(),
             line_number: 1,
             column_number: 1,
-        }
-    }
-
-    fn resolved_fork_fingerprint(hash: alloy_primitives::B256) -> ResolvedForkFingerprint {
-        ResolvedForkFingerprint {
-            hash,
-            context: ForkContext {
-                execution_chain_id: 1,
-                source_chain_id: 1,
-                network: NetworkVariant::Ethereum,
-                network_profile: NetworkConfigs::default(),
-                block_number: 1,
-                hardfork: None,
-                instance_id: None,
-                source_fork_block_number: None,
-                source_fork_block_hash: None,
-            },
         }
     }
 
@@ -762,7 +736,7 @@ mod tests {
         let first_key = mutation_execution_cache_key_from_parts_with_rerun_failures(
             &config,
             &evm_opts,
-            Some(resolved_fork_fingerprint(alloy_primitives::B256::with_last_byte(1))),
+            Some(alloy_primitives::B256::with_last_byte(1)),
             &filter_args,
             None,
             1,
@@ -772,7 +746,7 @@ mod tests {
         let second_key = mutation_execution_cache_key_from_parts_with_rerun_failures(
             &config,
             &evm_opts,
-            Some(resolved_fork_fingerprint(alloy_primitives::B256::with_last_byte(2))),
+            Some(alloy_primitives::B256::with_last_byte(2)),
             &filter_args,
             None,
             1,
