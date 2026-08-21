@@ -5,7 +5,10 @@ use super::{
     storage::BlockchainStorage,
 };
 use crate::eth::{
-    backend::{executor::build_tx_env_for_pending, replay::HistoricalReplayTransaction},
+    backend::{
+        db::MonadBlockReplayProfile, executor::build_tx_env_for_pending,
+        replay::HistoricalReplayTransaction,
+    },
     error::BlockchainError,
 };
 use alloy_consensus::{BlockHeader, constants::EMPTY_ROOT_HASH};
@@ -27,6 +30,7 @@ use foundry_evm::{
             monad_block_participants, monad_context_from_participants,
         },
     },
+    hardfork::FoundryHardfork,
 };
 use foundry_primitives::FoundryTxEnvelope;
 use monad_revm::{MonadChainContext, MonadHardfork, instructions::monad_gas_params};
@@ -39,6 +43,20 @@ use revm::{
     },
     database_interface::WrapDatabaseRef,
 };
+
+pub(super) fn store_block_metadata<N: Network>(
+    storage: &mut BlockchainStorage<N>,
+    block_hash: B256,
+    participants: MonadBlockParticipants,
+    execution_chain_id: u64,
+    hardfork: FoundryHardfork,
+) {
+    storage.monad_block_participants.insert(block_hash, participants);
+    storage.monad_block_replay_profiles.insert(
+        block_hash,
+        MonadBlockReplayProfile { execution_chain_id, hardfork: MonadHardfork::from(hardfork) },
+    );
+}
 
 pub(super) struct PreparedExecution {
     pub(super) context: Option<MonadChainContext>,

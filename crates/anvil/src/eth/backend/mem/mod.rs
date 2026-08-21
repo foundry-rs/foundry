@@ -4769,9 +4769,7 @@ impl<N: Network> Backend<N> {
                     }
                 }
                 #[cfg(feature = "monad")]
-                storage.monad_block_participants.remove(&hash);
-                #[cfg(feature = "monad")]
-                storage.monad_block_replay_profiles.remove(&hash);
+                storage.remove_monad_block_metadata(&hash);
             }
 
             storage.best_number = num;
@@ -5179,13 +5177,12 @@ where
             storage.hashes.insert(block_number, block_hash);
             #[cfg(feature = "monad")]
             if let Some(participants) = monad_participants {
-                storage.monad_block_participants.insert(block_hash, participants);
-                storage.monad_block_replay_profiles.insert(
+                monad::store_block_metadata(
+                    &mut storage,
                     block_hash,
-                    MonadBlockReplayProfile {
-                        execution_chain_id,
-                        hardfork: MonadHardfork::from(hardfork),
-                    },
+                    participants,
+                    execution_chain_id,
+                    hardfork,
                 );
             }
             for (info, receipt) in transactions.into_iter().zip(receipts) {
@@ -5578,13 +5575,12 @@ where
             storage.hashes.insert(block_number, block_hash);
             #[cfg(feature = "monad")]
             if let Some(participants) = monad_participants {
-                storage.monad_block_participants.insert(block_hash, participants);
-                storage.monad_block_replay_profiles.insert(
+                monad::store_block_metadata(
+                    &mut storage,
                     block_hash,
-                    MonadBlockReplayProfile {
-                        execution_chain_id: evm_env.cfg_env.chain_id,
-                        hardfork: hardfork.into(),
-                    },
+                    participants,
+                    evm_env.cfg_env.chain_id,
+                    hardfork,
                 );
             }
 
