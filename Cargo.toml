@@ -563,10 +563,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "ba818eef89b1f5d683c482e2702b74772fc27b37" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "ba818eef89b1f5d683c482e2702b74772fc27b37" }
-solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "ba818eef89b1f5d683c482e2702b74772fc27b37" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "ba818eef89b1f5d683c482e2702b74772fc27b37" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "e2e626864495f4693d6897beee9d20f2491732cc" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "e2e626864495f4693d6897beee9d20f2491732cc" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "e2e626864495f4693d6897beee9d20f2491732cc" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "e2e626864495f4693d6897beee9d20f2491732cc" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "eabd2e218a7606505430d84bfeacd145e2c1eff3" }

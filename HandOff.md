@@ -1,150 +1,107 @@
-# Task Handoff: Embedded Solar LSP Setup Convergence
+# Task Handoff: Fix Duplicate Forge LSP Diagnostics
 
 ## Objective And Success Criteria
 
-Finish the `forge lsp` integration so it uses Solar's embeddable launch API and follows Forge's
-normal CLI control flow without any LSP-specific setup or parsing path.
-
-Success means:
-
-- `Forge` is type-parsed exactly once, followed by `GlobalArgs::init` and `run_command`.
-- `lsp` uses the same process-wide environment, handler, tracing, shell, compiler approval, and
-  global-option setup as every other Forge subcommand, while skipping project dotenv loading so
-  its stdio transport cannot consume a prompt.
-- The LSP path has no bespoke pre-parser, hidden-global command, or separate dispatch branch.
-- Foundry injects its current executable as Solar's default Forge path.
-- Forge retains one focused LSP handshake/stdout integration test; Solar owns launch internals.
+Update Foundry's coordinated Solar pin to a formal upstream revision that preserves the embeddable
+`LaunchConfig` API and includes mutually exclusive push/pull diagnostic delivery. The same raw LSP
+probe must change from duplicate push-plus-pull delivery to pull-only delivery, and the affected
+Foundry code must compile and retain its lint and LSP behavior.
 
 ## Constraints And Decisions
 
-- Mattsse's review guidance is the primary design constraint and must survive session changes:
-  keep the regular Forge path (`environment/setup -> parse Forge enum once -> GlobalArgs::init ->
-  run_command -> LSP`), remove the `is_lsp_invocation`/`parse_lsp_args`/`run_lsp` setup bypass,
-  and introduce the missing Solar launch-config boundary so Forge keeps
-  `ForgeSubcommand::Lsp(LspArgs)` while `LspArgs` converts into `solar_lsp::LaunchConfig` before
-  `solar_lsp::launch(config)`. Review source: PR #16254 discussion `r3813986870` plus Mattsse's
-  follow-up message supplied by the user on 2026-08-21.
-- Preserve normal commands' dotenv-before-strict-parse behavior. Reuse the existing permissive clap
-  pass through a small command-aware predicate; do not add a second parser or dispatch path.
-- Treat Forge global flags normally for `lsp`; do not hide or reject them in a parallel grammar.
-- Keep Forge tests at the host boundary; Solar owns workspace, remapping, and flycheck internals.
-- Pin Solar to `ba818eef`, the two-commit backport directly on Foundry's existing Solar revision.
-  It exposes the same public launch contract as merged Solar PR #1209 without pulling 114 unrelated
-  Solar commits and roughly 300 changed upstream files into this PR.
-- Preserve unrelated user changes. Before this implementation only this handoff was modified.
+- Repository: `/Users/yuhang/foundry`; branch `lsp_wrapper`; HEAD `669624928`.
+- Preserve the completed `forge lsp` integration already committed on this branch.
+- Move all four Solar `[patch.crates-io]` entries together; Cargo resolves 12 Solar packages from
+  one git revision.
+- Use formal Solar #1209 squash-merge `e2e626864495f4693d6897beee9d20f2491732cc`.
+  Its tree exactly matches PR head `f1a08500d8913c5d4102bd8019a8e51a69a089c2`, and Solar's
+  diagnostic compatibility fix `8755964b` is an ancestor.
+- Keep Solar-owned protocol coverage upstream. Foundry retains its existing stdio handshake test;
+  the host-level regression proof is the external raw-stdio probe in
+  `/tmp/solar-diag-delivery-probe.rb`.
+- Keep the current lockfile. Reproducing from clean HEAD with the narrow non-recursive command
+  `cargo update -p solar-compiler --precise e2e626864495f4693d6897beee9d20f2491732cc`
+  produces it byte-for-byte. No package identity, registry version, checksum, or package count
+  changes; Cargo only rebinds dependency edges among versions already present in the lock.
 
-## Verified Facts
+## Verified Root Cause
 
-- Branch `lsp_wrapper`, HEAD `3521babd96244ef5a04c8ba6b34b97d2621af777`.
-- The branch at HEAD has `is_lsp_invocation`, `lsp_command`, `parse_lsp_args`,
-  `reject_unsupported_lsp_globals`, and `run_lsp` branches around normal setup; the working diff
-  removes all of them.
-- `common_setup<C>` already performs a permissive clap pass before `load_dotenv`.
-- Solar PR #1209 merged and exposes `solar_lsp::launch(LaunchConfig)` with a host-provided default
-  Forge executable path. The two-commit PR #1205 head (`ba818eef`) is based directly on Foundry's
-  existing Solar pin and has the same public contract; it is publicly fetchable at
-  `refs/pull/1205/head`. The reviewed PR #1209 head is `f1a08500` and its merge is `e2e62686`.
-- Cargo cannot move only `solar-lsp`: Foundry's unified Solar `[patch.crates-io]` source makes all
-  12 Solar packages resolve at one revision. `Cargo.lock` therefore changes all 12 source entries,
-  but no registry dependency versions.
-- Reviewers explicitly objected to the bespoke setup bypass and its divergence from
-  `run_command`; another review requested retaining only Forge-owned LSP integration coverage.
+- The old Solar pin `ba818eef89b1f5d683c482e2702b74772fc27b37` advertised pull diagnostics
+  while also publishing the same diagnostic through `textDocument/publishDiagnostics`.
+- `vscode-languageclient` keeps push and pull diagnostics in separate collections, so VS Code
+  displayed the identical Solar item twice. One server process was running; flycheck diagnostics
+  use source `forge-lint` and were not the duplicate.
+- Solar #1159 fixes the protocol boundary by negotiating exactly one
+  `DiagnosticDelivery::{Push, Pull}` mode. Pull requires both document-diagnostic and workspace
+  diagnostic-refresh capabilities; clients lacking either capability continue to receive push.
 
-## Work State
+## Completed Work
 
-- Completed: mapped boundaries; refactored Forge to regular process setup, one typed parse, and
-  normal dispatch; added command-aware dotenv isolation without a second parser; removed bespoke
-  global-option behavior; adopted `LaunchConfig` with `current_exe()`;
-  pinned the narrow Solar backport; reduced coverage to Forge's handshake/stdout boundary; aligned
-  README and changelog.
-- Completed: formatting, focused tests, Forge check, default-feature clippy, diff checks, and final
-  source review.
-- The malformed `lsp`-as-global-value case intentionally follows the single normal parse path: a
-  strict second pre-parser was not restored because Mattsse's guidance removes the bespoke LSP
-  setup/parser branch. Such an invocation is a malformed global command, not a parsed LSP command.
-- `--all-features` clippy could not reach Rust linting because the host Swift SDK/compiler versions
-  disagree while building `foundry-wallets` Touch ID support; default-feature clippy passed.
+- Updated the four Solar patch entries and all 12 Solar lockfile source records to `e2e62686`.
+- Migrated four Foundry lint call sites from removed Solar APIs
+  `Gcx::{builtin_member,resolved_member,builtin_callee}` to the unified
+  `Gcx::{resolved_builtin,resolved_expr}` queries, matching Solar's own migration in `6844b2d9`.
+- Preserved existing documentation and Forge-owned LSP test scope; no new Foundry test was added
+  for Solar internals. Updated the existing changelog entry to include the affected publishable
+  `forge-lint` package.
 
 ## Changed Files
 
-- `Cargo.toml`, `Cargo.lock`: move the coordinated Solar source to `ba818eef`; lockfile changes are
-  source-only.
-- `crates/cli/src/utils/mod.rs`, `crates/forge/src/args.rs`: reuse the permissive setup parse to
-  skip only project dotenv loading for LSP while preserving all other setup.
-- `crates/forge/src/args.rs`: removed the parallel LSP grammar/dispatch and restored normal flow.
-- `crates/forge/src/cmd/lsp.rs`: converts `LspArgs` to `LaunchConfig`, injects `current_exe()`, and
-  calls `solar_lsp::launch`.
-- `crates/forge/tests/cli/lsp.rs`: retains only Forge's handshake/stdout boundary coverage.
-- `README.md`, `.changelog/forge-lsp.md`: describe normal CLI flow and default Forge injection.
-- `HandOff.md`: refreshed rolling task state.
+- `Cargo.toml`: coordinated Solar pin.
+- `Cargo.lock`: reproducible Solar source/manifest resolution.
+- `crates/lint/src/sol/high/function_selector_collision.rs`: new Solar expression-resolution API.
+- `crates/lint/src/sol/med/ecrecover.rs`: new Solar builtin-resolution API.
+- `.changelog/forge-lsp.md`: diagnostic-delivery note and `forge-lint` patch mapping.
+- `HandOff.md`: rolling task state.
+
+## Red And Green Protocol Results
+
+Old pin, expected probe failure:
+
+```json
+{
+  "push_count": 1,
+  "pull_count": 1,
+  "push_equals_pull": true
+}
+```
+
+New pin, probe passed:
+
+```json
+{
+  "diagnostic_provider": {
+    "interFileDependencies": true,
+    "workspaceDiagnostics": true,
+    "workDoneProgress": true
+  },
+  "push_count": 0,
+  "pull_count": 1,
+  "push_equals_pull": false
+}
+```
 
 ## Verification
 
-- `cargo metadata --locked --no-deps --format-version 1`: passed after the Solar source update.
-- `cargo +nightly fmt --all -- --check`: passed after the final implementation.
-- `git diff --check`: passed after implementation and lockfile convergence.
+- Solar focused diagnostic-delivery tests on the source-identical PR-head tree: 6 passed,
+  1007 skipped.
+- `cargo check --locked -p forge-lint`: passed.
+- `cargo build --locked -p forge --bin forge`: passed.
+- `ruby /tmp/solar-diag-delivery-probe.rb /Users/yuhang/foundry/target/debug/forge`: passed with
+  pull 1, push 0.
+- `cargo test --locked -p forge --test ui -- Ecrecover`: passed, 97 fixtures selected and
+  96 filtered out; both `Ecrecover.sol` and `FunctionSelectorCollision.sol` passed.
+- `cargo nextest run --locked -p forge --test ui`: passed, 1/1 UI runner (all lint fixtures).
 - `cargo test --locked -p forge --test cli lsp:: --no-fail-fast`: passed, 1/1.
-- `cargo test --locked -p forge --lib opts::tests --no-fail-fast`: passed, 2/2.
-- `cargo test --locked -p foundry-cli --lib utils --no-fail-fast`: passed, 19/19.
-- Cargo emitted existing cache-cleanup permission, linker, and future-incompatibility warnings.
-- `cargo check --locked -p forge --all-targets`: passed.
-- `cargo clippy --locked -p forge --all-targets`: passed.
-- `cargo clippy --locked -p forge --all-targets --all-features`: blocked before linting by the host
-  SwiftBridging/Swift SDK mismatch in `foundry-wallets` Touch ID support.
+- `cargo metadata --locked --no-deps --format-version 1`: passed.
+- `cargo check --locked -p forge -p chisel -p solar --bins`: passed.
+- `cargo +nightly fmt --all -- --check`: passed after formatting.
+- `cargo clippy --locked -p forge-lint -p forge --all-targets`: passed.
 - `git diff --check`: passed.
 
-## Next Actions
+Cargo continues to emit pre-existing global-cache cleanup permission, macOS linker compact-unwind,
+and future-incompatibility warnings. They do not fail any command and are unrelated to this diff.
 
-1. No implementation work remains for this handoff. Preserve the current diff and report the
-   verification results; do not reintroduce the removed bespoke LSP parser/setup path.
+## Remaining Work
 
-<!-- codex-precompact:start -->
-## Automatic Pre-Compaction Checkpoint
-
-- Updated: 2026-08-21T09:32:24+00:00
-- Session: 01a0237b-37df-7ee0-8b2e-7a7b94e6578f
-- Turn: 01a0238a-e98e-7c63-af95-9d82567d4e83
-- Model: gpt-5.6-sol
-- Trigger: auto
-- Workspace: /Users/yuhang/foundry
-- Branch: lsp_wrapper
-- HEAD: 3521babd9
-
-### Git Status
-
-```text
-M .changelog/forge-lsp.md
- M Cargo.lock
- M Cargo.toml
- M HandOff.md
- M README.md
- M crates/cli/src/utils/mod.rs
- M crates/forge/src/args.rs
- M crates/forge/src/cmd/lsp.rs
- M crates/forge/tests/cli/lsp.rs
-```
-
-### Unstaged Diff Stat
-
-```text
-.changelog/forge-lsp.md       |   4 +-
- Cargo.lock                    |  24 ++---
- Cargo.toml                    |   8 +-
- HandOff.md                    | 108 ++++++++++++++++------
- README.md                     |  21 ++---
- crates/cli/src/utils/mod.rs   |  26 ++++--
- crates/forge/src/args.rs      | 210 +-----------------------------------------
- crates/forge/src/cmd/lsp.rs   |   4 +-
- crates/forge/tests/cli/lsp.rs |  80 ----------------
- 9 files changed, 133 insertions(+), 352 deletions(-)
-```
-
-### Staged Diff Stat
-
-```text
-(none or unavailable)
-```
-
-This generated block is a mechanical fallback. The semantic sections above must
-be maintained during the task so that decisions and exact next actions survive.
-<!-- codex-precompact:end -->
+No implementation or verification work remains. These changes belong on `0xKarl98/lsp_wrapper`.

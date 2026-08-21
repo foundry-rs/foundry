@@ -1,7 +1,10 @@
 ---
 forge: minor
+forge-lint: patch
 ---
 
 Added `forge lsp` to start Solar's Solidity language server without installing the standalone
 `solar` executable. The server follows Forge's normal CLI flow, and its default flycheck uses the
-running Forge executable while keeping project dotenv prompts away from LSP stdin.
+running Forge executable while keeping project dotenv prompts away from LSP stdin. Updated the
+Forge lint integration for the newer Solar APIs, and ensured compatible clients receive diagnostics
+through exactly one delivery method.
