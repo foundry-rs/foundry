@@ -3093,7 +3093,7 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
 
 fn fork_block_number(fork: &ForkId) -> Option<u64> {
     let (_, block) = fork.as_str().rsplit_once('@')?;
-    let block = block.split_once('-').map_or(block, |(block, _)| block);
+    let block = block.split(['#', '-']).next()?;
     let block = block.strip_prefix("0x")?;
     u64::from_str_radix(block, 16).ok()
 }
@@ -3453,6 +3453,12 @@ mod tests {
         assert_eq!(super::fork_block_number(&fork), Some(75_219_831));
         assert_eq!(
             super::fork_block_number(&format!("{}-1", fork.as_str()).into()),
+            Some(75_219_831)
+        );
+        assert_eq!(
+            super::fork_block_number(
+                &format!("{}#0xdeadbeef:authenticated-source", fork.as_str()).into()
+            ),
             Some(75_219_831)
         );
         assert_eq!(super::fork_block_number(&ForkId::new("https://example.com", None)), None);
