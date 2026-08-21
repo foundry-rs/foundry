@@ -6,7 +6,8 @@ use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use eyre::{Result, WrapErr};
 use foundry_evm_networks::NetworkConfigs;
 
-use super::{BlockResponseFor, ChainFor, FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor};
+use super::{BlockResponseFor, ChainFor, FoundryEvmNetwork, TxEnvFor};
+use crate::FoundryChain;
 
 /// Transaction metadata for an exact block and its two ancestors.
 #[derive(Clone, Debug)]
@@ -48,12 +49,7 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
 
     /// Builds context for the transaction at `index` in the current block.
     pub fn transaction(&self, index: usize) -> ChainFor<FEN> {
-        FEN::EvmFactory::default().chain_context_for_block(
-            &self.grandparent,
-            &self.parent,
-            &self.current,
-            index,
-        )
+        ChainFor::<FEN>::for_block(&self.grandparent, &self.parent, &self.current, index)
     }
 
     /// Returns a cursor positioned immediately before `index` in the current block.
@@ -80,12 +76,7 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
         let mut current = self.current.clone();
         let index = current.len();
         current.push(tx.clone());
-        FEN::EvmFactory::default().chain_context_for_block(
-            &self.grandparent,
-            &self.parent,
-            &current,
-            index,
-        )
+        ChainFor::<FEN>::for_block(&self.grandparent, &self.parent, &current, index)
     }
 
     /// Records a committed transaction at the cursor's current block position.
@@ -112,7 +103,7 @@ where
     P: Provider<FEN::Network>,
 {
     if !networks.is_monad() {
-        return Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx));
+        return Ok(ChainFor::<FEN>::for_transaction(tx));
     }
 
     let block = provider
