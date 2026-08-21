@@ -445,14 +445,9 @@ impl<'ast> State<'_, 'ast> {
                     self.print_sep(Separator::Hardbreak);
                 }
                 self.s.offset(-self.ind);
-            } else if !self.is_beginning_of_line() {
-                // A trailing run of mixed comments ends in a string token; glue the brace to it,
-                // as a break in between would reclassify the last comment on the next run.
-                glued = true;
-                self.nbsp();
+            } else {
+                glued = self.glue_brace_to_trailing_comments(cmnt.is_some());
             }
-            // Otherwise the body ended with verbatim source that already broke the line; print
-            // the brace as-is.
             self.end();
             if self.config.contract_new_lines && !glued {
                 self.hardbreak_if_nonempty();
@@ -467,6 +462,26 @@ impl<'ast> State<'_, 'ast> {
 
         self.cursor.advance_to(span.hi(), true);
         self.contract = None;
+    }
+
+    /// Glues the closing brace of an item body to a trailing run of mixed comments.
+    ///
+    /// A trailing run of mixed comments ends in a string token; a break in between would
+    /// reclassify the last comment on the next run, so the brace is glued with a hard space.
+    /// Bodies that end with a pending break (the caller adjusts its offset instead), an existing
+    /// space, or verbatim source that already broke the line are left unchanged.
+    ///
+    /// Returns `true` if the brace was glued.
+    fn glue_brace_to_trailing_comments(&mut self, printed: bool) -> bool {
+        if printed
+            && !self.last_token_is_break()
+            && !self.last_token_is_space()
+            && !self.is_beginning_of_line()
+        {
+            self.nbsp();
+            return true;
+        }
+        false
     }
 
     fn print_struct(&mut self, strukt: &'ast ast::ItemStruct<'ast>, span: Span) {
@@ -494,9 +509,8 @@ impl<'ast> State<'_, 'ast> {
             if ind == 0 {
                 self.s.offset(-self.ind);
             }
-        } else if printed && !self.last_token_is_space() {
-            // A trailing run of mixed comments ends in a string token; glue the brace to it.
-            self.nbsp();
+        } else {
+            self.glue_brace_to_trailing_comments(printed);
         }
         self.end();
         self.end();
@@ -510,22 +524,25 @@ impl<'ast> State<'_, 'ast> {
         self.print_ident(name);
         self.word(" {");
         self.hardbreak_if_nonempty();
+        let mut printed = false;
         for (pos, ident) in variants.iter().delimited() {
             self.print_comments(ident.span.lo(), CommentConfig::default());
             self.print_ident(ident);
             if !pos.is_last {
                 self.word(",");
             }
-            if !self.print_trailing_comment(ident.span.hi(), None) {
+            printed = self.print_trailing_comment(ident.span.hi(), None);
+            if !printed {
                 self.hardbreak();
             }
         }
-        self.print_comments(span.hi(), CommentConfig::skip_ws());
+        if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
+            printed = true;
+        }
         if self.last_token_is_break() {
             self.s.offset(-self.ind);
         } else {
-            // A trailing run of mixed comments ends in a string token; glue the brace to it.
-            self.nbsp();
+            self.glue_brace_to_trailing_comments(printed);
         }
         self.end();
         self.word("}");

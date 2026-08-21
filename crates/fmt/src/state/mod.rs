@@ -608,7 +608,6 @@ impl<'sess> State<'sess, '_> {
             }
 
             // Handle mixed with follow-up comment
-            let mut glue_next = false;
             if cmnt.style.is_mixed() {
                 if let Some(cmnt) = self.peek_comment_before(pos) {
                     config.mixed_no_break_prev = true;
@@ -617,7 +616,9 @@ impl<'sess> State<'sess, '_> {
                     // The separator within a run of mixed comments must never break, even with
                     // `wrap_comments`: a breakable space inside a broken consistent box always
                     // breaks, which splits the run and reclassifies its comments on the next run.
-                    glue_next = cmnt.style.is_mixed();
+                    if cmnt.style.is_mixed() {
+                        config = config.mixed_post_glued();
+                    }
                 }
 
                 // Ensure consecutive mixed comments don't have a double-space
@@ -635,10 +636,6 @@ impl<'sess> State<'sess, '_> {
 
             last_style = Some(cmnt.style);
             self.print_comment(cmnt, config);
-            if glue_next {
-                self.nbsp();
-                self.cursor.advance(1);
-            }
             config = config_cache;
         }
         last_style
