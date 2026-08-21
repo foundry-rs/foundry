@@ -3,8 +3,8 @@ use clap::{Parser, ValueHint};
 use comfy_table::{
     Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
 };
-use eyre::{Context, Result};
-use foundry_cli::utils::{Git, LoadConfig};
+use eyre::Result;
+use foundry_cli::utils::{Git, LoadConfig, SubmoduleCheckoutStatus};
 use foundry_common::shell;
 use foundry_config::{Config, impl_figment_convert_basic};
 use serde::Serialize;
@@ -97,19 +97,6 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
         // Not a Git repository - no submodules possible.
         return Ok(Vec::new());
     };
-    // Unlike the not-a-repo case above, a failure here is a real problem worth surfacing loudly:
-    // `git submodule status` fails its *entire* output (not just the offending line) if any
-    // submodule anywhere in the repo is merge-conflicted (`U<all-zeros> path`) - `Submodule`'s
-    // status-line regex only recognizes ` `/`+`/`-` prefixes, not `U`. Silently falling back to
-    // an empty list here would print "No dependencies found" while the repo is mid-conflict,
-    // which is exactly the kind of "looks empty but isn't" result this command exists to avoid.
-    // Trade-off worth knowing: this means one conflicted submodule anywhere in a large repo
-    // blocks `forge dependencies` entirely, even for an unrelated project subdirectory - fixing
-    // that needs `Submodule`'s status parsing to tolerate individual bad lines, which is shared
-    // by every other caller of `Git::submodules()` and out of scope here.
-    let submodules = git.submodules().wrap_err(
-        "failed to parse `git submodule status` - a merge-conflicted submodule can cause this",
-    )?;
 
     let mut lockfile = Lockfile::new(&config.root);
     if lockfile.exists() {
@@ -124,11 +111,8 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     let project_root = dunce::canonicalize(&config.root).unwrap_or_else(|_| config.root.clone());
 
     // `Git`'s commands all run with `config.root` as their working directory (see
-    // `Git::from_config`), and `git submodule status` prints paths relative to cwd - so
-    // `submodule.path()` below is already relative to the project root, nested-monorepo layout
-    // or not. No rebasing needed for the filter, the `foundry.lock` lookup (its keys are written
-    // the same way, by a `Git` instance rooted the same way - see `install.rs`/`update.rs`), or
-    // the displayed path.
+    // `Git::from_config`), so `lib`, scoped as a pathspec below, is relative to the project root,
+    // nested-monorepo layout or not.
     let install_lib_dir = config.install_lib_dir();
     let lib = install_lib_dir.strip_prefix(&project_root).unwrap_or(install_lib_dir);
 
@@ -140,22 +124,25 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     // spawning a fresh `git config` subprocess) per submodule.
     let gitmodules_entries = git.submodule_gitmodules_entries(&git_root).unwrap_or_default();
 
+    // NUL-delimited (`git ls-files --stage -z` under the hood) and status-tolerant per entry -
+    // unlike `Git::submodules()`'s whitespace-split `git submodule status` parser, this handles a
+    // submodule path containing a space correctly (that parser's path capture group is `[^\s]+`
+    // and rejects the whole line), and classifies each submodule's checkout status individually
+    // instead of failing the *entire* listing the moment one line looks unusual - a
+    // merge-conflicted submodule used to take down the whole command this way; scoping directly
+    // to `lib` here also replaces the old post-hoc `path.starts_with(lib)` filter.
+    let submodules = git.submodules_in_worktree(lib, &git_root, project_prefix)?;
+
     let mut out = Vec::new();
     for submodule in &submodules {
+        // A registered but never-checked-out submodule - e.g. after a `git clone` without
+        // `--recursive`, or a manual `rm -rf lib/foo` without `git submodule deinit` - isn't
+        // actually installed.
+        if submodule.status() == SubmoduleCheckoutStatus::Uninitialized {
+            continue;
+        }
+
         let path = submodule.path();
-        if !path.starts_with(lib) {
-            continue;
-        }
-        // `git submodule status`'s leading `-`/`+` status marker (which would say "not
-        // initialized") is stripped away by `Submodule::from_str`'s parsing, so a registered but
-        // never-checked-out submodule - e.g. after a `git clone` without `--recursive`, or a
-        // manual `rm -rf lib/foo` without `git submodule deinit` - still shows up here with its
-        // last-known rev. Match git's own "is this submodule populated" check
-        // (`<path>/.git` existing) rather than a bare directory-existence check, since a
-        // never-initialized gitlink still leaves behind an empty directory.
-        if !project_root.join(path).join(".git").exists() {
-            continue;
-        }
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
 
         // A `.gitmodules` section name isn't required to match its `path` field (e.g. `git
@@ -167,22 +154,28 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
             .ok()
             .flatten();
 
-        // Prefer `foundry.lock`'s pinned tag/branch, but only when it still matches what's
-        // actually checked out - if the submodule was manually moved to a different commit
-        // (`git submodule status`'s `+` marker), showing the stale locked version would
-        // misrepresent what's really on disk.
-        let version = lockfile
-            .get(path)
-            // `git submodule status` always reports the full 40-char SHA, but a `DepIdentifier::Rev`
-            // entry (from `forge install dep@<rev>`) stores whatever string the user typed
-            // verbatim, abbreviated or not - `Tag`/`Branch` entries are already normalized to a
-            // full SHA via `git.get_rev()`, so a bare `==` silently rejects an accurate,
-            // still-matching abbreviated `Rev` pin. A short hash is only ever the checkout's own
-            // SHA prefixed with itself, never another commit's, so `starts_with` is exact for
-            // full-length revs and correct for abbreviated ones.
-            .filter(|dep| !dep.rev().is_empty() && submodule.rev().starts_with(dep.rev()))
-            .map(ToString::to_string)
-            .unwrap_or_else(|| format!("rev={}", submodule.rev()));
+        // A merge-conflicted submodule has no meaningful single revision to report (`git
+        // submodule status` prints an all-zero placeholder SHA for it) - say so plainly rather
+        // than showing that placeholder or a stale lockfile pin.
+        let version = if submodule.status() == SubmoduleCheckoutStatus::Conflicted {
+            "conflicted".to_string()
+        } else {
+            // Prefer `foundry.lock`'s pinned tag/branch, but only when it still matches what's
+            // actually checked out - if the submodule was manually moved to a different commit,
+            // showing the stale locked version would misrepresent what's really on disk.
+            lockfile
+                .get(path)
+                // `git submodule status` always reports the full 40-char SHA, but a
+                // `DepIdentifier::Rev` entry (from `forge install dep@<rev>`) stores whatever
+                // string the user typed verbatim, abbreviated or not - `Tag`/`Branch` entries are
+                // already normalized to a full SHA via `git.get_rev()`, so a bare `==` silently
+                // rejects an accurate, still-matching abbreviated `Rev` pin. A short hash is only
+                // ever the checkout's own SHA prefixed with itself, never another commit's, so
+                // `starts_with` is exact for full-length revs and correct for abbreviated ones.
+                .filter(|dep| !dep.rev().is_empty() && submodule.rev().starts_with(dep.rev()))
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("rev={}", submodule.rev()))
+        };
 
         out.push(DependencyInfo {
             name: name.to_string(),
@@ -195,7 +188,6 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
 
     Ok(out)
 }
-
 /// Lists Soldeer-managed dependencies recorded in `soldeer.lock`.
 fn soldeer_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     let soldeer_lock_path = config.root.join(soldeer_core::lock::SOLDEER_LOCK);

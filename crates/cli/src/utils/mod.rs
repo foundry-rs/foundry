@@ -1022,19 +1022,26 @@ ignore them in the `.gitignore` file."
     ) -> Result<Option<String>> {
         let Some((name, gitmodules_url)) = entries.get(path) else { return Ok(None) };
 
-        // `.gitmodules` doesn't always carry the URL itself - some setups rely on a local-only
-        // override (e.g. a `git config` `insteadOf` rewrite, or an entry from `git submodule
-        // sync` that was never re-exported to `.gitmodules`). Prefer `.gitmodules`'s copy when
-        // present; otherwise fall back to the local config entry keyed by the resolved section
-        // name - this is still correct even when `.gitmodules` has the url and local config
-        // doesn't (a submodule that's never had `git submodule init` run).
-        if let Some(url) = gitmodules_url {
-            return Ok(Some(url.clone()));
-        }
-        self.cmd()
+        // The repository-local `submodule.<name>.url` is the URL git itself actually fetches
+        // from once a submodule is initialized - it can intentionally diverge from `.gitmodules`
+        // (a manually pinned internal mirror, an `insteadOf` rewrite recorded via `git config`,
+        // anything not re-exported with `git submodule sync`), and *that* divergence is exactly
+        // what `.gitmodules`-first used to hide. Verified empirically: with local config and
+        // `.gitmodules` pointing at different remotes, a fresh `git submodule update --init`
+        // clones from the local config's URL, not `.gitmodules`'s - so local config wins when
+        // both are present. Fall back to `.gitmodules`'s copy only when local config has no entry
+        // for this submodule at all (never had `git submodule init` run).
+        if let Ok(url) = self
+            .cmd()
             .args(["config", "--get", &format!("submodule.{name}.url")])
             .get_stdout_lossy()
-            .map(|url| Some(url.trim().to_string()))
+        {
+            let url = url.trim();
+            if !url.is_empty() {
+                return Ok(Some(url.to_string()));
+            }
+        }
+        Ok(gitmodules_url.clone())
     }
 
     /// Returns whether `.gitmodules` contains the default section name or an exact path mapping.
