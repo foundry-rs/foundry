@@ -1,6 +1,6 @@
 use super::{
     backend::mem::{
-        BlockRequest, DatabaseRef, GasEstimateCallOptions, MonadReplayContext, State,
+        BlockRequest, DatabaseRef, GasEstimateCallOptions, MonadExecutionSession, State,
         sanitize_simulation_blocks,
     },
     preserve_simulation_request_fields,
@@ -1739,7 +1739,7 @@ impl EthApi<FoundryNetwork> {
         request: FoundryTransactionRequest,
         state: &dyn DatabaseRef,
         block_env: BlockEnv,
-        monad_context: Option<MonadReplayContext>,
+        monad_session: MonadExecutionSession,
     ) -> Result<u128> {
         let inner = request.as_ref();
         let fees = FeeDetails::new(
@@ -1817,7 +1817,7 @@ impl EthApi<FoundryNetwork> {
             GasEstimateCallOptions::new(
                 highest_gas_limit as u64,
                 is_tempo_keychain,
-                monad_context.clone(),
+                monad_session.clone(),
             ),
         );
 
@@ -1857,7 +1857,7 @@ impl EthApi<FoundryNetwork> {
                 GasEstimateCallOptions::new(
                     mid_gas_limit as u64,
                     is_tempo_keychain,
-                    monad_context.clone(),
+                    monad_session.clone(),
                 ),
             );
 
@@ -3384,7 +3384,7 @@ impl EthApi<FoundryNetwork> {
         let typed_request = self.parse_transaction_request(request.clone())?;
 
         self.backend
-            .with_database_at_and_context(Some(block_request), |state, block_env, monad_context| {
+            .with_database_at_and_context(Some(block_request), |state, block_env, monad_session| {
                 let mut cache_db = CacheDB::new(state);
                 if let Some(state_override) = state_override {
                     apply_state_overrides(state_override.into_iter().collect(), &mut cache_db)?;
@@ -3396,7 +3396,7 @@ impl EthApi<FoundryNetwork> {
                         request.clone(),
                         FeeDetails::zero(),
                         block_env.clone(),
-                        monad_context.clone(),
+                        monad_session.clone(),
                     )?;
 
                 // Re-execute with the access list applied to get the post-AL gas usage.
@@ -3409,7 +3409,7 @@ impl EthApi<FoundryNetwork> {
                     FeeDetails::zero(),
                     block_env,
                     access_list.clone(),
-                    monad_context,
+                    monad_session,
                 )?;
 
                 Ok(AccessListResult {
@@ -4568,7 +4568,7 @@ impl EthApi<FoundryNetwork> {
             this.backend
                 .with_database_at_and_context(
                     Some(block_request),
-                    |state, mut block, monad_context| {
+                    |state, mut block, monad_session| {
                         let mut cache_db = CacheDB::new(state);
                         if let Some(state_overrides) = overrides.state {
                             apply_state_overrides(
@@ -4579,7 +4579,7 @@ impl EthApi<FoundryNetwork> {
                         if let Some(block_overrides) = overrides.block {
                             cache_db.apply_block_overrides(*block_overrides, &mut block);
                         }
-                        this.do_estimate_gas_with_state(request, &cache_db, block, monad_context)
+                        this.do_estimate_gas_with_state(request, &cache_db, block, monad_session)
                     },
                 )
                 .await
@@ -4595,8 +4595,8 @@ impl EthApi<FoundryNetwork> {
         let block_request = self.block_request(block_number).await?;
         self.on_blocking_task(|this| async move {
             this.backend
-                .with_database_at_and_context(Some(block_request), |state, block, monad_context| {
-                    this.do_estimate_gas_with_state(request, &state, block, monad_context)
+                .with_database_at_and_context(Some(block_request), |state, block, monad_session| {
+                    this.do_estimate_gas_with_state(request, &state, block, monad_session)
                 })
                 .await
         })

@@ -1,5 +1,9 @@
 //! In-memory blockchain backend.
-use self::{in_memory_db::StateRootDb, state::trie_storage};
+use self::{
+    in_memory_db::StateRootDb,
+    monad::{ExecutionContext as MonadExecutionContext, ReplayContext as MonadReplayContext},
+    state::trie_storage,
+};
 
 #[cfg(feature = "monad")]
 use crate::eth::backend::db::MonadBlockReplayProfile;
@@ -165,7 +169,7 @@ use foundry_primitives::{
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 #[cfg(feature = "monad")]
-use monad_revm::{MonadCfgEnv, MonadChainContext, MonadHardfork, instructions::monad_gas_params};
+use monad_revm::{MonadCfgEnv, MonadHardfork, instructions::monad_gas_params};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID};
 #[cfg(feature = "optimism")]
@@ -448,24 +452,6 @@ impl<D> Drop for StagedForkDbUser<D> {
     }
 }
 
-#[cfg(feature = "monad")]
-pub(crate) type MonadReplayContext = MonadChainContext;
-// Opaque stand-in that keeps feature-independent replay context plumbing type-stable.
-#[cfg(not(feature = "monad"))]
-#[derive(Clone)]
-pub(crate) struct MonadReplayContext;
-
-#[cfg(feature = "monad")]
-enum MonadExecutionContext<'a> {
-    Exact(Box<MonadReplayContext>),
-    Next(&'a mut MonadReplayContext),
-}
-
-#[cfg(not(feature = "monad"))]
-struct MonadExecutionContext<'a> {
-    _marker: std::marker::PhantomData<&'a mut MonadReplayContext>,
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum EnvelopeExecutionKind {
     #[default]
@@ -494,36 +480,6 @@ impl<'a> EnvelopeExecution<'a> {
     ) -> Self {
         Self { monad_context, kind: EnvelopeExecutionKind::Replay, hardfork }
     }
-}
-
-#[cfg(feature = "monad")]
-fn monad_execution_context_at(
-    context: Option<&MonadReplayContext>,
-    current_tx_index: usize,
-) -> Option<MonadExecutionContext<'static>> {
-    context.map(|context| {
-        let mut context = context.clone();
-        context.current_tx_index = current_tx_index;
-        MonadExecutionContext::Exact(Box::new(context))
-    })
-}
-
-#[cfg(not(feature = "monad"))]
-const fn monad_execution_context_at(
-    _context: Option<&MonadReplayContext>,
-    _current_tx_index: usize,
-) -> Option<MonadExecutionContext<'static>> {
-    None
-}
-
-#[cfg(feature = "monad")]
-const fn next_monad_context(context: &mut MonadReplayContext) -> MonadExecutionContext<'_> {
-    MonadExecutionContext::Next(context)
-}
-
-#[cfg(not(feature = "monad"))]
-const fn next_monad_context(_context: &mut MonadReplayContext) -> MonadExecutionContext<'_> {
-    MonadExecutionContext { _marker: std::marker::PhantomData }
 }
 
 const fn noop_before_transaction<E, T>(_evm: &mut E, _tx: &T) {}
@@ -695,16 +651,16 @@ struct TypedCallOverrides {
 pub(crate) struct GasEstimateCallOptions {
     gas_limit: u64,
     disable_fee_charge: bool,
-    monad_context: Option<MonadReplayContext>,
+    monad_session: MonadExecutionSession,
 }
 
 impl GasEstimateCallOptions {
     pub(crate) const fn new(
         gas_limit: u64,
         disable_fee_charge: bool,
-        monad_context: Option<MonadReplayContext>,
+        monad_session: MonadExecutionSession,
     ) -> Self {
-        Self { gas_limit, disable_fee_charge, monad_context }
+        Self { gas_limit, disable_fee_charge, monad_session }
     }
 }
 
@@ -763,6 +719,12 @@ pub mod in_memory_db;
 pub mod inspector;
 #[cfg(feature = "monad")]
 mod monad;
+#[cfg(not(feature = "monad"))]
+#[path = "monad_disabled.rs"]
+mod monad;
+
+pub(crate) use monad::ExecutionSession as MonadExecutionSession;
+
 #[cfg(feature = "optimism")]
 pub mod optimism;
 pub mod state;
@@ -1284,11 +1246,11 @@ impl<N: Network> Backend<N> {
     }
 
     #[cfg(not(feature = "monad"))]
-    fn active_monad_context_for_mined_block(
+    fn active_monad_session_for_mined_block(
         &self,
         _block: &Block,
-    ) -> Result<Option<MonadReplayContext>, BlockchainError> {
-        Ok(None)
+    ) -> Result<MonadExecutionSession, BlockchainError> {
+        Ok(MonadExecutionSession::default())
     }
 
     /// Returns the active hardfork.
@@ -1738,11 +1700,11 @@ impl<N: Network> Backend<N> {
     where
         DB: DatabaseRef<Error = DatabaseError> + Debug,
     {
-        let monad_context = self.active_monad_context_for_mined_block(block)?;
+        let monad_session = self.active_monad_session_for_mined_block(block)?;
         for (index, transaction) in block.body.transactions[..end].iter().enumerate() {
             let pending = self.pending_mined_transaction(transaction.clone())?;
             let mut inspector = AnvilInspector::default();
-            let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
+            let transaction_context = monad_session.transaction_at(index);
             let (result, _) = self.replay_envelope_with_inspector_ref_and_context(
                 cache_db,
                 evm_env,
@@ -3206,7 +3168,13 @@ impl<N: Network> Backend<N> {
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
-        self.call_with_state_and_context(state, request, fee_details, block_env, None)
+        self.call_with_state_and_context(
+            state,
+            request,
+            fee_details,
+            block_env,
+            MonadExecutionSession::default(),
+        )
     }
 
     pub(crate) fn call_with_state_and_context(
@@ -3215,7 +3183,7 @@ impl<N: Network> Backend<N> {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-        mut monad_context: Option<MonadReplayContext>,
+        mut monad_session: MonadExecutionSession,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         let mut inspector = self.build_inspector();
         let PreparedCall { evm_env, tx_env, .. } =
@@ -3225,7 +3193,7 @@ impl<N: Network> Backend<N> {
             &evm_env,
             &mut inspector,
             tx_env,
-            monad_context.as_mut().map(next_monad_context),
+            monad_session.next_transaction(),
         )?;
 
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
@@ -3246,7 +3214,7 @@ impl<N: Network> Backend<N> {
         block_env: BlockEnv,
         options: GasEstimateCallOptions,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
-        let GasEstimateCallOptions { gas_limit, disable_fee_charge, monad_context } = options;
+        let GasEstimateCallOptions { gas_limit, disable_fee_charge, monad_session } = options;
         self.call_with_state_typed_inner(
             state,
             request,
@@ -3257,7 +3225,7 @@ impl<N: Network> Backend<N> {
                 disable_fee_charge,
                 ..Default::default()
             },
-            monad_context,
+            monad_session,
         )
     }
 
@@ -3268,7 +3236,7 @@ impl<N: Network> Backend<N> {
         fee_details: FeeDetails,
         block_env: BlockEnv,
         access_list: AccessList,
-        monad_context: Option<MonadReplayContext>,
+        monad_session: MonadExecutionSession,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         self.call_with_state_typed_inner(
             state,
@@ -3276,7 +3244,7 @@ impl<N: Network> Backend<N> {
             fee_details,
             block_env,
             TypedCallOverrides { access_list: Some(access_list), ..Default::default() },
-            monad_context,
+            monad_session,
         )
     }
 
@@ -3287,7 +3255,7 @@ impl<N: Network> Backend<N> {
         fee_details: FeeDetails,
         block_env: BlockEnv,
         overrides: TypedCallOverrides,
-        mut monad_context: Option<MonadReplayContext>,
+        mut monad_session: MonadExecutionSession,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         let mut inspector = self.build_inspector();
         let PreparedCall { mut evm_env, mut tx_env, .. } =
@@ -3304,7 +3272,7 @@ impl<N: Network> Backend<N> {
             &evm_env,
             &mut inspector,
             tx_env,
-            monad_context.as_mut().map(next_monad_context),
+            monad_session.next_transaction(),
         )?;
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         inspector.print_logs();
@@ -3318,7 +3286,13 @@ impl<N: Network> Backend<N> {
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError> {
-        self.build_access_list_with_state_and_context(state, request, fee_details, block_env, None)
+        self.build_access_list_with_state_and_context(
+            state,
+            request,
+            fee_details,
+            block_env,
+            MonadExecutionSession::default(),
+        )
     }
 
     pub(crate) fn build_access_list_with_state_and_context(
@@ -3327,7 +3301,7 @@ impl<N: Network> Backend<N> {
         request: WithOtherFields<TransactionRequest>,
         fee_details: FeeDetails,
         block_env: BlockEnv,
-        mut monad_context: Option<MonadReplayContext>,
+        mut monad_session: MonadExecutionSession,
     ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError> {
         let mut inspector =
             AccessListInspector::new(request.access_list.clone().unwrap_or_default());
@@ -3339,7 +3313,7 @@ impl<N: Network> Backend<N> {
             &evm_env,
             &mut inspector,
             tx_env,
-            monad_context.as_mut().map(next_monad_context),
+            monad_session.next_transaction(),
         )?;
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         let access_list = inspector.access_list();
@@ -3561,7 +3535,7 @@ impl<N: Network> Backend<N> {
             return Ok(fork.trace_call(request, trace_types, block_id).await?);
         }
 
-        self.with_database_at_and_context(Some(block_request), |state, block, mut monad_context| {
+        self.with_database_at_and_context(Some(block_request), |state, block, mut monad_session| {
             let cache_db = CacheDB::new(state);
             let mut inspector =
                 TracingInspector::new(TracingInspectorConfig::from_parity_config(&trace_types));
@@ -3572,7 +3546,7 @@ impl<N: Network> Backend<N> {
                 &evm_env,
                 &mut inspector,
                 tx_env,
-                monad_context.as_mut().map(next_monad_context),
+                monad_session.next_transaction(),
             )?;
 
             inspector
@@ -3657,7 +3631,7 @@ impl<N: Network> Backend<N> {
     {
         let trace_config = TracingInspectorConfig::from_parity_config(&trace_types);
 
-        self.with_database_at_and_context(block_request, |state, block_env, mut monad_context| {
+        self.with_database_at_and_context(block_request, |state, block_env, mut monad_session| {
             let cache_db = CacheDB::new(state);
             let mut evm_env = self.evm_env.read().clone();
             evm_env.block_env = block_env;
@@ -3668,7 +3642,7 @@ impl<N: Network> Backend<N> {
                 &evm_env,
                 &mut inspector,
                 &pending_transaction,
-                monad_context.as_mut().map(next_monad_context),
+                monad_session.next_transaction(),
             )?;
 
             inspector
@@ -3688,7 +3662,7 @@ impl<N: Network> Backend<N> {
     where
         N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
     {
-        self.with_database_at_and_context(block_request, |state, block_env, mut monad_context| {
+        self.with_database_at_and_context(block_request, |state, block_env, mut monad_session| {
             let mut cache_db = CacheDB::new(state);
             let mut results = Vec::with_capacity(calls.len());
             let mut calls = calls.into_iter().peekable();
@@ -3712,7 +3686,7 @@ impl<N: Network> Backend<N> {
                     &evm_env,
                     &mut inspector,
                     tx_env,
-                    monad_context.as_mut().map(next_monad_context),
+                    monad_session.next_transaction(),
                 )?;
 
                 let trace_result = inspector
@@ -3767,7 +3741,7 @@ impl<N: Network> Backend<N> {
     ) -> Result<Vec<TraceResultsWithTransactionHash>, BlockchainError> {
         let (mut cache_db, evm_env, hardfork) = self.prepare_block_replay(block, parent_state)?;
         let mut results = Vec::new();
-        let monad_context = self.active_monad_context_for_mined_block(block)?;
+        let monad_session = self.active_monad_session_for_mined_block(block)?;
 
         // Execute each transaction in the block with tracing
         for tx_envelope in &block.body.transactions {
@@ -3778,8 +3752,7 @@ impl<N: Network> Backend<N> {
 
             // Prepare transaction environment and execute
             let pending_tx = self.pending_mined_transaction(tx_envelope.clone())?;
-            let transaction_context =
-                monad_execution_context_at(monad_context.as_ref(), results.len());
+            let transaction_context = monad_session.transaction_at(results.len());
             let (result, _) = self.replay_envelope_with_inspector_ref_and_context(
                 &cache_db,
                 &evm_env,
@@ -4814,19 +4787,20 @@ impl<N: Network> Backend<N> {
         let db = self.db.read().await;
         let mut inspector = self.build_inspector();
         #[cfg(feature = "monad")]
-        let mut monad_context = self
+        let monad_context = self
             .is_monad()
             .then(|| self.monad_context_for_child_of(self.best_hash()))
             .transpose()?;
         #[cfg(not(feature = "monad"))]
-        let mut monad_context = None;
+        let monad_context = None;
+        let mut monad_session = MonadExecutionSession::new(monad_context);
         let (ResultAndState { result, state }, _) = self
             .transact_envelope_with_inspector_ref_and_context(
                 &**db,
                 &evm_env,
                 &mut inspector,
                 &tx.pending_transaction,
-                monad_context.as_mut().map(next_monad_context),
+                monad_session.next_transaction(),
             )?;
         let (exit_reason, gas_used, out, logs) = unpack_execution_result(result);
 
@@ -6017,7 +5991,7 @@ where
                 tracing_options,
                 state_overrides,
                 block_overrides,
-                {
+                MonadExecutionSession::new({
                     #[cfg(feature = "monad")]
                     {
                         self.is_monad()
@@ -6028,7 +6002,7 @@ where
                     {
                         None
                     }
-                },
+                }),
                 Some((evm_env, hardfork)),
             )
         };
@@ -6055,7 +6029,7 @@ where
         tracing_options: GethDebugTracingOptions,
         state_overrides: Option<StateOverride>,
         block_overrides: Option<BlockOverrides>,
-        mut monad_context: Option<MonadReplayContext>,
+        mut monad_session: MonadExecutionSession,
         historical_execution: Option<(EvmEnv, FoundryHardfork)>,
     ) -> Result<GethTrace, BlockchainError> {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
@@ -6098,7 +6072,7 @@ where
                                 &evm_env,
                                 &mut inspector,
                                 tx_env,
-                                monad_context.as_mut().map(next_monad_context),
+                                monad_session.next_transaction(),
                                 hardfork,
                             )?;
 
@@ -6136,7 +6110,7 @@ where
                             &evm_env,
                             &mut inspector,
                             tx_env,
-                            monad_context.as_mut().map(next_monad_context),
+                            monad_session.next_transaction(),
                             hardfork,
                         )?;
 
@@ -6177,7 +6151,7 @@ where
                         &evm_env,
                         &mut inspector,
                         tx_env.clone(),
-                        monad_context.as_mut().map(next_monad_context),
+                        monad_session.next_transaction(),
                         hardfork,
                     )?;
                     let res = inspector
@@ -6202,7 +6176,7 @@ where
                 &evm_env,
                 &mut inspector,
                 tx_env,
-                monad_context.as_mut().map(next_monad_context),
+                monad_session.next_transaction(),
                 hardfork,
             )?;
 
@@ -6287,7 +6261,7 @@ where
         F: FnOnce(
             Box<dyn MaybeFullDatabase + '_>,
             BlockEnv,
-            Option<MonadReplayContext>,
+            MonadExecutionSession,
         ) -> Result<T, BlockchainError>,
     {
         let block_number = match block_request {
@@ -6306,7 +6280,7 @@ where
                         #[cfg(not(feature = "monad"))]
                         let context = None;
                         let block_env = block_env_from_header(&block_info.block.header);
-                        f(state, block_env, context)
+                        f(state, block_env, MonadExecutionSession::new(context))
                     })
                     .await;
             }
@@ -6337,12 +6311,20 @@ where
             {
                 let read_guard = self.states.upgradable_read();
                 if let Some(state_db) = read_guard.get_state(&block_hash) {
-                    return f(Box::new(state_db), block_env_from_header(&block.header), context);
+                    return f(
+                        Box::new(state_db),
+                        block_env_from_header(&block.header),
+                        MonadExecutionSession::new(context),
+                    );
                 }
 
                 let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
                 if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                    return f(Box::new(state), block_env_from_header(&block.header), context);
+                    return f(
+                        Box::new(state),
+                        block_env_from_header(&block.header),
+                        MonadExecutionSession::new(context),
+                    );
                 }
             }
 
@@ -6352,7 +6334,7 @@ where
 
         let db = self.db.read().await;
         let block = self.evm_env.read().block_env.clone();
-        f(Box::new(&**db), block, context)
+        f(Box::new(&**db), block, MonadExecutionSession::new(context))
     }
 
     pub async fn storage_at(
@@ -6503,8 +6485,8 @@ where
 
             let target_tx = block.body.transactions[index].clone();
             let target_tx = self.pending_mined_transaction(target_tx)?;
-            let monad_context = self.active_monad_context_for_mined_block(&block)?;
-            let transaction_context = monad_execution_context_at(monad_context.as_ref(), index);
+            let monad_session = self.active_monad_session_for_mined_block(&block)?;
+            let transaction_context = monad_session.transaction_at(index);
             let (result, base_tx_env) = self.replay_envelope_with_inspector_ref_and_context(
                 &cache_db,
                 &evm_env,
@@ -6682,13 +6664,12 @@ where
             let (mut cache_db, evm_env, hardfork) =
                 self.prepare_block_replay(block, parent_state)?;
             let mut transactions = Vec::with_capacity(block.body.transactions.len());
-            let monad_context = self.active_monad_context_for_mined_block(block)?;
+            let monad_session = self.active_monad_session_for_mined_block(block)?;
 
             for tx_envelope in &block.body.transactions {
                 let mut inspector = OpcodeGasInspector::default();
                 let pending_tx = self.pending_mined_transaction(tx_envelope.clone())?;
-                let transaction_context =
-                    monad_execution_context_at(monad_context.as_ref(), transactions.len());
+                let transaction_context = monad_session.transaction_at(transactions.len());
                 let (result, _) = self.replay_envelope_with_inspector_ref_and_context(
                     &cache_db,
                     &evm_env,
@@ -7691,7 +7672,7 @@ impl Backend<FoundryNetwork> {
 
         self.with_database_at_and_context(
             block_request,
-            |state, mut block_env, mut monad_context| {
+            |state, mut block_env, mut monad_session| {
                 let state_block_number = block_env.number.to::<u64>();
                 block_env.number = U256::from(block_number);
                 block_env.timestamp = timestamp
@@ -7738,7 +7719,7 @@ impl Backend<FoundryNetwork> {
                             &evm_env,
                             &mut inspector,
                             &transaction,
-                            monad_context.as_mut().map(next_monad_context),
+                            monad_session.next_transaction(),
                         )?;
 
                     let gas_price = tx.effective_tip_per_gas(base_fee).unwrap_or_default();
@@ -7813,7 +7794,7 @@ impl Backend<FoundryNetwork> {
 
         self.with_database_at_and_context(
             block_request,
-            |state, mut block_env, mut monad_context| {
+            |state, mut block_env, mut monad_session| {
                 let mut cache_db = CacheDB::new(state);
                 if let Some(state_override) = state_override {
                     apply_state_overrides(state_override, &mut cache_db)?;
@@ -7846,7 +7827,7 @@ impl Backend<FoundryNetwork> {
                                 &evm_env,
                                 &mut inspector,
                                 tx_env,
-                                monad_context.as_mut().map(next_monad_context),
+                                monad_session.next_transaction(),
                             )?;
 
                         let output = result.output().cloned().unwrap_or_default();
@@ -7866,10 +7847,7 @@ impl Backend<FoundryNetwork> {
                     results.push(bundle_results);
                     block_env.number = block_env.number.saturating_add(U256::ONE);
                     block_env.timestamp = block_env.timestamp.saturating_add(U256::ONE);
-                    #[cfg(feature = "monad")]
-                    if let Some(context) = monad_context.as_mut() {
-                        monad::advance_block(context);
-                    }
+                    monad_session.advance_block();
                 }
 
                 Ok(results)
@@ -7906,7 +7884,7 @@ impl Backend<FoundryNetwork> {
                            base_timestamp,
                            base_hash,
                            base_fee,
-                           mut monad_context: Option<MonadReplayContext>,
+                           mut monad_session: MonadExecutionSession,
                            base_base_fee_per_gas,
                            base_excess_blob_gas,
                            base_blob_gas_used| {
@@ -8209,7 +8187,7 @@ impl Backend<FoundryNetwork> {
                                 &evm_env,
                                 &mut inspector,
                                 tx_env,
-                                monad_context.as_mut().map(next_monad_context),
+                                monad_session.next_transaction(),
                             ),
                         tx_env => self.transact_eth_with_inspector_ref_and_precompile_overrides(
                             &cache_db,
@@ -8474,10 +8452,7 @@ impl Backend<FoundryNetwork> {
 
                 block_res.push(simulated_block);
 
-                #[cfg(feature = "monad")]
-                if let Some(context) = monad_context.as_mut() {
-                    monad::advance_block(context);
-                }
+                monad_session.advance_block();
             }
 
             Ok(block_res)
@@ -8494,17 +8469,18 @@ impl Backend<FoundryNetwork> {
                     );
                     #[cfg(feature = "monad")]
                     let monad_context = if self.is_monad() {
-                        let mut context = self.monad_context_before_mined_transaction(
+                        let context = self.monad_context_before_mined_transaction(
                             &block.block,
                             block.block.body.transactions.len(),
                         )?;
-                        monad::advance_block(&mut context);
                         Some(context)
                     } else {
                         None
                     };
                     #[cfg(not(feature = "monad"))]
                     let monad_context = None;
+                    let mut monad_session = MonadExecutionSession::new(monad_context);
+                    monad_session.advance_block();
                     simulate_at(
                         state,
                         block_env_from_header(header),
@@ -8512,7 +8488,7 @@ impl Backend<FoundryNetwork> {
                         header.timestamp(),
                         header.hash_slow(),
                         base_fee,
-                        monad_context,
+                        monad_session,
                         header.base_fee_per_gas().unwrap_or_default(),
                         header.excess_blob_gas().unwrap_or_default(),
                         header.blob_gas_used().unwrap_or_default(),
@@ -8547,6 +8523,7 @@ impl Backend<FoundryNetwork> {
                 };
                 #[cfg(not(feature = "monad"))]
                 let monad_context = None;
+                let monad_session = MonadExecutionSession::new(monad_context);
 
                 self.with_database_at(block_request, |state, block_env| {
                     simulate_at(
@@ -8556,7 +8533,7 @@ impl Backend<FoundryNetwork> {
                         base_timestamp,
                         base_hash,
                         base_fee,
-                        monad_context,
+                        monad_session,
                         base_block.header.base_fee_per_gas().unwrap_or_default(),
                         base_block.header.excess_blob_gas().unwrap_or_default(),
                         base_block.header.blob_gas_used().unwrap_or_default(),

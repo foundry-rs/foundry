@@ -1,7 +1,7 @@
 //! Monad-specific execution and context helpers for the in-memory backend.
 
 use super::{
-    AnvilInspector, Backend, ClientFork, DatabaseRef, EnvelopeExecutionKind, MonadExecutionContext,
+    AnvilInspector, Backend, ClientFork, DatabaseRef, EnvelopeExecutionKind,
     storage::BlockchainStorage,
 };
 use crate::eth::{
@@ -40,6 +40,46 @@ use revm::{
     database_interface::WrapDatabaseRef,
 };
 
+pub(super) type ReplayContext = MonadChainContext;
+
+pub(super) enum ExecutionContext<'a> {
+    Exact(Box<ReplayContext>),
+    Next(&'a mut ReplayContext),
+}
+
+/// Owns the Monad context while executing transactions against one evolving chain state.
+#[derive(Clone, Default)]
+pub(crate) struct ExecutionSession {
+    context: Option<ReplayContext>,
+}
+
+impl ExecutionSession {
+    pub(super) const fn new(context: Option<ReplayContext>) -> Self {
+        Self { context }
+    }
+
+    /// Returns a token that records the candidate transaction when its context is resolved.
+    pub(super) fn next_transaction(&mut self) -> Option<ExecutionContext<'_>> {
+        self.context.as_mut().map(ExecutionContext::Next)
+    }
+
+    /// Returns an isolated context for replaying the transaction at `index`.
+    pub(super) fn transaction_at(&self, index: usize) -> Option<ExecutionContext<'static>> {
+        self.context.as_ref().map(|context| {
+            let mut context = context.clone();
+            context.current_tx_index = index;
+            ExecutionContext::Exact(Box::new(context))
+        })
+    }
+
+    /// Advances the context to the next simulated block.
+    pub(super) fn advance_block(&mut self) {
+        if let Some(context) = &mut self.context {
+            advance_block(context);
+        }
+    }
+}
+
 pub(super) struct PreparedExecution {
     pub(super) context: Option<MonadChainContext>,
     pub(super) kind: EnvelopeExecutionKind,
@@ -75,12 +115,12 @@ pub(super) fn prepare_transaction<DB: alloy_evm::Database>(
 }
 
 pub(super) fn resolve_execution_context(
-    context: Option<MonadExecutionContext<'_>>,
+    context: Option<ExecutionContext<'_>>,
     tx: &TxEnv,
 ) -> Option<MonadChainContext> {
     match context {
-        Some(MonadExecutionContext::Exact(context)) => Some(*context),
-        Some(MonadExecutionContext::Next(context)) => {
+        Some(ExecutionContext::Exact(context)) => Some(*context),
+        Some(ExecutionContext::Next(context)) => {
             append_transaction(context, tx);
             Some(context.clone())
         }
@@ -88,7 +128,7 @@ pub(super) fn resolve_execution_context(
     }
 }
 
-pub(super) fn advance_block(context: &mut MonadChainContext) {
+fn advance_block(context: &mut MonadChainContext) {
     let current = context
         .current_block_senders
         .iter()
@@ -323,11 +363,14 @@ impl<N: Network> Backend<N> {
         self.monad_context_for_mined_transactions(block, &current, 0)
     }
 
-    pub(super) fn active_monad_context_for_mined_block(
+    pub(super) fn active_monad_session_for_mined_block(
         &self,
         block: &Block,
-    ) -> Result<Option<MonadChainContext>, BlockchainError> {
-        self.is_monad().then(|| self.monad_context_for_mined_block(block)).transpose()
+    ) -> Result<ExecutionSession, BlockchainError> {
+        self.is_monad()
+            .then(|| self.monad_context_for_mined_block(block))
+            .transpose()
+            .map(ExecutionSession::new)
     }
 
     pub(super) fn monad_context_before_mined_transaction(
