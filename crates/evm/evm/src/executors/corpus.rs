@@ -1978,6 +1978,7 @@ mod tests {
             EvmEnvFor::<EthEvmNetwork>::default(),
             TxEnvFor::<EthEvmNetwork>::default(),
             Backend::spawn(None).unwrap(),
+            Default::default(),
         );
         executor.inspector_mut().collect_edge_coverage_with_config(&corpus_config(corpus_root));
         // CALLDATALOAD(4); PUSH1 8; JUMPI; STOP; JUMPDEST; STOP.

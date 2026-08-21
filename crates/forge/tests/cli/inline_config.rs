@@ -524,8 +524,8 @@ forgetest!(per_test_network_routing, |prj, cmd| {
             }
         }
 
+        /// forge-config: default.networks.network = "tempo"
         contract TempoNetwork {
-            /// forge-config: default.networks.network = "tempo"
             function test_fee_manager_callable_on_tempo() public view {
                 // Sentinel bytecode (0xef) is injected at every Tempo precompile address.
                 require(
@@ -545,9 +545,10 @@ forgetest!(per_test_network_routing, |prj, cmd| {
             }
         }
 
-        // Mixed contract: one function annotated with Tempo, one unannotated (runs on Ethereum).
+        // Mixed contract: the contract defaults to Tempo, while one function overrides Ethereum.
+        /// forge-config: default.networks.network = "tempo"
         contract MixedNetwork {
-            // No annotation -> runs on Ethereum; precompile must be absent.
+            /// forge-config: default.networks.network = "ethereum"
             function test_fee_manager_absent_on_ethereum() public view {
                 require(
                     TIP_FEE_MANAGER.code.length == 0,
@@ -555,7 +556,6 @@ forgetest!(per_test_network_routing, |prj, cmd| {
                 );
             }
 
-            /// forge-config: default.networks.network = "tempo"
             function test_fee_manager_callable_on_tempo() public view {
                 require(
                     TIP_FEE_MANAGER.code.length > 0,

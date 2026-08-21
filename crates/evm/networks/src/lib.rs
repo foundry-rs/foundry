@@ -700,11 +700,16 @@ impl NetworkConfigs {
         }
     }
 
-    /// Applies an endpoint-reported execution profile while preserving orthogonal settings.
-    pub fn with_rpc_profile(self, profile: Self) -> Self {
+    /// Applies an authoritative execution profile while preserving orthogonal settings.
+    pub fn with_execution_profile(self, profile: Self) -> Self {
         let mut resolved = profile.canonical_execution_profile();
         resolved.bypass_prevrandao = self.bypass_prevrandao;
         resolved
+    }
+
+    /// Applies an endpoint-reported execution profile while preserving orthogonal settings.
+    pub fn with_rpc_profile(self, profile: Self) -> Self {
+        self.with_execution_profile(profile)
     }
 
     /// Parses the execution profile reported by `anvil_nodeInfo`.
@@ -1271,6 +1276,19 @@ mod tests {
         );
         assert_eq!(NetworkConfigs::with_celo().execution_family_name(), "ethereum");
         assert_eq!(NetworkConfigs::with_celo().execution_profile_name(), "celo");
+    }
+
+    #[test]
+    fn authoritative_execution_profile_preserves_orthogonal_settings() {
+        let inline = NetworkConfigs { bypass_prevrandao: true, ..NetworkConfigs::with_tempo() };
+
+        let ethereum = inline.with_execution_profile(NetworkConfigs::with_ethereum());
+        assert!(ethereum.has_same_execution_profile(&NetworkConfigs::with_ethereum()));
+        assert!(ethereum.bypass_prevrandao(NamedChain::Mainnet as u64));
+
+        let celo = inline.with_execution_profile(NetworkConfigs::with_celo());
+        assert!(celo.has_same_execution_profile(&NetworkConfigs::with_celo()));
+        assert!(celo.bypass_prevrandao(NamedChain::Mainnet as u64));
     }
 
     #[test]
