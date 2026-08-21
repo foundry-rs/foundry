@@ -301,6 +301,22 @@ repl_test!(eval_subcommand, "eval type(uint8).max", |repl| {
     repl.expect("Decimal: 255");
 });
 
+// Issue #4963: inspect the value of the final inline assembly expression.
+repl_test!(inline_assembly_expression, |repl| {
+    repl.sendln("uint256 value = 1");
+    repl.sendln("assembly { value := 2 add(value, 0) } // trailing comment");
+    repl.expect("Decimal: 2");
+    repl.sendln("value");
+    repl.expect("Decimal: 2");
+
+    repl.sendln("assembly { let __chisel_yul_result := 3 add(__chisel_yul_result, 0) }");
+    repl.expect("Decimal: 3");
+
+    repl.sendln("uint256 __chisel_yul_result_1 = 0");
+    repl.sendln("assembly { add(3, 4) }");
+    repl.expect("Decimal: 7");
+});
+
 repl_test!(
     eval_tempo_network_uses_tempo_executor,
     "--network tempo eval address(0xfeEC000000000000000000000000000000000000).code.length",
