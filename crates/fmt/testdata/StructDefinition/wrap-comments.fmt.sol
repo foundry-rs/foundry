@@ -1,4 +1,4 @@
-// config: bracket_spacing = true
+// config: wrap_comments = true
 struct Foo {}
 
 struct Bar {

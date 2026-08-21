@@ -420,12 +420,27 @@ impl FoundryTransaction for TempoTxEnv {
 /// Foundry extension for chain context type
 ///
 /// Every family that doesn't need chain metadata uses `()`.
-pub trait FoundryChain: Clone + Debug + Default + Send + Sync {
+pub trait FoundryChain<Tx>: Clone + Debug + Default + Send + Sync {
+    /// Builds chain context for a standalone synthetic transaction.
+    fn for_transaction(_tx: &Tx) -> Self {
+        Self::default()
+    }
+
+    /// Builds chain context for a transaction at an exact block position.
+    fn for_block(
+        _grandparent: &[Tx],
+        _parent: &[Tx],
+        _current: &[Tx],
+        _current_tx_index: usize,
+    ) -> Self {
+        Self::default()
+    }
+
     /// Refreshes journal state derived from the active chain position.
     fn refresh_journal<J: FoundryJournal>(&self, _journal: &mut J) {}
 }
 
-impl FoundryChain for () {}
+impl<Tx> FoundryChain<Tx> for () {}
 
 /// Foundry extension for Journal type
 pub trait FoundryJournal: JournalExt {
@@ -483,7 +498,7 @@ pub trait FoundryContextExt:
         Tx: FoundryTransaction + Clone,
         Cfg: Cfg<Spec = Self::Spec> + Clone + From<CfgEnv<Self::Spec>> + Into<CfgEnv<Self::Spec>>,
         Journal: FoundryJournal,
-        Chain: FoundryChain,
+        Chain: FoundryChain<Self::Tx>,
     >
 {
     /// Specification id type
@@ -565,7 +580,7 @@ impl<
     TX: FoundryTransaction + Clone,
     SPEC: Into<SpecId> + Copy + Debug,
     DB: Database,
-    C: FoundryChain,
+    C: FoundryChain<TX>,
 > FoundryContextExt for Context<BLOCK, TX, CfgEnv<SPEC>, DB, Journal<DB>, C>
 {
     type Spec = <Self::Cfg as Cfg>::Spec;

@@ -136,8 +136,8 @@ pub trait FoundryEvmFactory:
     + Default
     + 'static
 {
-    /// Chain context required to execute at an exact transaction position.
-    type Chain: FoundryChain;
+    /// Chain type for EVM's context created by this factory.
+    type Chain: FoundryChain<Self::Tx>;
 
     /// Foundry Context abstraction
     type FoundryContext<'db>: FoundryContextExt<
@@ -170,22 +170,6 @@ pub trait FoundryEvmFactory:
         chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I>;
-
-    /// Builds chain context for a standalone synthetic transaction.
-    fn chain_context_for_transaction(&self, _tx: &Self::Tx) -> Self::Chain {
-        Self::Chain::default()
-    }
-
-    /// Builds chain context for a transaction at an exact block position.
-    fn chain_context_for_block(
-        &self,
-        _grandparent: &[Self::Tx],
-        _parent: &[Self::Tx],
-        _current: &[Self::Tx],
-        _current_tx_index: usize,
-    ) -> Self::Chain {
-        Self::Chain::default()
-    }
 
     /// Tries to execute a canonical system transaction on a regular Alloy EVM during replay.
     ///
@@ -240,7 +224,7 @@ pub trait NestedEvm {
     /// The transaction environment type.
     type Tx: FoundryTransaction;
     /// Chain context identifying the active transaction position.
-    type Chain: FoundryChain;
+    type Chain: FoundryChain<Self::Tx>;
     /// The Journal type, which may own Monad's reserve-balance-tracker state.
     type Journal: FoundryJournal;
     /// Returns a mutable reference to the journal inner state (`JournaledState`).

@@ -6,6 +6,14 @@ contract ContractDefinition is
     Contract5
 {}
 
+contract EmptyBodyWithComment { /* body */ }
+
+contract EmptyBodyWithComments { /* one */ /* two */ }
+
+contract NonEmptyBodyTrailingComments {
+    uint256 x;
+    /* one */ /* two */ }
+
 // comment 7
 contract SampleContract {
     // spaced comment 1

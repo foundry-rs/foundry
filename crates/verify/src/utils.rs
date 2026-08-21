@@ -26,11 +26,11 @@ use foundry_config::{Config, FoundryHardfork};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
-        FoundryBlock as _,
+        FoundryBlock as _, FoundryChain,
         decode::RevertDecoder,
         evm::{
-            BlockContext, BlockEnvFor, BlockResponseFor, ChainFor, EvmEnvFor, FoundryEvmFactory,
-            FoundryEvmNetwork, TxEnvFor,
+            BlockContext, BlockEnvFor, BlockResponseFor, ChainFor, EvmEnvFor, FoundryEvmNetwork,
+            TxEnvFor,
         },
     },
     executors::TracingExecutor,
@@ -471,7 +471,7 @@ where
     FEN: FoundryEvmNetwork,
 {
     block_context.map_or_else(
-        || FEN::EvmFactory::default().chain_context_for_transaction(tx_env),
+        || ChainFor::<FEN>::for_transaction(tx_env),
         |context| context.clone().into_child().next_transaction(tx_env),
     )
 }

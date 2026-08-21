@@ -21,7 +21,7 @@ use anvil_core::eth::{
 use foundry_evm::{
     backend::DatabaseError,
     core::{
-        FromAnyRpcTransaction,
+        FoundryChain, FromAnyRpcTransaction,
         evm::{
             EvmEnvFor, FoundryEvmFactory, MonadBlockParticipants, MonadEvmNetwork,
             monad_block_participants, monad_context_from_participants,
@@ -377,7 +377,7 @@ impl<N: Network> Backend<N> {
         let monad_env = Self::build_monad_evm_env(evm_env, execution.hardfork);
         let factory = MonadEvmFactory::default();
         let context =
-            execution.context.unwrap_or_else(|| factory.chain_context_for_transaction(&tx_env));
+            execution.context.unwrap_or_else(|| MonadChainContext::for_transaction(&tx_env));
         let mut evm = factory.create_evm_with_inspector(WrapDatabaseRef(db), monad_env, inspector);
         evm.ctx_mut().chain = context;
         self.inject_precompiles(evm.precompiles_mut(), evm_env);

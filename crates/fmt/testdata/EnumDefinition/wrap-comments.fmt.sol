@@ -1,3 +1,4 @@
+// config: wrap_comments = true
 contract EnumDefinitions {
     enum Empty {}
     enum ActionChoices {

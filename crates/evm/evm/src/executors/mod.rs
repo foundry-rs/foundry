@@ -20,7 +20,7 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{SolCall, sol};
 use foundry_evm_core::{
-    EvmEnv, FoundryBlock, FoundryTransaction,
+    EvmEnv, FoundryBlock, FoundryChain, FoundryTransaction,
     backend::{
         Backend, BackendError, BackendResult, CowBackend, DatabaseError, DatabaseExt,
         GLOBAL_FAIL_SLOT,
@@ -735,8 +735,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
                 &mut backend,
                 evm_env.clone(),
-                FEN::EvmFactory::default()
-                    .chain_context_for_transaction(&TxEnvFor::<FEN>::default()),
+                ChainFor::<FEN>::for_transaction(&TxEnvFor::<FEN>::default()),
                 inspector,
             );
             let result =
