@@ -380,12 +380,13 @@ forgetest_init!(dependencies_resolves_url_by_gitmodules_section_name, |prj, cmd|
 });
 
 // `git submodule status` prints `U<40 zeros> path` for a submodule with an unresolved merge
-// conflict - `Submodule`'s status-line regex only recognizes ` `/`+`/`-` prefixes, not `U`, so
-// parsing the *entire* `git submodule status` output fails, not just that one line. Silently
-// falling back to an empty list here would print "No dependencies found" while the repo is
-// mid-conflict, which is exactly the "looks empty but isn't" failure mode this command exists to
-// avoid - it should fail loudly instead.
-forgetest_init!(dependencies_errors_loudly_on_conflicted_submodule, |prj, cmd| {
+// conflict. `submodules_in_worktree` (NUL-delimited `git ls-files --stage -z` plus a per-entry
+// status lookup) classifies this as `SubmoduleCheckoutStatus::Conflicted` without losing the
+// rest of the listing - unlike the old whitespace-split `Git::submodules()` parser, where one
+// conflicted line failed the *entire* `git submodule status` parse and printed "No dependencies
+// found", hiding every unrelated dependency along with it. A conflicted submodule still shows up
+// here, just with its version marked plainly instead of a meaningless all-zero placeholder SHA.
+forgetest_init!(dependencies_marks_conflicted_submodule_instead_of_hiding, |prj, cmd| {
     let remote = tempfile::tempdir().unwrap();
     let run_git = |args: &[&str], cwd: &std::path::Path| {
         let status = Command::new("git").args(args).current_dir(cwd).status().unwrap();
@@ -478,13 +479,22 @@ forgetest_init!(dependencies_errors_loudly_on_conflicted_submodule, |prj, cmd| {
         "expected the merge to leave lib/dep conflicted - test setup didn't reproduce a real conflict"
     );
 
-    cmd.arg("dependencies").assert_failure().stderr_eq(str![[r#"
-Error: failed to parse `git submodule status` - a merge-conflicted submodule can cause this
-
-Context:
-- Invalid submodule status format
-
-"#]]);
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let deps = parsed.as_array().unwrap();
+    // `forgetest_init!`'s project already ships `lib/forge-std` - it should still be listed
+    // normally alongside the conflicted one, not hidden by it.
+    assert!(
+        deps.iter().any(|d| d["name"] == "forge-std"),
+        "an unrelated, unconflicted submodule should still be listed: {json}"
+    );
+    let dep = deps.iter().find(|d| d["name"] == "dep").unwrap_or_else(|| {
+        panic!("expected the conflicted 'dep' submodule to still be listed, not hidden: {json}")
+    });
+    assert_eq!(
+        dep["version"], "conflicted",
+        "a conflicted submodule has no single meaningful revision to report"
+    );
 });
 
 // `git submodule add` populates both `.gitmodules` and the local `.git/config` with matching
@@ -570,5 +580,108 @@ forgetest_init!(dependencies_matches_abbreviated_rev_lockfile_entry, |prj, cmd| 
     assert!(
         !output.contains(&format!("rev={actual_rev}")),
         "should show the lockfile's abbreviated form, not the full hash:\n{output}"
+    );
+});
+
+// A submodule directory containing a space (e.g. `lib/my dep`) is a perfectly ordinary, valid
+// Git setup - but `Git::submodules()`'s status-line regex requires `[^\s]+` for the path, so it
+// used to reject the whole `git submodule status` output over one such line, taking every other
+// dependency down with it. `submodules_in_worktree`'s NUL-delimited `git ls-files --stage -z`
+// parser has no such requirement.
+forgetest_init!(dependencies_lists_submodule_with_space_in_path, |prj, cmd| {
+    let remote = tempfile::tempdir().unwrap();
+    let run_git = |args: &[&str], cwd: &std::path::Path| {
+        let status = Command::new("git").args(args).current_dir(cwd).status().unwrap();
+        assert!(status.success(), "git {args:?} failed in {}", cwd.display());
+    };
+    run_git(&["init", "-q", "-b", "main"], remote.path());
+    run_git(&["commit", "-q", "--allow-empty", "-m", "init"], remote.path());
+
+    run_git(
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            remote.path().to_str().unwrap(),
+            "lib/my dep",
+        ],
+        prj.root(),
+    );
+    run_git(&["add", "-A"], prj.root());
+    run_git(&["commit", "-q", "-m", "add submodule with a space in its path"], prj.root());
+
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let dep = parsed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["path"] == "lib/my dep")
+        .unwrap_or_else(|| panic!("expected a submodule at 'lib/my dep' in {json}"));
+    assert_eq!(
+        dep["url"].as_str().unwrap(),
+        remote.path().to_str().unwrap(),
+        "the spaced-path submodule's URL should still resolve"
+    );
+});
+
+// A repository-local `submodule.<name>.url` override (e.g. redirecting to an internal mirror via
+// `git config submodule.<name>.url <mirror>` without touching the committed `.gitmodules`) is
+// what `git submodule update --init` actually clones from - verified empirically: with local
+// config and `.gitmodules` pointing at different remotes, a fresh `update --init` follows the
+// local config's URL, not `.gitmodules`'s. Reporting `.gitmodules`'s URL instead would show a
+// stale/template value that doesn't match what the project is really pinned to.
+forgetest_init!(dependencies_prefers_local_config_url_over_gitmodules, |prj, cmd| {
+    let upstream = tempfile::tempdir().unwrap();
+    let mirror = tempfile::tempdir().unwrap();
+    let run_git = |args: &[&str], cwd: &std::path::Path| {
+        let status = Command::new("git").args(args).current_dir(cwd).status().unwrap();
+        assert!(status.success(), "git {args:?} failed in {}", cwd.display());
+    };
+    run_git(&["init", "-q", "-b", "main"], upstream.path());
+    run_git(&["commit", "-q", "--allow-empty", "-m", "init"], upstream.path());
+    run_git(&["init", "-q", "-b", "main"], mirror.path());
+    run_git(&["commit", "-q", "--allow-empty", "-m", "mirror init"], mirror.path());
+
+    run_git(
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            upstream.path().to_str().unwrap(),
+            "lib/dep",
+        ],
+        prj.root(),
+    );
+    run_git(&["add", "-A"], prj.root());
+    run_git(&["commit", "-q", "-m", "add submodule"], prj.root());
+
+    // Simulate a locally-pinned mirror override: `.gitmodules` keeps pointing at `upstream`, but
+    // the local config (what git itself actually fetches from) points at `mirror`.
+    run_git(&["config", "submodule.lib/dep.url", mirror.path().to_str().unwrap()], prj.root());
+    assert_ne!(
+        Command::new("git")
+            .args(["config", "--file", ".gitmodules", "--get", "submodule.lib/dep.url"])
+            .current_dir(prj.root())
+            .output()
+            .unwrap()
+            .stdout,
+        mirror.path().to_str().unwrap().as_bytes(),
+        "test setup should leave .gitmodules pointing at upstream, not the mirror"
+    );
+
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let dep = parsed.as_array().unwrap().iter().find(|e| e["name"] == "dep").unwrap_or_else(|| {
+        panic!("expected a 'dep' submodule in {json}");
+    });
+    assert_eq!(
+        dep["url"].as_str().unwrap(),
+        mirror.path().to_str().unwrap(),
+        "the local config override should win over .gitmodules's stale value"
     );
 });
