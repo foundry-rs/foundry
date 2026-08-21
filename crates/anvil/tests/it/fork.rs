@@ -495,7 +495,11 @@ async fn test_fork_transaction_hash_replay_error_fails_startup() {
         .with_fork_transaction_hash(Some(transaction_hash))
         .with_gas_limit(Some(20_000));
     let cache_path = config.block_cache_path(0).unwrap();
-    assert!(!cache_path.exists());
+    match std::fs::remove_file(&cache_path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => panic!("failed to clear stale fork cache: {err}"),
+    }
 
     let result = try_spawn(config).await;
     let Err(error) = result else { panic!("expected fork transaction replay to fail") };
