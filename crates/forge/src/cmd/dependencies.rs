@@ -3,12 +3,13 @@ use clap::{Parser, ValueHint};
 use comfy_table::{
     Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
 };
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::utils::{Git, LoadConfig, SubmoduleCheckoutStatus};
 use foundry_common::shell;
 use foundry_config::{Config, impl_figment_convert_basic};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use url::Url;
 
 /// CLI arguments for `forge dependencies`.
 #[derive(Clone, Debug, Parser)]
@@ -36,6 +37,20 @@ pub struct DependencyInfo {
     pub path: String,
     /// The upstream URL, if known.
     pub url: Option<String>,
+}
+
+/// Removes credentials from HTTP(S) URLs before they reach user-visible output.
+fn redact_url_credentials(raw: &str) -> String {
+    let Ok(mut url) = Url::parse(raw) else { return raw.to_string() };
+    if !matches!(url.scheme(), "http" | "https")
+        || (url.username().is_empty() && url.password().is_none())
+    {
+        return raw.to_string();
+    }
+
+    let _ = url.set_password(None);
+    let _ = url.set_username("");
+    url.to_string()
 }
 
 impl DependenciesArgs {
@@ -97,6 +112,7 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
         // Not a Git repository - no submodules possible.
         return Ok(Vec::new());
     };
+    let git_root = dunce::canonicalize(&git_root).unwrap_or(git_root);
 
     let mut lockfile = Lockfile::new(&config.root);
     if lockfile.exists() {
@@ -114,6 +130,13 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     // `Git::from_config`), so `lib`, scoped as a pathspec below, is relative to the project root,
     // nested-monorepo layout or not.
     let install_lib_dir = config.install_lib_dir();
+    // `libs` may point outside the repository, including through a symlink. Such a directory
+    // cannot contain a submodule from this worktree, and passing its absolute path to `git
+    // ls-files` fails with "is outside repository" instead of allowing Soldeer dependencies to
+    // be listed.
+    if install_lib_dir.is_absolute() && install_lib_dir.strip_prefix(&git_root).is_err() {
+        return Ok(Vec::new());
+    }
     let lib = install_lib_dir.strip_prefix(&project_root).unwrap_or(install_lib_dir);
 
     // `.gitmodules` always keys its `path` field relative to the Git repository root, regardless
@@ -166,7 +189,8 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
         let url = git
             .submodule_url_for_path(&gitmodules_entries, &project_prefix.join(path))
             .ok()
-            .flatten();
+            .flatten()
+            .map(|url| redact_url_credentials(&url));
 
         // A merge-conflicted submodule has no meaningful single revision to report (`git
         // submodule status` prints an all-zero placeholder SHA for it) - say so plainly rather
@@ -209,11 +233,11 @@ fn soldeer_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
         return Ok(Vec::new());
     }
 
-    // `read_lockfile` returns `Ok` with empty entries for malformed files, consistent with how
-    // `forge build`'s Soldeer integrity check already treats it.
-    let Ok(lockfile) = soldeer_core::lock::read_lockfile(&soldeer_lock_path) else {
-        return Ok(Vec::new());
-    };
+    // `read_lockfile` returns `Ok` with empty entries for malformed TOML. An error here is an
+    // actual I/O failure and should not be presented as an empty dependency list.
+    let lockfile = soldeer_core::lock::read_lockfile(&soldeer_lock_path).wrap_err_with(|| {
+        format!("failed to read Soldeer lockfile `{}`", soldeer_lock_path.display())
+    })?;
 
     let deps_dir = config.root.join("dependencies");
 
@@ -221,22 +245,31 @@ fn soldeer_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     for entry in &lockfile.entries {
         let install_path = entry.install_path(&deps_dir);
         // A fresh clone (before `forge soldeer install`) or a manually deleted package still has
-        // a `soldeer.lock` entry - only report what's actually present on disk.
-        if !install_path.exists() {
+        // a `soldeer.lock` entry - only report what's actually present on disk. For Git entries,
+        // a plain directory is not an installed checkout; require the repository metadata that
+        // Soldeer itself uses to distinguish a checkout from a missing dependency.
+        if !install_path.exists()
+            || (matches!(entry, soldeer_core::lock::LockEntry::Git(_))
+                && !install_path.join(".git").exists())
+        {
             continue;
         }
         let path = install_path.strip_prefix(&config.root).unwrap_or(&install_path);
 
-        let url = match entry {
-            soldeer_core::lock::LockEntry::Git(dep) => Some(dep.git.clone()),
-            soldeer_core::lock::LockEntry::Http(dep) => Some(dep.url.clone()),
-            _ => None,
+        let (version, url) = match entry {
+            soldeer_core::lock::LockEntry::Git(dep) => {
+                (format!("{}@{}", dep.version, dep.rev), Some(redact_url_credentials(&dep.git)))
+            }
+            soldeer_core::lock::LockEntry::Http(dep) => {
+                (dep.version.clone(), Some(redact_url_credentials(&dep.url)))
+            }
+            _ => (entry.version().to_string(), None),
         };
 
         out.push(DependencyInfo {
             name: entry.name().to_string(),
             source: "soldeer",
-            version: entry.version().to_string(),
+            version,
             path: path.display().to_string(),
             url,
         });

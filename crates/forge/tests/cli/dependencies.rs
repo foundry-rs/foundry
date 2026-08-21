@@ -31,7 +31,16 @@ fn write_soldeer_lock(root: &std::path::Path) {
     ];
     let deps_dir = root.join("dependencies");
     for entry in &entries {
-        fs::create_dir_all(entry.install_path(&deps_dir)).unwrap();
+        let install_path = entry.install_path(&deps_dir);
+        fs::create_dir_all(&install_path).unwrap();
+        if matches!(entry, LockEntry::Git(_)) {
+            let status = Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&install_path)
+                .status()
+                .unwrap();
+            assert!(status.success(), "git init failed in {}", install_path.display());
+        }
     }
     let contents = soldeer_core::lock::generate_lockfile_contents(entries);
     fs::write(root.join("soldeer.lock"), contents).unwrap();
@@ -67,7 +76,10 @@ forgetest_init!(dependencies_lists_submodules_and_soldeer, |prj, cmd| {
     assert!(output.contains("git-dep"), "missing git-dep entry:\n{output}");
     assert!(output.contains("soldeer"), "missing soldeer source label:\n{output}");
     assert!(output.contains("1.0.0"), "missing test-dep version:\n{output}");
-    assert!(output.contains("2.0.0"), "missing git-dep version:\n{output}");
+    assert!(
+        output.contains("2.0.0@abc123def456"),
+        "missing git-dep version and resolved revision:\n{output}"
+    );
     assert!(
         output.contains("https://example.com/test-dep-1.0.0.zip"),
         "missing test-dep URL in table output:\n{output}"
@@ -102,8 +114,78 @@ forgetest_init!(dependencies_json_output, |prj, cmd| {
 
     let git_dep = entries.iter().find(|e| e["name"] == "git-dep").unwrap();
     assert_eq!(git_dep["source"], "soldeer");
-    assert_eq!(git_dep["version"], "2.0.0");
+    assert_eq!(git_dep["version"], "2.0.0@abc123def456");
     assert_eq!(git_dep["url"], "https://github.com/example/git-dep.git");
+});
+
+// Dependency URLs can carry HTTP basic-auth credentials, including tokens accepted by `forge
+// install`. Neither the table nor JSON output may expose that userinfo, whether the URL came from
+// effective local submodule config or a Soldeer lock entry.
+forgetest_init!(dependencies_redacts_http_url_credentials, |prj, cmd| {
+    write_soldeer_lock(prj.root());
+
+    let lock_path = prj.root().join("soldeer.lock");
+    let lockfile = fs::read_to_string(&lock_path)
+        .unwrap()
+        .replace(
+            "https://example.com/test-dep-1.0.0.zip",
+            "https://soldeer-http-secret@example.com/test-dep-1.0.0.zip",
+        )
+        .replace(
+            "https://github.com/example/git-dep.git",
+            "https://soldeer-git-user:soldeer-git-secret@github.com/example/git-dep.git",
+        );
+    fs::write(lock_path, lockfile).unwrap();
+
+    let status = Command::new("git")
+        .args([
+            "config",
+            "submodule.lib/forge-std.url",
+            "https://submodule-secret@github.com/foundry-rs/forge-std",
+        ])
+        .current_dir(prj.root())
+        .status()
+        .unwrap();
+    assert!(status.success(), "failed to set credentialed submodule URL");
+
+    let table = cmd.arg("dependencies").assert_success().get_output().stdout_lossy();
+    for secret in
+        ["soldeer-http-secret", "soldeer-git-user", "soldeer-git-secret", "submodule-secret"]
+    {
+        assert!(
+            !table.contains(secret),
+            "credential `{secret}` leaked into table output:\n{table}"
+        );
+    }
+    assert!(table.contains("https://example.com/test-dep-1.0.0.zip"));
+    assert!(table.contains("https://github.com/example/git-dep.git"));
+    assert!(table.contains("https://github.com/foundry-rs/forge-std"));
+
+    let json = cmd
+        .forge_fuse()
+        .args(["dependencies", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    for secret in
+        ["soldeer-http-secret", "soldeer-git-user", "soldeer-git-secret", "submodule-secret"]
+    {
+        assert!(!json.contains(secret), "credential `{secret}` leaked into JSON output:\n{json}");
+    }
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let entries = parsed.as_array().unwrap();
+    assert_eq!(
+        entries.iter().find(|entry| entry["name"] == "test-dep").unwrap()["url"],
+        "https://example.com/test-dep-1.0.0.zip"
+    );
+    assert_eq!(
+        entries.iter().find(|entry| entry["name"] == "git-dep").unwrap()["url"],
+        "https://github.com/example/git-dep.git"
+    );
+    assert_eq!(
+        entries.iter().find(|entry| entry["name"] == "forge-std").unwrap()["url"],
+        "https://github.com/foundry-rs/forge-std"
+    );
 });
 
 // With no submodules and no `soldeer.lock`, the command reports an empty list rather than
@@ -244,6 +326,32 @@ forgetest_init!(dependencies_excludes_soldeer_entry_missing_from_disk, |prj, cmd
     assert!(names.contains(&"git-dep"), "git-dep missing from --json output:\n{json}");
 });
 
+// A Git lock entry's install path can exist without containing a Git checkout. Soldeer classifies
+// that as missing, so `forge dependencies` must not list a plain or empty directory as installed.
+forgetest_init!(dependencies_excludes_soldeer_git_entry_without_git_metadata, |prj, cmd| {
+    write_soldeer_lock(prj.root());
+    fs::remove_dir_all(prj.root().join("dependencies/git-dep-2.0.0/.git")).unwrap();
+
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let names: Vec<&str> =
+        parsed.as_array().unwrap().iter().map(|entry| entry["name"].as_str().unwrap()).collect();
+    assert!(!names.contains(&"git-dep"), "non-Git directory was listed as installed:\n{json}");
+    assert!(names.contains(&"test-dep"), "valid HTTP dependency should remain listed:\n{json}");
+});
+
+// A malformed lockfile is intentionally treated as empty by Soldeer, but a read error is not.
+// In particular, a directory named `soldeer.lock` must fail with useful path context.
+forgetest_init!(dependencies_propagates_soldeer_lockfile_io_errors, |prj, cmd| {
+    fs::create_dir(prj.root().join("soldeer.lock")).unwrap();
+
+    let stderr = cmd.args(["dependencies", "--json"]).assert_failure().get_output().stderr_lossy();
+    assert!(
+        stderr.contains("failed to read Soldeer lockfile") && stderr.contains("soldeer.lock"),
+        "missing lockfile path context:\n{stderr}"
+    );
+});
+
 // `Git`'s commands (including `git submodule status`) all run with the project root as their
 // working directory, so `submodule.path()` is already relative to the project root regardless of
 // nesting - `git submodule status` prints paths relative to cwd, not the Git repository root.
@@ -332,6 +440,28 @@ forgetest_init!(dependencies_resolves_symlinked_project_root, |prj, cmd| {
         output.contains("forge-std"),
         "a symlinked project root excluded a real submodule:\n{output}"
     );
+});
+
+// `libs` supports symlinks and absolute paths. When the configured install directory resolves
+// outside the enclosing Git worktree, there cannot be indexed submodules under it; skip the Git
+// lookup instead of letting an outside-repository pathspec abort the entire command before the
+// independently installed Soldeer dependencies are listed.
+#[cfg(unix)]
+forgetest_init!(dependencies_skips_submodules_for_external_lib_dir, |prj, cmd| {
+    write_soldeer_lock(prj.root());
+    fs::write(prj.root().join("foundry.toml"), "[profile.default]\nlibs = [\"lib\"]\n").unwrap();
+
+    fs::remove_dir_all(prj.root().join("lib")).unwrap();
+    let external = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(external.path(), prj.root().join("lib")).unwrap();
+
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let names: Vec<&str> =
+        parsed.as_array().unwrap().iter().map(|entry| entry["name"].as_str().unwrap()).collect();
+    assert!(!names.contains(&"forge-std"), "external lib cannot contain this submodule:\n{json}");
+    assert!(names.contains(&"test-dep"), "HTTP Soldeer dependency should still be listed:\n{json}");
+    assert!(names.contains(&"git-dep"), "Git Soldeer dependency should still be listed:\n{json}");
 });
 
 // `.gitmodules` doesn't require a submodule's section name to match its `path` field - `git
