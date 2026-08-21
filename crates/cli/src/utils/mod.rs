@@ -1031,6 +1031,13 @@ ignore them in the `.gitignore` file."
         // clones from the local config's URL, not `.gitmodules`'s - so local config wins when
         // both are present. Fall back to `.gitmodules`'s copy only when local config has no entry
         // for this submodule at all (never had `git submodule init` run).
+        //
+        // An explicitly-empty local override (`git config submodule.<name>.url ""`) is treated
+        // the same as no entry, falling back to `.gitmodules` - this is a display choice, not a
+        // claim about what git would actually do: an empty local URL is itself a broken config
+        // state (`update --init` would try to clone from "" and fail), so there's no truthful
+        // single answer here either way. Showing `.gitmodules`'s value is simply the least
+        // misleading of two inaccurate options.
         if let Ok(url) = self
             .cmd()
             .args(["config", "--get", &format!("submodule.{name}.url")])

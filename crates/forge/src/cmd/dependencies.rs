@@ -138,7 +138,21 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
         // A registered but never-checked-out submodule - e.g. after a `git clone` without
         // `--recursive`, or a manual `rm -rf lib/foo` without `git submodule deinit` - isn't
         // actually installed.
-        if submodule.status() == SubmoduleCheckoutStatus::Uninitialized {
+        //
+        // A `MissingMapping` gitlink (present in the index, but with no corresponding
+        // `.gitmodules` entry - e.g. `.gitmodules` was hand-edited or deleted without also
+        // running `git submodule deinit`) can never be initialized: `git submodule update --init`
+        // has nothing to clone from without a mapping. `submodules_in_worktree` reports it
+        // *without* consulting the real on-disk checkout at all - its "rev" is always the index's
+        // recorded sha, never the actual checkout - so on a fresh clone (where the directory is
+        // genuinely empty) this used to list a phantom "installed" dependency with a fabricated
+        // rev. Verified empirically: a fresh clone of a repo with a mappingless gitlink shows an
+        // empty `lib/<name>` directory, yet without this check `forge dependencies` still listed
+        // it as installed.
+        if matches!(
+            submodule.status(),
+            SubmoduleCheckoutStatus::Uninitialized | SubmoduleCheckoutStatus::MissingMapping
+        ) {
             continue;
         }
 

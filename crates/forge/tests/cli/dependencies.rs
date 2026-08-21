@@ -685,3 +685,62 @@ forgetest_init!(dependencies_prefers_local_config_url_over_gitmodules, |prj, cmd
         "the local config override should win over .gitmodules's stale value"
     );
 });
+
+// A gitlink can end up in the Git index with no corresponding `.gitmodules` mapping - e.g.
+// `.gitmodules` was hand-edited or deleted without also running `git submodule deinit`. Unlike
+// every other status, `submodules_in_worktree` classifies this (`MissingMapping`) purely from the
+// index, without ever consulting the real on-disk checkout - so on a fresh clone, where the
+// directory is genuinely empty and can never be populated (there's no mapping to `update --init`
+// from), it must not be listed as an installed dependency with a fabricated index-recorded rev.
+forgetest_init!(dependencies_excludes_submodule_missing_gitmodules_mapping, |prj, cmd| {
+    let remote = tempfile::tempdir().unwrap();
+    let run_git = |args: &[&str], cwd: &std::path::Path| {
+        let status = Command::new("git").args(args).current_dir(cwd).status().unwrap();
+        assert!(status.success(), "git {args:?} failed in {}", cwd.display());
+    };
+    run_git(&["init", "-q", "-b", "main"], remote.path());
+    run_git(&["commit", "-q", "--allow-empty", "-m", "init"], remote.path());
+
+    run_git(
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            remote.path().to_str().unwrap(),
+            "lib/ghost",
+        ],
+        prj.root(),
+    );
+    run_git(&["add", "-A"], prj.root());
+    run_git(&["commit", "-q", "-m", "add submodule"], prj.root());
+
+    // Orphan the gitlink: remove its `.gitmodules` mapping without deiniting the submodule.
+    run_git(&["rm", "--cached", ".gitmodules"], prj.root());
+    fs::remove_file(prj.root().join(".gitmodules")).unwrap();
+    run_git(
+        &["commit", "-q", "-am", "remove .gitmodules mapping, leaving an orphaned gitlink"],
+        prj.root(),
+    );
+
+    // A fresh clone is the scenario that actually breaks: the directory is genuinely empty here,
+    // unlike the original working copy where `lib/ghost` still happens to hold prior content.
+    let clone_dir = tempfile::tempdir().unwrap();
+    run_git(
+        &["clone", "-q", prj.root().to_str().unwrap(), clone_dir.path().to_str().unwrap()],
+        remote.path(),
+    );
+    assert!(
+        fs::read_dir(clone_dir.path().join("lib/ghost")).unwrap().next().is_none(),
+        "test setup should leave lib/ghost genuinely empty in the fresh clone"
+    );
+
+    cmd.set_current_dir(clone_dir.path());
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(
+        parsed.as_array().unwrap().iter().all(|d| d["name"] != "ghost"),
+        "an orphaned, mapping-less gitlink with an empty checkout must not be listed as installed: {json}"
+    );
+});
