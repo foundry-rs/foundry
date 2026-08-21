@@ -4,4 +4,5 @@ chisel: patch
 anvil: patch
 ---
 
-Pinned fork state reads and `BLOCKHASH` ancestry to the exact resolved block across reorgs.
+Pinned fork state reads and `BLOCKHASH` ancestry to the exact resolved block across reorgs without
+persisting credential-derived source identities.

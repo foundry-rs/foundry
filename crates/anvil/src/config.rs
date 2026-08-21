@@ -62,7 +62,7 @@ use std::{
     fmt::Write as FmtWrite,
     net::{IpAddr, Ipv4Addr},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 use tempo_hardfork::{
@@ -70,6 +70,7 @@ use tempo_hardfork::{
     constants::gas::{TEMPO_T0_BASE_FEE, TEMPO_T1_BASE_FEE},
 };
 use tokio::sync::RwLock as TokioRwLock;
+use url::Url;
 use yansi::Paint;
 
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
@@ -151,8 +152,14 @@ const BANNER: &str = r"
      \__,_| |_| |_|   \_/   |_| |_|
 ";
 
+static FORK_SOURCE_ID_KEY: LazyLock<B256> = LazyLock::new(B256::random);
+
 fn fork_source_id(urls: &[String], headers: &[String]) -> B256 {
     let mut encoded = Vec::new();
+    encoded.extend_from_slice(b"foundry-anvil-fork-source-v1");
+    if !fork_source_is_cache_safe(urls, headers) {
+        encoded.extend_from_slice(FORK_SOURCE_ID_KEY.as_slice());
+    }
     for parts in [urls, headers] {
         encoded.extend_from_slice(&(parts.len() as u64).to_be_bytes());
         for part in parts {
@@ -161,6 +168,18 @@ fn fork_source_id(urls: &[String], headers: &[String]) -> B256 {
         }
     }
     keccak256(encoded)
+}
+
+fn fork_source_is_cache_safe(urls: &[String], headers: &[String]) -> bool {
+    headers.is_empty()
+        && urls.iter().all(|raw| {
+            let Ok(url) = Url::parse(raw) else { return false };
+            url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+                && matches!(url.path(), "" | "/")
+        })
 }
 
 /// Configurations of the EVM node
@@ -1188,7 +1207,10 @@ impl NodeConfig {
         block: u64,
         rpc_url: &str,
     ) -> Option<PathBuf> {
-        if self.no_storage_caching || self.fork_urls.is_empty() {
+        if self.no_storage_caching
+            || self.fork_urls.is_empty()
+            || !fork_source_is_cache_safe(&self.fork_urls, &self.fork_headers)
+        {
             return None;
         }
 
@@ -2457,6 +2479,20 @@ mod tests {
         assert_ne!(identity, fork_source_id(&urls[..1], &headers));
         assert_ne!(identity, fork_source_id(&urls, &[]));
         assert_ne!(identity, fork_source_id(&[urls[1].clone(), urls[0].clone()], &headers));
+    }
+
+    #[test]
+    fn fork_cache_rejects_secret_bearing_sources() {
+        let block = 42;
+        let mut config = NodeConfig::test().with_eth_rpc_url(Some("http://localhost:8545"));
+        assert!(config.block_cache_path(block).is_some());
+
+        config.fork_headers = vec!["Authorization: secret".to_string()];
+        assert_eq!(config.block_cache_path(block), None);
+
+        config.fork_headers = Vec::new();
+        config.fork_urls = vec!["https://rpc.example/key".to_string()];
+        assert_eq!(config.block_cache_path(block), None);
     }
 
     #[test]

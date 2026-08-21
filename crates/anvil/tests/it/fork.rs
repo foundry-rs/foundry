@@ -32,9 +32,10 @@ use anvil::{
     eth::{EthApi, fees::INITIAL_BASE_FEE},
     spawn, try_spawn,
 };
+use axum::{Json, Router, body::Bytes as BodyBytes};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, arbitrum};
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
     self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_erroring_method_after,
@@ -45,6 +46,7 @@ use revm::{
     context::BlockEnv, context_interface::block::BlobExcessGasAndPrice,
     precompile::PrecompileStatus,
 };
+use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -284,6 +286,100 @@ async fn test_fork_transaction_hash_replays_before_startup() {
             .collect::<Vec<_>>(),
         expected_hashes
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_arbitrum_transaction_replay_preserves_rpc_block_number() {
+    let (origin_api, origin_handle) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Arbitrum as u64))).await;
+    origin_api.anvil_mine(Some(U256::from(11)), None).await.unwrap();
+    let origin_provider = origin_handle.http_provider();
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+
+    let mut init_code = hex!("63").to_vec();
+    init_code.extend_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR);
+    init_code.extend_from_slice(&hex!("60e01b5f5260205f60045f60645afa505f51602052435f5260405ff3"));
+    let receipt = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).with_deploy_code(init_code),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let transaction_hash = receipt.transaction_hash;
+    let contract = receipt.contract_address.unwrap();
+    let rpc_block_number = receipt.block_number.unwrap();
+    assert_eq!(rpc_block_number, 12);
+
+    let client = reqwest::Client::new();
+    let endpoint = origin_handle.http_endpoint();
+    let app = Router::new().fallback(move |body: BodyBytes| {
+        let client = client.clone();
+        let endpoint = endpoint.clone();
+        async move {
+            let request = serde_json::from_slice::<Value>(&body).unwrap();
+            let mut response = client
+                .post(endpoint)
+                .json(&request)
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap();
+            if request["method"] == "eth_getBlockByHash" && response["result"]["number"] == "0xc" {
+                response["result"]["l1BlockNumber"] = Value::String("0xa".to_string());
+            }
+            Json(response)
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let _server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(endpoint))
+            .with_fork_transaction_hash(Some(transaction_hash))
+            .with_no_storage_caching(true)
+            .with_no_mining(true),
+    )
+    .await;
+    let fork_provider = fork_handle.http_provider();
+
+    assert_eq!(fork_provider.get_block_number().await.unwrap(), rpc_block_number);
+    let code = fork_provider.get_code_at(contract).await.unwrap();
+    assert_eq!(U256::from_be_slice(&code[..32]), U256::from(10));
+    assert_eq!(U256::from_be_slice(&code[32..]), U256::from(rpc_block_number));
+
+    let arb_sys_call = WithOtherFields::new(
+        TransactionRequest::default()
+            .to(arbitrum::ARB_SYS_ADDRESS)
+            .with_input(arbitrum::ARB_BLOCK_NUMBER_SELECTOR.to_vec()),
+    );
+    let arb_block_number =
+        fork_provider.call(arb_sys_call.clone()).block(BlockId::latest()).await.unwrap();
+    assert_eq!(U256::from_be_slice(&arb_block_number), U256::from(rpc_block_number));
+    let pending_arb_block_number =
+        fork_provider.call(arb_sys_call.clone()).block(BlockId::pending()).await.unwrap();
+    assert_eq!(U256::from_be_slice(&pending_arb_block_number), U256::from(rpc_block_number + 1));
+
+    fork_api.mine_one().await.unwrap();
+    assert_eq!(fork_provider.get_block_number().await.unwrap(), rpc_block_number + 1);
+    let historical_arb_block_number = fork_provider
+        .call(arb_sys_call.clone())
+        .block(BlockId::number(rpc_block_number))
+        .await
+        .unwrap();
+    assert_eq!(U256::from_be_slice(&historical_arb_block_number), U256::from(rpc_block_number));
+    let parent_arb_block_number = fork_provider
+        .call(arb_sys_call)
+        .block(BlockId::number(rpc_block_number - 1))
+        .await
+        .unwrap();
+    assert_eq!(U256::from_be_slice(&parent_arb_block_number), U256::from(rpc_block_number - 1));
 }
 
 #[tokio::test(flavor = "multi_thread")]

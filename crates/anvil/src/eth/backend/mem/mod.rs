@@ -697,6 +697,7 @@ pub(crate) struct GasEstimateCallOptions {
     gas_limit: u64,
     disable_fee_charge: bool,
     monad_context: Option<MonadReplayContext>,
+    rpc_block_number: Option<u64>,
 }
 
 impl GasEstimateCallOptions {
@@ -704,8 +705,9 @@ impl GasEstimateCallOptions {
         gas_limit: u64,
         disable_fee_charge: bool,
         monad_context: Option<MonadReplayContext>,
+        rpc_block_number: Option<u64>,
     ) -> Self {
-        Self { gas_limit, disable_fee_charge, monad_context }
+        Self { gas_limit, disable_fee_charge, monad_context, rpc_block_number }
     }
 }
 
@@ -1642,7 +1644,11 @@ impl<N: Network> Backend<N> {
     fn next_evm_env(&self) -> EvmEnv {
         let mut evm_env = self.evm_env.read().clone();
         // increase block number for this block
-        evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
+        evm_env.block_env.number = if is_arbitrum(self.protocol_chain_id()) {
+            U256::from(self.best_number().saturating_add(1))
+        } else {
+            evm_env.block_env.number.saturating_add(U256::from(1))
+        };
         evm_env.block_env.basefee = self.base_fee();
         evm_env.block_env.blob_excess_gas_and_price = self.excess_blob_gas_and_price();
         evm_env.block_env.timestamp = U256::from(self.time.current_call_timestamp());
@@ -2233,8 +2239,19 @@ impl<N: Network> Backend<N> {
         }
     }
 
-    fn inject_arbitrum_precompile(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
-        let Some(block_number) = self.arbitrum_block_number(evm_env) else { return };
+    fn inject_arbitrum_precompile(
+        &self,
+        precompiles: &mut PrecompilesMap,
+        evm_env: &EvmEnv,
+        rpc_block_number: Option<u64>,
+    ) {
+        if !arbitrum::is_arbitrum_chain(self.protocol_chain_id()) {
+            return;
+        }
+        let Some(block_number) = rpc_block_number.or_else(|| self.arbitrum_block_number(evm_env))
+        else {
+            return;
+        };
         precompiles.apply_precompile(&arbitrum::ARB_SYS_ADDRESS, move |_| {
             Some(arbitrum::arb_sys_precompile(block_number))
         });
@@ -2267,7 +2284,7 @@ impl<N: Network> Backend<N> {
             PrecompileSpecId::from_spec_id(*evm_env.spec_id()),
         ));
         self.inject_precompiles(&mut precompiles, evm_env);
-        self.inject_arbitrum_precompile(&mut precompiles, evm_env);
+        self.inject_arbitrum_precompile(&mut precompiles, evm_env, None);
         let precompile_addresses = precompiles.addresses().copied().collect::<HashSet<_>>();
 
         // Validate every source first so invalid-source errors take precedence over the more
@@ -2368,6 +2385,7 @@ impl<N: Network> Backend<N> {
             evm_env,
             inspector,
             tx_env,
+            None,
             &SimulationPrecompileOverrides::default(),
         )
     }
@@ -2378,6 +2396,7 @@ impl<N: Network> Backend<N> {
         evm_env: &EvmEnv,
         inspector: &mut I,
         tx_env: TxEnv,
+        rpc_block_number: Option<u64>,
         overrides: &SimulationPrecompileOverrides,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
@@ -2391,7 +2410,7 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
+        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env, rpc_block_number);
         if !overrides.moves.is_empty() {
             let warm_addresses =
                 self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
@@ -2420,7 +2439,7 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
+        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env, None);
         if !overrides.moves.is_empty() {
             let warm_addresses =
                 self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
@@ -2624,7 +2643,7 @@ impl<N: Network> Backend<N> {
                 $on_execution_error:expr
             ) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
-                self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
+                self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env, None);
                 let mut executor =
                     AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions);
                 executor
@@ -2749,7 +2768,7 @@ impl<N: Network> Backend<N> {
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
+        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env, None);
         apply_ethereum_pre_execution_changes(&mut evm, parent_hash, transitions)
             .map_err(|err| BlockchainError::Internal(err.to_string()))
     }
@@ -2769,7 +2788,7 @@ impl<N: Network> Backend<N> {
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
+        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env, None);
         apply_ethereum_post_execution_changes(&mut evm, transitions, receipts)
             .map_err(|err| BlockchainError::Internal(err.to_string()))
     }
@@ -3151,6 +3170,7 @@ impl<N: Network> Backend<N> {
             inspector,
             tx_env,
             monad_context,
+            None,
             self.hardfork(),
         )
     }
@@ -3164,6 +3184,7 @@ impl<N: Network> Backend<N> {
         #[cfg_attr(not(feature = "monad"), allow(unused_variables))] monad_context: Option<
             MonadExecutionContext<'_>,
         >,
+        rpc_block_number: Option<u64>,
         #[cfg_attr(not(feature = "monad"), allow(unused_variables))] hardfork: FoundryHardfork,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
     where
@@ -3172,9 +3193,15 @@ impl<N: Network> Backend<N> {
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         match tx_env {
-            CallTxEnv::Eth(tx_env) => {
-                self.transact_eth_with_inspector_ref(db, evm_env, inspector, tx_env)
-            }
+            CallTxEnv::Eth(tx_env) => self
+                .transact_eth_with_inspector_ref_and_precompile_overrides(
+                    db,
+                    evm_env,
+                    inspector,
+                    tx_env,
+                    rpc_block_number,
+                    &SimulationPrecompileOverrides::default(),
+                ),
             #[cfg(feature = "monad")]
             CallTxEnv::Monad(tx_env) => {
                 let context = monad::resolve_execution_context(monad_context, &tx_env);
@@ -3207,7 +3234,7 @@ impl<N: Network> Backend<N> {
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
-        self.call_with_state_and_context(state, request, fee_details, block_env, None)
+        self.call_with_state_and_context(state, request, fee_details, block_env, None, None)
     }
 
     pub(crate) fn call_with_state_and_context(
@@ -3217,16 +3244,19 @@ impl<N: Network> Backend<N> {
         fee_details: FeeDetails,
         block_env: BlockEnv,
         mut monad_context: Option<MonadReplayContext>,
+        rpc_block_number: Option<u64>,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         let mut inspector = self.build_inspector();
         let PreparedCall { evm_env, tx_env, .. } =
             self.prepare_call_env(state, request, fee_details, block_env)?;
-        let ResultAndState { result, state } = self.transact_call_with_inspector_ref(
+        let ResultAndState { result, state } = self.transact_call_with_inspector_ref_at_hardfork(
             state,
             &evm_env,
             &mut inspector,
             tx_env,
             monad_context.as_mut().map(next_monad_context),
+            rpc_block_number,
+            self.hardfork(),
         )?;
 
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
@@ -3247,7 +3277,12 @@ impl<N: Network> Backend<N> {
         block_env: BlockEnv,
         options: GasEstimateCallOptions,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
-        let GasEstimateCallOptions { gas_limit, disable_fee_charge, monad_context } = options;
+        let GasEstimateCallOptions {
+            gas_limit,
+            disable_fee_charge,
+            monad_context,
+            rpc_block_number,
+        } = options;
         self.call_with_state_typed_inner(
             state,
             request,
@@ -3259,6 +3294,7 @@ impl<N: Network> Backend<N> {
                 ..Default::default()
             },
             monad_context,
+            rpc_block_number,
         )
     }
 
@@ -3270,6 +3306,7 @@ impl<N: Network> Backend<N> {
         block_env: BlockEnv,
         access_list: AccessList,
         monad_context: Option<MonadReplayContext>,
+        rpc_block_number: Option<u64>,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         self.call_with_state_typed_inner(
             state,
@@ -3278,6 +3315,7 @@ impl<N: Network> Backend<N> {
             block_env,
             TypedCallOverrides { access_list: Some(access_list), ..Default::default() },
             monad_context,
+            rpc_block_number,
         )
     }
 
@@ -3289,6 +3327,7 @@ impl<N: Network> Backend<N> {
         block_env: BlockEnv,
         overrides: TypedCallOverrides,
         mut monad_context: Option<MonadReplayContext>,
+        rpc_block_number: Option<u64>,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         let mut inspector = self.build_inspector();
         let PreparedCall { mut evm_env, mut tx_env, .. } =
@@ -3300,12 +3339,14 @@ impl<N: Network> Backend<N> {
         if let Some(access_list) = overrides.access_list {
             tx_env.base_mut().access_list = access_list;
         }
-        let ResultAndState { result, state } = self.transact_call_with_inspector_ref(
+        let ResultAndState { result, state } = self.transact_call_with_inspector_ref_at_hardfork(
             state,
             &evm_env,
             &mut inspector,
             tx_env,
             monad_context.as_mut().map(next_monad_context),
+            rpc_block_number,
+            self.hardfork(),
         )?;
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         inspector.print_logs();
@@ -3319,7 +3360,14 @@ impl<N: Network> Backend<N> {
         fee_details: FeeDetails,
         block_env: BlockEnv,
     ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError> {
-        self.build_access_list_with_state_and_context(state, request, fee_details, block_env, None)
+        self.build_access_list_with_state_and_context(
+            state,
+            request,
+            fee_details,
+            block_env,
+            None,
+            None,
+        )
     }
 
     pub(crate) fn build_access_list_with_state_and_context(
@@ -3329,19 +3377,23 @@ impl<N: Network> Backend<N> {
         fee_details: FeeDetails,
         block_env: BlockEnv,
         mut monad_context: Option<MonadReplayContext>,
+        rpc_block_number: Option<u64>,
     ) -> Result<(InstructionResult, Option<Output>, u64, AccessList), BlockchainError> {
         let mut inspector =
             AccessListInspector::new(request.access_list.clone().unwrap_or_default());
 
         let PreparedCall { evm_env, tx_env, .. } =
             self.prepare_call_env(state, request, fee_details, block_env)?;
-        let ResultAndState { result, state: _ } = self.transact_call_with_inspector_ref(
-            state,
-            &evm_env,
-            &mut inspector,
-            tx_env,
-            monad_context.as_mut().map(next_monad_context),
-        )?;
+        let ResultAndState { result, state: _ } = self
+            .transact_call_with_inspector_ref_at_hardfork(
+                state,
+                &evm_env,
+                &mut inspector,
+                tx_env,
+                monad_context.as_mut().map(next_monad_context),
+                rpc_block_number,
+                self.hardfork(),
+            )?;
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         let access_list = inspector.access_list();
         Ok((exit_reason, out, gas_used, access_list))
@@ -3562,25 +3614,30 @@ impl<N: Network> Backend<N> {
             return Ok(fork.trace_call(request, trace_types, block_id).await?);
         }
 
-        self.with_database_at_and_context(Some(block_request), |state, block, mut monad_context| {
-            let cache_db = CacheDB::new(state);
-            let mut inspector =
-                TracingInspector::new(TracingInspectorConfig::from_parity_config(&trace_types));
-            let PreparedCall { evm_env, tx_env, .. } =
-                self.prepare_call_env(&cache_db, request, fee_details, block)?;
-            let result = self.transact_call_with_inspector_ref(
-                &cache_db,
-                &evm_env,
-                &mut inspector,
-                tx_env,
-                monad_context.as_mut().map(next_monad_context),
-            )?;
+        self.with_database_at_and_context(
+            Some(block_request),
+            |state, block, mut monad_context, rpc_block_number| {
+                let cache_db = CacheDB::new(state);
+                let mut inspector =
+                    TracingInspector::new(TracingInspectorConfig::from_parity_config(&trace_types));
+                let PreparedCall { evm_env, tx_env, .. } =
+                    self.prepare_call_env(&cache_db, request, fee_details, block)?;
+                let result = self.transact_call_with_inspector_ref_at_hardfork(
+                    &cache_db,
+                    &evm_env,
+                    &mut inspector,
+                    tx_env,
+                    monad_context.as_mut().map(next_monad_context),
+                    Some(rpc_block_number),
+                    self.hardfork(),
+                )?;
 
-            inspector
-                .into_parity_builder()
-                .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                .map_err(Into::into)
-        })
+                inspector
+                    .into_parity_builder()
+                    .into_trace_results_with_state(&result, &trace_types, &cache_db)
+                    .map_err(Into::into)
+            },
+        )
         .await
     }
 
@@ -3658,25 +3715,28 @@ impl<N: Network> Backend<N> {
     {
         let trace_config = TracingInspectorConfig::from_parity_config(&trace_types);
 
-        self.with_database_at_and_context(block_request, |state, block_env, mut monad_context| {
-            let cache_db = CacheDB::new(state);
-            let mut evm_env = self.evm_env.read().clone();
-            evm_env.block_env = block_env;
+        self.with_database_at_and_context(
+            block_request,
+            |state, block_env, mut monad_context, _rpc_block_number| {
+                let cache_db = CacheDB::new(state);
+                let mut evm_env = self.evm_env.read().clone();
+                evm_env.block_env = block_env;
 
-            let mut inspector = TracingInspector::new(trace_config);
-            let (result, _) = self.transact_envelope_with_inspector_ref_and_context(
-                &cache_db,
-                &evm_env,
-                &mut inspector,
-                &pending_transaction,
-                monad_context.as_mut().map(next_monad_context),
-            )?;
+                let mut inspector = TracingInspector::new(trace_config);
+                let (result, _) = self.transact_envelope_with_inspector_ref_and_context(
+                    &cache_db,
+                    &evm_env,
+                    &mut inspector,
+                    &pending_transaction,
+                    monad_context.as_mut().map(next_monad_context),
+                )?;
 
-            inspector
-                .into_parity_builder()
-                .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                .map_err(BlockchainError::from)
-        })
+                inspector
+                    .into_parity_builder()
+                    .into_trace_results_with_state(&result, &trace_types, &cache_db)
+                    .map_err(BlockchainError::from)
+            },
+        )
         .await
     }
 
@@ -3689,46 +3749,51 @@ impl<N: Network> Backend<N> {
     where
         N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
     {
-        self.with_database_at_and_context(block_request, |state, block_env, mut monad_context| {
-            let mut cache_db = CacheDB::new(state);
-            let mut results = Vec::with_capacity(calls.len());
-            let mut calls = calls.into_iter().peekable();
+        self.with_database_at_and_context(
+            block_request,
+            |state, block_env, mut monad_context, rpc_block_number| {
+                let mut cache_db = CacheDB::new(state);
+                let mut results = Vec::with_capacity(calls.len());
+                let mut calls = calls.into_iter().peekable();
 
-            while let Some((request, trace_types)) = calls.next() {
-                let fee_details = FeeDetails::new(
-                    request.gas_price,
-                    request.max_fee_per_gas,
-                    request.max_priority_fee_per_gas,
-                    request.max_fee_per_blob_gas,
-                )?
-                .or_zero_fees();
-                let PreparedCall { evm_env, mut tx_env, simulated_tempo_tx } =
-                    self.prepare_call_env(&cache_db, request, fee_details, block_env.clone())?;
-                apply_tempo_envelope_identity(&mut tx_env, simulated_tempo_tx.as_ref());
+                while let Some((request, trace_types)) = calls.next() {
+                    let fee_details = FeeDetails::new(
+                        request.gas_price,
+                        request.max_fee_per_gas,
+                        request.max_priority_fee_per_gas,
+                        request.max_fee_per_blob_gas,
+                    )?
+                    .or_zero_fees();
+                    let PreparedCall { evm_env, mut tx_env, simulated_tempo_tx } =
+                        self.prepare_call_env(&cache_db, request, fee_details, block_env.clone())?;
+                    apply_tempo_envelope_identity(&mut tx_env, simulated_tempo_tx.as_ref());
 
-                let trace_config = TracingInspectorConfig::from_parity_config(&trace_types);
-                let mut inspector = TracingInspector::new(trace_config);
-                let result = self.transact_call_with_inspector_ref(
-                    &cache_db,
-                    &evm_env,
-                    &mut inspector,
-                    tx_env,
-                    monad_context.as_mut().map(next_monad_context),
-                )?;
+                    let trace_config = TracingInspectorConfig::from_parity_config(&trace_types);
+                    let mut inspector = TracingInspector::new(trace_config);
+                    let result = self.transact_call_with_inspector_ref_at_hardfork(
+                        &cache_db,
+                        &evm_env,
+                        &mut inspector,
+                        tx_env,
+                        monad_context.as_mut().map(next_monad_context),
+                        Some(rpc_block_number),
+                        self.hardfork(),
+                    )?;
 
-                let trace_result = inspector
-                    .into_parity_builder()
-                    .into_trace_results_with_state(&result, &trace_types, &cache_db)
-                    .map_err(BlockchainError::from)?;
-                results.push(trace_result);
+                    let trace_result = inspector
+                        .into_parity_builder()
+                        .into_trace_results_with_state(&result, &trace_types, &cache_db)
+                        .map_err(BlockchainError::from)?;
+                    results.push(trace_result);
 
-                if calls.peek().is_some() {
-                    cache_db.commit(result.state);
+                    if calls.peek().is_some() {
+                        cache_db.commit(result.state);
+                    }
                 }
-            }
 
-            Ok(results)
-        })
+                Ok(results)
+            },
+        )
         .await
     }
 
@@ -5133,6 +5198,7 @@ where
             } = self.execute_with_replay_block_executor(
                 &mut overlay,
                 &replay_env,
+                block_number,
                 best_hash,
                 hardfork,
                 parent_beacon_block_root,
@@ -5251,6 +5317,7 @@ where
         &self,
         db: DB,
         evm_env: &EvmEnv,
+        rpc_block_number: u64,
         parent_hash: B256,
         hardfork: FoundryHardfork,
         parent_beacon_block_root: Option<B256>,
@@ -5280,7 +5347,11 @@ where
             }};
             ($evm:expr, $execute:expr) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
-                self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
+                self.inject_arbitrum_precompile(
+                    $evm.precompiles_mut(),
+                    evm_env,
+                    Some(rpc_block_number),
+                );
                 let mut executor = AnvilBlockExecutor::new(
                     $evm,
                     parent_hash,
@@ -5861,7 +5932,9 @@ where
         block_request: Option<BlockRequest<FoundryTxEnvelope>>,
         overrides: EvmOverrides,
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
-        self.with_database_at_and_context(block_request, |state, mut block, monad_context| {
+        self.with_database_at_and_context(
+            block_request,
+            |state, mut block, monad_context, rpc_block_number| {
             let block_number = block.number;
             let (exit, out, gas, state) = {
                 let mut cache_db = CacheDB::new(state);
@@ -5877,11 +5950,13 @@ where
                     fee_details,
                     block,
                     monad_context,
+                    Some(rpc_block_number),
                 )
             }?;
             trace!(target: "backend", "call return {:?} out: {:?} gas {} on block {}", exit, out, gas, block_number);
             Ok((exit, out, gas, state))
-        })
+            },
+        )
         .await
     }
 
@@ -5913,20 +5988,24 @@ where
                 .await;
         }
 
-        self.with_database_at_and_context(block_request, |state, block, monad_context| {
-            let cache_db = CacheDB::new(state);
-            self.trace_call_with_state(
-                request,
-                fee_details,
-                block,
-                cache_db,
-                tracing_options,
-                state_overrides,
-                block_overrides,
-                monad_context,
-                None,
-            )
-        })
+        self.with_database_at_and_context(
+            block_request,
+            |state, block, monad_context, rpc_block_number| {
+                let cache_db = CacheDB::new(state);
+                self.trace_call_with_state(
+                    request,
+                    fee_details,
+                    block,
+                    cache_db,
+                    tracing_options,
+                    state_overrides,
+                    block_overrides,
+                    monad_context,
+                    None,
+                    Some(rpc_block_number),
+                )
+            },
+        )
         .await
     }
 
@@ -6033,6 +6112,7 @@ where
                     }
                 },
                 Some((evm_env, hardfork)),
+                Some(block.header.number),
             )
         };
 
@@ -6060,6 +6140,7 @@ where
         block_overrides: Option<BlockOverrides>,
         mut monad_context: Option<MonadReplayContext>,
         historical_execution: Option<(EvmEnv, FoundryHardfork)>,
+        rpc_block_number: Option<u64>,
     ) -> Result<GethTrace, BlockchainError> {
         let GethDebugTracingOptions { config, tracer, tracer_config, .. } = tracing_options;
         let block_number = block.number;
@@ -6102,6 +6183,7 @@ where
                                 &mut inspector,
                                 tx_env,
                                 monad_context.as_mut().map(next_monad_context),
+                                rpc_block_number,
                                 hardfork,
                             )?;
 
@@ -6140,6 +6222,7 @@ where
                             &mut inspector,
                             tx_env,
                             monad_context.as_mut().map(next_monad_context),
+                            rpc_block_number,
                             hardfork,
                         )?;
 
@@ -6181,6 +6264,7 @@ where
                         &mut inspector,
                         tx_env.clone(),
                         monad_context.as_mut().map(next_monad_context),
+                        rpc_block_number,
                         hardfork,
                     )?;
                     let res = inspector
@@ -6206,6 +6290,7 @@ where
                 &mut inspector,
                 tx_env,
                 monad_context.as_mut().map(next_monad_context),
+                rpc_block_number,
                 hardfork,
             )?;
 
@@ -6291,6 +6376,7 @@ where
             Box<dyn MaybeFullDatabase + '_>,
             BlockEnv,
             Option<MonadReplayContext>,
+            u64,
         ) -> Result<T, BlockchainError>,
     {
         let block_number = match block_request {
@@ -6309,7 +6395,7 @@ where
                         #[cfg(not(feature = "monad"))]
                         let context = None;
                         let block_env = block_env_from_header(&block_info.block.header);
-                        f(state, block_env, context)
+                        f(state, block_env, context, self.best_number().saturating_add(1))
                     })
                     .await;
             }
@@ -6340,12 +6426,22 @@ where
             {
                 let read_guard = self.states.upgradable_read();
                 if let Some(state_db) = read_guard.get_state(&block_hash) {
-                    return f(Box::new(state_db), block_env_from_header(&block.header), context);
+                    return f(
+                        Box::new(state_db),
+                        block_env_from_header(&block.header),
+                        context,
+                        block_number,
+                    );
                 }
 
                 let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
                 if let Some(state) = write_guard.get_on_disk_state(&block_hash) {
-                    return f(Box::new(state), block_env_from_header(&block.header), context);
+                    return f(
+                        Box::new(state),
+                        block_env_from_header(&block.header),
+                        context,
+                        block_number,
+                    );
                 }
             }
 
@@ -6355,7 +6451,7 @@ where
 
         let db = self.db.read().await;
         let block = self.evm_env.read().block_env.clone();
-        f(Box::new(&**db), block, context)
+        f(Box::new(&**db), block, context, block_number)
     }
 
     pub async fn storage_at(
@@ -7694,7 +7790,7 @@ impl Backend<FoundryNetwork> {
 
         self.with_database_at_and_context(
             block_request,
-            |state, mut block_env, mut monad_context| {
+            |state, mut block_env, mut monad_context, _rpc_block_number| {
                 let state_block_number = block_env.number.to::<u64>();
                 block_env.number = U256::from(block_number);
                 block_env.timestamp = timestamp
@@ -7816,7 +7912,7 @@ impl Backend<FoundryNetwork> {
 
         self.with_database_at_and_context(
             block_request,
-            |state, mut block_env, mut monad_context| {
+            |state, mut block_env, mut monad_context, mut rpc_block_number| {
                 let mut cache_db = CacheDB::new(state);
                 if let Some(state_override) = state_override {
                     apply_state_overrides(state_override, &mut cache_db)?;
@@ -7844,12 +7940,14 @@ impl Backend<FoundryNetwork> {
 
                         let mut inspector = self.build_inspector();
                         let ResultAndState { result, state } = self
-                            .transact_call_with_inspector_ref(
+                            .transact_call_with_inspector_ref_at_hardfork(
                                 &cache_db,
                                 &evm_env,
                                 &mut inspector,
                                 tx_env,
                                 monad_context.as_mut().map(next_monad_context),
+                                Some(rpc_block_number),
+                                self.hardfork(),
                             )?;
 
                         let output = result.output().cloned().unwrap_or_default();
@@ -7868,6 +7966,7 @@ impl Backend<FoundryNetwork> {
 
                     results.push(bundle_results);
                     block_env.number = block_env.number.saturating_add(U256::ONE);
+                    rpc_block_number = rpc_block_number.saturating_add(1);
                     block_env.timestamp = block_env.timestamp.saturating_add(U256::ONE);
                     #[cfg(feature = "monad")]
                     if let Some(context) = monad_context.as_mut() {
@@ -8219,6 +8318,7 @@ impl Backend<FoundryNetwork> {
                             &evm_env,
                             &mut inspector,
                             tx_env.into_base(),
+                            None,
                             &precompile_overrides,
                         ),
                     };

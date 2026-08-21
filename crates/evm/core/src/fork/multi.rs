@@ -72,10 +72,8 @@ impl ForkId {
     }
 
     /// Returns the identifier for an exactly resolved fork.
-    fn resolved(url: &str, fork: &ResolvedFork) -> Self {
-        let mut id = Self::new_with_context(url, Some(fork.number()), Some(&fork.context())).0;
-        write!(id, "#{}:{}", fork.hash(), fork.source_id()).unwrap();
-        Self(id)
+    fn resolved(fork: &ResolvedFork) -> Self {
+        Self(format!("resolved:{}", fork.fingerprint()))
     }
 
     /// Returns the identifier of the fork.
@@ -380,8 +378,7 @@ impl<
         expected_identity: Option<ForkContext>,
         sender: CreateSender<N, SPEC, BLOCK>,
     ) {
-        let resolved_id =
-            fork.resolved.as_ref().map(|resolved| ForkId::resolved(&fork.url, resolved));
+        let resolved_id = fork.resolved.as_ref().map(ForkId::resolved);
         trace!(?resolved_id, "creating fork");
 
         // Only deduplicate requests that already carry an exact identity. Unresolved requests at
@@ -756,7 +753,7 @@ async fn create_fork<
         .with_fork_identity(resolved.hash(), resolved.source_id());
 
     // Determine the cache path if caching is enabled.
-    let cache_path = if fork.enable_caching {
+    let cache_path = if fork.enable_caching && resolved.persistent_cache_safe() {
         Config::foundry_block_cache_dir(fork_context.source_chain_id, number)
     } else {
         None
@@ -770,7 +767,7 @@ async fn create_fork<
         resolved.hash(),
     );
     let (backend, handler) = SharedBackend::new_with_anchor(provider, db, anchor)?;
-    let fork_id = ForkId::resolved(&fork.url, &resolved);
+    let fork_id = ForkId::resolved(&resolved);
     fork.resolved = Some(resolved);
     let fork = CreatedFork::new(fork, evm_env, backend);
 
@@ -824,8 +821,17 @@ mod tests {
             BlockNumHash::new(1, B256::with_last_byte(1)),
             context(1),
         );
+        let credential_url = ResolvedFork::new(
+            "https://rpc.example/secret",
+            None,
+            None,
+            Some(1),
+            BlockNumHash::new(1, B256::with_last_byte(1)),
+            context(1),
+        );
 
-        assert_ne!(ForkId::resolved(url, &first), ForkId::resolved(url, &replacement));
-        assert_ne!(ForkId::resolved(url, &first), ForkId::resolved(url, &authenticated));
+        assert_ne!(ForkId::resolved(&first), ForkId::resolved(&replacement));
+        assert_ne!(ForkId::resolved(&first), ForkId::resolved(&authenticated));
+        assert!(!ForkId::resolved(&credential_url).as_str().contains("secret"));
     }
 }

@@ -1,7 +1,10 @@
 use crate::opts::ForkContext;
 use alloy_eips::{BlockId, BlockNumHash};
 use alloy_primitives::{B256, BlockNumber, keccak256};
-use std::fmt;
+use std::{fmt, sync::LazyLock};
+use url::Url;
+
+static SOURCE_ID_KEY: LazyLock<B256> = LazyLock::new(B256::random);
 
 /// A fork selector and block identity resolved from a configured RPC source.
 ///
@@ -108,6 +111,9 @@ impl ResolvedFork {
     pub(crate) fn source_id(&self) -> B256 {
         let mut encoded = Vec::new();
         encoded.extend_from_slice(b"foundry-resolved-fork-source-v1");
+        if !self.persistent_cache_safe() {
+            encoded.extend_from_slice(SOURCE_ID_KEY.as_slice());
+        }
         encode_source_part(&mut encoded, self.source.url.as_bytes());
         encoded.extend_from_slice(
             &u64::try_from(self.source.headers.len())
@@ -124,6 +130,13 @@ impl ResolvedFork {
             encoded.push(0);
         }
         keccak256(encoded)
+    }
+
+    /// Returns whether the source identity contains no credential-bearing inputs.
+    pub(crate) fn persistent_cache_safe(&self) -> bool {
+        self.source.headers.is_empty()
+            && self.source.jwt.is_none()
+            && source_url_is_cache_safe(&self.source.url)
     }
 
     /// Returns a redacted, opaque fingerprint of the complete resolved fork identity.
@@ -143,6 +156,15 @@ fn encode_source_part(encoded: &mut Vec<u8>, part: &[u8]) {
     let len = u64::try_from(part.len()).expect("source identity part length exceeds u64");
     encoded.extend_from_slice(&len.to_be_bytes());
     encoded.extend_from_slice(part);
+}
+
+fn source_url_is_cache_safe(raw: &str) -> bool {
+    let Ok(url) = Url::parse(raw) else { return false };
+    url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && matches!(url.path(), "" | "/")
 }
 
 impl fmt::Debug for ResolvedFork {
@@ -234,5 +256,29 @@ mod tests {
         assert_ne!(header.source_id(), jwt.source_id());
         assert_ne!(plain.fingerprint(), header.fingerprint());
         assert_ne!(plain.fingerprint(), jwt.fingerprint());
+    }
+
+    #[test]
+    fn only_secret_free_root_urls_are_safe_to_cache() {
+        let block = BlockNumHash::new(1, B256::with_last_byte(1));
+        let context = context(1);
+        let plain = ResolvedFork::new("http://localhost:8545", None, None, None, block, context);
+        let header = ResolvedFork::new(
+            "http://localhost:8545",
+            Some(&["Authorization: secret".to_string()]),
+            None,
+            None,
+            block,
+            context,
+        );
+        let jwt =
+            ResolvedFork::new("http://localhost:8545", None, Some("secret"), None, block, context);
+        let url_secret =
+            ResolvedFork::new("https://rpc.example/key", None, None, None, block, context);
+
+        assert!(plain.persistent_cache_safe());
+        assert!(!header.persistent_cache_safe());
+        assert!(!jwt.persistent_cache_safe());
+        assert!(!url_secret.persistent_cache_safe());
     }
 }

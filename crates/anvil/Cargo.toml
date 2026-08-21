@@ -99,6 +99,7 @@ flate2.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+url.workspace = true
 yansi.workspace = true
 tempfile.workspace = true
 itertools.workspace = true

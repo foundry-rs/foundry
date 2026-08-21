@@ -3173,7 +3173,7 @@ mod tests {
         AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope,
         AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction,
     };
-    use alloy_primitives::{Address, B256, U256, address};
+    use alloy_primitives::{Address, B256, U256};
     use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
     use alloy_rpc_types::{Block, BlockTransactions, Transaction as RpcTransaction};
     use alloy_serde::WithOtherFields;
@@ -3518,13 +3518,21 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cache() {
-        let endpoint = &*foundry_test_utils::rpc::next_http_rpc_endpoint();
-        let provider = get_http_provider(endpoint);
+        let mut random_block = [0_u8; 8];
+        random_block.copy_from_slice(&B256::random()[..8]);
+        let block_num = u64::from_be_bytes(random_block) | (1 << 63);
+        let config = anvil::NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Mainnet as u64))
+            .with_genesis_block_number(Some(block_num));
+        let (_api, handle) = anvil::spawn(config).await;
+        let endpoint = handle.http_endpoint();
+        let provider = get_http_provider(&endpoint);
+        let address = handle.dev_accounts().next().unwrap();
 
-        let block_num = provider.get_block_number().await.unwrap();
+        assert_eq!(provider.get_block_number().await.unwrap(), block_num);
 
         let mut evm_opts = Config::figment().extract::<EvmOpts>().unwrap();
-        evm_opts.fork_url = Some(endpoint.to_string());
+        evm_opts.fork_url = Some(endpoint.clone());
         evm_opts.fork_block_number = Some(block_num);
 
         let (evm_env, _, resolved) =
@@ -3539,25 +3547,22 @@ mod tests {
         let source_id = resolved.source_id();
         let backend = Backend::<EthEvmNetwork>::spawn(Some(fork)).unwrap();
 
-        // some rng contract from etherscan
-        let address = address!("0x63091244180ae240c87d1f528f5f269134cb07b3");
-
         let num_slots = 5;
-        let _account = backend.basic_ref(address);
+        backend.basic_ref(address).unwrap();
         for idx in 0..num_slots {
-            let _ = backend.storage_ref(address, U256::from(idx));
+            backend.storage_ref(address, U256::from(idx)).unwrap();
         }
         drop(backend);
 
-        let meta = BlockchainDbMeta::new(evm_env.block_env, endpoint.to_string())
+        let meta = BlockchainDbMeta::new(evm_env.block_env, endpoint)
             .with_fork_identity(fork_hash, source_id);
 
-        let db = BlockchainDb::new(
-            meta,
-            Some(Config::foundry_block_cache_dir(NamedChain::Mainnet, block_num).unwrap()),
-        );
+        let cache_path = Config::foundry_block_cache_dir(NamedChain::Mainnet, block_num).unwrap();
+        let db = BlockchainDb::new(meta, Some(cache_path.clone()));
         assert!(db.accounts().read().contains_key(&address));
         assert!(db.storage().read().contains_key(&address));
         assert_eq!(db.storage().read().get(&address).unwrap().len(), num_slots as usize);
+        drop(db);
+        std::fs::remove_file(cache_path).unwrap();
     }
 }

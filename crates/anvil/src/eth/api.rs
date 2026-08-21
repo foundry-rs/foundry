@@ -1740,6 +1740,7 @@ impl EthApi<FoundryNetwork> {
         state: &dyn DatabaseRef,
         block_env: BlockEnv,
         monad_context: Option<MonadReplayContext>,
+        rpc_block_number: u64,
     ) -> Result<u128> {
         let inner = request.as_ref();
         let fees = FeeDetails::new(
@@ -1818,6 +1819,7 @@ impl EthApi<FoundryNetwork> {
                 highest_gas_limit as u64,
                 is_tempo_keychain,
                 monad_context.clone(),
+                Some(rpc_block_number),
             ),
         );
 
@@ -1858,6 +1860,7 @@ impl EthApi<FoundryNetwork> {
                     mid_gas_limit as u64,
                     is_tempo_keychain,
                     monad_context.clone(),
+                    Some(rpc_block_number),
                 ),
             );
 
@@ -3384,40 +3387,45 @@ impl EthApi<FoundryNetwork> {
         let typed_request = self.parse_transaction_request(request.clone())?;
 
         self.backend
-            .with_database_at_and_context(Some(block_request), |state, block_env, monad_context| {
-                let mut cache_db = CacheDB::new(state);
-                if let Some(state_override) = state_override {
-                    apply_state_overrides(state_override.into_iter().collect(), &mut cache_db)?;
-                }
+            .with_database_at_and_context(
+                Some(block_request),
+                |state, block_env, monad_context, rpc_block_number| {
+                    let mut cache_db = CacheDB::new(state);
+                    if let Some(state_override) = state_override {
+                        apply_state_overrides(state_override.into_iter().collect(), &mut cache_db)?;
+                    }
 
-                let (_, _, _, access_list) =
-                    self.backend.build_access_list_with_state_and_context(
+                    let (_, _, _, access_list) =
+                        self.backend.build_access_list_with_state_and_context(
+                            &cache_db,
+                            request.clone(),
+                            FeeDetails::zero(),
+                            block_env.clone(),
+                            monad_context.clone(),
+                            Some(rpc_block_number),
+                        )?;
+
+                    // Re-execute with the access list applied to get the post-AL gas usage.
+                    // EVM failures (including reverts) are surfaced in the result's `error`
+                    // field per the execution-apis `eth_createAccessList` spec, so callers
+                    // can still inspect the traced slots when execution fails.
+                    let (exit, _, gas_used, _) = self.backend.call_with_state_typed_access_list(
                         &cache_db,
-                        request.clone(),
+                        typed_request,
                         FeeDetails::zero(),
-                        block_env.clone(),
-                        monad_context.clone(),
+                        block_env,
+                        access_list.clone(),
+                        monad_context,
+                        Some(rpc_block_number),
                     )?;
 
-                // Re-execute with the access list applied to get the post-AL gas usage.
-                // EVM failures (including reverts) are surfaced in the result's `error`
-                // field per the execution-apis `eth_createAccessList` spec, so callers
-                // can still inspect the traced slots when execution fails.
-                let (exit, _, gas_used, _) = self.backend.call_with_state_typed_access_list(
-                    &cache_db,
-                    typed_request,
-                    FeeDetails::zero(),
-                    block_env,
-                    access_list.clone(),
-                    monad_context,
-                )?;
-
-                Ok(AccessListResult {
-                    access_list,
-                    gas_used: U256::from(gas_used),
-                    error: execution_error(exit),
-                })
-            })
+                    Ok(AccessListResult {
+                        access_list,
+                        gas_used: U256::from(gas_used),
+                        error: execution_error(exit),
+                    })
+                },
+            )
             .await
     }
 
@@ -4568,7 +4576,7 @@ impl EthApi<FoundryNetwork> {
             this.backend
                 .with_database_at_and_context(
                     Some(block_request),
-                    |state, mut block, monad_context| {
+                    |state, mut block, monad_context, rpc_block_number| {
                         let mut cache_db = CacheDB::new(state);
                         if let Some(state_overrides) = overrides.state {
                             apply_state_overrides(
@@ -4579,7 +4587,13 @@ impl EthApi<FoundryNetwork> {
                         if let Some(block_overrides) = overrides.block {
                             cache_db.apply_block_overrides(*block_overrides, &mut block);
                         }
-                        this.do_estimate_gas_with_state(request, &cache_db, block, monad_context)
+                        this.do_estimate_gas_with_state(
+                            request,
+                            &cache_db,
+                            block,
+                            monad_context,
+                            rpc_block_number,
+                        )
                     },
                 )
                 .await
@@ -4595,9 +4609,18 @@ impl EthApi<FoundryNetwork> {
         let block_request = self.block_request(block_number).await?;
         self.on_blocking_task(|this| async move {
             this.backend
-                .with_database_at_and_context(Some(block_request), |state, block, monad_context| {
-                    this.do_estimate_gas_with_state(request, &state, block, monad_context)
-                })
+                .with_database_at_and_context(
+                    Some(block_request),
+                    |state, block, monad_context, rpc_block_number| {
+                        this.do_estimate_gas_with_state(
+                            request,
+                            &state,
+                            block,
+                            monad_context,
+                            rpc_block_number,
+                        )
+                    },
+                )
                 .await
         })
         .await
