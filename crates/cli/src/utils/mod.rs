@@ -961,6 +961,96 @@ ignore them in the `.gitignore` file."
             .map(|url| Some(url.trim().to_string()))
     }
 
+    /// Parses `.gitmodules` once into a map of submodule path -> (section name, url if
+    /// `.gitmodules` itself carries one). `git_root` is the directory containing `.gitmodules`.
+    ///
+    /// A submodule's `.gitmodules` section name isn't required to match its `path` field (e.g.
+    /// `git submodule add --name openzeppelin <url> lib/openzeppelin` records `path =
+    /// lib/openzeppelin` under section `openzeppelin`), so the section name is kept alongside
+    /// the path for callers that need to resolve a URL by section name as a fallback - see
+    /// [`Git::submodule_url_for_path`]. Call this once per invocation and reuse the result across
+    /// every submodule, rather than re-parsing `.gitmodules` per submodule.
+    pub fn submodule_gitmodules_entries(
+        self,
+        git_root: &Path,
+    ) -> Result<BTreeMap<PathBuf, (String, Option<String>)>> {
+        let gitmodules = git_root.join(".gitmodules");
+        if !gitmodules.exists() {
+            return Ok(BTreeMap::new());
+        }
+
+        let output = self
+            .cmd()
+            .args(["config", "--null", "--file"])
+            .arg(&gitmodules)
+            .args(["--get-regexp", r"^submodule\..*\.(path|url)$"])
+            .output()?;
+        if output.status.code() != Some(0) {
+            return Ok(BTreeMap::new());
+        }
+
+        // Collect both fields per section - `--get-regexp`'s output order isn't guaranteed to
+        // put `path` before `url` for the same section, so a single-pass match-then-break can
+        // miss the url.
+        let mut sections: BTreeMap<String, (Option<PathBuf>, Option<String>)> = BTreeMap::new();
+        for entry in output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty()) {
+            let Some(separator) = entry.iter().position(|byte| *byte == b'\n') else { continue };
+            let key = std::str::from_utf8(&entry[..separator])?;
+            let value = std::str::from_utf8(&entry[separator + 1..])?;
+            let Some(rest) = key.strip_prefix("submodule.") else { continue };
+            let Some((name, field)) = rest.rsplit_once('.') else { continue };
+            let slot = sections.entry(name.to_string()).or_default();
+            match field {
+                "path" => slot.0 = Some(PathBuf::from(value)),
+                "url" => slot.1 = Some(value.to_string()),
+                _ => {}
+            }
+        }
+
+        Ok(sections
+            .into_iter()
+            .filter_map(|(name, (path, url))| path.map(|path| (path, (name, url))))
+            .collect())
+    }
+
+    /// Resolves a submodule's URL by its recorded `path`, given the `.gitmodules` entries
+    /// already parsed via a single [`Git::submodule_gitmodules_entries`] call.
+    pub fn submodule_url_for_path(
+        self,
+        entries: &BTreeMap<PathBuf, (String, Option<String>)>,
+        path: &Path,
+    ) -> Result<Option<String>> {
+        let Some((name, gitmodules_url)) = entries.get(path) else { return Ok(None) };
+
+        // The repository-local `submodule.<name>.url` is the URL git itself actually fetches
+        // from once a submodule is initialized - it can intentionally diverge from `.gitmodules`
+        // (a manually pinned internal mirror, an `insteadOf` rewrite recorded via `git config`,
+        // anything not re-exported with `git submodule sync`), and *that* divergence is exactly
+        // what `.gitmodules`-first used to hide. Verified empirically: with local config and
+        // `.gitmodules` pointing at different remotes, a fresh `git submodule update --init`
+        // clones from the local config's URL, not `.gitmodules`'s - so local config wins when
+        // both are present. Fall back to `.gitmodules`'s copy only when local config has no entry
+        // for this submodule at all (never had `git submodule init` run).
+        //
+        // An explicitly-empty local override (`git config submodule.<name>.url ""`) is treated
+        // the same as no entry, falling back to `.gitmodules` - this is a display choice, not a
+        // claim about what git would actually do: an empty local URL is itself a broken config
+        // state (`update --init` would try to clone from "" and fail), so there's no truthful
+        // single answer here either way. Showing `.gitmodules`'s value is simply the least
+        // misleading of two inaccurate options.
+        if let Ok(url) = self
+            .cmd()
+            .args(["config", "--get", &format!("submodule.{name}.url")])
+            .get_stdout_lossy()
+        {
+            let url = url.trim();
+            if !url.is_empty() {
+                return Ok(Some(url.to_string()));
+            }
+        }
+        Ok(gitmodules_url.clone())
+    }
+
     /// Returns whether `.gitmodules` contains the default section name or an exact path mapping.
     pub fn has_submodule_mapping(self, path: &Path) -> Result<bool> {
         let (names, paths) = self.submodule_mappings()?;
