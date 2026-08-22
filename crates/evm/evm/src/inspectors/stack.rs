@@ -211,7 +211,10 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
-    /// Set networks with enabled features.
+    /// Sets networks when building an inspector stack directly.
+    ///
+    /// [`ExecutorBuilder::build`](crate::executors::ExecutorBuilder::build) overrides this with its
+    /// explicit network configuration so the executor, backend, and inspector remain in sync.
     #[inline]
     pub const fn networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;

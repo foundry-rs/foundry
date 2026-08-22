@@ -1058,7 +1058,6 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                 stack
                     .logs(self.config.live_logs)
                     .trace_requirements(script_trace_requirements(&self.config, debug))
-                    .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
             })
             .gas_limit(self.evm_opts.gas_limit())
@@ -1088,9 +1087,11 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
         tx_env.set_fee_token(self.tempo.fee_token);
 
-        let mut runner =
-            ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone())
-                .with_debug_bytecodes(debug);
+        let mut runner = ScriptRunner::new(
+            builder.build(evm_env, tx_env, db, self.evm_opts.networks),
+            self.evm_opts.clone(),
+        )
+        .with_debug_bytecodes(debug);
 
         if self.sender_nonce_override.is_some() {
             runner.executor.set_nonce(self.evm_opts.sender, self.sender_nonce)?;

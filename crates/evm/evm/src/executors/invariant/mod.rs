@@ -2373,6 +2373,7 @@ mod tests {
                 EvmEnvFor::<EthEvmNetwork>::default(),
                 TxEnvFor::<EthEvmNetwork>::default(),
                 backend,
+                Default::default(),
             );
         let target = Address::repeat_byte(0x11);
         let mut code = vec![0x6e]; // PUSH15.
@@ -2771,6 +2772,7 @@ mod tests {
             EvmEnvFor::<EthEvmNetwork>::default(),
             TxEnvFor::<EthEvmNetwork>::default(),
             backend,
+            Default::default(),
         );
         // Return ABI-encoded `true` for the invariant predicate.
         executor

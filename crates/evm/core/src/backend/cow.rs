@@ -20,11 +20,13 @@ use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, TxKind, U256};
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
+#[cfg(feature = "monad")]
+use revm::context_interface::result::HaltReason;
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     context::{ContextTr, Transaction},
-    context_interface::result::{HaltReason, ResultAndState},
+    context_interface::result::ResultAndState,
     database::DatabaseRef,
     primitives::AddressMap,
     state::{Account, AccountInfo, EvmState},
