@@ -1,10 +1,6 @@
 use async_lsp::{
     LanguageServer, MainLoop, ServerSocket,
-    lsp_types::{
-        ClientCapabilities, InitializeParams, InitializeResult, InitializedParams, Url,
-        WorkspaceFolder, WorkspaceSymbolParams, WorkspaceSymbolResponse,
-        notification::{self, Notification},
-    },
+    lsp_types::notification::{self, Notification},
     router::Router,
 };
 use futures::{
@@ -26,8 +22,8 @@ struct Stop;
 
 pub struct LspClient {
     child: Option<Child>,
-    runtime: tokio::runtime::Runtime,
-    server: ServerSocket,
+    pub(crate) runtime: tokio::runtime::Runtime,
+    pub(crate) server: ServerSocket,
     main_loop: Option<JoinHandle<async_lsp::Result<()>>>,
     notifications: Receiver<String>,
 }
@@ -81,26 +77,6 @@ impl LspClient {
         Self { child: Some(child), runtime, server, main_loop: Some(main_loop), notifications }
     }
 
-    #[allow(deprecated)]
-    pub fn initialize(&mut self, root: &Path) -> InitializeResult {
-        let root_uri = Url::from_directory_path(root).unwrap();
-        let params = InitializeParams {
-            capabilities: ClientCapabilities::default(),
-            root_uri: Some(root_uri.clone()),
-            workspace_folders: Some(vec![WorkspaceFolder {
-                uri: root_uri,
-                name: "fixture".into(),
-            }]),
-            ..InitializeParams::default()
-        };
-        let future = self.server.initialize(params);
-        request(&self.runtime, future)
-    }
-
-    pub fn initialized(&mut self) {
-        self.server.initialized(InitializedParams {}).unwrap();
-    }
-
     pub fn wait_for_log_message(&self) {
         let deadline = std::time::Instant::now() + REQUEST_TIMEOUT;
         let mut observed = Vec::new();
@@ -115,23 +91,6 @@ impl LspClient {
                 Err(RecvTimeoutError::Disconnected) => {
                     panic!("LSP client stopped before receiving a log message")
                 }
-            }
-        }
-    }
-
-    pub fn workspace_symbols(&mut self) -> Vec<String> {
-        let future = self.server.symbol(WorkspaceSymbolParams {
-            query: String::new(),
-            ..WorkspaceSymbolParams::default()
-        });
-        let response = request(&self.runtime, future);
-        match response {
-            None => Vec::new(),
-            Some(WorkspaceSymbolResponse::Flat(symbols)) => {
-                symbols.into_iter().map(|symbol| symbol.name).collect()
-            }
-            Some(WorkspaceSymbolResponse::Nested(symbols)) => {
-                symbols.into_iter().map(|symbol| symbol.name).collect()
             }
         }
     }
@@ -152,7 +111,7 @@ impl LspClient {
     }
 }
 
-fn request<T>(
+pub(crate) fn request<T>(
     runtime: &tokio::runtime::Runtime,
     future: impl std::future::Future<Output = async_lsp::Result<T>>,
 ) -> T {

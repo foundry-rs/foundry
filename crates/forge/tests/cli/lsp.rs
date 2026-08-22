@@ -1,8 +1,16 @@
-use super::lsp_client::LspClient;
+use async_lsp::{
+    LanguageServer,
+    lsp_types::{
+        ClientCapabilities, InitializeParams, InitializedParams, Url, WorkspaceFolder,
+        WorkspaceSymbolParams, WorkspaceSymbolResponse,
+    },
+};
 use std::{
     fs, thread,
     time::{Duration, Instant},
 };
+
+use super::lsp_client::{LspClient, request};
 
 const SYMBOL_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -27,15 +35,40 @@ fn lsp_profile_selects_workspace_sources() {
         empty_path.path(),
         &["lsp", "--stdio", "--profile", "custom"],
     );
-    let initialize = client.initialize(project.path());
+    let initialize = request(
+        &client.runtime,
+        client.server.initialize(InitializeParams {
+            capabilities: ClientCapabilities::default(),
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: Url::from_directory_path(project.path()).unwrap(),
+                name: "fixture".into(),
+            }]),
+            ..InitializeParams::default()
+        }),
+    );
     assert!(initialize.capabilities.workspace_symbol_provider.is_some());
-    client.initialized();
+    client.server.initialized(InitializedParams {}).unwrap();
     client.wait_for_log_message();
 
     let deadline = Instant::now() + SYMBOL_TIMEOUT;
     let mut last_names = Vec::new();
     while Instant::now() < deadline {
-        last_names = client.workspace_symbols();
+        let response = request(
+            &client.runtime,
+            client.server.symbol(WorkspaceSymbolParams {
+                query: String::new(),
+                ..WorkspaceSymbolParams::default()
+            }),
+        );
+        last_names = match response {
+            None => Vec::new(),
+            Some(WorkspaceSymbolResponse::Flat(symbols)) => {
+                symbols.into_iter().map(|symbol| symbol.name).collect()
+            }
+            Some(WorkspaceSymbolResponse::Nested(symbols)) => {
+                symbols.into_iter().map(|symbol| symbol.name).collect()
+            }
+        };
         if last_names.iter().any(|name| name == "CustomContract")
             && last_names.iter().all(|name| name != "DefaultContract")
         {
@@ -60,9 +93,19 @@ fn lsp_stdio_handshake_uses_only_lsp_stdout() {
     let empty_path = tempfile::tempdir().unwrap();
     for args in [&["lsp"][..], &["lsp", "--stdio"][..]] {
         let mut client = LspClient::spawn(project.path(), empty_path.path(), args);
-        let initialize = client.initialize(project.path());
+        let initialize = request(
+            &client.runtime,
+            client.server.initialize(InitializeParams {
+                capabilities: ClientCapabilities::default(),
+                workspace_folders: Some(vec![WorkspaceFolder {
+                    uri: Url::from_directory_path(project.path()).unwrap(),
+                    name: "fixture".into(),
+                }]),
+                ..InitializeParams::default()
+            }),
+        );
         assert!(initialize.capabilities.workspace_symbol_provider.is_some());
-        client.initialized();
+        client.server.initialized(InitializedParams {}).unwrap();
         client.wait_for_log_message();
         client.shutdown();
     }
