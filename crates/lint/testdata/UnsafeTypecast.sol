@@ -439,6 +439,8 @@ contract UnsafeTypecast {
 }
 
 contract Repros {
+    error AmountOverflow();
+
     function downcastBoundedByMaskSafe(uint256 value, uint256 length) public pure {
         uint8(value & 0xff);
         uint8(0x7f & value);
@@ -462,6 +464,54 @@ contract Repros {
         return uint64(uint128(int128(uint128(a)) + b));
         //~^WARN: typecasts that can truncate values should be checked
         //~|WARN: typecasts that can truncate values should be checked
+    }
+
+    function checkedDowncast(uint256 value) public pure returns (uint128) {
+        if (value > type(uint128).max) revert AmountOverflow();
+        return uint128(value);
+    }
+
+    function checkedDowncastInBranch(uint256 value) public pure returns (uint128) {
+        if (value <= type(uint128).max) {
+            return uint128(value);
+        }
+        revert AmountOverflow();
+    }
+
+    function reassignedAfterCheck(uint256 value) public pure returns (uint128) {
+        if (value > type(uint128).max) revert AmountOverflow();
+        value = type(uint256).max;
+        return uint128(value); //~WARN: typecasts that can truncate values should be checked
+    }
+
+    function incrementedAfterCheck(uint256 value) public pure returns (uint128) {
+        if (value > type(uint128).max) revert AmountOverflow();
+        ++value;
+        return uint128(value); //~WARN: typecasts that can truncate values should be checked
+    }
+
+    function nestedAssignmentAfterCheck(uint256 value) public pure returns (uint128) {
+        if (value > type(uint128).max) revert AmountOverflow();
+        bool assigned = (value = type(uint256).max) > 0;
+        assigned;
+        return uint128(value); //~WARN: typecasts that can truncate values should be checked
+    }
+
+    function signedUpperBoundIsInsufficient(int256 value) public pure returns (uint128) {
+        if (value <= 100) {
+            return uint128(value); //~WARN: typecasts that can truncate values should be checked
+        }
+        revert AmountOverflow();
+    }
+
+    function checkedDowncastWithBuiltinRevert(uint256 value) public pure returns (uint128) {
+        if (value > type(uint128).max) revert();
+        return uint128(value);
+    }
+
+    function checkedDowncastWithRequireFalse(uint256 value) public pure returns (uint128) {
+        if (value > type(uint128).max) require(false);
+        return uint128(value);
     }
 }
 // forge-lint: disable-end(mixed-case-variable)
