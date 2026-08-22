@@ -3447,7 +3447,7 @@ casttest!(logs_sig, |_prj, cmd| {
         "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
     ])
     .assert_success()
-    .stdout_eq(file!["../fixtures/cast_logs.stdout"]);
+    .stdout_eq(file!["../fixtures/cast_logs_decoded.stdout"]);
 });
 
 casttest!(logs_sig_2, |_prj, cmd| {
@@ -3465,7 +3465,7 @@ casttest!(logs_sig_2, |_prj, cmd| {
         "0x68A99f89E475a078645f4BAC491360aFe255Dff1",
     ])
     .assert_success()
-    .stdout_eq(file!["../fixtures/cast_logs.stdout"]);
+    .stdout_eq(file!["../fixtures/cast_logs_decoded.stdout"]);
 });
 
 // Queries a 60k-block range (which `--query-size` splits into multiple chunks) and asserts the

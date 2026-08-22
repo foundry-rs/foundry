@@ -13,10 +13,10 @@ use alloy_consensus::{
     BlockHeader,
     transaction::{Recovered, SignerRecoverable},
 };
-use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, Specifier};
+use alloy_dyn_abi::{DynSolType, DynSolValue, EventExt, FunctionExt, Specifier};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
-use alloy_json_abi::Function;
+use alloy_json_abi::{Event, Function};
 use alloy_json_rpc::RpcError;
 use alloy_network::{AnyNetwork, BlockResponse, Network, TransactionBuilder};
 use alloy_primitives::{
@@ -34,7 +34,9 @@ use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
-    abi::{encode_function_args, encode_function_args_packed, get_event, get_func},
+    abi::{
+        encode_function_args, encode_function_args_packed, get_event, get_func, get_indexed_event,
+    },
     compile::etherscan_project,
     flatten,
     fmt::*,
@@ -643,35 +645,49 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         ))
     }
 
-    pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
+    pub async fn filter_logs(&self, filter: Filter, event: Option<&Event>) -> Result<String> {
         let logs = self.provider.get_logs(&filter).await?;
-        Self::format_logs(logs)
+        Self::format_logs(logs, event)
     }
 
     /// Retrieves logs using chunked requests to handle large block ranges.
     ///
     /// Automatically divides large block ranges into smaller chunks to avoid provider limits
     /// and processes them with controlled concurrency to prevent rate limiting.
-    pub async fn filter_logs_chunked(&self, filter: Filter, chunk_size: u64) -> Result<String> {
+    pub async fn filter_logs_chunked(
+        &self,
+        filter: Filter,
+        chunk_size: u64,
+        event: Option<&Event>,
+    ) -> Result<String> {
         let logs = self.get_logs_chunked(&filter, chunk_size).await?;
-        Self::format_logs(logs)
+        Self::format_logs(logs, event)
     }
 
-    fn format_logs(logs: Vec<Log>) -> Result<String> {
+    fn format_logs(logs: Vec<Log>, event: Option<&Event>) -> Result<String> {
         let res = if shell::is_json() {
             serde_json::to_string(&logs)?
         } else {
             let mut s = vec![];
             for log in logs {
-                let pretty = log
-                    .pretty()
-                    .replacen('\n', "- ", 1) // Remove empty first line
-                    .replace('\n', "\n  "); // Indent
-                s.push(pretty);
+                s.push(Self::format_log(&log, event));
             }
             s.join("\n")
         };
         Ok(res)
+    }
+
+    /// Pretty-formats a log, appending its decoded parameters when an event is provided.
+    fn format_log(log: &Log, event: Option<&Event>) -> String {
+        let mut pretty = log.pretty();
+        if let Some(event) = event
+            && let Some(decoded) = format_log_params(event, log)
+        {
+            pretty.push_str(&decoded);
+        }
+        pretty
+            .replacen('\n', "- ", 1) // Remove empty first line
+            .replace('\n', "\n  ") // Indent
     }
 
     /// Resolves the filter's block range to concrete block numbers.
@@ -886,11 +902,16 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// let filter =
     ///     Filter::new().address(Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?);
     /// let mut output = io::stdout();
-    /// cast.subscribe(filter, &mut output).await?;
+    /// cast.subscribe(filter, &mut output, None).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn subscribe(&self, filter: Filter, output: &mut dyn io::Write) -> Result<()> {
+    pub async fn subscribe(
+        &self,
+        filter: Filter,
+        output: &mut dyn io::Write,
+        event: Option<&Event>,
+    ) -> Result<()> {
         // Initialize the subscription stream for logs
         let mut subscription = self.provider.subscribe_logs(&filter).await?.into_stream();
 
@@ -934,9 +955,8 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
                         let log_str = serde_json::to_string(&log).unwrap();
                         write!(output, "{log_str}")?;
                     } else {
-                        let log_str = log.pretty()
-                            .replacen('\n', "- ", 1)  // Remove empty first line
-                            .replace('\n', "\n  ");  // Indent
+                        let log_str =
+                            log.as_ref().map(|log| Self::format_log(log, event)).unwrap_or_default();
                         writeln!(output, "{log_str}")?;
                     }
                 },
@@ -955,6 +975,32 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
 
         Ok(())
     }
+}
+
+/// Decodes the log with the given event and formats its parameters in declaration order as a
+/// `decoded` section, one `name: value` line per parameter.
+///
+/// Indexed parameters are decoded from the topics and the remaining ones from the data. When the
+/// signature carries no `indexed` markers, they are inferred from the log's topic count. Returns
+/// `None` when the log does not match the event.
+fn format_log_params(event: &Event, log: &Log) -> Option<String> {
+    // Only infer the indexed flags from the log's topic count when the signature carries none,
+    // as the heuristic can otherwise mark parameters the signature declares as non-indexed.
+    let event = if event.inputs.iter().any(|input| input.indexed) {
+        event.clone()
+    } else {
+        get_indexed_event(event.clone(), log.data())
+    };
+    let decoded = event.decode_log(log.data()).ok()?;
+    let mut indexed = decoded.indexed.iter();
+    let mut body = decoded.body.iter();
+    let mut s = String::from("\ndecoded:");
+    for (i, input) in event.inputs.iter().enumerate() {
+        let value = if input.indexed { indexed.next() } else { body.next() }?;
+        let name = if input.name.is_empty() { format!("param{i}") } else { input.name.clone() };
+        write!(s, "\n\t{name}: {}", format_token(value)).ok()?;
+    }
+    Some(s)
 }
 
 /// Returns `true` if `err` is a provider range/result-size limit that retrying over a smaller
@@ -2719,8 +2765,54 @@ mod logs_bisecting {
 
 #[cfg(test)]
 mod tests {
-    use super::{DynSolValue, SimpleCast as Cast, serialize_value_as_json};
-    use alloy_primitives::{U256, hex};
+    use super::{DynSolValue, SimpleCast as Cast, format_log_params, serialize_value_as_json};
+    use alloy_json_abi::Event;
+    use alloy_primitives::{Address, B256, Log as PrimitiveLog, U256, hex};
+    use alloy_rpc_types::Log;
+
+    fn rpc_log(topics: Vec<B256>, data: Vec<u8>) -> Log {
+        Log {
+            inner: PrimitiveLog::new_unchecked(Address::ZERO, topics, data.into()),
+            ..Default::default()
+        }
+    }
+
+    // Regression test: the indexed flags of the signature must win over the topic-count
+    // heuristic, which would otherwise also mark `b` as indexed here.
+    #[test]
+    fn format_log_params_respects_signature_indexed_flags() {
+        let event = Event::parse("event Ev(bytes32 indexed a, address b)").unwrap();
+        let a = B256::repeat_byte(0x11);
+        let b = Address::repeat_byte(0x22);
+        let log = rpc_log(vec![event.selector(), a], DynSolValue::Address(b).abi_encode());
+
+        let params = format_log_params(&event, &log).unwrap();
+        assert_eq!(params, format!("\ndecoded:\n\ta: {a}\n\tb: {b}"));
+    }
+
+    #[test]
+    fn format_log_params_infers_indexed_flags() {
+        let event =
+            Event::parse("event Transfer(address from, address to, uint256 value)").unwrap();
+        let from = Address::repeat_byte(0x11);
+        let to = Address::repeat_byte(0x22);
+        let log = rpc_log(
+            vec![event.selector(), from.into_word(), to.into_word()],
+            DynSolValue::Uint(U256::from(42), 256).abi_encode(),
+        );
+
+        let params = format_log_params(&event, &log).unwrap();
+        assert_eq!(params, format!("\ndecoded:\n\tfrom: {from}\n\tto: {to}\n\tvalue: 42"));
+    }
+
+    #[test]
+    fn format_log_params_mismatching_log() {
+        let event = Event::parse("event Ev(uint256 indexed a, uint256 b)").unwrap();
+        // Log with no topics for `a` does not match the event.
+        let log =
+            rpc_log(vec![event.selector()], DynSolValue::Uint(U256::from(1), 256).abi_encode());
+        assert_eq!(format_log_params(&event, &log), None);
+    }
 
     /// Compares [`super::encode_event_topic`] against alloy's static [`EventTopic`]
     /// implementation, which `sol!`-generated events use to compute indexed topics.
