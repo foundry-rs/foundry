@@ -665,29 +665,43 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     }
 
     fn format_logs(logs: Vec<Log>, event: Option<&Event>) -> Result<String> {
-        let res = if shell::is_json() {
-            serde_json::to_string(&logs)?
-        } else {
-            let mut s = vec![];
-            for log in logs {
-                s.push(Self::format_log(&log, event));
-            }
-            s.join("\n")
-        };
-        Ok(res)
+        if shell::is_json() {
+            return Ok(serde_json::to_string(&logs)?);
+        }
+        let total = logs.len();
+        let mut failed = 0usize;
+        let mut s = vec![];
+        for log in logs {
+            let (pretty, decode_failed) = Self::format_log(&log, event);
+            failed += decode_failed as usize;
+            s.push(pretty);
+        }
+        if failed > 0 {
+            sh_warn!(
+                "failed to decode {failed} of {total} logs with the provided event signature; \
+                 make sure its indexed parameters match the log topics"
+            )?;
+        }
+        Ok(s.join("\n"))
     }
 
     /// Pretty-formats a log, appending its decoded parameters when an event is provided.
-    fn format_log(log: &Log, event: Option<&Event>) -> String {
+    ///
+    /// Also returns whether decoding the log with the provided event failed, in which case the
+    /// decoded parameters are omitted.
+    fn format_log(log: &Log, event: Option<&Event>) -> (String, bool) {
         let mut pretty = log.pretty();
-        if let Some(event) = event
-            && let Some(decoded) = format_log_params(event, log)
-        {
-            pretty.push_str(&decoded);
+        let mut decode_failed = false;
+        if let Some(event) = event {
+            match format_log_params(event, log) {
+                Some(decoded) => pretty.push_str(&decoded),
+                None => decode_failed = true,
+            }
         }
-        pretty
+        let pretty = pretty
             .replacen('\n', "- ", 1) // Remove empty first line
-            .replace('\n', "\n  ") // Indent
+            .replace('\n', "\n  "); // Indent
+        (pretty, decode_failed)
     }
 
     /// Resolves the filter's block range to concrete block numbers.
@@ -931,6 +945,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         }
 
         let mut first = true;
+        let mut warned_decode_failure = false;
 
         loop {
             tokio::select! {
@@ -955,8 +970,15 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
                         let log_str = serde_json::to_string(&log).unwrap();
                         write!(output, "{log_str}")?;
                     } else {
-                        let log_str =
+                        let (log_str, decode_failed) =
                             log.as_ref().map(|log| Self::format_log(log, event)).unwrap_or_default();
+                        if decode_failed && !warned_decode_failure {
+                            warned_decode_failure = true;
+                            sh_warn!(
+                                "failed to decode a log with the provided event signature; \
+                                 make sure its indexed parameters match the log topics"
+                            )?;
+                        }
                         writeln!(output, "{log_str}")?;
                     }
                 },
