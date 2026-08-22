@@ -9138,6 +9138,21 @@ casttest!(abi_encode_event_dynamic_strings, |_prj, cmd| {
     );
 });
 
+// tests that `cast decode-event` ignores indexed parameters and decodes only the data.
+casttest!(decode_event_with_indexed_params, |_prj, cmd| {
+    cmd.args([
+        "decode-event",
+        "--sig",
+        "Transfer(address indexed from, address indexed to, uint256 value)",
+        "0x000000000000000000000000000000000000000000000000000000000000002a",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+42
+
+"#]]);
+});
+
 casttest!(abi_encode_event_argument_count_mismatch, |_prj, cmd| {
     cmd.args(["abi-encode-event", "Pair(uint256,uint256)", "1"]).assert_failure().stderr_eq(str![
         [r#"
