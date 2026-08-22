@@ -344,6 +344,7 @@ foundry-fork-db = { version = "0.27.0", features = ["zstd"] }
 imbl = "7"
 solar = { package = "solar-compiler", version = "=0.2.0", default-features = false }
 solar-cli = { version = "=0.2.0", default-features = false }
+solar-lsp = { version = "=0.2.0", default-features = false }
 solar-lint = { version = "=0.2.0", default-features = false }
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
     "rustls",
@@ -427,6 +428,8 @@ proc-macro2 = "1.0"
 quote = "1.0"
 syn = "2.0"
 async-trait = "0.1"
+async-lsp = { version = "0.2.4", default-features = false, features = ["omni-trait"] }
+tokio-util = { version = "0.7", features = ["compat"] }
 derive_more = { version = "2.1", features = ["full"] }
 thiserror = "2"
 
@@ -562,9 +565,10 @@ snapbox = { version = "1.2", features = ["json", "regex", "term-svg"] }
 idna_adapter = "=1.1.0"
 
 [patch.crates-io]
-solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
-solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
-solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "a38f69e4f2e2267c549555a980aef6b0b1f249eb" }
+solar-compiler = { git = "https://github.com/paradigmxyz/solar", rev = "c71464eab8c971a3cb759f9008ed370a6d95d714" }
+solar-cli = { git = "https://github.com/paradigmxyz/solar", rev = "c71464eab8c971a3cb759f9008ed370a6d95d714" }
+solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "c71464eab8c971a3cb759f9008ed370a6d95d714" }
+solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "c71464eab8c971a3cb759f9008ed370a6d95d714" }
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "eabd2e218a7606505430d84bfeacd145e2c1eff3" }

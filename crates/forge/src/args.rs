@@ -21,15 +21,25 @@ pub fn run() -> Result<()> {
     run_command(args)
 }
 
-/// Setup the global logger and other utilities.
+/// Set up process-global CLI facilities using the current process arguments.
+///
+/// This may load project dotenv files, except when the process arguments select LSP because the
+/// language server owns stdin for its entire lifetime.
 pub fn setup() -> Result<()> {
-    utils::common_setup::<Forge>()?;
+    // LSP owns stdin for the lifetime of the process, so do not prompt for project dotenv files.
+    utils::common_setup_with_project_env::<Forge>(|matches| {
+        matches.subcommand_name() != Some("lsp")
+    })?;
     utils::subscriber();
 
     Ok(())
 }
 
-/// Run the subcommand.
+/// Execute an already parsed Forge command.
+///
+/// This does not perform process-level [`setup`] or initialize global arguments. The [`run`]
+/// entrypoint owns those steps; library callers can select the setup they need before dispatching
+/// a typed command.
 pub fn run_command(args: Forge) -> Result<()> {
     // Set the execution context based on the subcommand.
     let context = match &args.cmd {
@@ -144,6 +154,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Eip712(cmd) => cmd.run(),
         ForgeSubcommand::BindJson(cmd) => cmd.run(),
         ForgeSubcommand::Lint(cmd) => global.block_on(cmd.run()),
+        ForgeSubcommand::Lsp(cmd) => global.block_on(crate::cmd::lsp::run(cmd)),
     }
 }
 
