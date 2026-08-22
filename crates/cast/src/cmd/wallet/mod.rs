@@ -49,10 +49,15 @@ pub enum WalletSubcommands {
     ///
     /// Examples:
     /// - cast wallet new (print a new private key and address)
+    /// - cast wallet new my-wallet (save to the default keystore directory)
     /// - cast wallet new ~/.foundry/keystores dev (save to an encrypted keystore)
     #[command(verbatim_doc_comment, visible_alias = "n")]
     New {
         /// If provided, then keypair will be written to an encrypted JSON keystore.
+        ///
+        /// A single bare argument that is not an existing directory is treated as ACCOUNT_NAME and
+        /// saved under the default keystore directory (`~/.foundry/keystores`), matching
+        /// `cast wallet import <name>`.
         path: Option<String>,
 
         /// Account name for the keystore file. If provided, the keystore file
@@ -385,7 +390,7 @@ impl WalletSubcommands {
         match self {
             Self::New {
                 path,
-                account_name,
+                mut account_name,
                 unsafe_password,
                 number,
                 password,
@@ -393,21 +398,30 @@ impl WalletSubcommands {
                 touch_id,
             } => {
                 ensure_touch_id_available(touch_id)?;
-                if let Some(name) = &account_name {
-                    ensure_account_name_available(name)?;
-                }
                 let mut rng = thread_rng();
 
                 let mut json_values = shell::is_json().then(std::vec::Vec::new);
 
+                // A single positional that does not resolve to anything on disk is treated as
+                // ACCOUNT_NAME and stored in the default keystore directory, matching
+                // `cast wallet import <name>`. Path-like values (`.`, `..`, or anything
+                // containing a separator) keep the existing directory error, and resolution
+                // failures other than `NotFound` are surfaced instead of silently redirecting
+                // the keystore to the default directory.
                 let path = if let Some(path) = path {
                     match dunce::canonicalize(&path) {
-                        Ok(path) => {
-                            if !path.is_dir() {
-                                // we require path to be an existing directory
-                                eyre::bail!("`{}` is not a directory", path.display());
-                            }
-                            Some(path)
+                        Ok(canonical) if canonical.is_dir() => Some(canonical),
+                        Err(e)
+                            if e.kind() == std::io::ErrorKind::NotFound
+                                && account_name.is_none()
+                                && is_bare_account_name(&path) =>
+                        {
+                            account_name = Some(path);
+                            Some(ensure_default_keystores_dir()?)
+                        }
+                        Ok(canonical) => {
+                            // we require path to be an existing directory
+                            eyre::bail!("`{}` is not a directory", canonical.display());
                         }
                         Err(e) => {
                             eyre::bail!(
@@ -417,14 +431,14 @@ impl WalletSubcommands {
                         }
                     }
                 } else if unsafe_password.is_some() || password || touch_id {
-                    let path = Config::foundry_keystores_dir().ok_or_else(|| {
-                        eyre::eyre!("Could not find the default keystore directory.")
-                    })?;
-                    fs::create_dir_all(&path)?;
-                    Some(path)
+                    Some(ensure_default_keystores_dir()?)
                 } else {
                     None
                 };
+
+                if let Some(name) = &account_name {
+                    ensure_account_name_available(name)?;
+                }
 
                 match path {
                     Some(path) => {
@@ -1334,6 +1348,30 @@ fn ensure_account_name_available(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Returns true when `value` is a bare keystore account name rather than a filesystem path.
+///
+/// Path-like values (`.`, `..`, anything containing a separator or `:`, including Windows
+/// prefixes such as `C:foo` and ADS names such as `foo:bar`) stay on the existing
+/// directory-resolution path for `cast wallet new`.
+fn is_bare_account_name(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && !value.contains('/')
+        && !value.contains('\\')
+        // `C:foo` is a drive-relative path; `foo:bar` is an alternate data stream on
+        // Windows. Joining either can write outside the default keystore directory
+        // or hide the keystore in a stream so listing/loading miss it.
+        && !value.contains(':')
+}
+
+fn ensure_default_keystores_dir() -> Result<PathBuf> {
+    let path = Config::foundry_keystores_dir()
+        .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory."))?;
+    fs::create_dir_all(&path)?;
+    Ok(path)
+}
+
 fn touch_id_sidecar_path(keystore_path: &Path) -> PathBuf {
     let mut path = OsString::from(keystore_path.as_os_str());
     path.push(TOUCH_ID_SIDECAR_SUFFIX);
@@ -2069,6 +2107,33 @@ mod tests {
             WalletSubcommands::New { touch_id, .. } => assert!(touch_id),
             _ => panic!("expected WalletSubcommands::New"),
         }
+    }
+
+    #[test]
+    fn can_parse_wallet_new_bare_account_name() {
+        let args = WalletSubcommands::parse_from(["foundry-cli", "new", "my-wallet"]);
+        match args {
+            WalletSubcommands::New { path, account_name, .. } => {
+                assert_eq!(path.as_deref(), Some("my-wallet"));
+                assert_eq!(account_name, None);
+            }
+            _ => panic!("expected WalletSubcommands::New"),
+        }
+    }
+
+    #[test]
+    fn bare_account_name_heuristic() {
+        assert!(is_bare_account_name("my-wallet"));
+        assert!(is_bare_account_name("dev"));
+        assert!(!is_bare_account_name(""));
+        assert!(!is_bare_account_name("."));
+        assert!(!is_bare_account_name(".."));
+        assert!(!is_bare_account_name("./missing-dir"));
+        assert!(!is_bare_account_name("missing-dir/"));
+        assert!(!is_bare_account_name("/tmp/keystores"));
+        assert!(!is_bare_account_name(r"C:\keystores"));
+        assert!(!is_bare_account_name("C:foo"));
+        assert!(!is_bare_account_name("foo:bar"));
     }
 
     #[test]

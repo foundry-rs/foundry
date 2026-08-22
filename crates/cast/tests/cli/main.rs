@@ -31,6 +31,8 @@ use foundry_test_utils::{
 #[cfg(unix)]
 use rexpect::{Encoding, reader::Options, spawn_with_options};
 use serde_json::json;
+#[cfg(unix)]
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::{fs, io::ErrorKind, net::TcpListener, path::Path, process::Command, str::FromStr};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 use tempo_primitives::{
@@ -681,6 +683,87 @@ Created new encrypted keystore file: [..]
     let keystore_path = dirs::home_dir().unwrap().join(".foundry").join("keystores");
     assert!(keystore_path.exists());
     assert!(keystore_path.is_dir());
+});
+
+// tests that `cast wallet new <name>` treats a bare account name like `cast wallet import <name>`
+casttest!(new_wallet_bare_account_name_uses_default_keystore, |prj, cmd| {
+    let account = "issue-16209-account";
+    cmd.env("HOME", prj.root());
+    cmd.args(["wallet", "new", account, "--unsafe-password", "test"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Created new encrypted keystore file: [..]
+[ADDRESS]
+
+"#]]);
+
+    let keystore_path = prj.root().join(".foundry").join("keystores").join(account);
+    assert!(keystore_path.is_file(), "expected keystore at {}", keystore_path.display());
+});
+
+// tests that a missing path-like argument is still treated as a directory, not an account name
+casttest!(new_wallet_missing_dir_still_errors, |_prj, cmd| {
+    cmd.args(["wallet", "new", "./missing-keystore-dir", "--unsafe-password", "test"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.
+./missing-keystore-dir is not a directory.
+Error: [..]
+
+"#]]);
+});
+
+// tests that a bare argument whose resolution fails for a reason other than the path being
+// missing is reported, rather than silently falling back to the default keystore directory
+#[cfg(unix)]
+casttest!(new_wallet_bare_name_unresolvable_symlink_errors, |prj, cmd| {
+    /// Restores search permission so the temporary project can be torn down, even on panic.
+    struct RestorePermissions<'a>(&'a Path);
+
+    impl Drop for RestorePermissions<'_> {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(self.0, fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    let account = "inaccessible-wallet";
+    // Resolving a symlink through a directory without search permission fails with
+    // `PermissionDenied` instead of `NotFound`.
+    let locked = prj.root().join("locked");
+    fs::create_dir_all(locked.join("keystores")).unwrap();
+    symlink(locked.join("keystores"), prj.root().join(account)).unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let _restore = RestorePermissions(&locked);
+
+    cmd.env("HOME", prj.root());
+    cmd.args(["wallet", "new", account, "--unsafe-password", "test"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.
+inaccessible-wallet is not a directory.
+Error: [..]
+
+"#]]);
+
+    let keystore_path = prj.root().join(".foundry").join("keystores").join(account);
+    assert!(!keystore_path.exists(), "unexpected keystore at {}", keystore_path.display());
+});
+
+// tests that the two-positional `[PATH] [ACCOUNT_NAME]` form still errors for a missing
+// separator-free directory, rather than treating the first argument as an account name
+casttest!(new_wallet_missing_dir_with_account_name_still_errors, |_prj, cmd| {
+    cmd.args(["wallet", "new", "missing-dir", "account-name", "--unsafe-password", "test"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: If you specified a directory, please make sure it exists, or create it before running `cast wallet new <DIR>`.
+missing-dir is not a directory.
+Error: [..]
+
+"#]]);
 });
 
 // tests that we can outputting multiple keys without a keystore path
