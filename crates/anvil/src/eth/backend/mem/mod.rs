@@ -5213,6 +5213,19 @@ where
     where
         DB: StateDB<Error = DatabaseError>,
     {
+        #[cfg(feature = "monad")]
+        if self.is_monad() {
+            return self.execute_with_monad_replay_block_executor(
+                db,
+                evm_env,
+                parent_hash,
+                hardfork,
+                transactions,
+                inspector_tx_config,
+                monad_context,
+            );
+        }
+
         let inspector = self.build_mining_inspector();
         let ethereum_transitions = self.ethereum_block_transitions(
             hardfork,
@@ -5273,42 +5286,6 @@ where
             return run!(evm);
         }
 
-        #[cfg(feature = "monad")]
-        if self.is_monad() {
-            let hardfork = monad_revm::MonadHardfork::from(hardfork);
-            let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
-            let mut evm = alloy_monad_evm::MonadEvmFactory::default()
-                .create_evm_with_inspector(db, monad_env, inspector);
-            let transaction_context = monad_context
-                .ok_or_else(|| eyre::eyre!("Monad replay ancestor context is unavailable"))?;
-            evm.ctx_mut().chain = transaction_context;
-            return run!(evm, |executor| {
-                crate::eth::backend::replay::execute_historical_replay_with(
-                    executor,
-                    transactions,
-                    inspector_tx_config,
-                    |evm, tx_env, _transaction_hash| {
-                        monad::prepare_transaction(evm, &tx_env);
-                        let result = match foundry_evm::core::evm::FoundryEvmFactory::try_transact_system_replay(
-                            &alloy_monad_evm::MonadEvmFactory::default(),
-                            evm,
-                            &tx_env,
-                        )
-                        .map_err(alloy_evm::block::BlockExecutionError::msg) {
-                            Ok(Some(result)) => Ok(result),
-                            Ok(None) => evm
-                                .transact(tx_env)
-                                .map_err(alloy_evm::block::BlockExecutionError::msg),
-                            Err(err) => Err(err),
-                        };
-                        if result.is_err() {
-                            monad::rollback_transaction(evm);
-                        }
-                        result
-                    },
-                )
-            });
-        }
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
         run!(evm)
