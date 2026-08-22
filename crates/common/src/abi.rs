@@ -1,7 +1,7 @@
 //! ABI related helper functions.
 
 use alloy_chains::Chain;
-use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, JsonAbiExt};
+use alloy_dyn_abi::{DecodedEvent, DynSolType, DynSolValue, FunctionExt, JsonAbiExt, Specifier};
 use alloy_json_abi::{Error, Event, Function, Param};
 use alloy_primitives::{Address, LogData, hex};
 use eyre::{Context, ContextCompat, Result};
@@ -106,6 +106,31 @@ pub fn get_func(sig: &str) -> Result<Function> {
 /// Given an event signature string, it tries to parse it as a `Event`
 pub fn get_event(sig: &str) -> Result<Event> {
     Event::parse(sig).wrap_err("could not parse event signature")
+}
+
+/// ABI-decodes the non-indexed parameters (the log data) of an event.
+///
+/// Indexed parameters are stored in the log topics rather than in the data, so they are skipped
+/// here and the returned [`DecodedEvent`] has an empty `indexed`. This allows decoding the data
+/// of a log without knowing its topics.
+pub fn abi_decode_event_data(event: &Event, data: &[u8]) -> Result<DecodedEvent> {
+    let body = DynSolType::Tuple(
+        event
+            .inputs
+            .iter()
+            .filter(|input| !input.indexed)
+            .map(|input| input.resolve())
+            .collect::<Result<_, _>>()?,
+    );
+    let body = match body.abi_decode_sequence(data)? {
+        DynSolValue::Tuple(values) => values,
+        _ => unreachable!("body is a tuple"),
+    };
+    Ok(DecodedEvent {
+        selector: (!event.anonymous).then(|| event.selector()),
+        indexed: vec![],
+        body,
+    })
 }
 
 /// Given an error signature string, it tries to parse it as a `Error`
@@ -274,6 +299,43 @@ mod tests {
         assert_eq!(parsed.indexed[0], DynSolValue::Address(Address::from_word(param0)));
         assert_eq!(parsed.indexed[1], DynSolValue::Uint(U256::from_be_bytes([3; 32]), 256));
         assert_eq!(parsed.indexed[2], DynSolValue::Address(Address::from_word(param2)));
+    }
+
+    #[test]
+    fn test_abi_decode_event_data_ignores_indexed() {
+        let event =
+            get_event("event Ev(uint256 indexed a, string b, address indexed c, uint256 d)")
+                .unwrap();
+        let data = DynSolValue::Tuple(vec![
+            DynSolValue::String("hello".into()),
+            DynSolValue::Uint(U256::from(42), 256),
+        ])
+        .abi_encode_params();
+
+        let decoded = abi_decode_event_data(&event, &data).unwrap();
+        assert_eq!(decoded.selector, Some(event.selector()));
+        assert!(decoded.indexed.is_empty());
+        assert_eq!(
+            decoded.body,
+            vec![DynSolValue::String("hello".into()), DynSolValue::Uint(U256::from(42), 256)]
+        );
+    }
+
+    #[test]
+    fn test_abi_decode_event_data_without_indexed() {
+        let event = get_event("event Ev(uint256 a, address b)").unwrap();
+        let addr = Address::random();
+        let data = DynSolValue::Tuple(vec![
+            DynSolValue::Uint(U256::from(1), 256),
+            DynSolValue::Address(addr),
+        ])
+        .abi_encode_params();
+
+        let decoded = abi_decode_event_data(&event, &data).unwrap();
+        assert_eq!(
+            decoded.body,
+            vec![DynSolValue::Uint(U256::from(1), 256), DynSolValue::Address(addr)]
+        );
     }
 
     #[test]
