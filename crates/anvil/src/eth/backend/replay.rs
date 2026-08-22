@@ -19,8 +19,6 @@ use anvil_core::eth::transaction::{MaybeImpersonatedTransaction, TransactionInfo
 use eyre::{Context, Result};
 use foundry_evm::core::evm::IntoInstructionResult;
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
-#[cfg(feature = "monad")]
-use monad_revm::staking::constants::SYSTEM_ADDRESS as MONAD_SYSTEM_ADDRESS;
 use revm::{
     Database,
     context_interface::result::{ExecutionResult, Output},
@@ -108,7 +106,7 @@ pub(crate) fn prepare_fork_transaction_replay(
             );
             #[cfg(feature = "monad")]
             let sender = if trust_monad_protocol_sender
-                && source_transaction.from() == MONAD_SYSTEM_ADDRESS
+                && source_transaction.from() == monad_revm::staking::constants::SYSTEM_ADDRESS
             {
                 source_transaction.from()
             } else {

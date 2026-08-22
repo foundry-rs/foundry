@@ -42,8 +42,6 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -171,7 +169,9 @@ impl RunArgs {
 
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
-            return self.run_with_evm::<MonadEvmNetwork>(config, evm_opts).await;
+            return self
+                .run_with_evm::<foundry_evm::core::evm::MonadEvmNetwork>(config, evm_opts)
+                .await;
         }
 
         #[cfg(feature = "optimism")]

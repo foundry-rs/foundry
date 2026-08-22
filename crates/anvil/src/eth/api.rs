@@ -5,8 +5,6 @@ use super::{
     },
     preserve_simulation_request_fields,
 };
-#[cfg(feature = "monad")]
-use crate::eth::backend::executor::build_tx_env_for_pending;
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
     eth::{
@@ -100,8 +98,6 @@ use foundry_common::{
     tempo::{PaymentLaneClassification, PaymentLaneReason, classify_payment_lane},
     version::{COMMIT_SHA, SEMVER_VERSION},
 };
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::protocol_system_call;
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
@@ -111,11 +107,7 @@ use futures::{
     StreamExt, TryFutureExt,
     channel::{mpsc::Receiver, oneshot},
 };
-#[cfg(feature = "monad")]
-use monad_revm::staking::constants::SYSTEM_ADDRESS as MONAD_SYSTEM_ADDRESS;
 use parking_lot::RwLock;
-#[cfg(feature = "monad")]
-use revm::context::TxEnv;
 use revm::{
     context::BlockEnv,
     context_interface::{
@@ -4143,10 +4135,15 @@ impl EthApi<FoundryNetwork> {
 
         let pending = PendingTransaction::with_sender(
             MaybeImpersonatedTransaction::new(transaction),
-            MONAD_SYSTEM_ADDRESS,
+            monad_revm::staking::constants::SYSTEM_ADDRESS,
         );
-        let tx_env: TxEnv = build_tx_env_for_pending(&pending, self.backend.cheats());
-        protocol_system_call(&tx_env).is_ok_and(|call| call.is_some()).then_some(pending)
+        let tx_env: revm::context::TxEnv = crate::eth::backend::executor::build_tx_env_for_pending(
+            &pending,
+            self.backend.cheats(),
+        );
+        foundry_evm::core::evm::protocol_system_call(&tx_env)
+            .is_ok_and(|call| call.is_some())
+            .then_some(pending)
     }
 
     /// Reorg the chain to a specific depth and mine new blocks back to the canonical height.
@@ -4254,7 +4251,7 @@ impl EthApi<FoundryNetwork> {
                         let protocol_pending = {
                             #[cfg(feature = "monad")]
                             {
-                                if from == MONAD_SYSTEM_ADDRESS {
+                                if from == monad_revm::staking::constants::SYSTEM_ADDRESS {
                                     self.monad_protocol_reorg_transaction(
                                         typed_tx.clone().into_impersonated(),
                                     )

@@ -1,6 +1,4 @@
 //! In-memory blockchain storage
-#[cfg(feature = "monad")]
-use crate::eth::backend::db::MonadBlockReplayProfile;
 use crate::eth::{
     backend::{
         db::{
@@ -30,8 +28,6 @@ use anvil_core::eth::{
     block::{Block, create_block},
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadBlockParticipants;
 use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
@@ -321,10 +317,10 @@ pub struct BlockchainStorage<N: Network> {
     pub total_difficulty: U256,
     /// Monad senders and authorities retained even when old transaction bodies are pruned.
     #[cfg(feature = "monad")]
-    pub monad_block_participants: B256HashMap<MonadBlockParticipants>,
+    pub monad_block_participants: B256HashMap<foundry_evm::core::evm::MonadBlockParticipants>,
     /// Execution profile used when each locally stored Monad block was created.
     #[cfg(feature = "monad")]
-    pub monad_block_replay_profiles: B256HashMap<MonadBlockReplayProfile>,
+    pub monad_block_replay_profiles: B256HashMap<crate::eth::backend::db::MonadBlockReplayProfile>,
 }
 
 impl<N: Network> BlockchainStorage<N> {

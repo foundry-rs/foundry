@@ -3041,10 +3041,6 @@ fn fork_block_number(fork: &ForkId) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::{Fork, apply_state_changeset};
-    #[cfg(feature = "monad")]
-    use crate::evm::MonadEvmNetwork;
-    #[cfg(feature = "monad")]
-    use crate::fork::CreateFork;
     use crate::{
         backend::{Backend, ForkPosition},
         evm::EthEvmNetwork,
@@ -3282,8 +3278,13 @@ mod tests {
             opts
         }
 
-        fn target_fork(opts: EvmOpts, url: String) -> CreateFork {
-            CreateFork { url, enable_caching: false, evm_opts: opts, expected_context: None }
+        fn target_fork(opts: EvmOpts, url: String) -> crate::fork::CreateFork {
+            crate::fork::CreateFork {
+                url,
+                enable_caching: false,
+                evm_opts: opts,
+                expected_context: None,
+            }
         }
 
         let (ethereum_base_api, ethereum_base) = spawn(NodeConfig::test()).await;
@@ -3309,7 +3310,7 @@ mod tests {
 
         let inferred_monad = pinned_opts(monad_base.http_endpoint(), None).await;
         assert!(inferred_monad.fork_network_is_inferred);
-        let error = Backend::<MonadEvmNetwork>::spawn(Some(target_fork(
+        let error = Backend::<crate::evm::MonadEvmNetwork>::spawn(Some(target_fork(
             inferred_monad,
             ethereum_target.http_endpoint(),
         )))
@@ -3333,7 +3334,7 @@ mod tests {
         let explicit_monad =
             pinned_opts(monad_base.http_endpoint(), Some(NetworkConfigs::with_monad())).await;
         assert!(!explicit_monad.fork_network_is_inferred);
-        let _backend = Backend::<MonadEvmNetwork>::spawn(Some(target_fork(
+        let _backend = Backend::<crate::evm::MonadEvmNetwork>::spawn(Some(target_fork(
             explicit_monad,
             ethereum_target.http_endpoint(),
         )))

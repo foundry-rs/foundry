@@ -9,16 +9,12 @@ use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverabl
 use alloy_evm::{
     EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap,
 };
-#[cfg(feature = "monad")]
-use alloy_monad_evm::MonadEvmFactory;
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_config::ExecutionSpec;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
-#[cfg(feature = "monad")]
-use revm::inspector::Inspector;
 use revm::{
     Database,
     context::{
@@ -92,7 +88,7 @@ pub struct MonadEvmNetwork;
 #[cfg(feature = "monad")]
 impl FoundryEvmNetwork for MonadEvmNetwork {
     type Network = Ethereum;
-    type EvmFactory = MonadEvmFactory;
+    type EvmFactory = alloy_monad_evm::MonadEvmFactory;
 }
 
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
@@ -184,7 +180,7 @@ pub trait FoundryEvmFactory:
     ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>>
     where
         DB: alloy_evm::Database,
-        I: Inspector<Self::Context<DB>>,
+        I: revm::inspector::Inspector<Self::Context<DB>>,
     {
         Ok(None)
     }
