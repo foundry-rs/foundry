@@ -4,6 +4,9 @@ extern crate foundry_test_utils;
 pub mod constants;
 pub mod utils;
 
+#[path = "../support/lsp_client.rs"]
+mod lsp_client;
+
 mod backtrace;
 mod bind;
 mod bind_json;

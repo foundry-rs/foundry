@@ -428,6 +428,8 @@ proc-macro2 = "1.0"
 quote = "1.0"
 syn = "2.0"
 async-trait = "0.1"
+async-lsp = { version = "0.2.4", default-features = false, features = ["omni-trait"] }
+tokio-util = { version = "0.7", features = ["compat"] }
 derive_more = { version = "2.1", features = ["full"] }
 thiserror = "2"
 
