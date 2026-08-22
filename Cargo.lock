@@ -1356,7 +1356,6 @@ name = "anvil-server"
 version = "1.8.0"
 dependencies = [
  "anvil-rpc",
- "async-trait",
  "axum",
  "bytes",
  "clap",
