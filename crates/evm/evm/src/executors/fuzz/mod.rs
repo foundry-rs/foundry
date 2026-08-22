@@ -213,7 +213,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         persisted_failure: Option<BaseCounterExample>,
     ) -> Self {
         let run_limit = if config.run.is_some() { 1 } else { config.runs };
-        let max_workers = if run_limit == 0 {
+        let max_workers = if run_limit == 0 && persisted_failure.is_none() {
             0
         } else if config.run.is_some() {
             1
@@ -737,12 +737,13 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let mut last_metrics_report = Instant::now();
         // Continue while:
         // 1. Global state allows (not timed out, not at global limit, no failure found)
-        // 2. Worker hasn't reached its specific run limit
-        'stop: while shared_state.should_continue() && worker.runs < worker_runs {
+        // 2. Worker has a persisted failure to replay or hasn't reached its specific run limit.
+        'stop: while shared_state.should_continue()
+            && (persisted_failure.is_some() || worker.runs < worker_runs)
+        {
             // If counterexample recorded, replay it first, without incrementing runs.
             let (input, fuzz_run, is_persisted_replay) = if worker_id == 0
                 && let Some(failure) = persisted_failure.take()
-                && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
                 let seed = failure.fuzz.seed.or(self.config.seed);
                 if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
