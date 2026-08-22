@@ -190,6 +190,13 @@ fn is_partial_match(
         return try_extract_and_compare_bytecode(local_bytecode, bytecode);
     }
 
+    // The constructor args are part of what is being verified: the onchain creation code must
+    // actually end with them before they can be stripped, otherwise args of the right length
+    // could never fail the comparison.
+    if !bytecode.ends_with(constructor_args) {
+        return false;
+    }
+
     // If not runtime, extract constructor args from the end of the bytecode
     bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
     local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
@@ -598,6 +605,26 @@ mod tests {
         let mut tx = TxEnvFor::<MonadEvmNetwork>::default();
         tx.set_caller(caller);
         tx
+    }
+
+    #[test]
+    fn creation_code_must_end_with_constructor_args() {
+        let code = alloy_primitives::hex!("6080604052348015600e575f5ffd5b50607b80601a5f395ff3fe");
+        let real_args = [0x11u8; 32];
+        let wrong_args = [0x22u8; 32];
+
+        let onchain = [code.as_slice(), &real_args].concat();
+
+        // Wrong args of the right length used to report a partial match because the tails were
+        // stripped from both sides without comparing them.
+        let local = [code.as_slice(), &wrong_args].concat();
+        assert_eq!(match_bytecodes(&local, &onchain, &wrong_args, false, BytecodeHash::Ipfs), None);
+
+        let local = [code.as_slice(), &real_args].concat();
+        assert_eq!(
+            match_bytecodes(&local, &onchain, &real_args, false, BytecodeHash::Ipfs),
+            Some(VerificationType::Full)
+        );
     }
 
     #[test]
