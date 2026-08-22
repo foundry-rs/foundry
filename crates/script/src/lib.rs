@@ -46,8 +46,6 @@ use foundry_config::{
     },
 };
 use foundry_debugger::DebuggerLayout;
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -413,7 +411,12 @@ impl ScriptArgs {
 
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
-            return Box::pin(self.run_generic_script::<MonadEvmNetwork>(config, evm_opts)).await;
+            return Box::pin(
+                self.run_generic_script::<foundry_evm::core::evm::MonadEvmNetwork>(
+                    config, evm_opts,
+                ),
+            )
+            .await;
         }
 
         #[cfg(feature = "optimism")]
@@ -1152,8 +1155,6 @@ mod tests {
         upsert_session_entry,
     };
     use foundry_config::UnresolvedEnvVarError;
-    #[cfg(feature = "monad")]
-    use foundry_evm::hardforks::MonadHardfork;
     use foundry_evm::{
         revm::context::Block as _,
         traces::{
@@ -1919,7 +1920,7 @@ mod tests {
         let (_origin_api, origin_handle) = spawn(
             NodeConfig::test_monad()
                 .with_chain_id(Some(NamedChain::MonadTestnet as u64))
-                .with_hardfork(Some(MonadHardfork::MonadNine.into())),
+                .with_hardfork(Some(foundry_evm::hardforks::MonadHardfork::MonadNine.into())),
         )
         .await;
         let (_fork_api, fork_handle) = spawn(
@@ -1934,7 +1935,7 @@ mod tests {
             EvmOpts { fork_url: Some(fork_handle.http_endpoint()), ..Default::default() };
         evm_opts.infer_network_from_fork().await.unwrap();
         let config = Config { networks: evm_opts.networks, ..Default::default() };
-        let mut script = ScriptConfig::<MonadEvmNetwork>::new(
+        let mut script = ScriptConfig::<foundry_evm::core::evm::MonadEvmNetwork>::new(
             config,
             evm_opts,
             false,
@@ -1947,7 +1948,10 @@ mod tests {
         let _runner = script._get_runner(None, false, false).await.unwrap();
 
         assert_eq!(script.source_chain_id, Some(NamedChain::MonadTestnet as u64));
-        assert_eq!(script.hardfork, Some(FoundryHardfork::Monad(MonadHardfork::MonadNine)));
+        assert_eq!(
+            script.hardfork,
+            Some(FoundryHardfork::Monad(foundry_evm::hardforks::MonadHardfork::MonadNine))
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -2323,7 +2327,10 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
 
-        let limits = args.contract_size_limits::<MonadEvmNetwork>(&Config::default(), &evm_opts);
+        let limits = args.contract_size_limits::<foundry_evm::core::evm::MonadEvmNetwork>(
+            &Config::default(),
+            &evm_opts,
+        );
 
         assert!(limits.runtime > ContractSizeLimits::default().runtime);
         assert!(limits.initcode > ContractSizeLimits::default().initcode);
@@ -2342,7 +2349,9 @@ mod tests {
         let mut config = Config { code_size_limit: Some(128), ..Default::default() };
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_monad(), ..Default::default() };
         assert_eq!(
-            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts),
+            args.contract_size_limits::<foundry_evm::core::evm::MonadEvmNetwork>(
+                &config, &evm_opts,
+            ),
             ContractSizeLimits::with_runtime_limit(64)
         );
 
@@ -2350,7 +2359,9 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "script", "script/Test.s.sol:TestScript"]);
         config.code_size_limit = Some(128);
         assert_eq!(
-            args.contract_size_limits::<MonadEvmNetwork>(&config, &evm_opts),
+            args.contract_size_limits::<foundry_evm::core::evm::MonadEvmNetwork>(
+                &config, &evm_opts,
+            ),
             ContractSizeLimits::with_runtime_limit(128)
         );
     }

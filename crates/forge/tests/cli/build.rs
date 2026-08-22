@@ -1,7 +1,5 @@
 use crate::utils::generate_large_init_contract;
 use foundry_compilers::artifacts::EvmVersion;
-#[cfg(feature = "monad")]
-use foundry_evm_networks::NetworkConfigs;
 use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt};
 use globset::Glob;
 use std::{
@@ -455,7 +453,7 @@ forgetest!(build_sizes_respects_configured_code_size_limit, |prj, cmd| {
 forgetest!(build_sizes_respects_monad_network_code_size_limit, |prj, cmd| {
     prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
     prj.update_config(|config| {
-        config.networks = NetworkConfigs::with_monad();
+        config.networks = foundry_evm_networks::NetworkConfigs::with_monad();
     });
 
     cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(

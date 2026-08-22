@@ -13,11 +13,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_hardforks::TempoHardfork;
 use foundry_evm_networks::NetworkConfigs;
-#[cfg(feature = "monad")]
-use foundry_evm_networks::is_monad_precompile_active_at;
 use itertools::Itertools;
-#[cfg(feature = "monad")]
-use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
 use revm_inspectors::tracing::types::DecodedCallTrace;
 
 sol! {
@@ -129,12 +125,13 @@ pub(crate) fn is_known_precompile(
             |networks| networks.is_monad(),
         );
         if is_monad_context {
-            if address == STAKING_ADDRESS {
+            if address == monad_revm::staking::STAKING_ADDRESS {
                 return true;
             }
-            if address == RESERVE_BALANCE_ADDRESS
-                && monad_hardfork
-                    .is_none_or(|hardfork| is_monad_precompile_active_at(address, hardfork))
+            if address == monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS
+                && monad_hardfork.is_none_or(|hardfork| {
+                    foundry_evm_networks::is_monad_precompile_active_at(address, hardfork)
+                })
             {
                 return true;
             }

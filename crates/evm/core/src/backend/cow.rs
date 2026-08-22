@@ -1,8 +1,6 @@
 //! A wrapper around `Backend` that is clone-on-write used for fuzzing.
 
 use super::BackendError;
-#[cfg(feature = "monad")]
-use crate::evm::protocol_system_call;
 use crate::{
     FoundryInspectorExt,
     backend::{
@@ -20,8 +18,6 @@ use alloy_genesis::GenesisAccount;
 use alloy_primitives::{Address, B256, TxKind, U256};
 use eyre::WrapErr;
 use foundry_fork_db::DatabaseError;
-#[cfg(feature = "monad")]
-use revm::context_interface::result::HaltReason;
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
@@ -135,8 +131,10 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         tx_env: &mut TxEnvFor<FEN>,
         chain_context: ChainFor<FEN>,
         inspector: I,
-    ) -> eyre::Result<Option<ResultAndState<HaltReason>>> {
-        if !self.backend.networks().is_monad() || protocol_system_call(tx_env)?.is_none() {
+    ) -> eyre::Result<Option<ResultAndState<revm::context_interface::result::HaltReason>>> {
+        if !self.backend.networks().is_monad()
+            || crate::evm::protocol_system_call(tx_env)?.is_none()
+        {
             return Ok(None);
         }
 

@@ -10,8 +10,6 @@ use foundry_evm_core::{
     fork::CreateFork,
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
 };
-#[cfg(feature = "monad")]
-use foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::TraceRequirements;
@@ -126,7 +124,8 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
     ) {
         let tempo_hardfork = resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork);
         #[cfg(feature = "monad")]
-        let monad_hardfork = resolved_hardfork.and_then(MonadHardfork::from_foundry_hardfork);
+        let monad_hardfork =
+            resolved_hardfork.and_then(foundry_evm_hardforks::MonadHardfork::from_foundry_hardfork);
         #[cfg(not(feature = "monad"))]
         let monad_hardfork = None;
 
@@ -174,7 +173,9 @@ fn network_hardfork_from_evm_version(
     }
     #[cfg(feature = "monad")]
     if networks.is_monad() {
-        return Some(FoundryHardfork::Monad(evm_spec_id::<MonadHardfork>(evm_version)));
+        return Some(FoundryHardfork::Monad(evm_spec_id::<foundry_evm_hardforks::MonadHardfork>(
+            evm_version,
+        )));
     }
     None
 }

@@ -23,8 +23,6 @@ use foundry_common::{
 };
 use foundry_config::{Chain, NamedChain};
 use foundry_debugger::Debugger;
-#[cfg(feature = "monad")]
-use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
@@ -465,8 +463,10 @@ pub(crate) fn build_trace_decoder_for_context<FEN: FoundryEvmNetwork>(
         .with_tempo_hardfork(resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork));
     #[cfg(feature = "monad")]
     {
-        builder = builder
-            .with_monad_hardfork(resolved_hardfork.and_then(MonadHardfork::from_foundry_hardfork));
+        builder = builder.with_monad_hardfork(
+            resolved_hardfork
+                .and_then(foundry_evm::hardforks::MonadHardfork::from_foundry_hardfork),
+        );
     }
     let mut decoder = builder.build();
 

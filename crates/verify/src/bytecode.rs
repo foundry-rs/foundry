@@ -32,8 +32,6 @@ use foundry_common::{
 };
 use foundry_compilers::info::ContractInfo;
 use foundry_config::{Chain, Config, figment, impl_figment_convert};
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -276,7 +274,7 @@ impl VerifyBytecodeArgs {
             }
             #[cfg(feature = "monad")]
             NetworkVariant::Monad => {
-                self.run_with_network_and_config::<MonadEvmNetwork>(
+                self.run_with_network_and_config::<foundry_evm::core::evm::MonadEvmNetwork>(
                     config,
                     endpoint_identity,
                     network_was_inferred,

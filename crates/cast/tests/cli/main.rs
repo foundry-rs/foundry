@@ -15,10 +15,6 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
-#[cfg(feature = "monad")]
-use foundry_evm::hardfork::MonadHardfork;
-#[cfg(feature = "monad")]
-use foundry_test_utils::rpc::spawn_canonical_monad_system_rpc;
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
@@ -7605,7 +7601,8 @@ Transaction successfully executed.
 
 #[cfg(feature = "monad")]
 casttest!(monad_call_trace_uses_monad_evm_network, async |_prj, cmd| {
-    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (_api, handle) = anvil::spawn(config).await;
     let endpoint = handle.http_endpoint();
     let reserve_balance_address = MONAD_RESERVE_BALANCE_ADDRESS.to_string();
@@ -7632,7 +7629,7 @@ casttest!(monad_call_trace_uses_monad_evm_network, async |_prj, cmd| {
 #[cfg(feature = "monad")]
 casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
     let config = NodeConfig::test_monad()
-        .with_hardfork(Some(MonadHardfork::MonadEight.into()))
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadEight.into()))
         .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
         .with_genesis_timestamp(Some(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP - 1));
     let (_api, monad_eight_handle) = anvil::spawn(config).await;
@@ -7710,7 +7707,7 @@ casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
     );
 
     let config = NodeConfig::test_monad()
-        .with_hardfork(Some(MonadHardfork::MonadNine.into()))
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()))
         .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
         .with_genesis_timestamp(Some(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP));
     let (_origin_api, monad_nine_origin) = anvil::spawn(config).await;
@@ -7776,7 +7773,8 @@ casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
 
 #[cfg(feature = "monad")]
 casttest!(monad_call_trace_uses_parent_sender_context, async |_prj, cmd| {
-    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (api, handle) = anvil::spawn(config).await;
     let provider = handle.http_provider();
     let sender = provider.get_accounts().await.unwrap()[0];
@@ -7830,7 +7828,8 @@ casttest!(monad_call_trace_uses_parent_sender_context, async |_prj, cmd| {
 
 #[cfg(feature = "monad")]
 casttest!(monad_run_replays_reserve_balance_precompile_tx, async |_prj, cmd| {
-    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (_api, handle) = anvil::spawn(config).await;
     let provider = handle.http_provider();
     let from = provider.get_accounts().await.unwrap()[0];
@@ -7858,7 +7857,7 @@ casttest!(monad_run_replays_reserve_balance_precompile_tx, async |_prj, cmd| {
 #[cfg(feature = "monad")]
 casttest!(monad_run_preserves_endpoint_hardfork, async |_prj, cmd| {
     let origin_config = NodeConfig::test_monad()
-        .with_hardfork(Some(MonadHardfork::MonadNine.into()))
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()))
         .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
         .with_genesis_timestamp(Some(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP - 2));
     let (_origin_api, origin_handle) = anvil::spawn(origin_config).await;
@@ -7948,7 +7947,8 @@ casttest!(monad_run_preserves_endpoint_hardfork, async |_prj, cmd| {
 
 #[cfg(feature = "monad")]
 casttest!(monad_run_traces_protocol_system_call, async |_prj, cmd| {
-    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (api, handle) = anvil::spawn(config).await;
     let provider = handle.http_provider();
     api.anvil_impersonate_account(MONAD_SYSTEM_ADDRESS).await.unwrap();
@@ -7988,7 +7988,8 @@ casttest!(monad_run_traces_protocol_system_call, async |_prj, cmd| {
         original.stdout_lossy()
     );
 
-    let canonical_endpoint = spawn_canonical_monad_system_rpc(endpoint.clone(), tx_hash).await;
+    let canonical_endpoint =
+        foundry_test_utils::rpc::spawn_canonical_monad_system_rpc(endpoint.clone(), tx_hash).await;
     let output = cmd
         .cast_fuse()
         .args(["run", &tx_hash_string, "--rpc-url", &canonical_endpoint, "--quick"])
@@ -8034,7 +8035,8 @@ Replaying system transactions is currently not supported.
 
 #[cfg(feature = "monad")]
 casttest!(monad_run_replays_current_sender_context, async |_prj, cmd| {
-    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (api, handle) = anvil::spawn(config).await;
     let provider = handle.http_provider();
     let sender = provider.get_accounts().await.unwrap()[0];

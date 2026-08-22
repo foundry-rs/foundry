@@ -1803,8 +1803,6 @@ mod tests {
     };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
-    #[cfg(feature = "monad")]
-    use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
     use foundry_evm_traces::InternalTraceMode;
     use revm::context::TxEnv;
     use std::{sync::mpsc, thread};
@@ -1833,11 +1831,16 @@ mod tests {
     fn network_cheatcode_revert_handling_is_monad_specific() {
         let target = Address::from([0x11; 20]);
 
-        assert!(should_ignore_revert(false, target, Some(MONAD_CHEATCODE_ADDRESS), &[]));
+        assert!(should_ignore_revert(
+            false,
+            target,
+            Some(foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS),
+            &[]
+        ));
         assert!(!should_ignore_revert(
             false,
             target,
-            Some(MONAD_CHEATCODE_ADDRESS),
+            Some(foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS),
             NetworkConfigs::with_monad().extra_cheatcode_addresses(),
         ));
     }
@@ -1852,19 +1855,25 @@ mod tests {
             NetworkConfigs::default(),
         );
         assert!(!ethereum.backend().networks().is_monad());
-        assert!(!ethereum.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
+        assert!(
+            !ethereum
+                .backend()
+                .is_persistent(&foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS)
+        );
 
-        let monad = ExecutorBuilder::<MonadEvmNetwork>::default()
+        let monad = ExecutorBuilder::<foundry_evm_core::evm::MonadEvmNetwork>::default()
             .inspectors(|stack| stack.networks(NetworkConfigs::default()))
             .build(
-                EvmEnvFor::<MonadEvmNetwork>::default(),
-                TxEnvFor::<MonadEvmNetwork>::default(),
+                EvmEnvFor::<foundry_evm_core::evm::MonadEvmNetwork>::default(),
+                TxEnvFor::<foundry_evm_core::evm::MonadEvmNetwork>::default(),
                 Backend::spawn(None).unwrap(),
                 NetworkConfigs::with_monad(),
             );
         assert!(monad.inspector().networks.is_monad());
         assert!(monad.backend().networks().is_monad());
-        assert!(monad.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
+        assert!(
+            monad.backend().is_persistent(&foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS)
+        );
     }
 
     #[test]

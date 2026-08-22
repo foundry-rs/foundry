@@ -42,8 +42,6 @@ use foundry_common::{
     provider::{ProviderBuilder, RetryProvider, is_rpc_method_not_found, redact_url},
 };
 use foundry_config::Config;
-#[cfg(feature = "monad")]
-use foundry_evm::hardfork::MonadHardfork;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
@@ -1417,7 +1415,9 @@ impl NodeConfig {
         #[cfg(feature = "monad")]
         {
             decoder_builder = decoder_builder.with_monad_hardfork(
-                self.networks.is_monad().then(|| MonadHardfork::from(active_hardfork)),
+                self.networks
+                    .is_monad()
+                    .then(|| foundry_evm::hardfork::MonadHardfork::from(active_hardfork)),
             );
         }
         if self.print_traces {
@@ -2678,7 +2678,10 @@ mod tests {
         config.fork_source_chain_id = Some(143);
 
         assert_eq!(config.get_chain_id(), 1);
-        assert_eq!(config.get_hardfork(), FoundryHardfork::Monad(MonadHardfork::MonadEight));
+        assert_eq!(
+            config.get_hardfork(),
+            FoundryHardfork::Monad(foundry_evm::hardfork::MonadHardfork::MonadEight)
+        );
     }
 
     #[test]
