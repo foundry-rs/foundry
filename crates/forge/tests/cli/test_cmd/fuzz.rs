@@ -316,6 +316,126 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 2 skipped (2 total tests)
     ]]);
 });
 
+forgetest_init!(overloaded_fuzz_tests_use_distinct_paths, |prj, cmd| {
+    let corpus_root = prj.root().join("overloaded-corpus");
+    prj.update_config(|config| {
+        config.fuzz.runs = 1;
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.corpus.corpus_dir = Some(corpus_root.clone());
+    });
+    prj.add_test(
+        "OverloadedFuzz.t.sol",
+        r#"
+contract OverloadedFuzzTest {
+    function testFuzz_collision(address) external pure {
+        revert("ADDRESS_BUG");
+    }
+
+    function testFuzz_collision(uint256) external pure {
+        revert("UINT_BUG");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "OverloadedFuzzTest", "-j1"]).assert_failure();
+
+    let failure_root = prj.root().join("cache/fuzz/failures/OverloadedFuzzTest");
+    let address_name = format!(
+        "testFuzz_collision-{}",
+        hex::encode(&keccak256("testFuzz_collision(address)")[..4])
+    );
+    let uint_name = format!(
+        "testFuzz_collision-{}",
+        hex::encode(&keccak256("testFuzz_collision(uint256)")[..4])
+    );
+    let address_failure = failure_root.join(&address_name);
+    let uint_failure = failure_root.join(&uint_name);
+    assert!(address_failure.exists());
+    assert!(uint_failure.exists());
+    assert!(!failure_root.join("testFuzz_collision").exists());
+    assert!(corpus_root.join("OverloadedFuzzTest").join(&address_name).exists());
+    assert!(corpus_root.join("OverloadedFuzzTest").join(&uint_name).exists());
+
+    let showmap_root = prj.root().join("overloaded-showmap");
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            "testFuzz_collision",
+            "--showmap-out",
+            "overloaded-showmap",
+            "--showmap-trial",
+            "overloaded",
+            "-j1",
+        ])
+        .assert_success();
+    let showmap_prefix = "replay__test_OverloadedFuzz.t.sol_OverloadedFuzzTest__";
+    assert!(showmap_root.join(format!("{showmap_prefix}{address_name}/overloaded.txt")).exists());
+    assert!(showmap_root.join(format!("{showmap_prefix}{uint_name}/overloaded.txt")).exists());
+
+    let address_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&address_replay.get_output().stdout);
+    assert!(stdout.contains("[FAIL: ADDRESS_BUG; counterexample:"), "{stdout}");
+
+    let uint_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(uint256\)$",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&uint_replay.get_output().stdout);
+    assert!(stdout.contains("[FAIL: UINT_BUG; counterexample:"), "{stdout}");
+
+    std::fs::rename(&address_failure, failure_root.join("testFuzz_collision")).unwrap();
+    std::fs::remove_file(&uint_failure).unwrap();
+
+    let mismatched_legacy_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(uint256\)$",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8_lossy(&mismatched_legacy_replay.get_output().stdout);
+    assert!(stdout.contains("no persisted fuzz failure found"), "{stdout}");
+
+    let legacy_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&legacy_replay.get_output().stdout);
+    assert!(stdout.contains("[FAIL: ADDRESS_BUG; counterexample:"), "{stdout}");
+});
+
 forgetest_init!(forge_fuzz_replays_explicit_failure_file, |prj, cmd| {
     prj.add_test(
         "ForgeExplicitFuzzReplay.t.sol",
