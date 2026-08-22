@@ -77,8 +77,9 @@ use alloy_evm::{
 #[cfg(feature = "monad")]
 use alloy_monad_evm::{MonadContext, MonadEvmFactory};
 use alloy_network::{
-    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
-    NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
+    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
+    BlockResponse, Network, NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope,
+    UnknownTypedTransaction,
 };
 #[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
@@ -4990,6 +4991,9 @@ where
         &self,
         replay: ForkTransactionReplay,
     ) -> Result<()> {
+        let source_chain_id = self.protocol_chain_id();
+        let arbitrum_block_number = is_arbitrum(source_chain_id)
+            .then(|| arbitrum_replay_block_number(&replay.source_block));
         let prepared = prepare_fork_transaction_replay(replay, self.is_monad())?;
         let fallback_execution_chain_id = self
             .get_fork()
@@ -5007,15 +5011,14 @@ where
         let current_base_fee = self.base_fee();
         let current_excess_blob_gas_and_price = self.excess_blob_gas_and_price();
         let mut evm_env = self.evm_env.read().clone();
-        let source_chain_id = self.protocol_chain_id();
         if evm_env.block_env.basefee == 0 {
             evm_env.cfg_env.disable_base_fee = true;
         }
 
         let best_number = self.blockchain.storage.read().best_number;
         let block_number = best_number.saturating_add(1);
-        if is_arbitrum(source_chain_id) {
-            evm_env.block_env.number = U256::from(block_number);
+        if let Some(block_number) = arbitrum_block_number {
+            evm_env.block_env.number = block_number;
         } else {
             evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
         }
@@ -9388,6 +9391,15 @@ fn unpack_execution_result<H: IntoInstructionResult>(
     }
 }
 
+fn arbitrum_replay_block_number(block: &AnyRpcBlock) -> U256 {
+    block
+        .other
+        .get("l1BlockNumber")
+        .cloned()
+        .and_then(|number| serde_json::from_value(number).ok())
+        .unwrap_or_else(|| U256::from(block.header().number()))
+}
+
 /// Converts a halt reason into an [`InstructionResult`].
 ///
 /// Abstracts over network-specific halt reason types (`HaltReason`, `OpHaltReason`)
@@ -9396,12 +9408,16 @@ pub use foundry_evm::core::evm::IntoInstructionResult;
 
 #[cfg(test)]
 mod tests {
-    use super::{ForkCacheNamespace, ForkCacheSource, StagedForkCacheLease, StagedForkDbUser};
+    use super::{
+        ForkCacheNamespace, ForkCacheSource, StagedForkCacheLease, StagedForkDbUser,
+        arbitrum_replay_block_number,
+    };
     use crate::{NodeConfig, spawn};
     #[cfg(feature = "monad")]
     use alloy_consensus::{BlockHeader, constants::EMPTY_ROOT_HASH};
     #[cfg(feature = "monad")]
     use alloy_network::TransactionBuilder;
+    use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader};
     #[cfg(feature = "monad")]
     use alloy_primitives::Address;
     use alloy_primitives::{B256, U256};
@@ -9409,6 +9425,7 @@ mod tests {
     use alloy_provider::Provider;
     #[cfg(feature = "monad")]
     use alloy_rpc_types::TransactionRequest;
+    use alloy_rpc_types::{Block, BlockTransactions};
     use foundry_evm::{
         backend::{BlockchainDb, BlockchainDbMeta},
         hardfork::{EthereumHardfork, FoundryHardfork},
@@ -9425,6 +9442,21 @@ mod tests {
         db.block_hashes().write().insert(U256::ZERO, B256::repeat_byte(0x11));
         db.cache().flush();
         db
+    }
+
+    #[test]
+    fn arbitrum_transaction_replay_uses_l1_block_number() {
+        let header = AnyHeader { number: 75_219_831, ..Default::default() };
+        let mut block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                BlockTransactions::Full(Vec::new()),
+            )
+            .into(),
+        );
+        block.other.insert("l1BlockNumber".to_string(), serde_json::json!("0x10276d3"));
+
+        assert_eq!(arbitrum_replay_block_number(&block), U256::from(16_938_707));
     }
 
     fn test_endpoint_identity(

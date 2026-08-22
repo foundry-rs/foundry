@@ -45,7 +45,7 @@ use foundry_config::Config;
 #[cfg(feature = "monad")]
 use foundry_evm::hardfork::MonadHardfork;
 use foundry_evm::{
-    backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
+    backend::{BlockchainDb, BlockchainDbMeta, ForkBlock, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
     hardfork::FoundryHardfork,
     utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
@@ -150,6 +150,18 @@ const BANNER: &str = r"
     | (_| | | | | |  \ V /  | | | |
      \__,_| |_| |_|   \_/   |_| |_|
 ";
+
+fn fork_source_id(urls: &[String], headers: &[String]) -> B256 {
+    let mut encoded = Vec::new();
+    for parts in [urls, headers] {
+        encoded.extend_from_slice(&(parts.len() as u64).to_be_bytes());
+        for part in parts {
+            encoded.extend_from_slice(&(part.len() as u64).to_be_bytes());
+            encoded.extend_from_slice(part.as_bytes());
+        }
+    }
+    keccak256(encoded)
+}
 
 /// Configurations of the EVM node
 #[derive(Clone, Debug)]
@@ -2025,14 +2037,12 @@ latest block number: {latest_block}"
             eyre::bail!("primary fork endpoint changed while its context was being validated");
         }
 
-        let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone());
+        let source_id = fork_source_id(&self.fork_urls, &self.fork_headers);
+        let meta = BlockchainDbMeta::new(cache_block_env, eth_rpc_url.clone())
+            .with_fork_identity(block_hash, source_id);
         let cache_path =
             self.block_cache_path_for_rpc(source_chain_id, fork_block_number, &eth_rpc_url);
-        let block_chain_db = if self.fork_chain_id.is_some() {
-            BlockchainDb::new_skip_check(meta, cache_path)
-        } else {
-            BlockchainDb::new(meta, cache_path)
-        };
+        let block_chain_db = BlockchainDb::new(meta, cache_path);
 
         // After bootstrap, rebuild the provider with round-robin if multiple URLs are
         // configured. This ensures bootstrap used only the primary endpoint for consistency,
@@ -2056,12 +2066,14 @@ latest block number: {latest_block}"
 
         // This will spawn the background thread that will use the provider to fetch
         // blockchain data from the other client
-        let backend = SharedBackend::spawn_backend(
-            Arc::clone(&provider),
-            block_chain_db.clone(),
-            Some(fork_block_number.into()),
-        )
-        .await;
+        let anchor = ForkBlock::with_rpc_number(
+            evm_env.block_env.number.saturating_to(),
+            fork_block_number,
+            block_hash,
+        );
+        let (backend, handler) =
+            SharedBackend::new_with_anchor(Arc::clone(&provider), block_chain_db.clone(), anchor)?;
+        tokio::spawn(handler);
 
         let config = ClientForkConfig {
             fork_urls: self.fork_urls.clone(),
@@ -2464,6 +2476,17 @@ mod tests {
         assert_eq!(json["endpoint"], redact_url(&fork_url));
         assert!(!json.to_string().contains("password"));
         assert!(!json.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn fork_source_identity_includes_all_urls_and_headers() {
+        let urls = ["http://primary".to_string(), "http://fallback".to_string()];
+        let headers = ["Authorization: secret".to_string()];
+        let identity = fork_source_id(&urls, &headers);
+
+        assert_ne!(identity, fork_source_id(&urls[..1], &headers));
+        assert_ne!(identity, fork_source_id(&urls, &[]));
+        assert_ne!(identity, fork_source_id(&[urls[1].clone(), urls[0].clone()], &headers));
     }
 
     #[test]

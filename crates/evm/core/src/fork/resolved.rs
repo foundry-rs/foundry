@@ -1,13 +1,13 @@
 use crate::opts::ForkContext;
 use alloy_eips::{BlockId, BlockNumHash};
-use alloy_primitives::{B256, BlockNumber};
+use alloy_primitives::{B256, BlockNumber, keccak256};
 use std::fmt;
 
 /// A fork selector and block identity resolved from a configured RPC source.
 ///
 /// This context binds exact preflight reads and EVM environment reconstruction to the source,
-/// selector, and block that were resolved together. The fork database itself remains
-/// number-pinned.
+/// selector, and block that were resolved together. The fork database uses the resolved hash for
+/// state reads and block ancestry.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ResolvedFork {
     source: ForkSource,
@@ -94,6 +94,55 @@ impl ResolvedFork {
     pub(crate) const fn block(&self) -> BlockNumHash {
         self.block
     }
+
+    /// Returns this resolution advanced to another exact block on the same RPC source.
+    pub(crate) fn at_block(&self, block: BlockNumHash) -> Self {
+        let mut resolved = self.clone();
+        resolved.selector = Some(block.number);
+        resolved.block = block;
+        resolved.context.block_number = block.number;
+        resolved
+    }
+
+    /// Returns an opaque identity for the complete authenticated RPC source.
+    pub(crate) fn source_id(&self) -> B256 {
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(b"foundry-resolved-fork-source-v1");
+        encode_source_part(&mut encoded, self.source.url.as_bytes());
+        encoded.extend_from_slice(
+            &u64::try_from(self.source.headers.len())
+                .expect("fork header count exceeds u64")
+                .to_be_bytes(),
+        );
+        for header in &self.source.headers {
+            encode_source_part(&mut encoded, header.as_bytes());
+        }
+        if let Some(jwt) = &self.source.jwt {
+            encoded.push(1);
+            encode_source_part(&mut encoded, jwt.as_bytes());
+        } else {
+            encoded.push(0);
+        }
+        keccak256(encoded)
+    }
+
+    /// Returns a redacted, opaque fingerprint of the complete resolved fork identity.
+    pub fn fingerprint(&self) -> B256 {
+        let encoded = serde_json::to_vec(&(
+            "foundry-resolved-fork-v1",
+            self.source_id(),
+            self.block,
+            self.context,
+        ))
+        .expect("resolved fork identity is serializable");
+        keccak256(encoded)
+    }
+}
+
+fn encode_source_part(encoded: &mut Vec<u8>, part: &[u8]) {
+    let len = u64::try_from(part.len()).expect("source identity part length exceeds u64");
+    encoded.extend_from_slice(&len.to_be_bytes());
+    encoded.extend_from_slice(part);
 }
 
 impl fmt::Debug for ResolvedFork {
@@ -162,5 +211,28 @@ mod tests {
 
         assert_ne!(first, second);
         assert_eq!(HashSet::from([first, second]).len(), 2);
+    }
+
+    #[test]
+    fn authenticated_source_identity_is_unambiguous() {
+        let block = BlockNumHash::new(1, B256::with_last_byte(1));
+        let context = context(1);
+        let plain = ResolvedFork::new("http://localhost:8545", None, None, None, block, context);
+        let header = ResolvedFork::new(
+            "http://localhost:8545",
+            Some(&["secret".to_string()]),
+            None,
+            None,
+            block,
+            context,
+        );
+        let jwt =
+            ResolvedFork::new("http://localhost:8545", None, Some("secret"), None, block, context);
+
+        assert_ne!(plain.source_id(), header.source_id());
+        assert_ne!(plain.source_id(), jwt.source_id());
+        assert_ne!(header.source_id(), jwt.source_id());
+        assert_ne!(plain.fingerprint(), header.fingerprint());
+        assert_ne!(plain.fingerprint(), jwt.fingerprint());
     }
 }

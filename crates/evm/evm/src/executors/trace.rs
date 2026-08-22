@@ -1,7 +1,7 @@
 use crate::executors::{Executor, ExecutorBuilder};
 use alloy_primitives::{Address, ChainId, U256, map::HashMap};
 use alloy_rpc_types::state::StateOverride;
-use eyre::Context;
+use eyre::{Context, ContextCompat};
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{Chain, Config, evm_spec_id};
 use foundry_evm_core::{
@@ -149,16 +149,13 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         evm_opts.fork_block_number = config.fork_block_number;
         evm_opts.infer_network_from_fork().await?;
         let networks = evm_opts.networks;
-        let (evm_env, tx_env, fork_context) = evm_opts
-            .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
-            .await?;
-        let Some(fork_context) = fork_context else {
-            eyre::bail!("fork context is missing for tracing executor");
-        };
-
+        let (evm_env, tx_env, resolved) =
+            evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let resolved = resolved.context("fork context is missing for tracing executor")?;
         let fork = evm_opts
-            .get_fork_with_context(config, fork_context)
-            .ok_or_else(|| eyre::eyre!("fork URL is missing for tracing executor"))?;
+            .get_fork_resolved(config, evm_env.cfg_env.chain_id, Some(&resolved))
+            .context("fork URL is missing for tracing executor")?;
+        let fork_context = resolved.context();
 
         let chain = fork_context.source_chain_id.into();
         Ok((evm_env, tx_env, fork, chain, networks, fork_context.hardfork))
