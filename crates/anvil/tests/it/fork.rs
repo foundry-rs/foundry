@@ -17,13 +17,19 @@ use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, Transac
 use alloy_primitives::{
     Address, B256, Bytes, TxHash, TxKind, U64, U256, address, b256, bytes, hex, uint,
 };
-use alloy_provider::{Provider, ext::TxPoolApi};
+use alloy_provider::{
+    Provider,
+    ext::{DebugApi, TxPoolApi},
+};
 use alloy_rpc_types::{
     AccountInfo, BlockId, BlockNumberOrTag, Index,
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
-    trace::parity::{Action, TraceResultsWithTransactionHash, TraceType},
+    trace::{
+        geth::{CallConfig, GethDebugTracingOptions, GethTrace, TraceResult},
+        parity::{Action, TraceResultsWithTransactionHash, TraceType},
+    },
 };
 use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
@@ -890,6 +896,86 @@ async fn test_fork_trace_replay_block_transactions_forwards_trace_types() {
     }
     // `StateDiff` was also requested, so it must be honored, not just `Trace`.
     assert!(full_trace.state_diff.is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_debug_trace_cache_includes_options() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let origin_provider = origin_handle.http_provider();
+    let from = origin_handle.dev_wallets().next().unwrap().address();
+    let receipt = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(from).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let fork_url = spawn_rpc_proxy_rejecting_method_after(
+        origin_handle.http_endpoint(),
+        "debug_traceTransaction",
+        2,
+    )
+    .await;
+    let fork_url =
+        spawn_rpc_proxy_rejecting_method_after(fork_url, "debug_traceBlockByHash", 2).await;
+    let (_fork_api, fork_handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
+    let fork_provider = fork_handle.http_provider();
+    let call_tracer = GethDebugTracingOptions::call_tracer(CallConfig::default());
+
+    let default_trace = fork_provider
+        .debug_trace_transaction(receipt.transaction_hash, GethDebugTracingOptions::default())
+        .await
+        .unwrap();
+    let call_trace = fork_provider
+        .debug_trace_transaction(receipt.transaction_hash, call_tracer.clone())
+        .await
+        .unwrap();
+    assert!(matches!(default_trace, GethTrace::Default(_)));
+    assert!(matches!(call_trace, GethTrace::CallTracer(_)));
+    assert_eq!(
+        fork_provider
+            .debug_trace_transaction(receipt.transaction_hash, GethDebugTracingOptions::default())
+            .await
+            .unwrap(),
+        default_trace
+    );
+    assert_eq!(
+        fork_provider
+            .debug_trace_transaction(receipt.transaction_hash, call_tracer.clone())
+            .await
+            .unwrap(),
+        call_trace
+    );
+
+    let block_hash = receipt.block_hash.unwrap();
+    let default_traces = fork_provider
+        .debug_trace_block_by_hash(block_hash, GethDebugTracingOptions::default())
+        .await
+        .unwrap();
+    let call_traces =
+        fork_provider.debug_trace_block_by_hash(block_hash, call_tracer.clone()).await.unwrap();
+    assert!(matches!(
+        &default_traces[0],
+        TraceResult::Success { result: GethTrace::Default(_), .. }
+    ));
+    assert!(matches!(
+        &call_traces[0],
+        TraceResult::Success { result: GethTrace::CallTracer(_), .. }
+    ));
+    assert_eq!(
+        fork_provider
+            .debug_trace_block_by_hash(block_hash, GethDebugTracingOptions::default())
+            .await
+            .unwrap(),
+        default_traces
+    );
+    assert_eq!(
+        fork_provider.debug_trace_block_by_hash(block_hash, call_tracer).await.unwrap(),
+        call_traces
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
