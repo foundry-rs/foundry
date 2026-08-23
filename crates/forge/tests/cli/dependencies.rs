@@ -31,7 +31,14 @@ fn write_soldeer_lock(root: &std::path::Path) {
     ];
     let deps_dir = root.join("dependencies");
     for entry in &entries {
-        fs::create_dir_all(entry.install_path(&deps_dir)).unwrap();
+        let install_path = entry.install_path(&deps_dir);
+        fs::create_dir_all(&install_path).unwrap();
+        // A Git-backed entry additionally needs `.git` metadata to look installed - mere
+        // directory existence isn't enough, matching Soldeer's own integrity classification (see
+        // `dependencies_excludes_soldeer_entry_without_git_metadata`).
+        if matches!(entry, LockEntry::Git(_)) {
+            fs::create_dir_all(install_path.join(".git")).unwrap();
+        }
     }
     let contents = soldeer_core::lock::generate_lockfile_contents(entries);
     fs::write(root.join("soldeer.lock"), contents).unwrap();
@@ -67,7 +74,10 @@ forgetest_init!(dependencies_lists_submodules_and_soldeer, |prj, cmd| {
     assert!(output.contains("git-dep"), "missing git-dep entry:\n{output}");
     assert!(output.contains("soldeer"), "missing soldeer source label:\n{output}");
     assert!(output.contains("1.0.0"), "missing test-dep version:\n{output}");
-    assert!(output.contains("2.0.0"), "missing git-dep version:\n{output}");
+    assert!(
+        output.contains("2.0.0@abc123def456"),
+        "missing git-dep version+resolved-rev:\n{output}"
+    );
     assert!(
         output.contains("https://example.com/test-dep-1.0.0.zip"),
         "missing test-dep URL in table output:\n{output}"
@@ -102,7 +112,10 @@ forgetest_init!(dependencies_json_output, |prj, cmd| {
 
     let git_dep = entries.iter().find(|e| e["name"] == "git-dep").unwrap();
     assert_eq!(git_dep["source"], "soldeer");
-    assert_eq!(git_dep["version"], "2.0.0");
+    assert_eq!(
+        git_dep["version"], "2.0.0@abc123def456",
+        "must show the resolved rev alongside the version requirement, not just the requirement"
+    );
     assert_eq!(git_dep["url"], "https://github.com/example/git-dep.git");
 });
 
@@ -742,5 +755,132 @@ forgetest_init!(dependencies_excludes_submodule_missing_gitmodules_mapping, |prj
     assert!(
         parsed.as_array().unwrap().iter().all(|d| d["name"] != "ghost"),
         "an orphaned, mapping-less gitlink with an empty checkout must not be listed as installed: {json}"
+    );
+});
+
+// A submodule URL can carry embedded credentials (`https://<token>@host/...`) - `forge install`
+// and manual `git config submodule.<name>.url` overrides both accept this syntax, e.g. to pin a
+// private-repo token or CI credential. `forge dependencies --json` must not print it verbatim.
+forgetest_init!(dependencies_redacts_url_credentials, |prj, cmd| {
+    let remote = tempfile::tempdir().unwrap();
+    let run_git = |args: &[&str], cwd: &std::path::Path| {
+        let status = Command::new("git").args(args).current_dir(cwd).status().unwrap();
+        assert!(status.success(), "git {args:?} failed in {}", cwd.display());
+    };
+    run_git(&["init", "-q", "-b", "main"], remote.path());
+    run_git(&["commit", "-q", "--allow-empty", "-m", "init"], remote.path());
+
+    run_git(
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            remote.path().to_str().unwrap(),
+            "lib/dep",
+        ],
+        prj.root(),
+    );
+    run_git(&["add", "-A"], prj.root());
+    run_git(&["commit", "-q", "-m", "add submodule"], prj.root());
+
+    // Simulate a token-embedded private-repo URL, as `forge install` itself would accept.
+    run_git(
+        &[
+            "config",
+            "submodule.lib/dep.url",
+            "https://ghp_supersecrettoken123@github.com/private-org/private-repo.git",
+        ],
+        prj.root(),
+    );
+
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    assert!(
+        !json.contains("ghp_supersecrettoken123"),
+        "credential leaked into --json output: {json}"
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let dep = parsed.as_array().unwrap().iter().find(|e| e["name"] == "dep").unwrap_or_else(|| {
+        panic!("expected a 'dep' submodule in {json}");
+    });
+    assert_eq!(
+        dep["url"].as_str().unwrap(),
+        "https://github.com/private-org/private-repo.git",
+        "url should be shown with credentials stripped, not omitted entirely"
+    );
+});
+
+// `libs` explicitly supports absolute paths and symlinked directories - a configured lib dir can
+// resolve entirely outside the Git repository. `git ls-files` then exits 128 ("outside
+// repository"), a structural failure distinct from every other per-entry-tolerant case this
+// command handles - letting it propagate previously failed the *whole* command, hiding even the
+// unrelated Soldeer half.
+forgetest_init!(dependencies_excludes_submodule_lib_dir_outside_git_root, |prj, cmd| {
+    let external = tempfile::tempdir().unwrap();
+    fs::remove_dir_all(prj.root().join("lib")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(external.path(), prj.root().join("lib")).unwrap();
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[profile.default]
+libs = ["lib"]
+"#,
+    )
+    .unwrap();
+    fs::remove_file(prj.root().join("foundry.lock")).ok();
+
+    write_soldeer_lock(prj.root());
+
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let names: Vec<&str> =
+        parsed.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert!(
+        names.contains(&"test-dep") && names.contains(&"git-dep"),
+        "an out-of-repo lib dir must not crash the whole command - Soldeer deps should still list: {json}"
+    );
+});
+
+// `read_lockfile` already converts malformed TOML to `Ok` with empty entries internally - the
+// only way it returns `Err` is a genuine I/O failure (e.g. `soldeer.lock` being unreadable, or a
+// directory rather than a file). That must be surfaced, not silently treated as "zero Soldeer
+// dependencies".
+forgetest_init!(dependencies_propagates_soldeer_lock_read_error, |prj, cmd| {
+    fs::create_dir(prj.root().join("soldeer.lock")).unwrap();
+
+    cmd.args(["dependencies", "--json"]).assert_failure().stderr_eq(str![[r#"
+Error: failed to read [..]soldeer.lock
+
+Context:
+- IO error for soldeer.lock: Is a directory (os error 21)
+
+"#]]);
+});
+
+// Mere directory existence isn't enough for a Git-backed Soldeer entry to count as installed -
+// Soldeer's own integrity check (`check_git_dependency`) classifies an empty or non-Git directory
+// at the install path as `Missing`. Requiring `.git` metadata closes that gap.
+forgetest_init!(dependencies_excludes_soldeer_entry_without_git_metadata, |prj, cmd| {
+    let entries = vec![LockEntry::from(
+        GitLockEntry::builder()
+            .name("git-dep")
+            .version("2.0.0")
+            .git("https://github.com/example/git-dep.git")
+            .rev("abc123def456")
+            .build(),
+    )];
+    let deps_dir = prj.root().join("dependencies");
+    // Directory exists (as if `forge soldeer install` started but never finished, or was manually
+    // emptied), but has no `.git` - not a real checkout.
+    fs::create_dir_all(entries[0].install_path(&deps_dir)).unwrap();
+    let contents = soldeer_core::lock::generate_lockfile_contents(entries);
+    fs::write(prj.root().join("soldeer.lock"), contents).unwrap();
+
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(
+        parsed.as_array().unwrap().iter().all(|d| d["name"] != "git-dep"),
+        "an empty, non-Git directory at a Git entry's install path must not be listed as installed: {json}"
     );
 });
