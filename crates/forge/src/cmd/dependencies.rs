@@ -8,7 +8,10 @@ use foundry_cli::utils::{Git, LoadConfig, SubmoduleCheckoutStatus};
 use foundry_common::shell;
 use foundry_config::{Config, impl_figment_convert_basic};
 use serde::Serialize;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 /// CLI arguments for `forge dependencies`.
 #[derive(Clone, Debug, Parser)]
@@ -131,61 +134,88 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     let project_root = dunce::canonicalize(&config.root).unwrap_or_else(|_| config.root.clone());
 
     // `Git`'s commands all run with `config.root` as their working directory (see
-    // `Git::from_config`), so `lib`, scoped as a pathspec below, is relative to the project root,
-    // nested-monorepo layout or not.
-    let install_lib_dir = config.install_lib_dir();
-    let lib = install_lib_dir.strip_prefix(&project_root).unwrap_or(install_lib_dir);
-
-    // `libs` explicitly supports absolute paths, and a configured lib dir can be (or contain) a
-    // symlink resolving outside the Git repository entirely. `git ls-files` then exits 128 ("is
-    // outside repository") - not a per-line parse failure like the other cases in this function,
-    // but a structural one, and letting it propagate would fail the *whole* command, including
-    // the unrelated Soldeer half. Verified empirically: `libs = ["lib"]` with `lib` symlinked to
-    // a directory outside the repo reproduces exactly this exit-128 failure. Treat it the same as
-    // "not a Git repository" - there simply are no Git submodules to report from here.
-    let git_root_canonical = dunce::canonicalize(&git_root).unwrap_or_else(|_| git_root.clone());
-    let lib_target = project_root.join(lib);
-    // `dunce::canonicalize` requires the path to actually exist, so it can't tell an out-of-repo
-    // lib dir from an in-repo one that just hasn't been created yet (the common case, before the
-    // first `forge install`) - both fail identically, and the check above only fired on success,
-    // silently skipping the guard whenever the target didn't exist. Verified empirically: an
-    // absolute `libs` entry pointing outside the repo that doesn't exist yet reproduces the exact
-    // same exit-128 crash the guard above was written to prevent. When canonicalize can't resolve
-    // it, fall back to a purely lexical (`.`/`..`-collapsing, filesystem-free) normalization of
-    // both sides - it can't detect a not-yet-existing symlink that would resolve outside the repo
-    // once created, but that's a strictly narrower gap than treating every non-existent path as
-    // "assume it's fine."
-    let is_outside_repo = match dunce::canonicalize(&lib_target) {
-        Ok(lib_absolute) => !lib_absolute.starts_with(&git_root_canonical),
-        Err(_) => {
-            let lib_normalized = foundry_common::fs::normalize_path(&lib_target);
-            let git_root_normalized = foundry_common::fs::normalize_path(&git_root_canonical);
-            !lib_normalized.starts_with(&git_root_normalized)
-        }
-    };
-    if is_outside_repo {
-        return Ok(Vec::new());
+    // `Git::from_config`), so each `lib`, scoped as a pathspec below, is relative to the project
+    // root, nested-monorepo layout or not.
+    //
+    // `libs` legitimately supports MULTIPLE search directories (used for solc import
+    // resolution), and while `forge install` only ever installs new dependencies into the first
+    // entry (`Config::install_lib_dir`), existing submodules can perfectly well live under any
+    // configured entry - an older project, a manually added submodule, a `libs` array extended
+    // after some submodules were already added under a later entry. Scanning only
+    // `install_lib_dir()` silently dropped every submodule under any OTHER entry with zero
+    // indication anything was skipped - verified empirically with `libs = ["lib", "lib2"]` and a
+    // real, installed submodule under each: only the `lib/` one showed up. The same failure class
+    // rounds 1-2 of this fix already treated as unacceptable for a different mechanism (a real,
+    // installed dependency going invisible), just via single-directory scoping instead of an
+    // over-broad status check. `node_modules`-named entries are skipped, matching
+    // `install_lib_dir()`'s own filter (a Hardhat-style `libs` default) - falling back to `lib`
+    // when that filter leaves nothing, matching `install_lib_dir()`'s own fallback exactly, so a
+    // project with no explicit `libs` config behaves identically to before.
+    let mut lib_dirs: Vec<&Path> =
+        config.libs.iter().map(PathBuf::as_path).filter(|p| !p.ends_with("node_modules")).collect();
+    if lib_dirs.is_empty() {
+        lib_dirs.push(Path::new("lib"));
     }
 
+    let git_root_canonical = dunce::canonicalize(&git_root).unwrap_or_else(|_| git_root.clone());
     // `.gitmodules` always keys its `path` field relative to the Git repository root, regardless
     // of invocation cwd - so this is the one place that still needs a Git-root-relative path.
     let project_prefix = project_root.strip_prefix(&git_root).unwrap_or(Path::new(""));
-
     // Parsed once and reused for every submodule below, instead of re-parsing `.gitmodules` (and
     // spawning a fresh `git config` subprocess) per submodule.
     let gitmodules_entries = git.submodule_gitmodules_entries(&git_root).unwrap_or_default();
 
-    // NUL-delimited (`git ls-files --stage -z` under the hood) and status-tolerant per entry -
-    // unlike `Git::submodules()`'s whitespace-split `git submodule status` parser, this handles a
-    // submodule path containing a space correctly (that parser's path capture group is `[^\s]+`
-    // and rejects the whole line), and classifies each submodule's checkout status individually
-    // instead of failing the *entire* listing the moment one line looks unusual - a
-    // merge-conflicted submodule used to take down the whole command this way; scoping directly
-    // to `lib` here also replaces the old post-hoc `path.starts_with(lib)` filter.
-    let submodules = git.submodules_in_worktree(lib, &git_root, project_prefix)?;
+    let mut submodules = BTreeMap::new();
+    for install_lib_dir in lib_dirs {
+        let lib = install_lib_dir.strip_prefix(&project_root).unwrap_or(install_lib_dir);
+
+        // `libs` explicitly supports absolute paths, and a configured lib dir can be (or
+        // contain) a symlink resolving outside the Git repository entirely. `git ls-files` then
+        // exits 128 ("is outside repository") - not a per-line parse failure like the other
+        // cases in this function, but a structural one, and letting it propagate would fail the
+        // *whole* command, including every other `libs` entry and the unrelated Soldeer half.
+        // Verified empirically: `libs = ["lib"]` with `lib` symlinked to a directory outside the
+        // repo reproduces exactly this exit-128 failure. Skip just this entry, the same as if it
+        // simply weren't a Git repository - there are no Git submodules to report from here.
+        let lib_target = project_root.join(lib);
+        // `dunce::canonicalize` requires the path to actually exist, so it can't tell an
+        // out-of-repo lib dir from an in-repo one that just hasn't been created yet (the common
+        // case, before the first `forge install`) - both fail identically, and a success-only
+        // check silently skips the guard whenever the target doesn't exist. Verified
+        // empirically: an absolute `libs` entry pointing outside the repo that doesn't exist yet
+        // reproduces the exact same exit-128 crash. When canonicalize can't resolve it, fall
+        // back to a purely lexical (`.`/`..`-collapsing, filesystem-free) normalization of both
+        // sides - it can't detect a not-yet-existing symlink that would resolve outside the repo
+        // once created, but that's a strictly narrower gap than treating every non-existent path
+        // as "assume it's fine."
+        let is_outside_repo = match dunce::canonicalize(&lib_target) {
+            Ok(lib_absolute) => !lib_absolute.starts_with(&git_root_canonical),
+            Err(_) => {
+                let lib_normalized = foundry_common::fs::normalize_path(&lib_target);
+                let git_root_normalized = foundry_common::fs::normalize_path(&git_root_canonical);
+                !lib_normalized.starts_with(&git_root_normalized)
+            }
+        };
+        if is_outside_repo {
+            continue;
+        }
+
+        // NUL-delimited (`git ls-files --stage -z` under the hood) and status-tolerant per entry
+        // - unlike `Git::submodules()`'s whitespace-split `git submodule status` parser, this
+        // handles a submodule path containing a space correctly (that parser's path capture
+        // group is `[^\s]+` and rejects the whole line), and classifies each submodule's
+        // checkout status individually instead of failing the *entire* listing the moment one
+        // line looks unusual - a merge-conflicted submodule used to take down the whole command
+        // this way; scoping directly to `lib` here also replaces the old post-hoc
+        // `path.starts_with(lib)` filter. Merged by path across every `libs` entry - two entries
+        // that happen to overlap or nest would otherwise report the same submodule twice.
+        for submodule in git.submodules_in_worktree(lib, &git_root, project_prefix)? {
+            submodules.insert(submodule.path().clone(), submodule);
+        }
+    }
 
     let mut out = Vec::new();
-    for submodule in &submodules {
+    for submodule in submodules.values() {
         // A registered but never-checked-out submodule - e.g. after a `git clone` without
         // `--recursive`, or a manual `rm -rf lib/foo` without `git submodule deinit` - isn't
         // actually installed.

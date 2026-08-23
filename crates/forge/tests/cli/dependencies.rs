@@ -982,3 +982,68 @@ libs = ["{}"]
         "a non-existent, out-of-repo lib dir must not crash the whole command - Soldeer deps should still list: {json}"
     );
 });
+
+// `libs` supports multiple search directories (used for solc import resolution), but `forge
+// install` only ever installs new dependencies into the first entry (`Config::install_lib_dir`).
+// Existing submodules can perfectly well live under any configured entry - an older project, a
+// manually added submodule, or a `libs` array extended after some submodules were already added
+// under a later entry. Scanning only the first entry silently dropped every submodule under any
+// other one, the same failure class (a real, installed dependency going invisible) rounds 1-2
+// already treated as unacceptable via a different mechanism.
+forgetest_init!(dependencies_scans_every_configured_libs_entry, |prj, cmd| {
+    let remote1 = tempfile::tempdir().unwrap();
+    let remote2 = tempfile::tempdir().unwrap();
+    let run_git = |args: &[&str], cwd: &std::path::Path| {
+        let status = Command::new("git").args(args).current_dir(cwd).status().unwrap();
+        assert!(status.success(), "git {args:?} failed in {}", cwd.display());
+    };
+    for remote in [&remote1, &remote2] {
+        run_git(&["init", "-q", "-b", "main"], remote.path());
+        run_git(&["commit", "-q", "--allow-empty", "-m", "init"], remote.path());
+    }
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[profile.default]
+libs = ["lib", "lib2"]
+"#,
+    )
+    .unwrap();
+    fs::remove_file(prj.root().join("foundry.lock")).ok();
+
+    run_git(
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            remote1.path().to_str().unwrap(),
+            "lib/dep-in-lib1",
+        ],
+        prj.root(),
+    );
+    run_git(
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            remote2.path().to_str().unwrap(),
+            "lib2/dep-in-lib2",
+        ],
+        prj.root(),
+    );
+    run_git(&["add", "-A"], prj.root());
+    run_git(&["commit", "-q", "-m", "add submodules under both libs entries"], prj.root());
+
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let names: Vec<&str> =
+        parsed.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert!(
+        names.contains(&"dep-in-lib1") && names.contains(&"dep-in-lib2"),
+        "a real submodule under a non-first `libs` entry must not be silently dropped: {json}"
+    );
+});
