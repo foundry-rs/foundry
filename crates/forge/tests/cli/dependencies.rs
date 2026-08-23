@@ -947,3 +947,38 @@ forgetest_init!(dependencies_shows_orphaned_populated_submodule_missing_mapping,
         "a MissingMapping entry has no trustworthy rev - flag it plainly instead of fabricating one"
     );
 });
+
+// The external-lib-dir guard above only fires when `dunce::canonicalize` succeeds, but
+// canonicalize requires the path to actually exist - so an out-of-repo `libs` entry that hasn't
+// been created yet (a CI checkout before an external mount is populated, or simply a typo) fails
+// canonicalize identically to the common, harmless case of an in-repo `libs` entry that just
+// hasn't been installed yet. The guard silently skipped itself in exactly the scenario it exists
+// to catch. This doesn't go through a symlink - the path is a plain absolute string that never
+// existed - so it exercises the canonicalize-failure fallback specifically.
+forgetest_init!(dependencies_excludes_nonexistent_external_lib_dir, |prj, cmd| {
+    fs::remove_dir_all(prj.root().join("lib")).unwrap();
+    fs::remove_file(prj.root().join("foundry.lock")).ok();
+    let outside = tempfile::tempdir().unwrap();
+    let never_created = outside.path().join("does-not-exist/lib");
+    fs::write(
+        prj.root().join("foundry.toml"),
+        format!(
+            r#"[profile.default]
+libs = ["{}"]
+"#,
+            never_created.display()
+        ),
+    )
+    .unwrap();
+
+    write_soldeer_lock(prj.root());
+
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let names: Vec<&str> =
+        parsed.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert!(
+        names.contains(&"test-dep") && names.contains(&"git-dep"),
+        "a non-existent, out-of-repo lib dir must not crash the whole command - Soldeer deps should still list: {json}"
+    );
+});

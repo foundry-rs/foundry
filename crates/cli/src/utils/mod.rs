@@ -814,8 +814,12 @@ ignore them in the `.gitignore` file."
         Ok((status, rev))
     }
 
-    /// Returns submodules at or below `path`, with paths relative to this Git root, using mappings
-    /// from the enclosing worktree.
+    /// Returns submodules at or below `path`, with each `SubmoduleCheckout::path` relative to
+    /// `self.root` (this `Git` instance's own working directory - see [`Git::cmd`]), not
+    /// `worktree_root`. `worktree_root`/`worktree_prefix` are used only to resolve `.gitmodules`
+    /// mappings (via [`Git::submodule_mappings_at`]) against the enclosing worktree - which can
+    /// differ from `self.root` in a nested-monorepo layout, where a project subdirectory is its
+    /// own logical root but `.gitmodules` still lives at the actual Git repository root.
     pub fn submodules_in_worktree(
         &self,
         path: &Path,

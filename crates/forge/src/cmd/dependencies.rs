@@ -144,9 +144,26 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     // a directory outside the repo reproduces exactly this exit-128 failure. Treat it the same as
     // "not a Git repository" - there simply are no Git submodules to report from here.
     let git_root_canonical = dunce::canonicalize(&git_root).unwrap_or_else(|_| git_root.clone());
-    if let Ok(lib_absolute) = dunce::canonicalize(project_root.join(lib))
-        && !lib_absolute.starts_with(&git_root_canonical)
-    {
+    let lib_target = project_root.join(lib);
+    // `dunce::canonicalize` requires the path to actually exist, so it can't tell an out-of-repo
+    // lib dir from an in-repo one that just hasn't been created yet (the common case, before the
+    // first `forge install`) - both fail identically, and the check above only fired on success,
+    // silently skipping the guard whenever the target didn't exist. Verified empirically: an
+    // absolute `libs` entry pointing outside the repo that doesn't exist yet reproduces the exact
+    // same exit-128 crash the guard above was written to prevent. When canonicalize can't resolve
+    // it, fall back to a purely lexical (`.`/`..`-collapsing, filesystem-free) normalization of
+    // both sides - it can't detect a not-yet-existing symlink that would resolve outside the repo
+    // once created, but that's a strictly narrower gap than treating every non-existent path as
+    // "assume it's fine."
+    let is_outside_repo = match dunce::canonicalize(&lib_target) {
+        Ok(lib_absolute) => !lib_absolute.starts_with(&git_root_canonical),
+        Err(_) => {
+            let lib_normalized = foundry_common::fs::normalize_path(&lib_target);
+            let git_root_normalized = foundry_common::fs::normalize_path(&git_root_canonical);
+            !lib_normalized.starts_with(&git_root_normalized)
+        }
+    };
+    if is_outside_repo {
         return Ok(Vec::new());
     }
 
