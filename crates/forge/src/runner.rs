@@ -38,7 +38,7 @@ use foundry_config::{
     Config, FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig, InlineConfig, InvariantConfig,
 };
 use foundry_evm::{
-    constants::{CALLER, CHEATCODE_ADDRESS, MAGIC_ASSUME},
+    constants::{CALLER, MAGIC_ASSUME},
     core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
     decode::{RevertDecoder, SkipReason},
     executors::{
@@ -932,7 +932,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
     /// Returns the configuration for a contract or function.
     fn inline_config(&self, func: Option<&Function>) -> Result<Config> {
-        inline_config_for(&self.config, &self.mcr.inline_config, self.name, func)
+        let mut config = inline_config_for(&self.config, &self.mcr.inline_config, self.name, func)?;
+        config.networks = config.networks.with_execution_profile(self.tcfg.evm_opts.networks);
+        Ok(config)
     }
 
     /// Collect fixtures from test contract.
@@ -1704,9 +1706,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self,
         raw_call_result: &RawCallResult<FEN>,
     ) -> Result<Option<String>, String> {
-        if raw_call_result.reverter == Some(CHEATCODE_ADDRESS)
-            && let Some(reason) = SkipReason::decode(&raw_call_result.result)
-        {
+        if let Some(reason) = raw_call_result.skip_reason() {
             return Err(format!("vm.skip during concrete replay: {reason}"));
         }
 

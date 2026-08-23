@@ -4,7 +4,7 @@ use crate::{
     Debugger, DebuggerLayout, debugger::DebuggerStats, node::flatten_call_trace_with_precompiles,
 };
 use alloy_primitives::{Address, map::AddressHashMap};
-use foundry_common::get_contract_name;
+use foundry_common::{ContractsByArtifact, get_contract_name, slot_identifier::SlotIdentifier};
 use foundry_evm_core::Breakpoints;
 use foundry_evm_traces::{
     CallTraceArena, CallTraceDecoder, Traces,
@@ -21,6 +21,10 @@ pub struct DebuggerBuilder {
     stats: DebuggerStats,
     /// Identified contracts.
     identified_contracts: AddressHashMap<String>,
+    /// Full artifact identifiers for identified contracts.
+    contract_identifiers: AddressHashMap<String>,
+    /// Known local contracts and their compiler metadata.
+    known_contracts: ContractsByArtifact,
     /// Active precompile labels for the current trace context.
     precompile_labels: AddressHashMap<String>,
     /// Map of source files.
@@ -72,9 +76,18 @@ impl DebuggerBuilder {
     /// Extends the identified contracts from a decoder.
     #[inline]
     pub fn decoder(mut self, decoder: &CallTraceDecoder) -> Self {
-        let c = decoder.contracts.iter().map(|(k, v)| (*k, get_contract_name(v).to_string()));
-        self.identified_contracts.extend(c);
+        for (address, identifier) in &decoder.contracts {
+            self.identified_contracts.insert(*address, get_contract_name(identifier).to_string());
+            self.contract_identifiers.insert(*address, identifier.clone());
+        }
         self.precompile_labels.extend(decoder.precompile_labels());
+        self
+    }
+
+    /// Sets known local contracts used to identify storage slots.
+    #[inline]
+    pub fn known_contracts(mut self, known_contracts: &ContractsByArtifact) -> Self {
+        self.known_contracts = known_contracts.clone();
         self
     }
 
@@ -116,11 +129,22 @@ impl DebuggerBuilder {
             mut trace_arenas,
             stats,
             identified_contracts,
+            contract_identifiers,
+            known_contracts,
             precompile_labels,
             sources,
             breakpoints,
             layout,
         } = self;
+        let slot_identifiers = contract_identifiers
+            .into_iter()
+            .filter_map(|(address, identifier)| {
+                let (_, contract) =
+                    known_contracts.find_by_name_or_identifier(&identifier).ok().flatten()?;
+                let layout = contract.storage_layout.clone()?;
+                Some((address, SlotIdentifier::new(layout)))
+            })
+            .collect();
         identify_internal_calls(&mut trace_arenas, &identified_contracts, &sources);
         let mut debug_arena = Vec::new();
         for arena in trace_arenas {
@@ -130,6 +154,7 @@ impl DebuggerBuilder {
             debug_arena,
             stats,
             identified_contracts,
+            slot_identifiers,
             sources,
             breakpoints,
             layout,

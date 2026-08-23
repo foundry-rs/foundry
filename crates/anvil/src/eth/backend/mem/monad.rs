@@ -6,13 +6,23 @@ use super::{
 };
 use crate::eth::{
     backend::{
-        db::MonadBlockReplayProfile, executor::build_tx_env_for_pending,
-        replay::HistoricalReplayTransaction,
+        db::MonadBlockReplayProfile,
+        executor::{
+            AnvilBlockExecutor, ExecutedPoolTransactions, PoolTransactionHooks, PoolTxGasConfig,
+            build_tx_env_for_pending, execute_pool_transactions,
+        },
+        replay::{
+            ExecutedHistoricalReplay, HistoricalReplayTransaction, execute_historical_replay_with,
+        },
     },
-    error::BlockchainError,
+    error::{BlockchainError, InvalidTransactionError},
+    pool::transactions::PoolTransaction,
 };
-use alloy_consensus::{BlockHeader, constants::EMPTY_ROOT_HASH};
-use alloy_evm::{Database, Evm, EvmEnv, EvmFactory, RecoveredTx};
+use alloy_consensus::{BlockHeader, constants::EMPTY_ROOT_HASH, transaction::Recovered};
+use alloy_evm::{
+    Database, Evm, EvmEnv, EvmFactory, RecoveredTx,
+    block::{BlockExecutionError, BlockExecutionResult, BlockExecutor, StateDB},
+};
 use alloy_monad_evm::{MonadContext, MonadEvm, MonadEvmFactory};
 use alloy_network::{BlockResponse, Network};
 use alloy_primitives::B256;
@@ -21,18 +31,19 @@ use anvil_core::eth::{
     block::Block,
     transaction::{MaybeImpersonatedTransaction, PendingTransaction},
 };
+use eyre::{Context, Result};
 use foundry_evm::{
     backend::DatabaseError,
     core::{
-        FromAnyRpcTransaction,
+        FoundryChain, FromAnyRpcTransaction,
         evm::{
             EvmEnvFor, FoundryEvmFactory, MonadBlockParticipants, MonadEvmNetwork,
-            monad_block_participants, monad_context_from_participants,
+            monad_block_participants, monad_context_from_participants, protocol_system_call,
         },
     },
     hardfork::FoundryHardfork,
 };
-use foundry_primitives::FoundryTxEnvelope;
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use monad_revm::{MonadChainContext, MonadHardfork, instructions::monad_gas_params};
 use revm::{
     Inspector,
@@ -42,7 +53,10 @@ use revm::{
         transaction::AuthorizationTr,
     },
     database_interface::WrapDatabaseRef,
+    primitives::hardfork::SpecId,
+    state::AccountInfo,
 };
+use std::sync::Arc;
 
 pub(super) fn store_block_metadata<N: Network>(
     storage: &mut BlockchainStorage<N>,
@@ -131,6 +145,159 @@ pub(super) fn rollback_transaction<DB: alloy_evm::Database>(
 }
 
 impl<N: Network> Backend<N> {
+    /// Executes a candidate block through a concrete Monad EVM.
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    pub(super) fn execute_with_monad_block_executor<DB>(
+        &self,
+        db: DB,
+        evm_env: &EvmEnv,
+        parent_hash: B256,
+        spec_id: SpecId,
+        hardfork: FoundryHardfork,
+        pool_transactions: &[Arc<PoolTransaction<FoundryTxEnvelope>>],
+        gas_config: &PoolTxGasConfig,
+        inspector_tx_config: &crate::mem::inspector::InspectorTxConfig,
+        validator: &dyn Fn(
+            &PoolTransaction<FoundryTxEnvelope>,
+            &AccountInfo,
+        ) -> Result<(), InvalidTransactionError>,
+    ) -> Result<
+        (ExecutedPoolTransactions<FoundryTxEnvelope>, BlockExecutionResult<FoundryReceiptEnvelope>),
+        BlockchainError,
+    >
+    where
+        DB: StateDB<Error = DatabaseError>,
+    {
+        let hardfork = MonadHardfork::from(hardfork);
+        let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
+        let inspector = self.build_mining_inspector();
+        let mut evm =
+            MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
+        let transaction_context = self
+            .monad_context_for_child_of(parent_hash)
+            .expect("Monad ancestor context must be available before block execution");
+        evm.ctx_mut().chain = transaction_context;
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
+
+        let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, None);
+        executor
+            .apply_pre_execution_changes()
+            .map_err(|err| BlockchainError::Internal(err.to_string()))?;
+        let mut hooks = PoolTransactionHooks {
+            before_transaction: prepare_transaction,
+            execute_transaction: |executor: &mut AnvilBlockExecutor<_>,
+                                  tx_env: TxEnv,
+                                  recovered: Recovered<FoundryTxEnvelope>,
+                                  is_replay: bool| {
+                if !is_replay {
+                    return executor.execute_transaction_without_commit((tx_env, recovered));
+                }
+                match protocol_system_call(&tx_env) {
+                    Ok(None) => {
+                        return executor.execute_transaction_without_commit((tx_env, recovered));
+                    }
+                    Ok(Some(_)) => {}
+                    Err(err) => return Err(BlockExecutionError::msg(err)),
+                }
+                executor.execute_transaction_without_commit_with(
+                    (tx_env, recovered),
+                    |evm, tx_env, transaction_hash| {
+                        MonadEvmFactory::default()
+                            .try_transact_system_replay(evm, &tx_env)
+                            .map_err(|err| {
+                                BlockExecutionError::msg(format!(
+                                    "failed to replay Monad transaction {transaction_hash}: {err}"
+                                ))
+                            })?
+                            .ok_or_else(|| {
+                                BlockExecutionError::msg(format!(
+                                    "Monad transaction {transaction_hash} is not a canonical replay \
+                                     envelope"
+                                ))
+                            })
+                    },
+                )
+            },
+            on_execution_error: rollback_transaction,
+        };
+        let pool_result = execute_pool_transactions(
+            &mut executor,
+            pool_transactions,
+            gas_config,
+            inspector_tx_config,
+            self.cheats(),
+            validator,
+            &mut hooks,
+        );
+        let (evm, block_result) =
+            executor.finish().map_err(|err| BlockchainError::Internal(err.to_string()))?;
+        drop(evm);
+        Ok((pool_result, block_result))
+    }
+
+    /// Executes a historical transaction prefix through a concrete Monad EVM.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn execute_with_monad_replay_block_executor<DB>(
+        &self,
+        db: DB,
+        evm_env: &EvmEnv,
+        parent_hash: B256,
+        hardfork: FoundryHardfork,
+        transactions: &[HistoricalReplayTransaction],
+        inspector_tx_config: &crate::mem::inspector::InspectorTxConfig,
+        transaction_context: Option<MonadChainContext>,
+    ) -> Result<ExecutedHistoricalReplay>
+    where
+        DB: StateDB<Error = DatabaseError>,
+    {
+        let hardfork = MonadHardfork::from(hardfork);
+        let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
+        let inspector = self.build_mining_inspector();
+        let mut evm =
+            MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
+        evm.ctx_mut().chain = transaction_context
+            .ok_or_else(|| eyre::eyre!("Monad replay ancestor context is unavailable"))?;
+        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
+
+        let mut executor = AnvilBlockExecutor::new(evm, parent_hash, *evm_env.spec_id(), None)
+            .with_state_changes();
+        executor
+            .apply_pre_execution_changes()
+            .wrap_err("failed to apply replay block-start transitions")?;
+        let (transactions, transaction_infos) = execute_historical_replay_with(
+            &mut executor,
+            transactions,
+            inspector_tx_config,
+            |evm, tx_env, _transaction_hash| {
+                prepare_transaction(evm, &tx_env);
+                let result = match MonadEvmFactory::default()
+                    .try_transact_system_replay(evm, &tx_env)
+                    .map_err(BlockExecutionError::msg)
+                {
+                    Ok(Some(result)) => Ok(result),
+                    Ok(None) => evm.transact(tx_env).map_err(BlockExecutionError::msg),
+                    Err(err) => Err(err),
+                };
+                if result.is_err() {
+                    rollback_transaction(evm);
+                }
+                result
+            },
+        )?;
+        let state_changes = executor.take_state_changes();
+        let (evm, block_result) =
+            executor.finish().wrap_err("failed to finish replay block execution")?;
+        drop(evm);
+        Ok(ExecutedHistoricalReplay {
+            block_result,
+            transactions,
+            transaction_infos,
+            state_changes,
+        })
+    }
+
     /// Reconstructs a locally mined transaction using its authoritative stored sender.
     pub(super) fn monad_pending_mined_transaction_from_storage(
         storage: &BlockchainStorage<N>,
@@ -395,7 +562,7 @@ impl<N: Network> Backend<N> {
         let monad_env = Self::build_monad_evm_env(evm_env, execution.hardfork);
         let factory = MonadEvmFactory::default();
         let context =
-            execution.context.unwrap_or_else(|| factory.chain_context_for_transaction(&tx_env));
+            execution.context.unwrap_or_else(|| MonadChainContext::for_transaction(&tx_env));
         let mut evm = factory.create_evm_with_inspector(WrapDatabaseRef(db), monad_env, inspector);
         evm.ctx_mut().chain = context;
         self.inject_precompiles(evm.precompiles_mut(), evm_env);

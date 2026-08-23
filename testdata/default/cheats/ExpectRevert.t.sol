@@ -36,6 +36,12 @@ contract Reverter {
     function revertWithoutReason() public pure {
         revert();
     }
+
+    function outOfGas() public pure {
+        assembly {
+            for {} 1 {} {}
+        }
+    }
 }
 
 contract ConstructorReverter {
@@ -134,6 +140,12 @@ contract ExpectRevertTest is Test {
         Reverter reverter = new Reverter();
         vm.expectRevert(bytes(""));
         reverter.revertWithoutReason();
+    }
+
+    function testExpectRevertEvmError() public {
+        Reverter reverter = new Reverter();
+        vm.expectRevert(bytes("EvmError: OutOfGas"));
+        reverter.outOfGas{gas: 10_000}();
     }
 
     function testExpectRevertAnyRevert() public {

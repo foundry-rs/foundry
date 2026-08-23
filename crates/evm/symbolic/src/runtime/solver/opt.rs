@@ -1,12 +1,42 @@
 use super::*;
 
 /// Normalizes path constraints into an equivalent, solver-friendlier form.
+#[cfg(test)]
 pub(crate) fn normalize_constraints_for_solver(
     cx: &mut SymCx,
     constraints: &[SymBoolExpr],
 ) -> Vec<SymBoolExpr> {
+    normalize_constraints_for_solver_with(cx, constraints, |cx, constraint| {
+        normalize_bool_for_solver(cx, constraint.clone())
+    })
+}
+
+/// Reuses context-free normalization results while retaining per-query contextual rewrites.
+pub(super) fn normalize_constraints_for_solver_cached(
+    cx: &mut SymCx,
+    constraints: &[SymBoolExpr],
+    normalization_cache: &mut HashMap<SymBoolExpr, SymBoolExpr>,
+) -> Vec<SymBoolExpr> {
+    normalize_constraints_for_solver_with(cx, constraints, |cx, constraint| {
+        if let Some(normalized) = normalization_cache.get(constraint) {
+            return normalized.clone();
+        }
+        let normalized = normalize_bool_for_solver(cx, constraint.clone());
+        // These are strong hash-consed handles, so bound their lifetime like the SAT cache.
+        if normalization_cache.len() < SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES {
+            normalization_cache.insert(constraint.clone(), normalized.clone());
+        }
+        normalized
+    })
+}
+
+fn normalize_constraints_for_solver_with(
+    cx: &mut SymCx,
+    constraints: &[SymBoolExpr],
+    mut normalize: impl FnMut(&mut SymCx, &SymBoolExpr) -> SymBoolExpr,
+) -> Vec<SymBoolExpr> {
     let normalized = normalize_constraint_batch(
-        constraints.iter().cloned().map(|constraint| normalize_bool_for_solver(cx, constraint)),
+        constraints.iter().map(|constraint| normalize(cx, constraint)),
         constraints.len(),
     );
     if matches!(normalized.as_slice(), [expr] if expr.as_const() == Some(false)) {
@@ -51,14 +81,16 @@ fn normalize_constraint_batch(
 fn sort_dedup_bool_exprs(exprs: &mut Vec<SymBoolExpr>) {
     // Hash-consing already caches deterministic structural hashes. Only render full structural
     // keys for the exceedingly rare case where two distinct expressions collide.
-    exprs.sort_unstable_by(|left, right| {
-        if left == right {
-            return std::cmp::Ordering::Equal;
-        }
-        left.stable_hash_cmp(right)
-            .then_with(|| bool_structural_key(left).cmp(&bool_structural_key(right)))
-    });
+    exprs.sort_unstable_by(bool_expr_cmp);
     exprs.dedup();
+}
+
+fn bool_expr_cmp(left: &SymBoolExpr, right: &SymBoolExpr) -> std::cmp::Ordering {
+    if left == right {
+        return std::cmp::Ordering::Equal;
+    }
+    left.stable_hash_cmp(right)
+        .then_with(|| bool_structural_key(left).cmp(&bool_structural_key(right)))
 }
 
 fn bool_structural_key(expr: &SymBoolExpr) -> String {
@@ -186,7 +218,7 @@ const fn expr_ternop_key(op: SymTernOp) -> u8 {
     }
 }
 
-/// Returns whether normalized conjunctive constraints contain a direct contradiction.
+/// Returns whether canonically ordered normalized constraints contain a direct contradiction.
 pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> bool {
     let mut derived = Vec::new();
     for constraint in constraints {
@@ -198,8 +230,10 @@ pub(super) fn constraints_are_directly_unsat(cx: &mut SymCx, constraints: &[SymB
         }
         derived.push(fact);
     }
-    let contains =
-        |expected: &SymBoolExpr| constraints.contains(expected) || derived.contains(expected);
+    let contains = |expected: &SymBoolExpr| {
+        constraints.binary_search_by(|candidate| bool_expr_cmp(candidate, expected)).is_ok()
+            || derived.contains(expected)
+    };
     constraints.iter().chain(&derived).any(|constraint| match constraint.kind() {
         SymBoolExprKind::Const(false) => true,
         SymBoolExprKind::Not(inner)
@@ -1848,6 +1882,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cached_normalization_keeps_contextual_rewrites_per_query() {
+        let mut cx = SymCx::new();
+        let value = SymExpr::var(&mut cx, "value");
+        let mask = SymExpr::constant(&mut cx, (U256::from(1) << 160) - U256::from(1));
+        let masked = SymExpr::binop(&mut cx, SymBinOp::And, value.clone(), mask);
+        let identity = SymBoolExpr::eq(&mut cx, masked, value.clone());
+        let upper = SymExpr::constant(&mut cx, U256::from(1) << 160);
+        let bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value, upper);
+        let mut cache = HashMap::default();
+
+        let normalized = normalize_constraints_for_solver_cached(
+            &mut cx,
+            &[identity.clone(), bounded.clone()],
+            &mut cache,
+        );
+        assert_eq!(normalized, vec![bounded]);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.get(&identity), Some(&identity));
+
+        let normalized = normalize_constraints_for_solver_cached(
+            &mut cx,
+            std::slice::from_ref(&identity),
+            &mut cache,
+        );
+        assert_eq!(normalized, vec![identity]);
+        assert_eq!(cache.len(), 2);
+    }
+
+    #[test]
     fn direct_contradiction_uses_members_of_derived_positive_conjunction() {
         let mut cx = SymCx::new();
         let x = SymExpr::var(&mut cx, "x");
@@ -1860,7 +1923,8 @@ mod tests {
         let either_word = SymExpr::binop(&mut cx, SymBinOp::Or, x_word, y_word);
         let neither_is_zero = SymBoolExpr::eq(&mut cx, either_word, zero);
 
-        assert!(constraints_are_directly_unsat(&mut cx, &[neither_is_zero, x_is_zero]));
+        let constraints = normalize_constraints_for_solver(&mut cx, &[neither_is_zero, x_is_zero]);
+        assert!(constraints_are_directly_unsat(&mut cx, &constraints));
     }
 
     #[test]
@@ -1876,7 +1940,8 @@ mod tests {
         let both_word = SymExpr::binop(&mut cx, SymBinOp::And, x_word, y_word);
         let not_both = SymBoolExpr::eq(&mut cx, both_word, zero);
 
-        assert!(!constraints_are_directly_unsat(&mut cx, &[not_both, x_is_zero]));
+        let constraints = normalize_constraints_for_solver(&mut cx, &[not_both, x_is_zero]);
+        assert!(!constraints_are_directly_unsat(&mut cx, &constraints));
     }
 
     #[test]

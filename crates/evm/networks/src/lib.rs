@@ -14,7 +14,7 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
 use clap::Parser;
 #[cfg(feature = "monad")]
-use foundry_evm_hardforks::MonadHardfork;
+type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
 #[cfg(feature = "optimism")]
 use foundry_evm_hardforks::OpHardfork;
 use foundry_evm_hardforks::{
@@ -22,11 +22,6 @@ use foundry_evm_hardforks::{
 };
 #[cfg(not(feature = "monad"))]
 type MonadHardfork = ();
-#[cfg(feature = "monad")]
-use monad_revm::{
-    MONAD_MAX_CODE_SIZE, MONAD_MAX_INITCODE_SIZE, reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
-    staking::STAKING_ADDRESS,
-};
 use revm::precompile::{
     Precompile as RevmPrecompile,
     secp256r1::{P256VERIFY, P256VERIFY_OSAKA},
@@ -71,12 +66,16 @@ const TEMPO_PRECOMPILES: &[(&str, Address)] = &[
 ];
 
 #[cfg(feature = "monad")]
-const MONAD_PRECOMPILE_LABELS: &[(&str, Address)] =
-    &[("Staking", STAKING_ADDRESS), ("ReserveBalance", RESERVE_BALANCE_ADDRESS)];
+const MONAD_PRECOMPILE_LABELS: &[(&str, Address)] = &[
+    ("Staking", monad_revm::staking::STAKING_ADDRESS),
+    ("ReserveBalance", monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS),
+];
 
 #[cfg(feature = "monad")]
-const MONAD_PRECOMPILES: &[(&str, Address)] =
-    &[("MonadStaking", STAKING_ADDRESS), ("MonadReserveBalance", RESERVE_BALANCE_ADDRESS)];
+const MONAD_PRECOMPILES: &[(&str, Address)] = &[
+    ("MonadStaking", monad_revm::staking::STAKING_ADDRESS),
+    ("MonadReserveBalance", monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS),
+];
 
 /// BSC secp256r1 precompile address introduced by the Haber hardfork.
 const BSC_P256_ADDRESS: Address = address!("0000000000000000000000000000000000000100");
@@ -152,8 +151,9 @@ pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterat
 /// Returns whether a well-known Monad precompile address is active at `hardfork`.
 #[cfg(feature = "monad")]
 pub fn is_monad_precompile_active_at(address: Address, hardfork: MonadHardfork) -> bool {
-    address == STAKING_ADDRESS
-        || (address == RESERVE_BALANCE_ADDRESS && MonadHardfork::MonadNine.is_enabled_in(hardfork))
+    address == monad_revm::staking::STAKING_ADDRESS
+        || (address == monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS
+            && MonadHardfork::MonadNine.is_enabled_in(hardfork))
 }
 
 #[derive(
@@ -612,8 +612,8 @@ impl NetworkConfigs {
     #[cfg(feature = "monad")]
     pub fn contract_size_limits(&self) -> Option<NetworkContractSizeLimits> {
         self.is_monad().then_some(NetworkContractSizeLimits {
-            runtime: MONAD_MAX_CODE_SIZE,
-            initcode: MONAD_MAX_INITCODE_SIZE,
+            runtime: monad_revm::MONAD_MAX_CODE_SIZE,
+            initcode: monad_revm::MONAD_MAX_INITCODE_SIZE,
         })
     }
 
@@ -700,11 +700,20 @@ impl NetworkConfigs {
         }
     }
 
-    /// Applies an endpoint-reported execution profile while preserving orthogonal settings.
-    pub fn with_rpc_profile(self, profile: Self) -> Self {
-        let mut resolved = profile.canonical_execution_profile();
+    /// Applies an authoritative execution profile while preserving orthogonal settings.
+    pub fn with_execution_profile(self, profile: Self) -> Self {
+        let mut resolved = if profile.is_celo() {
+            Self::with_celo()
+        } else {
+            profile.resolved_network().map(Into::into).unwrap_or_default()
+        };
         resolved.bypass_prevrandao = self.bypass_prevrandao;
         resolved
+    }
+
+    /// Applies an endpoint-reported execution profile while preserving orthogonal settings.
+    pub fn with_rpc_profile(self, profile: Self) -> Self {
+        self.with_execution_profile(profile.canonical_execution_profile())
     }
 
     /// Parses the execution profile reported by `anvil_nodeInfo`.
@@ -1274,6 +1283,39 @@ mod tests {
     }
 
     #[test]
+    fn authoritative_execution_profile_preserves_orthogonal_settings() {
+        let inline = NetworkConfigs { bypass_prevrandao: true, ..NetworkConfigs::with_tempo() };
+
+        #[cfg_attr(not(any(feature = "optimism", feature = "monad")), allow(unused_mut))]
+        let mut profiles = vec![
+            NetworkConfigs::with_ethereum(),
+            NetworkConfigs::with_tempo(),
+            NetworkConfigs::with_celo(),
+        ];
+        #[cfg(feature = "optimism")]
+        profiles.push(NetworkVariant::Optimism.into());
+        #[cfg(feature = "monad")]
+        profiles.push(NetworkConfigs::with_monad());
+
+        for profile in profiles {
+            let resolved = inline.with_execution_profile(profile);
+            assert!(resolved.has_same_execution_profile(&profile));
+            assert!(resolved.has_network_selection());
+            assert!(resolved.bypass_prevrandao(NamedChain::Mainnet as u64));
+        }
+
+        let ethereum = inline.with_execution_profile(NetworkConfigs::with_ethereum());
+        assert_eq!(
+            ethereum.try_with_chain_id(NamedChain::Tempo as u64).unwrap(),
+            ethereum,
+            "an authoritative Ethereum profile must prevent later endpoint inference",
+        );
+
+        let rpc_ethereum = inline.with_rpc_profile(NetworkConfigs::with_ethereum());
+        assert!(!rpc_ethereum.has_network_selection());
+    }
+
+    #[test]
     fn chain_id_inference_preserves_explicit_networks() {
         assert!(
             NetworkConfigs::default().try_with_chain_id(NamedChain::Celo as u64).unwrap().is_celo()
@@ -1455,7 +1497,7 @@ mod tests {
 
         assert_eq!(
             cfg.precompiles(None, Some(MonadHardfork::MonadEight)).get("MonadStaking"),
-            Some(&STAKING_ADDRESS)
+            Some(&monad_revm::staking::STAKING_ADDRESS)
         );
         assert!(
             !cfg.precompiles(None, Some(MonadHardfork::MonadEight))
@@ -1463,17 +1505,20 @@ mod tests {
         );
         assert_eq!(
             cfg.precompiles(None, Some(MonadHardfork::MonadNine)).get("MonadReserveBalance"),
-            Some(&RESERVE_BALANCE_ADDRESS)
+            Some(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
         );
         assert_eq!(
             cfg.precompiles_label(None, Some(MonadHardfork::MonadNine))
-                .get(&RESERVE_BALANCE_ADDRESS),
+                .get(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS),
             Some(&"ReserveBalance".to_string())
         );
-        assert!(cfg.precompiles_label(None, None).contains_key(&RESERVE_BALANCE_ADDRESS));
+        assert!(
+            cfg.precompiles_label(None, None)
+                .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+        );
         assert!(
             !cfg.precompiles_label(None, Some(MonadHardfork::MonadEight))
-                .contains_key(&RESERVE_BALANCE_ADDRESS)
+                .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
         );
     }
 
@@ -1521,8 +1566,8 @@ mod tests {
     #[cfg(feature = "monad")]
     fn contract_size_limits_monad() {
         let limits = NetworkConfigs::with_monad().contract_size_limits().unwrap();
-        assert_eq!(limits.runtime, MONAD_MAX_CODE_SIZE);
-        assert_eq!(limits.initcode, MONAD_MAX_INITCODE_SIZE);
+        assert_eq!(limits.runtime, monad_revm::MONAD_MAX_CODE_SIZE);
+        assert_eq!(limits.initcode, monad_revm::MONAD_MAX_INITCODE_SIZE);
         assert!(NetworkConfigs::default().contract_size_limits().is_none());
     }
 

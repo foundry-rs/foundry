@@ -286,6 +286,8 @@ pub async fn spawn_rpc_proxy_rejecting_method_after(
         method,
         RpcMethodRejection::After(successful_calls),
         StatusCode::FORBIDDEN,
+        -32004,
+        "method is not allowed",
     )
     .await
 }
@@ -301,6 +303,26 @@ pub async fn spawn_rpc_proxy_rejecting_method_before(
         method,
         RpcMethodRejection::Before(rejected_calls),
         StatusCode::FORBIDDEN,
+        -32004,
+        "method is not allowed",
+    )
+    .await
+}
+
+/// Spawns an RPC proxy that returns method-not-found for the first `unavailable_calls` requests to
+/// `method`.
+pub async fn spawn_rpc_proxy_method_not_found_before(
+    endpoint: String,
+    method: &'static str,
+    unavailable_calls: usize,
+) -> String {
+    spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::Before(unavailable_calls),
+        StatusCode::OK,
+        -32601,
+        "method not found",
     )
     .await
 }
@@ -317,6 +339,8 @@ pub async fn spawn_rpc_proxy_erroring_method_after(
         method,
         RpcMethodRejection::After(successful_calls),
         StatusCode::OK,
+        -32004,
+        "method is not allowed",
     )
     .await
 }
@@ -341,6 +365,8 @@ async fn spawn_rpc_proxy_rejecting_method(
     method: &'static str,
     rejection: RpcMethodRejection,
     rejection_status: StatusCode,
+    error_code: i64,
+    error_message: &'static str,
 ) -> String {
     let client = reqwest::Client::new();
     let calls = std::sync::Arc::new(AtomicUsize::new(0));
@@ -361,8 +387,8 @@ async fn spawn_rpc_proxy_rejecting_method(
                             "jsonrpc": "2.0",
                             "id": id,
                             "error": {
-                                "code": -32004,
-                                "message": "method is not allowed",
+                                "code": error_code,
+                                "message": error_message,
                             },
                         })),
                     )
