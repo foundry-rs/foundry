@@ -5,7 +5,7 @@ use eyre::{Context, OptionExt, Result};
 use foundry_cli::utils::{Git, SubmoduleCheckoutStatus};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, hash_map::Entry},
+    collections::{BTreeMap, BTreeSet, hash_map::Entry},
     path::{Path, PathBuf},
 };
 
@@ -208,8 +208,14 @@ impl<'a> Lockfile<'a> {
         })?;
 
         let repository_path = relative_path(&git_root, &project_root);
+        // The set of paths `.gitmodules` actually maps - `submodules_in_worktree` needs this to
+        // classify `MissingMapping`, and takes it as a parameter (rather than deriving it
+        // internally) so a caller looping over multiple paths against the same worktree can
+        // compute it once. This call site only calls it once, so behavior here is unchanged.
+        let gitmodules_paths: BTreeSet<PathBuf> =
+            git.submodule_gitmodules_entries(&git_root).unwrap_or_default().into_keys().collect();
         let git_submodules =
-            git.submodules_in_worktree(&repository_path, &git_root, project_prefix)?;
+            git.submodules_in_worktree(&repository_path, &gitmodules_paths, project_prefix)?;
         let mut submodules = BTreeMap::new();
         for submodule in &git_submodules {
             submodules.insert(submodule.path().clone(), submodule);

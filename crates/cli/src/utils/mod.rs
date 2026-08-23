@@ -815,15 +815,23 @@ ignore them in the `.gitignore` file."
     }
 
     /// Returns submodules at or below `path`, with each `SubmoduleCheckout::path` relative to
-    /// `self.root` (this `Git` instance's own working directory - see [`Git::cmd`]), not
-    /// `worktree_root`. `worktree_root`/`worktree_prefix` are used only to resolve `.gitmodules`
-    /// mappings (via [`Git::submodule_mappings_at`]) against the enclosing worktree - which can
-    /// differ from `self.root` in a nested-monorepo layout, where a project subdirectory is its
-    /// own logical root but `.gitmodules` still lives at the actual Git repository root.
+    /// `self.root` (this `Git` instance's own working directory - see [`Git::cmd`]), not the
+    /// worktree `mappings` were resolved against. `mappings` is the set of paths `.gitmodules`
+    /// records (see [`Git::submodule_gitmodules_entries`]'s keys) - callers looping this over
+    /// multiple `path`s against the same worktree should compute it once and reuse it, rather
+    /// than letting each call re-parse `.gitmodules` via a fresh subprocess: verified empirically
+    /// with a `libs = ["libA", "libB", "libC"]` repro (a subprocess spy logging every `git`
+    /// invocation) that re-deriving `mappings` internally here, once per caller-side loop
+    /// iteration with byte-identical arguments every time, was exactly this redundant pattern.
+    /// `worktree_prefix` is still needed separately - it's used to convert each submodule's
+    /// `self.root`-relative path into the worktree-relative form `mappings`' paths are keyed by
+    /// (this can differ from `self.root` in a nested-monorepo layout, where a project
+    /// subdirectory is its own logical root but `.gitmodules` still lives at the actual Git
+    /// repository root).
     pub fn submodules_in_worktree(
         &self,
         path: &Path,
-        worktree_root: &Path,
+        mappings: &BTreeSet<PathBuf>,
         worktree_prefix: &Path,
     ) -> Result<Vec<SubmoduleCheckout>> {
         let pathspec = if path.as_os_str().is_empty() { Path::new(".") } else { path };
@@ -832,7 +840,6 @@ ignore them in the `.gitignore` file."
             .args(["--literal-pathspecs", "ls-files", "--stage", "-z", "--"])
             .arg(pathspec)
             .exec()?;
-        let (_, mappings) = self.submodule_mappings_at(worktree_root)?;
         let mut gitlinks = BTreeMap::new();
         // Paths whose status still needs a `git submodule status` lookup, collected in the same
         // order `git ls-files` emits them - always sorted by path, since that's how the Git index

@@ -9,7 +9,7 @@ use foundry_common::shell;
 use foundry_config::{Config, impl_figment_convert_basic};
 use serde::Serialize;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -164,6 +164,15 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     // Parsed once and reused for every submodule below, instead of re-parsing `.gitmodules` (and
     // spawning a fresh `git config` subprocess) per submodule.
     let gitmodules_entries = git.submodule_gitmodules_entries(&git_root).unwrap_or_default();
+    // `submodules_in_worktree` needs to know which paths `.gitmodules` actually maps, to
+    // classify `MissingMapping` - `gitmodules_entries`'s keys already are exactly that set (same
+    // `.gitmodules` parse, same "has a `path` field" criterion), so this reuses it rather than
+    // letting `submodules_in_worktree` re-derive the same set via its own separate subprocess.
+    // Verified empirically (a `git`-invocation spy) that without this, looping over multiple
+    // `libs` entries spawned that second `.gitmodules` parse once per entry with byte-identical
+    // arguments every time - the same "N subprocess spawns for one invariant answer" pattern the
+    // batched-status-call fix above already treats as worth avoiding.
+    let gitmodules_paths: BTreeSet<PathBuf> = gitmodules_entries.keys().cloned().collect();
 
     let mut submodules = BTreeMap::new();
     for install_lib_dir in lib_dirs {
@@ -209,7 +218,7 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
         // this way; scoping directly to `lib` here also replaces the old post-hoc
         // `path.starts_with(lib)` filter. Merged by path across every `libs` entry - two entries
         // that happen to overlap or nest would otherwise report the same submodule twice.
-        for submodule in git.submodules_in_worktree(lib, &git_root, project_prefix)? {
+        for submodule in git.submodules_in_worktree(lib, &gitmodules_paths, project_prefix)? {
             submodules.insert(submodule.path().clone(), submodule);
         }
     }
