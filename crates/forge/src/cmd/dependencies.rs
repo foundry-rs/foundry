@@ -172,25 +172,34 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
         // A registered but never-checked-out submodule - e.g. after a `git clone` without
         // `--recursive`, or a manual `rm -rf lib/foo` without `git submodule deinit` - isn't
         // actually installed.
-        //
-        // A `MissingMapping` gitlink (present in the index, but with no corresponding
-        // `.gitmodules` entry - e.g. `.gitmodules` was hand-edited or deleted without also
-        // running `git submodule deinit`) can never be initialized: `git submodule update --init`
-        // has nothing to clone from without a mapping. `submodules_in_worktree` reports it
-        // *without* consulting the real on-disk checkout at all - its "rev" is always the index's
-        // recorded sha, never the actual checkout - so on a fresh clone (where the directory is
-        // genuinely empty) this used to list a phantom "installed" dependency with a fabricated
-        // rev. Verified empirically: a fresh clone of a repo with a mappingless gitlink shows an
-        // empty `lib/<name>` directory, yet without this check `forge dependencies` still listed
-        // it as installed.
-        if matches!(
-            submodule.status(),
-            SubmoduleCheckoutStatus::Uninitialized | SubmoduleCheckoutStatus::MissingMapping
-        ) {
+        if submodule.status() == SubmoduleCheckoutStatus::Uninitialized {
             continue;
         }
 
         let path = submodule.path();
+
+        // A `MissingMapping` gitlink (present in the index, but with no corresponding
+        // `.gitmodules` entry - e.g. `.gitmodules` was hand-edited or deleted without also
+        // running `git submodule deinit`) can never be (re)initialized: `git submodule update
+        // --init` has nothing to clone from without a mapping. When the directory is genuinely
+        // empty (a fresh clone, where nothing was ever checked out), it isn't installed and
+        // shouldn't be listed - `submodules_in_worktree` reports this status without consulting
+        // the real checkout at all, so its "rev" is always a fabricated index-recorded sha in
+        // that case. But an empty directory is NOT the same as "every `MissingMapping` entry" -
+        // skipping unconditionally, this function's own first pass at this fix, also hid a real,
+        // populated, still-checked-out dependency whenever `.gitmodules` was edited away WITHOUT
+        // running `deinit` (the exact scenario named above: deinit is what clears the working
+        // tree, so skipping it leaves real content in place). Verified empirically both ways: a
+        // fresh clone leaves the directory genuinely empty, while a hand-edited-without-deinit
+        // `.gitmodules` leaves it fully populated - unconditionally skipping made a real, orphaned
+        // dependency vanish with zero indication anything was there, a worse failure mode (total
+        // invisibility) than the phantom-entry bug this exclusion was meant to fix.
+        let is_missing_mapping = submodule.status() == SubmoduleCheckoutStatus::MissingMapping;
+        let is_populated =
+            std::fs::read_dir(project_root.join(path)).is_ok_and(|mut e| e.next().is_some());
+        if is_missing_mapping && !is_populated {
+            continue;
+        }
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
 
         // A `.gitmodules` section name isn't required to match its `path` field (e.g. `git
@@ -205,9 +214,15 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
 
         // A merge-conflicted submodule has no meaningful single revision to report (`git
         // submodule status` prints an all-zero placeholder SHA for it) - say so plainly rather
-        // than showing that placeholder or a stale lockfile pin.
+        // than showing that placeholder or a stale lockfile pin. A populated `MissingMapping`
+        // entry (reached this far, so the emptiness check above already passed) has no
+        // `.gitmodules` mapping to trust either - its `rev()` is the index's recorded sha, never
+        // verified against what's actually checked out on disk - so it gets the same "flag it
+        // plainly, don't dress it up as a normal healthy dependency" treatment.
         let version = if submodule.status() == SubmoduleCheckoutStatus::Conflicted {
             "conflicted".to_string()
+        } else if is_missing_mapping {
+            "orphaned".to_string()
         } else {
             // Prefer `foundry.lock`'s pinned tag/branch, but only when it still matches what's
             // actually checked out - if the submodule was manually moved to a different commit,

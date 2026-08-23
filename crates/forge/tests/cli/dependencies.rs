@@ -749,7 +749,11 @@ forgetest_init!(dependencies_excludes_submodule_missing_gitmodules_mapping, |prj
         "test setup should leave lib/ghost genuinely empty in the fresh clone"
     );
 
-    cmd.set_current_dir(clone_dir.path());
+    // `TestCommand::set_current_dir` only changes the *test binary's own* CWD - the underlying
+    // `Command` already has an explicit `.current_dir(prj.root())` baked in from construction
+    // (see `TestProject::forge_bin`), which always wins over an inherited CWD regardless. This
+    // command's `current_dir` method is the one that actually retargets the subprocess.
+    cmd.current_dir(clone_dir.path());
     let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert!(
@@ -882,5 +886,64 @@ forgetest_init!(dependencies_excludes_soldeer_entry_without_git_metadata, |prj, 
     assert!(
         parsed.as_array().unwrap().iter().all(|d| d["name"] != "git-dep"),
         "an empty, non-Git directory at a Git entry's install path must not be listed as installed: {json}"
+    );
+});
+
+// The `MissingMapping` exclusion above only targets a genuinely empty checkout (a fresh clone,
+// where nothing was ever populated). Its own motivating scenario - `.gitmodules` hand-edited away
+// WITHOUT running `git submodule deinit` - is exactly the case where the real checkout is left
+// untouched: `deinit` is what clears the working tree, so skipping it leaves real content in
+// place. An earlier version of the fix skipped every `MissingMapping` entry unconditionally,
+// which silently hid a real, populated, orphaned dependency with zero indication anything was
+// there - arguably a worse failure mode (total invisibility) than the phantom-entry bug the fix
+// was meant to address. A populated orphan should still be listed, just flagged plainly.
+forgetest_init!(dependencies_shows_orphaned_populated_submodule_missing_mapping, |prj, cmd| {
+    let remote = tempfile::tempdir().unwrap();
+    let run_git = |args: &[&str], cwd: &std::path::Path| {
+        let status = Command::new("git").args(args).current_dir(cwd).status().unwrap();
+        assert!(status.success(), "git {args:?} failed in {}", cwd.display());
+    };
+    run_git(&["init", "-q", "-b", "main"], remote.path());
+    fs::write(remote.path().join("contract.sol"), "real content").unwrap();
+    run_git(&["add", "-A"], remote.path());
+    run_git(&["commit", "-q", "-m", "dep init"], remote.path());
+
+    run_git(
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            remote.path().to_str().unwrap(),
+            "lib/realdep",
+        ],
+        prj.root(),
+    );
+    run_git(&["add", "-A"], prj.root());
+    run_git(&["commit", "-q", "-m", "add submodule"], prj.root());
+
+    // Orphan the mapping WITHOUT deinit - the real checkout stays fully populated, unlike the
+    // fresh-clone scenario the exclusion above targets. Same working copy throughout, no clone.
+    run_git(&["rm", "--cached", ".gitmodules"], prj.root());
+    fs::remove_file(prj.root().join(".gitmodules")).unwrap();
+    run_git(
+        &["commit", "-q", "-am", "remove .gitmodules mapping, leaving realdep still populated"],
+        prj.root(),
+    );
+    assert!(
+        prj.root().join("lib/realdep/contract.sol").exists(),
+        "test setup should leave lib/realdep's real content untouched"
+    );
+
+    let json = cmd.args(["dependencies", "--json"]).assert_success().get_output().stdout_lossy();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let dep =
+        parsed.as_array().unwrap().iter().find(|e| e["name"] == "realdep").unwrap_or_else(|| {
+            panic!("a populated, orphaned submodule must still be listed, not hidden: {json}")
+        });
+    assert_eq!(
+        dep["version"], "orphaned",
+        "a MissingMapping entry has no trustworthy rev - flag it plainly instead of fabricating one"
     );
 });
