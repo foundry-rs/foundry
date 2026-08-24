@@ -17,21 +17,22 @@ const SYMBOL_TIMEOUT: Duration = Duration::from_secs(10);
 #[test]
 fn lsp_profile_selects_workspace_sources() {
     let project = tempfile::tempdir().unwrap();
+    let project_root = dunce::canonicalize(project.path()).unwrap();
     fs::write(
-        project.path().join("foundry.toml"),
-        "[profile.default]\nsrc = \"default-src\"\n[profile.custom]\nsrc = \"custom-src\"\n",
+        project_root.join("foundry.toml"),
+        "[profile.default]\nsrc = \"default-src\"\n[profile.custom]\nextends = \"base.toml\"\n",
     )
     .unwrap();
-    fs::create_dir_all(project.path().join("default-src")).unwrap();
-    fs::create_dir_all(project.path().join("custom-src")).unwrap();
-    fs::write(project.path().join("default-src/Default.sol"), "contract DefaultContract {}\n")
+    fs::write(project_root.join("base.toml"), "[profile.custom]\nsrc = \"custom-src\"\n").unwrap();
+    fs::create_dir_all(project_root.join("default-src")).unwrap();
+    fs::create_dir_all(project_root.join("custom-src")).unwrap();
+    fs::write(project_root.join("default-src/Default.sol"), "contract DefaultContract {}\n")
         .unwrap();
-    fs::write(project.path().join("custom-src/Custom.sol"), "contract CustomContract {}\n")
-        .unwrap();
+    fs::write(project_root.join("custom-src/Custom.sol"), "contract CustomContract {}\n").unwrap();
 
     let empty_path = tempfile::tempdir().unwrap();
     let mut client = LspClient::spawn(
-        project.path(),
+        &project_root,
         empty_path.path(),
         &["lsp", "--stdio", "--profile", "custom"],
     );
@@ -40,7 +41,7 @@ fn lsp_profile_selects_workspace_sources() {
         client.server.initialize(InitializeParams {
             capabilities: ClientCapabilities::default(),
             workspace_folders: Some(vec![WorkspaceFolder {
-                uri: Url::from_directory_path(project.path()).unwrap(),
+                uri: Url::from_directory_path(&project_root).unwrap(),
                 name: "fixture".into(),
             }]),
             ..InitializeParams::default()
