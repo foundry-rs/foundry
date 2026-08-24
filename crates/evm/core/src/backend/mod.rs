@@ -3373,6 +3373,8 @@ mod tests {
             chain: None,
             block_env: evm_env.block_env,
             hosts: Default::default(),
+            fork_hash: None,
+            source_id: None,
         };
 
         let db = BlockchainDb::new(
