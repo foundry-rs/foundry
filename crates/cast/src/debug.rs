@@ -3,13 +3,10 @@ use alloy_chains::Chain;
 use alloy_primitives::B256;
 use alloy_primitives::{Bytes, map::AddressHashMap};
 use foundry_cli::utils::{TraceResult, print_traces};
-use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
+use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler};
+use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{Config, FoundryHardfork, TracingConfig};
 use foundry_debugger::Debugger;
-#[cfg(all(test, feature = "monad"))]
-use foundry_evm::hardforks::EthereumHardfork;
-#[cfg(feature = "monad")]
-use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
     hardforks::{ExecutionSpec, TempoHardfork},
     opts::ForkEndpointIdentity,
@@ -61,13 +58,23 @@ pub(crate) async fn handle_traces(
     let (known_contracts, mut sources) = if with_local_artifacts {
         // Status prose goes to stderr so `--json` output on stdout stays machine-readable.
         let _ = sh_status!("Compiling project to generate artifacts");
+        let mut config = config.clone();
+        if debug && !config.extra_output.contains(&ContractOutputSelection::StorageLayout) {
+            config.extra_output.push(ContractOutputSelection::StorageLayout);
+        }
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
         let output = compiler.compile(&project)?;
         (
-            Some(ContractsByArtifact::new(
-                output.artifact_ids().map(|(id, artifact)| (id, artifact.clone().into())),
-            )),
+            Some(
+                ContractsByArtifactBuilder::new(
+                    output.artifact_ids().map(|(id, artifact)| (id, artifact.into())),
+                )
+                .with_storage_layouts(output.artifact_ids().filter_map(|(id, artifact)| {
+                    artifact.storage_layout.as_ref().map(|layout| (id, layout.clone()))
+                }))
+                .build(),
+            ),
             ContractSources::from_project_output(&output, project.root(), None)?,
         )
     } else {
@@ -81,7 +88,8 @@ pub(crate) async fn handle_traces(
     #[cfg(feature = "monad")]
     let is_monad = execution_network.is_monad();
     #[cfg(feature = "monad")]
-    let monad_hardfork = resolved_hardfork.and_then(MonadHardfork::from_foundry_hardfork);
+    let monad_hardfork =
+        resolved_hardfork.and_then(foundry_evm::hardforks::MonadHardfork::from_foundry_hardfork);
     let mut builder = CallTraceDecoderBuilder::new()
         .with_tracing_config(tracing)
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
@@ -92,9 +100,9 @@ pub(crate) async fn handle_traces(
         );
     #[cfg(feature = "monad")]
     {
-        builder = builder.with_monad_hardfork(
-            monad_hardfork.or_else(|| is_monad.then(|| config.evm_spec_id::<MonadHardfork>())),
-        );
+        builder = builder.with_monad_hardfork(monad_hardfork.or_else(|| {
+            is_monad.then(|| config.evm_spec_id::<foundry_evm::hardforks::MonadHardfork>())
+        }));
     }
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {
@@ -114,11 +122,14 @@ pub(crate) async fn handle_traces(
         }
 
         if debug {
-            let mut debugger = Debugger::builder()
+            let mut builder = Debugger::builder()
                 .traces(result.traces.expect("missing traces"))
                 .decoder(&decoder)
-                .sources(sources)
-                .build();
+                .sources(sources);
+            if let Some(known_contracts) = &known_contracts {
+                builder = builder.known_contracts(known_contracts);
+            }
+            let mut debugger = builder.build();
             debugger.try_run_tui()?;
             return Ok(());
         }
@@ -173,9 +184,9 @@ mod tests {
     #[test]
     #[cfg(feature = "monad")]
     fn remote_trace_hardfork_ignores_cross_network_override() {
-        let ethereum = FoundryHardfork::Ethereum(EthereumHardfork::Cancun);
-        let monad_eight = FoundryHardfork::Monad(MonadHardfork::MonadEight);
-        let monad_nine = FoundryHardfork::Monad(MonadHardfork::MonadNine);
+        let ethereum = FoundryHardfork::Ethereum(foundry_evm::hardforks::EthereumHardfork::Cancun);
+        let monad_eight = FoundryHardfork::Monad(foundry_evm::hardforks::MonadHardfork::MonadEight);
+        let monad_nine = FoundryHardfork::Monad(foundry_evm::hardforks::MonadHardfork::MonadNine);
 
         assert_eq!(
             select_remote_trace_hardfork(Some(ethereum), Some(monad_nine), NetworkVariant::Monad),

@@ -1,10 +1,6 @@
 //! In-memory blockchain backend.
 use self::{in_memory_db::StateRootDb, state::trie_storage};
 
-#[cfg(feature = "monad")]
-use crate::eth::backend::db::MonadBlockReplayProfile;
-#[cfg(feature = "monad")]
-use crate::eth::backend::replay::execute_historical_replay_with;
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::{ForkTransactionReplay, PruneStateHistoryConfig},
@@ -65,8 +61,6 @@ use alloy_eips::{
     eip7840::BlobParams,
     eip7910::SystemContract,
 };
-#[cfg(feature = "monad")]
-use alloy_evm::block::BlockExecutionError;
 use alloy_evm::{
     Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromTxWithEncoded,
     block::{BlockExecutionResult, BlockExecutor, StateDB},
@@ -74,8 +68,6 @@ use alloy_evm::{
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
 };
-#[cfg(feature = "monad")]
-use alloy_monad_evm::{MonadContext, MonadEvmFactory};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
     NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -127,15 +119,8 @@ use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::{
-    FoundryEvmFactory, monad_block_participants as collect_monad_block_participants,
-    protocol_system_call,
-};
 #[cfg(feature = "optimism")]
 use foundry_evm::hardfork::OpHardfork;
-#[cfg(feature = "monad")]
-use foundry_evm::utils::get_blob_params;
 use foundry_evm::{
     backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
@@ -164,15 +149,11 @@ use foundry_primitives::{
     FoundryTxEnvelope, FoundryTxReceipt, TempoTransactionRequest,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-#[cfg(feature = "monad")]
-use monad_revm::{MonadCfgEnv, MonadChainContext, MonadHardfork, instructions::monad_gas_params};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID};
 #[cfg(feature = "optimism")]
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
-#[cfg(feature = "monad")]
-use revm::context_interface::result::InvalidTransaction;
 use revm::{
     Database as RevmDatabase, DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, Cfg, CfgEnv, ContextSetters, ContextTr, TxEnv},
@@ -449,7 +430,7 @@ impl<D> Drop for StagedForkDbUser<D> {
 }
 
 #[cfg(feature = "monad")]
-pub(crate) type MonadReplayContext = MonadChainContext;
+pub(crate) type MonadReplayContext = monad_revm::MonadChainContext;
 // Opaque stand-in that keeps feature-independent replay context plumbing type-stable.
 #[cfg(not(feature = "monad"))]
 #[derive(Clone)]
@@ -716,7 +697,7 @@ pub trait BackendInspector<DB: Database>:
     Inspector<EthEvmContext<DB>>
     + Inspector<OpEvmContext<DB>>
     + Inspector<TempoContext<DB>>
-    + Inspector<MonadContext<DB>>
+    + Inspector<alloy_monad_evm::MonadContext<DB>>
 {
 }
 #[cfg(all(feature = "optimism", feature = "monad"))]
@@ -724,7 +705,7 @@ impl<DB: Database, T> BackendInspector<DB> for T where
     T: Inspector<EthEvmContext<DB>>
         + Inspector<OpEvmContext<DB>>
         + Inspector<TempoContext<DB>>
-        + Inspector<MonadContext<DB>>
+        + Inspector<alloy_monad_evm::MonadContext<DB>>
 {
 }
 #[cfg(all(feature = "optimism", not(feature = "monad")))]
@@ -739,12 +720,16 @@ impl<DB: Database, T> BackendInspector<DB> for T where
 }
 #[cfg(all(not(feature = "optimism"), feature = "monad"))]
 pub trait BackendInspector<DB: Database>:
-    Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>> + Inspector<MonadContext<DB>>
+    Inspector<EthEvmContext<DB>>
+    + Inspector<TempoContext<DB>>
+    + Inspector<alloy_monad_evm::MonadContext<DB>>
 {
 }
 #[cfg(all(not(feature = "optimism"), feature = "monad"))]
 impl<DB: Database, T> BackendInspector<DB> for T where
-    T: Inspector<EthEvmContext<DB>> + Inspector<TempoContext<DB>> + Inspector<MonadContext<DB>>
+    T: Inspector<EthEvmContext<DB>>
+        + Inspector<TempoContext<DB>>
+        + Inspector<alloy_monad_evm::MonadContext<DB>>
 {
 }
 #[cfg(all(not(feature = "optimism"), not(feature = "monad")))]
@@ -1346,8 +1331,8 @@ impl<N: Network> Backend<N> {
 
     /// Returns the active Monad hardfork.
     #[cfg(feature = "monad")]
-    pub fn monad_hardfork(&self) -> MonadHardfork {
-        MonadHardfork::from(self.hardfork())
+    pub fn monad_hardfork(&self) -> monad_revm::MonadHardfork {
+        monad_revm::MonadHardfork::from(self.hardfork())
     }
 
     /// Returns whether a Tempo hardfork is active on this backend.
@@ -1532,15 +1517,16 @@ impl<N: Network> Backend<N> {
     }
 
     #[cfg(feature = "monad")]
-    fn monad_cfg_env(&self, evm_env: &EvmEnv) -> Option<MonadCfgEnv> {
+    fn monad_cfg_env(&self, evm_env: &EvmEnv) -> Option<monad_revm::MonadCfgEnv> {
         if !self.is_monad() {
             return None;
         }
 
-        let hardfork = MonadHardfork::from(self.hardfork());
-        Some(MonadCfgEnv::from(
-            evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
-        ))
+        let hardfork = monad_revm::MonadHardfork::from(self.hardfork());
+        Some(monad_revm::MonadCfgEnv::from(evm_env.cfg_env.clone().with_spec_and_gas_params(
+            hardfork,
+            monad_revm::instructions::monad_gas_params(hardfork),
+        )))
     }
 
     fn tx_gas_limit_cap(&self, evm_env: &EvmEnv) -> u64 {
@@ -1656,7 +1642,7 @@ impl<N: Network> Backend<N> {
         #[cfg(feature = "monad")]
         let hardfork = if self.is_monad() {
             let block_hash = block.header.hash_slow();
-            let fallback = MonadBlockReplayProfile {
+            let fallback = crate::eth::backend::db::MonadBlockReplayProfile {
                 execution_chain_id: evm_env.cfg_env.chain_id,
                 hardfork: self.monad_hardfork(),
             };
@@ -2530,7 +2516,7 @@ impl<N: Network> Backend<N> {
                 monad::PreparedExecution {
                     context,
                     kind: execution.kind,
-                    hardfork: MonadHardfork::from(execution.hardfork),
+                    hardfork: monad_revm::MonadHardfork::from(execution.hardfork),
                 },
             )?
         } else {
@@ -2611,6 +2597,21 @@ impl<N: Network> Backend<N> {
     where
         DB: StateDB<Error = DatabaseError>,
     {
+        #[cfg(feature = "monad")]
+        if self.is_monad() {
+            return self.execute_with_monad_block_executor(
+                db,
+                evm_env,
+                parent_hash,
+                spec_id,
+                hardfork,
+                pool_transactions,
+                gas_config,
+                inspector_tx_config,
+                validator,
+            );
+        }
+
         let inspector = self.build_mining_inspector();
         let ethereum_transitions =
             self.ethereum_block_transitions(hardfork, parent_beacon_block_root, execution_kind);
@@ -2675,57 +2676,6 @@ impl<N: Network> Backend<N> {
                 noop_before_transaction,
                 execute_pool_transaction,
                 noop_on_execution_error
-            );
-        }
-        #[cfg(feature = "monad")]
-        if self.is_monad() {
-            let hardfork = MonadHardfork::from(hardfork);
-            let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
-            let mut evm =
-                MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
-            let transaction_context = self
-                .monad_context_for_child_of(parent_hash)
-                .expect("Monad ancestor context must be available before block execution");
-            evm.ctx_mut().chain = transaction_context;
-            return run!(
-                evm,
-                monad::prepare_transaction,
-                |executor: &mut AnvilBlockExecutor<_>,
-                 tx_env: TxEnv,
-                 recovered: Recovered<FoundryTxEnvelope>,
-                 is_replay: bool| {
-                    if !is_replay {
-                        return executor.execute_transaction_without_commit((tx_env, recovered));
-                    }
-                    match protocol_system_call(&tx_env) {
-                        Ok(None) => {
-                            return executor
-                                .execute_transaction_without_commit((tx_env, recovered));
-                        }
-                        Ok(Some(_)) => {}
-                        Err(err) => return Err(BlockExecutionError::msg(err)),
-                    }
-                    executor.execute_transaction_without_commit_with(
-                        (tx_env, recovered),
-                        |evm, tx_env, transaction_hash| {
-                            MonadEvmFactory::default()
-                                .try_transact_system_replay(evm, &tx_env)
-                                .map_err(|err| {
-                                    BlockExecutionError::msg(format!(
-                                        "failed to replay Monad transaction {transaction_hash}: \
-                                         {err}"
-                                    ))
-                                })?
-                                .ok_or_else(|| {
-                                    BlockExecutionError::msg(format!(
-                                        "Monad transaction {transaction_hash} is not a canonical \
-                                         replay envelope"
-                                    ))
-                                })
-                        },
-                    )
-                },
-                monad::rollback_transaction
             );
         }
         let mut evm =
@@ -3185,7 +3135,7 @@ impl<N: Network> Backend<N> {
                     monad::PreparedExecution {
                         context,
                         kind: EnvelopeExecutionKind::Transaction,
-                        hardfork: MonadHardfork::from(hardfork),
+                        hardfork: monad_revm::MonadHardfork::from(hardfork),
                     },
                 )
             }
@@ -4769,9 +4719,7 @@ impl<N: Network> Backend<N> {
                     }
                 }
                 #[cfg(feature = "monad")]
-                storage.monad_block_participants.remove(&hash);
-                #[cfg(feature = "monad")]
-                storage.monad_block_replay_profiles.remove(&hash);
+                storage.remove_monad_block_metadata(&hash);
             }
 
             storage.best_number = num;
@@ -5083,7 +5031,7 @@ where
         let hardfork = if self.is_monad() {
             explicit_monad_hardfork
                 .or_else(|| {
-                    MonadHardfork::from_chain_and_timestamp(source_chain_id, timestamp)
+                    monad_revm::MonadHardfork::from_chain_and_timestamp(source_chain_id, timestamp)
                         .map(FoundryHardfork::Monad)
                 })
                 .unwrap_or_else(|| self.hardfork())
@@ -5116,7 +5064,9 @@ where
 
         #[cfg(feature = "monad")]
         let monad_participants = self.is_monad().then(|| {
-            collect_monad_block_participants(&self.monad_historical_replay_tx_envs(&transactions))
+            foundry_evm::core::evm::monad_block_participants(
+                &self.monad_historical_replay_tx_envs(&transactions),
+            )
         });
 
         let (block_info, state_changes, block_hash) = {
@@ -5179,13 +5129,12 @@ where
             storage.hashes.insert(block_number, block_hash);
             #[cfg(feature = "monad")]
             if let Some(participants) = monad_participants {
-                storage.monad_block_participants.insert(block_hash, participants);
-                storage.monad_block_replay_profiles.insert(
+                monad::store_block_metadata(
+                    &mut storage,
                     block_hash,
-                    MonadBlockReplayProfile {
-                        execution_chain_id,
-                        hardfork: MonadHardfork::from(hardfork),
-                    },
+                    participants,
+                    execution_chain_id,
+                    hardfork,
                 );
             }
             for (info, receipt) in transactions.into_iter().zip(receipts) {
@@ -5207,7 +5156,8 @@ where
             let spec_id = SpecId::from(hardfork);
             evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
             self.fees.set_execution_rules(spec_id, self.networks.base_fee_params(timestamp), None);
-            self.fees.set_blob_params(get_blob_params(source_chain_id, timestamp));
+            self.fees
+                .set_blob_params(foundry_evm::utils::get_blob_params(source_chain_id, timestamp));
 
             // An inferred hardfork follows the replayed source block. Keep an explicit override
             // fixed, even when the source schedule differs.
@@ -5260,6 +5210,19 @@ where
     where
         DB: StateDB<Error = DatabaseError>,
     {
+        #[cfg(feature = "monad")]
+        if self.is_monad() {
+            return self.execute_with_monad_replay_block_executor(
+                db,
+                evm_env,
+                parent_hash,
+                hardfork,
+                transactions,
+                inspector_tx_config,
+                monad_context,
+            );
+        }
+
         let inspector = self.build_mining_inspector();
         let ethereum_transitions = self.ethereum_block_transitions(
             hardfork,
@@ -5320,38 +5283,6 @@ where
             return run!(evm);
         }
 
-        #[cfg(feature = "monad")]
-        if self.is_monad() {
-            let hardfork = MonadHardfork::from(hardfork);
-            let monad_env = Self::build_monad_evm_env(evm_env, hardfork);
-            let mut evm =
-                MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
-            let transaction_context = monad_context
-                .ok_or_else(|| eyre::eyre!("Monad replay ancestor context is unavailable"))?;
-            evm.ctx_mut().chain = transaction_context;
-            return run!(evm, |executor| {
-                execute_historical_replay_with(
-                    executor,
-                    transactions,
-                    inspector_tx_config,
-                    |evm, tx_env, _transaction_hash| {
-                        monad::prepare_transaction(evm, &tx_env);
-                        let result = match MonadEvmFactory::default()
-                            .try_transact_system_replay(evm, &tx_env)
-                            .map_err(BlockExecutionError::msg)
-                        {
-                            Ok(Some(result)) => Ok(result),
-                            Ok(None) => evm.transact(tx_env).map_err(BlockExecutionError::msg),
-                            Err(err) => Err(err),
-                        };
-                        if result.is_err() {
-                            monad::rollback_transaction(evm);
-                        }
-                        result
-                    },
-                )
-            });
-        }
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
         run!(evm)
@@ -5549,7 +5480,7 @@ where
                         )
                     })
                     .collect::<Vec<_>>();
-                collect_monad_block_participants(&tx_envs)
+                foundry_evm::core::evm::monad_block_participants(&tx_envs)
             });
 
             if let Some(parent_state) = parent_state {
@@ -5578,13 +5509,12 @@ where
             storage.hashes.insert(block_number, block_hash);
             #[cfg(feature = "monad")]
             if let Some(participants) = monad_participants {
-                storage.monad_block_participants.insert(block_hash, participants);
-                storage.monad_block_replay_profiles.insert(
+                monad::store_block_metadata(
+                    &mut storage,
                     block_hash,
-                    MonadBlockReplayProfile {
-                        execution_chain_id: evm_env.cfg_env.chain_id,
-                        hardfork: hardfork.into(),
-                    },
+                    participants,
+                    evm_env.cfg_env.chain_id,
+                    hardfork,
                 );
             }
 
@@ -8737,7 +8667,7 @@ where
         if self.is_monad() && pool_tx.is_replay {
             let tx_env: TxEnv =
                 build_tx_env_for_pending(&pool_tx.pending_transaction, self.cheats());
-            match protocol_system_call(&tx_env) {
+            match foundry_evm::core::evm::protocol_system_call(&tx_env) {
                 Ok(Some(system_call)) => {
                     if system_call
                         .chain_id
@@ -8758,9 +8688,11 @@ where
                 }
                 Ok(None) => {}
                 Err(err) => {
-                    return Err(InvalidTransactionError::Revm(InvalidTransaction::Str(
-                        err.to_string().into(),
-                    )));
+                    return Err(InvalidTransactionError::Revm(
+                        revm::context_interface::result::InvalidTransaction::Str(
+                            err.to_string().into(),
+                        ),
+                    ));
                 }
             }
         }
@@ -9434,25 +9366,11 @@ pub use foundry_evm::core::evm::IntoInstructionResult;
 mod tests {
     use super::{ForkCacheNamespace, ForkCacheSource, StagedForkCacheLease, StagedForkDbUser};
     use crate::{NodeConfig, spawn};
-    #[cfg(feature = "monad")]
-    use alloy_consensus::{BlockHeader, constants::EMPTY_ROOT_HASH};
-    #[cfg(feature = "monad")]
-    use alloy_network::TransactionBuilder;
-    #[cfg(feature = "monad")]
-    use alloy_primitives::Address;
     use alloy_primitives::{B256, U256};
-    #[cfg(feature = "monad")]
-    use alloy_provider::Provider;
-    #[cfg(feature = "monad")]
-    use alloy_rpc_types::TransactionRequest;
     use foundry_evm::{
         backend::{BlockchainDb, BlockchainDbMeta},
         hardfork::{EthereumHardfork, FoundryHardfork},
     };
-    #[cfg(feature = "monad")]
-    use foundry_evm::{hardfork::MonadHardfork, traces::CallTraceDecoderBuilder};
-    #[cfg(feature = "monad")]
-    use monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS;
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -9740,8 +9658,13 @@ mod tests {
     #[cfg(feature = "monad")]
     #[tokio::test]
     async fn monad_load_state_rebuilds_participant_cache() {
-        let config =
-            || NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+        use alloy_network::TransactionBuilder as _;
+        use alloy_provider::Provider as _;
+
+        let config = || {
+            NodeConfig::test_monad()
+                .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()))
+        };
         let (api, handle) = spawn(config()).await;
         let provider = handle.http_provider();
         let accounts = provider.get_accounts().await.unwrap();
@@ -9749,7 +9672,7 @@ mod tests {
 
         let receipt = provider
             .send_transaction(
-                TransactionRequest::default()
+                alloy_rpc_types::TransactionRequest::default()
                     .with_from(sender)
                     .with_to(accounts[1])
                     .with_value(U256::from(1))
@@ -9774,9 +9697,13 @@ mod tests {
     #[cfg(feature = "monad")]
     #[tokio::test]
     async fn monad_load_state_restores_pruned_participant_cache() {
+        use alloy_consensus::BlockHeader as _;
+        use alloy_network::TransactionBuilder as _;
+        use alloy_provider::Provider as _;
+
         let config = || {
             NodeConfig::test_monad()
-                .with_hardfork(Some(MonadHardfork::MonadNine.into()))
+                .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()))
                 .with_transaction_block_keeper(Some(1usize))
         };
         let (api, handle) = spawn(config()).await;
@@ -9786,7 +9713,7 @@ mod tests {
 
         let first_receipt = provider
             .send_transaction(
-                TransactionRequest::default()
+                alloy_rpc_types::TransactionRequest::default()
                     .with_from(sender)
                     .with_to(accounts[1])
                     .with_value(U256::from(1))
@@ -9799,7 +9726,7 @@ mod tests {
             .unwrap();
         let second_receipt = provider
             .send_transaction(
-                TransactionRequest::default()
+                alloy_rpc_types::TransactionRequest::default()
                     .with_from(sender)
                     .with_to(accounts[1])
                     .with_value(U256::from(1))
@@ -9817,7 +9744,10 @@ mod tests {
             let storage = api.backend.blockchain.storage.read();
             let first_block = storage.blocks.get(&first_block_hash).unwrap();
             assert!(first_block.body.transactions.is_empty());
-            assert_ne!(first_block.header.transactions_root(), EMPTY_ROOT_HASH);
+            assert_ne!(
+                first_block.header.transactions_root(),
+                alloy_consensus::constants::EMPTY_ROOT_HASH
+            );
             assert!(storage.monad_block_participants[&first_block_hash].contains(&sender));
             assert!(!storage.blocks[&second_block_hash].body.transactions.is_empty());
         }
@@ -9843,21 +9773,25 @@ mod tests {
     #[cfg(feature = "monad")]
     #[tokio::test]
     async fn monad_load_state_rejection_is_atomic() {
+        use alloy_consensus::BlockHeader as _;
+        use alloy_network::TransactionBuilder as _;
+        use alloy_provider::Provider as _;
+
         let config = || {
             NodeConfig::test_monad()
-                .with_hardfork(Some(MonadHardfork::MonadNine.into()))
+                .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()))
                 .with_transaction_block_keeper(Some(1usize))
         };
         let (source_api, source_handle) = spawn(config()).await;
         let source_provider = source_handle.http_provider();
         let accounts = source_provider.get_accounts().await.unwrap();
-        let sentinel = Address::repeat_byte(0x77);
+        let sentinel = alloy_primitives::Address::repeat_byte(0x77);
 
         source_api.anvil_set_balance(sentinel, U256::from(123)).await.unwrap();
         for nonce in 0..2 {
             source_provider
                 .send_transaction(
-                    TransactionRequest::default()
+                    alloy_rpc_types::TransactionRequest::default()
                         .with_from(accounts[0])
                         .with_to(accounts[1])
                         .with_nonce(nonce)
@@ -9876,7 +9810,9 @@ mod tests {
             .blocks
             .iter()
             .find(|block| {
-                block.transactions.is_empty() && block.header.transactions_root() != EMPTY_ROOT_HASH
+                block.transactions.is_empty()
+                    && block.header.transactions_root()
+                        != alloy_consensus::constants::EMPTY_ROOT_HASH
             })
             .unwrap()
             .header
@@ -9905,30 +9841,44 @@ mod tests {
     #[cfg(feature = "monad")]
     #[tokio::test]
     async fn monad_trace_decoder_follows_resolved_hardfork() {
-        let (monad_eight, _) =
-            spawn(NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadEight.into())))
-                .await;
-        let stale_monad_nine = CallTraceDecoderBuilder::new()
-            .with_monad_hardfork(Some(MonadHardfork::MonadNine))
+        let (monad_eight, _) = spawn(
+            NodeConfig::test_monad()
+                .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadEight.into())),
+        )
+        .await;
+        let stale_monad_nine = foundry_evm::traces::CallTraceDecoderBuilder::new()
+            .with_monad_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine))
             .build();
         *monad_eight.backend.call_trace_decoder.write() = Arc::new(stale_monad_nine);
 
         let decoder = monad_eight.backend.call_trace_decoder();
-        assert_eq!(decoder.monad_hardfork(), Some(MonadHardfork::MonadEight));
-        assert!(!decoder.labels.contains_key(&RESERVE_BALANCE_ADDRESS));
+        assert_eq!(
+            decoder.monad_hardfork(),
+            Some(foundry_evm::hardfork::MonadHardfork::MonadEight)
+        );
+        assert!(
+            !decoder
+                .labels
+                .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+        );
 
-        let (monad_nine, _) =
-            spawn(NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into())))
-                .await;
-        let stale_monad_eight = CallTraceDecoderBuilder::new()
-            .with_monad_hardfork(Some(MonadHardfork::MonadEight))
+        let (monad_nine, _) = spawn(
+            NodeConfig::test_monad()
+                .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into())),
+        )
+        .await;
+        let stale_monad_eight = foundry_evm::traces::CallTraceDecoderBuilder::new()
+            .with_monad_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadEight))
             .build();
         *monad_nine.backend.call_trace_decoder.write() = Arc::new(stale_monad_eight);
 
         let decoder = monad_nine.backend.call_trace_decoder();
-        assert_eq!(decoder.monad_hardfork(), Some(MonadHardfork::MonadNine));
+        assert_eq!(decoder.monad_hardfork(), Some(foundry_evm::hardfork::MonadHardfork::MonadNine));
         assert_eq!(
-            decoder.labels.get(&RESERVE_BALANCE_ADDRESS).map(String::as_str),
+            decoder
+                .labels
+                .get(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+                .map(String::as_str),
             Some("ReserveBalance")
         );
     }

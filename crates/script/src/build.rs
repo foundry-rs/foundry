@@ -16,7 +16,8 @@ use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
-    ContractData, ContractsByArtifact, compile::ProjectCompiler, provider::ProviderBuilder,
+    ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
+    provider::ProviderBuilder,
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -188,8 +189,14 @@ impl LinkedBuildData {
             Some(&libraries),
         )?;
 
-        let known_contracts =
-            ContractsByArtifact::new(build_data.get_linker().get_linked_artifacts(&libraries)?);
+        let linked_contracts = build_data.get_linker().get_linked_artifacts(&libraries)?;
+        let known_contracts = ContractsByArtifactBuilder::new(
+            linked_contracts.iter().map(|(id, artifact)| (id.clone(), artifact.into())),
+        )
+        .with_storage_layouts(build_data.output.artifact_ids().filter_map(|(id, artifact)| {
+            artifact.storage_layout.as_ref().map(|layout| (id, layout.clone()))
+        }))
+        .build();
 
         Ok(Self { build_data, known_contracts, libraries, predeploy_libraries, sources })
     }

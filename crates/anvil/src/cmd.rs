@@ -929,8 +929,6 @@ fn duration_from_secs_f64(s: &str) -> Result<Duration, String> {
 mod tests {
     use super::*;
     use foundry_evm::hardfork::EthereumHardfork;
-    #[cfg(feature = "monad")]
-    use foundry_evm::hardfork::MonadHardfork;
     #[cfg(feature = "optimism")]
     use foundry_evm::hardfork::OpHardfork;
     use std::{env, net::Ipv4Addr};
@@ -1204,7 +1202,7 @@ mod tests {
         let args: NodeArgs =
             NodeArgs::parse_from(["anvil", "--network", "monad", "--hardfork", "MonadNine"]);
         let config = args.into_node_config().unwrap();
-        assert_eq!(config.hardfork, Some(MonadHardfork::MonadNine.into()));
+        assert_eq!(config.hardfork, Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
         assert!(config.networks.is_monad());
     }
 
@@ -1214,7 +1212,7 @@ mod tests {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--network", "monad"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, None);
-        assert_eq!(config.get_hardfork(), MonadHardfork::default().into());
+        assert_eq!(config.get_hardfork(), foundry_evm::hardfork::MonadHardfork::default().into());
         assert!(config.networks.is_monad());
     }
 

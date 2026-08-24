@@ -42,7 +42,7 @@ use foundry_common::{
     tempo::classify_payment_lane,
 };
 use foundry_config::Chain;
-use foundry_evm::core::bytecode::InstIter;
+use foundry_evm::core::{bytecode::InstIter, decode::RevertDecoder};
 use foundry_primitives::FoundryTxEnvelope;
 use futures::{FutureExt, StreamExt, TryStreamExt, future::Either};
 #[cfg(feature = "optimism")]
@@ -164,7 +164,22 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
             call = call.overrides(state_override)
         }
 
-        let res = call.await?;
+        let res = match call.await {
+            Ok(res) => res,
+            Err(err) => {
+                if let Some(data) = err.as_error_resp().and_then(|payload| payload.as_revert_data())
+                {
+                    let decoded = match RevertDecoder::new().maybe_decode_known(&data) {
+                        Some(decoded) => Some(decoded),
+                        None => tx::decode_custom_error(&data).await.ok().flatten(),
+                    };
+                    if let Some(decoded) = decoded {
+                        return Err(err).wrap_err(format!("execution reverted: {decoded}"));
+                    }
+                }
+                return Err(err.into());
+            }
+        };
         let decoded = if let Some(func) = func {
             // decode args into tokens
             match func.abi_decode_output(res.as_ref()) {

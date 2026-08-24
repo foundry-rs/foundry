@@ -1,6 +1,12 @@
 contract ContractDefinition is Contract1, Contract2, Contract3, Contract4, Contract5 {
 }
 
+contract EmptyBodyWithComment { /* body */ }
+
+contract EmptyBodyWithComments { /* one */ /* two */ }
+
+contract NonEmptyBodyTrailingComments { uint256 x; /* one */ /* two */ }
+
 // comment 7
 contract SampleContract {
 

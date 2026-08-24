@@ -1,6 +1,9 @@
 use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
 use clap::Parser;
-use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
+use comfy_table::{
+    Cell, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
+};
 use eyre::{Result, eyre};
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
@@ -436,9 +439,9 @@ fn print_table(
 ) -> Result<()> {
     let mut table = Table::new();
     if shell::is_markdown() {
-        table.load_preset(ASCII_MARKDOWN);
+        table.load_style(ASCII_MARKDOWN);
     } else {
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        table.load_style(ASCII_FULL.with_rounded_corners());
     }
     table.set_header(headers);
     if should_wrap {
