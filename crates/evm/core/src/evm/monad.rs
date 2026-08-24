@@ -39,7 +39,30 @@ use crate::{
     evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor},
 };
 
-impl FoundryChain for MonadChainContext {
+impl FoundryChain<TxEnv> for MonadChainContext {
+    fn for_transaction(tx: &TxEnv) -> Self {
+        monad_context_from_participants(
+            Default::default(),
+            Default::default(),
+            std::slice::from_ref(tx),
+            0,
+        )
+    }
+
+    fn for_block(
+        grandparent: &[TxEnv],
+        parent: &[TxEnv],
+        current: &[TxEnv],
+        current_tx_index: usize,
+    ) -> Self {
+        monad_context_from_participants(
+            monad_block_participants(grandparent),
+            monad_block_participants(parent),
+            current,
+            current_tx_index,
+        )
+    }
+
     fn refresh_journal<J: FoundryJournal>(&self, journal: &mut J) {
         let mut tracker = journal.capture_reserve_balance();
         tracker.rebase(self, journal.evm_state());
@@ -342,30 +365,6 @@ impl FoundryEvmFactory for MonadEvmFactory {
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         MonadEvm<&'db mut dyn DatabaseExt<Self>, I>;
-
-    fn chain_context_for_transaction(&self, tx: &Self::Tx) -> Self::Chain {
-        monad_context_from_participants(
-            Default::default(),
-            Default::default(),
-            std::slice::from_ref(tx),
-            0,
-        )
-    }
-
-    fn chain_context_for_block(
-        &self,
-        grandparent: &[Self::Tx],
-        parent: &[Self::Tx],
-        current: &[Self::Tx],
-        current_tx_index: usize,
-    ) -> Self::Chain {
-        monad_context_from_participants(
-            monad_block_participants(grandparent),
-            monad_block_participants(parent),
-            current,
-            current_tx_index,
-        )
-    }
 
     fn create_evm_with_context<DB: alloy_evm::Database>(
         &self,

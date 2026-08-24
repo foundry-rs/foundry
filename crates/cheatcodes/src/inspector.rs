@@ -1,7 +1,5 @@
 //! Cheatcode EVM inspector.
 
-#[cfg(feature = "monad")]
-use crate::monad::{apply_monad_cheatcode as apply_monad_cheatcode_call, is_monad_cheatcode_call};
 use crate::{
     Cheatcode, CheatsConfig, CheatsCtxt, Error, Result,
     Vm::{self, AccountAccess},
@@ -51,15 +49,11 @@ use foundry_evm_core::{
     },
     refresh_chain_journal,
 };
-#[cfg(feature = "monad")]
-use foundry_evm_core::{FoundryJournal, evm::refresh_nested_chain_journal};
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
 };
 use foundry_wallets::wallet_multi::MultiWallet;
 use itertools::Itertools;
-#[cfg(feature = "monad")]
-use monad_revm::reserve_balance::tracker::ReserveBalanceTracker;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
@@ -192,7 +186,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         let factory = FEN::EvmFactory::default();
         let chain_context = ecx.chain().clone();
         #[cfg(feature = "monad")]
-        let state = ecx.journal().capture_reserve_balance();
+        let state = foundry_evm_core::FoundryJournal::capture_reserve_balance(ecx.journal());
         let mut nested_chain_context = None;
         #[cfg(feature = "monad")]
         let mut reserve_balance = None;
@@ -201,14 +195,16 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
             *evm.journal_inner_mut() = journaled_state;
             #[cfg(feature = "monad")]
             {
-                evm.journal_mut().restore_reserve_balance(state);
-                refresh_nested_chain_journal(&mut *evm);
+                foundry_evm_core::FoundryJournal::restore_reserve_balance(evm.journal_mut(), state);
+                foundry_evm_core::evm::refresh_nested_chain_journal(&mut *evm);
             }
             f(&mut *evm)?;
             nested_chain_context = Some(evm.chain_mut().clone());
             #[cfg(feature = "monad")]
             {
-                reserve_balance = Some(evm.journal_mut().capture_reserve_balance());
+                reserve_balance = Some(foundry_evm_core::FoundryJournal::capture_reserve_balance(
+                    evm.journal_mut(),
+                ));
             }
             let sub_inner = evm.journal_inner_mut().clone();
             let sub_evm_env = evm.to_evm_env();
@@ -216,8 +212,10 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         })?;
         *ecx.chain_mut() = nested_chain_context.expect("nested EVM chain context was captured");
         #[cfg(feature = "monad")]
-        ecx.journal_mut()
-            .restore_reserve_balance(reserve_balance.expect("nested EVM state was captured"));
+        foundry_evm_core::FoundryJournal::restore_reserve_balance(
+            ecx.journal_mut(),
+            reserve_balance.expect("nested EVM state was captured"),
+        );
         refresh_chain_journal(ecx);
         Ok(())
     }
@@ -908,7 +906,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Transaction-position context and Monad's reserve-balance-tracker state captured atomically
     /// alongside state snapshots.
     #[cfg(feature = "monad")]
-    pub context_snapshots: HashMap<U256, (ChainFor<FEN>, ReserveBalanceTracker)>,
+    pub context_snapshots:
+        HashMap<U256, (ChainFor<FEN>, monad_revm::reserve_balance::tracker::ReserveBalanceTracker)>,
 
     /// Whether we are currently executing inside an isolation context, i.e.
     /// the synthetic inner transaction wrapped by
@@ -1318,7 +1317,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         // but only if the backend is in forking mode
         ecx.db_mut().ensure_cheatcode_access_forking_mode(&caller)?;
 
-        apply_monad_cheatcode_call(
+        crate::monad::apply_monad_cheatcode(
             &mut CheatsCtxt { state: self, ecx, gas_limit: call.gas_limit, caller },
             &input,
         )
@@ -1456,7 +1455,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
 
         #[cfg(feature = "monad")]
-        if is_monad_cheatcode_call(
+        if crate::monad::is_monad_cheatcode_call(
             self.config.evm_opts.networks.extra_cheatcode_addresses(),
             call.target_address,
         ) {
@@ -2366,7 +2365,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
         #[cfg(feature = "monad")]
         let cheatcode_call = cheatcode_call
-            || is_monad_cheatcode_call(
+            || crate::monad::is_monad_cheatcode_call(
                 self.config.evm_opts.networks.extra_cheatcode_addresses(),
                 call.target_address,
             );

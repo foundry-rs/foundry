@@ -65,6 +65,19 @@ pub fn is_rpc_method_not_found(error: &TransportError) -> bool {
         .is_some_and(|code| code == -32601)
 }
 
+/// Returns an RPC URL safe for display by retaining only its scheme, host, and port.
+pub fn redact_url(raw: &str) -> String {
+    let Ok(mut redacted) = Url::parse(raw) else {
+        return "<redacted>".to_owned();
+    };
+    let _ = redacted.set_username("");
+    let _ = redacted.set_password(None);
+    redacted.set_path("");
+    redacted.set_query(None);
+    redacted.set_fragment(None);
+    redacted.to_string()
+}
+
 fn rpc_error_code(body: &str) -> Option<i64> {
     // HTTP transports may append human-readable diagnostics after the JSON-RPC body. Parse the
     // first complete JSON value instead of requiring the entire body to be JSON.
@@ -217,7 +230,7 @@ impl<N: Network> ProviderBuilder<N> {
                 }
                 _ => Err(err),
             })
-            .wrap_err_with(|| format!("invalid provider URL: {url_str:?}"));
+            .wrap_err_with(|| format!("invalid provider URL: {:?}", redact_url(url_str)));
 
         // Use the final URL string to guess if it's a local URL.
         let is_local = url.as_ref().is_ok_and(|url| guess_local_url(url.as_str()));
@@ -622,6 +635,26 @@ mod tests {
     use alloy_json_rpc::ErrorPayload;
 
     use super::*;
+
+    #[test]
+    fn redacts_url_credentials_and_resource() {
+        let url = "https://user:password@example.com:8545/private-key?token=secret#fragment";
+
+        assert_eq!(redact_url(url), "https://example.com:8545/");
+        assert_eq!(redact_url("not a URL with secret"), "<redacted>");
+    }
+
+    #[test]
+    fn invalid_provider_url_error_is_redacted() {
+        let builder = ProviderBuilder::<AnyNetwork>::new(
+            "https://example.com:bad/private-api-key?token=secret",
+        );
+
+        let error = builder.url.unwrap_err().to_string();
+        assert!(error.contains("<redacted>"));
+        assert!(!error.contains("private-api-key"));
+        assert!(!error.contains("secret"));
+    }
 
     #[test]
     fn method_not_found_classification_is_exact() {

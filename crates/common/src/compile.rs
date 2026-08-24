@@ -4,7 +4,10 @@ use crate::{
     TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
 };
 use alloy_json_abi::JsonAbi;
-use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
+use comfy_table::{
+    Cell, Color, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
+};
 use eyre::{OptionExt, Result};
 use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
@@ -530,9 +533,9 @@ impl SizeReport {
     fn format_table_output(&self) -> Table {
         let mut table = Table::new();
         if shell::is_markdown() {
-            table.load_preset(ASCII_MARKDOWN);
+            table.load_style(ASCII_MARKDOWN);
         } else {
-            table.apply_modifier(UTF8_ROUND_CORNERS);
+            table.load_style(ASCII_FULL.with_rounded_corners());
         }
 
         table.set_header(vec![

@@ -1,7 +1,7 @@
 //! Foundry's main executor backend abstraction and implementation.
 
 use crate::{
-    FoundryBlock, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
+    FoundryBlock, FoundryChain, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
         BlockContext, BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
@@ -332,7 +332,7 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
 
     /// Returns transaction-position context for a synthetic transaction on the active database.
     fn chain_context_for_synthetic_transaction(&self, tx: &F::Tx) -> eyre::Result<F::Chain> {
-        Ok(F::default().chain_context_for_transaction(tx))
+        Ok(F::Chain::for_transaction(tx))
     }
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -1163,7 +1163,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         tx: &TxEnvFor<FEN>,
     ) -> eyre::Result<ChainFor<FEN>> {
         if !self.networks.is_monad() {
-            return Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx));
+            return Ok(ChainFor::<FEN>::for_transaction(tx));
         }
 
         let fork = self.inner.get_fork_by_id(id)?;
@@ -1301,7 +1301,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 let block_context = Self::block_context_inputs_from_backend(&backend, &block)?;
                 block_context.into_child().next_transaction(tx)
             } else {
-                FEN::EvmFactory::default().chain_context_for_transaction(tx)
+                ChainFor::<FEN>::for_transaction(tx)
             };
             ContextUpdate::Replace(chain_context)
         } else {
@@ -1510,7 +1510,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 };
                 Self::context_for_block_position(context.clone(), position, tx)?
             } else {
-                FEN::EvmFactory::default().chain_context_for_transaction(tx)
+                ChainFor::<FEN>::for_transaction(tx)
             };
             ContextUpdate::Replace(chain_context)
         } else if _affects_active {
@@ -1687,7 +1687,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         tx: &TxEnvFor<FEN>,
     ) -> eyre::Result<ChainFor<FEN>> {
         self.block_context_for_synthetic_transaction()?.map_or_else(
-            || Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx)),
+            || Ok(ChainFor::<FEN>::for_transaction(tx)),
             |context| Ok(context.next_transaction(tx)),
         )
     }
@@ -2048,7 +2048,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         let chain_context = if let Some((current_tx_index, _)) = current_tx_position {
             block_context.as_ref().expect("created above").transaction(current_tx_index)
         } else {
-            FEN::EvmFactory::default().chain_context_for_transaction(&tx_env)
+            ChainFor::<FEN>::for_transaction(&tx_env)
         };
 
         let next_position = if let Some((current_tx_index, transaction_count)) = current_tx_position
@@ -2077,7 +2077,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
                     _outer_tx_env,
                 )?
             } else {
-                FEN::EvmFactory::default().chain_context_for_transaction(_outer_tx_env)
+                ChainFor::<FEN>::for_transaction(_outer_tx_env)
             })
         } else {
             ContextUpdate::Rebase
@@ -3041,10 +3041,6 @@ fn fork_block_number(fork: &ForkId) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::{Fork, apply_state_changeset};
-    #[cfg(feature = "monad")]
-    use crate::evm::MonadEvmNetwork;
-    #[cfg(feature = "monad")]
-    use crate::fork::CreateFork;
     use crate::{
         backend::{Backend, ForkPosition},
         evm::EthEvmNetwork,
@@ -3282,8 +3278,13 @@ mod tests {
             opts
         }
 
-        fn target_fork(opts: EvmOpts, url: String) -> CreateFork {
-            CreateFork { url, enable_caching: false, evm_opts: opts, expected_context: None }
+        fn target_fork(opts: EvmOpts, url: String) -> crate::fork::CreateFork {
+            crate::fork::CreateFork {
+                url,
+                enable_caching: false,
+                evm_opts: opts,
+                expected_context: None,
+            }
         }
 
         let (ethereum_base_api, ethereum_base) = spawn(NodeConfig::test()).await;
@@ -3309,7 +3310,7 @@ mod tests {
 
         let inferred_monad = pinned_opts(monad_base.http_endpoint(), None).await;
         assert!(inferred_monad.fork_network_is_inferred);
-        let error = Backend::<MonadEvmNetwork>::spawn(Some(target_fork(
+        let error = Backend::<crate::evm::MonadEvmNetwork>::spawn(Some(target_fork(
             inferred_monad,
             ethereum_target.http_endpoint(),
         )))
@@ -3333,7 +3334,7 @@ mod tests {
         let explicit_monad =
             pinned_opts(monad_base.http_endpoint(), Some(NetworkConfigs::with_monad())).await;
         assert!(!explicit_monad.fork_network_is_inferred);
-        let _backend = Backend::<MonadEvmNetwork>::spawn(Some(target_fork(
+        let _backend = Backend::<crate::evm::MonadEvmNetwork>::spawn(Some(target_fork(
             explicit_monad,
             ethereum_target.http_endpoint(),
         )))
@@ -3372,6 +3373,8 @@ mod tests {
             chain: None,
             block_env: evm_env.block_env,
             hosts: Default::default(),
+            fork_hash: None,
+            source_id: None,
         };
 
         let db = BlockchainDb::new(

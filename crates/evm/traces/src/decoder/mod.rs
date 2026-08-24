@@ -15,8 +15,6 @@ use foundry_common::{
     get_contract_name, selectors::SelectorKind,
 };
 use foundry_config::TracingConfig;
-#[cfg(feature = "monad")]
-use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
 use foundry_evm_core::{
     abi::{Vm, console},
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
@@ -28,14 +26,10 @@ use foundry_evm_core::{
     },
 };
 #[cfg(feature = "monad")]
-use foundry_evm_hardforks::MonadHardfork;
+type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::TempoHardfork;
-#[cfg(feature = "monad")]
-use foundry_evm_networks::is_monad_precompile_active_at;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant, celo::transfer::CELO_TRANSFER_LABEL};
 use itertools::Itertools;
-#[cfg(feature = "monad")]
-use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
 use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 
@@ -56,9 +50,6 @@ use tempo_precompiles::{
 #[cfg(feature = "monad")]
 mod monad;
 pub(crate) mod precompiles;
-
-#[cfg(feature = "monad")]
-use monad::{IMonadStaking, IMonadStakingSyscalls, IReserveBalance};
 
 #[cfg(not(feature = "monad"))]
 type MonadHardfork = ();
@@ -657,15 +648,31 @@ impl CallTraceDecoder {
         }
         let Some(hardfork) = self.monad_hardfork else { return };
 
-        self.labels.entry(MONAD_CHEATCODE_ADDRESS).or_insert_with(|| "MonadVM".to_string());
-        self.register_address_abi(STAKING_ADDRESS, &IMonadStaking::abi::contract());
-        self.register_address_abi(STAKING_ADDRESS, &IMonadStakingSyscalls::abi::contract());
-        self.labels.entry(STAKING_ADDRESS).or_insert_with(|| "Staking".to_string());
+        self.labels
+            .entry(foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS)
+            .or_insert_with(|| "MonadVM".to_string());
+        self.register_address_abi(
+            monad_revm::staking::STAKING_ADDRESS,
+            &monad::IMonadStaking::abi::contract(),
+        );
+        self.register_address_abi(
+            monad_revm::staking::STAKING_ADDRESS,
+            &monad::IMonadStakingSyscalls::abi::contract(),
+        );
+        self.labels
+            .entry(monad_revm::staking::STAKING_ADDRESS)
+            .or_insert_with(|| "Staking".to_string());
 
-        if is_monad_precompile_active_at(RESERVE_BALANCE_ADDRESS, hardfork) {
-            self.register_address_abi(RESERVE_BALANCE_ADDRESS, &IReserveBalance::abi::contract());
+        if foundry_evm_networks::is_monad_precompile_active_at(
+            monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            hardfork,
+        ) {
+            self.register_address_abi(
+                monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+                &monad::IReserveBalance::abi::contract(),
+            );
             self.labels
-                .entry(RESERVE_BALANCE_ADDRESS)
+                .entry(monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
                 .or_insert_with(|| "ReserveBalance".to_string());
         }
     }
@@ -1609,15 +1616,8 @@ fn constructor_signature(constructor: &Constructor) -> String {
 mod tests {
     use super::*;
     use alloy_primitives::{address, aliases::U96, hex};
-    #[cfg(feature = "monad")]
-    use alloy_sol_types::TopicList;
     use alloy_sol_types::{SolCall, SolError, SolEvent};
     use foundry_evm_core::precompiles::P256_VERIFY;
-    #[cfg(feature = "monad")]
-    use monad_revm::{
-        reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
-        staking::interface::IMonadStaking::{getEpochCall, getEpochReturn},
-    };
     use std::borrow::Cow;
 
     #[cfg(feature = "monad")]
@@ -1648,7 +1648,7 @@ mod tests {
     #[cfg(feature = "monad")]
     fn typed_event_abi_item<E: SolEvent>() -> (String, usize, String) {
         let signature_topics = usize::from(!E::ANONYMOUS);
-        let indexed_inputs = <E::TopicList as TopicList>::COUNT - signature_topics;
+        let indexed_inputs = <E::TopicList as alloy_sol_types::TopicList>::COUNT - signature_topics;
         (E::SIGNATURE_HASH.to_string(), indexed_inputs, E::SIGNATURE.to_string())
     }
 
@@ -1669,9 +1669,9 @@ mod tests {
             staking::interface::IMonadStaking as RevmMonadStaking,
         };
 
-        let local_staking_functions = IMonadStaking::abi::functions()
+        let local_staking_functions = monad::IMonadStaking::abi::functions()
             .into_values()
-            .chain(IMonadStakingSyscalls::abi::functions().into_values())
+            .chain(monad::IMonadStakingSyscalls::abi::functions().into_values())
             .flatten();
         let mut revm_staking_functions = vec![
             typed_call_abi_item::<RevmMonadStaking::addValidatorCall>(),
@@ -1716,19 +1716,19 @@ mod tests {
         ];
         revm_staking_events.sort();
         assert_eq!(
-            event_abi_items(IMonadStaking::abi::events().into_values().flatten()),
+            event_abi_items(monad::IMonadStaking::abi::events().into_values().flatten()),
             revm_staking_events,
             "Monad staking event selectors drifted from monad_revm",
         );
 
         assert_eq!(
-            function_abi_items(IReserveBalance::abi::functions().into_values().flatten()),
+            function_abi_items(monad::IReserveBalance::abi::functions().into_values().flatten()),
             vec![typed_call_abi_item::<RevmReserveBalance::dippedIntoReserveCall>()],
             "Monad reserve-balance function selectors drifted from monad_revm",
         );
 
         assert_eq!(
-            event_abi_items(IReserveBalance::abi::events().into_values().flatten()),
+            event_abi_items(monad::IReserveBalance::abi::events().into_values().flatten()),
             Vec::<(String, usize, String)>::new(),
             "Monad reserve-balance event selectors drifted from monad_revm",
         );
@@ -2742,13 +2742,18 @@ mod tests {
     #[cfg(feature = "monad")]
     async fn test_decodes_monad_staking_precompile_call() {
         let trace = CallTrace {
-            address: STAKING_ADDRESS,
-            data: getEpochCall::SELECTOR.to_vec().into(),
-            output: getEpochCall::abi_encode_returns(&getEpochReturn {
-                epoch: 42,
-                inEpochDelayPeriod: true,
-            })
-            .into(),
+            address: monad_revm::staking::STAKING_ADDRESS,
+            data: monad_revm::staking::interface::IMonadStaking::getEpochCall::SELECTOR
+                .to_vec()
+                .into(),
+            output:
+                monad_revm::staking::interface::IMonadStaking::getEpochCall::abi_encode_returns(
+                    &monad_revm::staking::interface::IMonadStaking::getEpochReturn {
+                        epoch: 42,
+                        inEpochDelayPeriod: true,
+                    },
+                )
+                .into(),
             success: true,
             ..Default::default()
         };
@@ -2767,8 +2772,8 @@ mod tests {
     async fn test_decodes_monad_staking_syscall() {
         let block_author = Address::from([0x42; 20]);
         let trace = CallTrace {
-            address: STAKING_ADDRESS,
-            data: IMonadStakingSyscalls::syscallRewardCall { blockAuthor: block_author }
+            address: monad_revm::staking::STAKING_ADDRESS,
+            data: monad::IMonadStakingSyscalls::syscallRewardCall { blockAuthor: block_author }
                 .abi_encode()
                 .into(),
             success: true,
@@ -2789,8 +2794,10 @@ mod tests {
     #[cfg(feature = "monad")]
     async fn test_decodes_monad_reserve_balance_precompile_call() {
         let trace = CallTrace {
-            address: RESERVE_BALANCE_ADDRESS,
-            data: dippedIntoReserveCall::SELECTOR.to_vec().into(),
+            address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            data: monad_revm::reserve_balance::interface::IReserveBalance::dippedIntoReserveCall::SELECTOR
+                .to_vec()
+                .into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -2819,7 +2826,8 @@ mod tests {
         );
 
         let decoder = monad_decoder(MonadHardfork::MonadEight);
-        let decoded = decoder.decode_event_with_address(STAKING_ADDRESS, &log).await;
+        let decoded =
+            decoder.decode_event_with_address(monad_revm::staking::STAKING_ADDRESS, &log).await;
 
         assert_eq!(decoded.name.as_deref(), Some("Delegate"));
         let params = decoded.params.expect("params");
@@ -2828,7 +2836,12 @@ mod tests {
         assert_eq!(params[2], ("amount".to_string(), "1000".to_string()));
         assert_eq!(params[3], ("activationEpoch".to_string(), "9".to_string()));
 
-        let collision = decoder.decode_event_with_address(RESERVE_BALANCE_ADDRESS, &log).await;
+        let collision = decoder
+            .decode_event_with_address(
+                monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+                &log,
+            )
+            .await;
         assert_eq!(collision.name, None);
     }
 
@@ -2836,18 +2849,27 @@ mod tests {
     #[cfg(feature = "monad")]
     async fn test_monad_metadata_is_not_registered_for_ethereum() {
         let decoder = CallTraceDecoderBuilder::new().with_chain_id(Some(1)).build();
-        for address in [MONAD_CHEATCODE_ADDRESS, STAKING_ADDRESS, RESERVE_BALANCE_ADDRESS] {
+        for address in [
+            foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS,
+            monad_revm::staking::STAKING_ADDRESS,
+            monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+        ] {
             assert!(!decoder.labels.contains_key(&address));
         }
 
         let staking_trace = CallTrace {
-            address: STAKING_ADDRESS,
-            data: getEpochCall::SELECTOR.to_vec().into(),
-            output: getEpochCall::abi_encode_returns(&getEpochReturn {
-                epoch: 42,
-                inEpochDelayPeriod: true,
-            })
-            .into(),
+            address: monad_revm::staking::STAKING_ADDRESS,
+            data: monad_revm::staking::interface::IMonadStaking::getEpochCall::SELECTOR
+                .to_vec()
+                .into(),
+            output:
+                monad_revm::staking::interface::IMonadStaking::getEpochCall::abi_encode_returns(
+                    &monad_revm::staking::interface::IMonadStaking::getEpochReturn {
+                        epoch: 42,
+                        inEpochDelayPeriod: true,
+                    },
+                )
+                .into(),
             success: true,
             ..Default::default()
         };
@@ -2858,8 +2880,10 @@ mod tests {
         );
 
         let reserve_trace = CallTrace {
-            address: RESERVE_BALANCE_ADDRESS,
-            data: dippedIntoReserveCall::SELECTOR.to_vec().into(),
+            address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            data: monad_revm::reserve_balance::interface::IReserveBalance::dippedIntoReserveCall::SELECTOR
+                .to_vec()
+                .into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -2882,7 +2906,10 @@ mod tests {
             ],
             (U256::from(1000), 9_u64).abi_encode().into(),
         );
-        for address in [STAKING_ADDRESS, RESERVE_BALANCE_ADDRESS] {
+        for address in [
+            monad_revm::staking::STAKING_ADDRESS,
+            monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+        ] {
             let decoded = decoder.decode_event_with_address(address, &log).await;
             assert_eq!(decoded.name, None);
         }
@@ -2894,15 +2921,27 @@ mod tests {
         let mut monad_eight = monad_decoder(MonadHardfork::MonadEight);
         monad_eight.clear_addresses();
         assert_eq!(
-            monad_eight.labels.get(&MONAD_CHEATCODE_ADDRESS).map(String::as_str),
+            monad_eight
+                .labels
+                .get(&foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS)
+                .map(String::as_str),
             Some("MonadVM")
         );
-        assert_eq!(monad_eight.labels.get(&STAKING_ADDRESS).map(String::as_str), Some("Staking"));
-        assert!(!monad_eight.labels.contains_key(&RESERVE_BALANCE_ADDRESS));
+        assert_eq!(
+            monad_eight.labels.get(&monad_revm::staking::STAKING_ADDRESS).map(String::as_str),
+            Some("Staking")
+        );
+        assert!(
+            !monad_eight
+                .labels
+                .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+        );
 
         let trace = CallTrace {
-            address: RESERVE_BALANCE_ADDRESS,
-            data: dippedIntoReserveCall::SELECTOR.to_vec().into(),
+            address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            data: monad_revm::reserve_balance::interface::IReserveBalance::dippedIntoReserveCall::SELECTOR
+                .to_vec()
+                .into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -2916,7 +2955,10 @@ mod tests {
         let mut monad_nine = monad_decoder(MonadHardfork::MonadNine);
         monad_nine.clear_addresses();
         assert_eq!(
-            monad_nine.labels.get(&RESERVE_BALANCE_ADDRESS).map(String::as_str),
+            monad_nine
+                .labels
+                .get(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+                .map(String::as_str),
             Some("ReserveBalance")
         );
         let after = monad_nine.decode_function(&trace).await;
@@ -2930,8 +2972,10 @@ mod tests {
     #[cfg(feature = "monad")]
     async fn test_monad_metadata_refreshes_across_hardforks() {
         let trace = CallTrace {
-            address: RESERVE_BALANCE_ADDRESS,
-            data: dippedIntoReserveCall::SELECTOR.to_vec().into(),
+            address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            data: monad_revm::reserve_balance::interface::IReserveBalance::dippedIntoReserveCall::SELECTOR
+                .to_vec()
+                .into(),
             output: true.abi_encode().into(),
             success: true,
             ..Default::default()
@@ -2941,7 +2985,10 @@ mod tests {
         decoder.set_monad_hardfork(Some(MonadHardfork::MonadNine));
         assert_eq!(decoder.monad_hardfork(), Some(MonadHardfork::MonadNine));
         assert_eq!(
-            decoder.labels.get(&RESERVE_BALANCE_ADDRESS).map(String::as_str),
+            decoder
+                .labels
+                .get(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+                .map(String::as_str),
             Some("ReserveBalance")
         );
         let monad_nine = decoder.decode_function(&trace).await;
@@ -2952,8 +2999,15 @@ mod tests {
 
         decoder.set_monad_hardfork(Some(MonadHardfork::MonadEight));
         assert_eq!(decoder.monad_hardfork(), Some(MonadHardfork::MonadEight));
-        assert!(!decoder.labels.contains_key(&RESERVE_BALANCE_ADDRESS));
-        assert_eq!(decoder.labels.get(&STAKING_ADDRESS).map(String::as_str), Some("Staking"));
+        assert!(
+            !decoder
+                .labels
+                .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
+        );
+        assert_eq!(
+            decoder.labels.get(&monad_revm::staking::STAKING_ADDRESS).map(String::as_str),
+            Some("Staking")
+        );
         let monad_eight = decoder.decode_function(&trace).await;
         assert_ne!(
             monad_eight.call_data.as_ref().map(|call| call.signature.as_str()),
@@ -3745,7 +3799,7 @@ mod tests {
 
         arena.nodes_mut().push(CallTraceNode {
             trace: CallTrace {
-                address: STAKING_ADDRESS,
+                address: monad_revm::staking::STAKING_ADDRESS,
                 depth: 1,
                 maybe_precompile: None,
                 ..Default::default()
@@ -3755,7 +3809,7 @@ mod tests {
         });
         arena.nodes_mut().push(CallTraceNode {
             trace: CallTrace {
-                address: RESERVE_BALANCE_ADDRESS,
+                address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
                 depth: 1,
                 maybe_precompile: None,
                 ..Default::default()
@@ -3781,7 +3835,7 @@ mod tests {
 
         arena.nodes_mut().push(CallTraceNode {
             trace: CallTrace {
-                address: STAKING_ADDRESS,
+                address: monad_revm::staking::STAKING_ADDRESS,
                 depth: 1,
                 maybe_precompile: None,
                 ..Default::default()
@@ -3791,7 +3845,7 @@ mod tests {
         });
         arena.nodes_mut().push(CallTraceNode {
             trace: CallTrace {
-                address: RESERVE_BALANCE_ADDRESS,
+                address: monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
                 depth: 1,
                 maybe_precompile: None,
                 ..Default::default()
@@ -3805,7 +3859,11 @@ mod tests {
 
         assert_eq!(
             identifier.queried,
-            vec![regular_addr, STAKING_ADDRESS, RESERVE_BALANCE_ADDRESS]
+            vec![
+                regular_addr,
+                monad_revm::staking::STAKING_ADDRESS,
+                monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
+            ]
         );
     }
 
@@ -3813,7 +3871,7 @@ mod tests {
     #[cfg(feature = "monad")]
     fn execution_network_overrides_nested_source_monad_precompile_detection() {
         assert!(!precompiles::is_known_precompile(
-            RESERVE_BALANCE_ADDRESS,
+            monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
             Some(NetworkVariant::Ethereum.into()),
             Some(143),
             None,

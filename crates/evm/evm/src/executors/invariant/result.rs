@@ -510,6 +510,7 @@ mod tests {
                 EvmEnvFor::<EthEvmNetwork>::default(),
                 TxEnvFor::<EthEvmNetwork>::default(),
                 backend,
+                Default::default(),
             );
         let invariant_address = Address::repeat_byte(0x11);
         executor

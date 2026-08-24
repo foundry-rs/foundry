@@ -3,7 +3,8 @@ use crate::result::{SuiteTestResult, TestKindReport, TestOutcome};
 use alloy_primitives::{U256, map::HashMap};
 use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
 use comfy_table::{
-    Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
+    Cell, Color, Row, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
 use eyre::{Context, Result};
 use foundry_cli::utils::STATIC_FUZZ_SEED;
@@ -349,9 +350,9 @@ fn write_to_gas_snapshot_file(
 fn build_gas_snapshot_table(tests: &[SuiteTestResult]) -> Table {
     let mut table = Table::new();
     if shell::is_markdown() {
-        table.load_preset(ASCII_MARKDOWN);
+        table.load_style(ASCII_MARKDOWN);
     } else {
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        table.load_style(ASCII_FULL.with_rounded_corners());
     }
 
     table.set_header(vec![
