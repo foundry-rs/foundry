@@ -77,6 +77,44 @@ def exact_release(all_releases, tag):
     return matches[0]
 
 
+def tag_commit(commands, repo, tag):
+    raw = commands.output(["gh", "api", f"repos/{repo}/git/ref/tags/{tag}", "--jq", ".object"])
+    try:
+        target = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ReleaseError(f"could not parse Git tag {tag}: {raw}") from error
+    seen = set()
+    while target.get("type") == "tag":
+        sha = target.get("sha")
+        if sha in seen:
+            raise ReleaseError(f"Git tag {tag} contains a tag-object cycle")
+        seen.add(sha)
+        raw = commands.output(["gh", "api", f"repos/{repo}/git/tags/{sha}", "--jq", ".object"])
+        try:
+            target = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise ReleaseError(f"could not parse Git tag object {sha}: {raw}") from error
+    sha = target.get("sha")
+    if target.get("type") != "commit" or not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ReleaseError(f"Git tag {tag} does not resolve to a full commit SHA")
+    return sha
+
+
+def create_or_verify_tag(commands, repo, tag, commit):
+    args = [
+        "gh", "api", "--method", "POST", f"repos/{repo}/git/refs",
+        "-f", f"ref=refs/tags/{tag}", "-f", f"sha={commit}",
+    ]
+    result = commands.run(args, check=False)
+    try:
+        actual = tag_commit(commands, repo, tag)
+    except ReleaseError as error:
+        detail = (result.stderr or result.stdout).strip()
+        raise ReleaseError(f"could not create or verify Git tag {tag}: {detail}") from error
+    if actual != commit:
+        raise ReleaseError(f"Git tag {tag} resolves to {actual}, expected {commit}")
+
+
 def stable_aliases(candidate, all_releases):
     version = tuple(int(value) for value in STABLE.fullmatch(candidate).groups())
     versions = [version]
@@ -131,6 +169,13 @@ def publish(commands, tag, prerelease, latest):
         "gh", "release", "edit", tag, "--draft=false",
         f"--prerelease={'true' if prerelease else 'false'}",
         f"--latest={'true' if latest else 'false'}",
+    ])
+
+
+def publish_staged(commands, release_tag, tag, commit):
+    commands.run([
+        "gh", "release", "edit", release_tag, "--tag", tag, "--target", commit, "--draft=false",
+        "--prerelease=true", "--latest=false",
     ])
 
 
@@ -201,25 +246,49 @@ def nightly_eligible(commands, image, candidate_sha):
     raise ReleaseError(f"could not compare nightly history {current}..{candidate_sha}: {(result.stderr or result.stdout).strip()}")
 
 
-def finalize_nightly(commands, repo, image, tag, expected=None):
+def finalize_nightly(commands, repo, image, tag, release_tag, expected=None):
     _, sha = parse_tag(tag, "nightly")
+    if release_tag != f"staging-release-{sha}":
+        raise ReleaseError(f"staging release tag does not match nightly commit: {release_tag}")
     digest = verify_exact(commands, image, tag, expected)
-    state = exact_release(releases(commands, repo), tag)
-    commit = commands.output(["git", "rev-parse", f"{tag}^{{commit}}"])
-    if commit != sha or not state.get("prerelease"):
-        raise ReleaseError(f"release {tag} has unexpected state/classification")
-    if state.get("draft"):
-        publish(commands, tag, True, False)
-    if nightly_eligible(commands, image, sha):
-        promote(commands, image, digest, "nightly")
+    all_releases = releases(commands, repo)
+    final = [release for release in all_releases if release.get("tag_name") == tag]
+    staging = [release for release in all_releases if release.get("tag_name") == release_tag]
+    if len(final) > 1 or len(staging) > 1:
+        raise ReleaseError("found duplicate final or staging nightly releases")
+    if final and staging:
+        raise ReleaseError(f"both final release {tag} and staging release {release_tag} exist")
+    if final:
+        state = final[0]
+        if state.get("draft"):
+            raise ReleaseError(f"final nightly release {tag} unexpectedly exists as a draft")
+    elif staging:
+        state = staging[0]
+        if not state.get("draft"):
+            raise ReleaseError(f"staging nightly release {release_tag} is already published")
+        if state.get("target_commitish") != sha:
+            raise ReleaseError(f"staging nightly release {release_tag} targets an unexpected commit")
     else:
-        print(f"Not moving nightly: {tag} is not a descendant of the current nightly image.")
+        raise ReleaseError(f"expected final release {tag} or staging release {release_tag}")
+    if not state.get("prerelease"):
+        raise ReleaseError(f"release {tag} has unexpected state/classification")
+    if final and tag_commit(commands, repo, tag) != sha:
+        raise ReleaseError(f"release tag {tag} does not resolve to its encoded commit")
+    if not nightly_eligible(commands, image, sha):
+        print(f"Not publishing nightly: {tag} is not a descendant of the current nightly image.")
+        return
+    if staging:
+        create_or_verify_tag(commands, repo, tag, sha)
+    promote(commands, image, digest, "nightly")
+    if staging:
+        publish_staged(commands, release_tag, tag, sha)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("stable", "nightly"))
     parser.add_argument("--tag", required=True)
+    parser.add_argument("--release-tag")
     parser.add_argument("--digest")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
     parser.add_argument("--image")
@@ -231,7 +300,9 @@ def main():
         if args.mode == "stable":
             finalize_stable(Commands(), args.repo, image, args.tag)
         else:
-            finalize_nightly(Commands(), args.repo, image, args.tag, args.digest)
+            if not args.release_tag:
+                parser.error("--release-tag is required for nightly releases")
+            finalize_nightly(Commands(), args.repo, image, args.tag, args.release_tag, args.digest)
     except ReleaseError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
