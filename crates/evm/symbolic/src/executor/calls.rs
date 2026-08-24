@@ -15,6 +15,24 @@ impl SymbolicExecutor {
             || (state.is_static && matches!(kind, CallKind::Call)))
         .then(|| state.clone());
         let call_pc = state.pc.saturating_sub(1);
+
+        let has_value = matches!(kind, CallKind::Call | CallKind::CallCode);
+        let in_offset_idx = if has_value { 3 } else { 2 };
+        let in_offset = state.stack.peek(in_offset_idx)?.clone();
+        let in_size = state.stack.peek(in_offset_idx + 1)?.clone();
+        let out_offset = state.stack.peek(in_offset_idx + 2)?.clone();
+        let out_size = state.stack.peek(in_offset_idx + 3)?.clone();
+        if let Some(outcome) =
+            self.guard_memory_range(executor, state, worklist, &in_offset, &in_size)?
+        {
+            return Ok(outcome);
+        }
+        if let Some(outcome) =
+            self.guard_memory_range(executor, state, worklist, &out_offset, &out_size)?
+        {
+            return Ok(outcome);
+        }
+
         let gas = state.stack.pop()?;
         if gas.contains_gasleft() && !gas.is_raw_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
@@ -86,6 +104,9 @@ impl SymbolicExecutor {
                 BoundedCopySize::Symbolic { size: out_size, max_size }
             }
         };
+
+        in_size.expand_memory(&mut self.cx, &mut state.memory, in_offset.clone());
+        out_size.expand_memory(&mut self.cx, &mut state.memory, out_offset.clone());
 
         if state.is_static && matches!(kind, CallKind::Call) {
             match state.constrained_word(&mut self.cx, &value) {
