@@ -447,7 +447,7 @@ impl SequenceMutator {
         let end1 = rng.random_range(start1..first.len());
         let start2 = rng.random_range(0..second.len());
         let end2 = rng.random_range(start2..second.len());
-        first[start1..end1].iter().chain(&second[start2..end2]).cloned().collect()
+        first[start1..=end1].iter().chain(&second[start2..=end2]).cloned().collect()
     }
 
     fn repeat(sequence: &[BasicTxDetails], runner: &mut TestRunner) -> Vec<BasicTxDetails> {
@@ -715,6 +715,38 @@ mod tests {
             tx(7).sender
         );
         assert_eq!(SequenceMutator::suffix(&sequence, vec![tx(9)])[0].warp, sequence[0].warp);
+    }
+
+    #[test]
+    fn splice_retains_singleton_entries() {
+        let mut runner = TestRunner::deterministic();
+        let result = SequenceMutator::splice(&[tx(1)], &[tx(2)], &mut runner);
+
+        assert_eq!(
+            result.iter().map(|tx| tx.sender).collect::<Vec<_>>(),
+            [tx(1).sender, tx(2).sender]
+        );
+    }
+
+    #[test]
+    fn splice_can_select_final_transactions() {
+        let first = [tx(1), tx(2)];
+        let second = [tx(3), tx(4)];
+        let mut runner = TestRunner::deterministic();
+        let mut selected_first_final = false;
+        let mut selected_second_final = false;
+
+        for _ in 0..1000 {
+            let result = SequenceMutator::splice(&first, &second, &mut runner);
+            selected_first_final |= result.iter().any(|tx| tx.sender == first[1].sender);
+            selected_second_final |= result.iter().any(|tx| tx.sender == second[1].sender);
+        }
+
+        assert!(selected_first_final, "splice never selected the first entry's final transaction");
+        assert!(
+            selected_second_final,
+            "splice never selected the second entry's final transaction"
+        );
     }
 
     #[test]

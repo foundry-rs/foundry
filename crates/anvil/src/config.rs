@@ -39,11 +39,9 @@ use anvil_server::ServerConfig;
 use eyre::{Context, Result};
 use foundry_common::{
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
-    provider::{ProviderBuilder, RetryProvider, is_rpc_method_not_found},
+    provider::{ProviderBuilder, RetryProvider, is_rpc_method_not_found, redact_url},
 };
 use foundry_config::Config;
-#[cfg(feature = "monad")]
-use foundry_evm::hardfork::MonadHardfork;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, ForkBlock, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
@@ -123,7 +121,7 @@ impl AnvilNodeInfoProbe {
                 self.identified = true;
                 Ok(Some(node_info))
             }
-            Err(_) if !self.identified => Ok(None),
+            Err(error) if !self.identified && is_rpc_method_not_found(&error) => Ok(None),
             Err(error) => {
                 Err(error).wrap_err("failed to determine network family from fork endpoint")
             }
@@ -368,7 +366,7 @@ Block number:   {}
 Block hash:     {:?}
 Chain ID:       {}
 "#,
-                fork.eth_rpc_url().as_deref().unwrap_or("none"),
+                fork.eth_rpc_url().as_deref().map(redact_url).unwrap_or_else(|| "none".to_string()),
                 fork.block_number(),
                 fork.block_hash(),
                 fork.execution_chain_id()
@@ -380,7 +378,7 @@ Chain ID:       {}
             if self.fork_urls.len() > 1 {
                 let _ = writeln!(s, "Endpoints:      {}", self.fork_urls.len());
                 for (i, url) in self.fork_urls.iter().enumerate() {
-                    let _ = writeln!(s, "  ({i}) {url}");
+                    let _ = writeln!(s, "  ({i}) {}", redact_url(url));
                 }
             }
 
@@ -503,7 +501,7 @@ Genesis Number
             json!({
               "available_accounts": available_accounts,
               "private_keys": private_keys,
-              "endpoint": fork.eth_rpc_url().unwrap_or_default(),
+              "endpoint": fork.eth_rpc_url().as_deref().map(redact_url).unwrap_or_default(),
               "block_number": fork.block_number(),
               "block_hash": fork.block_hash(),
               "chain_id": fork.execution_chain_id(),
@@ -1429,7 +1427,9 @@ impl NodeConfig {
         #[cfg(feature = "monad")]
         {
             decoder_builder = decoder_builder.with_monad_hardfork(
-                self.networks.is_monad().then(|| MonadHardfork::from(active_hardfork)),
+                self.networks
+                    .is_monad()
+                    .then(|| foundry_evm::hardfork::MonadHardfork::from(active_hardfork)),
             );
         }
         if self.print_traces {
@@ -1749,7 +1749,7 @@ impl NodeConfig {
                     "fork endpoints must use the same chain ID: expected {}, got {} from {}",
                     expected.source_chain_id,
                     before.source_chain_id,
-                    eth_rpc_url
+                    redact_url(eth_rpc_url)
                 );
             }
             return Ok(
@@ -1819,7 +1819,7 @@ impl NodeConfig {
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig, Option<ForkTransactionReplay>)> {
-        debug!(target: "node", ?eth_rpc_url, "setting up fork db");
+        debug!(target: "node", eth_rpc_url=%redact_url(&eth_rpc_url), "setting up fork db");
         if self.fork_chain_id.is_some() {
             eyre::ensure!(
                 self.fork_urls.len() == 1,
@@ -2023,8 +2023,9 @@ latest block number: {latest_block}"
                 .await?
             {
                 eyre::bail!(
-                    "fork fallback endpoint `{mirror_url}` does not expose the primary endpoint's \
-                     execution and block context"
+                    "fork fallback endpoint `{}` does not expose the primary endpoint's execution \
+                     and block context",
+                    redact_url(mirror_url)
                 );
             }
         }
@@ -2047,7 +2048,8 @@ latest block number: {latest_block}"
         // configured. This ensures bootstrap used only the primary endpoint for consistency,
         // while ongoing requests are distributed across all endpoints.
         let provider = if self.fork_urls.len() > 1 {
-            debug!(target: "node", urls=?self.fork_urls, "using multi-endpoint round-robin provider");
+            let urls = self.fork_urls.iter().map(|url| redact_url(url)).collect::<Vec<_>>();
+            debug!(target: "node", ?urls, "using multi-endpoint round-robin provider");
             Arc::new(
                 ProviderBuilder::new(&eth_rpc_url)
                     .timeout(self.fork_request_timeout)
@@ -2448,6 +2450,34 @@ mod tests {
 
     use super::*;
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_output_redacts_endpoint_credentials() {
+        let (_api, source) = crate::spawn(NodeConfig::test()).await;
+        let fork_url = source.http_endpoint().replacen("http://", "http://user:password@", 1)
+            + "/?api_key=secret";
+        let mut config = NodeConfig::test().with_eth_rpc_url(Some(fork_url.clone()));
+        let (api, _handle) = crate::spawn(config.clone()).await;
+        config.fork_urls.push("https://mirror.example/private-api-key?token=secret".to_string());
+
+        let fork = api.backend.get_fork().unwrap();
+        let output = config.as_string(Some(&fork));
+        let temp = tempfile::tempdir().unwrap();
+        let config_out = temp.path().join("config.json");
+        config.config_out = Some(config_out.clone());
+        config.print(Some(&fork)).unwrap();
+        let json = serde_json::from_slice::<Value>(&std::fs::read(config_out).unwrap()).unwrap();
+
+        assert!(output.contains(&redact_url(&fork_url)));
+        assert!(output.contains("https://mirror.example/"));
+        assert!(!output.contains("user"));
+        assert!(!output.contains("password"));
+        assert!(!output.contains("private-api-key"));
+        assert!(!output.contains("secret"));
+        assert_eq!(json["endpoint"], redact_url(&fork_url));
+        assert!(!json.to_string().contains("password"));
+        assert!(!json.to_string().contains("secret"));
+    }
+
     #[test]
     fn fork_source_identity_includes_all_urls_and_headers() {
         let urls = ["http://primary".to_string(), "http://fallback".to_string()];
@@ -2671,7 +2701,10 @@ mod tests {
         config.fork_source_chain_id = Some(143);
 
         assert_eq!(config.get_chain_id(), 1);
-        assert_eq!(config.get_hardfork(), FoundryHardfork::Monad(MonadHardfork::MonadEight));
+        assert_eq!(
+            config.get_hardfork(),
+            FoundryHardfork::Monad(foundry_evm::hardfork::MonadHardfork::MonadEight)
+        );
     }
 
     #[test]

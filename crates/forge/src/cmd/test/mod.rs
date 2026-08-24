@@ -59,12 +59,8 @@ use foundry_config::{
     fs_permissions::FsAccessPermission,
 };
 use foundry_debugger::{Debugger, DebuggerLayout};
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
-#[cfg(feature = "monad")]
-use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
     core::evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
@@ -2700,7 +2696,7 @@ impl TestArgs {
             }
             #[cfg(feature = "monad")]
             NetworkDispatchKind::Monad => {
-                self.build_and_run_tests::<MonadEvmNetwork>(
+                self.build_and_run_tests::<foundry_evm::core::evm::MonadEvmNetwork>(
                     config,
                     evm_opts,
                     output,
@@ -2752,7 +2748,9 @@ impl TestArgs {
                 .map(|runner| fuzz_minimize_replay(runner, filter)),
             #[cfg(feature = "monad")]
             NetworkDispatchKind::Monad => self
-                .build_fuzz_minimize_runner::<MonadEvmNetwork>(config, evm_opts, output, options)
+                .build_fuzz_minimize_runner::<foundry_evm::core::evm::MonadEvmNetwork>(
+                    config, evm_opts, output, options,
+                )
                 .await
                 .map(|runner| fuzz_minimize_replay(runner, filter)),
             #[cfg(feature = "optimism")]
@@ -2990,7 +2988,8 @@ impl TestArgs {
         #[cfg(feature = "monad")]
         {
             builder = builder.with_monad_hardfork(
-                resolved_hardfork.and_then(MonadHardfork::from_foundry_hardfork),
+                resolved_hardfork
+                    .and_then(foundry_evm::hardforks::MonadHardfork::from_foundry_hardfork),
             );
         }
         // Signatures are of no value for gas reports.

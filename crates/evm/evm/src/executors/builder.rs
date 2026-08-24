@@ -3,6 +3,7 @@ use foundry_evm_core::{
     backend::Backend,
     evm::{BlockEnvFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
 };
+use foundry_evm_networks::NetworkConfigs;
 use revm::context::{Block, Transaction};
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
@@ -83,8 +84,10 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
         mut evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
         db: Backend<FEN>,
+        networks: NetworkConfigs,
     ) -> Executor<FEN> {
         let Self { mut stack, gas_limit, spec, legacy_assertions, .. } = self;
+        stack.networks = networks;
         if stack.block.is_none() {
             stack.block = Some(evm_env.block_env.clone());
         }
@@ -95,6 +98,6 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
         if let Some(spec) = spec {
             evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
         }
-        Executor::new(db, evm_env, tx_env, stack.build(), gas_limit, legacy_assertions)
+        Executor::new(db, evm_env, tx_env, stack.build(), networks, gas_limit, legacy_assertions)
     }
 }

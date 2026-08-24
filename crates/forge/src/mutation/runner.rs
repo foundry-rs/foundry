@@ -21,8 +21,6 @@ use eyre::Result;
 use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::{Config, InlineConfig};
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -638,7 +636,7 @@ fn compile_and_test(
     } else {
         #[cfg(feature = "monad")]
         if evm.opts.networks.is_monad() {
-            return compile_and_test_inner::<MonadEvmNetwork>(
+            return compile_and_test_inner::<foundry_evm::core::evm::MonadEvmNetwork>(
                 config,
                 evm,
                 filter_args,

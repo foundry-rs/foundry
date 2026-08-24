@@ -13,8 +13,6 @@ use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_cli::utils::fetch_abi_from_etherscan;
 use foundry_config::{Chain, Config, RpcEndpointUrl};
-#[cfg(feature = "monad")]
-use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
@@ -141,8 +139,13 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         // Create new source with exact input appended and parse
         let (new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
 
-        let InspectResult { control_flow, formatted_output, last_result } =
+        let InspectResult { control_flow, formatted_output, last_result, replay_input } =
             source.inspect(input).await?;
+        let (new_source, do_execute) = if let Some(input) = replay_input {
+            source.clone_with_new_line(input)?
+        } else {
+            (new_source, do_execute)
+        };
         if let Some(last_result) = last_result {
             self.last_result = Some(last_result);
         }
@@ -186,7 +189,8 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         #[cfg(feature = "monad")]
         {
             builder = builder.with_monad_hardfork(
-                resolved_hardfork.and_then(MonadHardfork::from_foundry_hardfork),
+                resolved_hardfork
+                    .and_then(foundry_evm::hardforks::MonadHardfork::from_foundry_hardfork),
             );
         }
         let mut decoder = builder.build();
@@ -693,16 +697,7 @@ fn preprocess<'a>(input: &'a str, last_result: Option<&str>) -> Result<(bool, Co
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "monad")]
-    use foundry_config::SolcReq;
-    #[cfg(feature = "monad")]
-    use foundry_evm::core::evm::MonadEvmNetwork;
-    use foundry_evm::{
-        core::evm::EthEvmNetwork,
-        opts::{Env, EvmOpts},
-    };
-    #[cfg(feature = "monad")]
-    use semver::Version;
+    use foundry_evm::{core::evm::EthEvmNetwork, opts::EvmOpts};
 
     fn config_with_network(network: Option<&str>) -> Config {
         let mut config = Config::default();
@@ -767,12 +762,12 @@ mod tests {
         let evm_opts = EvmOpts {
             fork_url: Some("http://localhost:8545".to_string()),
             networks,
-            env: Env { chain_id: Some(143), ..Default::default() },
+            env: foundry_evm::opts::Env { chain_id: Some(143), ..Default::default() },
             ..Default::default()
         };
-        let config = SessionSourceConfig::<MonadEvmNetwork> {
+        let config = SessionSourceConfig::<foundry_evm::core::evm::MonadEvmNetwork> {
             foundry_config: Config {
-                solc: Some(SolcReq::Version(Version::new(0, 8, 29))),
+                solc: Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 29))),
                 networks,
                 chain: Some(Chain::from(143u64)),
                 ..Default::default()

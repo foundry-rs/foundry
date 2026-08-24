@@ -9,16 +9,12 @@ use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverabl
 use alloy_evm::{
     EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap,
 };
-#[cfg(feature = "monad")]
-use alloy_monad_evm::MonadEvmFactory;
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_config::ExecutionSpec;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
-#[cfg(feature = "monad")]
-use revm::inspector::Inspector;
 use revm::{
     Database,
     context::{
@@ -92,7 +88,7 @@ pub struct MonadEvmNetwork;
 #[cfg(feature = "monad")]
 impl FoundryEvmNetwork for MonadEvmNetwork {
     type Network = Ethereum;
-    type EvmFactory = MonadEvmFactory;
+    type EvmFactory = alloy_monad_evm::MonadEvmFactory;
 }
 
 /// Convenience type aliases for accessing associated types through [`FoundryEvmNetwork`].
@@ -136,8 +132,8 @@ pub trait FoundryEvmFactory:
     + Default
     + 'static
 {
-    /// Chain context required to execute at an exact transaction position.
-    type Chain: FoundryChain;
+    /// Chain type for EVM's context created by this factory.
+    type Chain: FoundryChain<Self::Tx>;
 
     /// Foundry Context abstraction
     type FoundryContext<'db>: FoundryContextExt<
@@ -171,30 +167,11 @@ pub trait FoundryEvmFactory:
         inspector: I,
     ) -> Self::FoundryEvm<'db, I>;
 
-    /// Builds chain context for a standalone synthetic transaction.
-    fn chain_context_for_transaction(&self, _tx: &Self::Tx) -> Self::Chain {
-        Self::Chain::default()
-    }
-
-    /// Builds chain context for a transaction at an exact block position.
-    fn chain_context_for_block(
-        &self,
-        _grandparent: &[Self::Tx],
-        _parent: &[Self::Tx],
-        _current: &[Self::Tx],
-        _current_tx_index: usize,
-    ) -> Self::Chain {
-        Self::Chain::default()
-    }
-
     /// Tries to execute a canonical system transaction on a regular Alloy EVM during replay.
     ///
     /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
     /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
     /// fall back to ordinary execution using the same EVM instance.
-    ///
-    /// Implementations that recognize a transaction here must provide equivalent recognition in
-    /// [`Self::try_transact_foundry_system_replay`].
     #[cfg(feature = "monad")]
     fn try_transact_system_replay<DB, I>(
         &self,
@@ -203,28 +180,8 @@ pub trait FoundryEvmFactory:
     ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>>
     where
         DB: alloy_evm::Database,
-        I: Inspector<Self::Context<DB>>,
+        I: revm::inspector::Inspector<Self::Context<DB>>,
     {
-        Ok(None)
-    }
-
-    /// Tries to execute a canonical system transaction on a Foundry-wrapped EVM with an inspector.
-    ///
-    /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
-    /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
-    /// fall back to ordinary execution using the same EVM instance.
-    ///
-    /// Implementations that recognize a transaction here must provide equivalent recognition in
-    /// [`Self::try_transact_system_replay`].
-    #[cfg(feature = "monad")]
-    fn try_transact_foundry_system_replay<
-        'db,
-        I: FoundryInspectorExt<Self::FoundryContext<'db>>,
-    >(
-        &self,
-        _evm: &mut Self::FoundryEvm<'db, I>,
-        _tx: &Self::Tx,
-    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>> {
         Ok(None)
     }
 
@@ -263,7 +220,7 @@ pub trait NestedEvm {
     /// The transaction environment type.
     type Tx: FoundryTransaction;
     /// Chain context identifying the active transaction position.
-    type Chain: FoundryChain;
+    type Chain: FoundryChain<Self::Tx>;
     /// The Journal type, which may own Monad's reserve-balance-tracker state.
     type Journal: FoundryJournal;
     /// Returns a mutable reference to the journal inner state (`JournaledState`).
@@ -282,16 +239,7 @@ pub trait NestedEvm {
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>>;
 
     /// Executes a full transaction with the given tx env.
-    fn transact_raw(
-        &mut self,
-        tx: Self::Tx,
-    ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>>;
-
-    /// Executes a canonical replay transaction.
-    #[cfg(feature = "monad")]
-    fn transact_replay(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>> {
-        self.transact_raw(tx).map_err(Into::into)
-    }
+    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>>;
 
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block>;
 }

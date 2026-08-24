@@ -20,10 +20,14 @@ pub(crate) use hard_arith_fallback::{
 #[cfg(test)]
 pub(crate) use monotonic_product::product_monotonic_unsat;
 use monotonic_product::{product_monotonic_unsat_normalized, remove_implied_monotonic_constraints};
-pub(crate) use opt::normalize_constraints_for_solver;
-use opt::{constraints_are_directly_unsat, sorted_bool_exprs_are_subset, write_smt_assertions};
+use opt::{
+    constraints_are_directly_unsat, normalize_constraints_for_solver_cached,
+    sorted_bool_exprs_are_subset, write_smt_assertions,
+};
 #[cfg(test)]
-pub(crate) use opt::{normalize_bool_for_solver, normalize_expr_for_solver};
+pub(crate) use opt::{
+    normalize_bool_for_solver, normalize_constraints_for_solver, normalize_expr_for_solver,
+};
 
 const Z3_QUERY_END: &str = "foundry-query-complete";
 
@@ -230,6 +234,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     captured_diagnostics: Option<String>,
     heuristic_witnesses: usize,
     replayable_storage: SymbolicVars,
+    normalization_cache: HashMap<SymBoolExpr, SymBoolExpr>,
     sat_cache: HashMap<Vec<SymBoolExpr>, bool>,
     model_cache: HashMap<Vec<SymBoolExpr>, SymbolicModel>,
     sat_queries: usize,
@@ -264,6 +269,7 @@ impl SmtLibSubprocessSolver {
             captured_diagnostics: None,
             heuristic_witnesses: 0,
             replayable_storage: SymbolicVars::default(),
+            normalization_cache: HashMap::default(),
             sat_cache: HashMap::default(),
             model_cache: HashMap::default(),
             sat_queries: 0,
@@ -335,6 +341,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     }
 
     fn clear_context_caches(&mut self) {
+        self.normalization_cache.clear();
         self.sat_cache.clear();
         self.model_cache.clear();
     }
@@ -422,7 +429,8 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         constraints: &[SymBoolExpr],
     ) -> Result<SymbolicModel, SymbolicError> {
         self.model_queries += 1;
-        let smt_constraints = normalize_constraints_for_solver(cx, constraints);
+        let smt_constraints =
+            normalize_constraints_for_solver_cached(cx, constraints, &mut self.normalization_cache);
         let cache_key = smt_constraints.clone();
 
         if self.sat_cache.get(&cache_key) == Some(&false) {
@@ -549,7 +557,8 @@ impl SmtLibSubprocessSolver {
         defer_hard_arith_without_witness: bool,
     ) -> Result<bool, SymbolicError> {
         self.sat_queries += 1;
-        let smt_constraints = normalize_sat_constraints(cx, constraints);
+        let smt_constraints =
+            normalize_sat_constraints(cx, constraints, &mut self.normalization_cache);
         let cache_key = smt_constraints.clone();
         if let Some(result) = self.sat_cache.get(&cache_key) {
             self.sat_cache_hits += 1;
@@ -565,14 +574,16 @@ impl SmtLibSubprocessSolver {
         if defer_hard_arith_without_witness
             && let Some((condition, base)) = constraints.split_last()
             && {
-                let normalized_base = normalize_sat_constraints(cx, base);
+                let normalized_base =
+                    normalize_sat_constraints(cx, base, &mut self.normalization_cache);
                 self.sat_cache.get(&normalized_base) == Some(&true)
             }
             && {
                 let mut complement = Vec::with_capacity(constraints.len());
                 complement.extend(base.iter().cloned());
                 complement.push(condition.clone().not(cx));
-                let normalized_complement = normalize_sat_constraints(cx, &complement);
+                let normalized_complement =
+                    normalize_sat_constraints(cx, &complement, &mut self.normalization_cache);
                 self.has_cached_unsat_subset(&normalized_complement)
             }
         {
@@ -844,8 +855,16 @@ impl SmtLibSubprocessSolver {
 }
 
 /// Normalizes satisfiability constraints and removes soundly implied nonlinear comparisons.
-fn normalize_sat_constraints(cx: &mut SymCx, constraints: &[SymBoolExpr]) -> Vec<SymBoolExpr> {
-    remove_implied_monotonic_constraints(normalize_constraints_for_solver(cx, constraints))
+fn normalize_sat_constraints(
+    cx: &mut SymCx,
+    constraints: &[SymBoolExpr],
+    normalization_cache: &mut HashMap<SymBoolExpr, SymBoolExpr>,
+) -> Vec<SymBoolExpr> {
+    remove_implied_monotonic_constraints(normalize_constraints_for_solver_cached(
+        cx,
+        constraints,
+        normalization_cache,
+    ))
 }
 
 /// Returns a hard-arithmetic fallback model only after validating it against original constraints.

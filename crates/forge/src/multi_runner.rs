@@ -580,6 +580,12 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
     pub fn configure_executor(&self, executor: &mut Executor<FEN>) {
         // TODO: See above
 
+        debug_assert!(
+            executor.backend().networks().has_same_execution_profile(&self.evm_opts.networks)
+        );
+        debug_assert!(
+            executor.inspector().networks.has_same_execution_profile(&self.evm_opts.networks)
+        );
         let inspector = executor.inspector_mut();
         // inspector.set_env(&self.env);
         if let Some(cheatcodes) = inspector.cheatcodes.as_mut() {
@@ -590,7 +596,6 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         inspector.tracing_requirements(self.trace_requirements());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
-        inspector.networks(self.evm_opts.networks);
         // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
 
         // executor.env_mut().clone_from(&self.env);
@@ -624,14 +629,13 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
                     .trace_requirements(self.trace_requirements())
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
-                    .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
                     .set_analysis(analysis)
             })
             .spec_id(self.spec_id)
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions)
-            .build(self.evm_env.clone(), self.tx_env.clone(), db)
+            .build(self.evm_env.clone(), self.tx_env.clone(), db, self.evm_opts.networks)
     }
 
     fn trace_requirements(&self) -> TraceRequirements {

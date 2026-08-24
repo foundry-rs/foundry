@@ -39,7 +39,30 @@ use crate::{
     evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor},
 };
 
-impl FoundryChain for MonadChainContext {
+impl FoundryChain<TxEnv> for MonadChainContext {
+    fn for_transaction(tx: &TxEnv) -> Self {
+        monad_context_from_participants(
+            Default::default(),
+            Default::default(),
+            std::slice::from_ref(tx),
+            0,
+        )
+    }
+
+    fn for_block(
+        grandparent: &[TxEnv],
+        parent: &[TxEnv],
+        current: &[TxEnv],
+        current_tx_index: usize,
+    ) -> Self {
+        monad_context_from_participants(
+            monad_block_participants(grandparent),
+            monad_block_participants(parent),
+            current,
+            current_tx_index,
+        )
+    }
+
     fn refresh_journal<J: FoundryJournal>(&self, journal: &mut J) {
         let mut tracker = journal.capture_reserve_balance();
         tracker.rebase(self, journal.evm_state());
@@ -171,7 +194,7 @@ impl ProtocolSystemCall {
 ///
 /// Returns an error when the transaction uses Monad's reserved protocol sender but does not
 /// satisfy the canonical envelope rules.
-pub fn protocol_system_call(tx: &TxEnv) -> eyre::Result<Option<ProtocolSystemCall>> {
+pub fn protocol_system_call<T: Transaction>(tx: &T) -> eyre::Result<Option<ProtocolSystemCall>> {
     if tx.caller() != SYSTEM_ADDRESS {
         return Ok(None);
     }
@@ -193,23 +216,23 @@ pub fn protocol_system_call(tx: &TxEnv) -> eyre::Result<Option<ProtocolSystemCal
         "invalid Monad protocol system transaction: gas price must be zero"
     );
     eyre::ensure!(
-        tx.gas_priority_fee.is_none(),
+        tx.max_priority_fee_per_gas().is_none(),
         "invalid Monad protocol system transaction: priority fee must be absent"
     );
     eyre::ensure!(
-        tx.access_list.0.is_empty(),
+        tx.access_list().is_none_or(|mut list| list.next().is_none()),
         "invalid Monad protocol system transaction: access list must be empty"
     );
     eyre::ensure!(
-        tx.blob_hashes.is_empty(),
+        tx.blob_versioned_hashes().is_empty(),
         "invalid Monad protocol system transaction: blob hashes must be empty"
     );
     eyre::ensure!(
-        tx.max_fee_per_blob_gas == 0,
+        tx.max_fee_per_blob_gas() == 0,
         "invalid Monad protocol system transaction: blob gas fee must be zero"
     );
     eyre::ensure!(
-        tx.authorization_list.is_empty(),
+        tx.authorization_list_len() == 0,
         "invalid Monad protocol system transaction: authorization list must be empty"
     );
 
@@ -343,30 +366,6 @@ impl FoundryEvmFactory for MonadEvmFactory {
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         MonadEvm<&'db mut dyn DatabaseExt<Self>, I>;
 
-    fn chain_context_for_transaction(&self, tx: &Self::Tx) -> Self::Chain {
-        monad_context_from_participants(
-            Default::default(),
-            Default::default(),
-            std::slice::from_ref(tx),
-            0,
-        )
-    }
-
-    fn chain_context_for_block(
-        &self,
-        grandparent: &[Self::Tx],
-        parent: &[Self::Tx],
-        current: &[Self::Tx],
-        current_tx_index: usize,
-    ) -> Self::Chain {
-        monad_context_from_participants(
-            monad_block_participants(grandparent),
-            monad_block_participants(parent),
-            current,
-            current_tx_index,
-        )
-    }
-
     fn create_evm_with_context<DB: alloy_evm::Database>(
         &self,
         db: DB,
@@ -401,17 +400,6 @@ impl FoundryEvmFactory for MonadEvmFactory {
         DB: alloy_evm::Database,
         I: Inspector<Self::Context<DB>>,
     {
-        try_transact_monad_system_replay(evm, tx)
-    }
-
-    fn try_transact_foundry_system_replay<
-        'db,
-        I: FoundryInspectorExt<Self::FoundryContext<'db>>,
-    >(
-        &self,
-        evm: &mut Self::FoundryEvm<'db, I>,
-        tx: &Self::Tx,
-    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>> {
         try_transact_monad_system_replay(evm, tx)
     }
 
@@ -482,18 +470,17 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
         Ok(frame_result)
     }
 
-    fn transact_raw(&mut self, tx: Self::Tx) -> Result<ResultAndState, EVMError<DatabaseError>> {
-        ContextSetters::set_tx(&mut self.0.ctx, tx);
-
-        let mut handler = MonadEvmHandler::<I>::new();
-        let result = handler.inspect_run(self)?;
-
-        Ok(ResultAndState::new(result, self.ctx_ref().journaled_state.inner.state.clone()))
-    }
-
-    fn transact_replay(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
+    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
         let Some(system_call) = protocol_system_call(&tx)? else {
-            return self.transact_raw(tx).map_err(Into::into);
+            ContextSetters::set_tx(&mut self.0.ctx, tx);
+
+            let mut handler = MonadEvmHandler::<I>::new();
+            let result = handler.inspect_run(self)?;
+
+            return Ok(ResultAndState::new(
+                result,
+                self.ctx_ref().journaled_state.inner.state.clone(),
+            ));
         };
 
         system_call.validate_chain_id(self.ctx_ref().cfg().chain_id())?;
