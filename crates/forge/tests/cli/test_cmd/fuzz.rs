@@ -744,6 +744,32 @@ contract ForgeFuzzReplayFailureTest {
     assert!(stdout.contains("[SKIP: not runnable in replay mode] test_unit()"), "{stdout}");
 });
 
+forgetest_init!(stateless_fuzz_does_not_persist_assume_rejects, |prj, cmd| {
+    let corpus_root = prj.root().join("fuzz_corpus");
+    prj.update_config(|config| {
+        config.fuzz.runs = 1;
+        config.fuzz.max_test_rejects = 1;
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.corpus.corpus_dir = Some(corpus_root.clone());
+    });
+    prj.add_test(
+        "StatelessAssumeReject.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract StatelessAssumeRejectTest is Test {
+    function testFuzz_assume(uint256) public view {
+        vm.assume(false);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "testFuzz_assume", "-q"]).assert_failure();
+
+    assert!(!has_regular_file(&corpus_root));
+});
+
 forgetest_init!(stateless_fuzz_preserves_payable_value, |prj, cmd| {
     let corpus_root = prj.root().join("fuzz_corpus");
     let frontier_root = prj.root().join("fuzz_frontiers");

@@ -405,7 +405,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let campaign = FuzzCampaign::new(FuzzCampaignMode::Stateless);
         let mut state = (executor, tx);
         let mut cmp_values = Vec::new();
-        let mut new_coverage = false;
         let mut checked = None;
         campaign
             .run_sequence(
@@ -418,7 +417,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     match event {
                         CampaignEvent::Feedback(call) => {
                             cmp_values = call.evm_cmp_values.take().unwrap_or_default();
-                            new_coverage = coverage_metrics.merge_edge_coverage(call);
                         }
                         CampaignEvent::Check { result, kind, .. } => {
                             checked = Some((
@@ -438,6 +436,13 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
         let (mut call, kind) = checked.expect("depth-one campaign emits a check event");
         let tx = state.1.clone();
+
+        // Handle `vm.assume` before recording coverage or persisting the input.
+        if kind == CampaignCallKind::AssumptionRejected {
+            return Err(TestCaseError::reject(FuzzError::AssumeReject));
+        }
+
+        let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
         // `new_coverage` is only meaningful when edge coverage is collected; otherwise
         // `merge_edge_coverage` always returns `false`, so record it as unknown for frontiers.
         let frontier_new_coverage =
@@ -449,11 +454,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             new_coverage,
             None,
         );
-
-        // Handle `vm.assume`.
-        if kind == CampaignCallKind::AssumptionRejected {
-            return Err(TestCaseError::reject(FuzzError::AssumeReject));
-        }
 
         let (breakpoints, deprecated_cheatcodes) =
             call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| {
