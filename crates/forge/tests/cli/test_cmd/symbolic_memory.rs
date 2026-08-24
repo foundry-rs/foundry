@@ -50,6 +50,367 @@ contract SymbolicMload {
     assert!(!stdout.contains("symbolic MLOAD offset"), "{stdout}");
 });
 
+forgetest_init!(symbolic_fixed_memory_access_rejects_oversized_offset, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_fixed_memory_access_rejects_oversized_offset because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicOversizedMemoryOffset.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicOversizedMemoryOffset is Test {
+    function load(uint256 offset) external pure {
+        assembly {
+            pop(mload(offset))
+        }
+    }
+
+    function store(uint256 offset) external pure {
+        assembly {
+            mstore(offset, 1)
+        }
+    }
+
+    function store8(uint256 offset) external pure {
+        assembly {
+            mstore8(offset, 1)
+        }
+    }
+
+    function checkOversizedFixedMemoryAccesses() public {
+        uint256 offset = type(uint256).max;
+        (bool loadOk,) = address(this).call(abi.encodeCall(this.load, (offset)));
+        (bool storeOk,) = address(this).call(abi.encodeCall(this.store, (offset)));
+        (bool store8Ok,) = address(this).call(abi.encodeCall(this.store8, (offset)));
+        assertFalse(loadOk);
+        assertFalse(storeOk);
+        assertFalse(store8Ok);
+    }
+
+    function checkConstrainedOversizedMemoryAccess(uint256 offset) public {
+        vm.assume(offset == type(uint256).max);
+        (bool ok,) = address(this).call(abi.encodeCall(this.store, (offset)));
+        assertFalse(ok);
+    }
+
+    function checkMixedMemoryOffsetExploresValidSibling(uint256 offset) public {
+        bool endpoint;
+        assembly {
+            endpoint := or(iszero(offset), eq(offset, not(0)))
+        }
+        vm.assume(endpoint);
+        (bool ok,) = address(this).call(abi.encodeCall(this.store, (offset)));
+        assertFalse(ok);
+    }
+
+    function createWithOversizedSize() external {
+        assembly {
+            pop(create(0, 0, not(0)))
+        }
+    }
+
+    function create2WithOversizedSize() external {
+        assembly {
+            pop(create2(0, 0, not(0), 0))
+        }
+    }
+
+    function checkOversizedCreateRanges() public {
+        (bool createOk,) = address(this).call(abi.encodeCall(this.createWithOversizedSize, ()));
+        (bool create2Ok,) = address(this).call(abi.encodeCall(this.create2WithOversizedSize, ()));
+        assertFalse(createOk);
+        assertFalse(create2Ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "check.*Oversized"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkOversizedFixedMemoryAccesses()
+[PASS] checkConstrainedOversizedMemoryAccess(uint256)
+[PASS] checkOversizedCreateRanges()
+"#]],
+    );
+
+    cmd.forge_fuse();
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkMixedMemoryOffsetExploresValidSibling"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMixedMemoryOffsetExploresValidSibling(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[0]
+"#]],
+    );
+    assert!(!stdout.contains("counterexample did not replay"), "{stdout}");
+});
+
+forgetest_init!(symbolic_variable_memory_access_rejects_oversized_ranges, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_variable_memory_access_rejects_oversized_ranges because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicOversizedMemoryRange.t.sol",
+        r#"
+contract SymbolicOversizedMemoryRange {
+    function calldataCopy() external pure {
+        assembly {
+            calldatacopy(not(0), 0, 1)
+        }
+    }
+
+    function codeCopy() external pure {
+        assembly {
+            codecopy(not(0), 0, 1)
+        }
+    }
+
+    function extcodeCopy() external view {
+        assembly {
+            extcodecopy(address(), not(0), 0, 1)
+        }
+    }
+
+    function returndataCopy() external view {
+        assembly {
+            pop(staticcall(gas(), 4, 0, 1, 0, 1))
+            returndatacopy(not(0), 0, 1)
+        }
+    }
+
+    function memoryCopyDest() external pure {
+        assembly {
+            mcopy(not(0), 0, 1)
+        }
+    }
+
+    function memoryCopySource() external pure {
+        assembly {
+            mcopy(0, not(0), 1)
+        }
+    }
+
+    function hash() external pure {
+        assembly {
+            pop(keccak256(not(0), 1))
+        }
+    }
+
+    function log() external {
+        assembly {
+            log0(not(0), 1)
+        }
+    }
+
+    function ret() external pure {
+        assembly {
+            return(not(0), 1)
+        }
+    }
+
+    function rev() external pure {
+        assembly {
+            revert(not(0), 1)
+        }
+    }
+
+    function testOversizedVariableMemoryRanges() public {
+        verifyOversizedVariableMemoryRanges();
+    }
+
+    function checkOversizedVariableMemoryRanges() public {
+        verifyOversizedVariableMemoryRanges();
+    }
+
+    function verifyOversizedVariableMemoryRanges() internal {
+        assertFails(this.calldataCopy.selector);
+        assertFails(this.codeCopy.selector);
+        assertFails(this.extcodeCopy.selector);
+        assertFails(this.returndataCopy.selector);
+        assertFails(this.memoryCopyDest.selector);
+        assertFails(this.memoryCopySource.selector);
+        assertFails(this.hash.selector);
+        assertFails(this.log.selector);
+        assertFails(this.ret.selector);
+        assertFails(this.rev.selector);
+    }
+
+    function assertFails(bytes4 selector) internal {
+        (bool ok, bytes memory data) =
+            address(this).call{gas: 100_000}(abi.encodeWithSelector(selector));
+        assert(!ok);
+        assert(data.length == 0);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--match-test", "testOversizedVariableMemoryRanges"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[PASS] testOversizedVariableMemoryRanges()
+"#]],
+    );
+
+    cmd.forge_fuse();
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkOversizedVariableMemoryRanges"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[PASS] checkOversizedVariableMemoryRanges()
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_fixed_memory_access_respects_memory_limit, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_fixed_memory_access_respects_memory_limit because z3 is not available"
+        );
+        return;
+    }
+
+    prj.wipe_contracts();
+    prj.update_config(|config| config.memory_limit = 4096);
+    prj.add_test(
+        "SymbolicMemoryLimit.t.sol",
+        r#"
+contract SymbolicMemoryLimit {
+    fallback() external payable {
+        assembly {
+            switch callvalue()
+            case 0 { mstore(4065, 1) }
+            case 1 { mstore8(4096, 1) }
+            case 2 { mstore(2048, 1) }
+            default { mstore8(0, 1) }
+        }
+    }
+
+    function checkMemoryLimitExactBoundaries() public pure {
+        assembly {
+            mstore(4064, 1)
+            mstore8(4095, 1)
+        }
+    }
+
+    function checkMemoryLimitFirstInvalidBoundaries() public {
+        bool wordOk;
+        bool byteOk;
+        assembly {
+            wordOk := call(gas(), address(), 0, 0, 0, 0, 0)
+            byteOk := call(gas(), address(), 1, 0, 0, 0, 0)
+        }
+        assert(!wordOk && !byteOk);
+    }
+
+    function checkMemoryLimitNestedCall() public {
+        bool ok;
+        assembly {
+            mstore(2048, 1)
+            ok := call(gas(), address(), 2, 0, 0, 0, 0)
+        }
+        assert(ok);
+    }
+
+    function checkMemoryLimitCallInputExpansion() public {
+        bool ok;
+        assembly {
+            ok := call(gas(), address(), 3, 2048, 2048, 0, 0)
+        }
+        assert(ok);
+    }
+
+    function checkMemoryLimitSymbolicCallSize(bool expand) public {
+        bool ok;
+        assembly {
+            let size := mul(expand, 2048)
+            ok := call(gas(), address(), 3, 2048, size, 0, 0)
+        }
+        assert(ok);
+    }
+
+    function wrappingCallRange() external {
+        assembly {
+            pop(call(gas(), address(), 0, not(0), 1, 0, 0))
+        }
+    }
+
+    function nestedWrappingCallRange() external {
+        this.wrappingCallRange();
+    }
+
+    function checkMemoryLimitRejectsWrappingCallRanges() public {
+        (bool directOk,) = address(this).call(abi.encodeCall(this.wrappingCallRange, ()));
+        (bool nestedOk,) = address(this).call(abi.encodeCall(this.nestedWrappingCallRange, ()));
+        assert(!directOk && !nestedOk);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "checkMemoryLimitNestedCall"]).assert_success();
+
+    cmd.forge_fuse();
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkMemoryLimit"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[PASS] checkMemoryLimitExactBoundaries()
+[PASS] checkMemoryLimitFirstInvalidBoundaries()
+[PASS] checkMemoryLimitNestedCall()
+[PASS] checkMemoryLimitCallInputExpansion()
+[PASS] checkMemoryLimitSymbolicCallSize(bool)
+[PASS] checkMemoryLimitRejectsWrappingCallRanges()
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_mstore_accepts_constrained_symbolic_offset, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -212,6 +573,100 @@ contract SymbolicMsizeAfterWrite {
 "#]],
     );
     assert!(!stdout.contains("symbolic MSIZE after symbolic memory write"), "{stdout}");
+});
+
+forgetest_init!(symbolic_msize_tracks_read_only_memory_expansion, |prj, cmd| {
+    skip_unless_z3!("symbolic_msize_tracks_read_only_memory_expansion");
+
+    prj.add_test(
+        "SymbolicMsizeAfterRead.t.sol",
+        r#"
+contract SymbolicMsizeAfterRead {
+    function checkReadOnlyExpansion() public {
+        uint256 afterHash;
+        uint256 afterLog;
+        uint256 afterCopy;
+        assembly {
+            pop(keccak256(0x200, 1))
+            afterHash := msize()
+            log0(0x400, 1)
+            afterLog := msize()
+            mcopy(0, 0x600, 1)
+            afterCopy := msize()
+        }
+
+        assert(afterHash == 0x220);
+        assert(afterLog == 0x420);
+        assert(afterCopy == 0x620);
+    }
+
+    function checkSymbolicReadOnlyExpansion(uint16 offset) public pure {
+        uint256 afterHash;
+        assembly {
+            pop(keccak256(offset, 1))
+            afterHash := msize()
+        }
+
+        assert(afterHash > offset);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "check.*ReadOnlyExpansion"]).assert_success();
+
+    cmd.forge_fuse();
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "check.*ReadOnlyExpansion"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkReadOnlyExpansion()
+[PASS] checkSymbolicReadOnlyExpansion(uint16)
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_msize_respects_zero_symbolic_copy_size, |prj, cmd| {
+    skip_unless_z3!("symbolic_msize_respects_zero_symbolic_copy_size");
+
+    prj.add_test(
+        "SymbolicMsizeAfterCopy.t.sol",
+        r#"
+contract SymbolicMsizeAfterCopy {
+    function checkZeroLengthCopy(uint8 n) public pure {
+        uint256 size = uint256(n & 3);
+        uint256 beforeSize;
+        uint256 afterSize;
+        assembly {
+            beforeSize := msize()
+            calldatacopy(0x100, 0, size)
+            afterSize := msize()
+        }
+
+        assert(size != 0 || afterSize != beforeSize);
+    }
+}
+"#,
+    );
+
+    let stdout =
+        assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkZeroLengthCopy"]))
+            .failure()
+            .get_output()
+            .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        str![[r#"
+[FAIL: panic: assertion failed
+"#]],
+    );
+    assert!(!stdout.contains("symbolic counterexample did not replay"), "{stdout}");
 });
 
 forgetest_init!(symbolic_sha3_accepts_symbolic_offset, |prj, cmd| {

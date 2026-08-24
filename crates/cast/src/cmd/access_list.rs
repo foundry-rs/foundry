@@ -1,3 +1,4 @@
+use super::auth::confirm_auth_rpc_disclosure;
 use crate::{
     Cast,
     tx::{CastTxBuilder, SenderKind},
@@ -12,7 +13,7 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
-use foundry_wallets::WalletOpts;
+use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
 
@@ -50,11 +51,18 @@ pub struct AccessListArgs {
     #[command(flatten)]
     tx: TransactionOpts,
 
+    /// Skip the EIP-7702 authorization disclosure confirmation.
+    #[arg(long)]
+    force: bool,
+
     #[command(flatten)]
     rpc: RpcOpts,
 
     #[command(flatten)]
     wallet: WalletOpts,
+
+    #[command(flatten)]
+    browser: BrowserWalletOpts,
 }
 
 impl AccessListArgs {
@@ -70,7 +78,7 @@ impl AccessListArgs {
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        let Self { to, mut sig, args, data, tx, rpc, wallet, block } = self;
+        let Self { to, mut sig, args, data, tx, force, rpc, wallet, browser, block } = self;
 
         if let Some(data) = data {
             sig = Some(data);
@@ -78,17 +86,23 @@ impl AccessListArgs {
 
         let config = rpc.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
-        let sender = SenderKind::from_wallet_opts(wallet).await?;
+        let sender = if let Some(browser) = browser.run::<N>().await? {
+            browser.address().into()
+        } else {
+            SenderKind::from_wallet_opts(wallet).await?
+        };
 
-        let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
+        let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
             .with_to(to)
             .await?
             .with_code_sig_and_args(None, sig, args)
             .await?
-            .raw()
-            .build(sender)
-            .await?;
+            .raw();
+        if builder.has_auth() && !confirm_auth_rpc_disclosure(&builder, &sender, force)? {
+            return Ok(());
+        }
+        let (tx, _) = builder.build(sender).await?;
 
         let access_list: String = Cast::new(&provider).access_list(&tx, block).await?;
 

@@ -2,7 +2,7 @@ use alloy_primitives::{Address, hex};
 use alloy_signer::{k256::ecdsa::SigningKey, utils::secret_key_to_address};
 use alloy_signer_local::PrivateKeySigner;
 use clap::Parser;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::json::print_json_success;
 use foundry_common::{sh_println, shell};
 use itertools::Either;
@@ -10,8 +10,11 @@ use rayon::iter::{self, ParallelIterator};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -178,14 +181,29 @@ impl VanityArgs {
 fn save_wallet_to_file(wallet: &PrivateKeySigner, path: &Path) -> Result<()> {
     let mut wallets = if path.exists() {
         let data = fs::read_to_string(path)?;
-        serde_json::from_str::<Wallets>(&data).unwrap_or_default()
+        if data.trim().is_empty() {
+            Wallets::default()
+        } else {
+            serde_json::from_str::<Wallets>(&data)
+                .wrap_err_with(|| format!("failed to parse wallet file {}", path.display()))?
+        }
     } else {
         Wallets::default()
     };
 
     wallets.wallets.push(WalletData::new(wallet));
 
-    fs::write(path, serde_json::to_string_pretty(&wallets)?)?;
+    let contents = serde_json::to_string_pretty(&wallets)?;
+    let mut options = fs::File::options();
+    options.write(true).create(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    let mut file = options.open(path)?;
+    #[cfg(unix)]
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    file.set_len(0)?;
+    file.write_all(contents.as_bytes())?;
     Ok(())
 }
 
@@ -338,13 +356,29 @@ impl VanityMatcher for RegexMatcher {
 }
 
 fn parse_pattern(pattern: &str, is_start: bool) -> Result<Either<Vec<u8>, Regex>> {
+    let pattern =
+        pattern.strip_prefix("0x").or_else(|| pattern.strip_prefix("0X")).unwrap_or(pattern);
+    if pattern.is_empty() {
+        return Err(eyre::eyre!("Vanity pattern cannot be empty"));
+    }
+
+    let is_hex = pattern.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if is_hex && pattern.len() > 40 {
+        return Err(eyre::eyre!("Hex pattern must be less than 20 bytes"));
+    }
+
     if let Ok(decoded) = hex::decode(pattern) {
         if decoded.len() > 20 {
             return Err(eyre::eyre!("Hex pattern must be less than 20 bytes"));
         }
         Ok(Either::Left(decoded))
     } else {
+        // a non regex literal containing non-hex characters can never match
+        if !is_hex && pattern.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+            return Err(eyre::eyre!("Pattern contains non-hex characters and can never match"));
+        }
         let (prefix, suffix) = if is_start { ("^", "") } else { ("", "$") };
+        let pattern = if is_hex { pattern.to_ascii_lowercase() } else { pattern.to_string() };
         Ok(Either::Right(Regex::new(&format!("{prefix}{pattern}{suffix}"))?))
     }
 }
@@ -395,5 +429,101 @@ mod tests {
         let s = fs::read_to_string(tmp.path()).unwrap();
         let wallets: Wallets = serde_json::from_str(&s).unwrap();
         assert!(!wallets.wallets.is_empty());
+    }
+
+    #[test]
+    fn malformed_wallet_file_is_not_overwritten() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let original = "{\"wallets\":[";
+        fs::write(tmp.path(), original).unwrap();
+
+        let err = save_wallet_to_file(&PrivateKeySigner::random(), tmp.path()).unwrap_err();
+
+        assert!(err.to_string().contains("failed to parse wallet file"));
+        assert_eq!(fs::read_to_string(tmp.path()).unwrap(), original);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_wallet_file_is_owner_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("wallets.json");
+
+        save_wallet_to_file(&PrivateKeySigner::random(), &path).unwrap();
+
+        assert_eq!(fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_wallet_file_is_made_owner_only() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o644)).unwrap();
+
+        save_wallet_to_file(&PrivateKeySigner::random(), tmp.path()).unwrap();
+
+        assert_eq!(fs::metadata(tmp.path()).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn parse_odd_length_hex_case_insensitively() {
+        let mut starts_with = [0; 20];
+        starts_with[0] = 0xa0;
+        let Either::Right(pattern) = parse_pattern("A", true).unwrap() else {
+            panic!("expected a regex pattern");
+        };
+        assert!(SingleRegexMatcher { re: pattern }.is_match(&Address::from(starts_with)));
+
+        let mut ends_with = [0; 20];
+        ends_with[19] = 0x0a;
+        let Either::Right(pattern) = parse_pattern("A", false).unwrap() else {
+            panic!("expected a regex pattern");
+        };
+        assert!(SingleRegexMatcher { re: pattern }.is_match(&Address::from(ends_with)));
+    }
+
+    #[test]
+    fn reject_overlong_odd_length_hex_pattern() {
+        let err = parse_pattern(&"1".repeat(41), true).unwrap_err();
+        assert_eq!(err.to_string(), "Hex pattern must be less than 20 bytes");
+    }
+
+    #[test]
+    fn parse_prefixed_vanity_patterns() {
+        let Either::Left(lowercase) = parse_pattern("0xdead", true).unwrap() else {
+            panic!("expected an exact hex pattern");
+        };
+        assert_eq!(lowercase, hex::decode("dead").unwrap());
+        let mut matching = [0; 20];
+        matching[..2].copy_from_slice(&lowercase);
+        assert!(LeftHexMatcher { left: lowercase }.is_match(&Address::from(matching)));
+
+        let Either::Left(uppercase) = parse_pattern("0Xdead", true).unwrap() else {
+            panic!("expected an exact hex pattern");
+        };
+        assert_eq!(uppercase, hex::decode("dead").unwrap());
+
+        let Either::Right(odd_nibble) = parse_pattern("0x9", true).unwrap() else {
+            panic!("expected a regex pattern");
+        };
+        let mut matching = [0; 20];
+        matching[0] = 0x90;
+        assert!(SingleRegexMatcher { re: odd_nibble }.is_match(&Address::from(matching)));
+    }
+
+    #[test]
+    fn reject_empty_prefixed_vanity_pattern() {
+        let err = parse_pattern("0x", true).unwrap_err();
+        assert_eq!(err.to_string(), "Vanity pattern cannot be empty");
+    }
+
+    #[test]
+    fn reject_unmatchable_pattern() {
+        // non-hex chars can never appear in a hex address
+        assert!(parse_pattern("zzz", true).is_err());
+        assert!(parse_pattern("foobar", false).is_err());
+
+        // regex patterns stay supported
+        assert!(parse_pattern("a.c", true).is_ok());
     }
 }

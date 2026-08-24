@@ -38,8 +38,8 @@ alloy-rpc-types-engine = { workspace = true, features = ["jwt-aws-lc-rs"] }
 alloy-sol-types.workspace = true
 alloy-transport-ipc.workspace = true
 alloy-transport-ws.workspace = true
-rustls.workspace = true
 alloy-transport.workspace = true
+alloy-transport-mpp.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-network.workspace = true
 
@@ -55,7 +55,6 @@ tower.workspace = true
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 alloy-rlp.workspace = true
 comfy-table.workspace = true
-dirs.workspace = true
 dunce.workspace = true
 eyre.workspace = true
 itertools.workspace = true
@@ -69,7 +68,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-toml.workspace = true
 tracing.workspace = true
 url.workspace = true
 walkdir.workspace = true
@@ -84,12 +82,9 @@ tempo-alloy.workspace = true
 tempo-primitives.workspace = true
 mpp.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
-tokio-tungstenite.workspace = true
-futures.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic-all-languages"] }
 base64.workspace = true
 sha2 = "0.11"
-tempfile.workspace = true
 
 [build-dependencies]
 chrono.workspace = true
@@ -100,9 +95,11 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 axum = { workspace = true }
 foundry-evm-hardforks.workspace = true
 k256 = { workspace = true }
+tempfile.workspace = true
 
 [features]
 default = ["optimism"]
+monad = ["foundry-config/monad"]
 optimism = [
     "dep:op-alloy-network",
     "dep:op-alloy-rpc-types",

@@ -572,6 +572,27 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
     let parsed =
         parse_artifact_path(path).map_err(|e| fmt_err!("failed to parse artifact path: {e}"))?;
     let ParsedArtifactPath { file, contract_name, version, profile } = parsed;
+    let file = file.map(|file| {
+        let cwd = state
+            .config
+            .running_artifact
+            .as_ref()
+            .and_then(|artifact| artifact.source.parent())
+            .unwrap_or(&state.config.paths.root);
+        let relative_cwd = cwd.strip_prefix(&state.config.paths.root).unwrap_or(cwd);
+        let has_matching_remapping = state.config.paths.remappings.iter().any(|remapping| {
+            remapping.context.as_ref().is_none_or(|context| relative_cwd.starts_with(context))
+                && file.strip_prefix(&remapping.name).is_ok()
+        });
+
+        if has_matching_remapping {
+            state.config.paths.resolve_library_import(cwd, &file).map_or(file, |resolved| {
+                resolved.strip_prefix(&state.config.paths.root).unwrap_or(&resolved).to_path_buf()
+            })
+        } else {
+            file
+        }
+    });
 
     // Use available artifacts list if present
     if let Some(artifacts) = &state.config.available_artifacts {
@@ -721,28 +742,32 @@ fn get_artifact_code<FEN: FoundryEvmNetwork>(
 impl Cheatcode for ffiCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { commandInput: input } = self;
+        let stdout = ffi_stdout(state, input)?;
+        Ok(decode_ffi_stdout(&stdout).abi_encode())
+    }
+}
 
-        let output = ffi(state, input)?;
+impl Cheatcode for ffiUintCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { commandInput: input } = self;
+        parse(&ffi_stdout(state, input)?, &DynSolType::Uint(256))
+    }
+}
 
-        // Check the exit code of the command.
-        if output.exitCode != 0 {
-            // If the command failed, return an error with the exit code and stderr.
-            return Err(fmt_err!(
-                "ffi command {:?} exited with code {}. stderr: {}",
-                input,
-                output.exitCode,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+impl Cheatcode for ffiStringCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { commandInput: input } = self;
+        Ok(ffi_stdout(state, input)?.abi_encode())
+    }
+}
 
-        // If the command succeeded but still wrote to stderr, log it as a warning.
-        if !output.stderr.is_empty() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(target: "cheatcodes", ?input, ?stderr, "ffi command wrote to stderr");
-        }
-
-        // We already hex-decoded the stdout in the `ffi` helper function.
-        Ok(output.stdout.abi_encode())
+impl Cheatcode for ffiBytesCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { commandInput: input } = self;
+        let stdout = ffi_stdout(state, input)?;
+        Ok(hex::decode(&stdout)
+            .map_err(|err| fmt_err!("failed parsing ffi stdout as bytes: {err}"))?
+            .abi_encode())
     }
 }
 
@@ -840,6 +865,43 @@ fn read_dir<FEN: FoundryEvmNetwork>(
 }
 
 fn ffi<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>, input: &[String]) -> Result<FfiResult> {
+    let output = ffi_command(state, input)?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    let stdout = stdout.trim();
+    Ok(FfiResult {
+        exitCode: output.status.code().unwrap_or(69),
+        stdout: decode_ffi_stdout(stdout),
+        stderr: output.stderr.into(),
+    })
+}
+
+fn ffi_stdout<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>, input: &[String]) -> Result<String> {
+    let output = ffi_command(state, input)?;
+    let stdout = String::from_utf8(output.stdout)?;
+    if !output.status.success() {
+        return Err(fmt_err!(
+            "ffi command {:?} exited with code {}. stderr: {}",
+            input,
+            output.status.code().unwrap_or(69),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if !output.stderr.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        warn!(target: "cheatcodes", ?input, ?stderr, "ffi command wrote to stderr");
+    }
+    Ok(stdout.trim().to_string())
+}
+
+fn decode_ffi_stdout(stdout: &str) -> Bytes {
+    hex::decode(stdout).unwrap_or_else(|_| stdout.as_bytes().to_vec()).into()
+}
+
+fn ffi_command<FEN: FoundryEvmNetwork>(
+    state: &Cheatcodes<FEN>,
+    input: &[String],
+) -> Result<std::process::Output> {
     ensure!(
         state.config.ffi,
         "FFI is disabled; add the `--ffi` flag to allow tests to call external commands"
@@ -850,25 +912,9 @@ fn ffi<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>, input: &[String]) -> Res
 
     debug!(target: "cheatcodes", ?cmd, "invoking ffi");
 
-    let output = cmd
-        .current_dir(&state.config.root)
+    cmd.current_dir(&state.config.root)
         .output()
-        .map_err(|err| fmt_err!("failed to execute command {cmd:?}: {err}"))?;
-
-    // The stdout might be encoded on valid hex, or it might just be a string,
-    // so we need to determine which it is to avoid improperly encoding later.
-    let trimmed_stdout = String::from_utf8(output.stdout)?;
-    let trimmed_stdout = trimmed_stdout.trim();
-    let encoded_stdout = if let Ok(hex) = hex::decode(trimmed_stdout) {
-        hex
-    } else {
-        trimmed_stdout.as_bytes().to_vec()
-    };
-    Ok(FfiResult {
-        exitCode: output.status.code().unwrap_or(69),
-        stdout: encoded_stdout.into(),
-        stderr: output.stderr.into(),
-    })
+        .map_err(|err| fmt_err!("failed to execute command {cmd:?}: {err}"))
 }
 
 fn prompt_input(prompt_text: &str) -> Result<String, dialoguer::Error> {
@@ -1080,10 +1126,13 @@ mod tests {
     use foundry_common::ContractsByArtifact;
     use foundry_compilers::{
         ArtifactId,
-        artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
+        artifacts::{
+            BytecodeObject, CompactBytecode, CompactContractBytecode, remappings::Remapping,
+        },
     };
     use foundry_evm_core::evm::TempoEvmNetwork;
-    use std::{env, fs as stdfs, sync::Arc};
+    use std::{env, fs as stdfs, str::FromStr, sync::Arc};
+    use tempfile::TempDir;
 
     fn cheats() -> Cheatcodes {
         let config = CheatsConfig {
@@ -1284,6 +1333,62 @@ mod tests {
             super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
 
         assert_eq!(bytecode, contract_bytecode);
+    }
+
+    #[test]
+    fn test_get_artifact_code_resolves_remapping() {
+        let bytecode = Bytes::from_static(&[0x60, 0x01]);
+        let artifacts = ContractsByArtifact::new([test_artifact(
+            "src/Something.sol",
+            "Something",
+            "default",
+            bytecode.clone(),
+        )]);
+        let root = PathBuf::from(&env!("CARGO_MANIFEST_DIR"));
+        let paths = foundry_compilers::ProjectPathsConfig::builder()
+            .remapping(Remapping::from_str("@example/=src/").unwrap())
+            .build_with_root(&root);
+        let config = CheatsConfig {
+            available_artifacts: Some(artifacts),
+            root,
+            paths,
+            ..Default::default()
+        };
+        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+
+        let resolved =
+            super::get_artifact_code(&cheats, "@example/Something.sol:Something", false).unwrap();
+
+        assert_eq!(resolved, bytecode);
+    }
+
+    #[test]
+    fn test_get_artifact_code_preserves_project_path_on_library_collision() {
+        let root_bytecode = Bytes::from_static(&[0x60, 0x01]);
+        let library_bytecode = Bytes::from_static(&[0x60, 0x02]);
+        let artifacts = ContractsByArtifact::new([
+            test_artifact("src/Thing.sol", "RootThing", "default", root_bytecode.clone()),
+            test_artifact("lib/src/Thing.sol", "LibThing", "default", library_bytecode),
+        ]);
+        let temp = TempDir::new().unwrap();
+        let library = temp.path().join("lib");
+        stdfs::create_dir_all(library.join("src")).unwrap();
+        stdfs::write(library.join("src/Thing.sol"), "").unwrap();
+        let paths = foundry_compilers::ProjectPathsConfig::builder()
+            .remappings([])
+            .lib(library)
+            .build_with_root(temp.path());
+        let config = CheatsConfig {
+            available_artifacts: Some(artifacts),
+            root: temp.path().to_path_buf(),
+            paths,
+            ..Default::default()
+        };
+        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+
+        let resolved = super::get_artifact_code(&cheats, "src/Thing.sol:RootThing", false).unwrap();
+
+        assert_eq!(resolved, root_bytecode);
     }
 
     #[test]

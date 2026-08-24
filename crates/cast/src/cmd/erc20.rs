@@ -3,7 +3,10 @@ use std::{str::FromStr, time::Duration};
 use crate::{
     cmd::{
         call_overrides::CallOverrideOpts,
-        send::{cast_send, cast_send_with_tempo_wallet, validate_sponsor_url},
+        send::{
+            cast_send, cast_send_with_tempo_wallet, cast_send_with_tempo_wallet_via_sponsor,
+            validate_sponsor_url,
+        },
     },
     format_uint_exp, tempo,
     tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
@@ -29,7 +32,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::{ProviderBuilder, RetryProviderWithSigner},
     shell,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, Eip1559FeeEstimatePreset, utils::*};
@@ -413,9 +416,6 @@ impl Erc20Subcommand {
                     if $send_tx.browser.browser {
                         eyre::bail!("--sponsor-url cannot be combined with --browser");
                     }
-                    if tempo_keychain.is_some() {
-                        eyre::bail!("--sponsor-url cannot be combined with a Tempo access key");
-                    }
                 }
                 if let Some(ts) = expires_at {
                     sh_status!("Transaction expires at unix timestamp {ts}")?;
@@ -474,18 +474,33 @@ impl Erc20Subcommand {
                                 .await?;
                         }
                     }
-                    cast_send_with_tempo_wallet(
-                        &$provider,
-                        tx,
-                        &prepared_access_key,
-                        tempo_sponsor.is_none().then_some(chain),
-                        None,
-                        $send_tx.cast_async,
-                        $send_tx.confirmations,
-                        timeout,
-                        tempo_sponsor.is_none() && !config.eth_rpc_curl,
-                    )
-                    .await?;
+                    if let Some(sponsor_url) = sponsor_url.as_deref() {
+                        cast_send_with_tempo_wallet_via_sponsor(
+                            &$provider,
+                            tx,
+                            &prepared_access_key,
+                            sponsor_url,
+                            $send_tx.cast_async,
+                            $send_tx.sync,
+                            $send_tx.confirmations,
+                            timeout,
+                        )
+                        .await?;
+                    } else {
+                        cast_send_with_tempo_wallet(
+                            &$provider,
+                            tx,
+                            &prepared_access_key,
+                            tempo_sponsor.is_none().then_some(chain),
+                            None,
+                            $send_tx.cast_async,
+                            $send_tx.sync,
+                            $send_tx.confirmations,
+                            timeout,
+                            tempo_sponsor.is_none() && !config.eth_rpc_curl,
+                        )
+                        .await?;
+                    }
                 } else if let Some(browser) = $send_tx.browser.run::<N>().await? {
                     let $provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
                     if let Some(interval) = $send_tx.poll_interval {
@@ -789,15 +804,12 @@ where
     fill_transaction_gas_fees(provider, tx, legacy, browser, eip1559_fee_estimate).await?;
 
     if tx.gas_limit().is_none() {
-        let mut estimated = provider.estimate_gas(tx.clone()).await?;
-
-        // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
-        // costs more gas for signature verification on Tempo chains. Add a
-        // conservative buffer since we can't determine the signature type beforehand.
-        if chain.is_tempo() {
-            estimated += TEMPO_BROWSER_GAS_BUFFER;
-        }
-
+        let request = if browser && chain.is_tempo() {
+            tx.browser_wallet_gas_estimation_request()
+        } else {
+            tx.clone()
+        };
+        let estimated = provider.estimate_gas(request).await?;
         tx.set_gas_limit(estimated);
     }
 

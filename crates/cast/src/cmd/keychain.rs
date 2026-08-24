@@ -1,7 +1,7 @@
 use alloy_consensus::BlockHeader;
 use alloy_ens::NameOrAddress;
 use foundry_wallets::BrowserWalletOpts;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, U256, hex};
@@ -24,8 +24,8 @@ use foundry_common::{
     provider::ProviderBuilder,
     sh_warn, shell,
     tempo::{
-        self, AccountsStoreView, KeyType, TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token,
-        read_tempo_accounts_store, resolve_and_set_fee_token, tempo_accounts_store_path,
+        self, AccountsStoreView, KeyType, maybe_print_fee_token, read_tempo_accounts_store,
+        resolve_and_set_fee_token, tempo_accounts_store_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -56,8 +56,8 @@ use crate::cmd::tempo_policy_args::{
 };
 
 use crate::{
-    cmd::send::cast_send,
-    tx::{CastTxBuilder, CastTxSender, SendTxOpts},
+    cmd::{auth::confirm_auth_rpc_disclosure_during_build, send::cast_send},
+    tx::{CastTxBuilder, CastTxSender, SendTxOpts, SenderKind},
 };
 
 /// Tempo keychain management commands.
@@ -89,7 +89,7 @@ pub enum KeychainSubcommand {
         rpc: RpcOpts,
     },
 
-    /// Inspect an access key policy using the local key registry and on-chain state.
+    /// Inspect an access key policy using the Tempo Accounts store and on-chain state.
     Inspect {
         /// The key address to inspect.
         key_address: Address,
@@ -104,14 +104,14 @@ pub enum KeychainSubcommand {
 
     /// Diagnose access-key signing issues end-to-end.
     ///
-    /// Walks the local registry, RPC, and on-chain key state and prints a green
+    /// Walks the Tempo Accounts store, RPC, and on-chain key state and prints a green
     /// checklist. The first failing step turns red and includes a one-line hint.
     Doctor {
         /// The key address to diagnose. Optional when `--root-account` is provided.
         #[arg(required_unless_present = "root_account")]
         key_address: Option<Address>,
 
-        /// Root account address. Required if the key cannot be resolved from the local registry,
+        /// Root account address. Required if the key cannot be resolved from the Accounts store,
         /// or to diagnose the default key for a sender.
         #[arg(long, visible_alias = "wallet-address", value_name = "ADDRESS")]
         root_account: Option<Address>,
@@ -195,6 +195,10 @@ pub enum KeychainSubcommand {
         #[arg(long)]
         admin: bool,
 
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long)]
+        force: bool,
+
         #[command(flatten)]
         tx: TransactionOpts,
 
@@ -208,6 +212,10 @@ pub enum KeychainSubcommand {
         /// The key address to revoke.
         key_address: Address,
 
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long)]
+        force: bool,
+
         #[command(flatten)]
         tx: TransactionOpts,
 
@@ -220,6 +228,10 @@ pub enum KeychainSubcommand {
     BurnWitness {
         /// Witness to burn. `bytes32(0)` is valid.
         witness: B256,
+
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long)]
+        force: bool,
 
         #[command(flatten)]
         tx: TransactionOpts,
@@ -321,6 +333,10 @@ pub enum KeychainSubcommand {
         /// The new spending limit.
         new_limit: U256,
 
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long)]
+        force: bool,
+
         #[command(flatten)]
         tx: TransactionOpts,
 
@@ -338,6 +354,10 @@ pub enum KeychainSubcommand {
         #[arg(long = "scope", required = true, value_parser = parse_scope)]
         scope: Vec<CallScope>,
 
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long)]
+        force: bool,
+
         #[command(flatten)]
         tx: TransactionOpts,
 
@@ -354,6 +374,10 @@ pub enum KeychainSubcommand {
         /// The target address to remove scope for.
         target: Address,
 
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long)]
+        force: bool,
+
         #[command(flatten)]
         tx: TransactionOpts,
 
@@ -363,6 +387,10 @@ pub enum KeychainSubcommand {
 
     /// Read or edit TIP-1011 access-key permissions.
     Policy {
+        /// Skip the EIP-7702 authorization disclosure confirmation.
+        #[arg(long, global = true)]
+        force: bool,
+
         #[command(subcommand)]
         command: KeychainPolicySubcommand,
     },
@@ -653,6 +681,7 @@ fn abi_scope_to_auth_scope(scope: CallScope) -> AuthCallScope {
 }
 /// Represents a single scope entry in JSON format for `--scopes`.
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct JsonCallScope {
     target: Address,
     #[serde(default)]
@@ -766,6 +795,7 @@ impl KeychainSubcommand {
                 scopes_json,
                 witness,
                 admin,
+                force,
                 tx,
                 send_tx,
             } => {
@@ -787,12 +817,15 @@ impl KeychainSubcommand {
                     admin,
                     tx,
                     send_tx,
+                    force,
                 )
                 .await
             }
-            Self::Revoke { key_address, tx, send_tx } => run_revoke(key_address, tx, send_tx).await,
-            Self::BurnWitness { witness, tx, send_tx } => {
-                run_burn_witness(witness, tx, send_tx).await
+            Self::Revoke { key_address, force, tx, send_tx } => {
+                run_revoke(key_address, tx, send_tx, force).await
+            }
+            Self::BurnWitness { witness, force, tx, send_tx } => {
+                run_burn_witness(witness, tx, send_tx, force).await
             }
             Self::IsWitnessBurned { account, witness, rpc } => {
                 run_is_witness_burned(account, witness, rpc).await
@@ -809,16 +842,16 @@ impl KeychainSubcommand {
             Self::RemainingLimit { wallet_address, key_address, token, rpc } => {
                 run_remaining_limit(wallet_address, key_address, token, rpc).await
             }
-            Self::UpdateLimit { key_address, token, new_limit, tx, send_tx } => {
-                run_update_limit(key_address, token, new_limit, tx, send_tx).await
+            Self::UpdateLimit { key_address, token, new_limit, force, tx, send_tx } => {
+                run_update_limit(key_address, token, new_limit, tx, send_tx, force).await
             }
-            Self::SetScope { key_address, scope, tx, send_tx } => {
-                run_set_scope(key_address, scope, tx, send_tx).await
+            Self::SetScope { key_address, scope, force, tx, send_tx } => {
+                run_set_scope(key_address, scope, tx, send_tx, force).await
             }
-            Self::RemoveScope { key_address, target, tx, send_tx } => {
-                run_remove_scope(key_address, target, tx, send_tx).await
+            Self::RemoveScope { key_address, target, force, tx, send_tx } => {
+                run_remove_scope(key_address, target, tx, send_tx, force).await
             }
-            Self::Policy { command } => command.run().await,
+            Self::Policy { force, command } => command.run(force).await,
         }
     }
 }
@@ -838,7 +871,7 @@ impl KeyAuthorizationSubcommand {
 }
 
 impl KeychainPolicySubcommand {
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(self, force: bool) -> Result<()> {
         match self {
             Self::AddCall {
                 key_address,
@@ -857,14 +890,15 @@ impl KeychainPolicySubcommand {
                     recipients,
                     tx,
                     send_tx,
+                    force,
                 )
                 .await
             }
             Self::SetLimit { key_address, token, amount, period, tx, send_tx } => {
-                run_policy_set_limit(key_address, token, amount, period, tx, send_tx).await
+                run_policy_set_limit(key_address, token, amount, period, tx, send_tx, force).await
             }
             Self::RemoveTarget { key_address, target, tx, send_tx } => {
-                run_remove_scope(key_address, target, tx, send_tx).await
+                run_remove_scope(key_address, target, tx, send_tx, force).await
             }
         }
     }
@@ -1222,7 +1256,7 @@ struct DoctorContext {
     fee_token: Address,
 }
 
-/// Result of resolving a local registry entry for the doctor.
+/// Result of resolving a Tempo Accounts store entry for the doctor.
 #[derive(Debug)]
 struct DoctorSubject {
     root_account: Address,
@@ -1342,7 +1376,7 @@ async fn run_doctor(
         fee_token: requested_fee_token.unwrap_or(DEFAULT_FEE_TOKEN),
     };
 
-    // Step 1: local registry lookup.
+    // Step 1: Tempo Accounts store lookup.
     let candidates = match collect_local_candidates(key_address, root_account) {
         Ok(resolution) => {
             steps.push(resolution.step);
@@ -1562,7 +1596,7 @@ async fn run_doctor(
     finalize_doctor(steps, context)
 }
 
-/// Step 1 helper: collect local registry candidates.
+/// Step 1 helper: collect Tempo Accounts store candidates.
 fn collect_local_candidates(
     key_address: Option<Address>,
     root_account: Option<Address>,
@@ -1577,8 +1611,8 @@ fn collect_local_candidates(
         if let Some(candidate) = explicit_candidate() {
             return Ok(LocalCandidateResolution {
                 step: DoctorStep::pass(
-                    "local_registry",
-                    "Local registry",
+                    "accounts_store",
+                    "Accounts store",
                     format!(
                         "could not read {}; using explicit root/key",
                         tempo_accounts_store_path_display()
@@ -1589,8 +1623,8 @@ fn collect_local_candidates(
         }
 
         return Err(DoctorStep::fail(
-            "local_registry",
-            "Local registry",
+            "accounts_store",
+            "Accounts store",
             format!(
                 "could not read Tempo Accounts store at {}",
                 tempo_accounts_store_path_display()
@@ -1614,8 +1648,8 @@ fn collect_local_candidates(
         if let Some(candidate) = explicit_candidate() {
             return Ok(LocalCandidateResolution {
                 step: DoctorStep::pass(
-                    "local_registry",
-                    "Local registry",
+                    "accounts_store",
+                    "Accounts store",
                     format!(
                         "no local entry for key {} and root {}; using explicit root/key",
                         candidate.key_address, candidate.root_account
@@ -1633,12 +1667,12 @@ fn collect_local_candidates(
         };
         let hint = match (key_address, root_account) {
             (Some(_), None) => "pass --root-account to diagnose an explicit key/root pair",
-            (None, Some(_)) => "pass KEY_ADDRESS to diagnose a key without a local registry entry",
+            (None, Some(_)) => "pass KEY_ADDRESS to diagnose a key absent from the Accounts store",
             _ => "run `cast tempo login` to add a key to ~/.tempo/wallet/store.json",
         };
         return Err(DoctorStep::fail(
-            "local_registry",
-            "Local registry",
+            "accounts_store",
+            "Accounts store",
             format!("no entry for {descriptor} in {}", tempo_accounts_store_path_display()),
             hint,
         ));
@@ -1653,8 +1687,8 @@ fn collect_local_candidates(
 
     Ok(LocalCandidateResolution {
         step: DoctorStep::pass(
-            "local_registry",
-            "Local registry",
+            "accounts_store",
+            "Accounts store",
             format!("{count} candidate(s) in {}", tempo_accounts_store_path_display()),
         ),
         candidates,
@@ -1710,7 +1744,7 @@ fn check_local_signing_readiness(subject: &DoctorSubject) -> DoctorStep {
         return DoctorStep::warn(
             "local_signing",
             "Local signing",
-            "not verified; using explicit root/key without a local registry entry",
+            "not verified; using explicit root/key absent from the Accounts store",
             "pass --tempo.access-key in the send command or run `cast tempo login`",
         );
     };
@@ -2624,10 +2658,6 @@ async fn check_sponsorship(tempo: &TempoOpts, sender: Address) -> SponsorshipDia
     }
 }
 
-fn unix_timestamp_now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
-}
-
 const fn key_type_matches_authorization(key_type: &KeyType, auth_type: &AuthSignatureType) -> bool {
     matches!(
         (key_type, auth_type),
@@ -2769,6 +2799,7 @@ async fn run_authorize(
     admin: bool,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let enforce = enforce_limits || !limits.is_empty();
 
@@ -2798,7 +2829,7 @@ async fn run_authorize(
             witness: witness.unwrap_or(B256::ZERO),
         }
         .abi_encode();
-        send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+        send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
         return Ok(());
     }
 
@@ -2854,7 +2885,7 @@ async fn run_authorize(
         .abi_encode()
     };
 
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
@@ -3207,9 +3238,10 @@ async fn run_revoke(
     key_address: Address,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let calldata = IAccountKeychain::revokeKeyCall { keyId: key_address }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
@@ -3218,6 +3250,7 @@ async fn run_burn_witness(
     witness: B256,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let config = send_tx.eth.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
@@ -3226,7 +3259,7 @@ async fn run_burn_witness(
     }
 
     let calldata = IAccountKeychain::burnKeyAuthorizationWitnessCall { witness }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
@@ -3357,6 +3390,7 @@ async fn run_update_limit(
     new_limit: U256,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let calldata = IAccountKeychain::updateSpendingLimitCall {
         keyId: key_address,
@@ -3364,7 +3398,7 @@ async fn run_update_limit(
         newLimit: new_limit,
     }
     .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
@@ -3374,10 +3408,11 @@ async fn run_set_scope(
     scopes: Vec<CallScope>,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
@@ -3387,14 +3422,16 @@ async fn run_remove_scope(
     target: Address,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
 /// `cast keychain policy add-call` — merge a selector rule into a target scope.
+#[allow(clippy::too_many_arguments)]
 async fn run_policy_add_call(
     key_address: Address,
     root_account: Option<Address>,
@@ -3403,6 +3440,7 @@ async fn run_policy_add_call(
     recipients: Vec<Address>,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     let metadata = resolve_key_metadata(key_address, root_account)?;
     let config = send_tx.eth.load_config()?;
@@ -3453,7 +3491,7 @@ async fn run_policy_add_call(
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes: vec![target_scope] }
             .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None).await?;
+    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
 
@@ -3465,6 +3503,7 @@ async fn run_policy_set_limit(
     period: Option<u64>,
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
+    force: bool,
 ) -> Result<()> {
     if period.is_some_and(|period| period != 0) {
         eyre::bail!(
@@ -3474,11 +3513,12 @@ async fn run_policy_set_limit(
     }
 
     // updateSpendingLimit authorizes against msg.sender; the root account is not part of calldata.
-    run_update_limit(key_address, token, amount, tx_opts, send_tx).await
+    run_update_limit(key_address, token, amount, tx_opts, send_tx, force).await
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum KeychainTxOutcome {
+    Aborted,
     Submitted,
     PrintedSponsorHash,
 }
@@ -3493,6 +3533,13 @@ impl KeychainRootSigner {
         match self {
             Self::Browser(browser) => browser.address(),
             Self::Wallet(signer) => signer.address(),
+        }
+    }
+
+    fn sender(&self) -> SenderKind<'_> {
+        match self {
+            Self::Browser(browser) => browser.address().into(),
+            Self::Wallet(signer) => signer.as_ref().into(),
         }
     }
 }
@@ -3544,11 +3591,13 @@ pub(crate) async fn send_keychain_tx(
     tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,
     expected_from: Option<Address>,
+    force: bool,
 ) -> Result<KeychainTxOutcome> {
     let root_signer =
         resolve_keychain_root_signer(send_tx, expected_from, tx_opts.tempo.print_sponsor_hash)
             .await?;
-    send_keychain_tx_with_root_signer(calldata, tx_opts, send_tx, root_signer, || Ok(())).await
+    send_keychain_tx_with_root_signer(calldata, tx_opts, send_tx, root_signer, force, || Ok(()))
+        .await
 }
 
 /// Send AccountKeychain calldata with an already-resolved root signer.
@@ -3557,6 +3606,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     mut tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,
     root_signer: KeychainRootSigner,
+    force: bool,
     before_submit: impl FnOnce() -> Result<()>,
 ) -> Result<KeychainTxOutcome> {
     if tx_opts.tempo.sponsor_url.is_some() {
@@ -3591,10 +3641,14 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
 
+    if !confirm_auth_rpc_disclosure_during_build(&builder, root_signer.sender(), force)? {
+        return Ok(KeychainTxOutcome::Aborted);
+    }
+
     if print_sponsor_hash {
         let from = root_signer.address();
         let chain = builder.chain();
-        let (mut tx, _) = builder.build(from).await?;
+        let (mut tx, _) = builder.build(root_signer.sender()).await?;
         if let Some(fee_payer) = sponsor_fee_payer {
             resolve_and_set_fee_token(
                 (!config.eth_rpc_curl).then_some(&provider),
@@ -3621,11 +3675,6 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         KeychainRootSigner::Browser(browser) => {
             let chain = builder.chain();
             let (mut tx, _) = builder.with_browser_wallet().build(browser.address()).await?;
-            if chain.is_tempo()
-                && let Some(gas) = tx.gas_limit()
-            {
-                tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
-            }
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor
                     .resolve_and_set_fee_token(
@@ -3656,7 +3705,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         KeychainRootSigner::Wallet(signer) => {
             let from = signer.address();
             let chain = builder.chain();
-            let (mut tx, _) = builder.build(from).await?;
+            let (mut tx, _) = builder.build(signer.as_ref()).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             if let Some(sponsor) = &tempo_sponsor {
                 sponsor
@@ -4083,7 +4132,8 @@ fn format_timestamp_iso(timestamp: u64) -> String {
 }
 
 fn format_relative_timestamp(timestamp: u64) -> String {
-    format_relative_timestamp_from(timestamp, unix_timestamp_now())
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    format_relative_timestamp_from(timestamp, now)
 }
 
 fn format_relative_timestamp_from(timestamp: u64, now: u64) -> String {
@@ -4265,6 +4315,13 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_scopes_json_deny_unknown_scope_fields() {
+        let json =
+            r#"[{"target":"0x20c0000000000000000000000000000000000001","selector":["transfer"]}]"#;
+        assert!(parse_scopes_json(json).is_err());
+    }
+
+    #[test]
     fn test_parse_scopes_json_deny_unknown_fields() {
         let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":[{"selector":"transfer","recipients":[],"bogus":true}]}]"#;
         assert!(parse_scopes_json(json).is_err());
@@ -4354,6 +4411,7 @@ mod tests {
             KeychainSubcommand::Policy {
                 command:
                     KeychainPolicySubcommand::SetLimit { key_address, token, amount, period, .. },
+                ..
             } => {
                 assert_eq!(key_address, Address::from_str(key).unwrap());
                 assert_eq!(token, PATH_USD_ADDRESS);
@@ -4421,6 +4479,12 @@ mod tests {
         assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T2), Some(true));
         assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T3), Some(true));
         assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T4), Some(false));
+
+        let tempo_t11 = AnvilNodeInfo {
+            network: Some("tempo".to_string()),
+            hard_fork: Some("T11".to_string()),
+        };
+        assert_eq!(active_from_anvil_node_info(&tempo_t11, TempoHardfork::T11), Some(true));
 
         let ethereum_t3 = AnvilNodeInfo {
             network: Some("ethereum".to_string()),

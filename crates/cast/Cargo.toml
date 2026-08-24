@@ -107,14 +107,19 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
 ] }
 
+[target.'cfg(unix)'.dev-dependencies]
+rexpect.workspace = true
+
 [dev-dependencies]
 alloy-hardforks.workspace = true
 alloy-serde.workspace = true
+axum.workspace = true
 dirs.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
 tempo-hardfork.workspace = true
 path-slash.workspace = true
+reqwest.workspace = true
 tower.workspace = true
 
 [features]
@@ -126,6 +131,15 @@ tracy-allocator = ["foundry-cli/tracy-allocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
+touch-id = ["foundry-wallets/touch-id"]
+monad = [
+    "anvil/monad",
+    "foundry-common/monad",
+    "foundry-config/monad",
+    "foundry-evm-networks/monad",
+    "foundry-evm/monad",
+    "foundry-cli/monad",
+]
 optimism = [
     "dep:op-alloy-flz",
     "dep:op-alloy-consensus",

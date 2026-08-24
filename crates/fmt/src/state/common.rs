@@ -695,7 +695,7 @@ impl<'ast> State<'_, 'ast> {
             CommentConfig::skip_trailing_ws().mixed_no_break().mixed_prev_space(),
         );
         if !block_format.breaks() {
-            if !self.last_token_is_break() {
+            if !self.last_token_is_break() && !self.is_beginning_of_line() {
                 self.hardbreak();
             }
             self.s.offset(-self.ind);
@@ -765,11 +765,15 @@ impl<'ast> State<'_, 'ast> {
         let offset = if let BlockFormat::NoBraces(Some(off)) = block_format { off } else { 0 };
         self.print_comments(
             pos_hi,
-            self.cmnt_config().offset(offset).mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
+            self.cmnt_config()
+                .offset(offset)
+                .mixed_no_break()
+                .mixed_prev_space()
+                .mixed_post_glued(),
         );
         self.print_comments(
             pos_hi,
-            CommentConfig::default().mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
+            CommentConfig::default().mixed_no_break().mixed_prev_space().mixed_post_glued(),
         );
         if has_braces {
             self.word("}");

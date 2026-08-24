@@ -7,6 +7,16 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
+    inputs:
+      network:
+        description: "Tempo network to check"
+        required: true
+        type: choice
+        default: "moderato"
+        options:
+          - moderato
+          - mainnet
+          - all
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -31,11 +41,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
 
-      - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
       # Build and install binaries
       - name: Build and install Foundry binaries
@@ -44,9 +54,12 @@ jobs:
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
       - name: Restore bounded NanoUSD wallet
+        if: |
+          github.event_name == 'workflow_dispatch' &&
+          (inputs.network == 'mainnet' || inputs.network == 'all')
         env:
           TEMPO_ACCOUNTS_STORE_JSON_B64: ${{ secrets.TEMPO_ACCOUNTS_STORE_JSON_B64 }}
-          TEMPO_HOME: ${{ runner.temp }}/tempo-mpp
+          TEMPO_HOME: ${{ runner.temp }}/tempo-mpp-mainnet
         run: |
           if [ -z "$TEMPO_ACCOUNTS_STORE_JSON_B64" ]; then
             echo "TEMPO_ACCOUNTS_STORE_JSON_B64 is not configured"
@@ -56,10 +69,40 @@ jobs:
           printf '%s' "$TEMPO_ACCOUNTS_STORE_JSON_B64" | base64 --decode > "$TEMPO_HOME/wallet/store.json"
           chmod 600 "$TEMPO_HOME/wallet/store.json"
 
-      - name: Run MPP e2e test
+      - name: Run Moderato MPP e2e test
+        if: |
+          github.event_name != 'workflow_dispatch' ||
+          inputs.network == 'moderato' ||
+          inputs.network == 'all'
         env:
           MPP_API_KEY: ${{ secrets.MPP_API_KEY }}
-          TEMPO_HOME: ${{ runner.temp }}/tempo-mpp
+          MPP_ALLOW_API_KEY: "1"
+          TEMPO_HOME_BASE: ${{ runner.temp }}/tempo-mpp-moderato
+          TEMPO_AUTO_FUND: "1"
+          TEMPO_ROTATE_WALLET: "1"
+          MPP_RPC_URL: https://rpc.mpp.moderato.tempo.xyz
+          TEMPO_RPC_URL: https://rpc.moderato.tempo.xyz
+          MPP_TOKEN: "0x20c0000000000000000000000000000000000000"
+        run: |
+          for attempt in 1 2 3; do
+            export TEMPO_HOME="${TEMPO_HOME_BASE}-${attempt}"
+            log="${RUNNER_TEMP}/tempo-mpp-${attempt}.log"
+            if ./.github/scripts/tempo-mpp.sh "$(which cast | xargs dirname)" 2>&1 | tee "$log"; then
+              exit 0
+            fi
+            if ! grep -Eq 'HTTP error 402|replaced reusable channel|did not reuse channel' "$log"; then
+              exit 1
+            fi
+            echo "Transient MPP gateway failure on attempt ${attempt}/3"
+          done
+          exit 1
+
+      - name: Run mainnet MPP e2e test
+        if: |
+          github.event_name == 'workflow_dispatch' &&
+          (inputs.network == 'mainnet' || inputs.network == 'all')
+        env:
+          TEMPO_HOME: ${{ runner.temp }}/tempo-mpp-mainnet
           MPP_RPC_URL: https://rpc.mpp.tempo.xyz
           TEMPO_RPC_URL: https://rpc.tempo.xyz
           MPP_TOKEN: "0x20c0000000000000000000008b4c619d2eedec7a"

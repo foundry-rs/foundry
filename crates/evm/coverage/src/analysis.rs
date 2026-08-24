@@ -5,7 +5,7 @@ use foundry_compilers::ProjectCompileOutput;
 use rayon::prelude::*;
 use solar::{
     ast::{self, ExprKind, ItemKind, StmtKind, yul},
-    data_structures::{Never, map::FxHashSet},
+    data_structures::{Never, map::FxHashMap},
     interface::{BytePos, Span},
     sema::{Gcx, hir},
 };
@@ -33,14 +33,82 @@ struct SourceVisitor<'gcx> {
     items: Vec<CoverageItem>,
 
     all_lines: Vec<u32>,
-    function_calls: Vec<Span>,
-    function_calls_set: FxHashSet<Span>,
+    /// Deferred function-call spans, each paired with the contract scope active where the call
+    /// was collected, so scope travels with the span to the delayed HIR resolution pass.
+    function_calls: Vec<(Span, Arc<str>)>,
+    function_call_scopes: FxHashMap<Span, Arc<str>>,
 }
 
 struct SourceVisitorCheckpoint {
     items: usize,
     all_lines: usize,
     function_calls: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EmptySpecialFunctionKind {
+    Constructor,
+    Receive,
+    Fallback,
+}
+
+struct ResolvedEmptySpecialFunction {
+    contract_source_id: u32,
+    contract_name: Arc<str>,
+    function_source_id: u32,
+    function_contract_name: Arc<str>,
+    function_bytes: Range<u32>,
+    kind: EmptySpecialFunctionKind,
+}
+
+fn resolve_empty_special_functions(
+    gcx: Gcx<'_>,
+    data: &SourceFiles,
+) -> Vec<ResolvedEmptySpecialFunction> {
+    let hir_source_ids = data
+        .sources
+        .iter()
+        .map(|(&source_id, path)| {
+            let (hir_source_id, _) = gcx.get_hir_source(path).unwrap();
+            (hir_source_id, source_id)
+        })
+        .collect::<HashMap<_, _>>();
+    let mut resolved = Vec::new();
+    for contract_id in gcx.hir.contract_ids() {
+        let contract = gcx.hir.contract(contract_id);
+        let Some(&contract_source_id) = hir_source_ids.get(&contract.source) else { continue };
+        let constructors = contract.linearized_bases.iter().filter_map(|&base_id| {
+            gcx.hir
+                .contract(base_id)
+                .ctor
+                .map(|function_id| (function_id, EmptySpecialFunctionKind::Constructor))
+        });
+        let runtime_functions = [
+            (contract.receive, EmptySpecialFunctionKind::Receive),
+            (contract.fallback, EmptySpecialFunctionKind::Fallback),
+        ]
+        .into_iter()
+        .filter_map(|(function_id, kind)| function_id.map(|function_id| (function_id, kind)));
+        for (function_id, kind) in constructors.chain(runtime_functions) {
+            let function = gcx.hir.function(function_id);
+            if !function.body.is_some_and(|body| body.is_empty()) {
+                continue;
+            }
+            let Some(&function_source_id) = hir_source_ids.get(&function.source) else { continue };
+            let Some(function_contract_id) = function.contract else { continue };
+            let function_contract = gcx.hir.contract(function_contract_id);
+            let function_bytes = gcx.sess.source_map().span_to_source(function.span).unwrap().data;
+            resolved.push(ResolvedEmptySpecialFunction {
+                contract_source_id,
+                contract_name: contract.name.as_str().into(),
+                function_source_id,
+                function_contract_name: function_contract.name.as_str().into(),
+                function_bytes: function_bytes.start as u32..function_bytes.end as u32,
+                kind,
+            });
+        }
+    }
+    resolved
 }
 
 impl<'gcx> SourceVisitor<'gcx> {
@@ -52,7 +120,7 @@ impl<'gcx> SourceVisitor<'gcx> {
             branch_id: 0,
             all_lines: Default::default(),
             function_calls: Default::default(),
-            function_calls_set: Default::default(),
+            function_call_scopes: Default::default(),
             items: Default::default(),
         }
     }
@@ -87,12 +155,14 @@ impl<'gcx> SourceVisitor<'gcx> {
         })
     }
 
-    /// Disambiguate functions with the same name in the same contract.
+    /// Disambiguate overloaded functions that share a name within the same scope (a contract, or
+    /// the file level for free functions). Keyed by scope so a contract method and a same-named
+    /// free function are not treated as duplicates of each other.
     fn disambiguate_functions(&mut self) {
         let mut dups = HashMap::<_, Vec<usize>>::default();
         for (i, item) in self.items.iter().enumerate() {
             if let CoverageItemKind::Function { name } = &item.kind {
-                dups.entry(name.clone()).or_default().push(i);
+                dups.entry((item.loc.contract_name.clone(), name.clone())).or_default().push(i);
             }
         }
         for dups in dups.values() {
@@ -109,7 +179,7 @@ impl<'gcx> SourceVisitor<'gcx> {
     }
 
     fn resolve_function_calls(&mut self, hir_source_id: hir::SourceId) {
-        self.function_calls_set = self.function_calls.iter().copied().collect();
+        self.function_call_scopes = self.function_calls.iter().cloned().collect();
         let _ = hir::Visit::visit_nested_source(self, hir_source_id);
     }
 
@@ -120,11 +190,14 @@ impl<'gcx> SourceVisitor<'gcx> {
     fn push_lines(&mut self) {
         self.all_lines.sort_unstable();
         self.all_lines.dedup();
-        let mut lines = Vec::new();
+        let mut lines = Vec::with_capacity(self.all_lines.len());
+        // Items are already ordered by line, so advance through them only once.
+        let mut items = self.items.iter().peekable();
         for &line in &self.all_lines {
-            if let Some(reference_item) =
-                self.items.iter().find(|item| item.loc.lines.start == line)
-            {
+            while items.peek().is_some_and(|item| item.loc.lines.start < line) {
+                items.next();
+            }
+            if let Some(reference_item) = items.peek().filter(|item| item.loc.lines.start == line) {
                 lines.push(CoverageItem {
                     kind: CoverageItemKind::Line,
                     loc: reference_item.loc.clone(),
@@ -206,9 +279,9 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
     fn visit_item(&mut self, item: &'ast ast::Item<'ast>) -> ControlFlow<Self::BreakValue> {
         match &item.kind {
             ItemKind::Function(func) => {
-                // TODO: We currently can only detect empty bodies in normal functions, not any of
-                // the other kinds: https://github.com/foundry-rs/foundry/issues/9458
-                if func.kind != ast::FunctionKind::Function && !has_statements(func.body.as_ref()) {
+                // Empty modifiers have no bytecode of their own to anchor. Empty constructors,
+                // receive functions, and fallbacks are handled separately.
+                if func.kind == ast::FunctionKind::Modifier && !has_statements(func.body.as_ref()) {
                     return ControlFlow::Continue(());
                 }
 
@@ -322,8 +395,8 @@ impl<'ast> ast::Visit<'ast> for SourceVisitor<'_> {
                 }
             }
             ExprKind::Call(callee, _args) => {
-                // Resolve later.
-                self.function_calls.push(expr.span);
+                // Resolve later. Capture the current contract scope so it travels with the span.
+                self.function_calls.push((expr.span, self.contract_name.clone()));
 
                 if let ExprKind::Ident(ident) = &callee.kind {
                     // Might be a require call, add branch coverage.
@@ -418,10 +491,14 @@ impl<'gcx> hir::Visit<'gcx> for SourceVisitor<'gcx> {
 
     fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         if let hir::ExprKind::Call(lhs, ..) = &expr.kind
-            && self.function_calls_set.contains(&expr.span)
             && is_regular_call(lhs)
+            && let Some(scope) = self.function_call_scopes.get(&expr.span).cloned()
         {
+            // Attribute the call with the scope captured where it was collected, not the
+            // visitor's final scope (which leaks across free functions and contracts).
+            let prev = std::mem::replace(&mut self.contract_name, scope);
             self.push_stmt(expr.span);
+            self.contract_name = prev;
         }
         self.walk_expr(expr)
     }
@@ -458,25 +535,32 @@ pub struct SourceAnalysis {
     all_items: Vec<CoverageItem>,
     /// Source ID to `(offset, len)` into `all_items`.
     map: Vec<(u32, u32)>,
+    /// Empty receive and fallback items keyed by coverage item ID.
+    empty_special_functions: HashMap<u32, EmptySpecialFunctionKind>,
+    /// Empty receive and fallback item IDs resolved for each contract, including inheritance.
+    contract_empty_special_functions: HashMap<u32, HashMap<Arc<str>, Vec<u32>>>,
 }
 
 impl SourceAnalysis {
-    /// Analyzes contracts in the sources held by the source analyzer.
+    /// Analyzes the sources held by the source analyzer.
     ///
     /// Coverage items are found by:
     /// - Walking the AST of each contract (except interfaces)
-    /// - Recording the items of each contract
+    /// - Walking file-level (free) functions
+    /// - Recording the items found
     ///
     /// Each coverage item contains relevant information to find opcodes corresponding to them: the
     /// source ID the item is in, the source code range of the item, and the contract name the item
     /// is in.
     ///
-    /// Note: Source IDs are only unique per compilation job; that is, a code base compiled with
-    /// two different solc versions will produce overlapping source IDs if the compiler version is
-    /// not taken into account.
+    /// Note: Source IDs are only unique per compilation job, so report-level source identity must
+    /// also include the compiler build ID.
     #[instrument(name = "SourceAnalysis::new", skip_all)]
     pub fn new(data: &SourceFiles, output: &ProjectCompileOutput) -> eyre::Result<Self> {
+        let mut resolved_empty_special_functions = Vec::new();
         let mut sourced_items = output.parser().solc().compiler().enter(|compiler| {
+            resolved_empty_special_functions =
+                resolve_empty_special_functions(compiler.gcx(), data);
             data.sources
                 .par_iter()
                 .map(|(&source_id, path)| {
@@ -488,18 +572,31 @@ impl SourceAnalysis {
 
                     let mut visitor = SourceVisitor::new(source_id, compiler.gcx());
                     for item in ast.items.iter() {
-                        // Visit only top-level contracts.
-                        let ItemKind::Contract(contract) = &item.kind else { continue };
+                        match &item.kind {
+                            // Contracts: walk their functions, dropping test contracts.
+                            ItemKind::Contract(contract) => {
+                                // Skip interfaces which have no function implementations.
+                                if contract.kind.is_interface() {
+                                    continue;
+                                }
 
-                        // Skip interfaces which have no function implementations.
-                        if contract.kind.is_interface() {
-                            continue;
-                        }
-
-                        let checkpoint = visitor.checkpoint();
-                        visitor.visit_contract(contract);
-                        if visitor.has_tests(&checkpoint) {
-                            visitor.restore_checkpoint(checkpoint);
+                                let checkpoint = visitor.checkpoint();
+                                visitor.visit_contract(contract);
+                                if visitor.has_tests(&checkpoint) {
+                                    visitor.restore_checkpoint(checkpoint);
+                                }
+                            }
+                            // File-level (free) functions are covered too, not only functions
+                            // defined inside a contract. Without this, a file of only free
+                            // functions gets no coverage record at all.
+                            ItemKind::Function(_) => {
+                                // A free function is not scoped to any contract. Clear any scope
+                                // left by a previously visited contract so it is attributed at
+                                // file level, not as `Contract.freeFn`.
+                                visitor.contract_name = Arc::default();
+                                let _ = ast::Visit::visit_item(&mut visitor, item);
+                            }
+                            _ => {}
                         }
                     }
 
@@ -534,7 +631,31 @@ impl SourceAnalysis {
             all_items.extend(items);
         }
 
-        Ok(Self { all_items, map })
+        let mut empty_special_functions = HashMap::default();
+        let mut contract_empty_special_functions =
+            HashMap::<u32, HashMap<Arc<str>, Vec<u32>>>::default();
+        for resolved in resolved_empty_special_functions {
+            let item_ids = all_items
+                .iter()
+                .enumerate()
+                .filter(|(_, item)| {
+                    item.loc.source_id == resolved.function_source_id as usize
+                        && item.loc.contract_name == resolved.function_contract_name
+                        && item.loc.bytes == resolved.function_bytes
+                })
+                .map(|(item_id, _)| item_id as u32)
+                .collect::<Vec<_>>();
+            empty_special_functions
+                .extend(item_ids.iter().map(|&item_id| (item_id, resolved.kind)));
+            contract_empty_special_functions
+                .entry(resolved.contract_source_id)
+                .or_default()
+                .entry(resolved.contract_name)
+                .or_default()
+                .extend(item_ids);
+        }
+
+        Ok(Self { all_items, map, empty_special_functions, contract_empty_special_functions })
     }
 
     /// Returns all the coverage items.
@@ -570,11 +691,31 @@ impl SourceAnalysis {
     pub fn get(&self, item_id: u32) -> Option<&CoverageItem> {
         self.all_items.get(item_id as usize)
     }
+
+    pub(crate) fn empty_special_function_kind(
+        &self,
+        item_id: u32,
+    ) -> Option<EmptySpecialFunctionKind> {
+        self.empty_special_functions.get(&item_id).copied()
+    }
+
+    pub(crate) fn empty_special_function_ids(
+        &self,
+        source_id: u32,
+        contract_name: &str,
+    ) -> impl Iterator<Item = u32> + '_ {
+        self.contract_empty_special_functions
+            .get(&source_id)
+            .and_then(|contracts| contracts.get(contract_name))
+            .into_iter()
+            .flatten()
+            .copied()
+    }
 }
 
-/// A list of versioned sources and their ASTs.
+/// A list of sources from one compiler build.
 #[derive(Default)]
 pub struct SourceFiles {
-    /// The versioned sources.
+    /// The sources keyed by their IDs within the compiler build.
     pub sources: HashMap<u32, PathBuf>,
 }

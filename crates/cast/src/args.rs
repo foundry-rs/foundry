@@ -53,7 +53,7 @@ pub fn run() -> Result<()> {
 
 /// Setup the global logger and other utilities.
 pub fn setup() -> Result<()> {
-    utils::common_setup();
+    utils::common_setup::<CastArgs>()?;
     utils::subscriber();
 
     Ok(())
@@ -200,6 +200,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::ToBytes32 { bytes } => {
             let value = stdin::unwrap_line(bytes)?;
             let out = SimpleCast::to_bytes32(&value)?;
+            print_scalar(out)?;
+        }
+        CastSubcommand::ToBytesMemory { data } => {
+            let value = stdin::unwrap_line(data)?;
+            let out = SimpleCast::to_bytes_memory(&value)?;
             print_scalar(out)?;
         }
         CastSubcommand::Pad { data, right, left: _, len } => {
@@ -935,7 +940,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
         }
         CastSubcommand::Create2(cmd) => {
-            cmd.run()?;
+            cmd.execute()?;
         }
         CastSubcommand::Wallet { command } => command.run().await?,
         CastSubcommand::Completions { shell } => {
@@ -955,6 +960,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Some(NetworkVariant::Ethereum) => {
                     SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?
                 }
+                #[cfg(feature = "monad")]
+                Some(NetworkVariant::Monad) => SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?,
                 // Without an explicit `--network` override, decode with the Foundry envelope,
                 // which dispatches on the EIP-2718 type byte for the transaction types compiled
                 // into `FoundryNetwork`, including Tempo txs (`0x76`).

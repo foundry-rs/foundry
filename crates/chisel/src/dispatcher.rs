@@ -4,6 +4,7 @@
 //! of both builtin commands and Solidity snippets.
 
 use crate::{
+    executor::InspectResult,
     prelude::{ChiselCommand, ChiselResult, ChiselSession, SessionSourceConfig, SolidityHelper},
     source::SessionSource,
 };
@@ -11,17 +12,18 @@ use alloy_primitives::{Address, hex};
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_cli::utils::fetch_abi_from_etherscan;
-use foundry_config::{Config, RpcEndpointUrl};
+use foundry_config::{Chain, Config, RpcEndpointUrl};
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
-    hardforks::TempoHardfork,
+    hardforks::{ExecutionSpec, TempoHardfork},
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
         render_trace_arena,
     },
 };
+use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use reqwest::Url;
 use solar::{
     parse::lexer::token::{RawLiteralKind, RawTokenKind},
@@ -53,6 +55,7 @@ pub const CHISEL_CHAR: &str = "⚒️";
 pub struct ChiselDispatcher<FEN: FoundryEvmNetwork> {
     pub session: ChiselSession<FEN>,
     pub helper: SolidityHelper,
+    last_result: Option<String>,
 }
 
 /// Helper function that formats solidity source with the given [FormatterConfig]
@@ -65,7 +68,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
     /// Associated public function to create a new Dispatcher instance
     pub fn new(config: SessionSourceConfig<FEN>) -> eyre::Result<Self> {
         let session = ChiselSession::new(config)?;
-        Ok(Self { session, helper: Default::default() })
+        Ok(Self { session, helper: Default::default(), last_result: None })
     }
 
     /// Returns the optional ID of the current session.
@@ -118,11 +121,11 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             };
         }
 
-        let source = self.source_mut();
-
         input = input.trim();
-        let (only_trivia, new_input) = preprocess(input);
+        let (only_trivia, new_input) = preprocess(input, self.last_result.as_deref())?;
         input = &*new_input;
+
+        let source = self.source_mut();
 
         // If the input is a comment, add it to the run code so we avoid running with empty input
         if only_trivia {
@@ -136,23 +139,32 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         // Create new source with exact input appended and parse
         let (new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
 
-        let (cf, res) = source.inspect(input).await?;
-        if let Some(res) = &res {
+        let InspectResult { control_flow, formatted_output, last_result, replay_input } =
+            source.inspect(input).await?;
+        let (new_source, do_execute) = if let Some(input) = replay_input {
+            source.clone_with_new_line(input)?
+        } else {
+            (new_source, do_execute)
+        };
+        if let Some(last_result) = last_result {
+            self.last_result = Some(last_result);
+        }
+        if let Some(res) = &formatted_output {
             let _ = sh_println!("{res}");
         }
-        if cf.is_break() {
-            debug!(%input, ?res, "inspect success");
+        if control_flow.is_break() {
+            debug!(%input, ?formatted_output, "inspect success");
             return Ok(ControlFlow::Continue(()));
         }
 
         if do_execute {
-            self.execute_and_replace(new_source).await.map(ControlFlow::Continue)
+            self.execute_and_replace(new_source).await?;
         } else {
             let out = new_source.build()?;
             debug!(%input, ?out, "skipped execute and rebuild source");
             *self.source_mut() = new_source;
-            Ok(ControlFlow::Continue(()))
         }
+        Ok(ControlFlow::Continue(()))
     }
 
     /// Decodes traces in the given [`ChiselResult`].
@@ -162,20 +174,26 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         result: &mut ChiselResult,
         // known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
-        let chain_id = session_config.evm_opts.get_remote_chain_id().await;
-        let is_tempo = session_config.evm_opts.networks.is_tempo()
-            || chain_id.as_ref().is_some_and(|chain| chain.is_tempo());
+        let chain_id = session_config.source_chain_id.map(Chain::from);
+        let resolved_hardfork = session_config.resolved_hardfork;
 
-        let mut decoder = CallTraceDecoderBuilder::new()
+        #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
+        let mut builder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
             .with_signature_identifier(SignaturesIdentifier::from_config(
                 &session_config.foundry_config,
             )?)
+            .with_networks(session_config.foundry_config.networks)
             .with_chain_id(chain_id.map(|c| c.id()))
-            .with_tempo_hardfork(
-                is_tempo.then(|| session_config.foundry_config.evm_spec_id::<TempoHardfork>()),
-            )
-            .build();
+            .with_tempo_hardfork(resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork));
+        #[cfg(feature = "monad")]
+        {
+            builder = builder.with_monad_hardfork(
+                resolved_hardfork
+                    .and_then(foundry_evm::hardforks::MonadHardfork::from_foundry_hardfork),
+            );
+        }
+        let mut decoder = builder.build();
 
         let mut identifier =
             TraceIdentifiers::new().with_external(&session_config.foundry_config, chain_id)?;
@@ -259,7 +277,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             ChiselCommand::ListSessions => self.list_sessions(),
             ChiselCommand::Source => self.show_source(),
             ChiselCommand::ClearCache => self.clear_cache(),
-            ChiselCommand::Fork { url } => self.set_fork(url),
+            ChiselCommand::Fork { url } => self.set_fork(url).await,
             ChiselCommand::Traces => self.toggle_traces(),
             ChiselCommand::Calldata { data } => self.set_calldata(data.as_deref()),
             ChiselCommand::MemDump => self.show_mem_dump().await,
@@ -278,6 +296,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
 
     pub(crate) fn clear_source(&mut self) -> Result<()> {
         self.source_mut().clear();
+        self.last_result = None;
         sh_println!("Cleared session!")
     }
 
@@ -320,7 +339,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             sh_println!("{}", "Saved current session!".green())?;
         }
 
-        let new_session = match id {
+        let mut new_session = match id {
             "latest" => ChiselSession::<FEN>::latest(),
             id => ChiselSession::<FEN>::load(id),
         }
@@ -331,8 +350,10 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             &new_session.source.config.foundry_config,
             id,
         )?;
+        new_session.source.config.initialize_local_context();
         new_session.source.build()?;
         self.session = new_session;
+        self.last_result = None;
         sh_println!("Loaded Chisel session! (ID = {})", self.session.id.as_ref().unwrap())
     }
 
@@ -364,11 +385,11 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         sh_println!("Cleared chisel cache!")
     }
 
-    pub(crate) fn set_fork(&mut self, url: Option<String>) -> Result<()> {
+    pub(crate) async fn set_fork(&mut self, url: Option<String>) -> Result<()> {
+        self.source_mut().config.initialize_local_context();
+
         let Some(url) = url else {
-            self.source_mut().config.evm_opts.fork_url = None;
-            sh_println!("Now using local environment.")?;
-            return Ok(());
+            return self.clear_fork();
         };
 
         // If the argument is an RPC alias designated in the
@@ -387,14 +408,72 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             eyre::bail!("invalid fork URL: {e}");
         }
 
-        sh_println!("Set fork URL to {}", fork_url.yellow())?;
+        let mut fork_opts = self.source().config.evm_opts.clone();
+        fork_opts.fork_url = Some(fork_url.clone());
+        fork_opts.fork_block_number = None;
+        fork_opts.fork_block_number_is_inferred = false;
+        let explicit_network =
+            fork_opts.networks.has_network_selection() && !fork_opts.fork_network_is_inferred;
+        let identity = fork_opts.discover_fork_endpoint().await?;
+        let target = identity.network;
+        let current_opts = &self.source().config.evm_opts;
+        let current = network_variant(current_opts.networks);
+        ensure_fork_network_matches(current, target)?;
 
-        self.source_mut().config.evm_opts.fork_url = Some(fork_url);
+        let networks = if explicit_network {
+            current_opts.networks
+        } else {
+            current_opts.networks.with_rpc_profile(identity.network_profile)
+        };
+        if fork_opts.env.chain_id.is_none() || fork_opts.fork_chain_id_is_inferred {
+            fork_opts.env.chain_id = Some(identity.execution_chain_id);
+            fork_opts.fork_chain_id_is_inferred = true;
+        }
+        fork_opts.networks = networks;
+        fork_opts.fork_endpoint = Some(identity.clone());
+        fork_opts.fork_network_is_inferred = !explicit_network;
+        fork_opts.pin_fork_block().await?;
+        let chain_id_is_inferred = fork_opts.fork_chain_id_is_inferred;
+        let source = self.source_mut();
+        source.config.evm_opts = fork_opts;
+        source.config.fork_network_is_inferred = !explicit_network;
+        source.config.fork_chain_id_is_inferred = chain_id_is_inferred;
+        source.config.foundry_config.networks = networks;
+        source.config.foundry_config.chain = Some(Chain::from(identity.source_chain_id));
+        source.config.resolved_hardfork = None;
+        source.config.source_chain_id = None;
         // Clear the backend so that it is re-instantiated with the new fork
         // upon the next execution of the session source.
-        self.source_mut().config.backend = None;
+        source.config.backend = None;
+
+        sh_println!("Set fork URL to {}", fork_url.yellow())?;
 
         Ok(())
+    }
+
+    fn clear_fork(&mut self) -> Result<()> {
+        let current = network_variant(self.source().config.evm_opts.networks);
+        let local_networks =
+            self.source().config.local_networks.unwrap_or(self.source().config.evm_opts.networks);
+        let target = network_variant(local_networks);
+        ensure_fork_network_matches(current, target)?;
+
+        let source = self.source_mut();
+        source.config.evm_opts.fork_url = None;
+        source.config.evm_opts.fork_block_number = None;
+        source.config.evm_opts.fork_block_number_is_inferred = false;
+        source.config.evm_opts.networks = local_networks;
+        source.config.evm_opts.env.chain_id = source.config.local_chain_id;
+        source.config.evm_opts.fork_network_is_inferred = false;
+        source.config.evm_opts.fork_chain_id_is_inferred = false;
+        source.config.fork_network_is_inferred = false;
+        source.config.fork_chain_id_is_inferred = false;
+        source.config.foundry_config.networks = local_networks;
+        source.config.foundry_config.chain = source.config.local_chain_id.map(Chain::from);
+        source.config.resolved_hardfork = None;
+        source.config.source_chain_id = None;
+        source.config.backend = None;
+        sh_println!("Now using local environment.")
     }
 
     pub(crate) fn toggle_traces(&mut self) -> Result<()> {
@@ -530,7 +609,8 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         let source = self.source_mut();
         let line = format!("bytes32 __raw__; assembly {{ __raw__ := {var} }}");
         if let Ok((new_source, _)) = source.clone_with_new_line(line)
-            && let (_, Some(res)) = new_source.inspect("__raw__").await?
+            && let InspectResult { formatted_output: Some(res), .. } =
+                new_source.inspect("__raw__").await?
         {
             sh_println!("{res}")?;
             return Ok(());
@@ -542,6 +622,20 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
 
 fn config_network_name(config: &Config) -> &'static str {
     config.networks.active_network_name().unwrap_or("ethereum")
+}
+
+fn network_variant(networks: NetworkConfigs) -> NetworkVariant {
+    networks.resolved_network().unwrap_or_default()
+}
+
+fn ensure_fork_network_matches(current: NetworkVariant, target: NetworkVariant) -> Result<()> {
+    if current != target {
+        eyre::bail!(
+            "cannot switch this Chisel session from network `{current}` to `{target}`. Restart \
+             Chisel with `--network {target}` or a fork URL for that network.",
+        );
+    }
+    Ok(())
 }
 
 fn ensure_loaded_session_network_matches(
@@ -560,11 +654,11 @@ fn ensure_loaded_session_network_matches(
     Ok(())
 }
 
-/// Preprocesses addresses to ensure they are correctly checksummed and returns whether the input
-/// only contained trivia (comments, whitespace).
-fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
+/// Expands the previous result, checksums addresses, and returns whether the input only contained
+/// trivia (comments, whitespace).
+fn preprocess<'a>(input: &'a str, last_result: Option<&str>) -> Result<(bool, Cow<'a, str>)> {
     let mut only_trivia = true;
-    let mut new_input = Cow::Borrowed(input);
+    let mut replacements = Vec::new();
     for (pos, token) in solar::parse::Cursor::new(input).with_position() {
         use RawTokenKind::{BlockComment, LineComment, Literal, Whitespace};
 
@@ -573,22 +667,37 @@ fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
         }
         only_trivia = false;
 
+        let range = pos..pos + token.len as usize;
+        if &input[range.clone()] == "$_" {
+            let last_result = last_result.ok_or_else(|| eyre::eyre!("no previous result"))?;
+            replacements.push((range, format!("({last_result})")));
+            continue;
+        }
+
         // Ensure that addresses are correctly checksummed.
         if let Literal { kind: RawLiteralKind::Int { base: Base::Hexadecimal, .. } } = token.kind
             && token.len == 42
+            && let Ok(addr) = input[range.clone()].parse::<Address>()
         {
-            let range = pos..pos + 42;
-            if let Ok(addr) = input[range.clone()].parse::<Address>() {
-                new_input.to_mut().replace_range(range, addr.to_checksum_buffer(None).as_str());
-            }
+            replacements.push((range, addr.to_checksum_buffer(None).to_string()));
         }
     }
-    (only_trivia, new_input)
+
+    if replacements.is_empty() {
+        Ok((only_trivia, Cow::Borrowed(input)))
+    } else {
+        let mut new_input = input.to_string();
+        for (range, replacement) in replacements.into_iter().rev() {
+            new_input.replace_range(range, &replacement);
+        }
+        Ok((only_trivia, Cow::Owned(new_input)))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use foundry_evm::{core::evm::EthEvmNetwork, opts::EvmOpts};
 
     fn config_with_network(network: Option<&str>) -> Config {
         let mut config = Config::default();
@@ -609,6 +718,78 @@ mod tests {
     }
 
     #[test]
+    fn ensure_fork_network_matches_accepts_same_family() {
+        ensure_fork_network_matches(NetworkVariant::Ethereum, NetworkVariant::Ethereum).unwrap();
+        ensure_fork_network_matches(NetworkVariant::Tempo, NetworkVariant::Tempo).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn setting_fork_preserves_explicit_celo_context() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let networks = NetworkConfigs::with_celo();
+        let config = SessionSourceConfig::<EthEvmNetwork> {
+            foundry_config: Config { networks, ..Default::default() },
+            evm_opts: EvmOpts { networks, ..Default::default() },
+            local_networks: Some(networks),
+            ..Default::default()
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+
+        dispatcher.set_fork(Some(handle.http_endpoint())).await.unwrap();
+        assert!(dispatcher.source().config.evm_opts.networks.is_celo());
+        assert!(!dispatcher.source().config.evm_opts.fork_network_is_inferred);
+
+        dispatcher.clear_fork().unwrap();
+        assert!(dispatcher.source().config.evm_opts.networks.is_celo());
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn ensure_fork_network_matches_rejects_cross_family_change() {
+        let err = ensure_fork_network_matches(NetworkVariant::Ethereum, NetworkVariant::Monad)
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "cannot switch this Chisel session from network `ethereum` to `monad`. Restart Chisel \
+             with `--network monad` or a fork URL for that network."
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn clearing_startup_fork_preserves_inferred_monad_context() {
+        let networks = NetworkConfigs::with_monad();
+        let evm_opts = EvmOpts {
+            fork_url: Some("http://localhost:8545".to_string()),
+            networks,
+            env: foundry_evm::opts::Env { chain_id: Some(143), ..Default::default() },
+            ..Default::default()
+        };
+        let config = SessionSourceConfig::<foundry_evm::core::evm::MonadEvmNetwork> {
+            foundry_config: Config {
+                solc: Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 29))),
+                networks,
+                chain: Some(Chain::from(143u64)),
+                ..Default::default()
+            },
+            evm_opts,
+            local_networks: Some(networks),
+            local_chain_id: Some(143),
+            ..Default::default()
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+
+        dispatcher.clear_fork().unwrap();
+
+        let config = &dispatcher.source().config;
+        assert!(config.evm_opts.fork_url.is_none());
+        assert!(config.evm_opts.networks.is_monad());
+        assert_eq!(config.evm_opts.env.chain_id, Some(143));
+        assert!(config.foundry_config.networks.is_monad());
+        assert_eq!(config.foundry_config.chain.map(|chain| chain.id()), Some(143));
+    }
+
+    #[test]
     fn ensure_loaded_session_network_matches_rejects_different_network() {
         let current = config_with_network(None);
         let loaded = config_with_network(Some("tempo"));
@@ -618,6 +799,20 @@ mod tests {
             err.to_string(),
             "Chisel session `42` was saved for network `tempo`, but the current network is \
              `ethereum`. Rerun with `--network tempo` to load it."
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn ensure_loaded_session_network_matches_rejects_monad_on_default_network() {
+        let current = config_with_network(None);
+        let loaded = config_with_network(Some("monad"));
+
+        let err = ensure_loaded_session_network_matches(&current, &loaded, "43").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Chisel session `43` was saved for network `monad`, but the current network is \
+             `ethereum`. Rerun with `--network monad` to load it."
         );
     }
 
@@ -632,7 +827,7 @@ mod tests {
     #[test]
     fn test_trivia() {
         fn only_trivia(s: &str) -> bool {
-            let (only_trivia, _new_input) = preprocess(s);
+            let (only_trivia, _new_input) = preprocess(s, None).unwrap();
             only_trivia
         }
         assert!(only_trivia("// line comment"));
@@ -642,5 +837,18 @@ mod tests {
         assert!(only_trivia("/* block comment */"));
         assert!(only_trivia(" \t\n  /* block \n \t comment */\n"));
         assert!(!only_trivia("/* block \n \t comment */\nwith \tother"));
+    }
+
+    #[test]
+    fn test_last_result_preprocessing() {
+        let result = "abi.decode(hex\"2a\", (uint256))";
+        let (_, input) = preprocess("uint256 answer = $_;", Some(result)).unwrap();
+        assert_eq!(input, format!("uint256 answer = ({result});"));
+
+        let literal = r#"string memory value = "$_"; // $_"#;
+        let (_, input) = preprocess(literal, Some(result)).unwrap();
+        assert_eq!(input, literal);
+
+        assert_eq!(preprocess("$_", None).unwrap_err().to_string(), "no previous result");
     }
 }

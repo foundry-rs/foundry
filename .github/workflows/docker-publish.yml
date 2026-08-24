@@ -14,30 +14,37 @@ on:
       tag_name:
         required: true
         type: string
+    outputs:
+      digest:
+        description: Immutable multi-platform image digest
+        value: ${{ jobs.build.outputs.digest }}
 
 concurrency:
-  group: docker-${{ github.head_ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: docker-${{ github.repository }}-${{ inputs.tag_name }}
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
-  # Keep in sync with `release.yml`.
+  # Keep the base features in sync with `release.yml`.
   RUST_PROFILE: dist
-  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
+  RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad,optimism
 
 jobs:
   build:
-    name: build and push
+    name: build, sign, and stage
     runs-on: depot-ubuntu-latest
     permissions:
       attestations: write
       artifact-metadata: write
+      actions: read
       contents: read
       id-token: write
       packages: write
     timeout-minutes: 60
+    outputs:
+      digest: ${{ steps.select.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,7 +53,7 @@ jobs:
       # Login against a Docker registry except on PR
       # https://github.com/docker/login-action
       - name: Login into registry ${{ env.REGISTRY }}
-        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -60,44 +67,39 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
-      # Derive Docker tags from inputs.tag_name:
-      # - v{major}.{minor}.{patch}: tagged as :v1.2.3, :v1.2, :v1, and :latest
-      # - nightly-{SHA}: tagged as :nightly-{SHA} and :nightly
-      # - anything else: tagged as-is
-      - name: Finalize Docker Metadata
-        id: docker_tagging
+      - name: Check for an already staged exact image
+        id: existing
         env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           TAG: ${{ inputs.tag_name }}
-          REGISTRY: ${{ env.REGISTRY }}
-          IMAGE: ${{ env.IMAGE_NAME }}
+        shell: bash
         run: |
-          if [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            MAJOR="v${BASH_REMATCH[1]}"
-            MINOR="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-            printf "version tag release, assigning %s, %s, %s, and latest tags\n" "$TAG" "$MINOR" "$MAJOR"
-            printf "docker_tags=%s/%s:%s,%s/%s:%s,%s/%s:%s,%s/%s:latest\n" "$REGISTRY" "$IMAGE" "$TAG" "$REGISTRY" "$IMAGE" "$MINOR" "$REGISTRY" "$IMAGE" "$MAJOR" "$REGISTRY" "$IMAGE" >> "$GITHUB_OUTPUT"
-          elif [[ "$TAG" =~ ^nightly- ]]; then
-            printf "nightly release, assigning %s and nightly tags\n" "$TAG"
-            printf "docker_tags=%s/%s:%s,%s/%s:nightly\n" "$REGISTRY" "$IMAGE" "$TAG" "$REGISTRY" "$IMAGE" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          inspect_error="$(mktemp)"
+          if digest="$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest.Digest}}' 2>"$inspect_error" | tr -d '"')"; then
+            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::Exact tag $TAG has invalid digest $digest."
+              exit 1
+            fi
+            {
+              printf 'exists=true\n'
+              printf 'digest=%s\n' "$digest"
+            } >> "$GITHUB_OUTPUT"
+          elif grep -Eiq 'manifest unknown|not found' "$inspect_error"; then
+            printf 'exists=false\n' >> "$GITHUB_OUTPUT"
           else
-            printf "tagging as %s\n" "$TAG"
-            printf "docker_tags=%s/%s:%s\n" "$REGISTRY" "$IMAGE" "$TAG" >> "$GITHUB_OUTPUT"
+            cat "$inspect_error" >&2
+            echo "::error::Could not determine whether exact tag $TAG exists."
+            exit 1
           fi
 
-      # Log docker metadata to explicitly know what is being pushed
-      - name: Inspect Docker Metadata
-        env:
-          DOCKER_TAGS: ${{ steps.docker_tagging.outputs.docker_tags }}
-          DOCKER_LABELS: ${{ steps.meta.outputs.labels }}
-        run: |
-          printf "TAGS -> %s\n" "$DOCKER_TAGS"
-          printf "LABELS -> %s\n" "$DOCKER_LABELS"
-
       - name: Set up Depot CLI
+        if: steps.existing.outputs.exists != 'true'
         uses: depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461 # v1.7.1
 
       - name: Build and push Foundry image
         id: build
+        if: steps.existing.outputs.exists != 'true'
         uses: depot/build-push-action@98e78adca7817480b8185f474a400b451d74e287 # v1.18.0
         with:
           build-args: |
@@ -107,35 +109,106 @@ jobs:
             VERGEN_GIT_SHA=${{ github.sha }}
           project: 8gkbxxjrpw
           context: .
-          tags: ${{ steps.docker_tagging.outputs.docker_tags }}
+          # Depot implicitly tags an untagged multi-platform output as `latest` when merging.
+          outputs: type=image,name=ghcr.io/${{ github.repository }}:build-staging,push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
-          push: true
           no-cache: true
           sbom: true
           provenance: mode=max
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      - name: Sign image with cosign (keyless)
+      - name: Select and inspect image digest
+        id: select
         env:
-          DOCKER_TAGS: ${{ steps.docker_tagging.outputs.docker_tags }}
-          DIGEST: ${{ steps.build.outputs.digest }}
+          BUILT_DIGEST: ${{ steps.build.outputs.digest }}
+          EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         shell: bash
         run: |
           set -euo pipefail
-          IFS=',' read -r -a tags <<< "$DOCKER_TAGS"
-          for tag in "${tags[@]}"; do
-            # Strip any tag suffix and pin to immutable digest, then sign.
-            ref="${tag%%:*}@${DIGEST}"
-            printf 'Signing %s\n' "$ref"
-            cosign sign --yes "$ref"
-          done
+          DIGEST="${EXISTING_DIGEST:-$BUILT_DIGEST}"
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Invalid image digest: $DIGEST"
+            exit 1
+          fi
+          docker buildx imagetools inspect "$IMAGE@$DIGEST"
+          printf 'digest=%s\n' "$DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Verify already staged image
+        if: steps.existing.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ steps.select.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          EXPECTED_REVISION: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_REF: ${{ github.ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_data="$(docker buildx imagetools inspect "$IMAGE@$DIGEST" --format '{{json .Image}}')"
+          revision="$(jq -er '
+            [to_entries[].value.config.Labels["org.opencontainers.image.revision"]] |
+            unique | if length == 1 then .[0] else empty end
+          ' <<< "$image_data")"
+          if [[ "$revision" != "$EXPECTED_REVISION" ]]; then
+            echo "::error::Staged image revision $revision does not match $EXPECTED_REVISION."
+            exit 1
+          fi
+          docker_identity="https://github.com/${REPOSITORY}/.github/workflows/docker-publish.yml@${SOURCE_REF}"
+          cosign verify \
+            --certificate-identity "$docker_identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$IMAGE@$DIGEST"
+          gh attestation verify "oci://$IMAGE@$DIGEST" \
+            --repo "$REPOSITORY" \
+            --signer-workflow "$REPOSITORY/.github/workflows/docker-publish.yml" \
+            --source-ref "$SOURCE_REF" \
+            --source-digest "$EXPECTED_REVISION"
+
+      - name: Sign image with cosign (keyless)
+        if: steps.existing.outputs.exists != 'true'
+        env:
+          DIGEST: ${{ steps.select.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign sign --yes "$IMAGE@$DIGEST"
 
       - name: Image build provenance attestation
-        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
+        if: steps.existing.outputs.exists != 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ steps.select.outputs.digest }}
           push-to-registry: true
+
+      - name: Stage exact Docker tag
+        if: steps.existing.outputs.exists != 'true'
+        env:
+          DIGEST: ${{ steps.select.outputs.digest }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          TAG: ${{ inputs.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          inspect_error="$(mktemp)"
+          if existing="$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest.Digest}}' 2>"$inspect_error" | tr -d '"')"; then
+            if [[ "$existing" != "$DIGEST" ]]; then
+              echo "::error::Exact tag $TAG already resolves to conflicting digest $existing."
+              exit 1
+            fi
+            echo "Exact tag $TAG already staged at $DIGEST."
+          elif grep -Eiq 'manifest unknown|not found' "$inspect_error"; then
+            docker buildx imagetools create --tag "$IMAGE:$TAG" "$IMAGE@$DIGEST"
+          else
+            cat "$inspect_error" >&2
+            echo "::error::Could not determine whether exact tag $TAG exists."
+            exit 1
+          fi
+          actual="$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          [[ "$actual" == "$DIGEST" ]] || { echo "::error::Exact tag verification failed: $actual"; exit 1; }

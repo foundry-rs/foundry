@@ -217,6 +217,96 @@ Current modeling notes:
 Stateless symbolic tests use ordinary ABI parameters. The executor creates
 symbolic calldata from the function ABI and explores feasible EVM paths.
 
+Storage hooks can maintain revert-aware ghost state for raw storage accesses.
+Register a callback during `setUp` for each target and access kind:
+
+```solidity
+function setUp() public {
+    vm.registerSloadHook(address(vault), this.onLoad.selector);
+    vm.registerSstoreHook(address(vault), this.onStore.selector);
+}
+
+function onLoad(address account, bytes32 slot, bytes32 value) external {
+    require(msg.sender == address(vm), "only storage hook");
+    // Update ghost state from the observed load.
+}
+
+function onStore(
+    address account,
+    bytes32 slot,
+    bytes32 oldValue,
+    bytes32 newValue
+) external {
+    require(msg.sender == address(vm), "only storage hook");
+    // Update ghost state from the observed write.
+}
+```
+
+Concrete and symbolic execution use the same callback contract. Re-registering
+an access kind replaces its callback for that target. Callback reverts propagate
+through the post-operation callback. Registration survives EVM reverts, while
+callback state follows the enclosing EVM context and rolls back with it. Hooks
+use the effective storage account, so a `delegatecall` is attributed to the
+caller's storage context. Hooks are suppressed throughout the callback's call
+subtree. Callback execution is hidden from mocks, expectations, recorded logs,
+and storage-access recording, while its EVM state writes and hook registrations
+are retained. Callbacks do not inherit staticness, so they can update ghost state
+for storage reads beneath `STATICCALL`; the observed target remains subject to
+normal static-call restrictions. The slot is the computed effective slot;
+mapping roots and decoded keys are not included. Callbacks are ordinary external
+functions, so they must authenticate `msg.sender` as `address(vm)` before
+updating ghost state. Registered callback selectors are excluded from default
+invariant targets, but explicit selector configuration can still target them.
+The callback runs as an ordinary call frame, so it consumes one of the 1024
+protocol call-depth slots; a storage access at the maximum legal call depth
+that would otherwise succeed can have its callback rejected as too deep, which
+propagates as a failure of the storage operation.
+
+Aggregate ghosts such as `ghost = ghost - oldValue + newValue` require an
+initialization model consistent with the ghost's starting value. Use
+`symbolic.storage_layout = "zero_init"` when the ghost starts from zero and
+unwritten symbolic mapping entries should be zero. With the default `solidity`
+layout, a previously unwritten symbolic key has an unknown base value, so the
+ghost must already account for that value. Known nonzero setup state must
+likewise be included in the initial ghost. These raw hooks cannot distinguish
+one mapping family from another without mapping-root provenance.
+
+### Mapping SSTORE hooks and ERC20 accounting
+
+`registerMappingSstoreHook` can maintain a ghost aggregate for one mapping root without reacting
+to unrelated storage. For an ERC20 whose `balances` mapping is at slot zero:
+
+```solidity
+function setUp() public {
+    token = new Token();
+    vm.registerMappingSstoreHook(address(token), bytes32(0), this.onBalanceWrite.selector);
+}
+
+function onBalanceWrite(
+    address account,
+    bytes32,
+    bytes32 root,
+    bytes32[] calldata keys,
+    bytes32 oldValue,
+    bytes32 newValue
+) external {
+    require(msg.sender == address(vm) && account == address(token));
+    require(root == bytes32(0) && keys.length == 1);
+    ghostSupply = ghostSupply - uint256(oldValue) + uint256(newValue);
+}
+```
+
+With `symbolic.storage_layout = "zero_init"`, initialize `ghostSupply` to zero and assert it equals
+`totalSupply` after symbolic mint, transfer, and burn operations. Allowance writes use a different
+root and do not affect the ghost. Both target writes and callback ghost updates roll back when the
+enclosing operation reverts. Mapping hooks require complete, exact 64-byte Keccak chains computed
+after the latest mapping-hook registration for that target in the current top-level execution.
+Resolution follows the complete chain to its terminal root instead of stopping at a registered
+intermediate hash; offsets, incomplete provenance, hashes computed before registration, and hashes
+from earlier top-level executions do not match. Hashes computed after registration remain usable by
+later calls in the same top-level execution. The contract that calls `registerMappingSstoreHook`
+receives the callback.
+
 ```solidity
 contract RiddleTest is Test {
     function check_riddle(uint256 x) external pure {
@@ -627,7 +717,7 @@ Known incomplete, bounded, or approximate surfaces include:
 | Symbolic hashing and `KECCAK256` | Concrete hashes are computed exactly. Symbolic `KECCAK256` is represented by deterministic opaque terms plus Solidity-storage-layout heuristics for common mapping and dynamic-array keys. Proof obligations that depend on cryptographic facts such as non-zero hashes, collision resistance, or preimage resistance are not proof-grade and may report incomplete or produce replay-filtered candidates. |
 | Symbolic storage base values | Writes and later reads through symbolic keys are modeled, with Solidity-layout heuristics for common mapping/dynamic-array keys. Reads of previously-unwritten symbolic keys are abstract storage variables by default, or zero under the zero-init storage layout; the engine does not enumerate arbitrary concrete backend storage slots for a symbolic key. Proofs involving unknown existing storage are scoped to the selected `symbolic.storage_layout`. |
 | Precompiles | Canonical precompiles are recognized according to the active EVM version; KZG `0x0a` is Cancun+ only and falls back to normal empty-account behavior on earlier hardforks. Concrete inputs for modeled precompiles execute the corresponding revm precompile with effectively unlimited gas. Symbolic identity is byte-precise; symbolic hash/ecrecover/modexp outputs are deterministic opaque terms or fixed-length symbolic outputs, not full cryptographic/algebraic models. Symbolic BN254 inputs and symbolic BLAKE2f final flags report incomplete because precompile success depends on validity checks the symbolic model does not prove. KZG `0x0a` concrete inputs execute the revm KZG precompile exactly. Symbolic KZG calls model broad exact failures such as invalid input length and version/hash mismatches where known, plus selected replayable success/failure witnesses. Any remaining feasible symbolic KZG space reports incomplete rather than being treated as proved safe. Symbolic length headers, symbolic modexp output lengths, out-of-bounds symbolic inputs, future/custom precompiles, and precompile gas/OOG behavior are not fully modeled. |
-| Hard arithmetic | Bit-vector arithmetic is modeled through SMT. Forge proves unsigned monotonic product and same-divisor quotient comparisons when path bounds show that every product fits in 256 bits. Other expensive arithmetic has bounded helpers, but unsupported `EXP` base/exponent shapes and solver-intractable nonlinear identities can report incomplete or timeout. |
+| Hard arithmetic | Bit-vector arithmetic is modeled through SMT. Forge canonicalizes small polynomial equalities over the exact 256-bit EVM word ring, including identities that wrap, and proves unsigned monotonic product and same-divisor quotient comparisons when path bounds show that every product fits in 256 bits. Expansion is deliberately bounded; division, unsupported `EXP` base/exponent shapes, larger polynomials, and other solver-intractable nonlinear expressions can report incomplete or timeout. |
 | Cheatcode surface | The common testing cheatcodes listed below are modeled for safe concrete/symbolic forms. Unsupported Foundry/VM compatibility cheatcodes, value-bearing cheatcode calls, delegatecall prank forms, symbolic `expectCall` gas, unsupported symbolic `vm.bound` ranges, and unsupported symbolic `assumeNoRevert` decodes/overlaps report incomplete. |
 | Approximate/no-op cheatcodes | Some recognized Foundry helpers are accepted but not semantically checked under symbolic execution, including non-observable gas metering helpers, access-list/warm/cool helpers, `allowCheatcodes`, `sleep`, and breakpoints. Observable EVM-version helpers, gas snapshot/read helpers, and safe-memory expectation helpers report incomplete instead of fabricating results or silently accepting assertions. |
 | Fork mutation during symbolic execution | Fork-backed setup is allowed before symbolic execution. Creating forks, selecting a different fork, or rolling/mutating fork blocks during symbolic execution is restricted and reports incomplete unless it stays on the already active fork in the supported form. |

@@ -1,7 +1,7 @@
 use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
     compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
-    fmt::FmtArgs, fuzz::FuzzArgs, geiger, generate, init::InitArgs, inspect, install::InstallArgs,
+    fmt::FmtArgs, fuzz::FuzzArgs, geiger, init::InitArgs, inspect, install::InstallArgs,
     lint::LintArgs, remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands,
     snapshot, soldeer, test, tree, update,
 };
@@ -73,7 +73,13 @@ pub enum ForgeSubcommand {
     /// - forge build --sizes (print a contract size report)
     /// - forge build --watch (rebuild on file changes)
     #[command(verbatim_doc_comment, visible_aliases = ["b", "compile"])]
-    Build(BuildArgs),
+    Build {
+        /// Require foundry.lock to match direct Git dependency submodules.
+        #[arg(long)]
+        locked: bool,
+        #[command(flatten)]
+        args: BuildArgs,
+    },
 
     /// Clone a contract from Etherscan
     ///
@@ -213,10 +219,6 @@ pub enum ForgeSubcommand {
         #[command(subcommand)]
         command: SelectorsSubcommands,
     },
-
-    /// Generate scaffold files.
-    #[command(hide = true)]
-    Generate(generate::GenerateArgs),
 
     /// Compiler utilities.
     Compiler(CompilerArgs),

@@ -14,7 +14,7 @@ use crate::{
 };
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{SignableTransaction, Signed};
-use alloy_eips::{BlockId, eip2718::Encodable2718};
+use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{
     EthereumWallet, Network, NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder,
 };
@@ -35,7 +35,6 @@ use foundry_common::{
     provider::{
         ProviderBuilder,
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
-        try_get_http_provider,
     },
     shell,
     tempo::{TempoSponsor, maybe_print_fee_token, resolve_and_set_fee_token},
@@ -44,6 +43,8 @@ use foundry_config::Config;
 use foundry_evm::core::{
     constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     evm::{FoundryEvmNetwork, TempoEvmNetwork},
+    fork::ResolvedFork,
+    opts::EvmOpts,
 };
 use foundry_wallets::{TempoAccountsWallet, wallet_browser::signer::BrowserSigner};
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
@@ -56,6 +57,7 @@ pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
     estimate_multiplier: u64,
+    tempo_browser: bool,
 ) -> Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -64,24 +66,23 @@ where
     // set in the request and omit the estimate altogether, so we remove it here
     tx.reset_gas_limit();
 
+    let request =
+        if tempo_browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
     tx.set_gas_limit(
-        provider.estimate_gas(tx.clone()).await.wrap_err("Failed to estimate gas for tx")?
+        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?
             * estimate_multiplier
             / 100,
     );
     Ok(())
 }
 
-pub async fn next_nonce(
+/// Returns `caller`'s nonce at an already resolved fork block.
+pub(super) async fn next_nonce_resolved(
     caller: Address,
-    provider_url: &str,
-    block_number: Option<u64>,
+    evm_opts: &EvmOpts,
+    fork: &ResolvedFork,
 ) -> eyre::Result<u64> {
-    let provider = try_get_http_provider(provider_url)
-        .wrap_err_with(|| format!("bad fork_url provider: {provider_url}"))?;
-
-    let block_id = block_number.map_or(BlockId::latest(), BlockId::number);
-    Ok(provider.get_transaction_count(caller).block_id(block_id).await?)
+    evm_opts.transaction_count_at_resolved_fork(caller, fork).await
 }
 
 fn reject_access_key_create<N: Network>(
@@ -139,6 +140,7 @@ where
         tempo_sponsor: Option<&TempoSponsor>,
         chain: Option<Chain>,
     ) -> Result<()> {
+        let tempo_browser = matches!(self, Self::Browser(..)) && chain.is_some_and(Chain::is_tempo);
         let (tx, tempo_wallet) = match self {
             Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) => (tx, None),
             Self::AccessKey(tx, wallet) => (tx, Some(wallet)),
@@ -197,7 +199,7 @@ where
         // Chains which use `eth_estimateGas` are being sent sequentially and require their
         // gas to be re-estimated right before broadcasting.
         if !is_fixed_gas_limit && estimate_via_rpc {
-            estimate_gas(tx, provider, estimate_multiplier).await?;
+            estimate_gas(tx, provider, estimate_multiplier, tempo_browser).await?;
         }
 
         if let Some(sponsor) = tempo_sponsor {
@@ -384,6 +386,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         sequence,
                         &provider,
                         self.script_config.config.transaction_timeout,
+                        self.args.confirmations,
                     )
                     .await
             })
@@ -742,6 +745,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                 sequence,
                                 &provider,
                                 self.script_config.config.transaction_timeout,
+                                self.args.confirmations,
                             )
                             .await?
                     }
@@ -912,18 +916,10 @@ impl BundledState<TempoEvmNetwork> {
             )?;
 
             let timeout = self.script_config.config.transaction_timeout;
-            let receipt_result = tokio::time::timeout(Duration::from_secs(timeout), async {
-                loop {
-                    if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await? {
-                        return Ok::<_, eyre::Error>(Some(receipt));
-                    }
-                    // If the tx has left the mempool without a receipt it was dropped.
-                    if provider.get_transaction_by_hash(tx_hash).await?.is_none() {
-                        return Ok(None);
-                    }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                }
-            })
+            let receipt_result = tokio::time::timeout(
+                Duration::from_secs(timeout),
+                wait_for_batch_receipt(provider.as_ref(), tx_hash, self.args.confirmations),
+            )
             .await;
 
             match receipt_result {
@@ -1207,7 +1203,8 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         // Estimate gas for the batch transaction
-        estimate_gas(&mut batch_tx, provider.as_ref(), self.args.gas_estimate_multiplier).await?;
+        estimate_gas(&mut batch_tx, provider.as_ref(), self.args.gas_estimate_multiplier, false)
+            .await?;
 
         sh_println!("Estimated gas: {}", batch_tx.inner.gas.unwrap_or(0))?;
 
@@ -1255,16 +1252,13 @@ impl BundledState<TempoEvmNetwork> {
 
         // Wait for receipt
         let timeout = self.script_config.config.transaction_timeout;
-        let receipt = tokio::time::timeout(Duration::from_secs(timeout), async {
-            loop {
-                if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await? {
-                    return Ok::<_, eyre::Error>(receipt);
-                }
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-        })
+        let receipt = tokio::time::timeout(
+            Duration::from_secs(timeout),
+            wait_for_batch_receipt(provider.as_ref(), tx_hash, self.args.confirmations),
+        )
         .await
-        .map_err(|_| eyre::eyre!("Timeout waiting for batch transaction receipt (tx: {tx_hash:#x}). Run with --resume to retry."))??;
+        .map_err(|_| eyre::eyre!("Timeout waiting for batch transaction receipt (tx: {tx_hash:#x}). Run with --resume to retry."))??
+        .ok_or_else(|| eyre::eyre!("Batch transaction {tx_hash:#x} was dropped from the mempool. Run with --resume to retry."))?;
 
         let success = receipt.status();
         if success {
@@ -1354,10 +1348,34 @@ impl BundledState<TempoEvmNetwork> {
     }
 }
 
+async fn wait_for_batch_receipt<N: Network>(
+    provider: &RootProvider<N>,
+    tx_hash: TxHash,
+    confirmations: u64,
+) -> Result<Option<N::ReceiptResponse>> {
+    loop {
+        if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await?
+            && let Some(receipt_block) = receipt.block_number()
+        {
+            let latest_block = provider.get_block_number().await?;
+            if latest_block >= receipt_block.saturating_add(confirmations.saturating_sub(1)) {
+                return Ok(Some(receipt));
+            }
+        }
+
+        if provider.get_transaction_by_hash(tx_hash).await?.is_none() {
+            return Ok(None);
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
+    use alloy_eips::BlockId;
     use alloy_network::Ethereum;
     use alloy_primitives::{Bloom, address};
     use alloy_rpc_types::TransactionReceipt;
@@ -1368,6 +1386,55 @@ mod tests {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     const ACCESS_KEY_PRIVATE_KEY: &str =
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn next_nonce_uses_exact_fork_hash() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let provider = handle.http_provider();
+        let sender = handle.dev_accounts().next().unwrap();
+        let recipient = Address::with_last_byte(1);
+
+        let receipt = provider
+            .send_transaction(
+                TransactionRequest::default()
+                    .from(sender)
+                    .to(recipient)
+                    .value(U256::from(1))
+                    .into(),
+            )
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let block_number = receipt.block_number.unwrap();
+        let evm_opts = EvmOpts {
+            fork_url: Some(handle.http_endpoint()),
+            fork_block_number: Some(block_number),
+            ..Default::default()
+        };
+        let fork = evm_opts.resolve_fork().await.unwrap().unwrap();
+        assert_eq!(next_nonce_resolved(sender, &evm_opts, &fork).await.unwrap(), 1);
+
+        provider
+            .raw_request::<_, ()>("anvil_reorg".into(), (1_u64, Vec::<serde_json::Value>::new()))
+            .await
+            .unwrap();
+        assert_eq!(
+            provider
+                .get_transaction_count(sender)
+                .block_id(BlockId::number(block_number))
+                .await
+                .unwrap(),
+            0
+        );
+
+        match next_nonce_resolved(sender, &evm_opts, &fork).await {
+            Ok(0) => panic!("the exact lookup fell back to the replacement block"),
+            Ok(1) | Err(_) => {}
+            Ok(nonce) => panic!("unexpected nonce: {nonce}"),
+        }
+    }
 
     #[test]
     fn access_key_signer_takes_precedence_over_same_sender_wallet() {

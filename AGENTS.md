@@ -179,6 +179,31 @@ with", or command lists unless explicitly requested. Do not use templates,
 bullet lists, or long essays. When writing PR bodies from scripts, use a file or
 heredoc with real newlines; never pass escaped `\n` sequences.
 
+### Changelog Entries
+
+Every pull request must add or update at least one `.changelog/*.md` entry unless
+a maintainer applies the `L-ignore` label. Add an entry by default; when a change
+should not appear in release notes, such as a CI-only or repository-maintenance
+change, call out that a maintainer must apply `L-ignore`.
+
+Use a descriptive, unique filename and the format documented in
+`.changelog/README.md`:
+
+```md
+---
+forge: minor
+cast: patch
+---
+
+Added a Forge feature and fixed the related Cast behavior.
+```
+
+List every affected publishable workspace package by its actual Cargo package
+name and assign each a `major`, `minor`, or `patch` bump. Include a concise,
+non-empty user-facing release note. Do not use unknown or aggregate package
+names, leave the package mapping or note empty, or satisfy the requirement only
+by deleting an existing entry.
+
 ### Performance PRs
 
 When drafting or updating a PR body for a performance-related change, benchmark

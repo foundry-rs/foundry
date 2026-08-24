@@ -1,4 +1,4 @@
-use super::symbolic_helpers::assert_relevant_lines;
+use super::symbolic_helpers::{assert_relevant_lines, json_test_result};
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 
@@ -494,6 +494,15 @@ contract SymbolicLogEmitter {
     }
 }
 
+contract SymbolicRevertingLogConstructor {
+    event ConstructorLog();
+
+    constructor() {
+        emit ConstructorLog();
+        revert();
+    }
+}
+
 contract SymbolicRecordedLogs is Test {
     event Local(uint256 indexed topic, bytes data);
 
@@ -512,7 +521,7 @@ contract SymbolicRecordedLogs is Test {
         try emitter.fail(topic + 2, data) {} catch {}
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        assertEq(logs.length, 2);
+        assertEq(logs.length, 3);
 
         assertEq(logs[0].topics.length, 2);
         assertEq(logs[0].topics[0], keccak256("Local(uint256,bytes)"));
@@ -526,6 +535,11 @@ contract SymbolicRecordedLogs is Test {
         assertEq(logs[1].topics[0], keccak256("Helper(uint256,bytes)"));
         assertEq(logs[1].topics[1], bytes32(topic + 1));
         assertEq(logs[1].emitter, address(emitter));
+
+        assertEq(logs[2].topics.length, 2);
+        assertEq(logs[2].topics[0], keccak256("Helper(uint256,bytes)"));
+        assertEq(logs[2].topics[1], bytes32(topic + 2));
+        assertEq(logs[2].emitter, address(emitter));
 
         Vm.Log[] memory drained = vm.getRecordedLogs();
         assertEq(drained.length, 0);
@@ -541,6 +555,15 @@ contract SymbolicRecordedLogs is Test {
 
         Vm.Log[] memory drained = vm.getRecordedLogs();
         assertEq(drained.length, 0);
+    }
+
+    function checkRecordedRevertedCreate() public {
+        vm.recordLogs();
+        try new SymbolicRevertingLogConstructor() {} catch {}
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1);
+        assertEq(logs[0].topics[0], keccak256("ConstructorLog()"));
     }
 }
 "#,
@@ -562,6 +585,12 @@ contract SymbolicRecordedLogs is Test {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkRecordedLogsJson(uint256,bytes)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkRecordedRevertedCreate()
 "#]],
     );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
@@ -3559,6 +3588,15 @@ forgetest_init!(symbolic_vm_record_accesses_tracks_symbolic_slots, |prj, cmd| {
         r#"
 import "forge-std/Test.sol";
 
+contract SymbolicRevertingStorageTarget {
+    function storeThenRevert(bytes32 slot, bytes32 stored) external {
+        assembly {
+            sstore(slot, stored)
+        }
+        revert();
+    }
+}
+
 contract SymbolicRecordAccesses is Test {
     function checkRecordAccesses(bytes32 slot, bytes32 stored) public {
         vm.record();
@@ -3624,9 +3662,37 @@ contract SymbolicRecordAccesses is Test {
 
         vm.stopRecord();
     }
+
+    function testRecordRevertedChildAccesses() public {
+        recordRevertedChildAccesses();
+    }
+
+    function checkRecordAccessesRevertedChild() public {
+        recordRevertedChildAccesses();
+    }
+
+    function recordRevertedChildAccesses() internal {
+        SymbolicRevertingStorageTarget target = new SymbolicRevertingStorageTarget();
+        bytes32 slot = bytes32(uint256(7));
+
+        vm.record();
+        (bool ok,) = address(target).call(
+            abi.encodeCall(target.storeThenRevert, (slot, bytes32(uint256(1))))
+        );
+        assertFalse(ok);
+
+        (bytes32[] memory reads, bytes32[] memory writes) = vm.accesses(address(target));
+        assertEq(reads.length, 1);
+        assertEq(writes.length, 1);
+        assertEq(reads[0], slot);
+        assertEq(writes[0], slot);
+    }
 }
 "#,
     );
+
+    cmd.args(["test", "--match-test", "testRecordRevertedChildAccesses"]).assert_success();
+    cmd.forge_fuse();
 
     let stdout = cmd
         .args(["test", "--symbolic", "--match-test", "checkRecordAccesses"])
@@ -3638,6 +3704,12 @@ contract SymbolicRecordAccesses is Test {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkRecordAccesses(bytes32,bytes32)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkRecordAccessesRevertedChild()
 "#]],
     );
     assert_relevant_lines(
@@ -4150,7 +4222,10 @@ contract OkDeployCodeCtor {
 }
 
 contract RevertingDeployCodeCtor {
+    event ConstructorLog();
+
     constructor() {
+        emit ConstructorLog();
         require(false, "ctor");
     }
 }
@@ -4176,8 +4251,13 @@ contract SymbolicDeployCodeCheatcode is Test {
     string constant TARGET = "test/SymbolicDeployCodeCheatcode.t.sol";
 
     function checkDeployCodeExpectedRevert() public {
+        vm.recordLogs();
         vm.expectRevert();
         vm.deployCode(string.concat(TARGET, ":RevertingDeployCodeCtor"));
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1);
+        assertEq(logs[0].topics[0], keccak256("ConstructorLog()"));
     }
 
     function checkDeployCodeBranchingConstructor() public {
@@ -4233,4 +4313,1633 @@ contract SymbolicDeployCodeCheatcode is Test {
     );
     assert!(!stdout.contains("symbolic vm.deployCode"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+});
+
+forgetest_init!(storage_hook_cheatcodes_concrete_and_symbolic, |prj, cmd| {
+    prj.add_test(
+        "StorageHooks.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageHookVm {
+    function registerSloadHook(address target, bytes4 callback) external;
+    function registerSstoreHook(address target, bytes4 callback) external;
+}
+
+contract StorageHookTarget {
+    event Stored(uint256 value);
+
+    uint256 public value;
+    mapping(address => uint256) public balances;
+
+    function store(uint256 newValue) external {
+        value = newValue;
+    }
+
+    function storeTwice(uint256 first, uint256 second) external {
+        value = first;
+        value = second;
+    }
+
+    function storeAndRevert(uint256 newValue) external {
+        value = newValue;
+        revert("target revert");
+    }
+
+    function setBalance(address account, uint256 newValue) external {
+        balances[account] = newValue;
+    }
+
+    function storeAndEmit(uint256 newValue) external {
+        value = newValue;
+        emit Stored(newValue);
+    }
+
+    function storeAfterReturningCall(address returner, uint256 newValue)
+        external
+        returns (uint256 returnDataSize)
+    {
+        (bool ok,) = returner.staticcall(abi.encodeWithSignature("answer()"));
+        require(ok);
+        assembly {
+            sstore(0, newValue)
+            returnDataSize := returndatasize()
+        }
+    }
+}
+
+contract StorageHookReturner {
+    function answer() external pure returns (uint256) {
+        return 42;
+    }
+}
+
+contract StorageHookGasProbe {
+    function readCost(StorageHookTarget target) external view returns (uint256) {
+        uint256 gasBefore = gasleft();
+        target.value();
+        return gasBefore - gasleft();
+    }
+}
+
+contract StorageHookDepthTarget {
+    uint256 public value;
+
+    function recurse(uint256 remaining) external returns (bool) {
+        if (remaining == 0) {
+            return value == 0;
+        }
+        (bool ok, bytes memory data) =
+            address(this).call(abi.encodeCall(this.recurse, (remaining - 1)));
+        return ok && abi.decode(data, (bool));
+    }
+}
+
+contract StorageHookCaller {
+    function store(StorageHookTarget target, uint256 newValue) external {
+        target.store(newValue);
+    }
+}
+
+contract StorageHookImplementation {
+    function store(uint256 newValue) external {
+        assembly {
+            sstore(0, newValue)
+        }
+    }
+}
+
+contract StorageHookProxy {
+    address immutable implementation;
+
+    constructor(address implementation_) {
+        implementation = implementation_;
+    }
+
+    function store(uint256 newValue) external {
+        (bool ok, bytes memory data) =
+            implementation.delegatecall(abi.encodeCall(StorageHookImplementation.store, (newValue)));
+        if (!ok) {
+            assembly {
+                revert(add(data, 32), mload(data))
+            }
+        }
+    }
+}
+
+contract ConstructorStorageHook {
+    StorageHookVm constant hookVm =
+        StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    uint256 public ghostValue;
+
+    constructor(address target) {
+        hookVm.registerSstoreHook(target, ConstructorStorageHook.onStore.selector);
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32 newValue) external {
+        require(msg.sender == address(hookVm), "only storage hook");
+        ghostValue = uint256(newValue);
+    }
+
+    function registerThenRevert(address target) external {
+        hookVm.registerSstoreHook(target, ConstructorStorageHook.onStore.selector);
+        revert("after registration");
+    }
+}
+
+contract ConstructorStoreTarget {
+    uint256 public value;
+
+    constructor(uint256 newValue) {
+        value = newValue;
+    }
+}
+
+contract StorageHooksTest is Test {
+    event Stored(uint256 value);
+    event CallbackObserved(uint256 value);
+
+    StorageHookVm constant hookVm =
+        StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    address constant FINAL_OPCODE_TARGET = address(0xBEEF);
+    address constant TRACE_SUCCESS_TARGET = address(0xA11CE);
+    address constant TRACE_REVERT_TARGET = address(0xB0B);
+    address constant EXISTING_ACCOUNT = address(0xCAFE);
+
+    StorageHookTarget target;
+    StorageHookTarget mappingTarget;
+    StorageHookTarget baseStateTarget;
+    StorageHookTarget unregisteredTarget;
+    StorageHookCaller caller;
+    StorageHookProxy proxy;
+    StorageHookReturner returner;
+    StorageHookTarget coldReadTarget;
+
+    uint256 ghostValue;
+    bytes32 lastSlot;
+    address lastAccount;
+    uint256 loadCount;
+    uint256 recursiveHookCalls;
+    uint256 mappingGhost;
+    uint256 baseStateGhost;
+
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
+
+    function setUp() public {
+        target = new StorageHookTarget();
+        mappingTarget = new StorageHookTarget();
+        baseStateTarget = new StorageHookTarget();
+        unregisteredTarget = new StorageHookTarget();
+        caller = new StorageHookCaller();
+        proxy = new StorageHookProxy(address(new StorageHookImplementation()));
+        returner = new StorageHookReturner();
+        hookVm.registerSloadHook(address(target), this.onLoad.selector);
+        hookVm.registerSstoreHook(address(target), this.onStore.selector);
+        hookVm.registerSstoreHook(address(mappingTarget), this.onMappingStore.selector);
+        hookVm.registerSstoreHook(address(baseStateTarget), this.onBaseStateStore.selector);
+        baseStateTarget.setBalance(EXISTING_ACCOUNT, 5);
+        hookVm.registerSstoreHook(address(proxy), this.onStore.selector);
+        vm.etch(FINAL_OPCODE_TARGET, hex"600035600055");
+        hookVm.registerSstoreHook(FINAL_OPCODE_TARGET, this.branchingStoreHook.selector);
+        vm.etch(TRACE_SUCCESS_TARGET, hex"6001600055600260015500");
+        vm.etch(TRACE_REVERT_TARGET, hex"6001600055600260015500");
+        hookVm.registerSstoreHook(TRACE_SUCCESS_TARGET, this.noopStoreHook.selector);
+        hookVm.registerSstoreHook(TRACE_REVERT_TARGET, this.revertingStoreHook.selector);
+    }
+
+    function onLoad(address account, bytes32 slot, bytes32 value) external onlyStorageHook {
+        lastAccount = account;
+        lastSlot = slot;
+        ghostValue = uint256(value);
+        loadCount++;
+    }
+
+    function onLoadReadingColdSlot(address, bytes32, bytes32) external view onlyStorageHook {
+        coldReadTarget.value();
+    }
+
+    function onStore(address account, bytes32 slot, bytes32, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        lastAccount = account;
+        lastSlot = slot;
+        ghostValue = uint256(newValue);
+    }
+
+    function onStoreWithInstrumentation(address, bytes32, bytes32, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        emit CallbackObserved(uint256(newValue));
+        ghostValue = returner.answer();
+    }
+
+    function onStoreWithRecording(address, bytes32, bytes32, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        emit CallbackObserved(uint256(newValue));
+        ghostValue = 42;
+    }
+
+    function onMappingStore(address, bytes32, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        unchecked {
+            mappingGhost = mappingGhost - uint256(oldValue) + uint256(newValue);
+        }
+    }
+
+    function onBaseStateStore(address, bytes32, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        unchecked {
+            baseStateGhost = baseStateGhost - uint256(oldValue) + uint256(newValue);
+        }
+    }
+
+    function testConcreteArgumentsAndRollback() public {
+        target.store(7);
+        assertEq(ghostValue, 7);
+        assertEq(lastAccount, address(target));
+        assertEq(lastSlot, bytes32(0));
+
+        assertEq(target.value(), 7);
+        assertEq(loadCount, 1);
+        assertEq(ghostValue, 7);
+
+        (bool ok,) = address(target).call(abi.encodeCall(target.storeAndRevert, (11)));
+        assertFalse(ok);
+        assertEq(target.value(), 7);
+        assertEq(ghostValue, 7);
+
+        target.storeTwice(9, 12);
+        assertEq(ghostValue, 12);
+
+        caller.store(target, 15);
+        assertEq(ghostValue, 15);
+
+        unregisteredTarget.store(99);
+        assertEq(ghostValue, 15);
+
+        ghostValue = 0;
+        proxy.store(21);
+        assertEq(lastAccount, address(proxy));
+        assertEq(ghostValue, 21);
+    }
+
+    function testConcreteReplacementAndRevertPropagation() public {
+        hookVm.registerSstoreHook(address(target), this.revertingStoreHook.selector);
+        vm.expectRevert("replacement hook");
+        target.store(1);
+        assertEq(target.value(), 0);
+    }
+
+    function testConcreteFinalOpcodeSstoreCallbacks() public {
+        (bool ok,) = FINAL_OPCODE_TARGET.call(abi.encode(uint256(6)));
+        assertTrue(ok);
+        assertEq(uint256(vm.load(FINAL_OPCODE_TARGET, bytes32(0))), 6);
+
+        (ok,) = FINAL_OPCODE_TARGET.call(abi.encode(uint256(7)));
+        assertFalse(ok);
+        assertEq(uint256(vm.load(FINAL_OPCODE_TARGET, bytes32(0))), 6);
+    }
+
+    function testConcreteConstructorSstoreCallbacks() public {
+        uint256 nonce = vm.getNonce(address(this));
+        address constructorTarget = vm.computeCreateAddress(address(this), nonce);
+        hookVm.registerSstoreHook(constructorTarget, this.onStore.selector);
+
+        ConstructorStoreTarget deployed = new ConstructorStoreTarget(23);
+        assertEq(address(deployed), constructorTarget);
+        assertEq(deployed.value(), 23);
+        assertEq(ghostValue, 23);
+
+        nonce = vm.getNonce(address(this));
+        constructorTarget = vm.computeCreateAddress(address(this), nonce);
+        hookVm.registerSstoreHook(constructorTarget, this.revertingStoreHook.selector);
+        try new ConstructorStoreTarget(24) {
+            fail();
+        } catch Error(string memory reason) {
+            assertEq(reason, "replacement hook");
+        }
+        assertEq(constructorTarget.code.length, 0);
+        assertEq(ghostValue, 23);
+    }
+
+    function testConcreteRegistrationSurvivesRevert() public {
+        ConstructorStorageHook hook = new ConstructorStorageHook(address(unregisteredTarget));
+        (bool ok,) = address(hook).call(
+            abi.encodeCall(ConstructorStorageHook.registerThenRevert, (address(unregisteredTarget)))
+        );
+        assertFalse(ok);
+
+        unregisteredTarget.store(31);
+        assertEq(hook.ghostValue(), 31);
+    }
+
+    function testIsolateEnclosingRevertRollsBackTargetAndGhost() public {
+        (bool ok,) = address(this).call(abi.encodeCall(this.storeAndRevert, (37)));
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+        assertEq(ghostValue, 0);
+    }
+
+    function storeAndRevert(uint256 newValue) external {
+        target.store(newValue);
+        revert("enclosing revert");
+    }
+
+    function testConcreteCallbackBypassesCallMocks() public {
+        bytes memory callback = abi.encodeWithSelector(
+            this.onStore.selector, address(target), bytes32(0), bytes32(0), bytes32(uint256(17))
+        );
+        vm.mockCall(address(this), callback, bytes(""));
+
+        target.store(17);
+
+        assertEq(ghostValue, 17);
+    }
+
+    function testConcreteCallbackPanicRevertsTargetCall() public {
+        hookVm.registerSstoreHook(address(target), this.panickingStoreHook.selector);
+
+        (bool ok,) = address(target).call(abi.encodeCall(target.store, (1)));
+
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+    }
+
+    function testConcreteCallbackPreservesReturnData() public {
+        assertEq(target.storeAfterReturningCall(address(returner), 1), 32);
+    }
+
+    function testConcreteCallbackDoesNotWarmAccesses() public {
+        StorageHookTarget baselineReadTarget = new StorageHookTarget();
+        StorageHookGasProbe probe = new StorageHookGasProbe();
+        coldReadTarget = new StorageHookTarget();
+        hookVm.registerSloadHook(address(target), this.onLoadReadingColdSlot.selector);
+        vm.cool(address(coldReadTarget));
+        vm.coolSlot(address(coldReadTarget), bytes32(0));
+        vm.cool(address(baselineReadTarget));
+        vm.coolSlot(address(baselineReadTarget), bytes32(0));
+
+        target.value();
+
+        assertEq(probe.readCost(coldReadTarget), probe.readCost(baselineReadTarget));
+    }
+
+    function testConcreteCallbackInspectorStateIsIsolated() public {
+        hookVm.registerSstoreHook(address(target), this.onStoreWithInstrumentation.selector);
+        bytes memory helperCall = abi.encodeCall(returner.answer, ());
+        vm.mockCall(address(returner), helperCall, abi.encode(uint256(99)));
+        vm.expectCall(address(returner), helperCall, 1);
+        vm.record();
+        vm.recordLogs();
+
+        target.store(1);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        (, bytes32[] memory callbackWrites) = vm.accesses(address(this));
+        assertEq(logs.length, 0);
+        assertEq(callbackWrites.length, 0);
+        assertEq(ghostValue, 42);
+        assertEq(returner.answer(), 99);
+    }
+
+    function testConcreteCallbackCanWriteUnderStaticcall() public {
+        uint256 initialLoadCount = loadCount;
+
+        assertEq(target.value(), 0);
+        assertEq(loadCount, initialLoadCount + 1);
+
+        (bool ok,) = address(target).staticcall(abi.encodeCall(target.store, (1)));
+        assertFalse(ok);
+
+        (ok,) = address(this).call(abi.encodeCall(this.loadAndRevert, ()));
+        assertFalse(ok);
+        assertEq(loadCount, initialLoadCount + 1);
+    }
+
+    function loadAndRevert() external view {
+        target.value();
+        revert("after load");
+    }
+
+    function testConcreteCallbackCannotBeSpoofed() public {
+        vm.expectRevert("only storage hook");
+        this.onStore(address(target), bytes32(0), bytes32(0), bytes32(uint256(99)));
+        assertEq(ghostValue, 0);
+    }
+
+    function testConcreteFullStackSloadPreservesResult() public {
+        address fullStackTarget = address(0xF011);
+        bytes memory code = new bytes(1028);
+        for (uint256 i; i < 1024; i++) {
+            code[i] = bytes1(uint8(0x5f));
+        }
+        code[1024] = bytes1(uint8(0x54));
+        code[1025] = bytes1(uint8(0x56));
+        code[1026] = bytes1(uint8(0x5b));
+        code[1027] = bytes1(uint8(0x00));
+        vm.etch(fullStackTarget, code);
+        vm.store(fullStackTarget, bytes32(0), bytes32(uint256(1026)));
+        hookVm.registerSloadHook(fullStackTarget, this.noopLoadHook.selector);
+
+        (bool ok,) = fullStackTarget.call("");
+
+        assertTrue(ok);
+    }
+
+    function testConcreteStorageHookConsumesCallDepth() public {
+        StorageHookDepthTarget baseline = new StorageHookDepthTarget();
+        StorageHookDepthTarget hooked = new StorageHookDepthTarget();
+        hookVm.registerSloadHook(address(hooked), this.noopLoadHook.selector);
+
+        assertTrue(baseline.recurse(1024));
+        assertFalse(hooked.recurse(1024));
+    }
+
+    function testConcreteTraceSuccess() public {
+        (bool ok,) = TRACE_SUCCESS_TARGET.call("");
+        assertTrue(ok);
+    }
+
+    function testConcreteTraceRevert() public {
+        (bool ok,) = TRACE_REVERT_TARGET.call("");
+        assertFalse(ok);
+    }
+
+    function noopLoadHook(address, bytes32, bytes32) external view onlyStorageHook {}
+
+    function noopStoreHook(address, bytes32, bytes32, bytes32) external view onlyStorageHook {}
+
+    function revertingStoreHook(address, bytes32, bytes32, bytes32)
+        external
+        view
+        onlyStorageHook
+    {
+        revert("replacement hook");
+    }
+
+    function panickingStoreHook(address, bytes32, bytes32, bytes32)
+        external
+        view
+        onlyStorageHook
+    {
+        assert(false);
+    }
+
+    function recursiveStoreHook(address, bytes32, bytes32, bytes32) external onlyStorageHook {
+        recursiveHookCalls++;
+    }
+
+    function branchingStoreHook(address, bytes32, bytes32, bytes32 newValue)
+        external
+        view
+        onlyStorageHook
+    {
+        if (uint256(newValue) == 7) {
+            revert("seven");
+        }
+    }
+
+    function checkSymbolicMapping(address account, uint256 newValue) public {
+        target.setBalance(account, newValue);
+        bytes32 expectedSlot = keccak256(abi.encode(account, uint256(1)));
+        assertEq(lastAccount, address(target));
+        assertEq(lastSlot, expectedSlot);
+        assertEq(ghostValue, newValue);
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "zero_init"
+    function checkSymbolicAliasedMappingWrites(
+        address first,
+        address second,
+        uint256 firstValue,
+        uint256 secondValue
+    ) public {
+        vm.assume(first == second);
+        mappingTarget.setBalance(first, firstValue);
+        mappingTarget.setBalance(second, secondValue);
+
+        assertEq(mappingGhost, mappingTarget.balances(first));
+    }
+
+    function checkSymbolicPreexistingMappingWrites(uint256 firstValue, uint256 secondValue) public {
+        baseStateTarget.setBalance(EXISTING_ACCOUNT, firstValue);
+        baseStateTarget.setBalance(EXISTING_ACCOUNT, secondValue);
+
+        assertEq(baseStateGhost, secondValue);
+    }
+
+    function checkSymbolicLoad(uint256 newValue) public {
+        target.store(newValue);
+        assertEq(target.value(), newValue);
+        assertEq(lastAccount, address(target));
+        assertEq(lastSlot, bytes32(0));
+        assertEq(loadCount, 1);
+        assertEq(ghostValue, newValue);
+    }
+
+    function checkSymbolicMultipleWritesAndNestedCall(uint256 first, uint256 second) public {
+        target.storeTwice(first, second);
+        assertEq(ghostValue, second);
+        caller.store(target, first);
+        assertEq(ghostValue, first);
+        unregisteredTarget.store(second);
+        assertEq(ghostValue, first);
+    }
+
+    function checkSymbolicDelegatecall(uint256 newValue) public {
+        proxy.store(newValue);
+        assertEq(lastAccount, address(proxy));
+        assertEq(lastSlot, bytes32(0));
+        assertEq(ghostValue, newValue);
+    }
+
+    function checkSymbolicRollback(uint256 newValue) public {
+        (bool ok,) = address(target).call(abi.encodeCall(target.storeAndRevert, (newValue)));
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+        assertEq(ghostValue, 0);
+    }
+
+    function checkSymbolicCallbackRevert(uint256 newValue) public {
+        hookVm.registerSstoreHook(address(target), this.revertingStoreHook.selector);
+        (bool ok,) = address(target).call(abi.encodeCall(target.store, (newValue)));
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+        assertEq(ghostValue, 0);
+    }
+
+    function checkSymbolicCallbackPanic(uint256 newValue) public {
+        hookVm.registerSstoreHook(address(target), this.panickingStoreHook.selector);
+        (bool ok,) = address(target).call(abi.encodeCall(target.store, (newValue)));
+        assertFalse(ok);
+        assertEq(target.value(), 0);
+    }
+
+    function checkSymbolicCallbackSuppressesRecursiveHooks(uint256 newValue) public {
+        hookVm.registerSstoreHook(address(this), this.recursiveStoreHook.selector);
+
+        target.store(newValue);
+
+        assertEq(ghostValue, newValue);
+        assertEq(recursiveHookCalls, 0);
+    }
+
+    function checkSymbolicCallbackPreservesPendingExpectations(uint256 newValue) public {
+        vm.expectEmit(address(target));
+        emit Stored(newValue);
+
+        target.storeAndEmit(newValue);
+
+        assertEq(ghostValue, newValue);
+    }
+
+    function checkSymbolicCallbackPreservesReturnData(uint256 newValue) public {
+        assertEq(target.storeAfterReturningCall(address(returner), newValue), 32);
+    }
+
+    function checkSymbolicCallbackInspectorStateIsIsolated(uint256 newValue) public {
+        hookVm.registerSstoreHook(address(target), this.onStoreWithRecording.selector);
+        vm.record();
+        vm.recordLogs();
+
+        target.store(newValue);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        (, bytes32[] memory callbackWrites) = vm.accesses(address(this));
+        assertEq(logs.length, 0);
+        assertEq(callbackWrites.length, 0);
+        assertEq(ghostValue, 42);
+    }
+
+    function checkSymbolicCallbackCanWriteUnderStaticcall(uint256 newValue) public {
+        target.store(newValue);
+        uint256 initialLoadCount = loadCount;
+
+        assertEq(target.value(), newValue);
+        assertEq(loadCount, initialLoadCount + 1);
+
+        (bool ok,) = address(target).staticcall(abi.encodeCall(target.store, (newValue)));
+        assertFalse(ok);
+
+        (ok,) = address(this).call(abi.encodeCall(this.loadAndRevert, ()));
+        assertFalse(ok);
+        assertEq(loadCount, initialLoadCount + 1);
+    }
+
+    function checkSymbolicConstructorRegistration(uint256 newValue) public {
+        StorageHookTarget constructorTarget = new StorageHookTarget();
+        ConstructorStorageHook hook = new ConstructorStorageHook(address(constructorTarget));
+
+        constructorTarget.store(newValue);
+
+        assertEq(hook.ghostValue(), newValue);
+    }
+
+    function checkSymbolicFinalOpcodeCallbackBranch(uint256 newValue) public {
+        (bool ok,) = FINAL_OPCODE_TARGET.call(abi.encode(newValue));
+        assertEq(ok, newValue != 7);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "StorageHooksTest",
+            "--match-test",
+            "testConcrete",
+            "--gas-limit",
+            "10000000000000",
+            "--disable-block-gas-limit",
+        ])
+        .assert_success();
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--isolate",
+            "--match-contract",
+            "StorageHooksTest",
+            "--match-test",
+            "testIsolateEnclosingRevertRollsBackTargetAndGhost",
+        ])
+        .assert_success();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--match-contract",
+            "StorageHooksTest",
+            "--match-test",
+            "testConcreteTrace",
+            "-vvvvv",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let output: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let suite = output.as_object().unwrap().values().next().unwrap();
+
+    let success = &suite["test_results"]["testConcreteTraceSuccess()"];
+    let success_target = success["traces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
+        .find(|node| {
+            node["trace"]["address"].as_str().is_some_and(|address| {
+                address.ends_with("00000000000000000000000000000000000a11ce")
+            })
+        })
+        .unwrap();
+    let resumed_step = success_target["trace"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["pc"] == 5)
+        .unwrap();
+    let sstore_step = success_target["trace"]["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|step| step["pc"] == 4)
+        .unwrap();
+    assert_eq!(
+        resumed_step["gas_remaining"].as_u64().unwrap(),
+        sstore_step["gas_remaining"].as_u64().unwrap() - sstore_step["gas_cost"].as_u64().unwrap()
+    );
+    assert_eq!(resumed_step["gas_cost"], 3);
+
+    let reverted = &suite["test_results"]["testConcreteTraceRevert()"];
+    let reverted_target = reverted["traces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|trace| trace[1]["arena"].as_array().unwrap())
+        .find(|node| {
+            node["trace"]["address"].as_str().is_some_and(|address| {
+                address.ends_with("0000000000000000000000000000000000000b0b")
+            })
+        })
+        .unwrap();
+    assert!(
+        reverted_target["trace"]["steps"].as_array().unwrap().iter().all(|step| step["pc"] != 5)
+    );
+
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic half of storage_hook_cheatcodes_concrete_and_symbolic because z3 is not available"
+        );
+        return;
+    }
+
+    let stdout = cmd
+        .forge_fuse()
+        .args([
+            "test",
+            "--symbolic",
+            "--match-contract",
+            "StorageHooksTest",
+            "--match-test",
+            "checkSymbolic",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicMapping(address,uint256)
+[PASS] checkSymbolicAliasedMappingWrites(address,address,uint256,uint256)
+[PASS] checkSymbolicPreexistingMappingWrites(uint256,uint256)
+[PASS] checkSymbolicLoad(uint256)
+[PASS] checkSymbolicMultipleWritesAndNestedCall(uint256,uint256)
+[PASS] checkSymbolicDelegatecall(uint256)
+[PASS] checkSymbolicRollback(uint256)
+[PASS] checkSymbolicCallbackRevert(uint256)
+[PASS] checkSymbolicCallbackPanic(uint256)
+[PASS] checkSymbolicCallbackSuppressesRecursiveHooks(uint256)
+[PASS] checkSymbolicCallbackPreservesPendingExpectations(uint256)
+[PASS] checkSymbolicCallbackPreservesReturnData(uint256)
+[PASS] checkSymbolicCallbackInspectorStateIsIsolated(uint256)
+[PASS] checkSymbolicCallbackCanWriteUnderStaticcall(uint256)
+[PASS] checkSymbolicConstructorRegistration(uint256)
+[PASS] checkSymbolicFinalOpcodeCallbackBranch(uint256)
+"#]],
+    );
+});
+
+forgetest_init!(storage_hook_callbacks_do_not_leak_fuzz_guidance, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.runs = 32;
+        config.fuzz.corpus.corpus_dir = Some("fuzz_corpus".into());
+    });
+    prj.add_test(
+        "StorageHookFuzzGuidance.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageHookVm {
+    function registerSstoreHook(address target, bytes4 callback) external;
+}
+
+contract StorageHookFuzzTarget {
+    uint256 public value;
+
+    function store(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract StorageHookFuzzHelper {
+    function observe(uint256 value) external pure returns (uint256) {
+        if (value == 7) {
+            return 7;
+        }
+        return value;
+    }
+}
+
+contract StorageHookFuzzCallback {
+    StorageHookVm constant hookVm =
+        StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant HELPER = address(0x3000);
+
+    uint256 public hits;
+
+    function register(address target) external {
+        hookVm.registerSstoreHook(target, this.onStore.selector);
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32 newValue) external {
+        require(msg.sender == address(hookVm), "only storage hook");
+        hits++;
+        assertEq(StorageHookFuzzHelper(HELPER).observe(uint256(newValue)), uint256(newValue));
+    }
+
+    function assertEq(uint256 left, uint256 right) internal pure {
+        require(left == right);
+    }
+}
+
+contract StorageHookFuzzGuidanceTest is Test {
+    address constant TARGET = address(0x1000);
+    address constant CALLBACK = address(0x2000);
+    address constant HELPER = address(0x3000);
+
+    function setUp() public {
+        StorageHookFuzzTarget target = new StorageHookFuzzTarget();
+        StorageHookFuzzCallback callback = new StorageHookFuzzCallback();
+        StorageHookFuzzHelper helper = new StorageHookFuzzHelper();
+        vm.etch(TARGET, address(target).code);
+        vm.etch(CALLBACK, address(callback).code);
+        vm.etch(HELPER, address(helper).code);
+        StorageHookFuzzCallback(CALLBACK).register(TARGET);
+    }
+
+    function testFuzz_hookGuidance(uint256 value) public {
+        StorageHookFuzzTarget(TARGET).store(value);
+        assertEq(uint256(vm.load(CALLBACK, bytes32(0))), 1);
+        if (value == 42) {
+            assertEq(StorageHookFuzzTarget(TARGET).value(), 42);
+        }
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_hookGuidance",
+            "--fuzz-seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--fuzz-frontier-dir",
+            "fuzz_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = prj
+        .root()
+        .join("fuzz_frontiers")
+        .join("StorageHookFuzzGuidanceTest")
+        .join("testFuzz_hookGuidance")
+        .join("branch-frontiers.json");
+    let artifact: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(frontier_path).unwrap()).unwrap();
+    let frontiers = artifact["frontiers"].as_array().unwrap();
+    assert!(!frontiers.is_empty(), "missing user-code frontiers in {artifact:#}");
+    let instrumentation_addresses = [
+        "0x0000000000000000000000000000000000002000",
+        "0x0000000000000000000000000000000000003000",
+    ];
+    assert!(
+        frontiers.iter().all(|frontier| {
+            let address = frontier["site"]["address"].as_str().unwrap();
+            !instrumentation_addresses
+                .iter()
+                .any(|candidate| address.eq_ignore_ascii_case(candidate))
+        }),
+        "{artifact:#}"
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--match-test",
+            "testFuzz_hookGuidance",
+            "--showmap-out",
+            "showmap",
+            "--showmap-corpus-dir",
+            "fuzz_corpus",
+            "--showmap-trial",
+            "hook",
+        ])
+        .assert_success();
+
+    let runtime_hash_prefix = |artifact: &str| {
+        let artifact: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(prj.root().join(artifact)).unwrap()).unwrap();
+        let bytecode = artifact["deployedBytecode"]["object"].as_str().unwrap();
+        let bytecode = alloy_primitives::hex::decode(bytecode.trim_start_matches("0x")).unwrap();
+        alloy_primitives::hex::encode(&alloy_primitives::keccak256(bytecode)[..8])
+    };
+    let callback_hash =
+        runtime_hash_prefix("out/StorageHookFuzzGuidance.t.sol/StorageHookFuzzCallback.json");
+    let helper_hash =
+        runtime_hash_prefix("out/StorageHookFuzzGuidance.t.sol/StorageHookFuzzHelper.json");
+    let target_hash =
+        runtime_hash_prefix("out/StorageHookFuzzGuidance.t.sol/StorageHookFuzzTarget.json");
+    let mut pending = vec![prj.root().join("showmap")];
+    let mut showmap_files = 0;
+    let mut saw_target_coverage = false;
+    while let Some(path) = pending.pop() {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let body = std::fs::read_to_string(&path).unwrap();
+            assert!(!body.is_empty(), "empty showmap file: {}", path.display());
+            showmap_files += 1;
+            saw_target_coverage |= body.contains(&format!("evm_{target_hash}_"));
+            assert!(!body.contains(&format!("evm_{callback_hash}_")), "{body}");
+            assert!(!body.contains(&format!("evm_{helper_hash}_")), "{body}");
+        }
+    }
+    assert!(showmap_files > 0, "no showmap files were produced");
+    assert!(saw_target_coverage, "showmap did not contain target coverage");
+});
+
+forgetest_init!(symbolic_mapping_storage_hooks, |prj, cmd| {
+    skip_unless_z3!("symbolic_mapping_storage_hooks");
+    prj.add_test(
+        "SymbolicMappingStorageHooks.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface IHookVm {
+    function registerSstoreHook(address, bytes4) external;
+    function registerMappingSstoreHook(address, bytes32, bytes4) external;
+}
+
+contract MappingTarget {
+    bytes32 public constant SLOT_42 =
+        0x64d962e4eec2a0d2e4053fc69d3b480f61c5923c09e4bad52cdeec343ff95073;
+
+    mapping(uint256 => uint256) values;
+    mapping(uint256 => mapping(uint256 => uint256)) nested;
+    function set(uint256 key, uint256 value) external { values[key] = value; }
+    function setNested(uint256 outer, uint256 inner, uint256 value) external {
+        nested[outer][inner] = value;
+    }
+    function get(uint256 key) external view returns (uint256) { return values[key]; }
+    function computedSlot(uint256 key) external pure returns (bytes32) {
+        return keccak256(abi.encode(key, uint256(0)));
+    }
+    function computedSlot(uint256 key, uint256 root) external pure returns (bytes32) {
+        return keccak256(abi.encode(key, root));
+    }
+    function directStore(bytes32 slot, uint256 value) external {
+        assembly { sstore(slot, value) }
+    }
+    function equivalentStore(uint256 key, uint256 value, uint256 delta) external {
+        bytes32 slot = keccak256(abi.encode(key, uint256(0)));
+        assembly {
+            slot := sub(add(slot, delta), delta)
+            sstore(slot, value)
+        }
+    }
+    function conditionalStore(uint256 key, uint256 value, uint256 control) external {
+        bytes32 slot = keccak256(abi.encode(key, uint256(0)));
+        assembly { sstore(add(slot, and(control, 1)), value) }
+    }
+    function constrainedConstantStore(uint256 key, uint256 value) external {
+        bytes32 observed = keccak256(abi.encode(key, uint256(0)));
+        require(key == 1);
+        bytes32 slot = keccak256(abi.encode(uint256(1), uint256(0)));
+        assembly { sstore(slot, value) }
+        require(observed == slot);
+    }
+    function foldedConstantStore(uint256 key, uint256 value) external {
+        bytes32 observed = keccak256(abi.encode(key, uint256(0)));
+        require(observed == SLOT_42);
+        bytes32 slot = SLOT_42;
+        assembly { sstore(slot, value) }
+    }
+    function constrainedRootStore(uint256 key, uint256 root, uint256 value) external {
+        require(root == 0);
+        bytes32 slot = keccak256(abi.encode(key, root));
+        assembly { sstore(slot, value) }
+    }
+    function constrainedNestedRootStore(
+        uint256 outer,
+        uint256 inner,
+        uint256 root,
+        uint256 value
+    ) external {
+        require(root == 1);
+        bytes32 parent = keccak256(abi.encode(outer, root));
+        bytes32 slot = keccak256(abi.encode(inner, parent));
+        assembly { sstore(slot, value) }
+    }
+    function symbolicSizeStore(uint256 key, uint256 value, uint256 size) external {
+        require(size <= 64);
+        assembly {
+            mstore(0, key)
+            mstore(32, 0)
+            sstore(keccak256(0, size), value)
+        }
+    }
+    function offsetStore(uint256 key, uint256 value) external {
+        bytes32 slot = bytes32(uint256(keccak256(abi.encode(key, uint256(0)))) + 1);
+        assembly { sstore(slot, value) }
+    }
+    function incompleteStore(uint256 key, uint256 value) external {
+        bytes32 slot = keccak256(abi.encodePacked(key));
+        assembly { sstore(slot, value) }
+    }
+    function setThenRevert(uint256 key, uint256 value) external {
+        values[key] = value;
+        revert("target rollback");
+    }
+}
+
+contract MappingHashHelper {
+    function computedSlot(uint256 key) external pure returns (bytes32) {
+        return keccak256(abi.encode(key, uint256(0)));
+    }
+}
+
+contract DelegateImplementation {
+    function set(uint256 key, uint256 value) external {
+        bytes32 slot = keccak256(abi.encode(key, uint256(41)));
+        assembly { sstore(slot, value) }
+    }
+}
+
+contract DelegateProxy {
+    function run(address implementation, uint256 key, uint256 value) external {
+        (bool ok,) = implementation.delegatecall(abi.encodeCall(DelegateImplementation.set, (key, value)));
+        require(ok);
+    }
+}
+
+contract RevertingDelegateHelper {
+    function computeThenRevert(uint256 key) external pure {
+        bytes32 slot = keccak256(abi.encode(key, uint256(51)));
+        assembly { mstore(0, slot) revert(0, 32) }
+    }
+}
+
+contract RevertCatcher {
+    function run(address helper, uint256 key, uint256 value) external {
+        (bool ok, bytes memory data) = helper.delegatecall(abi.encodeCall(RevertingDelegateHelper.computeThenRevert, (key)));
+        require(!ok);
+        bytes32 slot = abi.decode(data, (bytes32));
+        assembly { sstore(slot, value) }
+    }
+}
+
+contract ConstructorTarget {
+    constructor() {
+        bytes32 slot = keccak256(abi.encode(uint256(62), uint256(61)));
+        assembly { sstore(slot, 63) }
+    }
+}
+
+contract StaleHandler {
+    MappingTarget target;
+    bytes32 slot;
+
+    constructor(MappingTarget target_) { target = target_; }
+    function produce(uint256 key) external { slot = target.computedSlot(key); }
+    function consume(uint256 value) external { target.directStore(slot, value); }
+}
+
+contract MappingRegistrationHandler {
+    IHookVm constant hookVm = IHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 public calls;
+
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
+
+    function registerThenRevert(address target) external {
+        hookVm.registerMappingSstoreHook(target, bytes32(0), this.onStore.selector);
+        revert("after registration");
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        calls++;
+    }
+}
+
+contract AccountingToken {
+    mapping(address => uint256) public balances;
+    mapping(address => mapping(address => uint256)) public allowances;
+    uint256 public totalSupply;
+
+    function mint(address to, uint256 amount) external {
+        balances[to] += amount;
+        totalSupply += amount;
+    }
+
+    function transfer(address from, address to, uint256 amount) external {
+        require(balances[from] >= amount, "balance");
+        balances[from] -= amount;
+        balances[to] += amount;
+    }
+
+    function burn(address from, uint256 amount) external {
+        require(balances[from] >= amount, "balance");
+        balances[from] -= amount;
+        totalSupply -= amount;
+    }
+
+    function approve(address owner, address spender, uint256 amount) external {
+        allowances[owner][spender] = amount;
+    }
+
+    function mintThenRevert(address to, uint256 amount) external {
+        balances[to] += amount;
+        totalSupply += amount;
+        revert("token rollback");
+    }
+}
+
+contract SymbolicMappingStorageHooks is Test {
+    IHookVm constant hookVm = IHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    MappingTarget target;
+    MappingTarget rawTarget;
+    AccountingToken token;
+    uint256 seenKey;
+    uint256 seenOuterKey;
+    uint256 seenInnerKey;
+    uint256 seenOld;
+    uint256 seenNew;
+    bytes32 seenSlot;
+    bytes32 callbackSlot;
+    uint256 calls;
+    uint256 nestedCalls;
+    uint256 unexpectedCalls;
+    uint256 implementationCalls;
+    uint256 ghostSum;
+    address expectedAccount;
+    address seenBalanceHolder;
+
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
+
+    function setUp() public {
+        target = new MappingTarget();
+        rawTarget = new MappingTarget();
+        token = new AccountingToken();
+        hookVm.registerMappingSstoreHook(address(target), bytes32(0), this.onStore.selector);
+        hookVm.registerMappingSstoreHook(address(target), bytes32(uint256(1)), this.onNestedStore.selector);
+        hookVm.registerMappingSstoreHook(address(token), bytes32(0), this.onBalanceStore.selector);
+        hookVm.registerSstoreHook(address(rawTarget), this.onRawStore.selector);
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "zero_init"
+    function checkMappingDispatch(uint256 key, uint256 first, uint256 second) public {
+        target.set(key, first);
+        assertEq(seenSlot, keccak256(abi.encode(key, uint256(0))));
+        assertEq(seenKey, key);
+        assertEq(seenOld, 0);
+        assertEq(seenNew, first);
+        target.set(key, second);
+        assertEq(seenOld, first);
+        assertEq(seenNew, second);
+        assertEq(target.get(key), second);
+        assertEq(seenKey, key);
+    }
+
+    function checkNestedMappingRootAndKeys(uint256 inner, uint256 value) public {
+        uint256 outer = 11;
+        bytes32 intermediateRoot = keccak256(abi.encode(outer, uint256(1)));
+        hookVm.registerMappingSstoreHook(
+            address(target), intermediateRoot, this.onUnexpectedStore.selector
+        );
+        target.setNested(outer, inner, value);
+
+        assertEq(seenOuterKey, outer);
+        assertEq(seenInnerKey, inner);
+        assertEq(seenSlot, keccak256(abi.encode(inner, intermediateRoot)));
+        assertEq(nestedCalls, 1);
+        assertEq(unexpectedCalls, 0);
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "zero_init"
+    function checkErc20BalanceAccounting(
+        address from,
+        address to,
+        address third,
+        uint128 minted,
+        uint128 moved,
+        uint128 burned,
+        uint128 allowance
+    ) public {
+        vm.assume(from != to);
+        vm.assume(third != from && third != to);
+        vm.assume(moved <= minted);
+        vm.assume(burned <= moved);
+
+        token.mint(from, minted);
+        assertEq(seenBalanceHolder, from);
+        assertAccounting(from, to);
+
+        token.transfer(from, to, moved);
+        assertEq(seenBalanceHolder, to);
+        assertAccounting(from, to);
+
+        uint256 ghostBeforeApproval = ghostSum;
+        token.approve(from, to, allowance);
+        assertEq(ghostSum, ghostBeforeApproval);
+        assertAccounting(from, to);
+
+        token.burn(to, burned);
+        assertEq(seenBalanceHolder, to);
+        assertAccounting(from, to);
+
+        assertRevertsDoNotChangeAccounting(from, to);
+
+        token.mint(third, 1);
+        assertEq(seenBalanceHolder, third);
+        assertEq(ghostSum, token.totalSupply());
+        assertNotEq(ghostSum, token.balances(from) + token.balances(to));
+    }
+
+    function assertRevertsDoNotChangeAccounting(address from, address to) internal {
+        uint256 fromBeforeRollback = token.balances(from);
+        uint256 supplyBeforeRollback = token.totalSupply();
+        uint256 ghostBeforeRollback = ghostSum;
+        (bool rollbackOk,) = address(token).call(
+            abi.encodeCall(token.mintThenRevert, (from, uint256(1)))
+        );
+        assertFalse(rollbackOk);
+        assertEq(token.balances(from), fromBeforeRollback);
+        assertEq(token.totalSupply(), supplyBeforeRollback);
+        assertEq(ghostSum, ghostBeforeRollback);
+
+        uint256 fromBefore = token.balances(from);
+        uint256 toBefore = token.balances(to);
+        uint256 supplyBefore = token.totalSupply();
+        uint256 ghostBeforeRevert = ghostSum;
+        (bool ok,) = address(token).call(
+            abi.encodeCall(token.transfer, (from, to, fromBefore + 1))
+        );
+        assertFalse(ok);
+        assertEq(token.balances(from), fromBefore);
+        assertEq(token.balances(to), toBefore);
+        assertEq(token.totalSupply(), supplyBefore);
+        assertEq(ghostSum, ghostBeforeRevert);
+    }
+
+    function assertAccounting(address first, address second) internal view {
+        assertEq(ghostSum, token.totalSupply());
+        assertEq(ghostSum, token.balances(first) + token.balances(second));
+    }
+
+    function checkOrdinaryCallProvenance(uint256 key, uint256 value) public {
+        bytes32 slot = target.computedSlot(key);
+        target.directStore(slot, value);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+        assertEq(seenSlot, slot);
+    }
+
+    function checkConstraintEquivalentProvenance(uint256 key, uint256 value, uint256 delta) public {
+        target.equivalentStore(key, value, delta);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+        assertEq(seenSlot, keccak256(abi.encode(key, uint256(0))));
+    }
+
+    function checkConditionalProvenance(uint256 key, uint256 value, uint256 control) public {
+        target.conditionalStore(key, value, control);
+        if (control & 1 == 0) {
+            assertEq(calls, 1);
+            assertEq(seenKey, key);
+        } else {
+            assertEq(calls, 0);
+        }
+    }
+
+    function checkConstraintEquivalentConstantSlot(uint256 key, uint256 value) public {
+        target.constrainedConstantStore(key, value);
+        assertEq(calls, 1);
+        assertEq(seenKey, 1);
+    }
+
+    function checkConstraintEquivalentFoldedSlot(uint256 key, uint256 value) public {
+        target.foldedConstantStore(key, value);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+        assertEq(seenSlot, target.SLOT_42());
+    }
+
+    function checkConstraintEquivalentKeccakShape(
+        uint256 key,
+        uint256 equivalentKey,
+        uint256 value
+    ) public {
+        MappingHashHelper helper = new MappingHashHelper();
+        bytes32 slot = target.computedSlot(key);
+        bytes32 equivalentSlot = helper.computedSlot(equivalentKey);
+        vm.assume(key == equivalentKey);
+        target.directStore(equivalentSlot, value);
+        assertEq(slot, equivalentSlot);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+    }
+
+    function checkConstraintEquivalentRoot(uint256 key, uint256 root, uint256 value) public {
+        target.constrainedRootStore(key, root, value);
+        assertEq(calls, 1);
+        assertEq(seenKey, key);
+    }
+
+    function checkConstraintEquivalentNestedRoot(
+        uint256 outer,
+        uint256 inner,
+        uint256 root,
+        uint256 value
+    ) public {
+        target.constrainedNestedRootStore(outer, inner, root, value);
+        assertEq(nestedCalls, 1);
+        assertEq(seenOuterKey, outer);
+        assertEq(seenInnerKey, inner);
+    }
+
+    function checkCallbackSubtreeSuppression(uint256 key, uint256 value) public {
+        hookVm.registerMappingSstoreHook(address(target), bytes32(uint256(71)), this.onUnexpectedStore.selector);
+        target.set(key, value);
+        assertEq(calls, 1);
+        assertEq(callbackSlot, keccak256(abi.encode(key, uint256(71))));
+        assertEq(target.get(key), value);
+        assertEq(calls, 1);
+        assertEq(unexpectedCalls, 0);
+    }
+
+    function checkLateRootRegistrationClearsProvenance(uint256 key, uint256 value) public {
+        bytes32 root = bytes32(uint256(72));
+        bytes32 slot = target.computedSlot(key, uint256(root));
+        hookVm.registerMappingSstoreHook(address(target), root, this.onUnexpectedStore.selector);
+
+        target.directStore(slot, value);
+
+        assertEq(unexpectedCalls, 0);
+    }
+
+    function checkCallbackRegistrationClearsParentProvenance(
+        uint256 key,
+        uint256 triggerKey,
+        uint256 value
+    ) public {
+        hookVm.registerMappingSstoreHook(address(target), bytes32(0), this.onRegisterRoot.selector);
+        bytes32 staleSlot = target.computedSlot(key, 73);
+
+        target.set(triggerKey, value);
+        target.directStore(staleSlot, value);
+
+        assertEq(unexpectedCalls, 0);
+    }
+
+    function checkOffsetsAndIncompleteHashesDoNotDispatch(uint256 key, uint256 value) public {
+        target.offsetStore(key, value);
+        target.incompleteStore(key, value);
+        assertEq(calls, 0);
+    }
+
+    function checkDelegatecallUsesProxyAccount(uint256 key, uint256 value) public {
+        DelegateImplementation implementation = new DelegateImplementation();
+        DelegateProxy proxy = new DelegateProxy();
+        expectedAccount = address(proxy);
+        hookVm.registerMappingSstoreHook(address(proxy), bytes32(uint256(41)), this.onProxyStore.selector);
+        hookVm.registerMappingSstoreHook(address(implementation), bytes32(uint256(41)), this.onImplementationStore.selector);
+
+        proxy.run(address(implementation), key, value);
+        assertEq(calls, 1);
+        assertEq(implementationCalls, 0);
+    }
+
+    function checkCaughtRevertingDelegatecallKeepsProvenance(uint256 key) public {
+        RevertingDelegateHelper helper = new RevertingDelegateHelper();
+        RevertCatcher catcher = new RevertCatcher();
+        expectedAccount = address(catcher);
+        hookVm.registerMappingSstoreHook(address(catcher), bytes32(uint256(51)), this.onProxyStore.selector);
+        catcher.run(address(helper), key, 1);
+        assertEq(calls, 1);
+    }
+
+    function checkConstructorProvenance() public {
+        bytes32 salt = bytes32(uint256(0xC0DE));
+        address predicted = vm.computeCreate2Address(salt, keccak256(type(ConstructorTarget).creationCode), address(this));
+        expectedAccount = predicted;
+        hookVm.registerMappingSstoreHook(predicted, bytes32(uint256(61)), this.onProxyStore.selector);
+        ConstructorTarget created = new ConstructorTarget{salt: salt}();
+        assertEq(address(created), predicted);
+        assertEq(calls, 1);
+    }
+
+    function checkConflictsAreCatchable() public {
+        (bool storeOk,) = address(hookVm).call(abi.encodeCall(hookVm.registerSstoreHook, (address(target), this.onRawStore.selector)));
+        assertFalse(storeOk);
+        (storeOk,) = address(hookVm).call(abi.encodeCall(hookVm.registerMappingSstoreHook, (address(rawTarget), bytes32(0), this.onStore.selector)));
+        assertFalse(storeOk);
+    }
+
+    /// forge-config: default.symbolic.storage_layout = "zero_init"
+    function checkRegistrationAndRollbackLifecycle(uint256 key, uint256 value) public {
+        MappingTarget registeredTarget = new MappingTarget();
+        MappingRegistrationHandler handler = new MappingRegistrationHandler();
+        (bool registrationOk,) = address(handler).call(
+            abi.encodeCall(handler.registerThenRevert, (address(registeredTarget)))
+        );
+        assertFalse(registrationOk);
+        registeredTarget.set(key, value);
+        assertEq(handler.calls(), 1);
+
+        (bool targetOk,) = address(target).call(
+            abi.encodeCall(target.setThenRevert, (key, value))
+        );
+        assertFalse(targetOk);
+        assertEq(calls, 0);
+        assertEq(target.get(key), 0);
+
+        hookVm.registerMappingSstoreHook(address(target), bytes32(0), this.onRevertingStore.selector);
+        (bool callbackOk,) = address(target).call(abi.encodeCall(target.set, (key, value)));
+        assertFalse(callbackOk);
+        assertEq(target.get(key), 0);
+    }
+
+    function onStore(address account, bytes32 slot, bytes32 root, bytes32[] calldata keys, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        assertEq(account, address(target));
+        assertEq(root, bytes32(0));
+        assertEq(keys.length, 1);
+        seenKey = uint256(keys[0]);
+        seenSlot = slot;
+        seenOld = uint256(oldValue);
+        seenNew = uint256(newValue);
+        calls++;
+        callbackSlot = target.computedSlot(uint256(keys[0]), uint256(71));
+        target.directStore(callbackSlot, 1);
+    }
+    function onNestedStore(address account, bytes32 slot, bytes32 root, bytes32[] calldata keys, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        assertEq(account, address(target));
+        assertEq(root, bytes32(uint256(1)));
+        assertEq(keys.length, 2);
+        seenOuterKey = uint256(keys[0]);
+        seenInnerKey = uint256(keys[1]);
+        seenSlot = slot;
+        nestedCalls++;
+    }
+    function onBalanceStore(address account, bytes32, bytes32 root, bytes32[] calldata keys, bytes32 oldValue, bytes32 newValue)
+        external
+        onlyStorageHook
+    {
+        assertEq(account, address(token));
+        assertEq(root, bytes32(0));
+        assertEq(keys.length, 1);
+        seenBalanceHolder = address(uint160(uint256(keys[0])));
+        ghostSum = ghostSum - uint256(oldValue) + uint256(newValue);
+    }
+    function onRawStore(address, bytes32, bytes32, bytes32) external onlyStorageHook {}
+    function onUnexpectedStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        unexpectedCalls++;
+    }
+    function onRegisterRoot(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        hookVm.registerMappingSstoreHook(
+            address(target), bytes32(uint256(73)), this.onUnexpectedStore.selector
+        );
+    }
+    function onRevertingStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        revert("hook rollback");
+    }
+    function onProxyStore(address account, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        assertEq(account, expectedAccount);
+        calls++;
+    }
+    function onImplementationStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        implementationCalls++;
+    }
+}
+
+contract SymbolicMappingStorageHooksStale is Test {
+    IHookVm constant hookVm = IHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    MappingTarget target;
+    uint256 calls;
+
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
+
+    function setUp() public {
+        target = new MappingTarget();
+        hookVm.registerMappingSstoreHook(address(target), bytes32(0), this.onStore.selector);
+        StaleHandler handler = new StaleHandler(target);
+        targetContract(address(handler));
+        targetSender(address(this));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    function invariant_staleProvenanceNeverDispatches() public view { assertEq(calls, 0); }
+    function onStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        calls++;
+    }
+}
+
+contract SymbolicMappingStorageHooksSymbolicSize is Test {
+    IHookVm constant hookVm = IHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    MappingTarget target;
+    uint256 calls;
+
+    function setUp() public {
+        target = new MappingTarget();
+        hookVm.registerMappingSstoreHook(address(target), bytes32(0), this.onStore.selector);
+    }
+
+    function checkSymbolicKeccakSize(uint256 key, uint256 value, uint256 size) public {
+        target.symbolicSizeStore(key, value, size);
+        assertEq(calls, 0);
+    }
+
+    function testConcreteKeccakSize() public {
+        target.symbolicSizeStore(1, 2, 64);
+        assertEq(calls, 1);
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32) external {
+        require(msg.sender == address(hookVm), "only storage hook");
+        calls++;
+    }
+}
+"#,
+    );
+    cmd.args(["test", "--symbolic", "--match-contract", "^SymbolicMappingStorageHooks$"])
+        .assert_success();
+
+    cmd.forge_fuse();
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--fuzz-runs",
+            "0",
+            "--match-contract",
+            "^SymbolicMappingStorageHooksStale$",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_staleProvenanceNeverDispatches()");
+    assert_eq!(result["symbolic"]["status"], "pass", "{}", result["symbolic"]);
+
+    cmd.forge_fuse();
+    cmd.args([
+        "test",
+        "--match-contract",
+        "^SymbolicMappingStorageHooksSymbolicSize$",
+        "--match-test",
+        "testConcreteKeccakSize",
+    ])
+    .assert_success();
+
+    cmd.forge_fuse();
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--match-contract",
+            "^SymbolicMappingStorageHooksSymbolicSize$",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "checkSymbolicKeccakSize(uint256,uint256,uint256)");
+    assert_eq!(result["symbolic"]["status"], "incomplete", "{}", result["symbolic"]);
+    assert_eq!(
+        result["symbolic"]["incomplete"]["reason"],
+        "unsupported symbolic execution feature: symbolic KECCAK256 size may conceal mapping provenance",
+        "{}",
+        result["symbolic"]
+    );
 });

@@ -1,15 +1,17 @@
 //! Foundry's main executor backend abstraction and implementation.
 
 use crate::{
-    FoundryBlock, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
+    FoundryBlock, FoundryChain, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
+        BlockContext, BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
+        FoundryEvmFactory, FoundryEvmNetwork, HaltReasonFor, SpecFor, TxEnvFor,
     },
     fork::{CreateFork, ForkId, MultiFork},
     state_snapshot::StateSnapshots,
-    utils::{apply_chain_specific_tx_replay_env_changes, get_blob_base_fee_update_fraction},
+    utils::{
+        apply_chain_specific_tx_replay_env_changes_for_chain, get_blob_base_fee_update_fraction,
+    },
 };
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_evm::{Evm, EvmEnv, EvmFactory};
@@ -17,8 +19,8 @@ use alloy_genesis::GenesisAccount;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, TransactionResponse,
 };
-use alloy_primitives::{Address, B256, TxKind, U256, keccak256, map::AddressSet, uint};
-use alloy_rpc_types::BlockNumberOrTag;
+use alloy_primitives::{Address, B256, ChainId, TxKind, U256, keccak256, map::AddressSet, uint};
+use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 use foundry_evm_networks::NetworkConfigs;
@@ -62,9 +64,109 @@ type ForkDB<N, B> = CacheDB<SharedBackend<N, B>>;
 /// block` which can be reused by multiple tests, whereas the `LocalForkId` is unique within a test
 pub type LocalForkId = U256;
 
+/// Transaction-context update required after a fork operation.
+#[cfg(feature = "monad")]
+pub enum ContextUpdate<C> {
+    /// The operation did not change the active chain cursor or outer journal state.
+    Unchanged,
+    /// The active fork cursor changed and provides replacement chain context.
+    Replace(C),
+    /// The outer journal changed while the active chain context remained unchanged.
+    Rebase,
+}
+
+/// Transaction-context update required after a fork operation, for a given [`FoundryEvmFactory`].
+///
+/// Only Monad's family-owned chain context needs to observe fork operations; every other network
+/// has no use for this signal, so it collapses to `()` without the `monad` feature.
+#[cfg(feature = "monad")]
+pub type ContextUpdateFor<F> = ContextUpdate<<F as FoundryEvmFactory>::Chain>;
+#[cfg(not(feature = "monad"))]
+pub type ContextUpdateFor<F> = std::marker::PhantomData<F>;
+
 /// Represents the index of a fork in the created forks vector
 /// This is used for fast lookup
 type ForkLookupIndex = usize;
+
+/// Inputs that define one transaction execution.
+struct TransactionInputs<FEN: FoundryEvmNetwork> {
+    evm_env: EvmEnvFor<FEN>,
+    tx_env: TxEnvFor<FEN>,
+    chain_context: ChainFor<FEN>,
+}
+
+/// Environment and network configuration used while replaying transactions.
+struct ReplayInputs<FEN: FoundryEvmNetwork> {
+    evm_env: EvmEnvFor<FEN>,
+    networks: NetworkConfigs,
+}
+
+/// Block data required to execute or position a fork at a transaction.
+struct TransactionForkTarget {
+    fork_block_number: u64,
+    transaction: AnyRpcTransaction,
+    block: AnyRpcBlock,
+    position: Option<TransactionPosition>,
+}
+
+/// Position of a transaction in its canonical block.
+#[derive(Clone, Copy)]
+struct TransactionPosition {
+    index: usize,
+    count: usize,
+}
+
+/// A fork roll prepared for atomic publication.
+#[cfg(feature = "monad")]
+struct StagedForkRoll<FEN: FoundryEvmNetwork> {
+    local_id: LocalForkId,
+    fork_id: ForkId,
+    fork_index: ForkLookupIndex,
+    fork: Fork<AnyNetwork, BlockEnvFor<FEN>>,
+}
+
+/// Canonical chain position used to reconstruct network-specific transaction context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ForkPosition {
+    /// The database contains all transactions through the fork's current block.
+    AfterBlock { block_number: u64 },
+    /// The database contains the transactions before `transaction_index` in `block_number`.
+    BeforeTransaction { block_number: u64, transaction_index: usize },
+}
+
+impl ForkPosition {
+    /// Returns the canonical position after committing `transaction_index`, if it immediately
+    /// follows this position.
+    fn after_transaction(
+        self,
+        block_number: u64,
+        transaction_index: usize,
+        transaction_count: usize,
+    ) -> Option<Self> {
+        let is_next = match self {
+            Self::AfterBlock { block_number: previous_block } => {
+                transaction_index == 0 && previous_block.checked_add(1) == Some(block_number)
+            }
+            Self::BeforeTransaction {
+                block_number: current_block,
+                transaction_index: current_index,
+            } => current_block == block_number && current_index == transaction_index,
+        };
+        if !is_next {
+            return None;
+        }
+        let next_index = transaction_index.checked_add(1)?;
+        if next_index > transaction_count {
+            return None;
+        }
+
+        Some(if next_index == transaction_count {
+            Self::AfterBlock { block_number }
+        } else {
+            Self::BeforeTransaction { block_number, transaction_index: next_index }
+        })
+    }
+}
 
 /// All accounts that will have persistent storage across fork swaps.
 const DEFAULT_PERSISTENT_ACCOUNTS: [Address; 3] =
@@ -134,10 +236,10 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
         evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
         tx_env: &mut F::Tx,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<LocalForkId> {
+    ) -> eyre::Result<(LocalForkId, ContextUpdateFor<F>)> {
         let id = self.create_fork(fork)?;
-        self.select_fork(id, evm_env, tx_env, journaled_state)?;
-        Ok(id)
+        let context = self.select_fork(id, evm_env, tx_env, journaled_state)?;
+        Ok((id, context))
     }
 
     /// Creates and also selects a new fork
@@ -150,10 +252,10 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
         tx_env: &mut F::Tx,
         journaled_state: &mut JournaledState,
         transaction: B256,
-    ) -> eyre::Result<LocalForkId> {
+    ) -> eyre::Result<(LocalForkId, ContextUpdateFor<F>)> {
         let id = self.create_fork_at_transaction(fork, transaction)?;
-        self.select_fork(id, evm_env, tx_env, journaled_state)?;
-        Ok(id)
+        let context = self.select_fork(id, evm_env, tx_env, journaled_state)?;
+        Ok((id, context))
     }
 
     /// Creates a new fork but does _not_ select it
@@ -181,7 +283,7 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
         evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
         tx_env: &mut F::Tx,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<()>;
+    ) -> eyre::Result<ContextUpdateFor<F>>;
 
     /// Updates the fork to given block number.
     ///
@@ -195,8 +297,9 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
         id: Option<LocalForkId>,
         block_number: u64,
         evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
+        tx_env: &F::Tx,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<()>;
+    ) -> eyre::Result<ContextUpdateFor<F>>;
 
     /// Updates the fork to given transaction hash
     ///
@@ -211,8 +314,9 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
         id: Option<LocalForkId>,
         transaction: B256,
         evm_env: &mut EvmEnv<F::Spec, F::BlockEnv>,
+        tx_env: &F::Tx,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<()>;
+    ) -> eyre::Result<ContextUpdateFor<F>>;
 
     /// Fetches the given transaction for the fork and executes it, committing the state in the DB
     fn transact(
@@ -220,9 +324,10 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
         id: Option<LocalForkId>,
         transaction: B256,
         evm_env: EvmEnv<F::Spec, F::BlockEnv>,
+        outer_tx_env: &F::Tx,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn for<'db> FoundryInspectorExt<F::FoundryContext<'db>>,
-    ) -> eyre::Result<()>;
+    ) -> eyre::Result<ContextUpdateFor<F>>;
 
     /// Executes a given TransactionRequest, commits the new state to the DB
     fn transact_from_tx(
@@ -232,6 +337,11 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
         journaled_state: &mut JournaledState,
         inspector: &mut dyn for<'db> FoundryInspectorExt<F::FoundryContext<'db>>,
     ) -> eyre::Result<()>;
+
+    /// Returns transaction-position context for a synthetic transaction on the active database.
+    fn chain_context_for_synthetic_transaction(&self, tx: &F::Tx) -> eyre::Result<F::Chain> {
+        Ok(F::Chain::for_transaction(tx))
+    }
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
     fn active_fork_id(&self) -> Option<LocalForkId>;
@@ -454,6 +564,8 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
 /// after reverting the snapshot.
 #[must_use]
 pub struct Backend<FEN: FoundryEvmNetwork = EthEvmNetwork> {
+    /// Active network configuration.
+    networks: NetworkConfigs,
     /// The access point for managing forks
     forks: MultiFork<AnyNetwork, SpecFor<FEN>, BlockEnvFor<FEN>>,
     // The default in memory db
@@ -486,6 +598,7 @@ pub struct Backend<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> Clone for Backend<FEN> {
     fn clone(&self) -> Self {
         Self {
+            networks: self.networks,
             forks: self.forks.clone(),
             mem_db: self.mem_db.clone(),
             fork_init_journaled_state: self.fork_init_journaled_state.clone(),
@@ -498,6 +611,7 @@ impl<FEN: FoundryEvmNetwork> Clone for Backend<FEN> {
 impl<FEN: FoundryEvmNetwork> Debug for Backend<FEN> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Backend")
+            .field("networks", &self.networks)
             .field("forks", &self.forks)
             .field("mem_db", &self.mem_db)
             .field("fork_init_journaled_state", &self.fork_init_journaled_state)
@@ -528,12 +642,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> eyre::Result<Self> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
-        let inner = BackendInner {
-            persistent_accounts: HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS),
-            ..Default::default()
-        };
+        let persistent_accounts = HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS);
+        let inner = BackendInner { persistent_accounts, ..Default::default() };
 
         let mut backend = Self {
+            networks: NetworkConfigs::default(),
             forks,
             mem_db: CacheDB::new(Default::default()),
             fork_init_journaled_state: inner.new_journaled_state(),
@@ -542,10 +655,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         };
 
         if let Some(fork) = fork {
-            let (fork_id, fork, _) = backend.forks.create_fork(fork)?;
+            let (fork_id, fork, _, context) = backend.forks.create_fork(fork)?;
             let fork_db = ForkDB::new(fork);
             let fork_ids = backend.inner.insert_new_fork(
                 fork_id.clone(),
+                context.block_number,
+                context.source_chain_id,
                 fork_db,
                 backend.inner.new_journaled_state(),
             );
@@ -562,11 +677,14 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// as active
     pub(crate) fn new_with_fork(
         id: &ForkId,
-        fork: Fork<AnyNetwork, BlockEnvFor<FEN>>,
+        mut fork: Fork<AnyNetwork, BlockEnvFor<FEN>>,
         journaled_state: JournaledState,
+        networks: NetworkConfigs,
     ) -> eyre::Result<Self> {
         let mut backend = Self::spawn(None)?;
-        let fork_ids = backend.inner.insert_new_fork(id.clone(), fork.db, journaled_state);
+        backend.networks = networks;
+        fork.journaled_state = journaled_state;
+        let fork_ids = backend.inner.insert_fork(id.clone(), fork);
         backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
         backend.active_fork_ids = Some(fork_ids);
         Ok(backend)
@@ -575,12 +693,23 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Creates a new instance with a `BackendDatabase::InMemory` cache layer for the `CacheDB`
     pub fn clone_empty(&self) -> Self {
         Self {
+            networks: self.networks,
             forks: self.forks.clone(),
             mem_db: CacheDB::new(Default::default()),
             fork_init_journaled_state: self.inner.new_journaled_state(),
             active_fork_ids: None,
             inner: Default::default(),
         }
+    }
+
+    /// Returns the active network configuration.
+    pub const fn networks(&self) -> NetworkConfigs {
+        self.networks
+    }
+
+    /// Sets the active network configuration.
+    pub const fn set_networks(&mut self, networks: NetworkConfigs) {
+        self.networks = networks;
     }
 
     pub fn insert_account_info(&mut self, address: Address, account: AccountInfo) {
@@ -829,10 +958,25 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         tx_env: &mut TxEnvFor<FEN>,
         inspector: I,
     ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
+        let chain_context = self.chain_context_for_synthetic_transaction(tx_env)?;
+        self.inspect_with_context(evm_env, tx_env, chain_context, inspector)
+    }
+
+    /// Executes the configured test call with explicit network-specific context.
+    #[instrument(name = "inspect", level = "debug", skip_all)]
+    pub fn inspect_with_context<I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, FEN>>>(
+        &mut self,
+        evm_env: &mut EvmEnvFor<FEN>,
+        tx_env: &mut TxEnvFor<FEN>,
+        chain_context: ChainFor<FEN>,
+        inspector: I,
+    ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
         self.initialize(evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind());
-        let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
+        let factory = FEN::EvmFactory::default();
+        let mut evm = factory.create_foundry_evm_with_inspector(
             self,
             evm_env.to_owned(),
+            chain_context,
             inspector,
         );
         let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
@@ -908,24 +1052,198 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         &self,
         id: LocalForkId,
         transaction: B256,
-    ) -> eyre::Result<(u64, AnyRpcBlock)> {
+    ) -> eyre::Result<TransactionForkTarget> {
         let fork = self.inner.get_fork_by_id(id)?;
         let tx = fork.backend().get_transaction(transaction)?;
 
         // get the block number we need to fork
         if let Some(tx_block) = tx.block_number() {
             let block = fork.backend().get_full_block(tx_block)?;
+            let position = if let BlockTransactions::Full(transactions) = block.transactions() {
+                let index = transactions.iter().position(|tx| tx.tx_hash() == transaction);
+                if self.networks.is_monad() && index.is_none() {
+                    eyre::bail!(
+                        "transaction {transaction:?} is missing from block {}",
+                        block.header().number()
+                    );
+                }
+                index.map(|index| TransactionPosition { index, count: transactions.len() })
+            } else {
+                if self.networks.is_monad() {
+                    eyre::bail!(
+                        "block {} does not contain full transactions",
+                        block.header().number()
+                    );
+                }
+                None
+            };
 
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
             let fork_block = tx_block - 1;
-            Ok((fork_block, block))
+            Ok(TransactionForkTarget {
+                fork_block_number: fork_block,
+                transaction: tx,
+                block,
+                position,
+            })
         } else {
+            if self.networks.is_monad() {
+                eyre::bail!(
+                    "transaction {transaction} is pending and has no canonical block context"
+                );
+            }
             let block = fork.backend().get_full_block(BlockNumberOrTag::Latest)?;
 
             let number = block.header().number();
 
-            Ok((number, block))
+            Ok(TransactionForkTarget {
+                fork_block_number: number,
+                transaction: tx,
+                block,
+                position: None,
+            })
+        }
+    }
+
+    /// Converts all transactions in a full RPC block into this backend's transaction environment.
+    fn full_block_tx_envs(block: &AnyRpcBlock) -> eyre::Result<Vec<TxEnvFor<FEN>>> {
+        let BlockTransactions::Full(transactions) = block.transactions() else {
+            eyre::bail!("block {} does not contain full transactions", block.header().number());
+        };
+        transactions.iter().map(TxEnvFor::<FEN>::from_any_rpc_transaction).collect()
+    }
+
+    /// Converts a replayable transaction while preserving the established behavior of skipping
+    /// system envelopes that this build cannot decode.
+    fn replay_tx_env(tx: &AnyRpcTransaction) -> eyre::Result<Option<TxEnvFor<FEN>>> {
+        let is_system = is_known_system_sender(tx.from()) || tx.ty() == SYSTEM_TRANSACTION_TYPE;
+        if is_system {
+            #[cfg(not(feature = "monad"))]
+            return Ok(None);
+            #[cfg(feature = "monad")]
+            return Ok(TxEnvFor::<FEN>::from_any_rpc_transaction(tx).ok());
+        }
+
+        TxEnvFor::<FEN>::from_any_rpc_transaction(tx).map(Some)
+    }
+
+    /// Returns the transaction environments needed to construct exact block context.
+    fn block_context_inputs_from_backend(
+        backend: &SharedBackend<AnyNetwork, BlockEnvFor<FEN>>,
+        block: &AnyRpcBlock,
+    ) -> eyre::Result<BlockContext<FEN>> {
+        let current = Self::full_block_tx_envs(block)?;
+
+        let parent_hash = block.header().parent_hash();
+        let parent_block = if parent_hash.is_zero() {
+            None
+        } else {
+            Some(
+                backend
+                    .get_full_block(parent_hash)
+                    .wrap_err_with(|| format!("failed to fetch parent block {parent_hash}"))?,
+            )
+        };
+        let parent =
+            parent_block.as_ref().map(Self::full_block_tx_envs).transpose()?.unwrap_or_default();
+
+        let grandparent = if let Some(parent_block) = &parent_block {
+            let grandparent_hash = parent_block.header().parent_hash();
+            if grandparent_hash.is_zero() {
+                Vec::new()
+            } else {
+                let block = backend.get_full_block(grandparent_hash).wrap_err_with(|| {
+                    format!("failed to fetch grandparent block {grandparent_hash}")
+                })?;
+                Self::full_block_tx_envs(&block)?
+            }
+        } else {
+            Vec::new()
+        };
+
+        Ok(BlockContext::new(grandparent, parent, current))
+    }
+
+    /// Returns the transaction environments needed to construct exact block context for a fork.
+    fn block_context_inputs(
+        &self,
+        id: LocalForkId,
+        block: &AnyRpcBlock,
+    ) -> eyre::Result<BlockContext<FEN>> {
+        let fork = self.inner.get_fork_by_id(id)?;
+        Self::block_context_inputs_from_backend(fork.backend(), block)
+    }
+
+    /// Builds transaction context for `tx` at a known position in `block_context`.
+    #[cfg(feature = "monad")]
+    fn context_for_block_position(
+        block_context: BlockContext<FEN>,
+        position: ForkPosition,
+        tx: &TxEnvFor<FEN>,
+    ) -> eyre::Result<ChainFor<FEN>> {
+        let cursor = match position {
+            ForkPosition::AfterBlock { .. } => block_context.into_child(),
+            ForkPosition::BeforeTransaction { transaction_index, .. } => {
+                block_context.before_transaction(transaction_index)?
+            }
+        };
+        Ok(cursor.next_transaction(tx))
+    }
+
+    /// Builds context for a synthetic transaction at a fork's current position.
+    #[cfg(feature = "monad")]
+    fn context_for_fork_synthetic_transaction(
+        &self,
+        id: LocalForkId,
+        tx: &TxEnvFor<FEN>,
+    ) -> eyre::Result<ChainFor<FEN>> {
+        if !self.networks.is_monad() {
+            return Ok(ChainFor::<FEN>::for_transaction(tx));
+        }
+
+        let fork = self.inner.get_fork_by_id(id)?;
+        let (block_number, position) = match fork.position {
+            position @ ForkPosition::AfterBlock { block_number } => (block_number, position),
+            position @ ForkPosition::BeforeTransaction { block_number, .. } => {
+                (block_number, position)
+            }
+        };
+        let block = fork
+            .backend()
+            .get_full_block(block_number)
+            .wrap_err_with(|| format!("failed to fetch fork block {block_number}"))?;
+        let context = Self::block_context_inputs_from_backend(fork.backend(), &block)?;
+        Self::context_for_block_position(context, position, tx)
+    }
+
+    /// Returns the block cursor matching the active fork's database position.
+    pub fn block_context_for_synthetic_transaction(
+        &self,
+    ) -> eyre::Result<Option<BlockContext<FEN>>> {
+        if !self.networks.is_monad() {
+            return Ok(None);
+        }
+        let Some(id) = self.active_fork_id() else {
+            return Ok(None);
+        };
+
+        let fork = self.inner.get_fork_by_id(id)?;
+        let (block_number, transaction_index) = match fork.position {
+            ForkPosition::AfterBlock { block_number } => (block_number, None),
+            ForkPosition::BeforeTransaction { block_number, transaction_index } => {
+                (block_number, Some(transaction_index))
+            }
+        };
+        let block = fork
+            .backend()
+            .get_full_block(block_number)
+            .wrap_err_with(|| format!("failed to fetch active fork block {block_number}"))?;
+        let context = Self::block_context_inputs_from_backend(fork.backend(), &block)?;
+
+        match transaction_index {
+            Some(index) => context.before_transaction(index).map(Some),
+            None => Ok(Some(context.into_child())),
         }
     }
 
@@ -936,51 +1254,370 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         evm_env: &mut EvmEnvFor<FEN>,
     ) -> eyre::Result<()> {
         let fork_id = self.inner.ensure_fork_id(id).cloned()?;
+        let source_chain_id = self.inner.get_fork_by_id(id)?.source_chain_id;
+        self.apply_fork_tx_replay_env_changes_for(&fork_id, source_chain_id, evm_env)
+    }
+
+    /// Applies replay changes using an explicitly staged fork identity.
+    fn apply_fork_tx_replay_env_changes_for(
+        &self,
+        fork_id: &ForkId,
+        source_chain_id: ChainId,
+        evm_env: &mut EvmEnvFor<FEN>,
+    ) -> eyre::Result<()> {
         let fork_evm_env = self
             .forks
-            .get_evm_env(fork_id)?
-            .ok_or_else(|| eyre::eyre!("Requested fork `{id}` does not exist"))?;
+            .get_evm_env(fork_id.clone())?
+            .ok_or_else(|| eyre::eyre!("Requested fork `{fork_id}` does not exist"))?;
         evm_env.cfg_env.chain_id = fork_evm_env.cfg_env.chain_id;
-        apply_chain_specific_tx_replay_env_changes(evm_env);
+        apply_chain_specific_tx_replay_env_changes_for_chain(evm_env, source_chain_id);
         Ok(())
+    }
+
+    /// Populates a rolled active fork and the outer journal at the new block state.
+    fn populate_rolled_active_fork(
+        fork: &mut Fork<AnyNetwork, BlockEnvFor<FEN>>,
+        persistent_accounts: &HashSet<Address>,
+        caller: Option<Address>,
+        journaled_state: &mut JournaledState,
+    ) {
+        let mut persistent_addrs = persistent_accounts.clone();
+        persistent_addrs.extend(caller);
+
+        fork.journaled_state.depth = journaled_state.depth;
+
+        for addr in persistent_addrs {
+            merge_journaled_state_data(addr, journaled_state, &mut fork.journaled_state);
+        }
+
+        for (addr, acc) in &journaled_state.state {
+            if acc.is_created() && acc.is_touched() {
+                merge_journaled_state_data(*addr, journaled_state, &mut fork.journaled_state);
+            } else if !acc.is_created() {
+                let _ = fork.journaled_state.load_account(&mut fork.db, *addr);
+            }
+        }
+
+        *journaled_state = fork.journaled_state.clone();
+    }
+
+    /// Reinitializes a rolled active fork before populating its journal at the new block state.
+    fn reset_rolled_active_fork(
+        fork: &mut Fork<AnyNetwork, BlockEnvFor<FEN>>,
+        fork_init_journaled_state: &JournaledState,
+        persistent_accounts: &HashSet<Address>,
+        caller: Option<Address>,
+        journaled_state: &mut JournaledState,
+    ) {
+        fork.journaled_state = fork_init_journaled_state.clone();
+        Self::populate_rolled_active_fork(fork, persistent_accounts, caller, journaled_state);
+    }
+
+    /// Rolls a fork while preparing active transaction context before publishing the new fork.
+    fn roll_fork_with_context(
+        &mut self,
+        id: Option<LocalForkId>,
+        block_number: u64,
+        evm_env: &mut EvmEnvFor<FEN>,
+        _tx_env: Option<&TxEnvFor<FEN>>,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
+        trace!(?id, ?block_number, "roll fork");
+        let id = self.ensure_fork(id)?;
+        let _affects_active = self.is_active_fork(id);
+        let (fork_id, backend, fork_env, context) =
+            self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number)?;
+
+        #[cfg(feature = "monad")]
+        let context_update = if _affects_active && let Some(tx) = _tx_env {
+            let chain_context = if self.networks.is_monad() {
+                let block = backend.get_full_block(context.block_number).wrap_err_with(|| {
+                    format!("failed to fetch rolled fork block {}", context.block_number)
+                })?;
+                let block_context = Self::block_context_inputs_from_backend(&backend, &block)?;
+                block_context.into_child().next_transaction(tx)
+            } else {
+                ChainFor::<FEN>::for_transaction(tx)
+            };
+            ContextUpdate::Replace(chain_context)
+        } else {
+            ContextUpdate::Unchanged
+        };
+        #[cfg(not(feature = "monad"))]
+        let context_update = std::marker::PhantomData;
+
+        // Update the local mapping only after all context fetches and decoding have succeeded.
+        self.inner.roll_fork(
+            id,
+            fork_id,
+            context.block_number,
+            context.source_chain_id,
+            backend,
+        )?;
+
+        if let Some((active_id, active_idx)) = self.active_fork_ids
+            && active_id == id
+        {
+            let preserved_spec = evm_env.cfg_env.spec;
+            *evm_env = fork_env;
+            evm_env.cfg_env.set_spec_and_mainnet_gas_params(preserved_spec);
+
+            let persistent_accounts = self.inner.persistent_accounts.clone();
+            let caller = self.inner.caller;
+            let active = self.inner.get_fork_mut(active_idx);
+            Self::reset_rolled_active_fork(
+                active,
+                &self.fork_init_journaled_state,
+                &persistent_accounts,
+                caller,
+                journaled_state,
+            );
+        }
+
+        Ok(context_update)
+    }
+
+    /// Rolls a fork to a transaction while reusing one precomputed block context for replay and
+    /// the final active-fork cursor.
+    fn roll_fork_to_transaction_with_context(
+        &mut self,
+        id: Option<LocalForkId>,
+        transaction: B256,
+        evm_env: &mut EvmEnvFor<FEN>,
+        tx_env: Option<&TxEnvFor<FEN>>,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
+        if !self.networks.is_monad() {
+            return self.roll_fork_to_transaction_inner(
+                id,
+                transaction,
+                evm_env,
+                tx_env,
+                journaled_state,
+            );
+        }
+
+        #[cfg(not(feature = "monad"))]
+        unreachable!("block context is only required when Monad support is enabled");
+
+        #[cfg(feature = "monad")]
+        {
+            trace!(?id, ?transaction, "roll fork to transaction");
+            let id = self.ensure_fork(id)?;
+            let affects_active = self.is_active_fork(id);
+            let TransactionForkTarget { fork_block_number, block, position, .. } =
+                self.get_block_number_and_block_for_transaction(id, transaction)?;
+            let position = position.expect("Monad transaction target includes canonical position");
+            let block_context = self.block_context_inputs(id, &block)?;
+            let context_update = if affects_active && let Some(tx) = tx_env {
+                let fork_position = ForkPosition::BeforeTransaction {
+                    block_number: block.header().number(),
+                    transaction_index: position.index,
+                };
+                ContextUpdate::Replace(Self::context_for_block_position(
+                    block_context.clone(),
+                    fork_position,
+                    tx,
+                )?)
+            } else if affects_active {
+                ContextUpdate::Unchanged
+            } else {
+                ContextUpdate::Rebase
+            };
+
+            let current_fork_id = self.inner.ensure_fork_id(id).cloned()?;
+            let (fork_id, backend, fork_env, context) =
+                self.forks.roll_fork(current_fork_id, fork_block_number)?;
+            let staged_fork_journaled_state = if affects_active {
+                self.fork_init_journaled_state.clone()
+            } else {
+                self.inner.get_fork_by_id(id)?.journaled_state.clone()
+            };
+            let mut staged_fork = self.inner.stage_fork_roll(
+                id,
+                fork_id,
+                context.block_number,
+                context.source_chain_id,
+                backend,
+                staged_fork_journaled_state,
+            )?;
+            let mut staged_evm_env = evm_env.clone();
+            let mut staged_journaled_state = journaled_state.clone();
+
+            if affects_active {
+                let preserved_spec = staged_evm_env.cfg_env.spec;
+                staged_evm_env = fork_env;
+                staged_evm_env.cfg_env.set_spec_and_mainnet_gas_params(preserved_spec);
+                Self::populate_rolled_active_fork(
+                    &mut staged_fork.fork,
+                    &self.inner.persistent_accounts,
+                    self.inner.caller,
+                    &mut staged_journaled_state,
+                );
+            }
+
+            update_env_block(&mut staged_evm_env, block.header());
+            let mut replay_env = staged_evm_env.clone();
+            self.apply_fork_tx_replay_env_changes_for(
+                &staged_fork.fork_id,
+                staged_fork.fork.source_chain_id,
+                &mut replay_env,
+            )?;
+            let target = Self::replay_until(
+                &mut staged_fork.fork,
+                ReplayInputs { evm_env: replay_env, networks: self.networks },
+                &block,
+                Some(&block_context),
+                transaction,
+                &mut staged_journaled_state,
+                &self.inner.persistent_accounts,
+            )?;
+            eyre::ensure!(
+                target.is_some(),
+                "transaction {transaction:?} is missing from block {}",
+                block.header().number()
+            );
+            staged_fork.fork.position = ForkPosition::BeforeTransaction {
+                block_number: block.header().number(),
+                transaction_index: position.index,
+            };
+
+            // Once the handler update is enqueued, all remaining publication is infallible.
+            self.forks
+                .update_block_env(staged_fork.fork_id.clone(), staged_evm_env.block_env.clone())?;
+            self.inner.publish_fork_roll(staged_fork);
+            *evm_env = staged_evm_env;
+            *journaled_state = staged_journaled_state;
+            Ok(context_update)
+        }
+    }
+
+    /// Performs a transaction-level roll on the provided backend, environment, and journal.
+    fn roll_fork_to_transaction_inner(
+        &mut self,
+        id: Option<LocalForkId>,
+        transaction: B256,
+        evm_env: &mut EvmEnvFor<FEN>,
+        _tx_env: Option<&TxEnvFor<FEN>>,
+        journaled_state: &mut JournaledState,
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
+        trace!(?id, ?transaction, "roll fork to transaction");
+        let id = self.ensure_fork(id)?;
+        let _affects_active = self.is_active_fork(id);
+
+        let TransactionForkTarget { fork_block_number, block, position, .. } =
+            self.get_block_number_and_block_for_transaction(id, transaction)?;
+        let block_context = if self.networks.is_monad() {
+            Some(self.block_context_inputs(id, &block)?)
+        } else {
+            None
+        };
+        #[cfg(feature = "monad")]
+        let context_update = if _affects_active && let Some(tx) = _tx_env {
+            let chain_context = if let Some(context) = &block_context {
+                let fork_position = ForkPosition::BeforeTransaction {
+                    block_number: block.header().number(),
+                    transaction_index: position
+                        .expect("Monad transaction target includes canonical position")
+                        .index,
+                };
+                Self::context_for_block_position(context.clone(), fork_position, tx)?
+            } else {
+                ChainFor::<FEN>::for_transaction(tx)
+            };
+            ContextUpdate::Replace(chain_context)
+        } else if _affects_active {
+            ContextUpdate::Unchanged
+        } else {
+            ContextUpdate::Rebase
+        };
+        #[cfg(not(feature = "monad"))]
+        let context_update = std::marker::PhantomData;
+
+        // The parent roll must not prepare an intermediate synthetic context.
+        self.roll_fork_with_context(Some(id), fork_block_number, evm_env, None, journaled_state)?;
+
+        update_env_block(evm_env, block.header());
+
+        let mut replay_env = evm_env.clone();
+        self.apply_fork_tx_replay_env_changes(id, &mut replay_env)?;
+        let persistent_accounts = self.inner.persistent_accounts.clone();
+        let target = {
+            let fork = self.inner.get_fork_by_id_mut(id)?;
+            Self::replay_until(
+                fork,
+                ReplayInputs { evm_env: replay_env, networks: self.networks },
+                &block,
+                block_context.as_ref(),
+                transaction,
+                journaled_state,
+                &persistent_accounts,
+            )?
+        };
+        if target.is_some()
+            && let Some(position) = position
+        {
+            self.inner.get_fork_by_id_mut(id)?.position = ForkPosition::BeforeTransaction {
+                block_number: block.header().number(),
+                transaction_index: position.index,
+            };
+        }
+
+        // Replay uses the staged environment directly. Publish the handler environment only after
+        // all fallible replay and cursor updates have succeeded.
+        let fork_id = self.inner.ensure_fork_id(id).cloned().expect("fork was resolved above");
+        let _ = self.forks.update_block_env(fork_id, evm_env.block_env.clone());
+
+        Ok(context_update)
     }
 
     /// Replays all the transactions at the forks current block that were mined before the `tx`
     ///
     /// Returns the _unmined_ transaction that corresponds to the given `tx_hash`
-    pub fn replay_until(
-        &mut self,
-        id: LocalForkId,
-        mut evm_env: EvmEnvFor<FEN>,
+    fn replay_until(
+        fork: &mut Fork<AnyNetwork, BlockEnvFor<FEN>>,
+        replay: ReplayInputs<FEN>,
+        full_block: &AnyRpcBlock,
+        block_context: Option<&BlockContext<FEN>>,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
+        persistent_accounts: &HashSet<Address>,
     ) -> eyre::Result<Option<AnyRpcTransaction>> {
-        trace!(?id, ?tx_hash, "replay until transaction");
+        let ReplayInputs { evm_env, networks } = replay;
+        trace!(?tx_hash, "replay until transaction");
+        eyre::ensure!(
+            !networks.is_monad() || block_context.is_some(),
+            "block context is required to replay transactions for this network"
+        );
 
-        let persistent_accounts = self.inner.persistent_accounts.clone();
-        self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
-
-        let fork = self.inner.get_fork_by_id_mut(id)?;
-        let full_block =
-            fork.backend().get_full_block(evm_env.block_env.number().saturating_to::<u64>())?;
-
-        // Collect non-system transactions up to and including the target.
-        let txs = full_block
-            .transactions()
-            .txns()
-            .filter(|tx| !is_known_system_sender(tx.from()) && tx.ty() != SYSTEM_TRANSACTION_TYPE);
-
-        let mut txs_to_replay = Vec::new();
-        let mut target_tx = None;
-        for tx in txs {
-            if tx.tx_hash() == tx_hash {
-                target_tx = Some(tx.clone());
-                break;
-            }
-            txs_to_replay.push(tx.clone());
+        let BlockTransactions::Full(transactions) = full_block.transactions() else {
+            eyre::bail!(
+                "block {} does not contain full transactions",
+                full_block.header().number()
+            );
+        };
+        let Some(target_index) = transactions.iter().position(|tx| tx.tx_hash() == tx_hash) else {
+            return Ok(None);
+        };
+        if networks.is_monad() {
+            eyre::ensure!(
+                fork.position
+                    .after_transaction(full_block.header().number(), 0, transactions.len(),)
+                    .is_some(),
+                "block {} does not immediately follow the active fork position",
+                full_block.header().number()
+            );
+        }
+        let target_tx = transactions[target_index].clone();
+        let factory = FEN::EvmFactory::default();
+        let mut txs_to_replay = Vec::with_capacity(target_index);
+        for (index, tx) in transactions[..target_index].iter().enumerate() {
+            let Some(tx_env) = Self::replay_tx_env(tx)? else { continue };
+            let is_system = is_known_system_sender(tx.from()) || tx.ty() == SYSTEM_TRANSACTION_TYPE;
+            txs_to_replay.push((index, tx.clone(), tx_env, is_system));
         }
 
-        // Replay all preceding transactions using a single EVM + cloned ForkDB.
+        // Replay all preceding transactions against a cloned ForkDB.
         if !txs_to_replay.is_empty() {
             let now = Instant::now();
 
@@ -988,35 +1625,86 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             // so only the local cache layer is actually duplicated.
             let chain_id = evm_env.cfg_env.chain_id;
             let timestamp = evm_env.block_env.timestamp().saturating_to();
-            let replay_db = fork.db.clone();
-            let mut evm = FEN::EvmFactory::default().create_evm(replay_db, evm_env);
-            NetworkConfigs::default().inject_chain_precompiles(
-                evm.precompiles_mut(),
-                chain_id,
-                timestamp,
-            );
+            let mut replay_db = fork.db.clone();
 
-            for tx in &txs_to_replay {
-                let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
-                trace!(tx=?tx.tx_hash(), "committing transaction");
-                evm.transact_commit(tx_env).wrap_err("backend: failed committing transaction")?;
+            if let Some(context) = block_context {
+                for (index, tx, tx_env, is_system) in &txs_to_replay {
+                    let chain_context = context.transaction(*index);
+                    let mut evm =
+                        factory.create_evm_with_context(replay_db, evm_env.clone(), chain_context);
+                    networks.inject_chain_precompiles(evm.precompiles_mut(), chain_id, timestamp);
+                    trace!(tx=?tx.tx_hash(), "committing transaction");
+                    let result = if *is_system {
+                        #[cfg(feature = "monad")]
+                        let Some(result) = factory
+                            .try_transact_system_replay(&mut evm, tx_env)
+                            .wrap_err("backend: failed replaying system transaction")?
+                        else {
+                            replay_db = evm.into_db();
+                            continue;
+                        };
+                        #[cfg(not(feature = "monad"))]
+                        unreachable!("system transactions are filtered without Monad support");
+                        #[cfg(feature = "monad")]
+                        result
+                    } else {
+                        evm.transact(tx_env.clone())
+                            .wrap_err("backend: failed replaying transaction")?
+                    };
+                    evm.db_mut().commit(result.state);
+                    replay_db = evm.into_db();
+                }
+            } else {
+                let mut evm = factory.create_evm(replay_db, evm_env);
+                networks.inject_chain_precompiles(evm.precompiles_mut(), chain_id, timestamp);
+                for (_, tx, tx_env, is_system) in &txs_to_replay {
+                    trace!(tx=?tx.tx_hash(), "committing transaction");
+                    let result = if *is_system {
+                        #[cfg(feature = "monad")]
+                        let Some(result) = factory
+                            .try_transact_system_replay(&mut evm, tx_env)
+                            .wrap_err("backend: failed replaying system transaction")?
+                        else {
+                            continue;
+                        };
+                        #[cfg(not(feature = "monad"))]
+                        unreachable!("system transactions are filtered without Monad support");
+                        #[cfg(feature = "monad")]
+                        result
+                    } else {
+                        evm.transact(tx_env.clone())
+                            .wrap_err("backend: failed replaying transaction")?
+                    };
+                    evm.db_mut().commit(result.state);
+                }
+                replay_db = evm.into_db();
             }
 
             // Extract the DB back and replace the fork's database with the replayed state.
-            fork.db = evm.into_db();
+            fork.db = replay_db;
 
             // Refresh journaled states from the updated database, preserving persistent
             // accounts (cheatcode address, CREATE2 deployer, test contract, etc.).
-            fork.refresh_journaled_states(journaled_state, &persistent_accounts)?;
+            fork.refresh_journaled_states(journaled_state, persistent_accounts)?;
 
             trace!(elapsed=?now.elapsed(), count=txs_to_replay.len(), "replayed transactions");
         }
 
-        Ok(target_tx)
+        Ok(Some(target_tx))
     }
 }
 
 impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
+    fn chain_context_for_synthetic_transaction(
+        &self,
+        tx: &TxEnvFor<FEN>,
+    ) -> eyre::Result<ChainFor<FEN>> {
+        self.block_context_for_synthetic_transaction()?.map_or_else(
+            || Ok(ChainFor::<FEN>::for_transaction(tx)),
+            |context| Ok(context.next_transaction(tx)),
+        )
+    }
+
     fn snapshot_state(
         &mut self,
         journaled_state: &JournaledState,
@@ -1107,11 +1795,15 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
 
     fn create_fork(&mut self, create_fork: CreateFork) -> eyre::Result<LocalForkId> {
         trace!("create fork");
-        let (fork_id, fork, _) = self.forks.create_fork(create_fork)?;
-
+        let (fork_id, fork, _, context) = self.forks.create_fork(create_fork)?;
         let fork_db = ForkDB::new(fork);
-        let (id, _) =
-            self.inner.insert_new_fork(fork_id, fork_db, self.fork_init_journaled_state.clone());
+        let (id, _) = self.inner.insert_new_fork(
+            fork_id,
+            context.block_number,
+            context.source_chain_id,
+            fork_db,
+            self.fork_init_journaled_state.clone(),
+        );
         Ok(id)
     }
 
@@ -1130,10 +1822,11 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
 
         // we still need to roll to the transaction, but we only need an empty dummy state since we
         // don't need to update the active journaled state yet
-        self.roll_fork_to_transaction(
+        self.roll_fork_to_transaction_with_context(
             Some(id),
             transaction,
             &mut evm_env,
+            None,
             &mut self.inner.new_journaled_state(),
         )?;
 
@@ -1148,12 +1841,18 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
         active_journaled_state: &mut JournaledState,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         trace!(?id, "select fork");
         if self.is_active_fork(id) {
             // nothing to do
-            return Ok(());
+            #[cfg(feature = "monad")]
+            return Ok(ContextUpdate::Unchanged);
+            #[cfg(not(feature = "monad"))]
+            return Ok(std::marker::PhantomData);
         }
+
+        #[cfg(feature = "monad")]
+        let chain_context = self.context_for_fork_synthetic_transaction(id, tx_env)?;
 
         // Update block number and timestamp of active fork (if any) with current env values,
         // in order to preserve values changed by using `roll` and `warp` cheatcodes.
@@ -1273,7 +1972,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         *evm_env = fork_evm_env;
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(preserved_spec);
 
-        Ok(())
+        #[cfg(feature = "monad")]
+        return Ok(ContextUpdate::Replace(chain_context));
+        #[cfg(not(feature = "monad"))]
+        Ok(std::marker::PhantomData)
     }
 
     /// This is effectively the same as [`Self::create_select_fork()`] but updating an existing
@@ -1283,65 +1985,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         id: Option<LocalForkId>,
         block_number: u64,
         evm_env: &mut EvmEnvFor<FEN>,
+        tx_env: &TxEnvFor<FEN>,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<()> {
-        trace!(?id, ?block_number, "roll fork");
-        let id = self.ensure_fork(id)?;
-        let (fork_id, backend, fork_env) =
-            self.forks.roll_fork(self.inner.ensure_fork_id(id).cloned()?, block_number)?;
-        // this will update the local mapping
-        self.inner.roll_fork(id, fork_id, backend)?;
-
-        if let Some((active_id, active_idx)) = self.active_fork_ids {
-            // the currently active fork is the targeted fork of this call
-            if active_id == id {
-                // need to update the block's env settings right away, which is otherwise set when
-                // forks are selected `select_fork`
-                let preserved_spec = evm_env.cfg_env.spec;
-                *evm_env = fork_env;
-                evm_env.cfg_env.set_spec_and_mainnet_gas_params(preserved_spec);
-
-                // we also need to update the journaled_state right away, this has essentially the
-                // same effect as selecting (`select_fork`) by discarding
-                // non-persistent storage from the journaled_state. This which will
-                // reset cached state from the previous block
-                let mut persistent_addrs = self.inner.persistent_accounts.clone();
-                // we also want to copy the caller state here
-                persistent_addrs.extend(self.caller_address());
-
-                let active = self.inner.get_fork_mut(active_idx);
-                active.journaled_state = self.fork_init_journaled_state.clone();
-                active.journaled_state.depth = journaled_state.depth;
-
-                for addr in persistent_addrs {
-                    merge_journaled_state_data(addr, journaled_state, &mut active.journaled_state);
-                }
-
-                // Ensure all previously loaded accounts are present in the journaled state to
-                // prevent issues in the new journalstate, e.g. assumptions that accounts are loaded
-                // if the account is not touched, we reload it, if it's touched we clone it.
-                //
-                // Special case for accounts that are not created: we don't merge their state but
-                // load it in order to reflect their state at the new block (they should explicitly
-                // be marked as persistent if it is desired to keep state between fork rolls).
-                for (addr, acc) in &journaled_state.state {
-                    if acc.is_created() {
-                        if acc.is_touched() {
-                            merge_journaled_state_data(
-                                *addr,
-                                journaled_state,
-                                &mut active.journaled_state,
-                            );
-                        }
-                    } else {
-                        let _ = active.journaled_state.load_account(&mut active.db, *addr);
-                    }
-                }
-
-                *journaled_state = active.journaled_state.clone();
-            }
-        }
-        Ok(())
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
+        self.roll_fork_with_context(id, block_number, evm_env, Some(tx_env), journaled_state)
     }
 
     fn roll_fork_to_transaction(
@@ -1349,32 +1996,16 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         id: Option<LocalForkId>,
         transaction: B256,
         evm_env: &mut EvmEnvFor<FEN>,
+        tx_env: &TxEnvFor<FEN>,
         journaled_state: &mut JournaledState,
-    ) -> eyre::Result<()> {
-        trace!(?id, ?transaction, "roll fork to transaction");
-        let id = self.ensure_fork(id)?;
-
-        let (fork_block, block) =
-            self.get_block_number_and_block_for_transaction(id, transaction)?;
-
-        // roll the fork to the transaction's parent block or latest if it's pending, because we
-        // need to fork off the parent block's state for tx level forking and then replay the txs
-        // before the tx in that block to get the state at the tx
-        self.roll_fork(Some(id), fork_block, evm_env, journaled_state)?;
-
-        // we need to update the env to the block
-        update_env_block(evm_env, block.header());
-
-        // after we forked at the fork block we need to properly update the block env to the block
-        // env of the tx's block
-        let _ = self
-            .forks
-            .update_block_env(self.inner.ensure_fork_id(id).cloned()?, evm_env.block_env.clone());
-
-        // replay all transactions that came before
-        self.replay_until(id, evm_env.clone(), transaction, journaled_state)?;
-
-        Ok(())
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
+        self.roll_fork_to_transaction_with_context(
+            id,
+            transaction,
+            evm_env,
+            Some(tx_env),
+            journaled_state,
+        )
     }
 
     fn transact(
@@ -1382,21 +2013,17 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         maybe_id: Option<LocalForkId>,
         transaction: B256,
         mut evm_env: EvmEnvFor<FEN>,
+        _outer_tx_env: &TxEnvFor<FEN>,
         journaled_state: &mut JournaledState,
         inspector: &mut dyn for<'db> FoundryInspectorExt<
             <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
         >,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<ContextUpdateFor<FEN::EvmFactory>> {
         trace!(?maybe_id, ?transaction, "execute transaction");
         let persistent_accounts = self.inner.persistent_accounts.clone();
         let id = self.ensure_fork(maybe_id)?;
+        let _affects_active = self.is_active_fork(id);
         let fork_id = self.ensure_fork_id(id).cloned()?;
-
-        let tx = {
-            let fork = self.inner.get_fork_by_id_mut(id)?;
-            fork.backend().get_transaction(transaction)?
-        };
-        let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&tx)?;
 
         // This is a bit ambiguous because the user wants to transact an arbitrary transaction in
         // the current context, but we're assuming the user wants to transact the transaction as it
@@ -1404,21 +2031,73 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         // transaction in the block and then the transaction is transacted:
         // <https://github.com/foundry-rs/foundry/issues/6538>
         // So we modify the env to match the transaction's block.
-        let (_fork_block, block) =
+        let TransactionForkTarget { transaction: tx, block, position, .. } =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
+        let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&tx)?;
         update_env_block(&mut evm_env, block.header());
         self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
 
+        let block_context = if self.networks.is_monad() {
+            Some(self.block_context_inputs(id, &block)?)
+        } else {
+            None
+        };
+        let chain_context = if let Some(context) = &block_context {
+            context.transaction(
+                position.expect("Monad transaction target includes canonical position").index,
+            )
+        } else {
+            ChainFor::<FEN>::for_transaction(&tx_env)
+        };
+
+        let next_position = if block_context.is_some() {
+            let position = position.expect("Monad transaction target includes canonical position");
+            Some(
+                self.inner
+                    .get_fork_by_id(id)?
+                    .position
+                    .after_transaction(block.header().number(), position.index, position.count)
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "transaction {transaction} does not immediately follow the active \
+                             fork position"
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
+        #[cfg(feature = "monad")]
+        let context_update = if _affects_active {
+            ContextUpdate::Replace(if let Some(context) = block_context {
+                Self::context_for_block_position(
+                    context,
+                    next_position.expect("block context has a next position"),
+                    _outer_tx_env,
+                )?
+            } else {
+                ChainFor::<FEN>::for_transaction(_outer_tx_env)
+            })
+        } else {
+            ContextUpdate::Rebase
+        };
+        #[cfg(not(feature = "monad"))]
+        let context_update = std::marker::PhantomData;
+
         let fork = self.inner.get_fork_by_id_mut(id)?;
         commit_transaction::<FEN>(
-            evm_env,
-            tx_env,
+            TransactionInputs { evm_env, tx_env, chain_context },
             journaled_state,
             fork,
             &fork_id,
+            self.networks,
             &persistent_accounts,
             inspector,
-        )
+        )?;
+        if let Some(position) = next_position {
+            fork.position = position;
+        }
+        Ok(context_update)
     }
 
     fn transact_from_tx(
@@ -1437,8 +2116,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         let res = {
             let mut db = self.clone();
             let depth = journaled_state.depth + 1;
+            let factory = FEN::EvmFactory::default();
+            let chain_context = self.chain_context_for_synthetic_transaction(&tx_env)?;
             let mut evm =
-                FEN::EvmFactory::default().create_foundry_nested_evm(&mut db, evm_env, inspector);
+                factory.create_foundry_nested_evm(&mut db, evm_env, chain_context, inspector);
             evm.journal_inner_mut().depth = depth;
             evm.transact_raw(tx_env)?
         };
@@ -1763,6 +2444,8 @@ pub enum BackendDatabaseSnapshot<N: Network, B: ForkBlockEnv = BlockEnv> {
 pub struct Fork<N: Network, B: ForkBlockEnv = BlockEnv> {
     db: ForkDB<N, B>,
     journaled_state: JournaledState,
+    source_chain_id: ChainId,
+    position: ForkPosition,
 }
 
 impl<N: Network, B: ForkBlockEnv> Fork<N, B> {
@@ -1981,6 +2664,8 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         &mut self,
         id: LocalForkId,
         fork_id: ForkId,
+        block_number: u64,
+        source_chain_id: ChainId,
         db: ForkDB<AnyNetwork, BlockEnvFor<FEN>>,
         journaled_state: JournaledState,
     ) -> ForkLookupIndex {
@@ -1988,7 +2673,12 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         self.issued_local_fork_ids.insert(id, fork_id.clone());
         self.created_forks.insert(fork_id, idx);
 
-        let fork = Fork { db, journaled_state };
+        let fork = Fork {
+            db,
+            journaled_state,
+            source_chain_id,
+            position: ForkPosition::AfterBlock { block_number },
+        };
         self.forks.push(Some(fork));
         idx
     }
@@ -1997,23 +2687,71 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
         &mut self,
         id: LocalForkId,
         new_fork_id: ForkId,
+        block_number: u64,
+        source_chain_id: ChainId,
         backend: SharedBackend<AnyNetwork, BlockEnvFor<FEN>>,
     ) -> eyre::Result<ForkLookupIndex> {
         let fork_id = self.ensure_fork_id(id)?;
         let idx = self.ensure_fork_index(fork_id)?;
 
         if let Some(active) = self.forks[idx].as_mut() {
-            // we initialize a _new_ `ForkDB` but keep the state of persistent accounts
+            // Initialize a new `ForkDB` while retaining persistent account data.
             let mut new_db = ForkDB::new(backend);
             for addr in self.persistent_accounts.iter().copied() {
                 merge_db_account_data(addr, &active.db, &mut new_db);
             }
             active.db = new_db;
+            active.source_chain_id = source_chain_id;
+            active.position = ForkPosition::AfterBlock { block_number };
         }
-        // update mappings
         self.issued_local_fork_ids.insert(id, new_fork_id.clone());
         self.created_forks.insert(new_fork_id, idx);
         Ok(idx)
+    }
+
+    /// Prepares a replacement for one fork without changing its local mapping or database.
+    #[cfg(feature = "monad")]
+    fn stage_fork_roll(
+        &self,
+        id: LocalForkId,
+        new_fork_id: ForkId,
+        block_number: u64,
+        source_chain_id: ChainId,
+        backend: SharedBackend<AnyNetwork, BlockEnvFor<FEN>>,
+        journaled_state: JournaledState,
+    ) -> eyre::Result<StagedForkRoll<FEN>> {
+        let fork_id = self.ensure_fork_id(id)?;
+        let idx = self.ensure_fork_index(fork_id)?;
+        let current = self.get_fork(idx);
+
+        // Initialize a new `ForkDB` with persistent account data and the prepared journal. The
+        // live fork remains untouched until publication.
+        let mut new_db = ForkDB::new(backend);
+        for addr in self.persistent_accounts.iter().copied() {
+            merge_db_account_data(addr, &current.db, &mut new_db);
+        }
+
+        Ok(StagedForkRoll {
+            local_id: id,
+            fork_id: new_fork_id,
+            fork_index: idx,
+            fork: Fork {
+                db: new_db,
+                journaled_state,
+                source_chain_id,
+                position: ForkPosition::AfterBlock { block_number },
+            },
+        })
+    }
+
+    /// Atomically publishes a previously prepared fork replacement.
+    #[cfg(feature = "monad")]
+    fn publish_fork_roll(&mut self, staged: StagedForkRoll<FEN>) -> ForkLookupIndex {
+        let StagedForkRoll { local_id, fork_id, fork_index, fork } = staged;
+        self.set_fork(fork_index, fork);
+        self.issued_local_fork_ids.insert(local_id, fork_id.clone());
+        self.created_forks.insert(fork_id, fork_index);
+        fork_index
     }
 
     /// Inserts a _new_ `ForkDB` and issues a new local fork identifier
@@ -2022,14 +2760,32 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
     pub fn insert_new_fork(
         &mut self,
         fork_id: ForkId,
+        block_number: u64,
+        source_chain_id: ChainId,
         db: ForkDB<AnyNetwork, BlockEnvFor<FEN>>,
         journaled_state: JournaledState,
+    ) -> (LocalForkId, ForkLookupIndex) {
+        self.insert_fork(
+            fork_id,
+            Fork {
+                db,
+                journaled_state,
+                source_chain_id,
+                position: ForkPosition::AfterBlock { block_number },
+            },
+        )
+    }
+
+    /// Inserts an existing fork while preserving its exact chain position.
+    fn insert_fork(
+        &mut self,
+        fork_id: ForkId,
+        fork: Fork<AnyNetwork, BlockEnvFor<FEN>>,
     ) -> (LocalForkId, ForkLookupIndex) {
         let idx = self.forks.len();
         self.created_forks.insert(fork_id.clone(), idx);
         let id = self.next_id();
         self.issued_local_fork_ids.insert(id, fork_id);
-        let fork = Fork { db, journaled_state };
         self.forks.push(Some(fork));
         (id, idx)
     }
@@ -2194,25 +2950,31 @@ fn update_env_block<SPEC, BLOCK: FoundryBlock>(
 /// Executes the given transaction and commits state changes to the database _and_ the journaled
 /// state, with an inspector.
 fn commit_transaction<FEN: FoundryEvmNetwork>(
-    evm_env: EvmEnvFor<FEN>,
-    tx_env: TxEnvFor<FEN>,
+    transaction: TransactionInputs<FEN>,
     journaled_state: &mut JournaledState,
     fork: &mut Fork<AnyNetwork, BlockEnvFor<FEN>>,
     fork_id: &ForkId,
+    networks: NetworkConfigs,
     persistent_accounts: &HashSet<Address>,
     inspector: &mut dyn for<'db> FoundryInspectorExt<
         <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
     >,
 ) -> eyre::Result<()> {
+    let TransactionInputs { evm_env, tx_env, chain_context } = transaction;
     let now = Instant::now();
     let res = {
         let fork = fork.clone();
         let journaled_state = journaled_state.clone();
         let depth = journaled_state.depth;
-        let mut db: Backend<FEN> = Backend::new_with_fork(fork_id, fork, journaled_state)?;
+        let mut db: Backend<FEN> =
+            Backend::new_with_fork(fork_id, fork, journaled_state, networks)?;
 
-        let mut evm =
-            FEN::EvmFactory::default().create_foundry_nested_evm(&mut db, evm_env, inspector);
+        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
+            &mut db,
+            evm_env,
+            chain_context,
+            inspector,
+        );
         evm.journal_inner_mut().depth = depth + 1;
         evm.transact_raw(tx_env).wrap_err("backend: failed committing transaction")?
     };
@@ -2249,9 +3011,23 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
     fork: &mut Fork<N, B>,
     persistent_accounts: &HashSet<Address>,
 ) -> Result<(), BackendError> {
-    // commit the state and update the loaded accounts
-    fork.db.commit(state);
-    fork.refresh_journaled_states(journaled_state, persistent_accounts)
+    // Refresh cloned journals against a cloned database so a failed read cannot publish only part
+    // of the transaction state.
+    let mut staged_db = fork.db.clone();
+    let mut staged_journaled_state = journaled_state.clone();
+    let mut staged_fork_journaled_state = fork.journaled_state.clone();
+    staged_db.commit(state);
+    update_state(&mut staged_journaled_state.state, &mut staged_db, Some(persistent_accounts))?;
+    update_state(
+        &mut staged_fork_journaled_state.state,
+        &mut staged_db,
+        Some(persistent_accounts),
+    )?;
+
+    fork.db = staged_db;
+    *journaled_state = staged_journaled_state;
+    fork.journaled_state = staged_fork_journaled_state;
+    Ok(())
 }
 
 fn fork_block_number(fork: &ForkId) -> Option<u64> {
@@ -2263,17 +3039,306 @@ fn fork_block_number(fork: &ForkId) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{backend::Backend, evm::EthEvmNetwork, fork::ForkId, opts::EvmOpts};
-    use alloy_primitives::{U256, address};
-    use alloy_provider::Provider;
-    use foundry_common::provider::get_http_provider;
-    use foundry_config::{Config, NamedChain};
-    use foundry_fork_db::cache::{BlockchainDb, BlockchainDbMeta};
-    use revm::{
-        context::{BlockEnv, TxEnv},
-        database::DatabaseRef,
-        primitives::hardfork::SpecId,
+    use super::{Fork, apply_state_changeset};
+    use crate::{
+        backend::{Backend, ForkPosition},
+        evm::EthEvmNetwork,
+        fork::ForkId,
+        opts::EvmOpts,
     };
+    use alloy_consensus::transaction::Recovered;
+    use alloy_network::{
+        AnyNetwork, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, UnknownTxEnvelope,
+        UnknownTypedTransaction,
+    };
+    use alloy_primitives::{Address, B256, U256, address};
+    use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
+    use alloy_rpc_types::Transaction as RpcTransaction;
+    use alloy_serde::WithOtherFields;
+    use anvil::{NodeConfig, spawn};
+    use foundry_common::{SYSTEM_TRANSACTION_TYPE, provider::get_http_provider};
+    use foundry_config::{Config, NamedChain};
+    use foundry_evm_networks::NetworkConfigs;
+    use foundry_fork_db::{
+        SharedBackend,
+        cache::{BlockchainDb, BlockchainDbMeta},
+    };
+    use revm::{
+        context::{BlockEnv, JournalInner, TxEnv},
+        database::{AccountState, CacheDB, DatabaseRef, DbAccount},
+        primitives::hardfork::SpecId,
+        state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
+    };
+    use std::collections::HashSet;
+
+    fn fork_with_closed_backend() -> Fork<AnyNetwork, BlockEnv> {
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(Asserter::new());
+        let db = BlockchainDb::new(
+            BlockchainDbMeta::new(BlockEnv::default(), "http://localhost".to_string()),
+            None,
+        );
+        let (backend, handler) = SharedBackend::new(provider, db, None);
+        drop(handler);
+        Fork {
+            db: CacheDB::new(backend),
+            journaled_state: JournalInner::new(),
+            source_chain_id: 1,
+            position: ForkPosition::AfterBlock { block_number: 0 },
+        }
+    }
+
+    #[test]
+    fn failed_fork_state_refresh_does_not_publish_transaction_changes() {
+        let mut fork = fork_with_closed_backend();
+        let externally_loaded = Address::with_last_byte(1);
+        let fork_loaded = Address::with_last_byte(2);
+        let committed = Address::with_last_byte(3);
+        let missing_slot = U256::from(1);
+
+        let cached_external = AccountInfo { balance: U256::from(11), ..Default::default() };
+        let cached_fork = AccountInfo { balance: U256::from(12), ..Default::default() };
+        fork.db.insert_account_info(externally_loaded, cached_external);
+        fork.db.insert_account_info(fork_loaded, cached_fork);
+
+        let mut journaled_state = JournalInner::new();
+        let external_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(1), ..Default::default() });
+        journaled_state.state.insert(externally_loaded, external_account);
+
+        let mut fork_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(2), ..Default::default() });
+        fork_account
+            .storage
+            .insert(missing_slot, EvmStorageSlot::new(U256::ZERO, TransactionId::ZERO));
+        fork.journaled_state.state.insert(fork_loaded, fork_account);
+
+        let mut committed_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(13), ..Default::default() });
+        committed_account.mark_touch();
+        let mut state = EvmState::default();
+        state.insert(committed, committed_account);
+
+        let result = apply_state_changeset(state, &mut journaled_state, &mut fork, &HashSet::new());
+        assert!(result.is_err());
+        assert!(!fork.db.cache.accounts.contains_key(&committed));
+        assert_eq!(journaled_state.state[&externally_loaded].info.balance, U256::from(1));
+        assert_eq!(fork.journaled_state.state[&fork_loaded].info.balance, U256::from(2));
+    }
+
+    #[test]
+    fn failed_fork_state_refresh_preserves_not_existing_account() {
+        let mut fork = fork_with_closed_backend();
+        let address = Address::with_last_byte(1);
+        let missing_slot = U256::from(1);
+        fork.db.cache.accounts.insert(address, DbAccount::new_not_existing());
+
+        let mut journaled_state = JournalInner::new();
+        let mut journaled_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(1), ..Default::default() });
+        journaled_account
+            .storage
+            .insert(missing_slot, EvmStorageSlot::new(U256::from(7), TransactionId::ZERO));
+        journaled_state.state.insert(address, journaled_account);
+
+        let mut touched_account = Account::default()
+            .with_info(AccountInfo { balance: U256::from(13), ..Default::default() });
+        touched_account.mark_touch();
+        let mut state = EvmState::default();
+        state.insert(address, touched_account);
+
+        let result = apply_state_changeset(state, &mut journaled_state, &mut fork, &HashSet::new());
+        assert!(result.is_err());
+        assert_eq!(fork.db.cache.accounts[&address].account_state, AccountState::NotExisting);
+        assert_eq!(journaled_state.state[&address].info.balance, U256::from(1));
+        assert_eq!(
+            journaled_state.state[&address].storage[&missing_slot].present_value(),
+            U256::from(7)
+        );
+    }
+
+    #[test]
+    fn ethereum_replay_skips_unknown_system_envelopes_before_conversion() {
+        let transaction = |ty| {
+            let unknown = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
+                hash: B256::ZERO,
+                inner: UnknownTypedTransaction {
+                    ty: AnyTxType(ty),
+                    fields: Default::default(),
+                    memo: Default::default(),
+                },
+            });
+            AnyRpcTransaction::new(WithOtherFields::new(RpcTransaction {
+                inner: Recovered::new_unchecked(unknown, Address::with_last_byte(0x42)),
+                block_hash: None,
+                block_number: None,
+                transaction_index: None,
+                effective_gas_price: None,
+                block_timestamp: None,
+            }))
+        };
+
+        assert!(
+            Backend::<EthEvmNetwork>::replay_tx_env(&transaction(SYSTEM_TRANSACTION_TYPE))
+                .unwrap()
+                .is_none()
+        );
+        assert!(Backend::<EthEvmNetwork>::replay_tx_env(&transaction(0xff)).is_err());
+    }
+
+    #[test]
+    fn fork_position_advances_from_exact_transaction_predecessor() {
+        let parent = ForkPosition::AfterBlock { block_number: 10 };
+        assert_eq!(
+            parent.after_transaction(11, 0, 2),
+            Some(ForkPosition::BeforeTransaction { block_number: 11, transaction_index: 1 })
+        );
+        assert_eq!(
+            parent.after_transaction(11, 0, 1),
+            Some(ForkPosition::AfterBlock { block_number: 11 })
+        );
+
+        let before_first =
+            ForkPosition::BeforeTransaction { block_number: 11, transaction_index: 0 };
+        assert_eq!(
+            before_first.after_transaction(11, 0, 2),
+            Some(ForkPosition::BeforeTransaction { block_number: 11, transaction_index: 1 })
+        );
+
+        let before_second =
+            ForkPosition::BeforeTransaction { block_number: 11, transaction_index: 1 };
+        assert_eq!(
+            before_second.after_transaction(11, 1, 3),
+            Some(ForkPosition::BeforeTransaction { block_number: 11, transaction_index: 2 })
+        );
+        assert_eq!(
+            before_second.after_transaction(11, 1, 2),
+            Some(ForkPosition::AfterBlock { block_number: 11 })
+        );
+
+        assert_eq!(parent.after_transaction(11, 1, 2), None);
+        assert_eq!(parent.after_transaction(12, 0, 1), None);
+        assert_eq!(before_second.after_transaction(11, 0, 3), None);
+        assert_eq!(before_second.after_transaction(11, 2, 3), None);
+        assert_eq!(before_second.after_transaction(12, 1, 3), None);
+        assert_eq!(before_second.after_transaction(11, 1, 1), None);
+        assert_eq!(parent.after_transaction(11, 0, 0), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn temporary_backend_preserves_fork_position() {
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let provider = handle.http_provider();
+        let block_number = provider.get_block_number().await.unwrap();
+
+        let mut evm_opts = Config::figment().extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(handle.http_endpoint());
+        evm_opts.fork_block_number = Some(block_number);
+        let fork = evm_opts.get_fork(&Config::default(), 31_337, Some(block_number)).unwrap();
+        let mut backend = Backend::<EthEvmNetwork>::spawn(Some(fork)).unwrap();
+        let id = backend.active_fork_ids.unwrap().0;
+        let fork_id = backend.inner.ensure_fork_id(id).unwrap().clone();
+
+        for position in [
+            ForkPosition::BeforeTransaction {
+                block_number: block_number + 1,
+                transaction_index: 2,
+            },
+            ForkPosition::AfterBlock { block_number: block_number + 2 },
+        ] {
+            backend.inner.get_fork_by_id_mut(id).unwrap().position = position;
+            let fork = backend.active_fork().unwrap().clone();
+            let journaled_state = fork.journaled_state.clone();
+            let temporary = Backend::<EthEvmNetwork>::new_with_fork(
+                &fork_id,
+                fork,
+                journaled_state,
+                NetworkConfigs::default(),
+            )
+            .unwrap();
+
+            assert_eq!(temporary.active_fork().unwrap().position, position);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[cfg(feature = "monad")]
+    async fn fork_factory_boundary_preserves_explicit_execution_overrides() {
+        async fn pinned_opts(endpoint: String, networks: Option<NetworkConfigs>) -> EvmOpts {
+            let mut opts = EvmOpts { fork_url: Some(endpoint), ..Default::default() };
+            if let Some(networks) = networks {
+                opts.networks = networks;
+            }
+            opts.infer_network_from_fork().await.unwrap();
+            let identity = opts.fork_endpoint.clone().unwrap();
+            let network_is_inferred = opts.fork_network_is_inferred;
+            opts.expect_fork_endpoint(identity, network_is_inferred);
+            opts.pin_fork_block().await.unwrap();
+            opts
+        }
+
+        fn target_fork(opts: EvmOpts, url: String) -> crate::fork::CreateFork {
+            crate::fork::CreateFork {
+                url,
+                enable_caching: false,
+                evm_opts: opts,
+                expected_context: None,
+            }
+        }
+
+        let (ethereum_base_api, ethereum_base) = spawn(NodeConfig::test()).await;
+        let (_ethereum_target_api, ethereum_target) = spawn(NodeConfig::test()).await;
+        let (monad_base_api, monad_base) = spawn(NodeConfig::test_monad()).await;
+        let (_monad_target_api, monad_target) = spawn(NodeConfig::test_monad()).await;
+        ethereum_base_api.mine_one().await.unwrap();
+        monad_base_api.mine_one().await.unwrap();
+
+        let inferred_ethereum = pinned_opts(ethereum_base.http_endpoint(), None).await;
+        assert!(inferred_ethereum.fork_network_is_inferred);
+        let error = Backend::<EthEvmNetwork>::spawn(Some(target_fork(
+            inferred_ethereum,
+            monad_target.http_endpoint(),
+        )))
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("cannot create a `monad` fork with an EVM instantiated for `ethereum`"),
+            "{error}"
+        );
+
+        let inferred_monad = pinned_opts(monad_base.http_endpoint(), None).await;
+        assert!(inferred_monad.fork_network_is_inferred);
+        let error = Backend::<crate::evm::MonadEvmNetwork>::spawn(Some(target_fork(
+            inferred_monad,
+            ethereum_target.http_endpoint(),
+        )))
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("cannot create a `ethereum` fork with an EVM instantiated for `monad`"),
+            "{error}"
+        );
+
+        let explicit_ethereum =
+            pinned_opts(ethereum_base.http_endpoint(), Some(NetworkConfigs::with_ethereum())).await;
+        assert!(!explicit_ethereum.fork_network_is_inferred);
+        let _backend = Backend::<EthEvmNetwork>::spawn(Some(target_fork(
+            explicit_ethereum,
+            monad_target.http_endpoint(),
+        )))
+        .unwrap();
+
+        let explicit_monad =
+            pinned_opts(monad_base.http_endpoint(), Some(NetworkConfigs::with_monad())).await;
+        assert!(!explicit_monad.fork_network_is_inferred);
+        let _backend = Backend::<crate::evm::MonadEvmNetwork>::spawn(Some(target_fork(
+            explicit_monad,
+            ethereum_target.http_endpoint(),
+        )))
+        .unwrap();
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn can_read_write_cache() {
@@ -2307,6 +3372,8 @@ mod tests {
             chain: None,
             block_env: evm_env.block_env,
             hosts: Default::default(),
+            fork_hash: None,
+            source_id: None,
         };
 
         let db = BlockchainDb::new(

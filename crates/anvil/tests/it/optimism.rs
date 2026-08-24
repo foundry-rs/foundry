@@ -1,17 +1,56 @@
 //! Tests for OP chain support.
 
 use crate::utils::{http_provider, http_provider_with_signer};
+use alloy_consensus::{Eip658Value, Receipt, proofs::calculate_receipt_root};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::{Address, Bloom, TxHash, TxKind, U256, b256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest};
-use alloy_serde::WithOtherFields;
+use alloy_rpc_types::{BlockId, TransactionRequest, anvil::Forking};
+use alloy_serde::{OtherFields, WithOtherFields};
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
+use foundry_evm::hardfork::OpHardfork;
 use foundry_evm_networks::NetworkConfigs;
-use op_alloy_consensus::TxDeposit;
+use foundry_primitives::FoundryReceiptEnvelope;
+use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom, TxDeposit};
 use op_alloy_rpc_types::OpTransactionFields;
 use serde_json::{Value, json};
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inferred_optimism_forks_allow_non_monad_source_resets() {
+    let (_optimism_api, optimism_handle) = spawn(NodeConfig::test().with_optimism()).await;
+    let (ethereum_api, _) = spawn(NodeConfig::test()).await;
+
+    ethereum_api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(optimism_handle.http_endpoint()),
+            block_number: Some(0),
+        }))
+        .await
+        .unwrap();
+    let node_info = ethereum_api.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.network.as_deref(), Some("ethereum"));
+    assert_eq!(node_info.fork_config.fork_url, Some(optimism_handle.http_endpoint()));
+
+    let (optimism_api, _) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(optimism_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    let (_ethereum_origin_api, ethereum_origin) = spawn(NodeConfig::test()).await;
+    optimism_api
+        .anvil_reset(Some(Forking {
+            json_rpc_url: Some(ethereum_origin.http_endpoint()),
+            block_number: Some(0),
+        }))
+        .await
+        .unwrap();
+    let node_info = optimism_api.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.network.as_deref(), Some("optimism"));
+    assert_eq!(node_info.fork_config.fork_url, Some(ethereum_origin.http_endpoint()));
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_deposits_not_supported_if_optimism_disabled() {
@@ -92,6 +131,87 @@ async fn test_send_value_deposit_transaction() {
     // the recipient should have received the value
     let after_balance_to = provider.get_balance(to).await.unwrap();
     assert_eq!(after_balance_to, before_balance_to + send_value);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fields_do_not_override_op_deposit_classification() {
+    let (_api, handle) =
+        spawn(NodeConfig::test().with_networks(NetworkConfigs::with_optimism())).await;
+    let provider = handle.http_provider();
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+
+    let op_fields = OpTransactionFields {
+        source_hash: Some(b256!(
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+        )),
+        mint: Some(0),
+        is_system_tx: Some(true),
+        deposit_receipt_version: None,
+    };
+    let mut other = OtherFields::try_from(serde_json::to_value(op_fields).unwrap()).unwrap();
+    other.insert("calls".to_string(), json!([]));
+    let tx = WithOtherFields {
+        inner: TransactionRequest::default()
+            .with_from(accounts[0].address())
+            .with_to(accounts[1].address())
+            .with_gas_limit(21_000),
+        other,
+    };
+
+    provider.call(tx).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulated_op_deposit_receipt_root_includes_canyon_fields() {
+    let (_api, handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_hardfork(Some(OpHardfork::Canyon.into())),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let response = provider
+        .raw_request::<_, Value>(
+            "eth_simulateV1".into(),
+            (json!({
+                "blockStateCalls": [{
+                    "calls": [{
+                        "from": accounts[0].address(),
+                        "to": accounts[1].address(),
+                        "gas": "0x5208",
+                        "sourceHash": b256!(
+                            "0x0000000000000000000000000000000000000000000000000000000000000000"
+                        ),
+                        "mint": "0x0",
+                        "isSystemTx": false,
+                        "calls": [],
+                    }]
+                }],
+                "returnFullTransactions": true,
+            }),),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response[0]["transactions"][0]["type"], "0x7e");
+    let gas_used = u64::from_str_radix(
+        response[0]["calls"][0]["gasUsed"].as_str().unwrap().trim_start_matches("0x"),
+        16,
+    )
+    .unwrap();
+    let receipt =
+        Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used: gas_used, logs: vec![] }
+            .with_bloom();
+    let receipt = FoundryReceiptEnvelope::Deposit(OpDepositReceiptWithBloom {
+        receipt: OpDepositReceipt {
+            inner: receipt.receipt,
+            deposit_nonce: Some(0),
+            deposit_receipt_version: Some(1),
+        },
+        logs_bloom: receipt.logs_bloom,
+    });
+    assert_eq!(response[0]["receiptsRoot"], json!(calculate_receipt_root(&[receipt])));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -345,4 +465,49 @@ async fn test_optimism_base_fee_params() {
         INITIAL_BASE_FEE + ethereum_increase,
         "Should not be using Ethereum base fee params"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inferred_optimism_fork_uses_optimism_base_fee_params() {
+    let (_origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_base_fee(Some(INITIAL_BASE_FEE))
+            .with_gas_limit(Some(GAS_TRANSFER)),
+    )
+    .await;
+    let origin_wallet = origin_handle.dev_wallets().next().unwrap();
+    let origin_provider =
+        http_provider_with_signer(&origin_handle.http_endpoint(), origin_wallet.into());
+    let tx = TransactionRequest::default().to(Address::random()).with_value(U256::from(1));
+    origin_provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    assert_eq!(fork_api.anvil_node_info().await.unwrap().network.as_deref(), Some("optimism"));
+
+    let fork_wallet = fork_handle.dev_wallets().next().unwrap();
+    let fork_provider = http_provider_with_signer(&fork_handle.http_endpoint(), fork_wallet.into());
+    let tx = TransactionRequest::default().to(Address::random()).with_value(U256::from(1));
+    fork_provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let block = fork_provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block.header.base_fee_per_gas, Some(INITIAL_BASE_FEE + INITIAL_BASE_FEE * 5 / 250));
 }

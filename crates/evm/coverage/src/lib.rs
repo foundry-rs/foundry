@@ -10,7 +10,10 @@ extern crate tracing;
 
 use alloy_primitives::{
     Bytes,
-    map::{B256HashMap, HashMap, rustc_hash::FxHashMap},
+    map::{
+        B256HashMap, HashMap,
+        rustc_hash::{FxHashMap, FxHashSet},
+    },
 };
 use analysis::SourceAnalysis;
 use eyre::Result;
@@ -37,16 +40,18 @@ pub use inspector::LineCoverageCollector;
 /// "anchors"). A single coverage item may be referred to by multiple anchors.
 #[derive(Clone, Debug, Default)]
 pub struct CoverageReport {
-    /// A map of source IDs to the source path.
-    pub source_paths: HashMap<(Version, usize), PathBuf>,
-    /// A map of source paths to source IDs.
-    pub source_paths_to_ids: HashMap<(Version, PathBuf), usize>,
-    /// All coverage items for the codebase, keyed by the compiler version.
-    pub analyses: HashMap<Version, SourceAnalysis>,
+    /// A map of compiler build IDs and source IDs to source paths.
+    pub source_paths: HashMap<String, HashMap<usize, PathBuf>>,
+    /// A map of compiler build IDs and source paths to source IDs.
+    pub source_paths_to_ids: HashMap<String, HashMap<PathBuf, usize>>,
+    /// All coverage items for the codebase, keyed by the compiler build ID.
+    pub analyses: HashMap<String, SourceAnalysis>,
     /// All item anchors for the codebase, keyed by their contract ID.
     ///
     /// `(id, (creation, runtime))`
     pub anchors: HashMap<ContractId, (Vec<ItemAnchor>, Vec<ItemAnchor>)>,
+    /// Execution-based anchors for coverage items without source-mapped bytecode.
+    execution_anchors: HashMap<ContractId, ContractExecutionAnchors>,
     /// All the bytecode hits for the codebase.
     pub bytecode_hits: HashMap<ContractId, HitMap>,
     /// The bytecode -> source mappings.
@@ -55,14 +60,19 @@ pub struct CoverageReport {
 
 impl CoverageReport {
     /// Add a source file path.
-    pub fn add_source(&mut self, version: Version, source_id: usize, path: PathBuf) {
-        self.source_paths.insert((version.clone(), source_id), path.clone());
-        self.source_paths_to_ids.insert((version, path), source_id);
+    pub fn add_source(&mut self, build_id: String, source_id: usize, path: PathBuf) {
+        self.source_paths.entry(build_id.clone()).or_default().insert(source_id, path.clone());
+        self.source_paths_to_ids.entry(build_id).or_default().insert(path, source_id);
     }
 
     /// Get the source ID for a specific source file path.
-    pub fn get_source_id(&self, version: Version, path: PathBuf) -> Option<usize> {
-        self.source_paths_to_ids.get(&(version, path)).copied()
+    pub fn get_source_id(&self, build_id: &str, path: &Path) -> Option<usize> {
+        self.source_paths_to_ids.get(build_id)?.get(path).copied()
+    }
+
+    /// Get the source path for a source ID in a compiler build.
+    pub fn get_source_path(&self, build_id: &str, source_id: usize) -> Option<&Path> {
+        self.source_paths.get(build_id)?.get(&source_id).map(PathBuf::as_path)
     }
 
     /// Add the source maps.
@@ -74,8 +84,8 @@ impl CoverageReport {
     }
 
     /// Add a [`SourceAnalysis`] to this report.
-    pub fn add_analysis(&mut self, version: Version, analysis: SourceAnalysis) {
-        self.analyses.insert(version, analysis);
+    pub fn add_analysis(&mut self, build_id: String, analysis: SourceAnalysis) {
+        self.analyses.insert(build_id, analysis);
     }
 
     /// Add anchors to this report.
@@ -88,29 +98,54 @@ impl CoverageReport {
         self.anchors.extend(anchors);
     }
 
+    /// Adds execution-based anchors for a contract.
+    pub fn add_execution_anchors(
+        &mut self,
+        contract_id: ContractId,
+        anchors: Vec<ExecutionAnchor>,
+        function_selectors: impl IntoIterator<Item = [u8; 4]>,
+        has_receive: bool,
+        fallback_payable: bool,
+    ) {
+        if anchors.is_empty() {
+            return;
+        }
+        self.execution_anchors.insert(
+            contract_id,
+            ContractExecutionAnchors {
+                anchors,
+                function_selectors: function_selectors.into_iter().collect(),
+                has_receive,
+                fallback_payable,
+            },
+        );
+    }
+
     /// Returns an iterator over coverage summaries by source file path.
     pub fn summary_by_file(&self) -> impl Iterator<Item = (&Path, CoverageSummary)> {
-        self.by_file(|summary: &mut CoverageSummary, item| summary.add_item(item))
+        self.items_by_file().map(|(path, items)| {
+            let summary = CoverageSummary::from_items(&items);
+            (path, summary)
+        })
     }
 
-    /// Returns an iterator over coverage items by source file path.
-    pub fn items_by_file(&self) -> impl Iterator<Item = (&Path, Vec<&CoverageItem>)> {
-        self.by_file(|list: &mut Vec<_>, item| list.push(item))
-    }
-
-    fn by_file<'a, T: Default>(
-        &'a self,
-        mut f: impl FnMut(&mut T, &'a CoverageItem),
-    ) -> impl Iterator<Item = (&'a Path, T)> {
-        let mut by_file: BTreeMap<&Path, T> = BTreeMap::new();
-        for (version, items) in &self.analyses {
+    /// Returns coverage items by source file path, merging duplicate items from compiler builds.
+    pub fn items_by_file(&self) -> impl Iterator<Item = (&Path, Vec<CoverageItem>)> {
+        let mut by_file = BTreeMap::<&Path, BTreeMap<CoverageItemKey<'_>, CoverageItem>>::new();
+        for (build_id, items) in &self.analyses {
             for item in items.all_items() {
-                let key = (version.clone(), item.loc.source_id);
-                let Some(path) = self.source_paths.get(&key) else { continue };
-                f(by_file.entry(path).or_default(), item);
+                let Some(path) = self.get_source_path(build_id, item.loc.source_id) else {
+                    continue;
+                };
+                by_file
+                    .entry(path)
+                    .or_default()
+                    .entry(CoverageItemKey::new(item))
+                    .and_modify(|merged| merged.hits = merged.hits.saturating_add(item.hits))
+                    .or_insert_with(|| item.clone());
             }
         }
-        by_file.into_iter()
+        by_file.into_iter().map(|(path, items)| (path, items.into_values().collect()))
     }
 
     /// Processes data from a [`HitMap`] and sets hit counts for coverage items in this coverage
@@ -136,11 +171,21 @@ impl CoverageReport {
             for anchor in anchors {
                 if let Some(hits) = hit_map.get(anchor.instruction) {
                     self.analyses
-                        .get_mut(&contract_id.version)
+                        .get_mut(&contract_id.build_id)
                         .and_then(|items| items.all_items_mut().get_mut(anchor.item_id as usize))
                         .expect("Anchor refers to non-existent coverage item")
                         .hits += hits.get();
                 }
+            }
+        }
+        if let Some(anchors) = self.execution_anchors.get(contract_id) {
+            for anchor in &anchors.anchors {
+                let hits = anchors.hits(hit_map, anchor.kind, is_deployed_code);
+                self.analyses
+                    .get_mut(&contract_id.build_id)
+                    .and_then(|items| items.all_items_mut().get_mut(anchor.item_id as usize))
+                    .expect("Anchor refers to non-existent coverage item")
+                    .hits += hits;
             }
         }
 
@@ -163,8 +208,18 @@ impl CoverageReport {
                 *hits_by_item.entry(anchor.item_id).or_default() += hits.get();
             }
         }
+        if let Some(anchors) = self.execution_anchors.get(contract_id) {
+            for anchor in &anchors.anchors {
+                let hits = anchors.hits(hit_map, anchor.kind, is_deployed_code);
+                if hits > 0 {
+                    *hits_by_item.entry(anchor.item_id).or_default() += hits;
+                }
+            }
+        }
 
-        let Some(items) = self.analyses.get(&contract_id.version) else { return Vec::new() };
+        let Some(items) = self.analyses.get(&contract_id.build_id) else {
+            return Vec::new();
+        };
         hits_by_item
             .into_iter()
             .filter_map(|(item_id, hits)| {
@@ -179,9 +234,17 @@ impl CoverageReport {
     /// This function should only be called after all the sources were used, otherwise, the output
     /// will be missing the ones that are dependent on them.
     pub fn retain_sources(&mut self, mut predicate: impl FnMut(&Path) -> bool) {
-        self.source_paths.retain(|_, path| predicate(path));
-        self.source_paths_to_ids.retain(|(version, _), source_id| {
-            self.source_paths.contains_key(&(version.clone(), *source_id))
+        self.source_paths.retain(|_, paths| {
+            paths.retain(|_, path| predicate(path));
+            !paths.is_empty()
+        });
+
+        let source_paths = &self.source_paths;
+        self.source_paths_to_ids.retain(|build_id, paths| {
+            paths.retain(|_, source_id| {
+                source_paths.get(build_id).is_some_and(|paths| paths.contains_key(source_id))
+            });
+            !paths.is_empty()
         });
     }
 }
@@ -229,6 +292,50 @@ impl DerefMut for HitMaps {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum CallData {
+    Empty,
+    Short,
+    Selector([u8; 4]),
+}
+
+impl CallData {
+    fn new(input: &[u8]) -> Self {
+        if input.is_empty() {
+            Self::Empty
+        } else if let Some(selector) = input.get(..4) {
+            Self::Selector(selector.try_into().unwrap())
+        } else {
+            Self::Short
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CallHits {
+    without_value: u32,
+    with_value: u32,
+}
+
+impl CallHits {
+    const fn hit(&mut self, with_value: bool) {
+        if with_value {
+            self.with_value += 1;
+        } else {
+            self.without_value += 1;
+        }
+    }
+
+    const fn merge(&mut self, other: Self) {
+        self.without_value += other.without_value;
+        self.with_value += other.with_value;
+    }
+
+    const fn total(self, payable: bool) -> u32 {
+        self.without_value + if payable { self.with_value } else { 0 }
+    }
+}
+
 /// Hit data for an address.
 ///
 /// Contains low-level data about hit counters for the instructions in the bytecode of a contract.
@@ -236,13 +343,24 @@ impl DerefMut for HitMaps {
 pub struct HitMap {
     hits: FxHashMap<u32, u32>,
     bytecode: Bytes,
+    creations: u32,
+    empty_calls: CallHits,
+    short_calls: CallHits,
+    selector_calls: FxHashMap<[u8; 4], CallHits>,
 }
 
 impl HitMap {
     /// Create a new hitmap with the given bytecode.
     #[inline]
     pub fn new(bytecode: Bytes) -> Self {
-        Self { bytecode, hits: HashMap::with_capacity_and_hasher(1024, Default::default()) }
+        Self {
+            bytecode,
+            hits: HashMap::with_capacity_and_hasher(1024, Default::default()),
+            creations: 0,
+            empty_calls: Default::default(),
+            short_calls: Default::default(),
+            selector_calls: Default::default(),
+        }
     }
 
     /// Returns the bytecode.
@@ -269,6 +387,19 @@ impl HitMap {
         *self.hits.entry(pc).or_default() += hits;
     }
 
+    fn call(&mut self, call: CallData, with_value: bool) {
+        let hits = match call {
+            CallData::Empty => &mut self.empty_calls,
+            CallData::Short => &mut self.short_calls,
+            CallData::Selector(selector) => self.selector_calls.entry(selector).or_default(),
+        };
+        hits.hit(with_value);
+    }
+
+    const fn creation(&mut self) {
+        self.creations += 1;
+    }
+
     /// Reserve space for additional hits.
     #[inline]
     pub fn reserve(&mut self, additional: usize) {
@@ -280,6 +411,12 @@ impl HitMap {
         self.reserve(other.len());
         for (pc, hits) in other.iter() {
             self.hits(pc, hits);
+        }
+        self.creations += other.creations;
+        self.empty_calls.merge(other.empty_calls);
+        self.short_calls.merge(other.short_calls);
+        for (&selector, &hits) in &other.selector_calls {
+            self.selector_calls.entry(selector).or_default().merge(hits);
         }
     }
 
@@ -302,10 +439,11 @@ impl HitMap {
     }
 }
 
-/// A unique identifier for a contract
+/// A unique identifier for a contract.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ContractId {
     pub version: Version,
+    pub build_id: String,
     pub source_id: usize,
     pub contract_name: Arc<str>,
 }
@@ -332,6 +470,59 @@ pub struct ItemAnchor {
 impl fmt::Display for ItemAnchor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "IC {} -> Item {}", self.instruction, self.item_id)
+    }
+}
+
+/// An execution-based anchor for a coverage item without source-mapped bytecode.
+#[derive(Clone, Copy, Debug)]
+pub struct ExecutionAnchor {
+    /// The item ID this anchor points to.
+    pub item_id: u32,
+    /// The execution path that marks the item as covered.
+    pub kind: ExecutionAnchorKind,
+}
+
+/// The execution path associated with an execution-based anchor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecutionAnchorKind {
+    /// A successful contract creation.
+    Constructor,
+    /// An empty calldata call routed to `receive`.
+    Receive,
+    /// A call routed to `fallback`.
+    Fallback,
+}
+
+#[derive(Clone, Debug)]
+struct ContractExecutionAnchors {
+    anchors: Vec<ExecutionAnchor>,
+    function_selectors: FxHashSet<[u8; 4]>,
+    has_receive: bool,
+    fallback_payable: bool,
+}
+
+impl ContractExecutionAnchors {
+    fn hits(&self, hit_map: &HitMap, kind: ExecutionAnchorKind, is_deployed_code: bool) -> u32 {
+        match (kind, is_deployed_code) {
+            (ExecutionAnchorKind::Constructor, false) => hit_map.creations,
+            (ExecutionAnchorKind::Receive, true) => hit_map.empty_calls.total(true),
+            (ExecutionAnchorKind::Fallback, true) => {
+                let empty_calls = if self.has_receive {
+                    0
+                } else {
+                    hit_map.empty_calls.total(self.fallback_payable)
+                };
+                empty_calls
+                    + hit_map.short_calls.total(self.fallback_payable)
+                    + hit_map
+                        .selector_calls
+                        .iter()
+                        .filter(|(selector, _)| !self.function_selectors.contains(*selector))
+                        .map(|(_, hits)| hits.total(self.fallback_payable))
+                        .sum::<u32>()
+            }
+            _ => 0,
+        }
     }
 }
 
@@ -403,6 +594,50 @@ pub struct CoverageItem {
     pub anchor_loc: Option<SourceLocation>,
     /// The number of times this item was hit.
     pub hits: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum CoverageItemKindKey<'a> {
+    Line,
+    Statement,
+    Branch { branch_id: u32, path_id: u32 },
+    Function(&'a str),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct CoverageItemKey<'a> {
+    line_start: u32,
+    line_end: u32,
+    kind_order: u8,
+    byte_start: u32,
+    byte_end: u32,
+    contract_name: &'a str,
+    kind: CoverageItemKindKey<'a>,
+}
+
+impl<'a> CoverageItemKey<'a> {
+    fn new(item: &'a CoverageItem) -> Self {
+        let (kind_order, kind) = match &item.kind {
+            CoverageItemKind::Line => (0, CoverageItemKindKey::Line),
+            CoverageItemKind::Statement => (1, CoverageItemKindKey::Statement),
+            CoverageItemKind::Branch { branch_id, path_id, .. } => {
+                (2, CoverageItemKindKey::Branch { branch_id: *branch_id, path_id: *path_id })
+            }
+            CoverageItemKind::Function { name } => {
+                (3, CoverageItemKindKey::Function(name.as_ref()))
+            }
+        };
+
+        Self {
+            line_start: item.loc.lines.start,
+            line_end: item.loc.lines.end,
+            kind_order,
+            byte_start: item.loc.bytes.start,
+            byte_end: item.loc.bytes.end,
+            contract_name: item.loc.contract_name.as_ref(),
+            kind,
+        }
+    }
 }
 
 impl PartialEq for CoverageItem {

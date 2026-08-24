@@ -31,18 +31,23 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{SolCall, SolInterface, SolValue};
 use foundry_common::{
     FoundryTransactionBuilder, SELECTOR_LEN, TransactionMaybeSigned,
-    mapping_slots::{MappingSlots, step as mapping_step},
+    mapping_slots::{
+        MappingSlots, PendingMappingHash, capture_hash as capture_mapping_hash,
+        record_hash as record_mapping_hash, step as mapping_step,
+    },
 };
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
+    backend::{ContextUpdateFor, DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
     evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
-        NestedEvmClosure, SpecFor, TransactionRequestFor, TxEnvFor, with_cloned_context,
+        BlockEnvFor, ChainFor, EthEvmNetwork, EvmFactoryFor, FoundryContextFor, FoundryEvmFactory,
+        FoundryEvmNetwork, NestedEvmClosureFor, SpecFor, TransactionRequestFor, TxEnvFor,
+        with_cloned_context,
     },
+    refresh_chain_journal,
 };
 use foundry_evm_traces::{
     TracingInspector, TracingInspectorConfig, identifier::SignaturesIdentifier,
@@ -52,15 +57,15 @@ use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestRng, TestRunner};
 use rand::Rng;
 use revm::{
-    Inspector,
+    Inspector, JournalEntry,
     bytecode::opcode as op,
     context::{Cfg, ContextTr, Host, JournalTr, Transaction, TransactionType, result::EVMError},
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
-        InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
-        interpreter_types::{Jumps, LoopControl, MemoryTr},
+        CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
+        FrameInput, Gas, InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
+        interpreter_types::{Jumps, LoopControl, MemoryTr, ReturnData},
         return_ok,
     },
 };
@@ -89,7 +94,7 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>>;
 
     /// Replays a historical transaction on the database. Inspector is assembled internally.
@@ -99,7 +104,7 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<()>;
+    ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>>;
 
     /// Executes a `TransactionRequest` on the database. Inspector is assembled internally.
     fn transact_from_tx_on_db(
@@ -119,7 +124,8 @@ pub trait CheatcodesExecutor<FEN: FoundryEvmNetwork> {
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        chain_context: ChainFor<FEN>,
+        f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>>;
 
     /// Simulates `console.log` invocation.
@@ -142,9 +148,11 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
     inputs: CreateInputs,
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
 ) -> std::result::Result<CreateOutcome, EVMError<DatabaseError>> {
+    let fee_token = ccx.ecx.tx().fee_token();
     let mut inputs = Some(inputs);
     let mut outcome = None;
     executor.with_nested_evm(ccx.state, ccx.ecx, &mut |evm| {
+        evm.tx_mut().set_fee_token(fee_token);
         let inputs = inputs.take().unwrap();
         evm.journal_inner_mut().depth += 1;
 
@@ -173,16 +181,43 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
         ecx: &mut FoundryContextFor<'_, FEN>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<(), EVMError<DatabaseError>> {
-        with_cloned_context(ecx, |db, evm_env, journal_inner| {
-            let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, cheats);
-            *evm.journal_inner_mut() = journal_inner;
+        let factory = FEN::EvmFactory::default();
+        let chain_context = ecx.chain().clone();
+        #[cfg(feature = "monad")]
+        let state = foundry_evm_core::FoundryJournal::capture_reserve_balance(ecx.journal());
+        let mut nested_chain_context = None;
+        #[cfg(feature = "monad")]
+        let mut reserve_balance = None;
+        with_cloned_context(ecx, |db, evm_env, journaled_state| {
+            let mut evm = factory.create_foundry_nested_evm(db, evm_env, chain_context, cheats);
+            *evm.journal_inner_mut() = journaled_state;
+            #[cfg(feature = "monad")]
+            {
+                foundry_evm_core::FoundryJournal::restore_reserve_balance(evm.journal_mut(), state);
+                foundry_evm_core::evm::refresh_nested_chain_journal(&mut *evm);
+            }
             f(&mut *evm)?;
+            nested_chain_context = Some(evm.chain_mut().clone());
+            #[cfg(feature = "monad")]
+            {
+                reserve_balance = Some(foundry_evm_core::FoundryJournal::capture_reserve_balance(
+                    evm.journal_mut(),
+                ));
+            }
             let sub_inner = evm.journal_inner_mut().clone();
             let sub_evm_env = evm.to_evm_env();
             Ok((sub_evm_env, sub_inner))
-        })
+        })?;
+        *ecx.chain_mut() = nested_chain_context.expect("nested EVM chain context was captured");
+        #[cfg(feature = "monad")]
+        foundry_evm_core::FoundryJournal::restore_reserve_balance(
+            ecx.journal_mut(),
+            reserve_balance.expect("nested EVM state was captured"),
+        );
+        refresh_chain_journal(ecx);
+        Ok(())
     }
 
     fn with_fresh_nested_evm(
@@ -190,9 +225,15 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         cheats: &mut Cheatcodes<FEN>,
         db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
-        f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
+        chain_context: ChainFor<FEN>,
+        f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
-        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, cheats);
+        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
+            db,
+            evm_env,
+            chain_context,
+            cheats,
+        );
         f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }
@@ -203,10 +244,11 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
-    ) -> eyre::Result<()> {
+    ) -> eyre::Result<ContextUpdateFor<EvmFactoryFor<FEN>>> {
         let evm_env = ecx.evm_clone();
+        let outer_tx_env = ecx.tx_clone();
         let (db, inner) = ecx.db_journal_inner_mut();
-        db.transact(fork_id, transaction, evm_env, inner, cheats)
+        db.transact(fork_id, transaction, evm_env, &outer_tx_env, inner, cheats)
     }
 
     fn transact_from_tx_on_db(
@@ -336,6 +378,59 @@ impl EnvOverrides {
     }
 }
 
+/// A callback registered for a storage access hook.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StorageHook {
+    /// Contract that receives the callback.
+    pub callback_target: Address,
+    /// Callback function selector.
+    pub callback_selector: [u8; 4],
+}
+
+#[derive(Clone, Debug)]
+enum PendingStorageHook {
+    Load {
+        account: Address,
+        slot: U256,
+        hook: StorageHook,
+    },
+    Store {
+        account: Address,
+        slot: U256,
+        old_value: U256,
+        mapping: Option<(B256, Vec<B256>)>,
+        hook: StorageHook,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct ActiveStorageHook {
+    parent_depth: usize,
+    callback_target: Address,
+    callback_input: Bytes,
+    saved_gas: Gas,
+    saved_return_data: Bytes,
+    saved_stack_item: Option<U256>,
+    journal_start: usize,
+    inspector_state: StorageHookInspectorState,
+    outcome: Option<(InstructionResult, Bytes)>,
+}
+
+#[derive(Clone, Debug)]
+struct StorageHookInspectorState {
+    accesses: RecordAccess,
+    recording_accesses: bool,
+    mapping_slots: Option<AddressHashMap<MappingSlots>>,
+    recorded_logs: Option<Vec<Vm::Log>>,
+    mocked_calls: HashMap<Address, BTreeMap<MockCallDataContext, VecDeque<MockCallReturnData>>>,
+    mocked_functions: HashMap<Address, HashMap<Bytes, Address>>,
+    expected_revert: Option<ExpectedRevert>,
+    assume_no_revert: Option<AssumeNoRevert>,
+    expected_calls: ExpectedCallTracker,
+    expected_emits: ExpectedEmitTracker,
+    expected_creates: Vec<ExpectedCreate>,
+}
+
 /// Holds gas metering state.
 #[derive(Clone, Debug, Default)]
 pub struct GasMetering {
@@ -408,12 +503,15 @@ pub struct ArbitraryStorage {
     copies: HashMap<Address, Address>,
     /// Address with storage slots that should be overwritten even if previously set.
     overwrites: HashSet<Address>,
+    /// Storage slots explicitly written with `vm.store`, grouped by address.
+    explicit_slots: HashMap<Address, HashSet<U256>>,
 }
 
 impl ArbitraryStorage {
     /// Marks an address with arbitrary storage.
     pub fn mark_arbitrary(&mut self, address: &Address, overwrite: bool) {
         self.values.insert(*address, HashMap::default());
+        self.explicit_slots.remove(address);
         if overwrite {
             self.overwrites.insert(*address);
         } else {
@@ -425,7 +523,24 @@ impl ArbitraryStorage {
     pub fn mark_copy(&mut self, from: &Address, to: &Address) {
         if self.values.contains_key(from) {
             self.copies.insert(*to, *from);
+            if let Some(slots) = self.explicit_slots.get(from).cloned() {
+                self.explicit_slots.insert(*to, slots);
+            } else {
+                self.explicit_slots.remove(to);
+            }
         }
+    }
+
+    /// Marks a slot as explicitly written if the address has arbitrary or copied storage.
+    fn mark_explicit(&mut self, address: Address, slot: U256) {
+        if self.values.contains_key(&address) || self.copies.contains_key(&address) {
+            self.explicit_slots.entry(address).or_default().insert(slot);
+        }
+    }
+
+    /// Returns whether a slot was explicitly written for the given address.
+    fn is_explicit(&self, address: Address, slot: U256) -> bool {
+        self.explicit_slots.get(&address).is_some_and(|slots| slots.contains(&slot))
     }
 
     /// Returns addresses explicitly marked with arbitrary storage.
@@ -581,6 +696,11 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// execution block environment.
     pub block: Option<BlockEnvFor<FEN>>,
 
+    /// The active fork block override updated by a fork-switching cheatcode.
+    ///
+    /// This persists fork changes made through a copy-on-write backend between invariant calls.
+    pub fork_block_number_override: Option<u64>,
+
     /// Currently active EIP-7702 delegations that will be consumed when building the next
     /// transaction. Set by `vm.attachDelegation()` and consumed via `.take()` during
     /// transaction construction.
@@ -682,6 +802,12 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Test-scoped context holding data that needs to be reset every test run
     pub test_context: TestContext,
 
+    /// Revert payloads minted by the `skip` cheatcode during the current test call.
+    ///
+    /// A top-level revert is only classified as a skip when its data byte-equals one of these
+    /// payloads, so user-crafted `FOUNDRY::SKIP` revert data never skips a test on its own.
+    pub skip_payloads: Vec<Bytes>,
+
     /// Whether to commit FS changes such as file creations, writes and deletes.
     /// Used to prevent duplicate changes file executing non-committing calls.
     pub fs_commit: bool,
@@ -722,6 +848,23 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Addresses with arbitrary storage.
     pub arbitrary_storage: Option<ArbitraryStorage>,
 
+    /// SLOAD callbacks keyed by effective storage address.
+    storage_load_hooks: AddressHashMap<StorageHook>,
+    /// SSTORE callbacks keyed by effective storage address.
+    storage_store_hooks: AddressHashMap<StorageHook>,
+    /// Mapping SSTORE callbacks keyed by effective storage address and root slot.
+    mapping_storage_store_hooks: AddressHashMap<HashMap<B256, StorageHook>>,
+    /// Execution-local provenance used only by mapping storage hooks.
+    storage_hook_mapping_slots: AddressHashMap<MappingSlots>,
+    /// A 64-byte Keccak operation awaiting successful completion.
+    pending_mapping_hash: Option<PendingMappingHash>,
+    /// Whether any storage hook map contains a callback.
+    storage_hooks_registered: bool,
+    /// Matching storage access captured before the opcode executes.
+    pending_storage_hook: Option<PendingStorageHook>,
+    /// Synthetic callback frame currently executing or awaiting parent cleanup.
+    active_storage_hook: Option<ActiveStorageHook>,
+
     /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
     /// Unlocked wallets used in scripts and testing of scripts.
@@ -757,6 +900,15 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// the post-snapshot value even though `EvmEnv` was rolled back.
     pub env_overrides_snapshots: HashMap<U256, HashMap<Option<LocalForkId>, EnvOverrides>>,
 
+    /// Per-state-snapshot copies of [`Self::fork_block_number_override`].
+    pub fork_block_number_override_snapshots: HashMap<U256, Option<u64>>,
+
+    /// Transaction-position context and Monad's reserve-balance-tracker state captured atomically
+    /// alongside state snapshots.
+    #[cfg(feature = "monad")]
+    pub context_snapshots:
+        HashMap<U256, (ChainFor<FEN>, monad_revm::reserve_balance::tracker::ReserveBalanceTracker)>,
+
     /// Whether we are currently executing inside an isolation context, i.e.
     /// the synthetic inner transaction wrapped by
     /// `InspectorStackRefMut::transact_inner` (used by `--gas-report` and
@@ -787,6 +939,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             labels: config.labels.clone(),
             config,
             block: Default::default(),
+            fork_block_number_override: Default::default(),
             active_delegations: Default::default(),
             active_blob_sidecar: Default::default(),
             gas_price: Default::default(),
@@ -816,6 +969,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             broadcastable_transactions: Default::default(),
             access_list: Default::default(),
             test_context: Default::default(),
+            skip_payloads: Default::default(),
             serialized_jsons: Default::default(),
             eth_deals: Default::default(),
             gas_metering: Default::default(),
@@ -827,6 +981,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             test_runner: Default::default(),
             ignored_traces: Default::default(),
             arbitrary_storage: Default::default(),
+            storage_load_hooks: Default::default(),
+            storage_store_hooks: Default::default(),
+            mapping_storage_store_hooks: Default::default(),
+            storage_hook_mapping_slots: Default::default(),
+            pending_mapping_hash: Default::default(),
+            storage_hooks_registered: Default::default(),
+            pending_storage_hook: Default::default(),
+            active_storage_hook: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
             private_key_signers: Default::default(),
@@ -835,6 +997,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             execution_evm_version: None,
             env_overrides: Default::default(),
             env_overrides_snapshots: Default::default(),
+            fork_block_number_override_snapshots: Default::default(),
+            #[cfg(feature = "monad")]
+            context_snapshots: Default::default(),
             in_isolation_context: false,
         }
     }
@@ -1138,6 +1303,26 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         )
     }
 
+    /// Decodes the input data and applies Monad-specific cheatcodes.
+    #[cfg(feature = "monad")]
+    fn apply_monad_cheatcode(
+        &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        call: &CallInputs,
+    ) -> Result {
+        let input = call.input.bytes(ecx);
+        let caller = call.caller;
+
+        // ensure the caller is allowed to execute cheatcodes,
+        // but only if the backend is in forking mode
+        ecx.db_mut().ensure_cheatcode_access_forking_mode(&caller)?;
+
+        crate::monad::apply_monad_cheatcode(
+            &mut CheatsCtxt { state: self, ecx, gas_limit: call.gas_limit, caller },
+            &input,
+        )
+    }
+
     /// Grants cheat code access for new contracts if the caller also has
     /// cheatcode access or the new contract is created in top most call.
     ///
@@ -1204,7 +1389,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<CallOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.cfg_mut().set_spec_and_mainnet_gas_params(spec_id);
+            ecx.set_spec_and_gas_params(spec_id);
         }
 
         let gas = Gas::new(call.gas_limit);
@@ -1232,7 +1417,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: false,
                         precompile_call_logs: vec![],
-                        charged_new_account_state_gas: false,
+                        charged_new_account_state_gas: call.charged_new_account_state_gas,
                     });
                 }
             };
@@ -1253,7 +1438,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     memory_offset: call.return_memory_offset.clone(),
                     was_precompile_called: true,
                     precompile_call_logs: vec![],
-                    charged_new_account_state_gas: false,
+                    charged_new_account_state_gas: call.charged_new_account_state_gas,
                 }),
                 Err(err) => Some(CallOutcome {
                     result: InterpreterResult {
@@ -1264,8 +1449,46 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     memory_offset: call.return_memory_offset.clone(),
                     was_precompile_called: false,
                     precompile_call_logs: vec![],
-                    charged_new_account_state_gas: false,
+                    charged_new_account_state_gas: call.charged_new_account_state_gas,
                 }),
+            };
+        }
+
+        #[cfg(feature = "monad")]
+        if crate::monad::is_monad_cheatcode_call(
+            self.config.evm_opts.networks.extra_cheatcode_addresses(),
+            call.target_address,
+        ) {
+            let checkpoint = ecx.journal_mut().checkpoint();
+            return match self.apply_monad_cheatcode(ecx, call) {
+                Ok(retdata) => {
+                    ecx.journal_mut().checkpoint_commit();
+                    Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Return,
+                            output: retdata.into(),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                        was_precompile_called: true,
+                        precompile_call_logs: vec![],
+                        charged_new_account_state_gas: call.charged_new_account_state_gas,
+                    })
+                }
+                Err(err) => {
+                    ecx.journal_mut().checkpoint_revert(checkpoint);
+                    Some(CallOutcome {
+                        result: InterpreterResult {
+                            result: InstructionResult::Revert,
+                            output: err.abi_encode().into(),
+                            gas,
+                        },
+                        memory_offset: call.return_memory_offset.clone(),
+                        was_precompile_called: false,
+                        precompile_call_logs: vec![],
+                        charged_new_account_state_gas: call.charged_new_account_state_gas,
+                    })
+                }
             };
         }
 
@@ -1289,7 +1512,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             let value = call.transfer_value();
 
             // Match every partial/full calldata
-            for (calldata, (expected, actual_count)) in expected_calls_for_target {
+            for ((calldata, expected_scheme), (expected, actual_count)) in expected_calls_for_target
+            {
                 // Increment actual times seen if...
                 // The calldata is at most, as big as this call's input, and
                 if calldata.len() <= input.len() &&
@@ -1300,7 +1524,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // The gas matches, if provided
                     expected.gas.is_none_or(|gas| gas == call.gas_limit) &&
                     // The minimum gas matches, if provided
-                    expected.min_gas.is_none_or(|min_gas| min_gas <= call.gas_limit)
+                    expected.min_gas.is_none_or(|min_gas| min_gas <= call.gas_limit) &&
+                    // The call scheme matches, if provided
+                    expected_scheme.is_none_or(|scheme| scheme == call.scheme)
                 {
                     *actual_count += 1;
                 }
@@ -1389,7 +1615,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                                 memory_offset: call.return_memory_offset.clone(),
                                 was_precompile_called: false,
                                 precompile_call_logs: vec![],
-                                charged_new_account_state_gas: false,
+                                charged_new_account_state_gas: call.charged_new_account_state_gas,
                             });
                         }
                     }
@@ -1409,7 +1635,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     memory_offset: call.return_memory_offset.clone(),
                     was_precompile_called: true,
                     precompile_call_logs: vec![],
-                    charged_new_account_state_gas: false,
+                    charged_new_account_state_gas: call.charged_new_account_state_gas,
                 });
             }
         }
@@ -1450,13 +1676,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             memory_offset: call.return_memory_offset.clone(),
                             was_precompile_called: false,
                             precompile_call_logs: vec![],
-                            charged_new_account_state_gas: false,
+                            charged_new_account_state_gas: call.charged_new_account_state_gas,
                         });
                     }
 
                     let input = call.input.bytes(ecx);
                     let chain_id = ecx.cfg().chain_id();
                     let rpc = ecx.db().active_fork_url();
+                    let fee_token = ecx.tx().fee_token();
                     let account =
                         ecx.journal_mut().evm_state_mut().get_mut(&broadcast.new_origin).unwrap();
 
@@ -1486,7 +1713,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                                 memory_offset: call.return_memory_offset.clone(),
                                 was_precompile_called: false,
                                 precompile_call_logs: vec![],
-                                charged_new_account_state_gas: false,
+                                charged_new_account_state_gas: call.charged_new_account_state_gas,
                             });
                         }
                         tx_req.set_blob_sidecar(blob_sidecar);
@@ -1506,7 +1733,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         }
                         tx_req.set_authorization_list(active_delegations);
                     }
-                    if let Some(fee_token) = self.config.fee_token {
+                    if let Some(fee_token) = fee_token {
                         tx_req.set_fee_token(fee_token);
                     }
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1532,7 +1759,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: false,
                         precompile_call_logs: vec![],
-                        charged_new_account_state_gas: false,
+                        charged_new_account_state_gas: call.charged_new_account_state_gas,
                     });
                 }
             }
@@ -1651,6 +1878,18 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
+    /// Marks a slot as explicitly written with `vm.store`.
+    pub fn mark_arbitrary_storage_slot_explicit(&mut self, address: Address, slot: U256) {
+        if let Some(storage) = &mut self.arbitrary_storage {
+            storage.mark_explicit(address, slot);
+        }
+    }
+
+    /// Returns whether a slot was explicitly written with `vm.store`.
+    pub fn is_arbitrary_storage_slot_explicit(&self, address: Address, slot: U256) -> bool {
+        self.arbitrary_storage.as_ref().is_some_and(|storage| storage.is_explicit(address, slot))
+    }
+
     /// Returns a cached arbitrary-storage replay value for a slot.
     pub fn cached_arbitrary_storage_value(&self, address: Address, slot: U256) -> Option<U256> {
         self.arbitrary_storage.as_ref().and_then(|storage| storage.cached_value(address, slot))
@@ -1693,6 +1932,123 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         }
     }
 
+    /// Registers an SLOAD callback, replacing the existing callback for `target`.
+    pub fn register_storage_load_hook(
+        &mut self,
+        target: Address,
+        callback_target: Address,
+        callback_selector: [u8; 4],
+    ) {
+        self.storage_load_hooks.insert(target, StorageHook { callback_target, callback_selector });
+        self.storage_hooks_registered = true;
+    }
+
+    /// Registers an SSTORE callback, replacing the existing callback for `target`.
+    pub fn register_storage_store_hook(
+        &mut self,
+        target: Address,
+        callback_target: Address,
+        callback_selector: [u8; 4],
+    ) {
+        self.storage_store_hooks.insert(target, StorageHook { callback_target, callback_selector });
+        self.storage_hooks_registered = true;
+    }
+
+    /// Registers a mapping SSTORE callback. Returns false when a raw hook conflicts.
+    pub fn register_mapping_storage_store_hook(
+        &mut self,
+        target: Address,
+        root_slot: B256,
+        callback_target: Address,
+        callback_selector: [u8; 4],
+    ) -> bool {
+        if self.storage_store_hooks.contains_key(&target) {
+            return false;
+        }
+        self.storage_hook_mapping_slots.remove(&target);
+        self.mapping_storage_store_hooks
+            .entry(target)
+            .or_default()
+            .insert(root_slot, StorageHook { callback_target, callback_selector });
+        self.storage_hooks_registered = true;
+        true
+    }
+
+    /// Returns registered mapping SSTORE callbacks.
+    pub fn mapping_storage_store_hooks(
+        &self,
+    ) -> impl Iterator<Item = (Address, B256, StorageHook)> + '_ {
+        self.mapping_storage_store_hooks
+            .iter()
+            .flat_map(|(target, hooks)| hooks.iter().map(|(root, hook)| (*target, *root, *hook)))
+    }
+
+    /// Returns whether mapping hooks conflict with a raw store hook.
+    pub fn has_mapping_storage_store_hooks(&self, target: Address) -> bool {
+        self.mapping_storage_store_hooks.get(&target).is_some_and(|hooks| !hooks.is_empty())
+    }
+
+    /// Returns registered SLOAD callbacks.
+    pub fn storage_load_hooks(&self) -> impl Iterator<Item = (Address, StorageHook)> + '_ {
+        self.storage_load_hooks.iter().map(|(target, hook)| (*target, *hook))
+    }
+
+    /// Returns registered SSTORE callbacks.
+    pub fn storage_store_hooks(&self) -> impl Iterator<Item = (Address, StorageHook)> + '_ {
+        self.storage_store_hooks.iter().map(|(target, hook)| (*target, *hook))
+    }
+
+    /// Returns whether any storage callback is registered.
+    #[inline]
+    pub const fn has_storage_hooks(&self) -> bool {
+        self.storage_hooks_registered
+    }
+
+    /// Clears execution-local mapping provenance while preserving hook registrations.
+    pub fn clear_storage_hook_mapping_slots(&mut self) {
+        self.storage_hook_mapping_slots.clear();
+    }
+
+    /// Returns whether a synthetic storage-hook callback or one of its child calls is executing.
+    #[inline]
+    pub const fn is_storage_hook_active(&self) -> bool {
+        self.active_storage_hook.is_some()
+    }
+
+    /// Returns whether `call` is the synthetic callback for the active storage hook.
+    pub fn is_storage_hook_callback(
+        &self,
+        ecx: &FoundryContextFor<'_, FEN>,
+        call: &CallInputs,
+    ) -> bool {
+        self.active_storage_hook.as_ref().is_some_and(|active| {
+            active.outcome.is_none()
+                && ecx.journal().depth() == active.parent_depth
+                && call.caller == CHEATCODE_ADDRESS
+                && call.target_address == active.callback_target
+                && call.input.bytes(ecx) == active.callback_input
+        })
+    }
+
+    fn finish_storage_hook_call(
+        &mut self,
+        ecx: &FoundryContextFor<'_, FEN>,
+        call: &CallInputs,
+        outcome: &CallOutcome,
+    ) -> bool {
+        let Some(active) = self.active_storage_hook.as_mut() else { return false };
+        if active.outcome.is_some()
+            || ecx.journal().depth() != active.parent_depth
+            || call.caller != CHEATCODE_ADDRESS
+            || call.target_address != active.callback_target
+            || call.input.bytes(ecx) != active.callback_input
+        {
+            return false;
+        }
+        active.outcome = Some((outcome.result.result, outcome.result.output.clone()));
+        true
+    }
+
     #[inline(always)]
     pub fn has_step_hooks(&self) -> bool {
         self.broadcast.is_some()
@@ -1704,6 +2060,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             || self.mapping_slots.is_some()
             || self.gas_metering.recording
             || self.has_active_env_overrides()
+            || self.has_storage_hooks()
     }
 
     #[inline(always)]
@@ -1711,7 +2068,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.gas_metering.paused
             || self.gas_metering.touched
             || self.arbitrary_storage.is_some()
+            || self.mapping_slots.is_some()
             || self.has_active_env_overrides()
+            || self.has_storage_hooks()
     }
 
     #[inline(always)]
@@ -1728,6 +2087,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             && self.recorded_account_diffs_stack.is_none()
             && self.allowed_mem_writes.is_empty()
             && self.mapping_slots.is_none()
+            && !self.has_storage_hooks()
             && !self.gas_metering.recording
             && !self.has_active_env_overrides()
     }
@@ -1776,6 +2136,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             return;
         }
 
+        if self.finish_storage_hook_callback(interpreter, ecx) {
+            return;
+        }
+
         if self.broadcast.is_some() {
             self.set_gas_limit_type(interpreter);
         }
@@ -1808,9 +2172,26 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             );
         }
 
-        // `startMappingRecording`: record SSTORE and KECCAK256.
-        if let Some(mapping_slots) = &mut self.mapping_slots {
-            mapping_step(mapping_slots, interpreter);
+        if self.mapping_slots.is_some() || !self.mapping_storage_store_hooks.is_empty() {
+            // `startMappingRecording`: record SSTORE.
+            if let Some(mapping_slots) = &mut self.mapping_slots {
+                mapping_step(mapping_slots, interpreter);
+            }
+
+            let account = interpreter.input.target_address;
+            let mapping_hook_active = self.active_storage_hook.is_none()
+                && self
+                    .mapping_storage_store_hooks
+                    .get(&account)
+                    .is_some_and(|hooks| !hooks.is_empty());
+            if mapping_hook_active {
+                mapping_step(&mut self.storage_hook_mapping_slots, interpreter);
+            }
+            self.pending_mapping_hash = if self.mapping_slots.is_some() || mapping_hook_active {
+                capture_mapping_hash(interpreter)
+            } else {
+                None
+            };
         }
 
         // `snapshotGas*`: take a snapshot of the current gas.
@@ -1847,6 +2228,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 }
             }
         }
+
+        if self.active_storage_hook.is_none() {
+            self.capture_storage_hook(interpreter, ecx);
+        }
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
@@ -1865,6 +2250,31 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // `setArbitraryStorage` and `copyStorage`: add arbitrary values to storage.
         if self.arbitrary_storage.is_some() {
             self.arbitrary_storage_end(interpreter, ecx);
+        }
+
+        if let Some(pending) = self.pending_mapping_hash.take()
+            && interpreter
+                .bytecode
+                .action
+                .as_ref()
+                .and_then(InterpreterAction::instruction_result)
+                .is_none()
+        {
+            if let Some(mapping_slots) = &mut self.mapping_slots {
+                record_mapping_hash(mapping_slots, interpreter, pending);
+            }
+            if self
+                .mapping_storage_store_hooks
+                .get(&pending.address)
+                .is_some_and(|hooks| !hooks.is_empty())
+                && self.active_storage_hook.is_none()
+            {
+                record_mapping_hash(&mut self.storage_hook_mapping_slots, interpreter, pending);
+            }
+        }
+
+        if self.active_storage_hook.is_none() {
+            self.invoke_pending_storage_hook(interpreter, ecx);
         }
 
         // Apply opcode-level env overrides (basefee/gasprice/blobhash). Needed
@@ -1935,6 +2345,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         ecx: &mut FoundryContextFor<'_, FEN>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
+        if self.is_storage_hook_callback(ecx, inputs) {
+            return None;
+        }
         Self::call_with_executor(self, ecx, inputs, &mut TransparentCheatcodesExecutor)
     }
 
@@ -1944,8 +2357,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
+        if self.finish_storage_hook_call(ecx, call, outcome) {
+            return;
+        }
+
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
             || call.target_address == HARDHAT_CONSOLE_ADDRESS;
+        #[cfg(feature = "monad")]
+        let cheatcode_call = cheatcode_call
+            || crate::monad::is_monad_cheatcode_call(
+                self.config.evm_opts.networks.extra_cheatcode_addresses(),
+                call.target_address,
+            );
         let curr_depth = ecx.journal().depth();
 
         self.finish_created_accounts_frame(
@@ -2311,7 +2734,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // Match expected calls
             for (address, calldatas) in &self.expected_calls {
                 // Loop over each address, and for each address, loop over each calldata it expects.
-                for (calldata, (expected, actual_count)) in calldatas {
+                for ((calldata, scheme), (expected, actual_count)) in calldatas {
                     // Grab the values we expect to see
                     let ExpectedCallData { gas, min_gas, value, count, call_type } = expected;
 
@@ -2332,6 +2755,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                             value.as_ref().map(|v| format!("value {v}")),
                             gas.map(|g| format!("gas {g}")),
                             min_gas.map(|g| format!("minimum gas {g}")),
+                            scheme.map(|scheme| format!("call type {scheme:?}")),
                         ]
                         .into_iter()
                         .flatten()
@@ -2401,7 +2825,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
     ) -> Option<CreateOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.cfg_mut().set_spec_and_mainnet_gas_params(spec_id);
+            ecx.set_spec_and_gas_params(spec_id);
         }
 
         let gas = Gas::new(input.gas_limit());
@@ -2424,6 +2848,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             return Some(CreateOutcome {
                 result: InterpreterResult { result: InstructionResult::Revert, output, gas },
                 address: None,
+                charged_create_state_gas: input.charged_create_state_gas(),
             });
         }
 
@@ -2472,6 +2897,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         gas,
                     },
                     address: None,
+                    charged_create_state_gas: input.charged_create_state_gas(),
                 });
             }
 
@@ -2484,6 +2910,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 input.set_caller(broadcast.new_origin);
 
                 let rpc = ecx.db().active_fork_url();
+                let fee_token = ecx.tx().fee_token();
                 let account = &ecx.journal().evm_state()[&broadcast.new_origin];
                 let mut tx_req = TransactionRequestFor::<FEN>::default()
                     .with_from(broadcast.new_origin)
@@ -2491,7 +2918,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                     .with_value(input.value())
                     .with_input(input.init_code())
                     .with_nonce(account.info.nonce);
-                if let Some(fee_token) = self.config.fee_token {
+                if let Some(fee_token) = fee_token {
                     tx_req.set_fee_token(fee_token);
                 }
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -2892,6 +3319,10 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             return;
         };
 
+        if self.is_arbitrary_storage_slot_explicit(target_address, key) {
+            return;
+        }
+
         let Some(value) = ecx.sload(target_address, key) else {
             return;
         };
@@ -2919,6 +3350,250 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 );
             }
         }
+    }
+
+    /// Restores parent interpreter state after a synthetic storage-hook callback.
+    ///
+    /// Returns whether a failed callback was propagated to the parent frame.
+    #[inline]
+    pub fn finish_storage_hook_callback(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+    ) -> bool {
+        let Some(active) = self.active_storage_hook.as_ref() else { return false };
+        let Some((result, output)) = active.outcome.clone() else { return false };
+
+        let active = self.active_storage_hook.take().expect("active storage hook exists");
+        Self::restore_storage_hook_access(ecx, active.journal_start);
+        self.restore_storage_hook_inspector_state(active.inspector_state);
+        let _ = interpreter.stack.pop();
+        if let Some(item) = active.saved_stack_item {
+            let result = interpreter.stack.push(item);
+            debug_assert!(result, "reserved storage-hook stack slot must be available");
+        }
+        interpreter.gas = active.saved_gas;
+        interpreter.return_data.set_buffer(active.saved_return_data);
+
+        if result.is_ok() {
+            false
+        } else {
+            interpreter.bytecode.set_action(InterpreterAction::new_return(
+                InstructionResult::Revert,
+                output,
+                interpreter.gas,
+            ));
+            true
+        }
+    }
+
+    fn take_storage_hook_inspector_state(&mut self) -> StorageHookInspectorState {
+        StorageHookInspectorState {
+            accesses: std::mem::take(&mut self.accesses),
+            recording_accesses: std::mem::replace(&mut self.recording_accesses, false),
+            mapping_slots: self.mapping_slots.take(),
+            recorded_logs: self.recorded_logs.take(),
+            mocked_calls: std::mem::take(&mut self.mocked_calls),
+            mocked_functions: std::mem::take(&mut self.mocked_functions),
+            expected_revert: self.expected_revert.take(),
+            assume_no_revert: self.assume_no_revert.take(),
+            expected_calls: std::mem::take(&mut self.expected_calls),
+            expected_emits: std::mem::take(&mut self.expected_emits),
+            expected_creates: std::mem::take(&mut self.expected_creates),
+        }
+    }
+
+    fn restore_storage_hook_inspector_state(&mut self, state: StorageHookInspectorState) {
+        self.accesses = state.accesses;
+        self.recording_accesses = state.recording_accesses;
+        self.mapping_slots = state.mapping_slots;
+        self.recorded_logs = state.recorded_logs;
+        self.mocked_calls = state.mocked_calls;
+        self.mocked_functions = state.mocked_functions;
+        self.expected_revert = state.expected_revert;
+        self.assume_no_revert = state.assume_no_revert;
+        self.expected_calls = state.expected_calls;
+        self.expected_emits = state.expected_emits;
+        self.expected_creates = state.expected_creates;
+    }
+
+    fn restore_storage_hook_access(ecx: &mut FoundryContextFor<'_, FEN>, journal_start: usize) {
+        let (_, journal) = ecx.db_journal_inner_mut();
+        let entries =
+            journal.journal.drain(journal_start.min(journal.journal.len())..).collect_vec();
+        for entry in entries {
+            match entry {
+                JournalEntry::AccountWarmed { address } => {
+                    journal.state.get_mut(&address).expect("warmed account exists").mark_cold();
+                }
+                JournalEntry::StorageWarmed { address, key } => {
+                    // TODO(@mablr): Preserve the EIP-2200 `original_value` when bumping the REVM
+                    // family to 42. REVM 41's `mark_cold` resets it for a slot first warmed and
+                    // modified by the callback.
+                    journal
+                        .state
+                        .get_mut(&address)
+                        .expect("warmed account exists")
+                        .storage
+                        .get_mut(&key)
+                        .expect("warmed storage slot exists")
+                        .mark_cold();
+                }
+                entry => journal.journal.push(entry),
+            }
+        }
+    }
+
+    fn capture_storage_hook(
+        &mut self,
+        interpreter: &Interpreter,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+    ) {
+        self.pending_storage_hook = None;
+        if self.active_storage_hook.is_some() {
+            return;
+        }
+        let account = interpreter.input.target_address;
+        match interpreter.bytecode.opcode() {
+            op::SLOAD => {
+                let slot = try_or_return!(interpreter.stack.peek(0));
+                let Some(hook) = self.storage_load_hooks.get(&account).copied() else { return };
+                self.pending_storage_hook = Some(PendingStorageHook::Load { account, slot, hook });
+            }
+            op::SSTORE => {
+                let slot = try_or_return!(interpreter.stack.peek(0));
+                let (hook, mapping) = if let Some(hook) = self.storage_store_hooks.get(&account) {
+                    (*hook, None)
+                } else {
+                    let Some(provenance) = self
+                        .storage_hook_mapping_slots
+                        .get(&account)
+                        .and_then(|slots| slots.resolve(slot.into()))
+                    else {
+                        return;
+                    };
+                    let Some(hook) = self
+                        .mapping_storage_store_hooks
+                        .get(&account)
+                        .and_then(|hooks| hooks.get(&provenance.root_slot))
+                        .copied()
+                    else {
+                        return;
+                    };
+                    (hook, Some((provenance.root_slot, provenance.keys)))
+                };
+                let checkpoint = ecx.journal_mut().checkpoint();
+                let old_value =
+                    ecx.sload(account, slot).map(|value| value.data).unwrap_or_default();
+                ecx.journal_mut().checkpoint_revert(checkpoint);
+                self.pending_storage_hook =
+                    Some(PendingStorageHook::Store { account, slot, old_value, mapping, hook });
+            }
+            _ => {}
+        }
+    }
+
+    fn invoke_pending_storage_hook(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+    ) {
+        let Some(pending) = self.pending_storage_hook.take() else { return };
+        if interpreter
+            .bytecode
+            .action
+            .as_ref()
+            .and_then(InterpreterAction::instruction_result)
+            .is_some()
+        {
+            return;
+        }
+
+        let (hook, input, saved_stack_item) = match pending {
+            PendingStorageHook::Load { account, slot, hook } => {
+                let value = try_or_return!(interpreter.stack.peek(0));
+                let mut input = Vec::with_capacity(4 + 32 * 3);
+                input.extend_from_slice(&hook.callback_selector);
+                input.extend_from_slice(account.into_word().as_slice());
+                input.extend_from_slice(&slot.to_be_bytes::<32>());
+                input.extend_from_slice(&value.to_be_bytes::<32>());
+                (hook, Bytes::from(input), Some(value))
+            }
+            PendingStorageHook::Store { account, slot, old_value, mapping, hook } => {
+                let new_value =
+                    ecx.sload(account, slot).map(|value| value.data).unwrap_or_default();
+                let mut input = Vec::with_capacity(4 + 32 * 4);
+                input.extend_from_slice(&hook.callback_selector);
+                input.extend_from_slice(account.into_word().as_slice());
+                input.extend_from_slice(&slot.to_be_bytes::<32>());
+                if let Some((root, keys)) = mapping {
+                    input.extend_from_slice(root.as_slice());
+                    input.extend_from_slice(&U256::from(32 * 6).to_be_bytes::<32>());
+                    input.extend_from_slice(&old_value.to_be_bytes::<32>());
+                    input.extend_from_slice(&new_value.to_be_bytes::<32>());
+                    input.extend_from_slice(&U256::from(keys.len()).to_be_bytes::<32>());
+                    for key in keys {
+                        input.extend_from_slice(key.as_slice());
+                    }
+                } else {
+                    input.extend_from_slice(&old_value.to_be_bytes::<32>());
+                    input.extend_from_slice(&new_value.to_be_bytes::<32>());
+                }
+                (hook, Bytes::from(input), None)
+            }
+        };
+
+        let journal_start = ecx.db_journal_inner_mut().1.journal.len();
+        let account = match ecx.journal_mut().load_account_with_code(hook.callback_target) {
+            Ok(account) => account,
+            Err(err) => {
+                interpreter.bytecode.set_action(InterpreterAction::new_return(
+                    InstructionResult::Revert,
+                    Error::encode(err),
+                    interpreter.gas,
+                ));
+                return;
+            }
+        };
+        let known_bytecode =
+            (account.info.code_hash, account.info.code.clone().unwrap_or_default());
+        let saved_gas = interpreter.gas;
+        let saved_return_data = Bytes::copy_from_slice(interpreter.return_data.buffer());
+        let gas_limit = interpreter.gas.remaining();
+        let parent_depth = ecx.journal().depth();
+        if saved_stack_item.is_some() {
+            let result = interpreter.stack.pop();
+            debug_assert!(result.is_ok(), "captured SLOAD result must be on the stack");
+        }
+        let inspector_state = self.take_storage_hook_inspector_state();
+
+        self.active_storage_hook = Some(ActiveStorageHook {
+            parent_depth,
+            callback_target: hook.callback_target,
+            callback_input: input.clone(),
+            saved_gas,
+            saved_return_data,
+            saved_stack_item,
+            journal_start,
+            inspector_state,
+            outcome: None,
+        });
+        interpreter.bytecode.set_action(InterpreterAction::NewFrame(FrameInput::Call(Box::new(
+            CallInputs {
+                input: CallInput::Bytes(input),
+                return_memory_offset: 0..0,
+                gas_limit,
+                reservoir: 0,
+                bytecode_address: hook.callback_target,
+                known_bytecode,
+                target_address: hook.callback_target,
+                caller: CHEATCODE_ADDRESS,
+                value: CallValue::Transfer(U256::ZERO),
+                scheme: CallScheme::Call,
+                is_static: false,
+                charged_new_account_state_gas: false,
+            },
+        ))));
     }
 
     /// Records storage slots reads and writes.
@@ -3536,6 +4211,12 @@ mod tests {
         cheats.recording_accesses = false;
         cheats.gas_metering.touched = true;
         assert!(!cheats.has_step_hooks());
+        assert!(cheats.has_step_end_hooks());
+        assert!(!cheats.has_recording_accesses_only_step_hook());
+
+        cheats.gas_metering.touched = false;
+        cheats.register_storage_load_hook(Address::ZERO, Address::ZERO, [0; 4]);
+        assert!(cheats.has_step_hooks());
         assert!(cheats.has_step_end_hooks());
         assert!(!cheats.has_recording_accesses_only_step_hook());
     }

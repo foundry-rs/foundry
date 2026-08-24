@@ -4,8 +4,9 @@ use alloy_chains::NamedChain;
 use alloy_eips::Decodable2718;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, B256, Bytes, U256, address, b256, hex, keccak256};
+use alloy_primitives::{Address, B256, Bytes, I256, U256, address, b256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder};
+use alloy_rlp::Header;
 use alloy_rpc_types::{
     Authorization, BlockNumberOrTag, Index, TransactionRequest, engine::JwtSecret,
 };
@@ -23,6 +24,8 @@ use foundry_test_utils::{
     str,
     util::OutputExt,
 };
+#[cfg(unix)]
+use rexpect::{Encoding, reader::Options, spawn_with_options};
 use serde_json::json;
 use std::{fs, io::ErrorKind, net::TcpListener, path::Path, process::Command, str::FromStr};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
@@ -36,8 +39,30 @@ extern crate foundry_test_utils;
 
 mod erc20;
 mod keychain;
+mod remote_trace;
 mod selectors;
 mod tempo;
+
+const PRESIGNED_EIP7702_AUTH: &str = "0xf85c827a6994f39fd6e51aad88f6f4ce6ab8827279cfffb922668001a03e1a66234e71242afcc7bc46c8950c3b2997b102db257774865f1232d2e7bf48a045e252dad189b27b2306792047745eba86bff0dd18aca813dbf3fba8c4e94576";
+
+#[cfg(feature = "monad")]
+const MONAD_RESERVE_BALANCE_ADDRESS: Address =
+    address!("0x0000000000000000000000000000000000001001");
+#[cfg(feature = "monad")]
+const MONAD_STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
+#[cfg(feature = "monad")]
+const MONAD_SYSTEM_ADDRESS: Address = address!("0x6f49a8f621353f12378d0046e7d7e4b9b249dc9e");
+#[cfg(feature = "monad")]
+const MONAD_TESTNET_CHAIN_ID: u64 = 10_143;
+#[cfg(feature = "monad")]
+const MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP: u64 = 1_773_153_000;
+#[cfg(feature = "monad")]
+const MONAD_DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
+#[cfg(feature = "monad")]
+const MONAD_RESERVE_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002000");
+#[cfg(feature = "monad")]
+const MONAD_RESERVE_RETURN_PROBE_CODE: [u8; 25] =
+    hex!("633a61584e5f5260205f6004601c5f6110015af15060205ff3");
 
 casttest!(print_short_version, |_prj, cmd| {
     cmd.arg("-V").assert_success().stdout_eq(str![[r#"
@@ -114,9 +139,33 @@ Display options:
           and
             backtraces with line numbers.
 
+Compiler options:
+      --allow-local-compiler
+          Allow use of local compiler executables without prompting
+
+Project options:
+      --allow-project-env
+          Allow loading project dotenv files without prompting
+
 Find more information in the book: https://getfoundry.sh/cast/overview
 
 "#]]);
+});
+
+casttest!(browser_wallet_commands_expose_browser_option, |_prj, cmd| {
+    for (name, args) in [
+        ("call", &["call", "--help"][..]),
+        ("estimate", &["estimate", "--help"]),
+        ("access-list", &["access-list", "--help"]),
+        ("wallet address", &["wallet", "address", "--help"]),
+        ("wallet sign", &["wallet", "sign", "--help"]),
+    ] {
+        let output = cmd.cast_fuse().args(args).assert_success().get_output().stdout_lossy();
+        assert!(
+            output.contains("--browser"),
+            "expected {name} help to expose --browser:\n{output}"
+        );
+    }
 });
 
 // tests that the `cast block` command works correctly
@@ -334,6 +383,38 @@ Successfully created new keypair.
 
 "#]]);
 });
+
+// tests that the machine-readable stdout record is omitted on an interactive terminal, where it
+// would duplicate the stderr prose
+casttest!(
+    #[cfg(unix)]
+    new_wallet_tty_omits_stdout_record,
+    |_prj, _cmd| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cast"));
+        command.env("NO_COLOR", "1").env("TERM", "dumb").args(["wallet", "new"]);
+
+        let mut session = spawn_with_options(
+            command,
+            Options {
+                timeout_ms: Some(30_000),
+                strip_ansi_escape_codes: true,
+                encoding: Encoding::UTF8,
+            },
+        )
+        .unwrap();
+
+        session.exp_string("Successfully created new keypair.").unwrap();
+        session.exp_string("Address:").unwrap();
+        session.exp_string("Private key: 0x").unwrap();
+        // Only the private key value may follow; the `address\tprivate_key` record must not be
+        // printed to a tty.
+        let rest = session.exp_eof().unwrap();
+        assert!(
+            !rest.contains("0x") && !rest.contains('\t'),
+            "unexpected stdout record on tty: {rest:?}"
+        );
+    }
+);
 
 // tests that we can create a new wallet with json output
 casttest!(new_wallet_json, |_prj, cmd| {
@@ -599,6 +680,34 @@ Created new encrypted keystore file: [..]
 });
 
 // tests that we can outputting multiple keys without a keystore path
+
+#[cfg(all(target_os = "macos", feature = "touch-id"))]
+casttest!(wallet_new_help_describes_touch_id_fallback, |_prj, cmd| {
+    let assert = cmd.args(["wallet", "new", "--help"]).assert_success();
+    let output = String::from_utf8_lossy(&assert.get_output().stdout);
+
+    assert!(output.contains("Touch ID-assisted authentication"));
+    assert!(output.contains("explicit keystore passwords remain available"));
+});
+
+#[cfg(all(target_os = "macos", feature = "touch-id"))]
+casttest!(wallet_import_help_describes_touch_id_fallback, |_prj, cmd| {
+    let assert = cmd.args(["wallet", "import", "--help"]).assert_success();
+    let output = String::from_utf8_lossy(&assert.get_output().stdout);
+
+    assert!(output.contains("Touch ID-assisted authentication"));
+    assert!(output.contains("explicit keystore passwords remain available"));
+});
+
+casttest!(wallet_touch_id_help_lists_lifecycle_commands, |_prj, cmd| {
+    let assert = cmd.args(["wallet", "touch-id", "--help"]).assert_success();
+    let output = String::from_utf8_lossy(&assert.get_output().stdout);
+
+    assert!(output.contains("enroll"));
+    assert!(output.contains("status"));
+    assert!(output.contains("remove"));
+});
+
 casttest!(new_wallet_multiple_keys, |_prj, cmd| {
     cmd.args(["wallet", "new", "-n", "2"])
         .assert_success()
@@ -640,7 +749,7 @@ casttest!(wallet_address_keystore_with_password_file, |_prj, cmd| {
 "#]]);
 });
 
-// tests that `cast wallet remove` can successfully remove a keystore file and validates password
+// Tests that `cast wallet remove` can successfully remove a keystore file and validates password.
 casttest!(wallet_remove_keystore_with_unsafe_password, |prj, cmd| {
     let keystore_path = prj.root().join("keystore");
 
@@ -694,6 +803,481 @@ casttest!(wallet_remove_keystore_with_unsafe_password, |prj, cmd| {
 "#]]);
 
     assert!(!keystore_file.exists());
+});
+
+fn valid_touch_id_sidecar_fixture(version: u32, policy: &str) -> String {
+    let sealed_password = format!("04{}", "00".repeat(92));
+
+    serde_json::json!({
+        "version": version,
+        "policy": policy,
+        "se_key": "aa",
+        "sealed_password": sealed_password,
+    })
+    .to_string()
+}
+
+casttest!(wallet_touch_id_status_missing_and_json, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "status",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Touch ID is not enrolled for keystore `testAccount`.
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "status",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--json",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":{"account":"testAccount","status":"not-enrolled"},"errors":[],"warnings":[]}
+
+"#]]);
+});
+
+casttest!(wallet_touch_id_status_recognized_is_non_mutating, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let sidecar = keystore_dir.join("testAccount.touchid");
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+    fs::write(&sidecar, valid_touch_id_sidecar_fixture(1, "current-biometry")).unwrap();
+    let original_sidecar = fs::read(&sidecar).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "status",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Touch ID is enrolled for keystore `testAccount` with `current-biometry` policy.
+
+"#]]);
+
+    assert_eq!(fs::read(sidecar).unwrap(), original_sidecar);
+});
+
+casttest!(wallet_touch_id_remove_is_idempotent, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let keystore = keystore_dir.join("testAccount");
+    let sidecar = keystore_dir.join("testAccount.touchid");
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+    fs::write(&sidecar, valid_touch_id_sidecar_fixture(1, "user-presence")).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "remove",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Touch ID enrollment removed for keystore `testAccount`.
+
+"#]]);
+    assert!(keystore.exists());
+    assert!(!sidecar.exists());
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "remove",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Touch ID is not enrolled for keystore `testAccount`.
+
+"#]]);
+});
+
+casttest!(wallet_touch_id_remove_refuses_unknown_sidecar, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let sidecar = keystore_dir.join("testAccount.touchid");
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+    fs::write(&sidecar, valid_touch_id_sidecar_fixture(2, "user-presence")).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "status",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Touch ID status for keystore `testAccount` is unknown: [..]/testAccount.touchid is not a recognized Touch ID sidecar.
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "remove",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: refusing to remove [..]/testAccount.touchid because it is not a recognized Touch ID sidecar
+
+"#]]);
+    assert!(sidecar.exists());
+});
+
+casttest!(wallet_touch_id_remove_refuses_keystore_collision, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let keystore = keystore_dir.join("testAccount");
+    let sidecar = keystore_dir.join("testAccount.touchid");
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+    fs::copy(&keystore, &sidecar).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "remove",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+        ])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: refusing to remove existing keystore at [..]/testAccount.touchid
+
+"#]]);
+    assert!(keystore.exists());
+    assert!(sidecar.exists());
+});
+
+casttest!(wallet_remove_touch_id_sidecar, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+
+    let account_name = "testAccount";
+    let keystore_file = keystore_dir.join(account_name);
+
+    cmd.args([
+        "wallet",
+        "import",
+        account_name,
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+
+    let sidecar = keystore_dir.join(format!("{account_name}.touchid"));
+    fs::write(&sidecar, valid_touch_id_sidecar_fixture(1, "user-presence")).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "remove",
+            "--name",
+            account_name,
+            "--dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "wrong",
+        ])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: Invalid password - wallet removal cancelled
+
+"#]]);
+    assert!(keystore_file.exists());
+    assert!(sidecar.exists());
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "remove",
+            "--name",
+            account_name,
+            "--dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "test",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+`testAccount` keystore was removed successfully.
+
+"#]]);
+    assert!(!keystore_file.exists());
+    assert!(!sidecar.exists());
+});
+
+casttest!(wallet_remove_preserves_invalid_touch_id_payload, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let keystore_path = keystore_dir.join("testAccount");
+    let sidecar_path = keystore_dir.join("testAccount.touchid");
+
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+
+    let invalid_sidecar_content = serde_json::json!({
+        "version": 1,
+        "policy": "user-presence",
+        "se_key": "aa",
+        "sealed_password": format!("04{}", "00".repeat(90)),
+    })
+    .to_string();
+
+    fs::write(&sidecar_path, &invalid_sidecar_content).unwrap();
+
+    let original_keystore_bytes = fs::read(&keystore_path).unwrap();
+    let original_sidecar_bytes = fs::read(&sidecar_path).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "remove",
+            "--name",
+            "testAccount",
+            "--dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "test",
+        ])
+        .assert_failure();
+
+    assert!(keystore_path.exists());
+    assert!(sidecar_path.exists());
+    assert_eq!(fs::read(&keystore_path).unwrap(), original_keystore_bytes);
+    assert_eq!(fs::read(&sidecar_path).unwrap(), original_sidecar_bytes);
+});
+
+casttest!(wallet_remove_preserves_touch_id_named_keystore, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let keystore_file = keystore_dir.join("testAccount");
+    let legacy_keystore = keystore_dir.join("testAccount.touchid");
+
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+    fs::copy(&keystore_file, &legacy_keystore).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "remove",
+            "--name",
+            "testAccount",
+            "--dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "test",
+        ])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: refusing to remove existing keystore at [..]/testAccount.touchid
+
+"#]]);
+    assert!(keystore_file.exists());
+    assert!(legacy_keystore.exists());
+});
+
+casttest!(wallet_remove_preserves_ambiguous_touch_id_file, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let keystore_file = keystore_dir.join("testAccount");
+    let sidecar = keystore_dir.join("testAccount.touchid");
+
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+    fs::write(&sidecar, "malformed").unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "remove",
+            "--name",
+            "testAccount",
+            "--dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "test",
+        ])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: failed to parse json file: "[..]/testAccount.touchid": expected value at line 1 column 1
+
+"#]]);
+    assert!(keystore_file.exists());
+    assert!(sidecar.exists());
+});
+
+casttest!(wallet_import_rejects_touch_id_suffix, |prj, cmd| {
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount.touchid",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        prj.root().to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: account names ending in `.touchid` are reserved
+
+"#]]);
+});
+
+// `cast wallet import` treats ACCOUNT_NAME as a file name under the keystore dir.
+// A path segment would write the encrypted keystore outside that directory.
+casttest!(wallet_import_rejects_path_account_name, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    fs::create_dir_all(&keystore_dir).unwrap();
+    let escaped = prj.root().join("pwned_foundry_alias");
+
+    cmd.set_current_dir(prj.root());
+    cmd.args([
+        "wallet",
+        "import",
+        "../pwned_foundry_alias",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: account name must be a single path segment
+
+"#]]);
+
+    assert!(!escaped.exists());
+    assert!(!keystore_dir.join("../pwned_foundry_alias").exists());
 });
 
 // tests that `cast wallet sign message` outputs the expected signature
@@ -949,6 +1533,91 @@ casttest!(wallet_sign_auth, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(wallet_sign_auth_zero_chain_requires_confirmation, |_prj, cmd| {
+    use alloy_rlp::Decodable;
+
+    let delegate = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf";
+    let private_key = "0x0000000000000000000000000000000000000000000000000000000000000001";
+
+    cmd.args(["wallet", "sign-auth", "--nonce", "100", "--chain", "0", delegate])
+        .stdin("n\n")
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Warning: Chain ID 0 creates an EIP-7702 authorization that is valid on every chain.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    let confirmed = cmd
+        .cast_fuse()
+        .args([
+            "wallet",
+            "sign-auth",
+            "--private-key",
+            private_key,
+            "--nonce",
+            "100",
+            "--chain",
+            "0",
+            delegate,
+        ])
+        .stdin("y\n")
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Chain ID 0 creates an EIP-7702 authorization that is valid on every chain.
+
+Continue anyway? [y/N] "#]])
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+
+    let bytes = hex::decode(confirmed.strip_prefix("0x").unwrap()).unwrap();
+    let auth = alloy_eips::eip7702::SignedAuthorization::decode(&mut bytes.as_slice()).unwrap();
+    assert_eq!(*auth.chain_id(), U256::ZERO);
+    assert_eq!(auth.nonce(), 100);
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "sign-auth",
+            "--private-key",
+            private_key,
+            "--nonce",
+            "100",
+            "--chain",
+            "0",
+            "--force",
+            delegate,
+        ])
+        .assert_success()
+        .stdout_eq(format!("{confirmed}\n"))
+        .stderr_eq(str![""]);
+});
+
+casttest!(wallet_sign_auth_rpc_zero_chain_requires_confirmation, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(0u64))).await;
+
+    cmd.args([
+        "wallet",
+        "sign-auth",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: Chain ID 0 creates an EIP-7702 authorization that is valid on every chain.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
 // tests that `cast wallet sign-auth --self-broadcast` uses nonce + 1
 casttest!(wallet_sign_auth_self_broadcast, async |_prj, cmd| {
     use alloy_rlp::Decodable;
@@ -1028,10 +1697,10 @@ casttest!(wallet_sign_auth_self_broadcast, async |_prj, cmd| {
     );
 });
 
-// tests that `cast wallet list` outputs the local accounts
+// Tests that `cast wallet list` outputs the local accounts.
 casttest!(wallet_list_local_accounts, |prj, cmd| {
     let keystore_path = prj.root().join("keystore");
-    fs::create_dir_all(keystore_path).unwrap();
+    fs::create_dir_all(&keystore_path).unwrap();
     cmd.set_current_dir(prj.root());
 
     // empty results
@@ -1081,7 +1750,13 @@ Created new encrypted keystore file: [..]
 
 "#]]);
 
-    // test list new wallet
+    fs::write(
+        keystore_path.join("ignored.touchid"),
+        valid_touch_id_sidecar_fixture(1, "user-presence"),
+    )
+    .unwrap();
+
+    // Test listing new wallets while omitting the Touch ID sidecar.
     cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]).assert_success().stdout_eq(str![
         [r#"
 [..] (Local)
@@ -1099,13 +1774,63 @@ Created new encrypted keystore file: [..]
     ]);
 });
 
-// tests that `cast wallet list --json --dir` wraps local accounts in the shared envelope
+casttest!(wallet_list_preserves_ambiguous_touch_id_file, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+    fs::create_dir_all(&keystore_path).unwrap();
+    fs::write(keystore_path.join("ambiguous.touchid"), "malformed").unwrap();
+    cmd.set_current_dir(prj.root());
+
+    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]).assert_success().stdout_eq(str![
+        [r#"ambiguous.touchid (Local)
+
+"#]
+    ]);
+});
+
+casttest!(wallet_list_retains_unknown_touch_id_sidecars_and_hides_recognized, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+    fs::create_dir_all(&keystore_path).unwrap();
+
+    fs::write(
+        keystore_path.join("recognized.touchid"),
+        valid_touch_id_sidecar_fixture(1, "user-presence"),
+    )
+    .unwrap();
+
+    fs::write(
+        keystore_path.join("future.touchid"),
+        valid_touch_id_sidecar_fixture(2, "user-presence"),
+    )
+    .unwrap();
+
+    fs::write(
+        keystore_path.join("invalid_payload.touchid"),
+        r#"{"version":1,"policy":"user-presence","se_key":"aa","sealed_password":"bb"}"#,
+    )
+    .unwrap();
+
+    cmd.set_current_dir(prj.root());
+
+    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]).assert_success().stdout_eq(str![
+        [r#"future.touchid (Local)
+invalid_payload.touchid (Local)
+
+"#]
+    ]);
+});
+
+// Tests that `cast wallet list --json --dir` wraps local accounts in the shared envelope.
 casttest!(wallet_list_local_accounts_json, |prj, cmd| {
     let keystore_path = prj.root().join("keystore");
     fs::create_dir_all(&keystore_path).unwrap();
     cmd.set_current_dir(prj.root());
 
     cmd.args(["wallet", "new", "keystore", "--unsafe-password", "test"]).assert_success();
+    fs::write(
+        keystore_path.join("ignored.touchid"),
+        valid_touch_id_sidecar_fixture(1, "user-presence"),
+    )
+    .unwrap();
 
     cmd.cast_fuse()
         .args(["wallet", "list", "--json", "--dir", "keystore"])
@@ -1118,6 +1843,43 @@ casttest!(wallet_list_local_accounts_json, |prj, cmd| {
   "data": [
     {
       "address": "{...}",
+      "source": "Local"
+    }
+  ],
+  "errors": [],
+  "warnings": []
+}
+
+"#]]
+            .is_json(),
+        );
+});
+
+// tests that `cast wallet list` preserves custom keystore names
+casttest!(wallet_list_named_local_account, |prj, cmd| {
+    let keystore_path = prj.root().join("keystore");
+    fs::create_dir_all(&keystore_path).unwrap();
+    fs::write(keystore_path.join("my_account"), "{}").unwrap();
+    cmd.set_current_dir(prj.root());
+
+    cmd.cast_fuse().args(["wallet", "list", "--dir", "keystore"]).assert_success().stdout_eq(str![
+        [r#"
+my_account (Local)
+
+"#]
+    ]);
+
+    cmd.cast_fuse()
+        .args(["wallet", "list", "--json", "--dir", "keystore"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [
+    {
+      "address": "my_account",
       "source": "Local"
     }
   ],
@@ -1512,6 +2274,95 @@ casttest!(wallet_private_key_with_derivation_path, |_prj, cmd| {
 "#]]);
 });
 
+// Tests that `cast wallet import --touch-id` fails without Touch ID support.
+#[cfg(not(all(target_os = "macos", feature = "touch-id")))]
+casttest!(wallet_import_touch_id_unsupported, |prj, cmd| {
+    let keystore_path = prj.root().join("touch-id-keystore");
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--keystore-dir",
+        keystore_path.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+        "--touch-id",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: `--touch-id` requires macOS and a cast build with the `touch-id` feature
+
+"#]]);
+
+    assert!(!keystore_path.exists());
+    assert!(!keystore_path.join("testAccount").exists());
+    assert!(!keystore_path.join("testAccount.touchid").exists());
+});
+
+// Tests that `cast wallet new --touch-id` fails without Touch ID support.
+#[cfg(not(all(target_os = "macos", feature = "touch-id")))]
+casttest!(wallet_new_touch_id_unsupported, |prj, cmd| {
+    let keystore_path = prj.root().join("touch-id-keystore");
+    cmd.args([
+        "wallet",
+        "new",
+        keystore_path.to_str().unwrap(),
+        "testAccount",
+        "--unsafe-password",
+        "test",
+        "--touch-id",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: `--touch-id` requires macOS and a cast build with the `touch-id` feature
+
+"#]]);
+
+    assert!(!keystore_path.exists());
+    assert!(!keystore_path.join("testAccount").exists());
+    assert!(!keystore_path.join("testAccount.touchid").exists());
+});
+
+#[cfg(not(all(target_os = "macos", feature = "touch-id")))]
+casttest!(wallet_touch_id_enroll_unsupported, |prj, cmd| {
+    let keystore_dir = prj.root().join("touch-id-keystore");
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "test",
+    ])
+    .assert_success();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "touch-id",
+            "enroll",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "test",
+        ])
+        .assert_failure()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Error: `--touch-id` requires macOS and a cast build with the `touch-id` feature
+
+"#]]);
+    assert!(!keystore_dir.join("testAccount.touchid").exists());
+});
+
 // tests that `cast wallet import` creates a keystore for a private key and that `cast wallet
 // decrypt-keystore` can access it
 casttest!(wallet_import_and_decrypt, |prj, cmd| {
@@ -1621,7 +2472,8 @@ casttest!(wallet_change_password, |prj, cmd| {
         .stdout_eq(str![[r#"
 Password for keystore `testAccount` was changed successfully. [ADDRESS]
 
-"#]]);
+"#]])
+        .stderr_eq(str![""]);
 
     // verify the old password no longer works
     cmd.cast_fuse()
@@ -1654,6 +2506,180 @@ Password for keystore `testAccount` was changed successfully. [ADDRESS]
     // check that the decrypted private key matches the imported private key
     let decrypted_private_key = B256::from_str(private_key_string).unwrap();
     assert_eq!(decrypted_private_key, test_private_key);
+});
+
+#[cfg(all(target_os = "macos", feature = "touch-id"))]
+casttest!(
+    wallet_change_password_rejects_unsupported_touch_id_sidecar_before_rewrite,
+    |prj, cmd| {
+        let keystore_dir = prj.root().join("keystore");
+        let sidecar = keystore_dir.join("testAccount.touchid");
+        let sidecar_content = valid_touch_id_sidecar_fixture(2, "user-presence");
+
+        cmd.args([
+            "wallet",
+            "import",
+            "testAccount",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "old_password",
+        ])
+        .assert_success();
+        fs::write(&sidecar, &sidecar_content).unwrap();
+
+        cmd.cast_fuse()
+            .args([
+                "wallet",
+                "change-password",
+                "testAccount",
+                "--keystore-dir",
+                keystore_dir.to_str().unwrap(),
+                "--unsafe-password",
+                "old_password",
+                "--unsafe-new-password",
+                "new_password",
+            ])
+            .assert_failure()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
+Error: unsupported Touch ID sidecar version 2; re-enroll this keystore to regenerate it, or delete its `.touchid` sidecar to use the password prompt
+
+"#]]);
+        assert!(sidecar.exists());
+        assert_eq!(fs::read_to_string(&sidecar).unwrap(), sidecar_content);
+
+        cmd.cast_fuse()
+            .args([
+                "wallet",
+                "decrypt-keystore",
+                "testAccount",
+                "--keystore-dir",
+                keystore_dir.to_str().unwrap(),
+                "--unsafe-password",
+                "old_password",
+            ])
+            .assert_success();
+
+        cmd.cast_fuse()
+            .args([
+                "wallet",
+                "decrypt-keystore",
+                "testAccount",
+                "--keystore-dir",
+                keystore_dir.to_str().unwrap(),
+                "--unsafe-password",
+                "new_password",
+            ])
+            .assert_failure();
+    }
+);
+
+casttest!(wallet_change_password_refuses_unknown_touch_id_sidecar, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let keystore_path = keystore_dir.join("testAccount");
+    let sidecar_path = keystore_dir.join("testAccount.touchid");
+
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "old_password",
+    ])
+    .assert_success();
+
+    let unknown_sidecar_content = r#"{"application":"unrelated"}"#;
+    fs::write(&sidecar_path, unknown_sidecar_content).unwrap();
+
+    let original_keystore_bytes = fs::read(&keystore_path).unwrap();
+    let original_sidecar_bytes = fs::read(&sidecar_path).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "change-password",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "old_password",
+            "--unsafe-new-password",
+            "new_password",
+        ])
+        .assert_failure();
+
+    assert_eq!(fs::read(&keystore_path).unwrap(), original_keystore_bytes);
+    assert_eq!(fs::read(&sidecar_path).unwrap(), original_sidecar_bytes);
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "decrypt-keystore",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "old_password",
+        ])
+        .assert_success();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "decrypt-keystore",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "new_password",
+        ])
+        .assert_failure();
+});
+
+#[cfg(not(all(target_os = "macos", feature = "touch-id")))]
+casttest!(wallet_change_password_removes_touch_id_sidecar, |prj, cmd| {
+    let keystore_dir = prj.root().join("keystore");
+    let sidecar = keystore_dir.join("testAccount.touchid");
+
+    cmd.args([
+        "wallet",
+        "import",
+        "testAccount",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--keystore-dir",
+        keystore_dir.to_str().unwrap(),
+        "--unsafe-password",
+        "old_password",
+    ])
+    .assert_success();
+    fs::write(&sidecar, valid_touch_id_sidecar_fixture(1, "user-presence")).unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "wallet",
+            "change-password",
+            "testAccount",
+            "--keystore-dir",
+            keystore_dir.to_str().unwrap(),
+            "--unsafe-password",
+            "old_password",
+            "--unsafe-new-password",
+            "new_password",
+        ])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: Removed the stale Touch ID enrollment after changing the password
+
+"#]]);
+    assert!(!sidecar.exists());
 });
 
 // tests that `cast estimate` is working correctly.
@@ -1731,6 +2757,109 @@ casttest!(estimate_contract_deploy_gas, |_prj, cmd| {
     assert!(output > 0);
 });
 
+casttest!(estimate_eip7702_auth_disclosure_declined, |prj, cmd| {
+    prj.update_config(|config| config.chain = Some(31337.into()));
+
+    cmd.args([
+        "estimate",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(estimate_eip7702_auth_disclosure_requires_signer, |prj, cmd| {
+    prj.update_config(|config| config.chain = Some(31337.into()));
+
+    cmd.args([
+        "estimate",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--nonce",
+        "0",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: No signer available to sign authorization. Provide a pre-signed authorization (hex-encoded) instead.
+
+"#]]);
+});
+
+casttest!(estimate_eip7702_auth_disclosure_accepted_and_forced, async |_prj, cmd| {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+    api.anvil_set_code(
+        address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+        "0x602a5f5260205ff3".parse().unwrap(),
+    )
+    .await
+    .unwrap();
+    let args = [
+        "estimate",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+    ];
+
+    let output = cmd
+        .args(args)
+        .arg("--json")
+        .stdin("y\n")
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] "#]])
+        .get_output()
+        .stdout_lossy();
+    let output: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert!(output["data"].as_u64().unwrap() > 21_000);
+
+    let output = cmd
+        .cast_fuse()
+        .args(args)
+        .arg("--force")
+        .assert_success()
+        .stderr_eq(str![""])
+        .get_output()
+        .stdout_lossy();
+    assert!(output.trim().parse::<u64>().unwrap() > 21_000);
+
+    let output = cmd
+        .cast_fuse()
+        .args(args)
+        .args(["--quiet", "--force"])
+        .assert_success()
+        .stderr_eq(str![""])
+        .get_output()
+        .stdout_lossy();
+    assert!(output.trim().parse::<u64>().unwrap() > 21_000);
+});
+
 // tests that the `cast to-rlp` and `cast from-rlp` commands work correctly
 casttest!(rlp, |_prj, cmd| {
     cmd.args(["--to-rlp", "[\"0xaa\", [[\"bb\"]], \"0xcc\"]"]).assert_success().stdout_eq(str![[
@@ -1745,6 +2874,24 @@ casttest!(rlp, |_prj, cmd| {
 [["0x55556666"],[],[],[[[]]]]
 
 "#]]);
+
+    // Build the RLP encoding of 10,000 nested single-item lists without recursively encoding it.
+    const NESTING_DEPTH: usize = 10_000;
+    let mut encoded_len = 1;
+    let mut headers = Vec::with_capacity(NESTING_DEPTH);
+    for _ in 0..NESTING_DEPTH {
+        let mut header = Vec::new();
+        Header { list: true, payload_length: encoded_len }.encode(&mut header);
+        encoded_len += header.len();
+        headers.push(header);
+    }
+    let mut deeply_nested = Vec::with_capacity(encoded_len);
+    for header in headers.iter().rev() {
+        deeply_nested.extend_from_slice(header);
+    }
+    deeply_nested.push(0x80);
+
+    cmd.cast_fuse().arg("--from-rlp").stdin(hex::encode_prefixed(deeply_nested)).assert_success();
 });
 
 // test that `cast impl` works correctly for both the implementation slot and the beacon slot
@@ -1900,6 +3047,20 @@ casttest!(rpc_raw_params_stdin, |_prj, cmd| {
 casttest!(calldata_array, |_prj, cmd| {
     cmd.args(["calldata", "propose(string[])", "[\"\"]"]).assert_success().stdout_eq(str![[r#"
 0xcde2baba0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000
+
+"#]]);
+});
+
+casttest!(to_bytes_memory, |_prj, cmd| {
+    cmd.args(["to-bytes-memory", "0x1234"]).assert_success().stdout_eq(str![[r#"
+0x00000000000000000000000000000000000000000000000000000000000000021234000000000000000000000000000000000000000000000000000000000000
+
+"#]]);
+});
+
+casttest!(to_bytes_memory_alias_from_stdin, |_prj, cmd| {
+    cmd.arg("tbm").stdin("0x1234\n").assert_success().stdout_eq(str![[r#"
+0x00000000000000000000000000000000000000000000000000000000000000021234000000000000000000000000000000000000000000000000000000000000
 
 "#]]);
 });
@@ -2114,6 +3275,93 @@ access list:
 "#]]);
 });
 
+casttest!(access_list_eip7702_auth_disclosure_declined, |prj, cmd| {
+    prj.update_config(|config| config.chain = Some(31337.into()));
+
+    cmd.args([
+        "access-list",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(access_list_eip7702_auth_disclosure_requires_signer, |prj, cmd| {
+    prj.update_config(|config| config.chain = Some(31337.into()));
+
+    cmd.args([
+        "access-list",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--nonce",
+        "0",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: No signer available to sign authorization. Provide a pre-signed authorization (hex-encoded) instead.
+
+"#]]);
+});
+
+casttest!(access_list_eip7702_auth_disclosure_accepted_and_forced, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+    let args = [
+        "access-list",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+    ];
+
+    cmd.args(args)
+        .stdin("y\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+[GAS]
+access list:
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] "#]]);
+
+    cmd.cast_fuse()
+        .args(args)
+        .arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
+[GAS]
+access list:
+
+"#]])
+        .stderr_eq(str![""]);
+});
+
 casttest!(send_rejects_invalid_eip1559_fees_before_access_list, async |_prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
@@ -2264,6 +3512,44 @@ casttest!(create2_output_channels, |_prj, cmd| {
 "#]]);
 });
 
+// tests that the machine-readable stdout record is omitted on an interactive terminal, where it
+// would duplicate the stderr prose
+casttest!(
+    #[cfg(unix)]
+    create2_tty_omits_stdout_record,
+    |_prj, _cmd| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cast"));
+        command.env("NO_COLOR", "1").env("TERM", "dumb").args([
+            "create2",
+            "--starts-with",
+            "cc",
+            "--init-code-hash",
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+        ]);
+
+        let mut session = spawn_with_options(
+            command,
+            Options {
+                timeout_ms: Some(30_000),
+                strip_ansi_escape_codes: true,
+                encoding: Encoding::UTF8,
+            },
+        )
+        .unwrap();
+
+        session.exp_string("Successfully found contract address").unwrap();
+        session.exp_string("Address: 0x").unwrap();
+        session.exp_string("Salt: 0x").unwrap();
+        // Only the salt value and its decimal representation may follow; the `address\tsalt`
+        // record must not be printed to a tty.
+        let rest = session.exp_eof().unwrap();
+        assert!(
+            !rest.contains("0x") && !rest.contains('\t'),
+            "unexpected stdout record on tty: {rest:?}"
+        );
+    }
+);
+
 // tests that `cast create2 --salt` writes `address\tsalt` to stdout
 casttest!(create2_fixed_salt_output_channels, |_prj, cmd| {
     cmd.args([
@@ -2276,6 +3562,99 @@ casttest!(create2_fixed_salt_output_channels, |_prj, cmd| {
     .assert_success()
     .stdout_eq(str![[r#"
 0x[..]	0x0000000000000000000000000000000000000000000000000000000000000001
+
+"#]]);
+});
+
+casttest!(create2_init_code_hash, |prj, cmd| {
+    prj.add_source(
+        "InitCodeHash",
+        r#"
+contract InitCodeHash {
+    int256 public immutable value;
+    address public immutable owner;
+
+    constructor(int256 value_, address owner_) {
+        value = value_;
+        owner = owner_;
+    }
+}
+"#,
+    );
+
+    let owner = address!("0x0000000000000000000000000000000000000001");
+    let bytecode = cmd
+        .forge_fuse()
+        .args(["inspect", "InitCodeHash", "bytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let mut expected_init_code = hex::decode(bytecode.trim()).unwrap();
+    expected_init_code.extend((I256::unchecked_from(42), owner).abi_encode());
+    let expected = keccak256(expected_init_code);
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "create2",
+            "init-code-hash",
+            "src/InitCodeHash.sol:InitCodeHash",
+            "42",
+            &owner.to_string(),
+        ])
+        .assert_success()
+        .stdout_eq(format!("{expected}\n"));
+
+    let mut expected_init_code = hex::decode(bytecode.trim()).unwrap();
+    expected_init_code.extend((I256::unchecked_from(-5), owner).abi_encode());
+    let expected = keccak256(expected_init_code);
+    let root = prj.root().to_str().unwrap();
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "create2",
+            "init-code-hash",
+            "src/InitCodeHash.sol:InitCodeHash",
+            "-5",
+            &owner.to_string(),
+            "--root",
+            root,
+        ])
+        .assert_success()
+        .stdout_eq(format!("{expected}\n"));
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args([
+            "--json",
+            "create2",
+            "init-code-hash",
+            "src/InitCodeHash.sol:InitCodeHash",
+            "-5",
+            &owner.to_string(),
+        ])
+        .assert_json_stdout(format!(
+            r#"{{"schema_version":1,"success":true,"data":"{expected}","errors":[],"warnings":[]}}"#
+        ));
+});
+
+casttest!(create2_init_code_hash_rejects_abstract_contract, |prj, cmd| {
+    prj.add_source(
+        "AbstractInitCodeHash",
+        r#"
+abstract contract AbstractInitCodeHash {
+    function value() public pure virtual returns (uint256);
+}
+"#,
+    );
+
+    cmd.cast_fuse()
+        .current_dir(prj.root())
+        .args(["create2", "init-code-hash", "src/AbstractInitCodeHash.sol:AbstractInitCodeHash"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: no bytecode found in bin object for AbstractInitCodeHash
 
 "#]]);
 });
@@ -2302,6 +3681,138 @@ casttest!(mktx, |_prj, cmd| {
 0x02f86b0180843b9aca008502540be4008252089400000000000000000000000000000000000000016480c001a070d55e79ed3ac9fc8f51e78eb91fd054720d943d66633f2eb1bc960f0126b0eca052eda05a792680de3181e49bab4093541f75b49d1ecbe443077b3660c836016a
 
 "#]]);
+});
+
+casttest!(mktx_eip7702_auth_disclosure_declined, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(mktx_ethsign_eip7702_auth_disclosure_declined, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        PRESIGNED_EIP7702_AUTH,
+        "--ethsign",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--chain",
+        "31337",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(mktx_eip7702_auth_no_disclosure, |_prj, cmd| {
+    cmd.args([
+        "mktx",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+    .stderr_eq(str![""]);
+});
+
+casttest!(mktx_eip7702_auth_disclosure_forced, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+
+    cmd.args([
+        "mktx",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--force",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+    .stderr_eq(str![""]);
+});
+
+casttest!(mktx_sponsor_hash_supports_address_auth, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+
+    cmd.args([
+        "mktx",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--force",
+        "--tempo.print-sponsor-hash",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+    .stderr_eq(str![""]);
 });
 
 casttest!(mktx_signature, |_prj, cmd| {
@@ -3302,6 +4813,54 @@ interface Interface {
     ]);
 });
 
+casttest!(interface_with_function_pointer_in_struct, |prj, cmd| {
+    let abi = r#"[
+        {
+            "anonymous": false,
+            "inputs": [
+                {
+                    "components": [
+                        {"internalType": "uint256", "name": "id", "type": "uint256"},
+                        {
+                            "internalType": "function (uint256) external",
+                            "name": "callback",
+                            "type": "function"
+                        }
+                    ],
+                    "indexed": false,
+                    "internalType": "struct StructWithFunctionEvent.Action",
+                    "name": "action",
+                    "type": "tuple"
+                }
+            ],
+            "name": "ActionLogged",
+            "type": "event"
+        }
+    ]"#;
+    let path = prj.root().join("function_event_abi.json");
+    fs::write(&path, abi).unwrap();
+
+    cmd.arg("interface")
+        .arg(&path)
+        .arg("--name")
+        .arg("StructWithFunctionEvent")
+        .assert_success()
+        .stdout_eq(str![[r#"
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity ^0.8.4;
+
+interface StructWithFunctionEvent {
+    struct Action {
+        uint256 id;
+        function(uint256) external callback;
+    }
+
+    event ActionLogged(Action action);
+}
+
+"#]]);
+});
+
 casttest!(interface_local_contract_does_not_write_artifacts, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.add_source(
@@ -3546,10 +5105,13 @@ casttest!(send_eip7702, async |_prj, cmd| {
         "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
         "--private-key",
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--gas-limit",
+        "100000",
         "--rpc-url",
         &endpoint,
     ])
-    .assert_success();
+    .assert_success()
+    .stderr_eq(str![""]);
 
     cmd.cast_fuse()
         .args(["code", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "--rpc-url", &endpoint])
@@ -3558,6 +5120,386 @@ casttest!(send_eip7702, async |_prj, cmd| {
 0xef010070997970c51812dc3a010c7d01b50e0d17dc79c8
 
 "#]]);
+});
+
+casttest!(send_eip7702_auth_disclosure_declined, |_prj, cmd| {
+    cmd.args([
+        "send",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(send_eip7702_auth_disclosure_forced, async |_prj, cmd| {
+    let (_api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+
+    cmd.args([
+        "send",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--force",
+        "--async",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+    .stderr_eq(str![""]);
+});
+
+casttest!(send_sponsor_hash_supports_address_auth, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+
+    cmd.args([
+        "send",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--force",
+        "--tempo.print-sponsor-hash",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+    .stderr_eq(str![""]);
+});
+
+casttest!(batch_mktx_eip7702_auth_disclosure, async |_prj, cmd| {
+    let args = [
+        "batch-mktx",
+        "--call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ];
+
+    cmd.args(args)
+        .args(["--chain", "31337", "--rpc-url", "http://127.0.0.1:1"])
+        .stdin("n\n")
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    let (_api, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    cmd.cast_fuse()
+        .args(args)
+        .args(["--force", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+
+"#]]);
+});
+
+casttest!(batch_mktx_ethsign_eip7702_auth_disclosure_declined, |_prj, cmd| {
+    cmd.args([
+        "batch-mktx",
+        "--call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        PRESIGNED_EIP7702_AUTH,
+        "--ethsign",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--nonce",
+        "0",
+        "--gas-limit",
+        "21000",
+        "--gas-price",
+        "10000000000",
+        "--priority-gas-price",
+        "1000000000",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(batch_send_eip7702_auth_disclosure, async |_prj, cmd| {
+    let args = [
+        "batch-send",
+        "--call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ];
+
+    cmd.args(args)
+        .args(["--chain", "31337", "--rpc-url", "http://127.0.0.1:1"])
+        .stdin("n\n")
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    let (_api, handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    cmd.cast_fuse()
+        .args(args)
+        .args(["--force", "--async", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x[..]
+
+"#]])
+        .stderr_eq(str![[r#"
+Building batch transaction with 1 call(s)...
+
+"#]]);
+});
+
+casttest!(call_eip7702_auth_disclosure_declined, |_prj, cmd| {
+    cmd.args([
+        "call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .stdin("n\n")
+    .assert_success()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+});
+
+casttest!(call_eip7702_auth_disclosure_requires_signer, |_prj, cmd| {
+    cmd.args([
+        "call",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--from",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--nonce",
+        "0",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: No signer available to sign authorization. Provide a pre-signed authorization (hex-encoded) instead.
+
+"#]]);
+});
+
+casttest!(call_eip7702_auth_disclosure_accepted_and_forced, async |_prj, cmd| {
+    let (api, handle) =
+        anvil::spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    let endpoint = handle.http_endpoint();
+    let delegate_code = "0x602a5f5260205ff3".parse().unwrap();
+    api.anvil_set_code(address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"), delegate_code)
+        .await
+        .unwrap();
+    api.anvil_set_code(
+        address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+        "0x602a5f5260205ff3".parse().unwrap(),
+    )
+    .await
+    .unwrap();
+    let args = [
+        "call",
+        "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+    ];
+
+    cmd.args(args)
+        .arg("--json")
+        .stdin("y\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] "#]]);
+
+    cmd.cast_fuse()
+        .args(args)
+        .arg("--force")
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]])
+        .stderr_eq(str![""]);
+
+    cmd.cast_fuse()
+        .args(args)
+        .args(["--quiet", "--force"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]])
+        .stderr_eq(str![""]);
+
+    let signer: PrivateKeySigner =
+        "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".parse().unwrap();
+    let auth = Authorization {
+        chain_id: U256::from(31337),
+        address: address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+        nonce: 0,
+    };
+    let signature = signer.sign_hash(&auth.signature_hash()).await.unwrap();
+    let encoded_auth = hex::encode_prefixed(alloy_rlp::encode(auth.into_signed(signature)));
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            &signer.address().to_string(),
+            "--auth",
+            &encoded_auth,
+            "--from",
+            &signer.address().to_string(),
+            "--rpc-url",
+            &endpoint,
+        ])
+        .stdin("y\n")
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]])
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] "#]]);
+
+    cmd.cast_fuse().args(args).arg("--trace").assert_success().stderr_eq(str![""]);
+    cmd.cast_fuse()
+        .args(args)
+        .args(["--trace", "--access-list", "[]"])
+        .assert_success()
+        .stderr_eq(str![""]);
+});
+
+casttest!(call_eip7702_auth_disclosure_routing, |_prj, cmd| {
+    let base_args = [
+        "call",
+        "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "--auth",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--chain",
+        "31337",
+        "--rpc-url",
+        "http://127.0.0.1:1",
+    ];
+
+    cmd.args(base_args)
+        .arg("--debug-trace-call")
+        .stdin("n\n")
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(base_args)
+        .args(["--trace", "--access-list"])
+        .stdin("n\n")
+        .assert_success()
+        .stderr_eq(str![[r#"
+Warning: This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid.
+
+Continue anyway? [y/N] Aborted.
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(base_args)
+        .arg("--quiet")
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: EIP-7702 authorization disclosure requires confirmation; pass `--force` to continue with `--quiet`
+
+"#]]);
+
+    cmd.cast_fuse().args(base_args).arg("--curl").assert_success().stderr_eq(str![""]);
 });
 
 casttest!(send_eip7702_multiple_auth, async |_prj, cmd| {
@@ -4011,6 +5953,146 @@ async fn deploy_counter_and_set_number(
         .unwrap()
         .tx_hash()
 }
+
+// `cast run` must replay a transaction's block prefix without changing the trace requested for the
+// selected transaction. A single block covers a deployment in the first position, a revert in the
+// middle, and an internally traced state change in the last position.
+forgetest_async!(cast_run_fork_traces_only_target_transaction, |prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap().address();
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source(
+        "ReplayTarget",
+        r#"
+contract ReplayTarget {
+    uint256 public number;
+
+    constructor() {
+        number = 1;
+    }
+
+    function revertingIncrement() external {
+        number++;
+        revert("expected revert");
+    }
+
+    function increment() external {
+        _increment();
+    }
+
+    function _increment() internal {
+        number++;
+    }
+}
+"#,
+    );
+    let bytecode = cmd
+        .forge_fuse()
+        .args(["inspect", "ReplayTarget", "bytecode"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let bytecode = Bytes::from_str(bytecode.trim()).unwrap();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let nonce = provider.get_transaction_count(sender).await.unwrap();
+    let target = sender.create(nonce);
+    let deployment = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .from(sender)
+                .with_deploy_code(bytecode)
+                .nonce(nonce)
+                .gas_limit(1_000_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let revert = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .from(sender)
+                .to(target)
+                .with_input(Bytes::copy_from_slice(&keccak256(b"revertingIncrement()")[..4]))
+                .nonce(nonce + 1)
+                .gas_limit(1_000_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let increment = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .from(sender)
+                .to(target)
+                .with_input(Bytes::copy_from_slice(&keccak256(b"increment()")[..4]))
+                .nonce(nonce + 2)
+                .gas_limit(1_000_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let tx_hashes = [*deployment.tx_hash(), *revert.tx_hash(), *increment.tx_hash()];
+    api.mine_one().await.unwrap();
+
+    for (index, tx_hash) in tx_hashes.iter().enumerate() {
+        let block_tx = api
+            .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(index))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(block_tx.tx_hash(), *tx_hash);
+    }
+    assert!(!api.transaction_receipt(tx_hashes[1]).await.unwrap().unwrap().status());
+
+    cmd.set_current_dir(prj.root());
+    let deployment_output = cmd
+        .cast_fuse()
+        .args(["run", &tx_hashes[0].to_string(), "--rpc-url", &endpoint, "--with-local-artifacts"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(deployment_output.contains("new ReplayTarget"));
+    assert!(deployment_output.contains("Transaction successfully executed."));
+
+    let revert_output = cmd
+        .cast_fuse()
+        .args(["run", &tx_hashes[1].to_string(), "--rpc-url", &endpoint, "--with-local-artifacts"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(revert_output.contains("ReplayTarget::revertingIncrement()"));
+    assert!(revert_output.contains("expected revert"));
+
+    let increment_output = cmd
+        .cast_fuse()
+        .args(["run", &tx_hashes[2].to_string(), "--rpc-url", &endpoint, "--with-local-artifacts"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(increment_output.contains("ReplayTarget::increment()"));
+    assert!(increment_output.contains("Transaction successfully executed."));
+
+    let decoded_output = cmd
+        .cast_fuse()
+        .args([
+            "run",
+            &tx_hashes[2].to_string(),
+            "--rpc-url",
+            &endpoint,
+            "--with-local-artifacts",
+            "--decode-internal",
+            "-vvvvv",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(decoded_output.contains("ReplayTarget::_increment()"));
+    assert!(decoded_output.contains("@ 0: 1 → 2"));
+});
 
 // `cast run --prestate-tracer` uses the prestate tracer when the node exposes the debug API
 // (Anvil does), skipping the block replay while still producing correct traces. The block replay
@@ -4935,6 +7017,86 @@ forgetest_async!(cast_call_debug_trace_call_local_artifacts_json_stdout, |prj, c
     });
 });
 
+casttest!(cast_call_decodes_custom_error, async |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    let signature = "RequestLimitExceeded(uint256,uint256)";
+    let selector = keccak256(signature);
+    let mut revert_data = selector[..4].to_vec();
+    revert_data.extend((U256::from(5), U256::from(3)).abi_encode());
+
+    // Runtime bytecode that copies the appended revert payload into memory and reverts with it.
+    let payload_len = u8::try_from(revert_data.len()).unwrap();
+    let mut runtime =
+        vec![0x60, payload_len, 0x60, 0x0a, 0x5f, 0x39, 0x60, payload_len, 0x5f, 0xfd];
+    runtime.extend(revert_data);
+
+    // Isolate and seed the signature cache so decoding is deterministic and offline.
+    let home = prj.root().join("home");
+    let cache_dir = home.join(".foundry/cache");
+    fs::create_dir_all(&cache_dir).unwrap();
+    let selector = format!("0x{}", hex::encode(&selector[..4]));
+    let mut errors = serde_json::Map::new();
+    errors.insert(selector, json!(signature));
+    fs::write(
+        cache_dir.join("signatures"),
+        serde_json::to_vec(&json!({
+            "functions": {},
+            "errors": errors,
+            "events": {},
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let target = "0x000000000000000000000000000000000000dead";
+    let code_override = format!("{target}:0x{}", hex::encode(runtime));
+    let endpoint = handle.http_endpoint();
+
+    cmd.env("HOME", &home);
+    cmd.env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+        "call",
+        target,
+        "--data",
+        "0x",
+        "--override-code",
+        &code_override,
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: execution reverted: RequestLimitExceeded(5, 3)
+
+Context:
+- server returned an error response:[..]
+
+"#]]);
+
+    cmd.cast_fuse();
+    cmd.env("HOME", &home);
+    cmd.env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+            "call",
+            target,
+            "--data",
+            "0x",
+            "--override-code",
+            &code_override,
+            "--rpc-url",
+            &endpoint,
+            "--json",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"cast.error","message":"execution reverted: RequestLimitExceeded(5, 3)"},{"level":"error","code":"cast.error.context","message":"server returned an error response:[..]"}],"warnings":[]}
+
+"#]])
+        .stderr_eq(str![""]);
+});
+
 // `cast call --trace` decodes custom errors through the local signatures cache that `forge build`
 // populates, without requiring `--with-local-artifacts`.
 // <https://github.com/foundry-rs/foundry/issues/11085>
@@ -5387,8 +7549,8 @@ Traces:
     │   │   │   │   └─ ← [Return] 0xc13089327d3c20c0ce35f2f058c423de29977e6950e406c095e366a8fabd463f
     │   │   │   ├─ [96] PRECOMPILES::sha256(0x424242424242424242424242424242424242424242424242424242424242424201000000c13089327d3c20c0ce35f2f058c423de29977e6950e406c095e366a8fabd463f) [staticcall]
     │   │   │   │   └─ ← [Return] 0xc544bd9a4ea526dda3a008f43c21b6f0be3031b1ff71832b9876915dc91deea0
-    │   │   │   ├─ [..] P256VERIFY::c544bd9a(4ea526dda3a008f43c21b6f0be3031b1ff71832b9876915dc91deea0dd519280ec730727f07aa36550bde31a1d5f3097818f3425c2f083ed33a91f080fa2afac0071f6e1af9a0e9c09b851bf01e68bc8a1c1f89f686c48205762f925bf54fa13f88658092efa36c51b1e3c4db31d3afb92812fb852dac7cf9614bc479bf5da7241d9c4ab1b431b57ec3369587b4c831d7a564438990da053708c3289) [staticcall]
-    │   │   │   │   └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000001
+    │   │   │   ├─ [..] PRECOMPILES::p256Verify(0xc544bd9a4ea526dda3a008f43c21b6f0be3031b1ff71832b9876915dc91deea0, 100105265279889746367868033207795503835004638867404470555471132548343465058056, 7072134396011491412722047857354424388694374548663828422239323654972225288485, 86541895207843662984465061939919839471417016180185784541173973900783506472007, 70542876722349398371292179791476581686494250953390952520841573290937254949513) [staticcall]
+    │   │   │   │   └─ ← [Return] true
     │   │   │   └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000000011bde17b8de18819c9eb86cefc3920ddb5d3d4254de276e3d6e18dd2b399f732b
     │   │   └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000000011bde17b8de18819c9eb86cefc3920ddb5d3d4254de276e3d6e18dd2b399f732b
     │   ├─ [..] 0xA12384c5E52fD646E7BC7F6B3b33A605651F566E::checkAndIncrementNonce(23)
@@ -5436,6 +7598,498 @@ Transaction successfully executed.
 "#]]);
     }
 );
+
+#[cfg(feature = "monad")]
+casttest!(monad_call_trace_uses_monad_evm_network, async |_prj, cmd| {
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
+    let (_api, handle) = anvil::spawn(config).await;
+    let endpoint = handle.http_endpoint();
+    let reserve_balance_address = MONAD_RESERVE_BALANCE_ADDRESS.to_string();
+    let input = format!("0x{}", hex::encode(MONAD_DIPPED_INTO_RESERVE_SELECTOR));
+    let output = cmd
+        .args([
+            "call",
+            &reserve_balance_address,
+            "--data",
+            &input,
+            "--rpc-url",
+            &endpoint,
+            "--trace",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("Traces:"), "{output}");
+    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
+    assert!(output.contains("[Return] false"), "{output}");
+});
+
+#[cfg(feature = "monad")]
+casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadEight.into()))
+        .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
+        .with_genesis_timestamp(Some(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP - 1));
+    let (_api, monad_eight_handle) = anvil::spawn(config).await;
+    let monad_eight_endpoint = monad_eight_handle.http_endpoint();
+    let reserve_balance_address = MONAD_RESERVE_BALANCE_ADDRESS.to_string();
+    let input = format!("0x{}", hex::encode(MONAD_DIPPED_INTO_RESERVE_SELECTOR));
+
+    let monad_eight = cmd
+        .args([
+            "call",
+            &reserve_balance_address,
+            "--data",
+            &input,
+            "--rpc-url",
+            &monad_eight_endpoint,
+            "--trace",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(monad_eight.contains(&reserve_balance_address), "{monad_eight}");
+    assert!(!monad_eight.contains("ReserveBalance"), "{monad_eight}");
+    assert!(monad_eight.contains("[Stop]"), "{monad_eight}");
+    assert!(!monad_eight.contains("[Return] false"), "{monad_eight}");
+
+    let monad_eight_rpc = cmd
+        .cast_fuse()
+        .args([
+            "call",
+            &reserve_balance_address,
+            "--data",
+            &input,
+            "--rpc-url",
+            &monad_eight_endpoint,
+            "--debug-trace-call",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(monad_eight_rpc.contains(&reserve_balance_address), "{monad_eight_rpc}");
+    assert!(!monad_eight_rpc.contains("ReserveBalance"), "{monad_eight_rpc}");
+
+    let activation = MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP.to_string();
+    let monad_eight_with_later_timestamp = cmd
+        .cast_fuse()
+        .args([
+            "call",
+            &reserve_balance_address,
+            "--data",
+            &input,
+            "--rpc-url",
+            &monad_eight_endpoint,
+            "--trace",
+            "--block.time",
+            &activation,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        monad_eight_with_later_timestamp.contains(&reserve_balance_address),
+        "{monad_eight_with_later_timestamp}"
+    );
+    assert!(
+        !monad_eight_with_later_timestamp.contains("ReserveBalance"),
+        "{monad_eight_with_later_timestamp}"
+    );
+    assert!(
+        monad_eight_with_later_timestamp.contains("[Stop]"),
+        "{monad_eight_with_later_timestamp}"
+    );
+    assert!(
+        !monad_eight_with_later_timestamp.contains("[Return] false"),
+        "{monad_eight_with_later_timestamp}"
+    );
+
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()))
+        .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
+        .with_genesis_timestamp(Some(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP));
+    let (_origin_api, monad_nine_origin) = anvil::spawn(config).await;
+    let config = NodeConfig::test_monad()
+        .with_chain_id(Some(1u64))
+        .with_no_storage_caching(true)
+        .with_eth_rpc_url(Some(monad_nine_origin.http_endpoint()))
+        .with_fork_block_number(Some(0u64));
+    let (_api, monad_nine_handle) = anvil::spawn(config).await;
+    let monad_nine_endpoint = monad_nine_handle.http_endpoint();
+    let monad_nine = cmd
+        .cast_fuse()
+        .args([
+            "call",
+            &reserve_balance_address,
+            "--data",
+            &input,
+            "--rpc-url",
+            &monad_nine_endpoint,
+            "--trace",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(monad_nine.contains("ReserveBalance::dippedIntoReserve()"), "{monad_nine}");
+    assert!(monad_nine.contains("[Return] false"), "{monad_nine}");
+
+    let monad_nine_rpc = cmd
+        .cast_fuse()
+        .args([
+            "call",
+            &reserve_balance_address,
+            "--data",
+            &input,
+            "--rpc-url",
+            &monad_nine_endpoint,
+            "--debug-trace-call",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(monad_nine_rpc.contains("ReserveBalance::dippedIntoReserve()"), "{monad_nine_rpc}");
+
+    cmd.cast_fuse().env("FOUNDRY_HARDFORK", "monad:MonadEight");
+    let explicit_monad_eight = cmd
+        .args([
+            "call",
+            &reserve_balance_address,
+            "--data",
+            &input,
+            "--rpc-url",
+            &monad_nine_endpoint,
+            "--trace",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(explicit_monad_eight.contains(&reserve_balance_address), "{explicit_monad_eight}");
+    assert!(!explicit_monad_eight.contains("ReserveBalance"), "{explicit_monad_eight}");
+    assert!(explicit_monad_eight.contains("[Stop]"), "{explicit_monad_eight}");
+    assert!(!explicit_monad_eight.contains("[Return] false"), "{explicit_monad_eight}");
+});
+
+#[cfg(feature = "monad")]
+casttest!(monad_call_trace_uses_parent_sender_context, async |_prj, cmd| {
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
+    let (api, handle) = anvil::spawn(config).await;
+    let provider = handle.http_provider();
+    let sender = provider.get_accounts().await.unwrap()[0];
+    api.anvil_set_code(MONAD_RESERVE_PROBE_ADDRESS, MONAD_RESERVE_RETURN_PROBE_CODE.into())
+        .await
+        .unwrap();
+    api.anvil_set_balance(sender, mon(13)).await.unwrap();
+
+    let _ = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(MONAD_RESERVE_PROBE_ADDRESS)
+                .with_value(mon(1))
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    let endpoint = handle.http_endpoint();
+    let probe = MONAD_RESERVE_PROBE_ADDRESS.to_string();
+    let sender = sender.to_string();
+    let value = mon(3).to_string();
+    let output = cmd
+        .args([
+            "call",
+            &probe,
+            "--data",
+            "0x",
+            "--from",
+            &sender,
+            "--value",
+            &value,
+            "--gas-limit",
+            "100000",
+            "--rpc-url",
+            &endpoint,
+            "--trace",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
+    assert!(output.contains("[Return] true"), "{output}");
+});
+
+#[cfg(feature = "monad")]
+casttest!(monad_run_replays_reserve_balance_precompile_tx, async |_prj, cmd| {
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
+    let (_api, handle) = anvil::spawn(config).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .with_to(MONAD_RESERVE_BALANCE_ADDRESS)
+        .with_input(MONAD_DIPPED_INTO_RESERVE_SELECTOR);
+    let receipt = provider.send_transaction(tx.into()).await.unwrap().get_receipt().await.unwrap();
+
+    assert!(receipt.status());
+
+    let endpoint = handle.http_endpoint();
+    let tx_hash = receipt.transaction_hash.to_string();
+    let output = cmd
+        .args(["run", &tx_hash, "--rpc-url", &endpoint, "--quick"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("Transaction successfully executed."), "{output}");
+    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
+    assert!(output.contains("[Return] false"), "{output}");
+});
+
+#[cfg(feature = "monad")]
+casttest!(monad_run_preserves_endpoint_hardfork, async |_prj, cmd| {
+    let origin_config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()))
+        .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
+        .with_genesis_timestamp(Some(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP - 2));
+    let (_origin_api, origin_handle) = anvil::spawn(origin_config).await;
+    let config = NodeConfig::test_monad()
+        .with_chain_id(Some(1u64))
+        .with_no_storage_caching(true)
+        .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+        .with_fork_block_number(Some(0u64));
+    let (api, handle) = anvil::spawn(config).await;
+    let provider = handle.http_provider();
+    let from = provider.get_accounts().await.unwrap()[0];
+
+    api.evm_set_next_block_timestamp(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP - 1).unwrap();
+    let pre_activation_receipt = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(from)
+                .with_to(MONAD_RESERVE_BALANCE_ADDRESS)
+                .with_input(MONAD_DIPPED_INTO_RESERVE_SELECTOR)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    api.evm_set_next_block_timestamp(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP).unwrap();
+    let post_activation_receipt = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(from)
+                .with_to(MONAD_RESERVE_BALANCE_ADDRESS)
+                .with_input(MONAD_DIPPED_INTO_RESERVE_SELECTOR)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(pre_activation_receipt.status());
+    assert!(post_activation_receipt.status());
+
+    let endpoint = handle.http_endpoint();
+    let pre_activation_hash = pre_activation_receipt.transaction_hash.to_string();
+    let pre_activation = cmd
+        .args(["run", &pre_activation_hash, "--rpc-url", &endpoint, "--quick"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(pre_activation.contains("ReserveBalance::dippedIntoReserve()"), "{pre_activation}");
+    assert!(pre_activation.contains("[Return] false"), "{pre_activation}");
+
+    let post_activation_hash = post_activation_receipt.transaction_hash.to_string();
+    let post_activation = cmd
+        .cast_fuse()
+        .args(["run", &post_activation_hash, "--rpc-url", &endpoint, "--quick"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(post_activation.contains("ReserveBalance::dippedIntoReserve()"), "{post_activation}");
+    assert!(post_activation.contains("[Return] false"), "{post_activation}");
+
+    let pre_activation_rpc_trace = cmd
+        .cast_fuse()
+        .args(["run", &pre_activation_hash, "--rpc-url", &endpoint, "--debug-trace-transaction"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        pre_activation_rpc_trace.contains("ReserveBalance::dippedIntoReserve()"),
+        "{pre_activation_rpc_trace}"
+    );
+
+    let post_activation_rpc_trace = cmd
+        .cast_fuse()
+        .args(["run", &post_activation_hash, "--rpc-url", &endpoint, "--debug-trace-transaction"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert!(
+        post_activation_rpc_trace.contains("ReserveBalance::dippedIntoReserve()"),
+        "{post_activation_rpc_trace}"
+    );
+});
+
+#[cfg(feature = "monad")]
+casttest!(monad_run_traces_protocol_system_call, async |_prj, cmd| {
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
+    let (api, handle) = anvil::spawn(config).await;
+    let provider = handle.http_provider();
+    api.anvil_impersonate_account(MONAD_SYSTEM_ADDRESS).await.unwrap();
+    api.anvil_set_balance(MONAD_SYSTEM_ADDRESS, mon(1)).await.unwrap();
+
+    let snapshot_selector = &keccak256("syscallSnapshot()")[..4];
+    let receipt = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(MONAD_SYSTEM_ADDRESS)
+                .with_to(MONAD_STAKING_ADDRESS)
+                .with_input(snapshot_selector.to_vec())
+                .with_gas_limit(1_000_000)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status());
+
+    let endpoint = handle.http_endpoint();
+    let tx_hash = receipt.transaction_hash;
+    let tx_hash_string = tx_hash.to_string();
+    let original =
+        cmd.args(["run", &tx_hash_string, "--rpc-url", &endpoint, "--quick"]).assert_failure();
+    let original = original.get_output();
+    assert!(
+        original.stderr_lossy().contains("invalid Monad protocol system transaction"),
+        "{}",
+        original.stderr_lossy()
+    );
+    assert!(
+        !original.stdout_lossy().contains("Staking::syscallSnapshot()"),
+        "{}",
+        original.stdout_lossy()
+    );
+
+    let canonical_endpoint =
+        foundry_test_utils::rpc::spawn_canonical_monad_system_rpc(endpoint.clone(), tx_hash).await;
+    let output = cmd
+        .cast_fuse()
+        .args(["run", &tx_hash_string, "--rpc-url", &canonical_endpoint, "--quick"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("Staking::syscallSnapshot()"), "{output}");
+    assert!(output.contains("Transaction successfully executed."), "{output}");
+    assert!(!output.contains("0x0000000000000000000000000000000000000000::fallback()"), "{output}");
+
+    let unrelated_system = address!("deaddeaddeaddeaddeaddeaddeaddeaddead0001");
+    api.anvil_impersonate_account(unrelated_system).await.unwrap();
+    api.anvil_set_balance(unrelated_system, mon(1)).await.unwrap();
+    let unrelated_receipt = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(unrelated_system)
+                .with_to(Address::with_last_byte(1))
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(unrelated_receipt.status());
+    let unrelated_hash = unrelated_receipt.transaction_hash.to_string();
+
+    cmd.cast_fuse()
+        .args(["run", &unrelated_hash, "--rpc-url", &endpoint, "--quick"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: 0x[..] is a system transaction.
+Replaying system transactions is currently not supported.
+
+"#]]);
+    cmd.cast_fuse()
+        .args(["run", &unrelated_hash, "--rpc-url", &endpoint, "--quick", "--replay-system-txes"])
+        .assert_success();
+});
+
+#[cfg(feature = "monad")]
+casttest!(monad_run_replays_current_sender_context, async |_prj, cmd| {
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
+    let (api, handle) = anvil::spawn(config).await;
+    let provider = handle.http_provider();
+    let sender = provider.get_accounts().await.unwrap()[0];
+    api.anvil_set_code(MONAD_RESERVE_PROBE_ADDRESS, MONAD_RESERVE_RETURN_PROBE_CODE.into())
+        .await
+        .unwrap();
+    api.anvil_set_balance(sender, mon(12)).await.unwrap();
+    api.mine_one().await.unwrap();
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let _ = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(MONAD_RESERVE_PROBE_ADDRESS)
+                .with_nonce(0)
+                .with_value(mon(2))
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    let second = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(MONAD_RESERVE_PROBE_ADDRESS)
+                .with_nonce(1)
+                .with_value(mon(1))
+                .with_gas_limit(100_000)
+                .into(),
+        )
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    let receipt = second.get_receipt().await.unwrap();
+
+    let endpoint = handle.http_endpoint();
+    let tx_hash = receipt.transaction_hash.to_string();
+    let output = cmd
+        .args(["run", &tx_hash, "--rpc-url", &endpoint])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("ReserveBalance::dippedIntoReserve()"), "{output}");
+    assert!(output.contains("[Return] true"), "{output}");
+});
+
+#[cfg(feature = "monad")]
+fn mon(value: u64) -> U256 {
+    U256::from(value) * U256::from(1_000_000_000_000_000_000u128)
+}
 
 // tests cast send gas estimate execution failure message contains decoded custom error
 // <https://github.com/foundry-rs/foundry/issues/9789>
@@ -6348,12 +9002,172 @@ casttest!(abi_encode_event_no_indexed, |_prj, cmd| {
 
 // Test cast abi-encode-event with dynamic indexed parameter (string)
 casttest!(abi_encode_event_dynamic_indexed, |_prj, cmd| {
+    // topic1 is keccak256("hello"), matching Solidity's hashing of indexed strings.
     cmd.args(["abi-encode-event", "Log(string indexed message, uint256 data)", "hello", "42"])
         .assert_success()
         .stdout_eq(str![[r#"
 [topic0]: 0xdd970dd9b5bfe707922155b058a407655cb18288b807e2216442bca8ad83d6b5
-[topic1]: 0x984002fcc0ca639f96622add24c2edd2fe72c65e71ca3faa243e091e0bc7cdab
+[topic1]: 0x1c8aff950685c2ed4bc3174f3472287b56d9517b9c948127319a09a7a36deac8
 [data]: 0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]]);
+
+    // topic1 is keccak256(0xdeadbeef): raw contents, no padding or length prefix.
+    cmd.cast_fuse()
+        .args(["abi-encode-event", "Raw(bytes indexed payload)", "0xdeadbeef"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0xada02cd4e7d8ed80ea02ba8f2b0c44295aecd704d4d25ffb82af584a09f59997
+[topic1]: 0xd4fd4e189132273036449fc9e11198c739161b4c0116a9a2dccdfa1c492006f1
+
+"#]]);
+});
+
+casttest!(abi_encode_event_indexed_arrays, |_prj, cmd| {
+    // Array topics hash the concatenated padded elements without any length prefix:
+    // topic1 is keccak256(word(1) ++ word(2)).
+    cmd.args(["abi-encode-event", "Numbers(uint256[] indexed values)", "[1,2]"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x998e4b4864cb035323945d614c5aecbe49a6045c844d1e046fee480db062cc97
+[topic1]: 0xe90b7bceb6e7df5418fb78d8ee546e97c83a08bbccc01a0644d599ccd2a7c2e0
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args(["abi-encode-event", "Fixed(uint256[2] indexed values)", "[7,9]"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x369112dff39fc5861d470b610421e77e5cd444efdbe9948df8de38824dffc6be
+[topic1]: 0xae6299332bcd708cd60e3a8defa55de28078a50a4cf2b3de3a546253240ff9e1
+
+"#]]);
+
+    // Nested arrays flatten into one preimage: `[[1],[2,3]]` hashes like `[1,2,3]`.
+    cmd.cast_fuse()
+        .args(["abi-encode-event", "Matrix(uint256[][] indexed rows)", "[[1],[2,3]]"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x8b54144c0baafc3c0a1b743082b3378dc1f6c787fe1b6ed5067469704b5b47b9
+[topic1]: 0x6e0c627900b24bd432fe7b1f713f1b0744091a646a9fe4a65a18dfed21f2949c
+
+"#]]);
+
+    // Strings nested in arrays are right-padded to 32 bytes each.
+    cmd.cast_fuse()
+        .args(["abi-encode-event", "Names(string[] indexed names)", "[alpha,beta]"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x54612034f490f8c9efbbf618b99e0dd23834387135bf603e7f77f36ab5a0dc59
+[topic1]: 0xec503acd2f5b8395d778ead6068e4dff0b21beb8f55fc559e660857d57f0c112
+
+"#]]);
+});
+
+casttest!(abi_encode_event_indexed_tuples, |_prj, cmd| {
+    // Tuple topics hash member preimages without offsets: keccak256(word(7) ++ pad32("hello")).
+    cmd.args(["abi-encode-event", "Pair((uint256,string) indexed pair)", "(7,hello)"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x9238dd7c0dba6500736bb8e584ccce3ba50e1d827893b0a66469369afa1b1ac8
+[topic1]: 0x2919104b27111a00427dc5719d616be7497d87822aa864c58817a818e17032b4
+
+"#]]);
+
+    // Nested strings longer than one word are padded to a multiple of 32 bytes: the 40-byte
+    // string occupies 64 bytes of the preimage.
+    cmd.cast_fuse()
+        .args([
+            "abi-encode-event",
+            "Entries((string,uint256) indexed entry)",
+            "(abcdefghijklmnopqrstuvwxyz0123456789abcd,1)",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0x55493f7db049561b9d0b263da2632368fcd86567dae4e8b4d8767f6789647dee
+[topic1]: 0x5e20f5ecd52f29dc801132b4fba26d512378bf6c068eff0f4c6e797d69ac1e2a
+
+"#]]);
+});
+
+casttest!(abi_encode_event_indexed_function, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Callback(function indexed callback)",
+        "0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab90",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0xc5656f42bc03a54463abf4aa177d76f9e12a2b4c0307bd71f23e713c47e8ed2d
+[topic1]: 0x29088eeb3082c897bebd16bbafc162322cbb1bf47cfdab900000000000000000
+
+"#]]);
+});
+
+casttest!(abi_encode_event_dynamic_tuple, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Details((uint256,string) details,uint256 nonce)",
+        "(7,hello)",
+        "9",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0xaabc576555b53190a80e9ddc865e2c1a772416783d18d8e5dc1d3f80ccbbbf3e
+[data]: 0x0000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000900000000000000000000000000000000000000000000000000000000000000070000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000568656c6c6f000000000000000000000000000000000000000000000000000000
+
+"#]]);
+});
+
+casttest!(abi_encode_event_dynamic_strings, |_prj, cmd| {
+    let signature = "Strings(string,string)";
+    let data = "0x000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000005616c70686100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000046265746100000000000000000000000000000000000000000000000000000000";
+
+    cmd.args(["abi-encode-event", signature, "alpha", "beta"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[topic0]: 0xb032a34ae8575c904b71dc599fde31122ca66ed21144188304825ec5ab48652a
+[data]: 0x000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000005616c70686100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000046265746100000000000000000000000000000000000000000000000000000000
+
+"#]]);
+
+    cmd.cast_fuse().args(["decode-event", "--sig", signature, data]).assert_success().stdout_eq(
+        str![[r#"
+"alpha"
+"beta"
+
+"#]],
+    );
+});
+
+casttest!(abi_encode_event_argument_count_mismatch, |_prj, cmd| {
+    cmd.args(["abi-encode-event", "Pair(uint256,uint256)", "1"]).assert_failure().stderr_eq(str![
+        [r#"
+Error: encode length mismatch: expected 2 types, got 1
+
+"#]
+    ]);
+
+    cmd.cast_fuse()
+        .args(["abi-encode-event", "Pair(uint256,uint256)", "1", "2", "3"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: encode length mismatch: expected 2 types, got 3
+
+"#]]);
+});
+
+casttest!(abi_encode_event_anonymous, |_prj, cmd| {
+    cmd.args([
+        "abi-encode-event",
+        "Log(uint256 indexed id,string message) anonymous",
+        "7",
+        "hello",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+[topic0]: 0x0000000000000000000000000000000000000000000000000000000000000007
+[data]: 0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000568656c6c6f000000000000000000000000000000000000000000000000000000
 
 "#]]);
 });
@@ -6626,6 +9440,19 @@ casttest!(curl_call_debug_trace_call_forwards_tx_fields, |_prj, cmd| {
     );
     assert!(output.contains("0x3039"), "expected the gas limit (12345) in params:\n{output}");
     assert!(output.contains("nonce"), "expected the nonce in params:\n{output}");
+});
+
+casttest!(curl_call_rejects_browser_wallet, |_prj, cmd| {
+    let stderr = cmd
+        .args(["call", "0xdead000000000000000000000000000000000000", "--browser", "--curl"])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(
+        stderr.contains("--browser cannot be combined with --curl; use --from <ADDRESS>"),
+        "unexpected stderr:\n{stderr}"
+    );
 });
 
 // tests that `--labels` / `--disable-labels` are accepted with `--debug-trace-call`, which

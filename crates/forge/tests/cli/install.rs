@@ -497,6 +497,40 @@ forgetest!(can_install_empty, |prj, cmd| {
     cmd.assert_empty_stdout();
 });
 
+// <https://github.com/foundry-rs/foundry/issues/7205>
+forgetest!(install_from_nested_git_repo_uses_project_root, |prj, cmd| {
+    prj.update_config(|config| config.libs = vec![PathBuf::from("dependencies")]);
+    cmd.git_init();
+
+    let nested = prj.root().join("vendor/dependency");
+    fs::create_dir_all(&nested).unwrap();
+    Git::new(&nested).init().unwrap();
+
+    cmd.forge_fuse().current_dir(&nested).args(["install", "--no-git"]).assert_success();
+
+    assert!(prj.root().join("dependencies").is_dir());
+    assert!(!nested.join("lib").exists());
+});
+
+forgetest!(install_from_nested_foundry_project_uses_nested_root, |prj, cmd| {
+    prj.update_config(|config| config.libs = vec![PathBuf::from("outer-dependencies")]);
+    cmd.git_init();
+
+    let nested = prj.root().join("vendor/dependency");
+    fs::create_dir_all(&nested).unwrap();
+    Git::new(&nested).init().unwrap();
+    fs::write(
+        nested.join(Config::FILE_NAME),
+        "[profile.default]\nlibs = [\"nested-dependencies\"]\n",
+    )
+    .unwrap();
+
+    cmd.forge_fuse().current_dir(&nested).args(["install", "--no-git"]).assert_success();
+
+    assert!(nested.join("nested-dependencies").is_dir());
+    assert!(!prj.root().join("outer-dependencies").exists());
+});
+
 // test to check that package can be reinstalled after manually removing the directory
 forgetest!(can_reinstall_after_manual_remove, |prj, cmd| {
     cmd.git_init();
@@ -826,7 +860,7 @@ async fn uni_v4_core_sync_foundry_lock() {
     let submod_solmate =
         submodules.into_iter().find(|s| s.path() == &PathBuf::from("lib/solmate")).unwrap();
 
-    cmd.arg("install").assert_success();
+    cmd.args(["install", "--allow-project-env"]).assert_success();
 
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert!(matches!(forge_std, DepIdentifier::Rev { .. }));
@@ -843,7 +877,7 @@ async fn uni_v4_core_sync_foundry_lock() {
     git.commit("Foundry lock").unwrap();
 
     // Try update. Nothing should get updated everything is pinned tag/rev.
-    cmd.forge_fuse().arg("update").assert_success();
+    cmd.forge_fuse().args(["update", "--allow-project-env"]).assert_success();
 
     let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
     assert!(matches!(forge_std, DepIdentifier::Rev { .. }));

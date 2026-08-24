@@ -1,8 +1,8 @@
-use crate::{HitMap, HitMaps};
+use crate::{CallData, HitMap, HitMaps};
 use alloy_primitives::B256;
 use revm::{
     Inspector,
-    interpreter::{Interpreter, interpreter_types::Jumps},
+    interpreter::{CreateInputs, CreateOutcome, Interpreter, interpreter_types::Jumps},
 };
 use std::ptr::NonNull;
 
@@ -34,7 +34,19 @@ impl Default for LineCoverageCollector {
 
 impl<CTX> Inspector<CTX> for LineCoverageCollector {
     fn initialize_interp(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
+        let call = interpreter.input.bytecode_address.is_some().then(|| {
+            let calldata = if interpreter.input.input.is_empty() {
+                CallData::Empty
+            } else {
+                let input = interpreter.input.input.as_bytes_memory(&interpreter.memory);
+                CallData::new(&input)
+            };
+            (calldata, !interpreter.input.call_value.is_zero())
+        });
         let map = self.get_or_insert_map(interpreter);
+        if let Some((call, with_value)) = call {
+            map.call(call, with_value);
+        }
         // Reserve some space early to avoid reallocating too often.
         map.reserve(8192.min(interpreter.bytecode.len()));
     }
@@ -42,6 +54,19 @@ impl<CTX> Inspector<CTX> for LineCoverageCollector {
     fn step(&mut self, interpreter: &mut Interpreter, _context: &mut CTX) {
         let map = self.get_or_insert_map(interpreter);
         map.hit(interpreter.bytecode.pc() as u32);
+    }
+
+    fn create_end(
+        &mut self,
+        _context: &mut CTX,
+        inputs: &CreateInputs,
+        outcome: &mut CreateOutcome,
+    ) {
+        if outcome.result.result.is_ok()
+            && let Some(map) = self.maps.get_mut(&inputs.init_code_hash())
+        {
+            map.creation();
+        }
     }
 }
 

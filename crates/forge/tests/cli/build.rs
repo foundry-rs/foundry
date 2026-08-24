@@ -1,7 +1,267 @@
 use crate::utils::generate_large_init_contract;
-use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str};
+use foundry_compilers::artifacts::EvmVersion;
+use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt};
 use globset::Glob;
-use std::fs;
+use std::{
+    collections::BTreeMap,
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+};
+
+#[cfg(unix)]
+use std::os::unix::fs::{PermissionsExt, symlink};
+
+fn git(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git").current_dir(root).args(args).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+fn add_local_submodule(root: &Path, path: &str) -> String {
+    let source = root.join("lib/forge-std");
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+        .arg(source)
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    git(&root.join(path), &["rev-parse", "HEAD"])
+}
+
+#[cfg(unix)]
+forgetest!(local_compiler_requires_approval, |prj, cmd| {
+    let solc = prj.root().join("payload");
+    let invoked = prj.root().join("payload.invoked");
+    fs::write(
+        &solc,
+        r#"#!/bin/sh
+touch "$0.invoked"
+if [ "$1" = "--version" ]; then
+    echo "solc, the solidity compiler commandline interface"
+    echo "Version: 0.8.35+commit.69074fbd"
+    exit 0
+fi
+exit 1
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&solc).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&solc, permissions).unwrap();
+    prj.add_source("Contract", "contract Contract {}");
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
+    });
+
+    let output = cmd.arg("build").assert_failure();
+    let stderr = output.get_output().stderr_lossy();
+    assert!(stderr.contains("refusing to run unapproved local compiler"), "{stderr}");
+    assert!(stderr.contains("--allow-local-compiler"), "{stderr}");
+    assert!(!invoked.exists(), "local compiler ran without approval");
+
+    cmd.forge_fuse().args(["build", "--allow-local-compiler"]).assert_failure();
+    assert!(invoked.exists(), "approved local compiler did not run");
+});
+
+forgetest!(project_dotenv_requires_approval, |prj, cmd| {
+    fs::write(prj.root().join(".env"), "FOUNDRY_SRC=dotenv-src").unwrap();
+
+    let output = cmd.args(["config", "--json"]).assert_failure();
+    let stderr = output.get_output().stderr_lossy();
+    assert!(stderr.contains("refusing to load unapproved project dotenv"), "{stderr}");
+    assert!(stderr.contains("--allow-project-env"), "{stderr}");
+
+    let output = cmd.forge_fuse().args([
+        "create",
+        "src/Contract.sol:Contract",
+        "--constructor-args",
+        "--allow-project-env",
+    ]);
+    let stderr = output.assert_failure().get_output().stderr_lossy();
+    assert!(stderr.contains("refusing to load unapproved project dotenv"), "{stderr}");
+
+    let output =
+        cmd.forge_fuse().args(["config", "--json", "--allow-project-env"]).assert_success();
+    let config: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(config["src"], "dotenv-src");
+});
+
+#[cfg(unix)]
+forgetest!(local_compiler_path_escapes_control_characters, |prj, cmd| {
+    let solc = prj.root().join("payload\n\u{1b}[2Jspoofed");
+    fs::write(&solc, "#!/bin/sh\nexit 1\n").unwrap();
+    let mut permissions = fs::metadata(&solc).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&solc, permissions).unwrap();
+    prj.add_source("Contract", "contract Contract {}");
+    prj.update_config(|config| {
+        config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
+    });
+
+    let output = cmd.arg("build").assert_failure();
+    let stderr = output.get_output().stderr_lossy();
+    assert!(stderr.contains(r"payload\n\u{1b}[2Jspoofed"), "{stderr:?}");
+    assert!(!stderr.contains("payload\n\u{1b}[2Jspoofed"), "{stderr:?}");
+});
+
+forgetest!(
+    #[cfg(unix)]
+    can_build_physical_and_symlinked_dependency_configs,
+    |prj, cmd| {
+        let external = tempfile::tempdir().unwrap();
+        let physical = prj.root().join("lib/linked");
+        let linked = external.path().join("cache/actual-package");
+        let write_dependency = |dependency: &std::path::Path| {
+            fs::create_dir_all(dependency.join("custom-source")).unwrap();
+            fs::create_dir_all(dependency.join("vendor/inner/src")).unwrap();
+            fs::create_dir_all(dependency.join("vendor/file/src")).unwrap();
+            fs::write(
+                dependency.join("foundry.toml"),
+                r#"
+[profile.default]
+src = "custom-source"
+remappings = ["special-alias/=vendor/inner/src/"]
+"#,
+            )
+            .unwrap();
+            fs::write(dependency.join("remappings.txt"), "file-alias/=vendor/file/src/\n").unwrap();
+            fs::write(
+                dependency.join("custom-source/Dep.sol"),
+                r#"
+pragma solidity >=0.8.0;
+
+import {Thing} from "special-alias/Thing.sol";
+import {FromFile} from "file-alias/FromFile.sol";
+
+contract Dep is Thing, FromFile {}
+"#,
+            )
+            .unwrap();
+            fs::write(
+                dependency.join("vendor/inner/src/Thing.sol"),
+                r#"
+pragma solidity >=0.8.0;
+
+contract Thing {}
+"#,
+            )
+            .unwrap();
+            fs::write(
+                dependency.join("vendor/file/src/FromFile.sol"),
+                r#"
+pragma solidity >=0.8.0;
+
+contract FromFile {}
+"#,
+            )
+            .unwrap();
+        };
+
+        write_dependency(&physical);
+        write_dependency(&linked);
+        prj.add_raw_source(
+            "Root.sol",
+            r#"
+pragma solidity >=0.8.0;
+
+import {Dep} from "linked/Dep.sol";
+
+contract Root is Dep {}
+"#,
+        );
+
+        let remappings = str![[r#"
+file-alias/=lib/linked/vendor/file/src/
+linked/=lib/linked/custom-source/
+special-alias/=lib/linked/vendor/inner/src/
+
+"#]];
+        cmd.arg("remappings").assert_success().stdout_eq(remappings.clone());
+        cmd.forge_fuse().arg("build").assert_success();
+
+        fs::remove_dir_all(&physical).unwrap();
+        symlink(&linked, &physical).unwrap();
+        cmd.forge_fuse().arg("clean").assert_success();
+        cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(remappings);
+        cmd.forge_fuse().arg("build").assert_success();
+    }
+);
+
+forgetest!(
+    #[cfg(unix)]
+    can_build_symlinked_dependency_with_existing_standard_source,
+    |prj, cmd| {
+        let external = tempfile::tempdir().unwrap();
+        let dependency = external.path().join("dependency");
+        fs::create_dir_all(dependency.join("src")).unwrap();
+        fs::write(dependency.join("foundry.toml"), "[profile.default]\nsrc = \"src\"\n").unwrap();
+        fs::write(dependency.join("src/Dep.sol"), "pragma solidity >=0.8.0; contract Dep {}\n")
+            .unwrap();
+        prj.update_config(|config| config.libs = vec!["node_modules".into()]);
+        fs::create_dir_all(prj.root().join("node_modules")).unwrap();
+        symlink(&dependency, prj.root().join("node_modules/linked")).unwrap();
+        prj.add_raw_source(
+            "Root.sol",
+            r#"
+pragma solidity >=0.8.0;
+
+import {Dep} from "linked/src/Dep.sol";
+
+contract Root is Dep {}
+"#,
+        );
+
+        cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+linked/=node_modules/linked/
+
+"#]]);
+        cmd.forge_fuse().arg("build").assert_success();
+    }
+);
+
+forgetest!(
+    #[cfg(unix)]
+    can_build_multiple_aliases_to_symlinked_dependency_config,
+    |prj, cmd| {
+        let external = tempfile::tempdir().unwrap();
+        let dependency = external.path().join("dependency");
+        fs::create_dir_all(dependency.join("custom-source")).unwrap();
+        fs::write(dependency.join("foundry.toml"), "[profile.default]\nsrc = \"custom-source\"\n")
+            .unwrap();
+        fs::write(
+            dependency.join("custom-source/Dep.sol"),
+            "pragma solidity >=0.8.0; contract Dep {}\n",
+        )
+        .unwrap();
+        symlink(&dependency, prj.root().join("lib/a-alias")).unwrap();
+        symlink(&dependency, prj.root().join("lib/z-alias")).unwrap();
+        prj.add_raw_source(
+            "Root.sol",
+            r#"
+pragma solidity >=0.8.0;
+
+import {Dep as ADep} from "a-alias/Dep.sol";
+import {Dep as ZDep} from "z-alias/Dep.sol";
+
+contract Root {
+    ADep private a;
+    ZDep private z;
+}
+"#,
+        );
+
+        cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+a-alias/=lib/a-alias/custom-source/
+z-alias/=lib/z-alias/custom-source/
+
+"#]]);
+        cmd.forge_fuse().arg("build").assert_success();
+    }
+);
 
 forgetest_init!(can_parse_build_filters, |prj, cmd| {
     prj.initialize_default_contracts();
@@ -182,6 +442,49 @@ forgetest!(build_sizes_respects_configured_code_size_limit, |prj, cmd| {
     "init_size": 50125,
     "runtime_margin": 63938,
     "init_margin": 77875
+  }
+}
+"#]]
+        .is_json(),
+    );
+});
+
+#[cfg(feature = "monad")]
+forgetest!(build_sizes_respects_monad_network_code_size_limit, |prj, cmd| {
+    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkConfigs::with_monad();
+    });
+
+    cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "LargeContract": {
+    "runtime_size": 62,
+    "init_size": 50125,
+    "runtime_margin": 131010,
+    "init_margin": 212019
+  }
+}
+"#]]
+        .is_json(),
+    );
+});
+
+forgetest!(build_sizes_respects_amsterdam_code_size_limits, |prj, cmd| {
+    prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Amsterdam;
+    });
+
+    cmd.args(["build", "--sizes", "--json"]).assert_success().stdout_eq(
+        str![[r#"
+{
+  "LargeContract": {
+    "runtime_size": 62,
+    "init_size": 50125,
+    "runtime_margin": 65474,
+    "init_margin": 80947
   }
 }
 "#]]
@@ -619,18 +922,20 @@ forgetest_init!(build_warns_on_malformed_foundry_lock, |prj, cmd| {
     fs::write(&foundry_lock, "this is not valid toml { [ }").unwrap();
 
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
-Warning: Failed to parse foundry.lock: [..]
+Warning: Failed to check foundry.lock: Failed to read foundry.lock; expected ident at line 1 column 2
 ...
 "#]]);
 });
 
-// tests that build succeeds without warning when no foundry.lock exists
-forgetest_init!(build_no_warning_without_foundry_lock, |prj, cmd| {
+// tests that build warns when dependencies are missing from foundry.lock
+forgetest_init!(build_warns_without_foundry_lock, |prj, cmd| {
     let foundry_lock = prj.root().join("foundry.lock");
     // Remove foundry.lock if it exists from template
     let _ = fs::remove_file(&foundry_lock);
 
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Warning: lib/forge-std: missing from foundry.lock (found [..])
+
 "#]]);
 });
 
@@ -650,7 +955,340 @@ forgetest_init!(build_warns_on_foundry_lock_revision_mismatch, |prj, cmd| {
     fs::write(&foundry_lock, lockfile_content).unwrap();
 
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
-Warning: Dependency 'lib/forge-std' revision mismatch: expected '0000000000000000000000000000000000000000', found '[..]'
+Warning: lib/forge-std: expected 0000000000000000000000000000000000000000, found [..]
+
+"#]]);
+});
+
+forgetest_init!(build_locked_succeeds_when_dependencies_match, |_prj, cmd| {
+    cmd.args(["build", "--locked"]).assert_success();
+});
+
+forgetest!(build_locked_succeeds_without_lockfile_or_dependencies, |prj, cmd| {
+    assert!(!prj.root().join("foundry.lock").exists());
+
+    cmd.args(["build"]).assert_success().stderr_eq("");
+    cmd.forge_fuse().args(["build", "--locked"]).assert_success().stderr_eq("");
+});
+
+forgetest!(build_locked_rejects_lockfile_outside_git_repository, |prj, cmd| {
+    fs::write(prj.root().join("foundry.lock"), "{}").unwrap();
+
+    let output = cmd.args(["build", "--locked"]).assert_failure();
+    assert!(
+        output.get_output().stderr_lossy().contains("not a git repository"),
+        "{}",
+        output.get_output().stderr_lossy()
+    );
+});
+
+forgetest!(build_locked_honors_git_environment, |prj, cmd| {
+    let project = prj.root().join("nested");
+    fs::create_dir(&project).unwrap();
+    let repository = prj.root().join("repository");
+    fs::create_dir(&repository).unwrap();
+    git(&repository, &["init"]);
+    git(&repository, &["config", "user.email", "foundry@example.com"]);
+    git(&repository, &["config", "user.name", "Foundry"]);
+    git(&repository, &["commit", "--allow-empty", "-m", "initial"]);
+    let head = git(&repository, &["rev-parse", "HEAD"]);
+
+    fs::write(
+        prj.root().join(".gitmodules"),
+        "[submodule \"nested/lib/dep\"]\n\tpath = nested/lib/dep\n\turl = ../dep\n",
+    )
+    .unwrap();
+    let git_dir = Path::new("../repository/.git");
+    let output = Command::new("git")
+        .current_dir(&project)
+        .env("GIT_DIR", git_dir)
+        .env("GIT_WORK_TREE", "..")
+        .args(["update-index", "--add", "--cacheinfo", "160000", &head, "nested/lib/dep"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    cmd.env("GIT_DIR", git_dir);
+    cmd.env("GIT_WORK_TREE", "..");
+    cmd.args(["build", "--locked", "--root", "nested"]).assert_failure().stderr_eq(str![[r#"
+Error: foundry.lock does not match installed dependencies:
+  lib/dep: missing from foundry.lock
+  lib/dep: dependency submodule is not initialized
+
+"#]]);
+});
+
+forgetest!(locked_is_build_only, |_prj, cmd| {
+    let output = cmd.args(["config", "--locked"]).assert_failure();
+    assert!(
+        output.get_output().stderr_lossy().contains("unexpected argument '--locked'"),
+        "{}",
+        output.get_output().stderr_lossy()
+    );
+});
+
+forgetest_init!(build_locked_rejects_malformed_lockfile, |prj, cmd| {
+    fs::write(prj.root().join("foundry.lock"), "not json").unwrap();
+
+    cmd.args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: Failed to read foundry.lock
+
+Context:
+- expected ident at line 1 column 2
+
+"#]]);
+});
+
+forgetest_init!(build_locked_reports_revision_mismatch, |prj, cmd| {
+    let foundry_lock = prj.root().join("foundry.lock");
+    let lockfile = r#"{
+  "lib/forge-std": {
+    "rev": "0000000000000000000000000000000000000000"
+  }
+}"#;
+    fs::write(&foundry_lock, lockfile).unwrap();
+    fs::write(prj.root().join("src/Broken.sol"), "this is not Solidity").unwrap();
+
+    cmd.args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: foundry.lock does not match installed dependencies:
+  lib/forge-std: expected 0000000000000000000000000000000000000000, found [..]
+
+"#]]);
+    assert_eq!(fs::read_to_string(foundry_lock).unwrap(), lockfile);
+});
+
+forgetest_init!(build_locked_reports_uninitialized_dependency_without_installing, |prj, cmd| {
+    let root = prj.root();
+    let foundry_lock = fs::read(root.join("foundry.lock")).unwrap();
+    let status = std::process::Command::new("git")
+        .current_dir(root)
+        .args(["submodule", "deinit", "-f", "lib/forge-std"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let index = fs::read(root.join(".git/index")).unwrap();
+    let git_config = fs::read(root.join(".git/config")).unwrap();
+
+    cmd.args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: foundry.lock does not match installed dependencies:
+  lib/forge-std: dependency submodule is not initialized (expected [..])
+
+"#]]);
+    assert_eq!(fs::read(root.join("foundry.lock")).unwrap(), foundry_lock);
+    assert_eq!(fs::read(root.join(".git/index")).unwrap(), index);
+    assert_eq!(fs::read(root.join(".git/config")).unwrap(), git_config);
+    assert!(!root.join("lib/forge-std/.git").exists());
+});
+
+forgetest_init!(build_locked_preserves_uninitialized_state_without_lock_entry, |prj, cmd| {
+    let root = prj.root();
+    fs::remove_file(root.join("foundry.lock")).unwrap();
+    let status = std::process::Command::new("git")
+        .current_dir(root)
+        .args(["submodule", "deinit", "-f", "lib/forge-std"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    cmd.args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: foundry.lock does not match installed dependencies:
+  lib/forge-std: missing from foundry.lock
+  lib/forge-std: dependency submodule is not initialized
+
+"#]]);
+    assert!(!root.join("foundry.lock").exists());
+    assert!(!root.join("lib/forge-std/.git").exists());
+});
+
+forgetest_init!(build_locked_preserves_conflict_without_lock_entry, |prj, cmd| {
+    let root = prj.root();
+    let submodule = root.join("lib/forge-std");
+    let rev = |args: &[&str]| {
+        let output = Command::new("git").current_dir(&submodule).args(args).output().unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+    let current = rev(&["rev-parse", "HEAD"]);
+    let previous = rev(&["rev-parse", "HEAD^"]);
+    fs::remove_file(root.join("foundry.lock")).unwrap();
+    assert!(
+        Command::new("git")
+            .current_dir(root)
+            .args(["update-index", "--force-remove", "lib/forge-std"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let mut child = Command::new("git")
+        .current_dir(root)
+        .args(["update-index", "--index-info"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    write!(
+        child.stdin.take().unwrap(),
+        "160000 {previous} 1\tlib/forge-std\n160000 {current} 2\tlib/forge-std\n160000 {previous} 3\tlib/forge-std\n"
+    )
+    .unwrap();
+    assert!(child.wait().unwrap().success());
+    let index = fs::read(root.join(".git/index")).unwrap();
+
+    cmd.args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: foundry.lock does not match installed dependencies:
+  lib/forge-std: missing from foundry.lock
+  lib/forge-std: dependency submodule has merge conflicts
+
+"#]]);
+    assert_eq!(fs::read(root.join(".git/index")).unwrap(), index);
+});
+
+forgetest_init!(build_locked_reports_stale_lockfile_entries, |prj, cmd| {
+    let foundry_lock = prj.root().join("foundry.lock");
+    let mut lockfile: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&foundry_lock).unwrap()).unwrap();
+    lockfile["lib/stale"] = serde_json::json!({
+        "rev": "0000000000000000000000000000000000000000"
+    });
+    fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
+
+    cmd.args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: foundry.lock does not match installed dependencies:
+  lib/stale: dependency submodule is missing (expected 0000000000000000000000000000000000000000)
+
+"#]]);
+});
+
+forgetest!(build_locked_supports_projects_nested_in_parent_repository, |prj, cmd| {
+    cmd.git_init();
+    cmd.args(["init", "nested", "--use-parent-git"]).assert_success();
+
+    let root = prj.root();
+    let output = Command::new("git")
+        .current_dir(root)
+        .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+        .arg(root.join("nested/lib/forge-std"))
+        .arg("sibling")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    cmd.forge_fuse().args(["install", "--root", "nested"]).assert_success();
+    let foundry_lock = root.join("nested/foundry.lock");
+    let mut lockfile: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&foundry_lock).unwrap()).unwrap();
+    assert!(lockfile.get("../sibling").is_some());
+    for (path, dependency) in lockfile.as_object_mut().unwrap() {
+        dependency["rev"] =
+            serde_json::Value::String(git(&root.join("nested").join(path), &["rev-parse", "HEAD"]));
+    }
+    fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
+
+    cmd.forge_fuse().args(["build", "--locked", "--no-lint", "--root", "nested"]).assert_success();
+});
+
+forgetest_init!(build_locked_supports_dependency_paths_with_spaces, |prj, cmd| {
+    let root = prj.root();
+    git(root, &["mv", "lib/forge-std", "lib/forge std"]);
+
+    let foundry_lock = root.join("foundry.lock");
+    let mut lockfile: BTreeMap<PathBuf, serde_json::Value> =
+        serde_json::from_str(&fs::read_to_string(&foundry_lock).unwrap()).unwrap();
+    let forge_std = lockfile.remove(Path::new("lib/forge-std")).unwrap();
+    lockfile.insert("lib/forge std".into(), forge_std);
+    fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
+
+    cmd.args(["build", "--locked"]).assert_success();
+});
+
+forgetest_init!(build_locked_accepts_modified_submodule_when_head_matches_lock, |prj, cmd| {
+    let root = prj.root();
+    let submodule = root.join("lib/forge-std");
+    let previous = git(&submodule, &["rev-parse", "HEAD^"]);
+    git(root, &["update-index", "--cacheinfo", "160000", &previous, "lib/forge-std"]);
+
+    cmd.args(["build", "--locked"]).assert_success();
+});
+
+forgetest_init!(build_locked_reports_all_mismatches_in_path_order, |prj, cmd| {
+    let root = prj.root();
+    add_local_submodule(root, "lib/second");
+    let foundry_lock = root.join("foundry.lock");
+    let mut lockfile: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&foundry_lock).unwrap()).unwrap();
+    lockfile["lib/forge-std"]["rev"] =
+        serde_json::Value::String("0000000000000000000000000000000000000000".to_string());
+    lockfile["lib/stale"] = serde_json::json!({
+        "rev": "1111111111111111111111111111111111111111"
+    });
+    fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
+
+    cmd.args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: foundry.lock does not match installed dependencies:
+  lib/forge-std: expected 0000000000000000000000000000000000000000, found [..]
+  lib/second: missing from foundry.lock (found [..])
+  lib/stale: dependency submodule is missing (expected 1111111111111111111111111111111111111111)
+
+"#]]);
+});
+
+forgetest_init!(build_locked_supports_custom_dependency_directory, |prj, cmd| {
+    let root = prj.root();
+    fs::create_dir(root.join("dependencies")).unwrap();
+    git(root, &["mv", "lib/forge-std", "dependencies/forge-std"]);
+    prj.update_config(|config| config.libs = vec!["dependencies".into()]);
+
+    let foundry_lock = root.join("foundry.lock");
+    let mut lockfile: BTreeMap<PathBuf, serde_json::Value> =
+        serde_json::from_str(&fs::read_to_string(&foundry_lock).unwrap()).unwrap();
+    let forge_std = lockfile.remove(Path::new("lib/forge-std")).unwrap();
+    lockfile.insert("dependencies/forge-std".into(), forge_std);
+    fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
+
+    cmd.args(["build", "--locked"]).assert_success();
+});
+
+forgetest_init!(build_locked_supports_project_root_as_dependency_directory, |prj, cmd| {
+    prj.update_config(|config| config.libs = vec![".".into()]);
+
+    cmd.args(["build", "--locked"]).assert_success();
+});
+
+forgetest_init!(build_locked_matches_submodules_outside_dependency_directory, |prj, cmd| {
+    let root = prj.root();
+    add_local_submodule(root, "vendor/second");
+
+    cmd.forge_fuse().args(["install"]).assert_success();
+
+    let mut lockfile: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("foundry.lock")).unwrap()).unwrap();
+    assert!(lockfile.get("vendor/second").is_some());
+    lockfile["lib/forge-std"]["rev"] =
+        serde_json::Value::String(git(&root.join("lib/forge-std"), &["rev-parse", "HEAD"]));
+    fs::write(root.join("foundry.lock"), serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
+
+    cmd.forge_fuse().args(["build", "--locked"]).assert_success();
+});
+
+forgetest_init!(build_locked_aggregates_missing_submodule_mapping, |prj, cmd| {
+    let root = prj.root();
+    let head = git(&root.join("lib/forge-std"), &["rev-parse", "HEAD"]);
+    git(root, &["update-index", "--add", "--cacheinfo", "160000", &head, "lib/unmapped"]);
+    let mut gitmodules = fs::read_to_string(root.join(".gitmodules")).unwrap();
+    gitmodules.push_str("\n[submodule \"lib/unmapped\"]\n\turl = ../unmapped\n");
+    fs::write(root.join(".gitmodules"), gitmodules).unwrap();
+
+    let foundry_lock = root.join("foundry.lock");
+    let mut lockfile: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&foundry_lock).unwrap()).unwrap();
+    lockfile["lib/stale"] = serde_json::json!({
+        "rev": "1111111111111111111111111111111111111111"
+    });
+    fs::write(foundry_lock, serde_json::to_vec_pretty(&lockfile).unwrap()).unwrap();
+
+    cmd.args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+Error: foundry.lock does not match installed dependencies:
+  lib/stale: dependency submodule is missing (expected 1111111111111111111111111111111111111111)
+  lib/unmapped: dependency submodule is missing from .gitmodules
 
 "#]]);
 });

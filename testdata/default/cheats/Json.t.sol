@@ -141,6 +141,14 @@ contract ParseJsonTest is Test {
         assertEq("hai", decodedData);
     }
 
+    function test_parseJsonComments() public {
+        string memory jsonc = vm.readFile("fixtures/Json/comments.jsonc");
+
+        assertEq(vm.parseJsonUint(jsonc, ".value"), 42);
+        assertTrue(vm.parseJsonBool(jsonc, ".enabled"));
+        assertEq(vm.parseJsonString(jsonc, ".url"), "https://example.com/path/*literal*/");
+    }
+
     function test_null() public {
         bytes memory data = vm.parseJson(json, ".null");
         bytes memory decodedData = abi.decode(data, (bytes));
@@ -326,6 +334,19 @@ contract ParseJsonTest is Test {
         bytes[] memory bytesArray = vm.parseJsonBytesArray(json, ".bytesStringArray");
         assertEq(bytesArray[0], hex"01");
         assertEq(bytesArray[1], hex"02");
+    }
+
+    function test_parseJsonDefaults() public {
+        assertEq(vm.parseJsonUint("{}", ".missing", 42), 42);
+        assertEq(vm.parseJsonUint('{"value":7}', ".value", 42), 7);
+
+        uint256[] memory defaultValue = new uint256[](1);
+        defaultValue[0] = 42;
+        assertEq(abi.encode(vm.parseJsonUintArray("{}", ".missing", defaultValue)), abi.encode(defaultValue));
+
+        bytes[] memory dynamicDefault = new bytes[](1);
+        dynamicDefault[0] = hex"deadbeef";
+        assertEq(abi.encode(vm.parseJsonBytesArray("{}", ".missing", dynamicDefault)), abi.encode(dynamicDefault));
     }
 
     struct Nested {

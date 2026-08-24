@@ -4,12 +4,12 @@ use foundry_evm_hardforks::TempoHardfork;
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
-        ContextTr, LocalContextTr,
+        ContextTr, Journal, LocalContextTr,
         result::{EVMError, HaltReason, ResultAndState},
     },
     handler::{EvmTr, FrameResult, Handler},
     inspector::InspectorHandler,
-    interpreter::{FrameInput, SharedMemory, interpreter_action::FrameInit},
+    interpreter::{FrameInput, GasTracker, SharedMemory, interpreter_action::FrameInit},
     state::Bytecode,
 };
 use tempo_evm::{TempoBlockEnv, TempoEvmFactory, TempoHaltReason, evm::TempoEvm};
@@ -26,7 +26,7 @@ use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
     constants::{CALLER, TEST_CONTRACT_ADDRESS},
-    evm::{FoundryEvmFactory, NestedEvm},
+    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor},
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
 };
 
@@ -78,15 +78,26 @@ pub(crate) fn initialize_tempo_evm<
 }
 
 impl FoundryEvmFactory for TempoEvmFactory {
+    type Chain = ();
     type FoundryContext<'db> = TempoContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         TempoEvm<&'db mut dyn DatabaseExt<Self>, I>;
 
+    fn create_evm_with_context<DB: alloy_evm::Database>(
+        &self,
+        db: DB,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        _chain_context: Self::Chain,
+    ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
+        self.create_evm(db, evm_env)
+    }
+
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        _chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let is_forked = db.is_forked_mode();
@@ -118,10 +129,13 @@ impl FoundryEvmFactory for TempoEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> Box<dyn NestedEvm<Spec = TempoHardfork, Block = TempoBlockEnv, Tx = TempoTxEnv> + 'db>
-    {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
+    ) -> NestedEvmFor<'db, Self> {
+        Box::new(
+            self.create_foundry_evm_with_inspector(db, evm_env, chain_context, inspector)
+                .into_inner(),
+        )
     }
 }
 
@@ -150,15 +164,27 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
     type Spec = TempoHardfork;
     type Block = TempoBlockEnv;
     type Tx = TempoTxEnv;
+    type Chain = ();
+    type Journal = Journal<&'db mut dyn DatabaseExt<TempoEvmFactory>>;
+
+    fn tx_mut(&mut self) -> &mut Self::Tx {
+        self.ctx_mut().tx_mut()
+    }
 
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx_mut().journaled_state.inner
     }
 
+    fn chain_mut(&mut self) -> &mut Self::Chain {
+        &mut self.ctx_mut().chain
+    }
+
+    fn journal_mut(&mut self) -> &mut Self::Journal {
+        &mut self.ctx_mut().journaled_state
+    }
+
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
         let mut handler = TempoEvmHandler::new();
-        let reservoir = frame.reservoir();
-
         let memory =
             SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
         let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
@@ -166,12 +192,19 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
         let mut frame_result =
             handler.inspect_run_exec_loop(self, first_frame_input).map_err(map_tempo_error)?;
 
-        handler.last_frame_result(self, reservoir, &mut frame_result).map_err(map_tempo_error)?;
+        let mut parent_gas = GasTracker::new(
+            frame_result.gas().limit(),
+            frame_result.gas().remaining(),
+            frame_result.gas().reservoir(),
+        );
+        handler
+            .last_frame_result(self, &mut frame_result, &mut parent_gas)
+            .map_err(map_tempo_error)?;
 
         Ok(frame_result)
     }
 
-    fn transact_raw(&mut self, tx: Self::Tx) -> Result<ResultAndState, EVMError<DatabaseError>> {
+    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
         self.set_tx(tx);
 
         let mut handler = TempoEvmHandler::new();

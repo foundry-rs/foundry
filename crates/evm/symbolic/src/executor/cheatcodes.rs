@@ -17,7 +17,7 @@ impl SymbolicExecutor {
 
         let mut fail_constraints = state.constraints.clone();
         fail_constraints.push(fail);
-        if self.solver.is_sat(&mut self.cx, &fail_constraints)? {
+        if self.is_sat_with_state(state, &fail_constraints)? {
             state.constraints = fail_constraints;
             return Ok(CheatcodeOutcome::Failure);
         }
@@ -167,16 +167,8 @@ impl SymbolicExecutor {
         let zero = SymExpr::zero(&mut self.cx);
         let calldata = SymBytes::empty(&mut self.cx);
         let calldata = SymCalldata::from_bytes(&mut self.cx, calldata);
-        let mut frame = CallFrame::new(
-            &mut self.cx,
-            created,
-            created,
-            created,
-            state.address,
-            zero,
-            false,
-            calldata,
-        );
+        let mut frame =
+            CallFrame::new(&mut self.cx, created, created, state.address, zero, false, calldata);
         frame.address_word = created_word.clone();
         frame.caller_word = state.address_word.clone();
         let mut child = state.child(frame);
@@ -188,24 +180,22 @@ impl SymbolicExecutor {
         child.assume_no_revert_next_call = None;
 
         let outcomes = self.execute_external_call(executor, child, &initcode, completed_paths)?;
-        let Some((first, rest)) = outcomes.split_first() else {
+        if outcomes.is_empty() {
             return Ok(StepOutcome::AssumeRejected);
-        };
+        }
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
-        for outcome in std::iter::once(first).chain(rest.iter()) {
+        for mut outcome in outcomes {
             let mut parent = state.clone();
-            parent.constraints = outcome.state.constraints.clone();
-            parent.next_symbol = outcome.state.next_symbol;
-            parent.inherit_branch_target_progress(&outcome.state);
+            parent.take_call_outcome_state(&mut outcome.state);
 
             if let Some(assumption) = parent.assume_no_revert_next_call.take()
-                && matches!(outcome.status, TopLevelCallStatus::Revert)
+                && matches!(outcome.status, CallStatus::Revert)
                 && self.assume_no_revert_rejects(
                     &mut parent,
                     &assumption,
                     created,
-                    &outcome.return_data,
+                    &outcome.state.frame.return_data,
                 )?
             {
                 continue;
@@ -213,16 +203,16 @@ impl SymbolicExecutor {
 
             if let Some(mut expected) = parent.expected_revert.clone() {
                 match outcome.status {
-                    TopLevelCallStatus::Success => {
+                    CallStatus::Success => {
                         *state = parent;
                         return Ok(StepOutcome::Failure);
                     }
-                    TopLevelCallStatus::Revert | TopLevelCallStatus::Failure => {
+                    CallStatus::Revert | CallStatus::Failure => {
                         if !self.expected_revert_matches(
                             &mut parent,
                             &expected,
                             created,
-                            &outcome.return_data,
+                            &outcome.state.frame.return_data,
                         )? {
                             *state = parent;
                             return Ok(StepOutcome::Failure);
@@ -232,11 +222,10 @@ impl SymbolicExecutor {
                         } else {
                             parent.expected_revert = Some(expected);
                         }
-                        parent.access_record = outcome.state.access_record.clone();
-                        parent.expected_calls = outcome.state.expected_calls.clone();
+                        parent.expected_calls = outcome.state.expected_calls;
                         parent.expected_creates = pending_expected_creates.clone();
-                        parent.call_mocks = outcome.state.call_mocks.clone();
-                        parent.function_mocks = outcome.state.function_mocks.clone();
+                        parent.call_mocks = outcome.state.call_mocks;
+                        parent.function_mocks = outcome.state.function_mocks;
                         parent.world = failure_world.clone();
                         let zero = SymExpr::zero(&mut self.cx);
                         let return_data = SymReturnData::from_words(&mut self.cx, vec![zero]);
@@ -254,26 +243,25 @@ impl SymbolicExecutor {
             }
 
             match outcome.status {
-                TopLevelCallStatus::Success => {
-                    parent.world = outcome.state.world.clone();
-                    parent.block = outcome.state.block.clone();
-                    parent.recorded_logs = outcome.state.recorded_logs.clone();
-                    parent.access_record = outcome.state.access_record.clone();
-                    parent.expected_emit = outcome.state.expected_emit.clone();
-                    parent.expected_calls = outcome.state.expected_calls.clone();
+                CallStatus::Success => {
+                    parent.world = outcome.state.world;
+                    parent.block = outcome.state.block;
+                    parent.expected_emit = outcome.state.expected_emit;
+                    parent.expected_calls = outcome.state.expected_calls;
                     parent.expected_creates = pending_expected_creates.clone();
-                    parent.call_mocks = outcome.state.call_mocks.clone();
-                    parent.function_mocks = outcome.state.function_mocks.clone();
+                    parent.call_mocks = outcome.state.call_mocks;
+                    parent.function_mocks = outcome.state.function_mocks;
                     self.observe_expected_create(
                         &mut parent,
                         state.address,
                         CreateKind::Create,
-                        &outcome.return_data,
+                        &outcome.state.frame.return_data,
                     )?;
                     if !parent.world.is_destroyed(created) {
-                        parent
-                            .world
-                            .install_code(created, outcome.return_data.to_code(&mut self.cx)?);
+                        parent.world.install_code(
+                            created,
+                            outcome.state.frame.return_data.to_code(&mut self.cx)?,
+                        );
                         parent.world.set_nonce(created, 1);
                     }
                     let return_data =
@@ -286,13 +274,13 @@ impl SymbolicExecutor {
                         return_data,
                     )?;
                 }
-                TopLevelCallStatus::Revert => {
+                CallStatus::Revert => {
                     parent.world = failure_world.clone();
-                    parent.return_data = outcome.return_data.clone();
+                    parent.return_data = outcome.state.frame.return_data;
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), out_size)?;
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
                 }
-                TopLevelCallStatus::Failure => {
+                CallStatus::Failure => {
                     *state = parent;
                     return Ok(StepOutcome::Failure);
                 }
@@ -577,6 +565,76 @@ impl SymbolicExecutor {
                 return Ok(CheatcodeOutcome::ContinueData(
                     self.accesses_return_data_for_target(state, target)?,
                 ));
+            }
+            registerSloadHookCall::SELECTOR | registerSstoreHookCall::SELECTOR => {
+                let target = read_abi_address_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic storage hook target",
+                )?;
+                let callback: [u8; 4] = state
+                    .memory
+                    .read_concrete(&mut self.cx, args_offset + 32, 4)?
+                    .try_into()
+                    .map_err(|_| SymbolicError::Unsupported("symbolic storage hook callback"))?;
+                let hook = SymbolicStorageHook {
+                    callback_target: state.address,
+                    callback_selector: callback,
+                };
+                if selector == registerSloadHookCall::SELECTOR {
+                    state.storage_load_hooks.insert(target, hook);
+                } else {
+                    if state
+                        .mapping_storage_store_hooks
+                        .keys()
+                        .any(|(address, _)| *address == target)
+                    {
+                        return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                            &mut self.cx,
+                            "cannot register raw SSTORE hook: mapping SSTORE hooks already exist for target",
+                        )));
+                    }
+                    state.storage_store_hooks.insert(target, hook);
+                }
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
+            }
+            registerMappingSstoreHookCall::SELECTOR => {
+                let target = read_abi_address_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    0,
+                    "symbolic mapping storage hook target",
+                )?;
+                let root = read_abi_concrete_word_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic mapping storage hook root",
+                )?;
+                let callback: [u8; 4] = state
+                    .memory
+                    .read_concrete(&mut self.cx, args_offset + 64, 4)?
+                    .try_into()
+                    .map_err(|_| {
+                        SymbolicError::Unsupported("symbolic mapping storage hook callback")
+                    })?;
+                let hook = SymbolicStorageHook {
+                    callback_target: state.address,
+                    callback_selector: callback,
+                };
+                if state.storage_store_hooks.contains_key(&target) {
+                    return Ok(CheatcodeOutcome::Revert(error_string_return_data(
+                        &mut self.cx,
+                        "cannot register mapping SSTORE hook: raw SSTORE hook already exists for target",
+                    )));
+                }
+                state.mapping_hook_keccak_preimages.retain(|(account, _), _| *account != target);
+                state.mapping_storage_store_hooks.insert((target, root), hook);
+                return Ok(CheatcodeOutcome::Continue(Vec::new()));
             }
             getRecordedLogsCall::SELECTOR => {
                 let logs = state.recorded_logs.replace(Vec::new()).unwrap_or_default();

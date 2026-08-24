@@ -1,5 +1,7 @@
 use alloy_primitives::{Address, B256, address, b256, hex};
 
+pub use foundry_evm_networks::MONAD_CHEATCODE_ADDRESS;
+
 /// The cheatcode handler address.
 ///
 /// This is the same address as the one used in DappTools's HEVM.

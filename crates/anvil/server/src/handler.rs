@@ -1,7 +1,7 @@
 use crate::RpcHandler;
 use anvil_rpc::{
     error::RpcError,
-    request::{Request, RpcCall},
+    request::{Id, Request, RpcCall, RpcMethodCall, Version},
     response::{Response, RpcResponse},
 };
 use axum::{
@@ -24,6 +24,10 @@ pub async fn handle<Http: RpcHandler, Ws>(
             .map(Json)
             .map(IntoResponse::into_response)
             .unwrap_or_else(|| StatusCode::NO_CONTENT.into_response()),
+        Err(JsonRejection::JsonSyntaxError(err)) => {
+            warn!(target: "rpc", ?err, "invalid request");
+            Json(Response::error(RpcError::parse_error())).into_response()
+        }
         Err(err) => {
             warn!(target: "rpc", ?err, "invalid request");
             Json(Response::error(RpcError::invalid_request())).into_response()
@@ -66,7 +70,14 @@ async fn handle_call<Handler: RpcHandler>(call: RpcCall, handler: Handler) -> Op
             Some(handler.on_call(call).await)
         }
         RpcCall::Notification(notification) => {
-            trace!(target: "rpc", method = ?notification.method, "received rpc notification");
+            let call = RpcMethodCall {
+                jsonrpc: notification.jsonrpc.unwrap_or(Version::V2),
+                method: notification.method,
+                params: notification.params,
+                id: Id::Null,
+            };
+            trace!(target: "rpc", method = ?call.method, "handling rpc notification");
+            drop(handler.on_call(call).await);
             None
         }
         RpcCall::Invalid { id } => {
@@ -79,34 +90,89 @@ async fn handle_call<Handler: RpcHandler>(call: RpcCall, handler: Handler) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ServerConfig, http_router};
     use anvil_rpc::{
-        request::{RequestParams, RpcNotification, Version},
+        request::{RequestParams, RpcNotification},
         response::ResponseResult,
     };
-    use axum::body::to_bytes;
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request as HttpRequest, header},
+    };
     use std::{
         pin::pin,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
         task::{Context, Poll, Waker},
     };
+    use tower::ServiceExt;
+
+    #[derive(Clone, Default)]
+    struct TestHandler {
+        requests: Arc<AtomicUsize>,
+    }
+
+    #[derive(Clone, Debug, serde::Deserialize)]
+    #[serde(tag = "method", content = "params")]
+    enum TypedRequest {
+        #[serde(rename = "known")]
+        Known(Vec<TestParam>),
+    }
+
+    #[derive(Clone, Debug, serde::Deserialize)]
+    enum TestParam {
+        #[serde(rename = "allowed")]
+        Allowed,
+    }
 
     #[derive(Clone)]
-    struct TestHandler;
+    struct TypedHandler;
 
-    #[async_trait::async_trait]
     impl RpcHandler for TestHandler {
         type Request = serde_json::Value;
 
+        async fn on_request(&self, _request: Self::Request) -> ResponseResult {
+            self.requests.fetch_add(1, Ordering::Relaxed);
+            ResponseResult::success(())
+        }
+    }
+
+    impl RpcHandler for TypedHandler {
+        type Request = TypedRequest;
+
         async fn on_request(&self, request: Self::Request) -> ResponseResult {
-            ResponseResult::success(request)
+            let TypedRequest::Known(params) = request;
+            drop(params);
+            ResponseResult::success(())
         }
     }
 
     fn notification() -> RpcCall {
         RpcCall::Notification(RpcNotification {
             jsonrpc: Some(Version::V2),
-            method: "eth_subscribe".to_owned(),
+            method: "record".to_owned(),
             params: RequestParams::None,
         })
+    }
+
+    fn method_call(id: i64) -> RpcCall {
+        RpcCall::MethodCall(RpcMethodCall {
+            jsonrpc: Version::V2,
+            method: "record".to_owned(),
+            params: RequestParams::None,
+            id: Id::Number(id),
+        })
+    }
+
+    fn typed_call(method: &str) -> RpcMethodCall {
+        RpcMethodCall {
+            jsonrpc: Version::V2,
+            method: method.to_owned(),
+            params: RequestParams::Array(vec![serde_json::json!("bogus")]),
+            id: Id::Number(1),
+        }
     }
 
     fn run_ready<F: Future>(future: F) -> F::Output {
@@ -121,26 +187,84 @@ mod tests {
 
     #[test]
     fn empty_batch_returns_invalid_request() {
-        let response = run_ready(handle_request(Request::Batch(vec![]), TestHandler));
+        let response = run_ready(handle_request(Request::Batch(vec![]), TestHandler::default()));
 
         assert_eq!(response, Some(Response::error(RpcError::invalid_request())));
     }
 
     #[test]
-    fn notification_only_batch_returns_no_response() {
-        let response = run_ready(handle_request(Request::Batch(vec![notification()]), TestHandler));
+    fn distinguishes_unknown_methods_from_unknown_parameter_variants() {
+        let unknown_method = run_ready(TypedHandler.on_call(typed_call("unknown")));
+        let invalid_params = run_ready(TypedHandler.on_call(typed_call("known")));
 
-        assert_eq!(response, None);
+        assert_eq!(
+            serde_json::to_value(unknown_method).unwrap()["error"]["code"],
+            serde_json::json!(-32601)
+        );
+        assert_eq!(
+            serde_json::to_value(invalid_params).unwrap()["error"]["code"],
+            serde_json::json!(-32602)
+        );
     }
 
     #[test]
-    fn http_notification_only_batch_returns_no_content() {
+    fn notification_only_batch_executes_without_response() {
+        let handler = TestHandler::default();
+        let response = run_ready(handle_request(
+            Request::Batch(vec![notification(), notification()]),
+            handler.clone(),
+        ));
+
+        assert_eq!(response, None);
+        assert_eq!(handler.requests.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn mixed_batch_executes_notification_without_including_response() {
+        let handler = TestHandler::default();
+        let response = run_ready(handle_request(
+            Request::Batch(vec![notification(), method_call(1)]),
+            handler.clone(),
+        ));
+
+        assert_eq!(
+            response,
+            Some(Response::Batch(vec![RpcResponse::new(
+                Id::Number(1),
+                ResponseResult::success(())
+            )]))
+        );
+        assert_eq!(handler.requests.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn http_notification_returns_no_content_after_execution() {
+        let handler = TestHandler::default();
         let response = run_ready(handle(
-            State((TestHandler, ())),
-            Ok(Json(Request::Batch(vec![notification()]))),
+            State((handler.clone(), ())),
+            Ok(Json(Request::Single(notification()))),
         ));
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         assert!(run_ready(to_bytes(response.into_body(), usize::MAX)).unwrap().is_empty());
+        assert_eq!(handler.requests.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn malformed_json_returns_parse_error() {
+        let request = HttpRequest::post("/")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{"))
+            .unwrap();
+        let response = run_ready(
+            http_router(ServerConfig::default(), TestHandler::default()).oneshot(request),
+        )
+        .unwrap();
+        let body = run_ready(to_bytes(response.into_body(), usize::MAX)).unwrap();
+
+        assert_eq!(
+            serde_json::from_slice::<Response>(&body).unwrap(),
+            Response::error(RpcError::parse_error())
+        );
     }
 }

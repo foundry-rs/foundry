@@ -7,6 +7,8 @@ struct MyStruct {
     uint256 value;
 }
 
+error ExplicitRollCompleted();
+
 contract MyContract {
     uint256 forkId;
     bytes32 blockHash;
@@ -315,6 +317,78 @@ contract ForkTest is Test {
         revert();
     }
 
+    function testForkDumpStatePreservesOrderAfterCreateSelectForkAtBlock() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_create_select_fork_block.json");
+
+        DummyContract first = new DummyContract();
+        vm.createSelectFork("mainnet", 16_261_703);
+        DummyContract second = new DummyContract();
+
+        assertDumpStateOrder(path, address(first), address(second));
+    }
+
+    function testForkDumpStatePreservesOrderAfterCreateSelectForkAtTransaction() public {
+        string memory path =
+            string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_create_select_fork_transaction.json");
+
+        DummyContract first = new DummyContract();
+        vm.createSelectFork("mainnet", bytes32(0x67cbad73764049e228495a3f90144aab4a37cb4b5fd697dffc234aa5ed811ace));
+        DummyContract second = new DummyContract();
+
+        assertDumpStateOrder(path, address(first), address(second));
+    }
+
+    function testForkDumpStatePreservesOrderAfterExplicitActiveRoll() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_explicit_active_roll.json");
+
+        vm.selectFork(mainnetFork);
+        address first =
+            vm.computeCreate2Address(bytes32(uint256(2)), keccak256(type(DummyContract).creationCode), address(this));
+        try this.createExplicitRollAndRevert(mainnetFork, block.number) {
+            assertTrue(false);
+        } catch (bytes memory reason) {
+            assertEq(bytes4(reason), ExplicitRollCompleted.selector);
+        }
+        DummyContract second = new DummyContract();
+
+        assertDumpStateOrder(path, first, address(second));
+    }
+
+    function testForkDumpStatePreservesOrderAfterInactiveRoll() public {
+        string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_inactive_roll.json");
+
+        vm.selectFork(mainnetFork);
+        DummyContract first = new DummyContract();
+        uint256 mainnetBlock = block.number;
+
+        vm.selectFork(optimismFork);
+        vm.rollFork(mainnetFork, mainnetBlock);
+        vm.selectFork(mainnetFork);
+        DummyContract second = new DummyContract();
+
+        assertDumpStateOrder(path, address(first), address(second));
+    }
+
+    function createExplicitRollAndRevert(uint256 forkId, uint256 blockNumber) external {
+        new DummyContract{salt: bytes32(uint256(2))}();
+        vm.rollFork(forkId, blockNumber);
+        revert ExplicitRollCompleted();
+    }
+
+    function assertDumpStateOrder(string memory path, address first, address second) private {
+        vm.dumpState(path);
+
+        string memory json = vm.readFile(path);
+        uint256 firstIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(first)), '"'));
+        uint256 secondIndex = vm.indexOf(json, string.concat('"', vm.toLowercase(vm.toString(second)), '"'));
+        assertTrue(firstIndex != type(uint256).max);
+        assertTrue(secondIndex != type(uint256).max);
+        assertLt(firstIndex, secondIndex);
+
+        vm.removeFile(path);
+    }
+
     /// forge-config: default.allow_internal_expect_revert = true
     function testNonExistingContractRevert() public {
         vm.selectFork(mainnetFork);
@@ -526,12 +600,10 @@ contract ForkTest is Test {
     }
 
     // Verify struct decoding for transaction objects (original issue #7858).
-    // Hardcode the DRPC URL to avoid provider-specific non-standard fields
-    // (e.g. `blockTimestamp` from PublicNode) that shift ABI decoding offsets.
     // <https://github.com/foundry-rs/foundry/issues/7858>
     function testRpcTransactionByHash() public {
         bytes memory data = vm.rpc(
-            "https://sepolia.drpc.org",
+            "sepolia",
             "eth_getTransactionByHash",
             '["0xe1a0fba63292976050b2fbf4379a1901691355ed138784b4e0d1854b4cf9193e"]'
         );

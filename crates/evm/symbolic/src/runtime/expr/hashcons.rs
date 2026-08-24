@@ -26,6 +26,19 @@ impl<T> HashConsed<T> {
         self.inner.hash.cmp(&other.inner.hash)
     }
 
+    /// Orders nodes within one hash-consing context without inspecting or rendering their value.
+    ///
+    /// The cached structural hash handles the common case. Pointer identity is only a tie-breaker
+    /// for distinct nodes with the same hash; structurally equal values share one node.
+    #[inline]
+    pub(in crate::runtime::expr) fn identity_cmp(&self, other: &Self) -> Ordering {
+        self.inner.hash.cmp(&other.inner.hash).then_with(|| {
+            let left = Arc::as_ptr(&self.inner);
+            let right = Arc::as_ptr(&other.inner);
+            left.cmp(&right)
+        })
+    }
+
     #[inline]
     pub(in crate::runtime) fn value(&self) -> &T {
         &self.inner.value
@@ -87,15 +100,18 @@ impl<T: fmt::Debug> fmt::Debug for HashConsed<T> {
 }
 
 type HashConsHasher = FixedState;
+const MIN_GC_THRESHOLD: usize = 1024;
 
 /// Hash-consing table for sharing structurally equal immutable values.
 ///
 /// The table stores weak references so interned values disappear when the rest of
-/// the symbolic state stops using them. `make` only looks up and inserts; dead
-/// weak entries are ignored and left in the table until the context is dropped.
+/// the symbolic state stops using them. `make` removes dead entries encountered
+/// during lookup and periodically sweeps distinct dead values before they can
+/// grow the table without bound.
 pub(in crate::runtime) struct HashCons<T> {
     table: HashTable<HashConsEntry<T>>,
     hash_builder: HashConsHasher,
+    gc_threshold: usize,
 }
 
 struct HashConsEntry<T> {
@@ -111,7 +127,11 @@ impl<T> HashConsEntry<T> {
 
 impl<T> HashCons<T> {
     pub(in crate::runtime) fn new() -> Self {
-        Self { table: HashTable::new(), hash_builder: HashConsHasher::default() }
+        Self {
+            table: HashTable::new(),
+            hash_builder: HashConsHasher::default(),
+            gc_threshold: MIN_GC_THRESHOLD,
+        }
     }
 
     fn hash<Q: Hash + ?Sized>(&self, value: &Q) -> u64 {
@@ -121,29 +141,47 @@ impl<T> HashCons<T> {
 
 impl<T: Eq + Hash> HashCons<T> {
     pub(in crate::runtime) fn make(&mut self, value: T) -> HashConsed<T> {
+        if self.table.len() >= self.gc_threshold {
+            self.table.retain(|entry| entry.value.strong_count() != 0);
+            self.gc_threshold = self.table.len().saturating_mul(2).max(MIN_GC_THRESHOLD);
+        }
+
         let hash = self.hash(&value);
-        let mut found = None;
-        match self.table.entry(
-            hash,
-            |entry| {
-                if entry.hash == hash
-                    && let Some(existing) = entry.value.upgrade()
-                    && existing.value == value
-                {
-                    found = Some(existing);
-                    true
-                } else {
-                    false
+        loop {
+            let mut found = None;
+            let mut matched_dead_entry = false;
+            match self.table.entry(
+                hash,
+                |entry| {
+                    if entry.hash != hash {
+                        return false;
+                    }
+                    match entry.value.upgrade() {
+                        Some(existing) if existing.value == value => {
+                            found = Some(existing);
+                            true
+                        }
+                        None => {
+                            matched_dead_entry = true;
+                            true
+                        }
+                        Some(_) => false,
+                    }
+                },
+                HashConsEntry::hash,
+            ) {
+                Entry::Occupied(entry) => {
+                    if let Some(inner) = found {
+                        return HashConsed { inner };
+                    }
+                    debug_assert!(matched_dead_entry);
+                    let _ = entry.remove();
                 }
-            },
-            HashConsEntry::hash,
-        ) {
-            Entry::Occupied(_) => HashConsed { inner: found.expect("matched live value") },
-            Entry::Vacant(entry) => {
-                let inner = HashConsedInner { hash, value };
-                let inner = Arc::new(inner);
-                entry.insert(HashConsEntry { hash, value: Arc::downgrade(&inner) });
-                HashConsed { inner }
+                Entry::Vacant(entry) => {
+                    let inner = Arc::new(HashConsedInner { hash, value });
+                    entry.insert(HashConsEntry { hash, value: Arc::downgrade(&inner) });
+                    return HashConsed { inner };
+                }
             }
         }
     }
@@ -187,6 +225,31 @@ mod tests {
 
         assert_eq!(second.value().as_str(), "same");
         assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn make_reclaims_repeatedly_dropped_values() {
+        let mut table = HashCons::<String>::new();
+
+        for _ in 0..128 {
+            drop(table.make("same".to_string()));
+        }
+
+        assert_eq!(table.table.len(), 1);
+    }
+
+    #[test]
+    fn make_reclaims_distinct_dropped_values() {
+        let mut table = HashCons::<String>::new();
+        let retained = table.make("retained".to_string());
+
+        for value in 0..MIN_GC_THRESHOLD - 1 {
+            drop(table.make(value.to_string()));
+        }
+        let same = table.make("retained".to_string());
+
+        assert_eq!(table.table.len(), 1);
+        assert_eq!(retained, same);
     }
 
     #[test]

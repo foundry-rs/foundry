@@ -88,6 +88,18 @@ impl<'ast> State<'_, 'ast> {
         if !item_needs_iso(&next_item.kind) {
             return;
         }
+        // Never isolate items within a `disable-start`/`disable-end` region, where the source
+        // layout is preserved verbatim. The cursor sits right past the line break that follows the
+        // previous item, so check the byte that was last copied from the source. Line-based
+        // directives such as `disable-line` only opt out of formatting that line's contents, so
+        // they keep the isolation break.
+        if self.cursor.pos > BytePos(0)
+            && self
+                .inline_config
+                .is_disabled_block(Span::new(self.cursor.pos - BytePos(1), self.cursor.pos))
+        {
+            return;
+        }
         let span = next_item.span;
 
         let cmnts = self
@@ -120,24 +132,22 @@ impl<'ast> State<'_, 'ast> {
         let ast::Item { ref docs, span, ref kind } = *item;
         self.print_docs(docs);
 
-        if self.handle_span(item.span, skip_ws) {
+        // The comments preceding the item are printed before checking whether it is disabled,
+        // because printing a disabled item copies the source verbatim and drops every comment
+        // that ends before it.
+        let cmnt = self.print_comments(
+            span.lo(),
+            if skip_ws { CommentConfig::skip_leading_ws(false) } else { CommentConfig::default() },
+        );
+
+        if self.print_span_if_disabled(span) {
             if !self.print_trailing_comment(span.hi(), None) {
                 self.print_sep(Separator::Hardbreak);
             }
             return;
         }
 
-        if self
-            .print_comments(
-                span.lo(),
-                if skip_ws {
-                    CommentConfig::skip_leading_ws(false)
-                } else {
-                    CommentConfig::default()
-                },
-            )
-            .is_some_and(|cmnt| cmnt.is_mixed())
-        {
+        if cmnt.is_some_and(|cmnt| cmnt.is_mixed()) {
             self.zerobreak();
         }
 
@@ -159,7 +169,7 @@ impl<'ast> State<'_, 'ast> {
         self.print_comments(span.hi(), CommentConfig::default());
         self.print_trailing_comment(span.hi(), None);
         self.hardbreak_if_not_bol();
-        self.cursor.next_line(self.is_at_crlf());
+        self.cursor_next_line();
     }
 
     fn print_pragma(&mut self, pragma: &'ast ast::PragmaDirective<'ast>) {
@@ -314,6 +324,17 @@ impl<'ast> State<'_, 'ast> {
         self.contract = Some(c);
         self.cursor.advance_to(span.lo(), true);
 
+        // Position of the body's opening brace, needed to identify the comments that belong to
+        // the contract header. The `is` and `layout` clauses can appear in either order, so the
+        // header ends at whichever clause ends last.
+        let header_hi = bases
+            .last()
+            .map(|base| base.span().hi())
+            .max(layout.as_ref().map(|layout| layout.span.hi()))
+            .unwrap_or(name.span.hi());
+        let body_lo = body.first().map_or(span.hi(), |item| item.span.lo());
+        let brace = self.find_opening_brace(Span::new(header_hi, body_lo));
+
         self.s.cbox(self.ind);
         self.ibox(0);
         self.cbox(0);
@@ -326,7 +347,8 @@ impl<'ast> State<'_, 'ast> {
         {
             self.word("layout at ");
             self.print_expr(layout.slot);
-            self.print_sep(Separator::Space);
+            let breaks = !bases.is_empty() || !self.peek_mixed_comment_before(brace);
+            self.print_sep(Separator::SpaceOrNbsp(breaks));
         }
 
         if let Some(first) = bases.first().map(|base| base.span())
@@ -355,23 +377,39 @@ impl<'ast> State<'_, 'ast> {
                     }
                 }
             }
-            if !self.print_trailing_comment(bases.last().unwrap().span().hi(), None) {
+            if self.print_trailing_comment(bases.last().unwrap().span().hi(), None) {
+                self.s.offset(-self.ind);
+            } else if self.peek_mixed_comment_before(brace) {
+                self.nbsp();
+            } else {
                 self.space();
+                self.s.offset(-self.ind);
             }
-            self.s.offset(-self.ind);
+        }
+
+        // Print the comments preceding the opening brace, otherwise they get relocated into the
+        // contract body. They are glued to both the header and the brace, as breaking them apart
+        // turns them into trailing comments, which are relocated again on the next run.
+        while self.peek_mixed_comment_before(brace) {
+            let cmnt = self.next_comment().unwrap();
+            if let Some(cmnt) = self.handle_comment(cmnt, true) {
+                self.print_comment(cmnt, CommentConfig::skip_ws().mixed_no_break());
+            }
+            self.nbsp();
         }
         self.end();
 
         self.print_word("{");
         self.end();
         if body.is_empty() {
-            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
+            match self.print_comments(span.hi(), CommentConfig::empty_block()) {
                 // Adjust the offset of the trailing break from comment printing
                 // so the closing brace is not indented
-                self.s.offset(-self.ind);
-            } else if self.config.bracket_spacing {
-                self.nbsp();
-            };
+                Some(_) if self.last_token_is_break() => self.s.offset(-self.ind),
+                Some(_) => {}
+                None if self.config.bracket_spacing => self.nbsp(),
+                None => {}
+            }
             self.end();
         } else {
             // update block depth
@@ -400,25 +438,50 @@ impl<'ast> State<'_, 'ast> {
                 }
             }
 
-            if let Some(cmnt) = self.print_comments(span.hi(), CommentConfig::skip_trailing_ws())
-                && self.config.contract_new_lines
-                && !cmnt.is_blank()
-            {
-                self.print_sep(Separator::Hardbreak);
+            let cmnt = self.print_comments(span.hi(), CommentConfig::skip_trailing_ws());
+            let mut glued = false;
+            if self.last_token_is_break() {
+                if self.config.contract_new_lines && cmnt.is_some_and(|cmnt| !cmnt.is_blank()) {
+                    self.print_sep(Separator::Hardbreak);
+                }
+                self.s.offset(-self.ind);
+            } else {
+                glued = self.glue_brace_to_trailing_comments(cmnt.is_some());
             }
-            self.s.offset(-self.ind);
             self.end();
-            if self.config.contract_new_lines {
+            if self.config.contract_new_lines && !glued {
                 self.hardbreak_if_nonempty();
             }
 
             // restore block depth
             self.block_depth -= 1;
         }
-        self.print_word("}");
+        // The cursor is updated with the actual span; a disabled trailing comment of the last item
+        // may have already consumed source beyond the closing brace.
+        self.word("}");
 
         self.cursor.advance_to(span.hi(), true);
         self.contract = None;
+    }
+
+    /// Glues the closing brace of an item body to a trailing run of mixed comments.
+    ///
+    /// A trailing run of mixed comments ends in a string token; a break in between would
+    /// reclassify the last comment on the next run, so the brace is glued with a hard space.
+    /// Bodies that end with a pending break (the caller adjusts its offset instead), an existing
+    /// space, or verbatim source that already broke the line are left unchanged.
+    ///
+    /// Returns `true` if the brace was glued.
+    fn glue_brace_to_trailing_comments(&mut self, printed: bool) -> bool {
+        if printed
+            && !self.last_token_is_break()
+            && !self.last_token_is_space()
+            && !self.is_beginning_of_line()
+        {
+            self.nbsp();
+            return true;
+        }
+        false
     }
 
     fn print_struct(&mut self, strukt: &'ast ast::ItemStruct<'ast>, span: Span) {
@@ -439,9 +502,15 @@ impl<'ast> State<'_, 'ast> {
                 self.hardbreak();
             }
         }
-        self.print_comments(span.hi(), CommentConfig::skip_ws());
-        if ind == 0 {
-            self.s.offset(-self.ind);
+        let cmnt_config =
+            if fields.is_empty() { CommentConfig::empty_block() } else { CommentConfig::skip_ws() };
+        let printed = self.print_comments(span.hi(), cmnt_config).is_some();
+        if self.last_token_is_break() {
+            if ind == 0 {
+                self.s.offset(-self.ind);
+            }
+        } else {
+            self.glue_brace_to_trailing_comments(printed);
         }
         self.end();
         self.end();
@@ -455,18 +524,26 @@ impl<'ast> State<'_, 'ast> {
         self.print_ident(name);
         self.word(" {");
         self.hardbreak_if_nonempty();
+        let mut printed = false;
         for (pos, ident) in variants.iter().delimited() {
             self.print_comments(ident.span.lo(), CommentConfig::default());
             self.print_ident(ident);
             if !pos.is_last {
                 self.word(",");
             }
-            if !self.print_trailing_comment(ident.span.hi(), None) {
+            printed = self.print_trailing_comment(ident.span.hi(), None);
+            if !printed {
                 self.hardbreak();
             }
         }
-        self.print_comments(span.hi(), CommentConfig::skip_ws());
-        self.s.offset(-self.ind);
+        if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
+            printed = true;
+        }
+        if self.last_token_is_break() {
+            self.s.offset(-self.ind);
+        } else {
+            self.glue_brace_to_trailing_comments(printed);
+        }
         self.end();
         self.word("}");
     }
@@ -1077,10 +1154,6 @@ impl<'ast> State<'_, 'ast> {
         self.print_str_lit(ast::StrKind::Str, strlit.span.lo(), strlit.value.as_str());
     }
 
-    fn print_lit(&mut self, lit: &'ast ast::Lit<'ast>) {
-        self.print_lit_inner(lit, false);
-    }
-
     fn print_ty(&mut self, ty: &'ast ast::Type<'ast>) {
         if self.handle_span(ty.span, false) {
             return;
@@ -1362,9 +1435,12 @@ impl<'ast> State<'_, 'ast> {
                             };
                         s.print_call_args(
                             call_args,
-                            list_format
-                                .without_ind(s.return_bin_expr)
-                                .with_delimiters(!s.call_with_opts_and_args),
+                            list_format.without_ind(s.return_bin_expr).with_delimiters(
+                                !s.call_with_opts_and_args
+                                    || s.call_stack
+                                        .last()
+                                        .is_some_and(|call| call.is_chained() && call.has_indent),
+                            ),
                             get_callee_head_size(call_expr),
                             callee_suffix_can_break,
                         );
@@ -1391,7 +1467,7 @@ impl<'ast> State<'_, 'ast> {
             ast::ExprKind::Ident(ident) => self.print_ident(ident),
             ast::ExprKind::Index(expr, kind) => self.print_index_expr(span, expr, kind),
             ast::ExprKind::Lit(lit, unit) => {
-                self.print_lit(lit);
+                self.print_lit_inner(lit, false);
                 if let Some(unit) = unit {
                     self.nbsp();
                     self.word(unit.to_str());
@@ -1405,15 +1481,19 @@ impl<'ast> State<'_, 'ast> {
                         let has_mixed_comment = s
                             .peek_comment_between(member_expr.span.hi(), ident.span.lo())
                             .is_some_and(|comment| comment.style.is_mixed());
-                        if has_mixed_comment {
+                        let break_before_suffix = if has_mixed_comment {
                             s.print_comments(
                                 ident.span.lo(),
                                 CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
                             );
+                            true
                         } else {
-                            s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()));
-                        }
-                        if has_mixed_comment || s.member_suffix_emits_break(expr, member_expr) {
+                            !s.print_trailing_comment(member_expr.span.hi(), Some(ident.span.lo()))
+                                && s.peek_comment_between(member_expr.span.hi(), ident.span.lo())
+                                    .is_none()
+                                && s.member_suffix_emits_break(expr, member_expr)
+                        };
+                        if break_before_suffix {
                             s.zerobreak();
                         }
                         s.word(".");
@@ -1797,7 +1877,7 @@ impl<'ast> State<'_, 'ast> {
             }
 
             if chain_has_indent {
-                self.s.ibox(self.ind);
+                self.s.cbox(self.ind);
             } else {
                 self.skip_index_break = true;
                 self.cbox(0);
@@ -3311,7 +3391,13 @@ mod tests {
                     Comments::new(&source_obj.file, gcx.sess.source_map(), true, false, None);
                 let config = Arc::new(FormatterConfig::default());
                 let inline_config = InlineConfig::default();
-                let mut state = State::new(gcx.sess.source_map(), config, inline_config, comments);
+                let mut state = State::new(
+                    gcx.sess.source_map(),
+                    source_obj.file.start_pos,
+                    config,
+                    inline_config,
+                    comments,
+                );
 
                 // Extract the first function header (either top-level or inside a contract)
                 let func = ast

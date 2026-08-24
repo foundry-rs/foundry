@@ -49,6 +49,43 @@ const POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR: f32 = 0.6;
 /// Helper type alias for a retry provider
 pub type RetryProvider<N = AnyNetwork> = RootProvider<N>;
 
+/// Returns whether an RPC transport error reports JSON-RPC method-not-found.
+///
+/// Some providers encode JSON-RPC errors inside an HTTP error response instead of returning a
+/// normal JSON-RPC response. Only the exact `-32601` code is treated as method unavailability;
+/// authentication, internal, and transport errors must remain visible to callers.
+pub fn is_rpc_method_not_found(error: &TransportError) -> bool {
+    if error.as_error_resp().is_some_and(|response| response.code == -32601) {
+        return true;
+    }
+    let TransportError::Transport(error) = error else { return false };
+    error
+        .as_http_error()
+        .and_then(|error| rpc_error_code(&error.body))
+        .is_some_and(|code| code == -32601)
+}
+
+/// Returns an RPC URL safe for display by retaining only its scheme, host, and port.
+pub fn redact_url(raw: &str) -> String {
+    let Ok(mut redacted) = Url::parse(raw) else {
+        return "<redacted>".to_owned();
+    };
+    let _ = redacted.set_username("");
+    let _ = redacted.set_password(None);
+    redacted.set_path("");
+    redacted.set_query(None);
+    redacted.set_fragment(None);
+    redacted.to_string()
+}
+
+fn rpc_error_code(body: &str) -> Option<i64> {
+    // HTTP transports may append human-readable diagnostics after the JSON-RPC body. Parse the
+    // first complete JSON value instead of requiring the entire body to be JSON.
+    let value =
+        serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>().next()?.ok()?;
+    value.get("error").unwrap_or(&value).get("code")?.as_i64()
+}
+
 /// Helper type alias for a retry provider with a signer
 pub type RetryProviderWithSigner<N = AnyNetwork, W = EthereumWallet> = FillProvider<
     JoinFill<JoinFill<Identity, <N as RecommendedFillers>::RecommendedFillers>, WalletFiller<W>>,
@@ -193,7 +230,7 @@ impl<N: Network> ProviderBuilder<N> {
                 }
                 _ => Err(err),
             })
-            .wrap_err_with(|| format!("invalid provider URL: {url_str:?}"));
+            .wrap_err_with(|| format!("invalid provider URL: {:?}", redact_url(url_str)));
 
         // Use the final URL string to guess if it's a local URL.
         let is_local = url.as_ref().is_ok_and(|url| guess_local_url(url.as_str()));
@@ -595,7 +632,61 @@ fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
 
 #[cfg(test)]
 mod tests {
+    use alloy_json_rpc::ErrorPayload;
+
     use super::*;
+
+    #[test]
+    fn redacts_url_credentials_and_resource() {
+        let url = "https://user:password@example.com:8545/private-key?token=secret#fragment";
+
+        assert_eq!(redact_url(url), "https://example.com:8545/");
+        assert_eq!(redact_url("not a URL with secret"), "<redacted>");
+    }
+
+    #[test]
+    fn invalid_provider_url_error_is_redacted() {
+        let builder = ProviderBuilder::<AnyNetwork>::new(
+            "https://example.com:bad/private-api-key?token=secret",
+        );
+
+        let error = builder.url.unwrap_err().to_string();
+        assert!(error.contains("<redacted>"));
+        assert!(!error.contains("private-api-key"));
+        assert!(!error.contains("secret"));
+    }
+
+    #[test]
+    fn method_not_found_classification_is_exact() {
+        let method_not_found = TransportError::ErrorResp(ErrorPayload::method_not_found());
+        let internal_error = TransportError::ErrorResp(ErrorPayload::internal_error());
+        let http_method_not_found = alloy_transport::TransportErrorKind::http_error(
+            403,
+            r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"method not allowed"}}"#
+                .to_string(),
+        );
+        let http_internal_error = alloy_transport::TransportErrorKind::http_error(
+            500,
+            r#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"internal error"}}"#.to_string(),
+        );
+        let http_method_not_found_with_diagnostics =
+            alloy_transport::TransportErrorKind::http_error(
+                403,
+                concat!(
+                    r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"method not allowed"}}"#,
+                    "\n\nHTTP diagnostics:\nstatus: 403 Forbidden"
+                )
+                .to_string(),
+            );
+        let transport_error = alloy_transport::TransportErrorKind::backend_gone();
+
+        assert!(is_rpc_method_not_found(&method_not_found));
+        assert!(is_rpc_method_not_found(&http_method_not_found));
+        assert!(is_rpc_method_not_found(&http_method_not_found_with_diagnostics));
+        assert!(!is_rpc_method_not_found(&internal_error));
+        assert!(!is_rpc_method_not_found(&http_internal_error));
+        assert!(!is_rpc_method_not_found(&transport_error));
+    }
 
     #[test]
     fn can_auto_correct_missing_prefix() {

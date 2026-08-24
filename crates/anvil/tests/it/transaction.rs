@@ -139,7 +139,7 @@ async fn can_order_transactions() {
     let tx_higher = provider.send_transaction(tx).await.unwrap();
 
     // manually mine the block with the transactions
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let higher_price = tx_higher.get_receipt().await.unwrap().transaction_hash;
     let lower_price = tx_lower.get_receipt().await.unwrap().transaction_hash;
@@ -223,7 +223,7 @@ async fn can_replace_transaction() {
 
     let higher_tx_hash = *higher_priced_pending_tx.tx_hash();
     // mine exactly one block
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(1.into()).await.unwrap().unwrap();
 
@@ -281,7 +281,7 @@ async fn can_resend_transaction() {
 
     assert_ne!(*original_pending_tx.tx_hash(), replacement_hash);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(1.into()).await.unwrap().unwrap();
     assert_eq!(BlockTransactions::Hashes(vec![replacement_hash]), block.transactions);
@@ -342,7 +342,7 @@ async fn can_reject_invalid_resend_transaction() {
         underpriced_resend.unwrap_err().to_string().contains("replacement transaction underpriced")
     );
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     pending_tx.get_receipt().await.unwrap();
 }
 
@@ -440,7 +440,7 @@ async fn can_reject_underpriced_replacement() {
     assert!(replacement_err.to_string().contains("replacement transaction underpriced"));
 
     // mine exactly one block
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap();
 
     // ensure that only the higher priced tx was mined
@@ -585,7 +585,7 @@ async fn can_call_greeter_historic() {
     assert_eq!("Another Message", greeting);
 
     // min
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     // returns previous state
     let greeting =
@@ -857,7 +857,7 @@ async fn can_get_pending_transaction() {
     let pending = provider.get_transaction_by_hash(*tx.tx_hash()).await;
     assert!(pending.is_ok());
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let mined = provider.get_transaction_by_hash(*tx.tx_hash()).await.unwrap().unwrap();
 
     assert_eq!(mined.tx_hash(), pending.unwrap().unwrap().tx_hash());
@@ -908,7 +908,7 @@ async fn can_get_raw_transaction() {
     let res1 = api.raw_transaction(*tx.tx_hash()).await;
     assert!(res1.is_ok());
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let res2 = api.raw_transaction(*tx.tx_hash()).await;
 
     assert_eq!(res1.unwrap(), res2.unwrap());
@@ -933,7 +933,7 @@ async fn can_get_raw_receipts() {
     let first = provider.send_transaction(WithOtherFields::new(first)).await.unwrap();
     let second = provider.send_transaction(WithOtherFields::new(second)).await.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let first_receipt = first.get_receipt().await.unwrap();
     let second_receipt = second.get_receipt().await.unwrap();
     assert_eq!(first_receipt.block_number, Some(1));
@@ -963,6 +963,26 @@ async fn can_get_raw_receipts() {
     assert!(second_decoded.status());
     assert_eq!(first_decoded.cumulative_gas_used(), 21_000);
     assert_eq!(second_decoded.cumulative_gas_used(), 42_000);
+
+    // Loaded state can contain transaction metadata that is inconsistent with the block body.
+    // Receipt lookup must continue to use transaction hashes in block-body order.
+    let mut state = api.serialized_state(false).await.unwrap();
+    state.transactions.reverse();
+    for transaction in &mut state.transactions {
+        transaction.info.transaction_index = 99;
+        transaction.block_hash = B256::repeat_byte(0xff);
+        transaction.block_number = 999;
+    }
+    let (loaded_api, _loaded_handle) =
+        spawn(NodeConfig::test().with_init_state(Some(state.clone()))).await;
+    let loaded_raw = loaded_api.raw_receipts(BlockId::number(1)).await.unwrap();
+    assert_eq!(loaded_raw, raw_by_number);
+
+    // A block with any missing stored transaction must not return a partial receipt list.
+    state.transactions.pop();
+    let (incomplete_api, _incomplete_handle) =
+        spawn(NodeConfig::test().with_init_state(Some(state))).await;
+    assert!(incomplete_api.raw_receipts(BlockId::number(1)).await.is_err());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -986,7 +1006,7 @@ async fn can_get_raw_transactions() {
     let first_hash = *first.tx_hash();
     let second_hash = *second.tx_hash();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let first_receipt = first.get_receipt().await.unwrap();
     let second_receipt = second.get_receipt().await.unwrap();
     assert_eq!(first_receipt.block_number, Some(1));
@@ -1142,7 +1162,7 @@ async fn includes_pending_tx_for_transaction_count() {
         assert_eq!(nonce, idx);
     }
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let nonce = provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap();
     assert_eq!(nonce, tx_count);
 }
@@ -1759,7 +1779,7 @@ async fn can_send_tx_osaka_valid_with_limit_enabled() {
     let tx = WithOtherFields::new(tx);
     let err = provider.send_transaction(tx).await.unwrap_err().to_string();
     assert!(
-        err.contains("intrinsic gas too high -- tx.gas_limit > env.cfg.tx_gas_limit_cap"),
+        err.contains("intrinsic gas too high -- tx.gas_limit > resolved tx gas limit cap"),
         "{err}"
     );
 }
@@ -1824,7 +1844,7 @@ async fn can_get_tx_by_sender_and_nonce() {
     }
 
     // mine all transactions
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     for nonce in 0..4 {
         let result: Option<alloy_network::AnyRpcTransaction> = provider
@@ -1877,7 +1897,7 @@ async fn can_get_tx_by_sender_and_nonce() {
     assert_eq!(found_tx.inner.nonce(), 4);
     assert_eq!(found_tx.inner.tx_hash(), *pending_tx.tx_hash());
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let result: Option<alloy_network::AnyRpcTransaction> = provider
         .client()

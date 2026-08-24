@@ -21,6 +21,12 @@ const BASE_URL: &str = "https://api.4byte.sourcify.dev";
 const SELECTOR_LOOKUP_URL: &str = "https://api.4byte.sourcify.dev/signature-database/v1/lookup";
 const SELECTOR_IMPORT_URL: &str = "https://api.4byte.sourcify.dev/signature-database/v1/import";
 
+/// The selector registry uses Express's default 100 KiB JSON body limit.
+const SELECTOR_IMPORT_BODY_LIMIT: usize = 100 * 1024;
+
+/// The selector registry accepts at most this many signatures of each kind per database insert.
+const SELECTOR_IMPORT_SIGNATURE_LIMIT: usize = 1000;
+
 /// The standard request timeout for API requests.
 const REQ_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -65,6 +71,8 @@ impl OpenChainClient {
             .send()
             .await
             .inspect_err(|err| self.on_reqwest_err(err))?
+            .error_for_status()
+            .inspect_err(|err| self.on_reqwest_err(err))?
             .text()
             .await
             .inspect_err(|err| self.on_reqwest_err(err))
@@ -82,6 +90,8 @@ impl OpenChainClient {
             .json(body)
             .send()
             .await
+            .inspect_err(|err| self.on_reqwest_err(err))?
+            .error_for_status()
             .inspect_err(|err| self.on_reqwest_err(err))?
             .json()
             .await
@@ -298,13 +308,14 @@ impl OpenChainClient {
                         abi.functions()
                             .map(|func| func.signature())
                             .chain(abi.errors().map(|error| error.signature()))
-                            .collect::<Vec<_>>()
                     })
+                    .unique()
                     .collect();
 
                 let events = abis
                     .iter()
                     .flat_map(|abi| abi.events().map(|event| event.signature()))
+                    .unique()
                     .collect::<Vec<_>>();
 
                 SelectorImportRequest { function: functions_and_errors, event: events }
@@ -316,7 +327,20 @@ impl OpenChainClient {
             }
         };
 
-        Ok(self.post_json(SELECTOR_IMPORT_URL, &request).await?)
+        let mut response: Option<SelectorImportResponse> = None;
+        for request in request.into_chunks()? {
+            let chunk: SelectorImportResponse =
+                self.post_json(SELECTOR_IMPORT_URL, &request).await?;
+            if let Some(response) = &mut response {
+                response.result.function.imported.extend(chunk.result.function.imported);
+                response.result.function.duplicated.extend(chunk.result.function.duplicated);
+                response.result.event.imported.extend(chunk.result.event.imported);
+                response.result.event.duplicated.extend(chunk.result.event.duplicated);
+            } else {
+                response = Some(chunk);
+            }
+        }
+        Ok(response.expect("selector import always contains at least one request"))
     }
 }
 
@@ -464,6 +488,49 @@ struct SelectorImportRequest {
     event: OpenChainSignatures,
 }
 
+impl SelectorImportRequest {
+    fn into_chunks(self) -> eyre::Result<Vec<Self>> {
+        let empty_request_len = serde_json::to_vec(&Self::default()).unwrap().len();
+        let mut chunks = Vec::new();
+        let mut chunk = Self::default();
+        let mut chunk_len = empty_request_len;
+
+        for (is_event, signature) in self
+            .function
+            .into_iter()
+            .map(|signature| (false, signature))
+            .chain(self.event.into_iter().map(|signature| (true, signature)))
+        {
+            let signature_len = serde_json::to_vec(&signature).unwrap().len();
+            if empty_request_len + signature_len > SELECTOR_IMPORT_BODY_LIMIT {
+                eyre::bail!("selector signature exceeds the registry request body limit");
+            }
+            let needs_comma =
+                if is_event { !chunk.event.is_empty() } else { !chunk.function.is_empty() };
+            let signatures_full = if is_event {
+                chunk.event.len() == SELECTOR_IMPORT_SIGNATURE_LIMIT
+            } else {
+                chunk.function.len() == SELECTOR_IMPORT_SIGNATURE_LIMIT
+            };
+            if (signatures_full
+                || chunk_len + signature_len + usize::from(needs_comma)
+                    > SELECTOR_IMPORT_BODY_LIMIT)
+                && chunk_len > empty_request_len
+            {
+                chunks.push(chunk);
+                chunk = Self::default();
+                chunk_len = empty_request_len;
+            }
+
+            let signatures = if is_event { &mut chunk.event } else { &mut chunk.function };
+            chunk_len += signature_len + usize::from(!signatures.is_empty());
+            signatures.push(signature);
+        }
+        chunks.push(chunk);
+        Ok(chunks)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct SelectorImportEffect {
     imported: HashMap<String, String>,
@@ -588,6 +655,24 @@ struct Signature {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        Router,
+        http::StatusCode,
+        routing::{get, post},
+    };
+
+    async fn spawn_status_server() -> (String, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route("/unavailable", get(|| async { StatusCode::SERVICE_UNAVAILABLE }))
+            .route("/bad-request", get(|| async { StatusCode::BAD_REQUEST }))
+            .route("/post-unavailable", post(|| async { StatusCode::SERVICE_UNAVAILABLE }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), handle)
+    }
 
     #[test]
     fn test_parse_signatures() {
@@ -646,6 +731,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn selector_import_requests_stay_within_registry_limits() {
+        let suffix = "x".repeat(100);
+        let function = (0..3_000)
+            .map(|i| format!("functionName{i:04}{suffix}(address,uint256)"))
+            .collect::<Vec<_>>();
+        let expected = function.clone();
+        let chunks = SelectorImportRequest { function, event: Vec::new() }.into_chunks().unwrap();
+
+        assert!(chunks.len() > 3);
+        assert!(chunks.iter().all(|chunk| chunk.function.len() <= SELECTOR_IMPORT_SIGNATURE_LIMIT
+            && serde_json::to_vec(chunk).unwrap().len() <= SELECTOR_IMPORT_BODY_LIMIT));
+        assert_eq!(
+            chunks.into_iter().flat_map(|chunk| chunk.function).collect::<Vec<_>>(),
+            expected
+        );
+    }
+
     #[tokio::test]
     async fn spurious_marked_on_timeout_threshold() {
         // Use an unreachable local port to trigger a quick connect error.
@@ -661,5 +764,53 @@ mod tests {
         // The Nth failure (N == MAX_TIMEDOUT_REQ) should flip the spurious flag.
         let _ = client.get_text(url).await;
         assert!(client.is_spurious(), "expected spurious after threshold failures");
+    }
+
+    #[tokio::test]
+    async fn spurious_marked_on_http_5xx_threshold() {
+        let (base_url, server_task) = spawn_status_server().await;
+        let client = OpenChainClient::new().expect("client must build");
+
+        for i in 0..(MAX_TIMEDOUT_REQ - 1) {
+            let result = client.get_text(format!("{base_url}/unavailable")).await;
+            assert!(result.is_err(), "expected HTTP 503 on attempt {}", i + 1);
+            assert!(!client.is_spurious(), "unexpected spurious after {} failed attempts", i + 1);
+        }
+
+        let result = client.get_text(format!("{base_url}/unavailable")).await;
+        assert!(result.is_err());
+        assert!(client.is_spurious(), "expected spurious after threshold HTTP 503 responses");
+
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn post_http_5xx_counts_as_connectivity_failure() {
+        let (base_url, server_task) = spawn_status_server().await;
+        let client = OpenChainClient::new().expect("client must build");
+        let body = serde_json::json!({});
+
+        for _ in 0..MAX_TIMEDOUT_REQ {
+            let result = client
+                .post_json::<_, serde_json::Value>(&format!("{base_url}/post-unavailable"), &body)
+                .await;
+            assert!(result.is_err(), "expected HTTP 503");
+        }
+
+        assert!(client.is_spurious(), "expected HTTP 503 POSTs to mark the connection spurious");
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn http_4xx_does_not_count_as_connectivity_failure() {
+        let (base_url, server_task) = spawn_status_server().await;
+        let client = OpenChainClient::new().expect("client must build");
+
+        assert!(client.get_text(format!("{base_url}/bad-request")).await.is_err());
+        assert!(client.get_text(format!("{base_url}/missing")).await.is_err());
+        assert_eq!(client.timedout_requests.load(Ordering::SeqCst), 0);
+        assert!(!client.is_spurious());
+
+        server_task.abort();
     }
 }

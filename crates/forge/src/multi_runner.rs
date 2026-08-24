@@ -10,7 +10,7 @@ use crate::{
     symbolic_regression::SYMBOLIC_REGRESSION_MARKER,
 };
 use alloy_json_abi::{Function, JsonAbi};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, ChainId, U256};
 use eyre::Result;
 use foundry_cli::opts::configure_pcx_from_compile_output;
 use foundry_common::{
@@ -21,7 +21,7 @@ use foundry_compilers::{
     Artifact, ArtifactId, Compiler, ProjectCompileOutput,
     artifacts::{Contract, Libraries},
 };
-use foundry_config::{Config, InlineConfig};
+use foundry_config::{Config, FoundryHardfork, InlineConfig};
 use foundry_evm::{
     backend::Backend,
     core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
@@ -29,16 +29,16 @@ use foundry_evm::{
     executors::{EarlyExit, Executor, ExecutorBuilder, ReplayObservation, ShowmapDomain},
     fork::CreateFork,
     fuzz::{
-        BasicTxDetails,
+        BaseCounterExample, BasicTxDetails,
         strategies::{EnumBounds, LiteralsDictionary},
     },
     inspectors::{CheatsConfig, EdgeIndexMap},
-    opts::EvmOpts,
+    opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
     traces::{InternalTraceMode, TraceRequirements},
 };
 use foundry_evm_networks::NetworkVariant;
 
-use foundry_linking::{LinkOutput, Linker, LinkerError};
+use foundry_linking::{DetailedLinkOutput, LinkOutput, Linker, LinkerError, Resolver};
 use rayon::prelude::*;
 use std::{
     borrow::Borrow,
@@ -473,6 +473,17 @@ pub struct SymbolicArtifactReplayConfig {
     pub path: PathBuf,
 }
 
+/// A validated stateless fuzz failure and its unique replay target.
+#[derive(Clone, Debug)]
+pub struct FuzzFailureReplayConfig {
+    /// Artifact payload to replay.
+    pub failure: Arc<BaseCounterExample>,
+    /// Fully qualified contract identifier selected for replay.
+    pub contract: String,
+    /// Function signature selected for replay.
+    pub test: String,
+}
+
 /// Configuration for the test runner.
 ///
 /// This is modified after instantiation through inline config.
@@ -491,6 +502,12 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub tx_env: TxEnvFor<FEN>,
     /// EVM version.
     pub spec_id: SpecFor<FEN>,
+    /// Exact network hardfork selected for the execution environment.
+    pub hardfork: Option<FoundryHardfork>,
+    /// Source chain ID used to resolve fork hardfork schedules.
+    pub fork_chain_id: Option<ChainId>,
+    /// Exact hardfork reported by the fork endpoint.
+    pub fork_hardfork: Option<FoundryHardfork>,
     /// The address which will be used to deploy the initial contracts and send all transactions.
     pub sender: Address,
 
@@ -519,6 +536,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub fuzz_only: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
     pub fuzz_failure_replay: bool,
+    /// Validated explicit stateless fuzz failure to replay.
+    pub fuzz_input: Option<FuzzFailureReplayConfig>,
 
     /// When set, run only the matching test and replay this artifact's concrete payload.
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
@@ -530,9 +549,17 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
     pub fn reconfigure_with(&mut self, config: Arc<Config>) {
         debug_assert!(!Arc::ptr_eq(&self.config, &config));
 
-        self.spec_id = config.evm_spec_id();
         self.sender = config.sender;
         self.evm_opts.networks = config.networks;
+        self.hardfork = resolve_execution_spec(
+            &config,
+            self.evm_opts.networks,
+            &mut self.evm_env,
+            ExecutionSpecContext::local_or_fork(self.fork_chain_id, self.fork_hardfork),
+            None,
+            None,
+        );
+        self.spec_id = self.evm_env.cfg_env.spec;
         self.isolation = config.isolate;
 
         // Specific to Forge, not present in config.
@@ -553,6 +580,12 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
     pub fn configure_executor(&self, executor: &mut Executor<FEN>) {
         // TODO: See above
 
+        debug_assert!(
+            executor.backend().networks().has_same_execution_profile(&self.evm_opts.networks)
+        );
+        debug_assert!(
+            executor.inspector().networks.has_same_execution_profile(&self.evm_opts.networks)
+        );
         let inspector = executor.inspector_mut();
         // inspector.set_env(&self.env);
         if let Some(cheatcodes) = inspector.cheatcodes.as_mut() {
@@ -563,7 +596,6 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         inspector.tracing_requirements(self.trace_requirements());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
-        inspector.networks(self.evm_opts.networks);
         // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
 
         // executor.env_mut().clone_from(&self.env);
@@ -585,7 +617,6 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             self.evm_opts.clone(),
             Some(known_contracts),
             Some(artifact_id.clone()),
-            None,
             false,
         );
         cheats_config.isolate = self.isolation;
@@ -598,14 +629,13 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
                     .trace_requirements(self.trace_requirements())
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
-                    .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
                     .set_analysis(analysis)
             })
             .spec_id(self.spec_id)
             .gas_limit(self.evm_opts.gas_limit())
             .legacy_assertions(self.config.legacy_assertions)
-            .build(self.evm_env.clone(), self.tx_env.clone(), db)
+            .build(self.evm_env.clone(), self.tx_env.clone(), db, self.evm_opts.networks)
     }
 
     fn trace_requirements(&self) -> TraceRequirements {
@@ -628,6 +658,10 @@ pub struct MultiContractRunnerBuilder {
     pub initial_balance: U256,
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
+    /// Source chain ID used to resolve the fork's hardfork schedule.
+    pub fork_chain_id: Option<ChainId>,
+    /// Exact hardfork reported by the fork endpoint.
+    pub fork_hardfork: Option<FoundryHardfork>,
     /// Project config.
     pub config: Arc<Config>,
     /// Parsed inline configuration.
@@ -654,6 +688,8 @@ pub struct MultiContractRunnerBuilder {
     pub fuzz_only: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
     pub fuzz_failure_replay: bool,
+    /// Validated explicit stateless fuzz failure to replay.
+    pub fuzz_input: Option<FuzzFailureReplayConfig>,
     /// Symbolic artifact replay mode (CLI-only, off by default).
     pub symbolic_artifact_replay: Option<SymbolicArtifactReplayConfig>,
     /// Whether the configured CREATE2 deployer is available in the execution environment.
@@ -676,6 +712,8 @@ impl MultiContractRunnerBuilder {
             sender: Default::default(),
             initial_balance: Default::default(),
             fork: Default::default(),
+            fork_chain_id: None,
+            fork_hardfork: None,
             line_coverage: Default::default(),
             debug: Default::default(),
             isolation: Default::default(),
@@ -687,6 +725,7 @@ impl MultiContractRunnerBuilder {
             fuzz_minimize: None,
             fuzz_only: false,
             fuzz_failure_replay: false,
+            fuzz_input: None,
             symbolic_artifact_replay: None,
             create2_deployer_available: None,
         }
@@ -717,6 +756,11 @@ impl MultiContractRunnerBuilder {
         self
     }
 
+    pub fn with_fuzz_input(mut self, fuzz_input: Option<FuzzFailureReplayConfig>) -> Self {
+        self.fuzz_input = fuzz_input;
+        self
+    }
+
     pub fn with_symbolic_artifact_replay(
         mut self,
         replay: Option<SymbolicArtifactReplayConfig>,
@@ -737,6 +781,16 @@ impl MultiContractRunnerBuilder {
 
     pub fn with_fork(mut self, fork: Option<CreateFork>) -> Self {
         self.fork = fork;
+        self
+    }
+
+    pub const fn with_fork_chain_id(mut self, chain_id: Option<ChainId>) -> Self {
+        self.fork_chain_id = chain_id;
+        self
+    }
+
+    pub const fn with_fork_hardfork(mut self, hardfork: Option<FoundryHardfork>) -> Self {
+        self.fork_hardfork = hardfork;
         self
     }
 
@@ -780,7 +834,7 @@ impl MultiContractRunnerBuilder {
     pub fn build<FEN: FoundryEvmNetwork, C: Compiler<CompilerContract = Contract>>(
         self,
         output: &ProjectCompileOutput,
-        evm_env: EvmEnvFor<FEN>,
+        mut evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
         evm_opts: EvmOpts,
     ) -> Result<MultiContractRunner<FEN>> {
@@ -801,7 +855,7 @@ impl MultiContractRunnerBuilder {
         let configured_libraries = self.config.libraries_with_remappings()?;
         let create2_deployer_available = self.create2_deployer_available(&evm_opts);
         let create2 = if create2_deployer_available {
-            match linker.link_with_create2(
+            match linker.link_with_create2_detailed(
                 configured_libraries.clone(),
                 evm_opts.create2_deployer,
                 self.config.create2_library_salt,
@@ -814,30 +868,37 @@ impl MultiContractRunnerBuilder {
         } else {
             None
         };
-        let (LinkOutput { libraries, library_addresses, libs_to_deploy }, library_deployment) =
-            if let Some(output) = create2 {
-                let deployment = if output.libs_to_deploy.is_empty() {
-                    LibraryDeployment::Nonce
-                } else {
-                    LibraryDeployment::Create2 {
-                        deployer: evm_opts.create2_deployer,
-                        salt: self.config.create2_library_salt,
-                    }
-                };
-                (output, deployment)
+        let (
+            DetailedLinkOutput {
+                output: LinkOutput { libraries, library_addresses, libs_to_deploy },
+                artifact_libraries,
+                ..
+            },
+            library_deployment,
+        ) = if let Some(output) = create2 {
+            let deployment = if output.output.libs_to_deploy.is_empty() {
+                LibraryDeployment::Nonce
             } else {
-                (
-                    linker.link_with_nonce_or_address(
-                        configured_libraries,
-                        LIBRARY_DEPLOYER,
-                        0,
-                        linker.contracts.keys(),
-                    )?,
-                    LibraryDeployment::Nonce,
-                )
+                LibraryDeployment::Create2 {
+                    deployer: evm_opts.create2_deployer,
+                    salt: self.config.create2_library_salt,
+                }
             };
+            (output, deployment)
+        } else {
+            (
+                linker.link_with_nonce_or_address_detailed(
+                    configured_libraries,
+                    LIBRARY_DEPLOYER,
+                    0,
+                    linker.contracts.keys(),
+                )?,
+                LibraryDeployment::Nonce,
+            )
+        };
 
-        let linked_contracts = linker.get_linked_artifacts_cow(&libraries)?;
+        let linked_contracts = linker
+            .get_linked_artifacts_cow_with_artifact_libraries(&libraries, &artifact_libraries)?;
         let inline_config = self.inline_config;
 
         // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
@@ -848,6 +909,7 @@ impl MultiContractRunnerBuilder {
             self.symbolic_artifact_replay.as_ref(),
         );
         let empty_filter = EmptyTestFilter::default();
+        let resolver = Resolver::new(&linker);
 
         for (id, contract) in linked_contracts.iter() {
             let Some(abi) = contract.abi.as_ref() else { continue };
@@ -864,7 +926,9 @@ impl MultiContractRunnerBuilder {
                     continue;
                 };
 
-                let library_addresses = linker.linked_library_addresses(id, &libraries)?;
+                let artifact_libraries = artifact_libraries.get(id).unwrap_or(&libraries);
+                let library_addresses =
+                    resolver.linked_library_addresses(id, artifact_libraries)?;
 
                 deployable_contracts.insert(
                     id.clone(),
@@ -924,6 +988,19 @@ impl MultiContractRunnerBuilder {
             )
         };
 
+        let fork_chain_id = self.fork_chain_id.or_else(|| {
+            (self.fork.is_some() || evm_opts.fork_url.is_some()).then_some(evm_env.cfg_env.chain_id)
+        });
+        let hardfork = resolve_execution_spec(
+            &self.config,
+            evm_opts.networks,
+            &mut evm_env,
+            ExecutionSpecContext::local_or_fork(fork_chain_id, self.fork_hardfork),
+            None,
+            None,
+        );
+        let spec_id = evm_env.cfg_env.spec;
+
         Ok(MultiContractRunner {
             contracts: deployable_contracts,
             revert_decoder,
@@ -941,7 +1018,10 @@ impl MultiContractRunnerBuilder {
                 evm_opts,
                 evm_env,
                 tx_env,
-                spec_id: self.config.evm_spec_id(),
+                spec_id,
+                hardfork,
+                fork_chain_id,
+                fork_hardfork: self.fork_hardfork,
                 sender: self.sender.unwrap_or(self.config.sender),
                 line_coverage: self.line_coverage,
                 debug: self.debug,
@@ -955,6 +1035,7 @@ impl MultiContractRunnerBuilder {
                 fuzz_minimize: self.fuzz_minimize,
                 fuzz_only: self.fuzz_only,
                 fuzz_failure_replay: self.fuzz_failure_replay,
+                fuzz_input: self.fuzz_input,
                 symbolic_artifact_replay: self.symbolic_artifact_replay,
                 config: self.config,
             },
@@ -1107,6 +1188,7 @@ mod tests {
             enable_caching: false,
             url: "http://localhost:8545".into(),
             evm_opts: evm_opts.clone(),
+            expected_context: None,
         });
         assert!(!builder.create2_deployer_available(&evm_opts));
         builder.fork = None;

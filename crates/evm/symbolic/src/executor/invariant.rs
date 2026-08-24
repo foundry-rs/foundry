@@ -28,13 +28,12 @@ impl SymbolicExecutor {
 
         let mut checked = Vec::new();
         for mut outcome in outcomes {
-            if !matches!(outcome.status, TopLevelCallStatus::Success) {
-                outcome.status = TopLevelCallStatus::Failure;
+            if !matches!(outcome.status, CallStatus::Success) {
                 checked.push(InvariantCheckOutcome { failed: true, state: outcome.state });
                 continue;
             }
 
-            if self.invariant_return_failed(invariant, &outcome.return_data, &mut outcome.state)? {
+            if self.invariant_return_failed(invariant, &mut outcome.state)? {
                 checked.push(InvariantCheckOutcome { failed: true, state: outcome.state });
                 continue;
             }
@@ -49,7 +48,7 @@ impl SymbolicExecutor {
             let constraints = after_calldata.constraints().to_vec();
             for after_outcome in self.execute_sequence_call(
                 executor,
-                outcome.state.clone(),
+                outcome.state,
                 invariant_address,
                 sender,
                 after_invariant,
@@ -58,7 +57,7 @@ impl SymbolicExecutor {
                 completed_paths,
             )? {
                 checked.push(InvariantCheckOutcome {
-                    failed: !matches!(after_outcome.status, TopLevelCallStatus::Success),
+                    failed: !matches!(after_outcome.status, CallStatus::Success),
                     state: after_outcome.state,
                 });
             }
@@ -69,7 +68,6 @@ impl SymbolicExecutor {
     pub(super) fn invariant_return_failed(
         &mut self,
         invariant: &Function,
-        return_data: &SymReturnData,
         state: &mut PathState,
     ) -> Result<bool, SymbolicError> {
         if invariant.outputs.is_empty() {
@@ -78,11 +76,11 @@ impl SymbolicExecutor {
         if invariant.outputs.len() != 1 || invariant.outputs[0].selector_type().as_ref() != "bool" {
             return Ok(false);
         }
-        if return_data.len() < 32 {
+        if state.return_data.len() < 32 {
             return Ok(true);
         }
 
-        let pass = return_data.load_word(&mut self.cx, 0)?.nonzero_bool(&mut self.cx);
+        let pass = state.return_data.load_word(&mut self.cx, 0)?.nonzero_bool(&mut self.cx);
         let fail = pass.clone().not(&mut self.cx);
         match fail.as_const() {
             Some(true) => Ok(true),
@@ -90,7 +88,7 @@ impl SymbolicExecutor {
             None => {
                 let mut constraints = state.constraints.clone();
                 constraints.push(fail);
-                if self.solver.is_sat(&mut self.cx, &constraints)? {
+                if self.is_sat_with_state(state, &constraints)? {
                     state.constraints = constraints;
                     Ok(true)
                 } else {
@@ -112,23 +110,16 @@ impl SymbolicExecutor {
         calldata: SymCalldata,
         constraints: Vec<SymBoolExpr>,
         completed_paths: &mut usize,
-    ) -> Result<Vec<TopLevelCallOutcome>, SymbolicError> {
+    ) -> Result<Vec<CallOutcome>, SymbolicError> {
         state.world.clear_transaction_scoped_state();
+        state.mapping_hook_keccak_preimages.clear();
         let code = state.world.extcode(&mut self.cx, executor, target)?;
         state.call_depth = 0;
         state.origin = sender;
         state.origin_word = SymExpr::constant(&mut self.cx, address_word(sender));
         let callvalue = SymExpr::zero(&mut self.cx);
-        state.frame = CallFrame::new(
-            &mut self.cx,
-            target,
-            target,
-            target,
-            sender,
-            callvalue,
-            false,
-            calldata,
-        );
+        state.frame =
+            CallFrame::new(&mut self.cx, target, target, sender, callvalue, false, calldata);
         state.constraints.extend(constraints);
 
         let mut worklist = VecDeque::from([state]);
@@ -139,6 +130,11 @@ impl SymbolicExecutor {
         while let Some(mut state) = self.pop_next_feasible_path(&mut worklist)? {
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+            }
+            if std::mem::take(&mut state.pending_storage_hook_revert) {
+                *completed_paths += 1;
+                outcomes.push(CallOutcome { status: CallStatus::Revert, state });
+                continue;
             }
             let _path_span =
                 trace_span!("symbolic_path", completed_paths, worklist_size = worklist.len())
@@ -154,13 +150,12 @@ impl SymbolicExecutor {
 
                 let Some(op) = code.opcode(&mut self.cx, state.pc)? else {
                     *completed_paths += 1;
-                    outcomes.push(TopLevelCallOutcome {
+                    outcomes.push(CallOutcome {
                         status: if state.expectations_satisfied() {
-                            TopLevelCallStatus::Success
+                            CallStatus::Success
                         } else {
-                            TopLevelCallStatus::Failure
+                            CallStatus::Failure
                         },
-                        return_data: state.return_data.clone(),
                         state,
                     });
                     break;
@@ -179,33 +174,24 @@ impl SymbolicExecutor {
                     StepOutcome::Continue => {}
                     StepOutcome::Halt => {
                         *completed_paths += 1;
-                        outcomes.push(TopLevelCallOutcome {
+                        outcomes.push(CallOutcome {
                             status: if state.expectations_satisfied() {
-                                TopLevelCallStatus::Success
+                                CallStatus::Success
                             } else {
-                                TopLevelCallStatus::Failure
+                                CallStatus::Failure
                             },
-                            return_data: state.return_data.clone(),
                             state,
                         });
                         break;
                     }
                     StepOutcome::Revert => {
                         *completed_paths += 1;
-                        outcomes.push(TopLevelCallOutcome {
-                            status: TopLevelCallStatus::Revert,
-                            return_data: state.return_data.clone(),
-                            state,
-                        });
+                        outcomes.push(CallOutcome { status: CallStatus::Revert, state });
                         break;
                     }
                     StepOutcome::Failure => {
                         *completed_paths += 1;
-                        outcomes.push(TopLevelCallOutcome {
-                            status: TopLevelCallStatus::Failure,
-                            return_data: state.return_data.clone(),
-                            state,
-                        });
+                        outcomes.push(CallOutcome { status: CallStatus::Failure, state });
                         break;
                     }
                     StepOutcome::AssumeRejected | StepOutcome::Forked => break,
@@ -221,7 +207,12 @@ impl SymbolicExecutor {
         steps: &[SequenceStepTemplate],
         state: &PathState,
     ) -> Result<(Vec<SymbolicInvariantStep>, Vec<SymbolicStorageAssignment>), SymbolicError> {
-        let model = self.solver.model(&mut self.cx, &state.constraints)?;
+        let replayable_storage = state.world.replay_storage_symbols();
+        let model = self.solver.model_with_replayable_storage(
+            &mut self.cx,
+            &state.constraints,
+            &replayable_storage,
+        )?;
         let sequence = steps
             .iter()
             .map(|step| {

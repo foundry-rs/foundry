@@ -6,7 +6,10 @@
 
 use crate::{
     call_spec::CallSpec,
-    cmd::send::{cast_send, cast_send_with_tempo_wallet},
+    cmd::{
+        auth::confirm_auth_rpc_disclosure_during_build,
+        send::{cast_send, cast_send_with_tempo_wallet},
+    },
     tempo,
     tx::{self, CastTxBuilder, SendTxOpts},
 };
@@ -44,6 +47,10 @@ pub struct BatchSendArgs {
     #[command(flatten)]
     pub tx: TransactionOpts,
 
+    /// Skip the EIP-7702 authorization disclosure confirmation.
+    #[arg(long)]
+    pub force: bool,
+
     /// Send via `eth_sendTransaction` using the `--from` argument or $ETH_FROM as sender
     #[arg(long, requires = "from")]
     pub unlocked: bool,
@@ -51,7 +58,7 @@ pub struct BatchSendArgs {
 
 impl BatchSendArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { calls, send_tx, mut tx, unlocked } = self;
+        let Self { calls, send_tx, mut tx, force, unlocked } = self;
         let has_session = tx.tempo.session_id()?.is_some();
         // Tempo sessions must sign with the session key; these modes route signing through a
         // node-managed account or browser wallet instead.
@@ -133,6 +140,9 @@ impl BatchSendArgs {
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
 
         if unlocked {
+            if !confirm_auth_rpc_disclosure_during_build(&builder, config.sender, force)? {
+                return Ok(());
+            }
             let (tx, _) = builder.build(config.sender).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             cast_send(
@@ -150,6 +160,10 @@ impl BatchSendArgs {
             .map(drop)
         } else {
             if let Some(ref access_key) = tempo_access_key {
+                if !confirm_auth_rpc_disclosure_during_build(&builder, access_key.account(), force)?
+                {
+                    return Ok(());
+                }
                 let (tx_request, _, prepared) = builder.build_with_tempo_wallet(access_key).await?;
                 maybe_print_resolved_lane(
                     resolved_lane.as_ref(),
@@ -162,6 +176,7 @@ impl BatchSendArgs {
                     Some(chain),
                     None,
                     send_tx.cast_async,
+                    send_tx.sync,
                     send_tx.confirmations,
                     timeout,
                     !config.eth_rpc_curl,
@@ -173,6 +188,9 @@ impl BatchSendArgs {
                     None => send_tx.eth.wallet.signer().await?,
                 };
                 tx::validate_from_address(send_tx.eth.wallet.from, Signer::address(&signer))?;
+                if !confirm_auth_rpc_disclosure_during_build(&builder, &signer, force)? {
+                    return Ok(());
+                }
                 let (tx_request, _) = builder.build(&signer).await?;
                 maybe_print_resolved_lane(
                     resolved_lane.as_ref(),

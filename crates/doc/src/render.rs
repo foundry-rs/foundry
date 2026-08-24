@@ -5,6 +5,7 @@ use crate::{
     utils::Deployment,
 };
 use foundry_common::sh_warn;
+use markdown::{ParseOptions, mdast::Node, to_mdast};
 use solar::{
     ast::{
         CommentKind, ContractKind, DocComments, FunctionKind, ItemContract, ItemEnum, ItemError,
@@ -20,6 +21,7 @@ use solar::{
 use std::{
     collections::HashMap,
     fmt::Write as _,
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -282,13 +284,23 @@ fn render_contract<'ast, 'gcx>(
                 writeln!(out, "### {vname}").unwrap();
                 writeln!(out).unwrap();
                 let mut c = collect_comments(docs, name_to_page, page_path, local);
-                // Attempt @inheritdoc resolution for public state variables.
-                let inherited = inheritdoc_base(docs).and_then(|base| {
-                    hir_id.and_then(|cid| hir_ext::resolve_inheritdoc_var(gcx, cid, &vname, &base))
+                // Explicit `@inheritdoc` merges into a partial local doc; implicit
+                // inheritance only runs when the variable has no local NatSpec at all.
+                let vid = hir_id.and_then(|cid| {
+                    gcx.hir.contract(cid).items.iter().find_map(|&item| match item {
+                        hir::ItemId::Variable(id) if gcx.hir.variable(id).span == *span => Some(id),
+                        _ => None,
+                    })
                 });
+                let inherited = vid.and_then(|id| {
+                    let explicit = inheritdoc_base(docs).is_some();
+                    (explicit || !has_local_natspec(docs))
+                        .then(|| hir_ext::natspec_doc(gcx, id.into(), !explicit))
+                        .flatten()
+                });
+                let sanitize =
+                    |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
                 if let Some(ref base_doc) = inherited {
-                    let sanitize =
-                        |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
                     if c.notices.is_empty() {
                         let inherited_notices: Vec<String> =
                             base_doc.notices.iter().map(|s| sanitize(s)).collect();
@@ -310,15 +322,17 @@ fn render_contract<'ast, 'gcx>(
                         );
                         c.devs.extend(inherited_devs);
                     }
-                    for (name, desc) in &base_doc.returns {
-                        if !c.returns.iter().any(|(n, _)| n == name) {
-                            c.returns.push((name.clone(), sanitize(desc)));
-                        }
-                    }
                 }
                 write_comment_block(out, &c);
                 write_code_block(out, &ctx.dedented_snippet(*span));
-                if !c.returns.is_empty() {
+                // When the documentation is inherited from the variable's generated getter,
+                // render the getter's parameter and return signature instead of the declared
+                // (possibly mapping) type.
+                let getter_doc = inherited.as_ref().filter(|d| !d.getter_returns.is_empty());
+                if let Some(base_doc) = getter_doc {
+                    write_getter_table(out, "Parameters", &base_doc.getter_params, &sanitize);
+                    write_getter_table(out, "Returns", &base_doc.getter_returns, &sanitize);
+                } else if !c.returns.is_empty() {
                     let ty = format!("`{}`", ctx.snippet(v.ty.span).trim());
                     writeln!(out, "**Returns**").unwrap();
                     writeln!(out).unwrap();
@@ -354,30 +368,37 @@ fn render_contract<'ast, 'gcx>(
         writeln!(out, "## Functions").unwrap();
         writeln!(out).unwrap();
         for (span, f, docs) in &functions {
-            let fn_name = f.header.name.map(|n| n.as_str().to_string());
-            // Attempt inheritdoc resolution.
+            let fn_name = match f.kind {
+                FunctionKind::Constructor => None,
+                FunctionKind::Fallback => Some("fallback".to_string()),
+                FunctionKind::Receive => Some("receive".to_string()),
+                FunctionKind::Function | FunctionKind::Modifier => {
+                    f.header.name.map(|name| name.as_str().to_string())
+                }
+            };
+            // Explicit `@inheritdoc` merges into a partial local doc; implicit inheritance
+            // only runs when the function has no local NatSpec at all.
             let inherited = fn_name.as_deref().and_then(|fname| {
-                let base = inheritdoc_base(docs)?;
-                let param_types = hir_id
-                    .and_then(|cid| {
-                        let fid = gcx.hir.contract(cid).items.iter().find_map(|&item| match item {
-                            hir::ItemId::Function(id) if gcx.hir.function(id).span == *span => {
-                                Some(id)
-                            }
-                            _ => None,
-                        });
-                        if fid.is_none() {
+                let fid = hir_id.and_then(|cid| {
+                    gcx.hir.contract(cid).items.iter().find_map(|&item| match item {
+                        hir::ItemId::Function(id) if gcx.hir.function(id).span == *span => Some(id),
+                        _ => None,
+                    })
+                });
+                match inheritdoc_base(docs) {
+                    Some(_) => {
+                        if hir_id.is_some() && fid.is_none() {
                             let _ = sh_warn!(
                                 "forge doc: failed to find HIR function for `{}.{fname}` while resolving @inheritdoc",
                                 c.name
                             );
                         }
-                        fid
-                    })
-                    .and_then(|fid| hir_ext::function_param_types(gcx, fid));
-                hir_id.and_then(|cid| {
-                    hir_ext::resolve_inheritdoc(gcx, cid, fname, &base, param_types.as_deref())
-                })
+                        fid.and_then(|id| hir_ext::natspec_doc(gcx, id.into(), false))
+                    }
+                    None if !has_local_natspec(docs) =>
+                        fid.and_then(|id| hir_ext::natspec_doc(gcx, id.into(), true)),
+                    None => None,
+                }
             });
             render_function_section(
                 &mut out,
@@ -402,7 +423,7 @@ fn render_contract<'ast, 'gcx>(
             let c = collect_comments(docs, name_to_page, page_path, local);
             write_comment_block(&mut out, &c);
             write_code_block(&mut out, &ctx.dedented_snippet(*span));
-            write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
+            write_param_table(&mut out, "Parameters", &e.parameters, &c, None, ctx);
         }
     }
 
@@ -415,7 +436,7 @@ fn render_contract<'ast, 'gcx>(
             let c = collect_comments(docs, name_to_page, page_path, local);
             write_comment_block(&mut out, &c);
             write_code_block(&mut out, &ctx.dedented_snippet(*span));
-            write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
+            write_param_table(&mut out, "Parameters", &e.parameters, &c, None, ctx);
         }
     }
 
@@ -595,7 +616,7 @@ fn render_error<'ast>(
     write_git_source(&mut out, git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &ctx.dedented_snippet(span));
-    write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
+    write_param_table(&mut out, "Parameters", &e.parameters, &c, None, ctx);
     out
 }
 
@@ -617,7 +638,7 @@ fn render_event<'ast>(
     write_git_source(&mut out, git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &ctx.dedented_snippet(span));
-    write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
+    write_param_table(&mut out, "Parameters", &e.parameters, &c, None, ctx);
     out
 }
 
@@ -632,7 +653,7 @@ fn render_function_section(
     name_to_page: &NameToPage,
     page_path: &Path,
     local: Option<&hir_ext::LocalMembers>,
-    inherited: Option<&hir_ext::InheritedDoc>,
+    inherited: Option<&hir_ext::NatSpecDoc>,
 ) {
     let heading = function_heading(f);
     if let Some(anchor) = function_signature_anchor(f, ctx) {
@@ -642,6 +663,7 @@ fn render_function_section(
     writeln!(out, "### {heading}").unwrap();
     writeln!(out).unwrap();
     let mut c = collect_comments(docs, name_to_page, page_path, local);
+    let mut inherited_params = None;
     // Merge inherited natspec for missing tags.
     if let Some(inherited) = inherited {
         let sanitize = |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
@@ -665,19 +687,26 @@ fn render_function_section(
                     .map(|s| Description { kind: DescKind::Dev, content: s.clone() }),
             );
         }
-        for (name, desc) in &inherited.params {
-            let name = inherited_param_name_for_current_function(
-                name,
-                &f.header.parameters,
-                &inherited.params,
-            );
-            if !c.params.iter().any(|(n, _)| n == &name) {
-                c.params.push((name, sanitize(desc)));
+        if c.params.is_empty() {
+            let params = inherited.params.iter().map(|desc| sanitize(desc)).collect::<Vec<_>>();
+            for (index, desc) in params.iter().enumerate() {
+                if let Some(name) = f.header.parameters.get(index).and_then(|param| param.name) {
+                    c.params.push((name.as_str().to_string(), desc.clone()));
+                }
             }
+            inherited_params = Some(params);
         }
-        for (name, desc) in &inherited.returns {
-            if !c.returns.iter().any(|(n, _)| n == name) {
-                c.returns.push((name.clone(), sanitize(desc)));
+        if c.returns.is_empty() {
+            for (index, desc) in inherited.returns.iter().enumerate() {
+                let name = f
+                    .header
+                    .returns
+                    .as_ref()
+                    .and_then(|returns| returns.get(index))
+                    .and_then(|return_| return_.name)
+                    .map(|name| name.as_str().to_string())
+                    .unwrap_or_default();
+                c.returns.push((name, sanitize(desc)));
             }
         }
     }
@@ -685,48 +714,16 @@ fn render_function_section(
     let hspan = if f.header.span.lo() == f.header.span.hi() { span } else { f.header.span };
     let snippet = ctx.dedented_snippet(hspan);
     write_code_block(out, &format!("{snippet};"));
-    write_param_table(out, "Parameters", &f.header.parameters, &c, ctx);
+    write_param_table(
+        out,
+        "Parameters",
+        &f.header.parameters,
+        &c,
+        inherited_params.as_deref(),
+        ctx,
+    );
     if let Some(returns) = &f.header.returns {
-        write_param_table(out, "Returns", returns, &c, ctx);
-    }
-}
-
-fn inherited_param_name_for_current_function(
-    inherited_name: &str,
-    params: &ParameterList<'_>,
-    inherited_params: &[(String, String)],
-) -> String {
-    if params
-        .iter()
-        .any(|param| param.name.map(|name| name.as_str() == inherited_name).unwrap_or(false))
-    {
-        return inherited_name.to_string();
-    }
-
-    let normalized_inherited = inherited_name.trim_matches('_');
-    if normalized_inherited.is_empty() {
-        return inherited_name.to_string();
-    }
-
-    if inherited_params
-        .iter()
-        .filter(|(name, _)| name.trim_matches('_') == normalized_inherited)
-        .take(2)
-        .count()
-        != 1
-    {
-        return inherited_name.to_string();
-    }
-
-    let mut candidates = params.iter().filter_map(|param| {
-        let name = param.name?;
-        let name = name.as_str();
-        (name.trim_matches('_') == normalized_inherited).then(|| name.to_string())
-    });
-
-    match (candidates.next(), candidates.next()) {
-        (Some(name), None) => name,
-        _ => inherited_name.to_string(),
+        write_param_table(out, "Returns", returns, &c, None, ctx);
     }
 }
 
@@ -775,7 +772,7 @@ struct Description {
 struct CommentData {
     titles: Vec<String>,
     authors: Vec<String>,
-    /// Real `@notice` items (used for inheritdoc merging and frontmatter description).
+    /// Real `@notice` items used for inheritdoc merging.
     notices: Vec<String>,
     /// Real `@dev` items (used for inheritdoc merging).
     devs: Vec<String>,
@@ -934,6 +931,43 @@ fn is_known_custom_tag(tag: &str) -> bool {
 }
 
 /// Returns the base contract name from `@inheritdoc Base`, or `None`.
+/// Whether the declaration carries any local NatSpec item other than `@inheritdoc`. Solidity
+/// only auto-inherits documentation for a member with none, so implicit inheritance is gated
+/// on this being false; a local `@custom:*`, `@title` or `@author` counts as local
+/// documentation just like `@notice`/`@dev`/`@param`/`@return`.
+fn has_local_natspec(docs: &DocComments<'_>) -> bool {
+    docs.iter().any(|doc| {
+        doc.natspec.iter().any(|item| !matches!(item.kind, NatSpecKind::Inheritdoc { .. }))
+    })
+}
+
+/// Render a getter signature table (`Parameters` or `Returns`) from its inherited rows.
+fn write_getter_table(
+    out: &mut String,
+    heading: &str,
+    fields: &[hir_ext::GetterField],
+    sanitize: &impl Fn(&str) -> String,
+) {
+    if fields.is_empty() {
+        return;
+    }
+    writeln!(out, "**{heading}**").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "| Name | Type | Description |").unwrap();
+    writeln!(out, "| ---- | ---- | ----------- |").unwrap();
+    for field in fields {
+        let name = field
+            .name
+            .as_deref()
+            .map(escape_table_cell)
+            .unwrap_or_else(|| "&lt;none&gt;".to_string());
+        let ty = escape_table_cell(&field.ty);
+        let desc = escape_table_cell(&sanitize(&field.description));
+        writeln!(out, "| {name} | `{ty}` | {desc} |").unwrap();
+    }
+    writeln!(out).unwrap();
+}
+
 fn inheritdoc_base(docs: &DocComments<'_>) -> Option<String> {
     for doc in docs.iter() {
         for item in doc.natspec.iter() {
@@ -946,7 +980,10 @@ fn inheritdoc_base(docs: &DocComments<'_>) -> Option<String> {
 }
 
 fn first_notice(data: &CommentData) -> Option<String> {
-    data.notices.first().cloned()
+    data.descriptions
+        .iter()
+        .find(|description| description.kind == DescKind::Notice)
+        .map(|description| description.content.clone())
 }
 
 // ── markdown output helpers ───────────────────────────────────────────────────
@@ -995,36 +1032,132 @@ fn italicize_dev(content: &str) -> String {
     if trimmed.is_empty() { String::new() } else { format!("<i>\n\n{trimmed}\n\n</i>") }
 }
 
+/// Byte ranges that MDX parses as code. An HTML entity would render literally inside these ranges,
+/// so neutralization skips them. If malformed MDX cannot be parsed, returning no ranges favors
+/// neutralizing possible ESM over preserving an invalid code example byte-for-byte.
+fn code_regions(text: &str) -> Vec<Range<usize>> {
+    let Ok(tree) = to_mdast(text, &ParseOptions::mdx()) else { return Vec::new() };
+    let mut regions = Vec::new();
+    collect_code_regions(&tree, &mut regions);
+    regions
+}
+
+/// Collect fenced and inline code positions from the MDX-aware syntax tree.
+fn collect_code_regions(node: &Node, regions: &mut Vec<Range<usize>>) {
+    if matches!(node, Node::Code(_) | Node::InlineCode(_))
+        && let Some(position) = node.position()
+    {
+        regions.push(position.start.offset..position.end.offset);
+    }
+    if let Some(children) = node.children() {
+        for child in children {
+            collect_code_regions(child, regions);
+        }
+    }
+}
+
+/// Logical lines and their byte offsets in the original text. CRLF is one separator; lone CR and
+/// LF are separators too. The separator bytes are excluded from the returned slices and preserved
+/// in the source string.
+fn logical_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let bytes = text.as_bytes();
+    let mut offset = 0;
+    std::iter::from_fn(move || {
+        if offset >= bytes.len() {
+            return None;
+        }
+        let start = offset;
+        let end = bytes[start..]
+            .iter()
+            .position(|&byte| byte == b'\n' || byte == b'\r')
+            .map_or(bytes.len(), |position| start + position);
+        offset = if end == bytes.len() {
+            end
+        } else if bytes[end] == b'\r' && bytes.get(end + 1) == Some(&b'\n') {
+            end + 2
+        } else {
+            end + 1
+        };
+        Some((start, &text[start..end]))
+    })
+}
+
+/// Check a position against sorted, merged ranges while advancing monotonically.
+fn region_contains(regions: &[Range<usize>], cursor: &mut usize, position: usize) -> bool {
+    while regions.get(*cursor).is_some_and(|region| region.end <= position) {
+        *cursor += 1;
+    }
+    regions.get(*cursor).is_some_and(|region| region.start <= position)
+}
+
+/// Neutralize any line MDX would parse as an ESM statement (`import ` or `export ` at column one):
+/// the keyword's prefix becomes HTML entities, so the line renders the same but no longer
+/// begins with an ESM token. NatSpec text can be inherited from a dependency via `@inheritdoc`, so
+/// this must run wherever displayed prose is assembled. A keyword that falls inside a Markdown
+/// code span or fenced code block is left untouched (see `code_regions`): the entity would render
+/// literally and corrupt the example, and MDX would not execute it there.
+fn neutralize_esm(text: &str) -> String {
+    let regions = code_regions(text);
+    let mut region_cursor = 0;
+    let mut copied = 0;
+    let mut out = String::with_capacity(text.len());
+
+    for (line_start, line) in logical_lines(text) {
+        let replacement = if line.starts_with("import ") {
+            Some(("&#105;&#109;", 2))
+        } else if line.starts_with("export ") {
+            Some(("&#101;", 1))
+        } else {
+            None
+        };
+        let Some((entity, prefix_len)) = replacement else { continue };
+        if region_contains(&regions, &mut region_cursor, line_start) {
+            continue;
+        }
+        out.push_str(&text[copied..line_start]);
+        out.push_str(entity);
+        copied = line_start + prefix_len;
+    }
+
+    out.push_str(&text[copied..]);
+    out
+}
+
 fn write_comment_block(out: &mut String, data: &CommentData) {
+    let mut block = String::new();
     if !data.titles.is_empty() {
         let label = if data.titles.len() == 1 { "Title" } else { "Titles" };
-        writeln!(out, "**{label}:** {}", data.titles.join(", ")).unwrap();
-        writeln!(out).unwrap();
+        writeln!(block, "**{label}:** {}", data.titles.join(", ")).unwrap();
+        writeln!(block).unwrap();
     }
     if !data.authors.is_empty() {
         let label = if data.authors.len() == 1 { "Author" } else { "Authors" };
-        writeln!(out, "**{label}:** {}", data.authors.join(", ")).unwrap();
-        writeln!(out).unwrap();
+        writeln!(block, "**{label}:** {}", data.authors.join(", ")).unwrap();
+        writeln!(block).unwrap();
     }
     // Render descriptions in source order (notices and devs interleaved, continuations joined).
     // `@dev` paragraphs are wrapped in `_..._` per paragraph so each multi-line block renders
     // as a single italic span (markdown emphasis cannot cross blank lines).
     for desc in &data.descriptions {
         match desc.kind {
-            DescKind::Notice => writeln!(out, "{}", desc.content).unwrap(),
-            DescKind::Dev => writeln!(out, "{}", italicize_dev(&desc.content)).unwrap(),
+            DescKind::Notice => writeln!(block, "{}", desc.content).unwrap(),
+            DescKind::Dev => writeln!(block, "{}", italicize_dev(&desc.content)).unwrap(),
         }
-        writeln!(out).unwrap();
+        writeln!(block).unwrap();
     }
     if !data.customs.is_empty() {
         let label = if data.customs.len() == 1 { "Note" } else { "Notes" };
-        writeln!(out, "**{label}:**").unwrap();
-        writeln!(out).unwrap();
+        writeln!(block, "**{label}:**").unwrap();
+        writeln!(block).unwrap();
         for (tag, content) in &data.customs {
-            writeln!(out, "- **{tag}:** {content}").unwrap();
+            writeln!(block, "- **{tag}:** {content}").unwrap();
         }
-        writeln!(out).unwrap();
+        writeln!(block).unwrap();
     }
+    // Neutralize the fully assembled block once: fence state stays continuous across the
+    // whole block, and every displayed line (authors, notices, custom notes), not just
+    // descriptions, is covered.
+    out.push_str(&neutralize_esm(&block));
 }
 
 fn write_code_block(out: &mut String, snippet: &str) {
@@ -1074,6 +1207,7 @@ fn write_param_table(
     heading: &str,
     params: &ParameterList<'_>,
     comments: &CommentData,
+    inherited_params: Option<&[String]>,
     ctx: &Ctx<'_>,
 ) {
     if params.is_empty() {
@@ -1097,7 +1231,16 @@ fn write_param_table(
         let desc = if is_return {
             return_description(comments, index, var.name.map(|_| name.as_str()))
         } else {
-            comments.params.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str()).unwrap_or("")
+            let named = comments.params.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str());
+            if var.name.is_none() {
+                inherited_params
+                    .and_then(|params| params.get(index))
+                    .map(String::as_str)
+                    .or(named)
+                    .unwrap_or("")
+            } else {
+                named.unwrap_or("")
+            }
         };
         let name = escape_table_cell(&name);
         let desc = escape_table_cell(desc);
@@ -1127,7 +1270,7 @@ fn return_description<'a>(
 
     match return_name {
         Some(return_name) => desc.strip_prefix(return_name).and_then(strip_one_ws).unwrap_or(desc),
-        None => split_first_word(desc).map(|(_, desc)| desc).unwrap_or(desc),
+        None => desc,
     }
 }
 
@@ -1135,13 +1278,6 @@ fn strip_one_ws(s: &str) -> Option<&str> {
     let mut chars = s.char_indices();
     let (_, first) = chars.next()?;
     first.is_whitespace().then(|| chars.next().map(|(idx, _)| &s[idx..]).unwrap_or(""))
-}
-
-fn split_first_word(s: &str) -> Option<(&str, &str)> {
-    let trimmed = s.trim_start();
-    let split = trimmed.find(char::is_whitespace)?;
-    let (first, rest) = trimmed.split_at(split);
-    Some((first, rest.trim_start()))
 }
 
 fn write_struct_properties_table(
@@ -1234,4 +1370,153 @@ fn dedent(s: &str) -> String {
         .map(|l| if l.len() >= indent { &l[indent..] } else { l.trim() })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::neutralize_esm;
+    use markdown::{MdxSignal, ParseOptions, mdast::Node, to_mdast};
+
+    fn parse_mdx(text: &str) -> Node {
+        let mut options = ParseOptions::mdx();
+        options.mdx_esm_parse = Some(Box::new(|_| MdxSignal::Ok));
+        to_mdast(text, &options).unwrap()
+    }
+
+    fn contains_mdx_esm(node: &Node) -> bool {
+        matches!(node, Node::MdxjsEsm(_))
+            || node.children().is_some_and(|children| children.iter().any(contains_mdx_esm))
+    }
+
+    #[test]
+    fn preserves_line_endings_while_neutralizing_esm() {
+        assert_eq!(
+            neutralize_esm("Intro.\r\rexport const afterCarriageReturn = 1"),
+            "Intro.\r\r&#101;xport const afterCarriageReturn = 1"
+        );
+        for (input, expected) in [
+            (
+                "```\rimport inside\r```\rexport outside",
+                "```\rimport inside\r```\r&#101;xport outside",
+            ),
+            (
+                "```\r\nimport inside\r\n```\r\nexport outside",
+                "```\r\nimport inside\r\n```\r\n&#101;xport outside",
+            ),
+            (
+                "`example:\rimport inside`\rexport outside",
+                "`example:\rimport inside`\r&#101;xport outside",
+            ),
+            (
+                "`example:\r\nimport inside`\r\nexport outside",
+                "`example:\r\nimport inside`\r\n&#101;xport outside",
+            ),
+            (
+                "    ```\r    import inside\r    ```\rexport outside",
+                "    ```\r    import inside\r    ```\r&#101;xport outside",
+            ),
+            ("```\rinside\r    ```\rexport outside", "```\rinside\r    ```\r&#101;xport outside"),
+        ] {
+            assert_eq!(neutralize_esm(input), expected);
+        }
+        assert_eq!(
+            neutralize_esm("Intro.\r\nimport outside"),
+            "Intro.\r\n&#105;&#109;port outside"
+        );
+        assert_eq!(
+            neutralize_esm("export first\r\npréface `span:\rimport inside`\r\nimport last"),
+            "&#101;xport first\r\npréface `span:\rimport inside`\r\n&#105;&#109;port last"
+        );
+    }
+
+    #[test]
+    fn traverses_sorted_code_regions() {
+        let input = "`first`\n    ```\n    import inside fence\n    ```\n`last`\nexport outside";
+        let expected =
+            "`first`\n    ```\n    import inside fence\n    ```\n`last`\n&#101;xport outside";
+        assert_eq!(neutralize_esm(input), expected);
+    }
+
+    #[test]
+    fn preserves_code_across_mdx_edge_cases() {
+        for (input, expected) in [
+            (
+                "```\nimport inside\n```\nexport outside",
+                "```\nimport inside\n```\n&#101;xport outside",
+            ),
+            (
+                "```\n~~~\nimport inside\n```\nexport outside",
+                "```\n~~~\nimport inside\n```\n&#101;xport outside",
+            ),
+            (
+                "````\n```\nimport inside\n```\n````\nexport outside",
+                "````\n```\nimport inside\n```\n````\n&#101;xport outside",
+            ),
+            (
+                "```\nimport inside\n```suffix\nexport inside\n```\nimport outside",
+                "```\nimport inside\n```suffix\nexport inside\n```\n&#105;&#109;port outside",
+            ),
+            (
+                "`example:\nimport inside`\nexport outside",
+                "`example:\nimport inside`\n&#101;xport outside",
+            ),
+            (
+                "```\ninside\n    ```\n```\nimport inside second\n```\nexport outside",
+                "```\ninside\n    ```\n```\nimport inside second\n```\n&#101;xport outside",
+            ),
+            (
+                "- ```\n  import inside list\n  ```\n\nexport outside",
+                "- ```\n  import inside list\n  ```\n\n&#101;xport outside",
+            ),
+            (
+                "    ```\n    import inside indented\n    ```\nexport outside",
+                "    ```\n    import inside indented\n    ```\n&#101;xport outside",
+            ),
+            ("    ```\n    import inside unclosed", "    ```\n    import inside unclosed"),
+        ] {
+            assert_eq!(neutralize_esm(input), expected, "input:\n{input}");
+        }
+    }
+
+    #[test]
+    fn neutralized_output_contains_no_mdx_esm() {
+        let input = "import injected from \"x\"\n\n```js\nexport const example = 1\n```";
+        assert!(contains_mdx_esm(&parse_mdx(input)));
+
+        let output = neutralize_esm(input);
+        assert_eq!(
+            output,
+            "&#105;&#109;port injected from \"x\"\n\n```js\nexport const example = 1\n```"
+        );
+
+        let tree = parse_mdx(&output);
+        assert!(!contains_mdx_esm(&tree), "{tree:#?}");
+        assert!(tree.children().is_some_and(|children| {
+            children.iter().any(
+                |node| matches!(node, Node::Code(code) if code.value == "export const example = 1"),
+            )
+        }));
+    }
+
+    #[test]
+    fn leaves_non_esm_prefixes_unchanged() {
+        let input = "important\nexporter\nimport_\nexport$\nImport value\nExport value\n    import value\n\t export value\nimport(value)\nexport: value\nimport\tvalue";
+        assert_eq!(neutralize_esm(input), input);
+    }
+
+    #[test]
+    fn neutralizes_only_exact_mdx_esm_prefixes() {
+        assert_eq!(
+            neutralize_esm("import value\nexport value\nimport  value\nexport  value"),
+            "&#105;&#109;port value\n&#101;xport value\n&#105;&#109;port  value\n&#101;xport  value"
+        );
+    }
+
+    #[test]
+    fn neutralizes_many_candidates_across_many_code_regions() {
+        let input = "`code`\nexport outside\n".repeat(10_000);
+        let output = neutralize_esm(&input);
+        assert_eq!(output.matches("`code`").count(), 10_000);
+        assert_eq!(output.matches("&#101;xport outside").count(), 10_000);
+    }
 }

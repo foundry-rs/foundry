@@ -144,6 +144,18 @@ impl AnvilInspector {
 
         let traces = self.tracer.take().map(|t| t.into_traces().into_nodes()).unwrap_or_default();
 
+        self.reset_transaction(config);
+
+        traces
+    }
+
+    /// Discards a transaction's traces/logs and resets the inspector without printing them.
+    pub fn discard_transaction(&mut self, config: &InspectorTxConfig) {
+        self.reset_transaction(config);
+    }
+
+    /// Resets per-transaction collectors for the next transaction.
+    fn reset_transaction(&mut self, config: &InspectorTxConfig) {
         // Reinstall tracer for next tx.
         let tracing_config = if config.enable_steps_tracing {
             TracingInspectorConfig::all().with_state_diffs()
@@ -153,11 +165,7 @@ impl AnvilInspector {
         self.tracer = Some(TracingInspector::new(tracing_config));
 
         // Reset log collector for next tx.
-        if config.print_logs {
-            self.log_collector = Some(LogCollector::Capture { logs: Vec::new() });
-        }
-
-        traces
+        self.log_collector = config.print_logs.then(|| LogCollector::Capture { logs: Vec::new() });
     }
 
     /// Called after the inspecting the evm
@@ -225,9 +233,16 @@ impl AnvilInspector {
     pub fn take_simulation_logs(
         &mut self,
         canonical_logs: &[Log],
+        success: bool,
     ) -> Option<(Vec<(u64, Log)>, u64)> {
         self.simulation_logs.take().map(|mut collector| {
-            collector.append_remaining_canonical_logs(canonical_logs);
+            if success {
+                collector.append_remaining_canonical_logs(canonical_logs);
+            } else {
+                // A top-level revert can discard logs without producing an enclosing call frame
+                // callback. Preserve the attempted count for subsequent log indices.
+                collector.logs.clear();
+            }
             (
                 collector.logs.into_iter().map(|log| (log.index, log.log)).collect(),
                 collector.next_index,

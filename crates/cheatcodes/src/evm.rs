@@ -33,6 +33,7 @@ use foundry_evm_core::{
     },
     env::FoundryContextExt,
     evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
+    refresh_chain_journal,
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceRequirements;
@@ -43,7 +44,7 @@ use revm::{
     bytecode::Bytecode,
     context::{Block, Cfg, ContextTr, Host, JournalTr, Transaction, result::ExecutionResult},
     inspector::JournalExt,
-    primitives::{KECCAK_EMPTY, hardfork::SpecId},
+    primitives::{KECCAK_EMPTY, eip3860::MAX_INITCODE_SIZE, hardfork::SpecId},
     state::{Account, AccountStatus},
 };
 use std::{
@@ -299,7 +300,10 @@ impl Cheatcode for loadCall {
             .sload(target, slot.into())
             .map_err(|e| fmt_err!("failed to load storage slot: {:?}", e))?;
 
-        if val.is_cold && val.data.is_zero() {
+        if val.is_cold
+            && val.data.is_zero()
+            && !ccx.state.is_arbitrary_storage_slot_explicit(target, slot.into())
+        {
             if ccx.state.has_arbitrary_storage(&target) {
                 // If storage slot is untouched and load from a target with arbitrary storage,
                 // then set random value for current slot.
@@ -351,9 +355,9 @@ impl Cheatcode for loadAllocsCall {
 
         // Then, load the allocs into the database.
         let (db, inner) = ccx.ecx.db_journal_inner_mut();
-        db.load_allocs(&allocs, inner)
-            .map(|()| Vec::default())
-            .map_err(|e| fmt_err!("failed to load allocs: {e}"))
+        db.load_allocs(&allocs, inner).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
+        refresh_chain_journal(ccx.ecx);
+        Ok(Default::default())
     }
 }
 
@@ -367,6 +371,7 @@ impl Cheatcode for cloneAccountCall {
         db.clone_account(&genesis, target, inner)?;
         // Cloned account should persist in forked envs.
         ccx.ecx.db_mut().add_persistent_account(*target);
+        refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
     }
 }
@@ -443,6 +448,36 @@ impl Cheatcode for accessesCall {
             state.accesses.writes.entry(target).or_default().as_slice(),
         );
         Ok(result.abi_encode_params())
+    }
+}
+
+impl Cheatcode for registerSloadHookCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, callback } = *self;
+        ccx.state.register_storage_load_hook(target, ccx.caller, callback.0);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for registerSstoreHookCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, callback } = *self;
+        if ccx.state.has_mapping_storage_store_hooks(target) {
+            bail!("cannot register raw SSTORE hook: mapping SSTORE hooks already exist for target");
+        }
+        ccx.state.register_storage_store_hook(target, ccx.caller, callback.0);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for registerMappingSstoreHookCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, rootSlot, callback } = *self;
+        if !ccx.state.register_mapping_storage_store_hook(target, rootSlot, ccx.caller, callback.0)
+        {
+            bail!("cannot register mapping SSTORE hook: raw SSTORE hook already exists for target");
+        }
+        Ok(Default::default())
     }
 }
 
@@ -532,7 +567,7 @@ impl Cheatcode for chainIdCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newChainId } = self;
         ensure!(*newChainId <= U256::from(u64::MAX), "chain ID must be less than 2^64");
-        ccx.ecx.cfg_mut().chain_id = newChainId.to();
+        ccx.ecx.cfg_env_mut().chain_id = newChainId.to();
         Ok(Default::default())
     }
 }
@@ -549,7 +584,7 @@ impl Cheatcode for difficultyCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newDifficulty } = self;
         ensure!(
-            (*ccx.ecx.cfg().spec()).into() < SpecId::MERGE,
+            ccx.ecx.cfg().spec().into() < SpecId::MERGE,
             "`difficulty` is not supported after the Paris hard fork, use `prevrandao` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -581,7 +616,7 @@ impl Cheatcode for prevrandao_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            (*ccx.ecx.cfg().spec()).into() >= SpecId::MERGE,
+            ccx.ecx.cfg().spec().into() >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -594,7 +629,7 @@ impl Cheatcode for prevrandao_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            (*ccx.ecx.cfg().spec()).into() >= SpecId::MERGE,
+            ccx.ecx.cfg().spec().into() >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -607,7 +642,7 @@ impl Cheatcode for blobhashesCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { hashes } = self;
         ensure!(
-            (*ccx.ecx.cfg().spec()).into() >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
             "`blobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
@@ -631,7 +666,7 @@ impl Cheatcode for getBlobhashesCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         ensure!(
-            (*ccx.ecx.cfg().spec()).into() >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
             "`getBlobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
@@ -650,7 +685,7 @@ impl Cheatcode for rollCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newHeight } = self;
         let current_height = ccx.ecx.block().number();
-        if (*ccx.ecx.cfg().spec()).into() >= SpecId::PRAGUE && *newHeight > current_height {
+        if ccx.ecx.cfg().spec().into() >= SpecId::PRAGUE && *newHeight > current_height {
             let mut block_number = forward_fill_start(current_height, *newHeight);
             while block_number < *newHeight {
                 let block_hash =
@@ -711,12 +746,12 @@ impl Cheatcode for blobBaseFeeCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newBlobBaseFee } = self;
         ensure!(
-            (*ccx.ecx.cfg().spec()).into() >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
             "`blobBaseFee` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
 
-        let spec: SpecId = (*ccx.ecx.cfg().spec()).into();
+        let spec: SpecId = ccx.ecx.cfg().spec().into();
         ccx.ecx.block_mut().set_blob_excess_gas_and_price(
             (*newBlobBaseFee).to(),
             get_blob_base_fee_update_fraction_by_spec_id(spec),
@@ -739,6 +774,7 @@ impl Cheatcode for dealCall {
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
+        refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
     }
 }
@@ -814,6 +850,7 @@ impl Cheatcode for storeCall {
             .journal_mut()
             .sstore(target, slot.into(), value.into())
             .map_err(|e| fmt_err!("failed to store storage slot: {:?}", e))?;
+        ccx.state.mark_arbitrary_storage_slot_explicit(target, slot.into());
         Ok(Default::default())
     }
 }
@@ -1049,6 +1086,9 @@ impl Cheatcode for deleteSnapshotCall {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
+        ccx.state.fork_block_number_override_snapshots.remove(snapshotId);
+        #[cfg(feature = "monad")]
+        ccx.state.context_snapshots.remove(snapshotId);
         ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
     }
@@ -1059,6 +1099,9 @@ impl Cheatcode for deleteStateSnapshotCall {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
+        ccx.state.fork_block_number_override_snapshots.remove(snapshotId);
+        #[cfg(feature = "monad")]
+        ccx.state.context_snapshots.remove(snapshotId);
         ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
     }
@@ -1070,6 +1113,9 @@ impl Cheatcode for deleteSnapshotsCall {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
+        ccx.state.fork_block_number_override_snapshots.clear();
+        #[cfg(feature = "monad")]
+        ccx.state.context_snapshots.clear();
         ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
     }
@@ -1080,6 +1126,9 @@ impl Cheatcode for deleteStateSnapshotsCall {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
+        ccx.state.fork_block_number_override_snapshots.clear();
+        #[cfg(feature = "monad")]
+        ccx.state.context_snapshots.clear();
         ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
     }
@@ -1231,6 +1280,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         let from = sender;
 
         executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
+        refresh_chain_journal(ccx.ecx);
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1254,7 +1304,7 @@ impl Cheatcode for setBlockhashCall {
 
         ccx.ecx.db_mut().set_blockhash(blockNumber, blockHash);
         let current_block = U256::from(ccx.ecx.block().number());
-        if (*ccx.ecx.cfg().spec()).into() >= SpecId::PRAGUE
+        if ccx.ecx.cfg().spec().into() >= SpecId::PRAGUE
             && blockNumber < current_block
             && current_block - blockNumber <= U256::from(HISTORY_SERVE_WINDOW)
         {
@@ -1288,6 +1338,7 @@ impl Cheatcode for executeTransactionCall {
         let sender =
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
         let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&tx, sender);
+        let chain_context = ccx.ecx.db().chain_context_for_synthetic_transaction(&tx_env)?;
         let created_address = tx_env.kind().is_create().then(|| sender.create(tx_env.nonce()));
 
         // Save current env for restoration after execution.
@@ -1301,16 +1352,22 @@ impl Cheatcode for executeTransactionCall {
         ccx.ecx.tx_mut().set_gas_priority_fee(None);
 
         // Enable nonce checks for realistic simulation.
-        ccx.ecx.cfg_mut().disable_nonce_check = false;
+        ccx.ecx.cfg_env_mut().disable_nonce_check = false;
 
-        // EIP-3860: enforce initcode size limit.
-        ccx.ecx.cfg_mut().limit_contract_initcode_size =
-            Some(revm::primitives::eip3860::MAX_INITCODE_SIZE);
+        // Enforce the active EVM's initcode size limit.
+        let initcode_size_limit = ccx
+            .state
+            .config
+            .evm_opts
+            .networks
+            .contract_size_limits()
+            .map_or(MAX_INITCODE_SIZE, |limits| limits.initcode);
+        ccx.ecx.cfg_env_mut().limit_contract_initcode_size = Some(initcode_size_limit);
 
         // Reset the tx gas limit cap so revm applies the spec-defined default (EIP-7825).
         // Normal test execution sets `Some(u64::MAX)` to disable the cap; clearing it here
         // lets the nested EVM enforce the real network limit for realistic simulation.
-        ccx.ecx.cfg_mut().tx_gas_limit_cap = None;
+        ccx.ecx.cfg_env_mut().tx_gas_limit_cap = None;
 
         // Snapshot the modified env for EVM construction.
         let modified_evm_env = ccx.ecx.evm_clone();
@@ -1344,14 +1401,20 @@ impl Cheatcode for executeTransactionCall {
         let mut cold_state = Some(cold_state);
         let mut nested_evm_env = {
             let (db, _) = ccx.ecx.db_journal_inner_mut();
-            executor.with_fresh_nested_evm(ccx.state, db, modified_evm_env, &mut |evm| {
-                // SAFETY: closure is called exactly once by the executor.
-                evm.journal_inner_mut().state = cold_state.take().expect("called once");
-                // Set depth to 1 for proper trace collection.
-                evm.journal_inner_mut().depth = 1;
-                res = Some(evm.transact_raw(modified_tx_env.clone()));
-                Ok(())
-            })?
+            executor.with_fresh_nested_evm(
+                ccx.state,
+                db,
+                modified_evm_env,
+                chain_context,
+                &mut |evm| {
+                    // SAFETY: closure is called exactly once by the executor.
+                    evm.journal_inner_mut().state = cold_state.take().expect("called once");
+                    // Set depth to 1 for proper trace collection.
+                    evm.journal_inner_mut().depth = 1;
+                    res = Some(evm.transact_raw(modified_tx_env.clone()));
+                    Ok(())
+                },
+            )?
         };
         let res = res.unwrap();
 
@@ -1397,6 +1460,10 @@ impl Cheatcode for executeTransactionCall {
                 slot_mut.is_cold &= val.is_cold;
             }
         }
+
+        // Keep network-specific caches aligned with the state merged from the nested EVM while
+        // preserving the outer transaction's execution context.
+        refresh_chain_journal(ccx.ecx);
 
         // Return output bytes.
         let output = match res.result {
@@ -1499,7 +1566,7 @@ impl Cheatcode for setEvmVersionCall {
 
 impl Cheatcode for getEvmVersionCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let spec = *ccx.ecx.cfg().spec();
+        let spec = ccx.ecx.cfg().spec();
         Ok(spec.evm_version_name().to_lowercase().abi_encode())
     }
 }
@@ -1530,13 +1597,21 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
             active.pre_override_blob_hashes = Some(ccx.ecx.tx().blob_versioned_hashes().to_vec());
         }
     }
-    let fork_id = ccx.ecx.db().active_fork_id();
-    let (db, inner) = ccx.ecx.db_journal_inner_mut();
-    let id = db.snapshot_state(inner, &evm_env);
+    let journaled_state = ccx.ecx.journal_inner().clone();
+    let id = ccx.ecx.db_mut().snapshot_state(&journaled_state, &evm_env);
     // Capture the cheatcode-side env overrides alongside the backend
     // snapshot so they can be rolled back in lockstep with `EvmEnv`. See
     // `Cheatcodes::env_overrides_snapshots`.
     ccx.state.env_overrides_snapshots.insert(id, all_env_overrides);
+    ccx.state.fork_block_number_override_snapshots.insert(id, ccx.state.fork_block_number_override);
+    #[cfg(feature = "monad")]
+    {
+        use foundry_evm_core::FoundryJournal as _;
+
+        ccx.state
+            .context_snapshots
+            .insert(id, (ccx.ecx.chain().clone(), ccx.ecx.journal().capture_reserve_balance()));
+    }
     ccx.state.snapshot_created_accounts(id, fork_id);
     Ok(id.abi_encode())
 }
@@ -1587,20 +1662,35 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
     let caller = ccx.ecx.caller();
-    let (db, inner) = ccx.ecx.db_journal_inner_mut();
-    if let Some(restored) = db.revert_state(
+    let journaled_state = ccx.ecx.journal_inner().clone();
+    if let Some(restored) = ccx.ecx.db_mut().revert_state(
         snapshot_id,
-        inner,
+        &journaled_state,
         &mut evm_env,
         caller,
         RevertStateSnapshotAction::RevertKeep,
     ) {
-        *inner = restored;
+        ccx.ecx.set_journal_inner(restored);
+        #[cfg(feature = "monad")]
+        {
+            use foundry_evm_core::FoundryJournal as _;
+
+            if let Some((context, state)) = ccx.state.context_snapshots.get(&snapshot_id) {
+                *ccx.ecx.chain_mut() = context.clone();
+                ccx.ecx.journal_mut().restore_reserve_balance(state.clone());
+            }
+        }
+        refresh_chain_journal(ccx.ecx);
         ccx.ecx.set_evm(evm_env);
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
         if let Some(snap) = ccx.state.env_overrides_snapshots.get(&snapshot_id) {
             ccx.state.env_overrides = snap.clone();
+        }
+        if let Some(&fork_block_number) =
+            ccx.state.fork_block_number_override_snapshots.get(&snapshot_id)
+        {
+            ccx.state.fork_block_number_override = fork_block_number;
         }
         ccx.state.revert_created_accounts(snapshot_id, false);
         sync_tx_after_env_override_restore(ccx);
@@ -1616,18 +1706,33 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
     let caller = ccx.ecx.caller();
-    let (db, inner) = ccx.ecx.db_journal_inner_mut();
-    if let Some(restored) = db.revert_state(
+    let journaled_state = ccx.ecx.journal_inner().clone();
+    if let Some(restored) = ccx.ecx.db_mut().revert_state(
         snapshot_id,
-        inner,
+        &journaled_state,
         &mut evm_env,
         caller,
         RevertStateSnapshotAction::RevertRemove,
     ) {
-        *inner = restored;
+        ccx.ecx.set_journal_inner(restored);
+        #[cfg(feature = "monad")]
+        {
+            use foundry_evm_core::FoundryJournal as _;
+
+            if let Some((context, state)) = ccx.state.context_snapshots.remove(&snapshot_id) {
+                *ccx.ecx.chain_mut() = context;
+                ccx.ecx.journal_mut().restore_reserve_balance(state);
+            }
+        }
+        refresh_chain_journal(ccx.ecx);
         ccx.ecx.set_evm(evm_env);
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
             ccx.state.env_overrides = snap;
+        }
+        if let Some(fork_block_number) =
+            ccx.state.fork_block_number_override_snapshots.remove(&snapshot_id)
+        {
+            ccx.state.fork_block_number_override = fork_block_number;
         }
         ccx.state.revert_created_accounts(snapshot_id, true);
         sync_tx_after_env_override_restore(ccx);
@@ -1874,9 +1979,6 @@ fn restore_eip2935_cold_state<
 // crates/precompiles/tests/storage_tests/solidity/testdata/tip20.layout.json
 // fixture, where `logoUri` has slot "5".
 const TIP20_LOGO_URI_SLOT_INDEX: u64 = 5;
-fn tip20_logo_uri_slot() -> U256 {
-    U256::from(TIP20_LOGO_URI_SLOT_INDEX)
-}
 
 fn set_tip20_logo_uri<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
@@ -1889,7 +1991,12 @@ fn set_tip20_logo_uri<FEN: FoundryEvmNetwork>(
     })?;
     ccx.ensure_not_precompile(token)?;
     ensure_loaded_account(ccx.ecx, *token)?;
-    store_solidity_string(ccx.ecx, *token, tip20_logo_uri_slot(), new_logo_uri.as_bytes())
+    store_solidity_string(
+        ccx.ecx,
+        *token,
+        U256::from(TIP20_LOGO_URI_SLOT_INDEX),
+        new_logo_uri.as_bytes(),
+    )
 }
 
 fn store_solidity_string<CTX>(

@@ -236,7 +236,13 @@ pub fn format_ast<'ast>(
     let ast = source.ast.as_ref()?;
     let inline_config = parse_inline_config(gcx.sess, &comments, ast);
 
-    let mut state = state::State::new(gcx.sess.source_map(), config, inline_config, comments);
+    let mut state = state::State::new(
+        gcx.sess.source_map(),
+        source.file.start_pos,
+        config,
+        inline_config,
+        comments,
+    );
     state.print_source_unit(ast);
     Some(state.s.eof())
 }
@@ -255,6 +261,9 @@ fn parse_inline_config<'ast>(
         }
         let item = item.trim_start().strip_prefix("forgefmt:")?.trim();
         match item.parse::<InlineConfigItem<()>>() {
+            Ok(InlineConfigItem::DisableLine(())) if cmnt.style.is_isolated() => {
+                Some((cmnt.span, InlineConfigItem::DisableNextItem(())))
+            }
             Ok(item) => Some((cmnt.span, item)),
             Err(e) => {
                 sess.dcx.warn(e.to_string()).span(cmnt.span).emit();

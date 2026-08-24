@@ -1,6 +1,6 @@
 use crate::{
     FuzzFixtures,
-    strategies::{FuzzStateReader, fuzz_param_from_state, fuzz_param_with_fixtures},
+    strategies::{DictionaryRead, fuzz_param_from_state, fuzz_param_with_fixtures},
 };
 use alloy_dyn_abi::{DynSolCall, DynSolReturns, DynSolType, DynSolValue};
 use alloy_json_abi::{Function, Param};
@@ -114,6 +114,18 @@ impl EnumClamp {
     }
 }
 
+/// Constrains enum leaves in a decoded value to the range declared by its Solidity type.
+pub(crate) fn constrain_enum_value(
+    value: DynSolValue,
+    input: &Param,
+    fuzz_fixtures: &FuzzFixtures,
+) -> DynSolValue {
+    match EnumClamp::for_param(input, fuzz_fixtures) {
+        Some(plan) => plan.apply(value),
+        None => value,
+    }
+}
+
 /// Wraps `strat` to constrain any enum leaves in `input` to their valid range; a no-op otherwise.
 fn bound_enum(
     strat: BoxedStrategy<DynSolValue>,
@@ -169,7 +181,7 @@ pub fn fuzz_calldata(
 
 /// Given a function and some state, it returns a strategy which generated valid calldata for the
 /// given function's input types, based on state taken from the EVM.
-pub fn fuzz_calldata_from_state<S: FuzzStateReader>(
+pub(crate) fn fuzz_calldata_from_state<S: DictionaryRead>(
     func: Function,
     state: &S,
     fuzz_fixtures: &FuzzFixtures,

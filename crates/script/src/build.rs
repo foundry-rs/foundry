@@ -16,7 +16,8 @@ use forge_script_sequence::ScriptSequence;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::opts::TempoOpts;
 use foundry_common::{
-    ContractData, ContractsByArtifact, compile::ProjectCompiler, provider::ProviderBuilder,
+    ContractData, ContractsByArtifact, ContractsByArtifactBuilder, compile::ProjectCompiler,
+    provider::ProviderBuilder,
 };
 use foundry_compilers::{
     ArtifactId, ProjectCompileOutput,
@@ -33,7 +34,7 @@ use std::{path::PathBuf, str::FromStr, sync::Arc};
 /// Returns whether every scoped signer needed for resume is already available.
 ///
 /// `Wallets` only tracks signers collected from CLI options and script cheatcodes. A Tempo
-/// session signer lives in the session registry instead, so resume needs to treat the session
+/// session signer lives in the Accounts store instead, so resume needs to treat the session
 /// root account as available only on the chain covered by the session.
 fn has_available_script_signers(
     tempo: &TempoOpts,
@@ -81,7 +82,7 @@ impl BuildData {
         let create2_deployer = script_config.evm_opts.create2_deployer;
         let can_use_create2 = script_config
             .evm_opts
-            .can_use_create2_deployer(script_config.evm_opts.fork_block_number)
+            .can_use_create2_deployer_resolved(script_config.resolved_fork()?)
             .await?;
 
         let known_libraries = script_config.config.libraries_with_remappings()?;
@@ -188,8 +189,14 @@ impl LinkedBuildData {
             Some(&libraries),
         )?;
 
-        let known_contracts =
-            ContractsByArtifact::new(build_data.get_linker().get_linked_artifacts(&libraries)?);
+        let linked_contracts = build_data.get_linker().get_linked_artifacts(&libraries)?;
+        let known_contracts = ContractsByArtifactBuilder::new(
+            linked_contracts.iter().map(|(id, artifact)| (id.clone(), artifact.into())),
+        )
+        .with_storage_layouts(build_data.output.artifact_ids().filter_map(|(id, artifact)| {
+            artifact.storage_layout.as_ref().map(|layout| (id, layout.clone()))
+        }))
+        .build();
 
         Ok(Self { build_data, known_contracts, libraries, predeploy_libraries, sources })
     }

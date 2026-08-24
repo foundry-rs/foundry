@@ -55,6 +55,9 @@ pub struct TestOutcome {
     ///
     /// Essentially `identifier => signature => result`.
     pub results: BTreeMap<String, SuiteResult>,
+    /// Complete results for JSON file output, including suites hidden from fail-fast console
+    /// output.
+    pub(crate) json_file_results: Option<BTreeMap<String, SuiteResult>>,
     /// Whether to allow test failures without failing the entire test run.
     pub allow_failure: bool,
     /// The decoder used to decode traces and logs.
@@ -81,6 +84,7 @@ impl TestOutcome {
     ) -> Self {
         Self {
             results,
+            json_file_results: None,
             allow_failure,
             last_run_decoder: None,
             gas_report: None,
@@ -1858,6 +1862,10 @@ pub struct TestResult {
     /// still be successful (i.e self.success == true) when it's expected to fail.
     pub reason: Option<String>,
 
+    /// The active fork's block number after execution, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_block_number: Option<u64>,
+
     /// All broken invariant predicates in this campaign in source declaration order.
     ///
     /// For invariant tests, this is the single source of truth used by the renderer.
@@ -2250,6 +2258,9 @@ impl TestResult {
 
 macro_rules! extend {
     ($a:expr, $b:expr, $trace_kind:expr) => {
+        if $b.fork_block_number.is_some() {
+            $a.fork_block_number = $b.fork_block_number;
+        }
         $a.logs.extend($b.logs);
         $a.labels.extend($b.labels);
         $a.traces.extend($b.traces.map(|traces| ($trace_kind, traces)));
@@ -2267,6 +2278,7 @@ impl TestResult {
             traces: setup.traces.clone(),
             debug_bytecodes: setup.debug_bytecodes.clone(),
             line_coverage: setup.coverage.clone(),
+            fork_block_number: setup.fork_block_number,
             ..Default::default()
         }
     }
@@ -2287,6 +2299,7 @@ impl TestResult {
             debug_bytecodes,
             coverage,
             deployed_libs: _,
+            fork_block_number,
             reason,
             skipped,
             ..
@@ -2299,6 +2312,7 @@ impl TestResult {
             debug_bytecodes,
             line_coverage: coverage,
             labels,
+            fork_block_number,
             ..Default::default()
         }
     }
@@ -2481,6 +2495,7 @@ impl TestResult {
         &mut self,
         gas_report_traces: Vec<Vec<CallTraceArena>>,
         success: bool,
+        fork_block_number: Option<u64>,
         invariant_failures: Vec<InvariantFailure>,
         invariant_predicate_results: Vec<InvariantPredicateResult>,
         invariant_failure_dir: Option<std::path::PathBuf>,
@@ -2510,6 +2525,7 @@ impl TestResult {
         } else {
             TestStatus::Failure
         };
+        self.fork_block_number = fork_block_number;
         self.invariant_failures = invariant_failures;
         self.invariant_predicate_results = invariant_predicate_results;
         self.invariant_failure_dir = invariant_failure_dir;
@@ -2657,7 +2673,13 @@ impl TestResult {
             Cow::Borrowed(name)
         };
         let status = self.render_status_block(true, is_invariant_campaign.then_some(name.as_ref()));
-        format!("{status} {name} {}", self.kind.report())
+        if self.status.is_failure()
+            && let Some(block) = self.fork_block_number
+        {
+            format!("{status} {name} (block: {block}) {}", self.kind.report())
+        } else {
+            format!("{status} {name} {}", self.kind.report())
+        }
     }
 
     const fn is_invariant_campaign(&self) -> bool {
@@ -3034,6 +3056,8 @@ pub struct TestSetup {
     pub coverage: Option<HitMaps>,
     /// Addresses of external libraries deployed during setup.
     pub deployed_libs: Vec<Address>,
+    /// The active fork's block number after setup, if any.
+    pub fork_block_number: Option<u64>,
     /// Cached setup-derived fuzz dictionary for stateless fuzz tests.
     pub(crate) fuzz_state: OnceLock<EvmFuzzState>,
 

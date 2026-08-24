@@ -6,10 +6,10 @@ use crate::{
     ScriptArgs, ScriptConfig, ScriptResult,
     broadcast::{BundledState, estimate_gas},
     build::LinkedBuildData,
-    execute::{ExecutionArtifacts, ExecutionData},
+    execute::{ExecutionArtifacts, ExecutionData, build_trace_decoder_for_context},
     sequence::get_commit_hash,
 };
-use alloy_chains::NamedChain;
+use alloy_chains::{Chain, NamedChain};
 use alloy_evm::revm::context::Block;
 use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, U256, map::HashMap, utils::format_units};
@@ -20,15 +20,18 @@ use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{
-    ContractData, provider::fee::resolve_broadcast_eip1559_fees, shell,
+    ContractData, ContractsByArtifact, provider::fee::resolve_broadcast_eip1559_fees, shell,
     tempo::known_fee_token_symbol,
 };
 use foundry_evm::{
     core::{FoundryBlock, evm::FoundryEvmNetwork},
-    traces::{decode_trace_arena, prune_trace_depth, render_trace_arena_inner},
+    traces::{
+        CallTraceDecoder, debug::ContractSources, decode_trace_arena, prune_trace_depth,
+        render_trace_arena_inner,
+    },
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
-use futures::future::{join_all, try_join_all};
+use futures::future::join_all;
 use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -52,14 +55,92 @@ pub struct PreSimulationState<FEN: FoundryEvmNetwork> {
     pub execution_artifacts: ExecutionArtifacts,
 }
 
+struct RpcSimulationContext<R> {
+    runner: RwLock<R>,
+    decoder: CallTraceDecoder,
+}
+
+enum RpcContexts<R> {
+    Simulation(Arc<HashMap<String, RpcSimulationContext<R>>>),
+    Decoding(HashMap<String, CallTraceDecoder>),
+}
+
+impl<R> RpcContexts<R> {
+    fn decoder(&self, rpc: &str) -> &CallTraceDecoder {
+        match self {
+            Self::Simulation(contexts) => &context_for_rpc(contexts, rpc).decoder,
+            Self::Decoding(decoders) => decoders.get(rpc).expect("invalid rpc url"),
+        }
+    }
+}
+
+fn context_for_rpc<'a, R>(
+    contexts: &'a HashMap<String, RpcSimulationContext<R>>,
+    rpc: &str,
+) -> &'a RpcSimulationContext<R> {
+    contexts.get(rpc).expect("invalid rpc url")
+}
+
+async fn build_rpc_simulation_context<FEN: FoundryEvmNetwork>(
+    rpc: String,
+    args: &ScriptArgs,
+    script_config: &ScriptConfig<FEN>,
+    known_contracts: &ContractsByArtifact,
+    sources: &ContractSources,
+    execution_result: &ScriptResult<FEN::Network>,
+) -> Result<(String, RpcSimulationContext<ScriptRunner<FEN>>)> {
+    let mut script_config = script_config.clone();
+    script_config.set_fork_url(rpc.clone());
+    let mut runner = script_config._get_runner(None, false, false).await?;
+    runner.executor.enable_block_context_progression()?;
+    let decoder = build_trace_decoder_for_context(
+        args,
+        &script_config,
+        known_contracts,
+        sources,
+        execution_result,
+        script_config.source_chain_id.map(Chain::from),
+    )?;
+    Ok((rpc, RpcSimulationContext { runner: RwLock::new(runner), decoder }))
+}
+
+async fn build_rpc_decoder<FEN: FoundryEvmNetwork>(
+    rpc: String,
+    args: &ScriptArgs,
+    script_config: &ScriptConfig<FEN>,
+    known_contracts: &ContractsByArtifact,
+    sources: &ContractSources,
+    execution_result: &ScriptResult<FEN::Network>,
+) -> Result<(String, CallTraceDecoder)> {
+    let mut script_config = script_config.clone();
+    script_config.set_fork_url(rpc.clone());
+    let _ = script_config.resolve_execution_env().await?;
+    let decoder = build_trace_decoder_for_context(
+        args,
+        &script_config,
+        known_contracts,
+        sources,
+        execution_result,
+        script_config.source_chain_id.map(Chain::from),
+    )?;
+    Ok((rpc, decoder))
+}
+
 impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
-    /// If simulation is enabled, simulates transactions against fork and fills gas estimation and
-    /// metadata. Otherwise, metadata (e.g. additional contracts, created contract names) is
-    /// left empty.
+    /// If simulation is enabled, simulates transactions against the fork and fills gas estimation
+    /// and execution metadata. Otherwise, fills metadata that can be derived without transaction
+    /// simulation using each RPC's resolved execution context.
     ///
     /// Both modes will panic if any of the transactions have None for the `rpc` field.
     pub async fn fill_metadata(self) -> Result<FilledTransactionsState<FEN>> {
         let address_to_abi = self.build_address_to_abi_map();
+        let contexts = if self.args.skip_simulation {
+            RpcContexts::Decoding(self.build_rpc_decoders().await?)
+        } else {
+            RpcContexts::Simulation(Arc::new(
+                self.build_runners().await?.into_iter().collect::<HashMap<_, _>>(),
+            ))
+        };
 
         let mut transactions = self
             .execution_result
@@ -72,13 +153,14 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 let sender = tx.transaction.from().expect("all transactions should have a sender");
                 let nonce = tx.transaction.nonce().expect("all transactions should have a nonce");
                 let to = tx.transaction.to();
+                let decoder = contexts.decoder(&rpc);
 
                 let mut builder = ScriptTransactionBuilder::new(tx.transaction, rpc);
 
                 if to.is_some() {
                     builder.set_call(
                         &address_to_abi,
-                        &self.execution_artifacts.decoder,
+                        decoder,
                         self.script_config.evm_opts.create2_deployer,
                     )?;
                 } else {
@@ -89,10 +171,11 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             })
             .collect::<Result<VecDeque<_>>>()?;
 
-        if self.args.skip_simulation {
-            sh_println!("\nSKIPPING ON CHAIN SIMULATION.")?;
-        } else {
-            transactions = self.simulate_and_fill(transactions).await?;
+        match contexts {
+            RpcContexts::Simulation(contexts) => {
+                transactions = self.simulate_and_fill_with_contexts(transactions, contexts).await?;
+            }
+            RpcContexts::Decoding(_) => sh_println!("\nSKIPPING ON CHAIN SIMULATION.")?,
         }
 
         Ok(FilledTransactionsState {
@@ -106,23 +189,14 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         })
     }
 
-    /// Builds separate runners and environments for each RPC used in script and executes all
-    /// transactions in those environments.
-    ///
-    /// Collects gas usage and metadata for each transaction.
-    pub async fn simulate_and_fill(
+    /// Executes every transaction in its RPC-specific simulation context and collects gas usage
+    /// and metadata.
+    async fn simulate_and_fill_with_contexts(
         &self,
         transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+        contexts: Arc<HashMap<String, RpcSimulationContext<ScriptRunner<FEN>>>>,
     ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
         trace!(target: "script", "executing onchain simulation");
-
-        let runners = Arc::new(
-            self.build_runners()
-                .await?
-                .into_iter()
-                .map(|(rpc, runner)| (rpc, Arc::new(RwLock::new(runner))))
-                .collect::<HashMap<_, _>>(),
-        );
 
         let mut final_txs = VecDeque::new();
 
@@ -130,7 +204,9 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         let futs = transactions
             .into_iter()
             .map(|mut transaction| async {
-                let mut runner = runners.get(&transaction.rpc).expect("invalid rpc url").write();
+                let rpc = transaction.rpc.clone();
+                let context = context_for_rpc(&contexts, &rpc);
+                let mut runner = context.runner.write();
                 let tx = transaction.tx_mut();
 
                 let to = tx.to();
@@ -146,11 +222,12 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     .wrap_err("Internal EVM error during simulation")?;
 
                 if !result.success {
-                    return Ok((None, false, result.traces));
+                    return Ok((rpc, None, false, result.traces));
                 }
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
+                    runner.executor.advance_block_context();
                     let block_number = runner.executor.evm_env().block_env.number() + U256::from(1);
                     runner.executor.evm_env_mut().block_env.set_number(block_number);
                 }
@@ -169,7 +246,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     )
                     .build();
 
-                eyre::Ok((Some(transaction), is_noop_tx, result.traces))
+                eyre::Ok((rpc, Some(transaction), is_noop_tx, result.traces))
             })
             .collect::<Vec<_>>();
 
@@ -181,12 +258,13 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
         let mut abort = false;
         for res in join_all(futs).await {
-            let (tx, is_noop_tx, mut traces) = res?;
+            let (rpc, tx, is_noop_tx, mut traces) = res?;
 
             // Transaction will be `None`, if execution didn't pass.
             if !shell::is_json() && (tx.is_none() || tracing.verbosity > 3) {
+                let decoder = &context_for_rpc(&contexts, &rpc).decoder;
                 for (_, trace) in &mut traces {
-                    decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
+                    decode_trace_arena(trace, decoder).await;
                     if let Some(trace_depth) = tracing.trace_depth {
                         prune_trace_depth(trace, trace_depth);
                     }
@@ -246,8 +324,10 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     }
 
     /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
-    async fn build_runners(&self) -> Result<Vec<(String, ScriptRunner<FEN>)>> {
-        let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
+    async fn build_runners(
+        &self,
+    ) -> Result<Vec<(String, RpcSimulationContext<ScriptRunner<FEN>>)>> {
+        let rpcs = &self.execution_artifacts.rpc_data.total_rpcs;
 
         if !shell::is_json() {
             let n = rpcs.len();
@@ -255,13 +335,278 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
             sh_println!("\n## Setting up {n} EVM{s}.")?;
         }
 
-        let futs = rpcs.into_iter().map(|rpc| async move {
-            let mut script_config = self.script_config.clone();
-            script_config.evm_opts.fork_url = Some(rpc.clone());
-            let runner = script_config.get_runner().await?;
-            Ok((rpc, runner))
-        });
-        try_join_all(futs).await
+        // Context construction performs several identity and block probes per endpoint. Resolve
+        // endpoints serially so setup does not create an unbounded cross-endpoint request burst.
+        let mut contexts = Vec::with_capacity(rpcs.len());
+        for rpc in rpcs.iter().cloned() {
+            contexts.push(
+                build_rpc_simulation_context(
+                    rpc,
+                    &self.args,
+                    &self.script_config,
+                    &self.build_data.known_contracts,
+                    &self.build_data.sources,
+                    &self.execution_result,
+                )
+                .await?,
+            );
+        }
+        Ok(contexts)
+    }
+
+    /// Builds one trace decoder for every RPC without constructing simulation runners.
+    async fn build_rpc_decoders(&self) -> Result<HashMap<String, CallTraceDecoder>> {
+        let rpcs = &self.execution_artifacts.rpc_data.total_rpcs;
+        // Decoder construction resolves the same endpoint context as a simulation runner.
+        let mut decoders = HashMap::default();
+        for rpc in rpcs.iter().cloned() {
+            let (rpc, decoder) = build_rpc_decoder(
+                rpc,
+                &self.args,
+                &self.script_config,
+                &self.build_data.known_contracts,
+                &self.build_data.sources,
+                &self.execution_result,
+            )
+            .await?;
+            decoders.insert(rpc, decoder);
+        }
+        Ok(decoders)
+    }
+}
+
+#[cfg(all(test, feature = "monad"))]
+mod tests {
+    use super::*;
+    use alloy_primitives::address;
+    use anvil::{NodeConfig, spawn};
+    use foundry_cli::opts::TempoOpts;
+    use foundry_config::Config;
+    use foundry_evm::{
+        core::{evm::MonadEvmNetwork, opts::EvmOpts},
+        hardforks::MonadHardfork,
+    };
+    use foundry_evm_networks::NetworkConfigs;
+
+    const RESERVE_BALANCE_ADDRESS: Address = address!("0000000000000000000000000000000000001001");
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multi_rpc_fork_selects_trace_decoder_for_source_hardfork() {
+        let (monad_eight_api, monad_eight) = spawn(
+            NodeConfig::test_monad()
+                .with_chain_id(Some(NamedChain::Monad as u64))
+                .with_hardfork(Some(MonadHardfork::MonadEight.into())),
+        )
+        .await;
+        let (monad_nine_api, monad_nine) = spawn(
+            NodeConfig::test_monad()
+                .with_chain_id(Some(NamedChain::Monad as u64))
+                .with_hardfork(Some(MonadHardfork::MonadNine.into())),
+        )
+        .await;
+        monad_eight_api.mine_one().await.unwrap();
+        monad_nine_api.mine_one().await.unwrap();
+        let monad_eight_rpc = monad_eight.http_endpoint();
+        let monad_nine_rpc = monad_nine.http_endpoint();
+
+        let mut evm_opts = EvmOpts {
+            fork_url: Some(monad_eight_rpc.clone()),
+            fork_block_number: Some(0),
+            networks: NetworkConfigs::with_monad(),
+            ..Default::default()
+        };
+        evm_opts.env.chain_id = Some(42);
+        let script_config = ScriptConfig::<MonadEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            Some(0),
+        )
+        .await
+        .unwrap();
+        let args = ScriptArgs::default();
+        let known_contracts = ContractsByArtifact::default();
+        let sources = ContractSources::default();
+        let execution_result = ScriptResult::default();
+        let contexts = [
+            build_rpc_simulation_context(
+                monad_eight_rpc.clone(),
+                &args,
+                &script_config,
+                &known_contracts,
+                &sources,
+                &execution_result,
+            )
+            .await
+            .unwrap(),
+            build_rpc_simulation_context(
+                monad_nine_rpc.clone(),
+                &args,
+                &script_config,
+                &known_contracts,
+                &sources,
+                &execution_result,
+            )
+            .await
+            .unwrap(),
+        ]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+
+        let monad_eight = context_for_rpc(&contexts, &monad_eight_rpc);
+        let monad_eight_runner = monad_eight.runner.read();
+        assert_eq!(monad_eight_runner.executor.evm_env().cfg_env.chain_id, 42);
+        assert_eq!(monad_eight_runner.executor.evm_env().block_env.number(), U256::ZERO);
+        assert_eq!(monad_eight_runner.evm_opts.fork_block_number, Some(0));
+        assert!(!monad_eight_runner.evm_opts.fork_block_number_is_inferred);
+        assert_eq!(monad_eight_runner.evm_opts.networks, NetworkConfigs::with_monad());
+        assert!(!monad_eight_runner.evm_opts.fork_network_is_inferred);
+        assert_eq!(monad_eight.decoder.chain_id, Some(NamedChain::Monad as u64));
+        assert_eq!(monad_eight.decoder.monad_hardfork(), Some(MonadHardfork::MonadEight));
+        assert!(!monad_eight.decoder.precompile_labels().contains_key(&RESERVE_BALANCE_ADDRESS));
+
+        let monad_nine = context_for_rpc(&contexts, &monad_nine_rpc);
+        let monad_nine_runner = monad_nine.runner.read();
+        assert_eq!(monad_nine_runner.executor.evm_env().cfg_env.chain_id, 42);
+        assert_eq!(monad_nine_runner.executor.evm_env().block_env.number(), U256::ZERO);
+        assert_eq!(monad_nine_runner.evm_opts.fork_block_number, Some(0));
+        assert!(!monad_nine_runner.evm_opts.fork_block_number_is_inferred);
+        assert_eq!(monad_nine_runner.evm_opts.networks, NetworkConfigs::with_monad());
+        assert!(!monad_nine_runner.evm_opts.fork_network_is_inferred);
+        assert_eq!(monad_nine.decoder.chain_id, Some(NamedChain::Monad as u64));
+        assert_eq!(monad_nine.decoder.monad_hardfork(), Some(MonadHardfork::MonadNine));
+        assert_eq!(
+            monad_nine.decoder.precompile_labels().get(&RESERVE_BALANCE_ADDRESS),
+            Some(&"ReserveBalance".to_string())
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn skip_simulation_fork_builds_per_rpc_trace_decoders() {
+        let (monad_eight_api, monad_eight) = spawn(
+            NodeConfig::test_monad()
+                .with_chain_id(Some(NamedChain::Monad as u64))
+                .with_hardfork(Some(MonadHardfork::MonadEight.into())),
+        )
+        .await;
+        let (monad_nine_api, monad_nine) = spawn(
+            NodeConfig::test_monad()
+                .with_chain_id(Some(NamedChain::Monad as u64))
+                .with_hardfork(Some(MonadHardfork::MonadNine.into())),
+        )
+        .await;
+        monad_eight_api.mine_one().await.unwrap();
+        monad_nine_api.mine_one().await.unwrap();
+        let monad_eight_rpc = monad_eight.http_endpoint();
+        let monad_nine_rpc = monad_nine.http_endpoint();
+
+        let script_config = ScriptConfig::<MonadEvmNetwork>::new(
+            Config::default(),
+            EvmOpts {
+                fork_url: Some(monad_eight_rpc.clone()),
+                fork_block_number: Some(0),
+                networks: NetworkConfigs::with_monad(),
+                ..Default::default()
+            },
+            false,
+            TempoOpts::default(),
+            Some(0),
+        )
+        .await
+        .unwrap();
+        let args = ScriptArgs { skip_simulation: true, ..Default::default() };
+        let known_contracts = ContractsByArtifact::default();
+        let sources = ContractSources::default();
+        let execution_result = ScriptResult::default();
+        let decoders = [
+            build_rpc_decoder(
+                monad_eight_rpc.clone(),
+                &args,
+                &script_config,
+                &known_contracts,
+                &sources,
+                &execution_result,
+            )
+            .await
+            .unwrap(),
+            build_rpc_decoder(
+                monad_nine_rpc.clone(),
+                &args,
+                &script_config,
+                &known_contracts,
+                &sources,
+                &execution_result,
+            )
+            .await
+            .unwrap(),
+        ]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+
+        let monad_eight = decoders.get(&monad_eight_rpc).unwrap();
+        assert_eq!(monad_eight.monad_hardfork(), Some(MonadHardfork::MonadEight));
+        assert!(!monad_eight.precompile_labels().contains_key(&RESERVE_BALANCE_ADDRESS));
+
+        let monad_nine = decoders.get(&monad_nine_rpc).unwrap();
+        assert_eq!(monad_nine.monad_hardfork(), Some(MonadHardfork::MonadNine));
+        assert_eq!(
+            monad_nine.precompile_labels().get(&RESERVE_BALANCE_ADDRESS),
+            Some(&"ReserveBalance".to_string())
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn multi_rpc_fork_rejects_inferred_network_change() {
+        let (_monad_api, monad) = spawn(NodeConfig::test_monad()).await;
+        let (_ethereum_api, ethereum) = spawn(NodeConfig::test()).await;
+        let ethereum_rpc = ethereum.http_endpoint();
+        let script_config = ScriptConfig::<MonadEvmNetwork>::new(
+            Config::default(),
+            EvmOpts { fork_url: Some(monad.http_endpoint()), ..Default::default() },
+            false,
+            TempoOpts::default(),
+            Some(0),
+        )
+        .await
+        .unwrap();
+        assert!(script_config.evm_opts.fork_network_is_inferred);
+
+        let result = build_rpc_simulation_context(
+            ethereum_rpc.clone(),
+            &ScriptArgs::default(),
+            &script_config,
+            &ContractsByArtifact::default(),
+            &ContractSources::default(),
+            &ScriptResult::default(),
+        )
+        .await;
+        let Err(error) = result else { panic!("inferred cross-network fork should be rejected") };
+        assert!(
+            error
+                .to_string()
+                .contains("fork network `ethereum` is incompatible with the active EVM"),
+            "{error}"
+        );
+
+        let result = build_rpc_decoder(
+            ethereum_rpc,
+            &ScriptArgs { skip_simulation: true, ..Default::default() },
+            &script_config,
+            &ContractsByArtifact::default(),
+            &ContractSources::default(),
+            &ScriptResult::default(),
+        )
+        .await;
+        let Err(error) = result else {
+            panic!("skip-simulation decoder should reject an inferred cross-network fork")
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("fork network `ethereum` is incompatible with the active EVM"),
+            "{error}"
+        );
     }
 }
 
@@ -307,6 +652,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
             let provider_info = manager
                 .get_or_init_provider(
                     &tx.rpc,
+                    self.execution_artifacts.rpc_data.chain_ids.get(&tx.rpc).copied(),
                     self.args.legacy,
                     self.script_config.config.eip1559_fee_estimate,
                 )
@@ -341,6 +687,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                             tx,
                             &provider_info.provider,
                             self.args.gas_estimate_multiplier,
+                            false,
                         )
                         .await
                         {

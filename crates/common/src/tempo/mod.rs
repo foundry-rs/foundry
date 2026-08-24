@@ -20,7 +20,6 @@ use tempo_primitives::TempoAddressExt;
 
 mod keystore;
 mod lane;
-mod registry;
 mod session;
 mod session_policy;
 #[cfg(test)]
@@ -42,7 +41,7 @@ pub use tip20::{
 };
 
 #[cfg(test)]
-pub(crate) use test_utils::{test_env_mutex, with_tempo_home};
+pub(crate) use test_utils::test_env_mutex;
 
 #[cfg(test)]
 mod tests;
@@ -51,17 +50,6 @@ mod tests;
 fn redacted_debug(value: &str) -> &'static str {
     if value.trim().is_empty() { "<empty>" } else { "<redacted>" }
 }
-
-/// Conservative gas buffer for browser wallet transactions on Tempo chains.
-///
-/// Browser wallets may sign with P256 or WebAuthn instead of secp256k1, which costs more gas
-/// for signature verification. Since we can't determine the signature type before signing,
-/// we add the worst-case (WebAuthn) overhead:
-///   - P256: +5,000 gas (P256 precompile cost minus ecrecover savings)
-///   - WebAuthn: ~6,500 gas (P256 cost + calldata for webauthn_data)
-///
-/// See <https://github.com/tempoxyz/tempo/blob/6ebf1a8/crates/revm/src/handler.rs#L108-L124>
-pub const TEMPO_BROWSER_GAS_BUFFER: u64 = 7_000;
 
 /// Reserved Tempo TIP20 fee-token addresses created during Foundry genesis.
 ///
@@ -364,7 +352,13 @@ impl TempoSponsor {
             .recover_address_from_prehash(&digest)
             .context("failed to recover Tempo sponsor signature")?;
         if recovered != self.sponsor {
-            eyre::bail!("Tempo sponsor signature recovered {recovered}, expected {}", self.sponsor);
+            eyre::bail!(
+                "Tempo sponsor signature recovered {recovered}, expected {}; the signature must \
+                 cover this exact transaction's sponsor digest — when signing a digest produced \
+                 with `--tempo.print-sponsor-hash`, pin --nonce, --gas-limit, --gas-price and \
+                 --priority-gas-price on both commands so the digest does not change in between",
+                self.sponsor
+            );
         }
         if recovered == sender {
             eyre::bail!(

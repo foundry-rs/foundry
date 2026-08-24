@@ -410,6 +410,88 @@ impl FoundryTransaction for TempoTxEnv {
     }
 }
 
+/// Foundry extension for chain context type
+///
+/// Every family that doesn't need chain metadata uses `()`.
+pub trait FoundryChain<Tx>: Clone + Debug + Default + Send + Sync {
+    /// Builds chain context for a standalone synthetic transaction.
+    fn for_transaction(_tx: &Tx) -> Self {
+        Self::default()
+    }
+
+    /// Builds chain context for a transaction at an exact block position.
+    fn for_block(
+        _grandparent: &[Tx],
+        _parent: &[Tx],
+        _current: &[Tx],
+        _current_tx_index: usize,
+    ) -> Self {
+        Self::default()
+    }
+
+    /// Refreshes journal state derived from the active chain position.
+    fn refresh_journal<J: FoundryJournal>(&self, _journal: &mut J) {}
+}
+
+impl<Tx> FoundryChain<Tx> for () {}
+
+/// Foundry extension for Journal type
+pub trait FoundryJournal: JournalExt {
+    /// Captures Monad's reserve-balance tracker for the active transaction.
+    #[cfg(feature = "monad")]
+    fn capture_reserve_balance(
+        &self,
+    ) -> monad_revm::reserve_balance::tracker::ReserveBalanceTracker {
+        monad_revm::reserve_balance::tracker::ReserveBalanceTracker::default()
+    }
+
+    /// Restores Monad's reserve-balance tracker for the active transaction.
+    #[cfg(feature = "monad")]
+    fn restore_reserve_balance(
+        &mut self,
+        _tracker: monad_revm::reserve_balance::tracker::ReserveBalanceTracker,
+    ) {
+    }
+
+    /// Whether transaction boundaries currently preserve the reserve-balance tracker, e.g. for
+    /// an isolated call that models an inner call of the enclosing transaction rather than a
+    /// new one.
+    #[cfg(feature = "monad")]
+    fn preserves_reserve_balance(&self) -> bool {
+        false
+    }
+
+    /// Sets whether transaction boundaries preserve the reserve-balance tracker.
+    #[cfg(feature = "monad")]
+    fn set_preserve_reserve_balance(&mut self, _preserve: bool) {}
+}
+
+impl<DB: Database> FoundryJournal for Journal<DB> {}
+
+#[cfg(feature = "monad")]
+impl<DB: Database> FoundryJournal for monad_revm::MonadJournal<DB> {
+    fn capture_reserve_balance(
+        &self,
+    ) -> monad_revm::reserve_balance::tracker::ReserveBalanceTracker {
+        monad_revm::MonadJournalTr::reserve_balance(self).clone()
+    }
+
+    fn restore_reserve_balance(
+        &mut self,
+        tracker: monad_revm::reserve_balance::tracker::ReserveBalanceTracker,
+    ) {
+        *monad_revm::MonadJournalTr::reserve_balance_mut(self) = tracker;
+    }
+
+    fn preserves_reserve_balance(&self) -> bool {
+        monad_revm::MonadJournalTr::preserves_reserve_balance_tracker(self)
+    }
+
+    fn set_preserve_reserve_balance(&mut self, preserve: bool) {
+        monad_revm::MonadJournalTr::set_preserve_reserve_balance_tracker(self, preserve);
+    }
+}
+
 /// Extension trait providing mutable field access to block, tx, and cfg environments.
 ///
 /// [`ContextTr`] only exposes immutable references for block, tx, and cfg.
@@ -418,8 +500,9 @@ pub trait FoundryContextExt:
     ContextTr<
         Block: FoundryBlock + Clone,
         Tx: FoundryTransaction + Clone,
-        Cfg = CfgEnv<Self::Spec>,
-        Journal: JournalExt,
+        Cfg: Cfg<Spec = Self::Spec> + Clone + From<CfgEnv<Self::Spec>> + Into<CfgEnv<Self::Spec>>,
+        Journal: FoundryJournal,
+        Chain: FoundryChain<Self::Tx>,
     >
 {
     /// Specification id type
@@ -436,8 +519,22 @@ pub trait FoundryContextExt:
     /// Mutable reference to the configuration environment.
     fn cfg_mut(&mut self) -> &mut Self::Cfg;
 
+    /// Reference to the underlying [`CfgEnv`].
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec>;
+
+    /// Mutable reference to the underlying [`CfgEnv`].
+    fn cfg_env_mut(&mut self) -> &mut CfgEnv<Self::Spec>;
+
     /// Mutable reference to the db and the journal inner.
     fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState);
+
+    /// Reference to the journal inner.
+    fn journal_inner(&self) -> &JournaledState;
+
+    /// Sets the spec and refreshes gas params for the concrete EVM family.
+    fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
+        self.cfg_env_mut().set_spec_and_mainnet_gas_params(spec);
+    }
 
     /// Sets block environment.
     fn set_block(&mut self, block: Self::Block) {
@@ -461,7 +558,7 @@ pub trait FoundryContextExt:
 
     /// Sets EVM environment.
     fn set_evm(&mut self, evm_env: EvmEnv<Self::Spec, Self::Block>) {
-        *self.cfg_mut() = evm_env.cfg_env;
+        *self.cfg_mut() = evm_env.cfg_env.into();
         *self.block_mut() = evm_env.block_env;
     }
 
@@ -472,8 +569,14 @@ pub trait FoundryContextExt:
 
     /// Cloned EVM environment (Cfg + Block).
     fn evm_clone(&self) -> EvmEnv<Self::Spec, Self::Block> {
-        EvmEnv::new(self.cfg().clone(), self.block().clone())
+        EvmEnv::new(self.cfg().clone().into(), self.block().clone())
     }
+}
+
+/// Refreshes journal state derived from a context's active chain position.
+pub fn refresh_chain_journal<CTX: FoundryContextExt>(context: &mut CTX) {
+    let chain = context.chain().clone();
+    chain.refresh_journal(context.journal_mut());
 }
 
 impl<
@@ -481,11 +584,10 @@ impl<
     TX: FoundryTransaction + Clone,
     SPEC: Into<SpecId> + Copy + Debug,
     DB: Database,
-    C,
+    C: FoundryChain<TX>,
 > FoundryContextExt for Context<BLOCK, TX, CfgEnv<SPEC>, DB, Journal<DB>, C>
 {
     type Spec = <Self::Cfg as Cfg>::Spec;
-
     fn block_mut(&mut self) -> &mut Self::Block {
         &mut self.block
     }
@@ -498,8 +600,69 @@ impl<
         &mut self.cfg
     }
 
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
+        &self.cfg
+    }
+
+    fn cfg_env_mut(&mut self) -> &mut CfgEnv<Self::Spec> {
+        &mut self.cfg
+    }
+
     fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
         (&mut self.journaled_state.database, &mut self.journaled_state.inner)
+    }
+
+    fn journal_inner(&self) -> &JournaledState {
+        &self.journaled_state.inner
+    }
+}
+
+#[cfg(feature = "monad")]
+impl<DB: Database> FoundryContextExt
+    for Context<
+        BlockEnv,
+        TxEnv,
+        monad_revm::MonadCfgEnv,
+        DB,
+        monad_revm::MonadJournal<DB>,
+        monad_revm::MonadChainContext,
+    >
+{
+    type Spec = <Self::Cfg as Cfg>::Spec;
+    fn block_mut(&mut self) -> &mut Self::Block {
+        &mut self.block
+    }
+
+    fn tx_mut(&mut self) -> &mut Self::Tx {
+        &mut self.tx
+    }
+
+    fn cfg_mut(&mut self) -> &mut Self::Cfg {
+        &mut self.cfg
+    }
+
+    fn cfg_env(&self) -> &CfgEnv<Self::Spec> {
+        self.cfg.inner()
+    }
+
+    fn cfg_env_mut(&mut self) -> &mut CfgEnv<Self::Spec> {
+        self.cfg.inner_mut()
+    }
+
+    fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
+        let mut cfg = self.cfg.clone().into_inner();
+        cfg.spec = spec;
+        self.cfg = monad_revm::MonadCfgEnv::from(cfg);
+    }
+
+    fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
+        let journal: &mut Journal<DB> = std::ops::DerefMut::deref_mut(&mut self.journaled_state);
+        (&mut journal.database, &mut journal.inner)
+    }
+
+    fn journal_inner(&self) -> &JournaledState {
+        let journal: &Journal<DB> = std::ops::Deref::deref(&self.journaled_state);
+        &journal.inner
     }
 }
 
@@ -813,6 +976,56 @@ mod tests {
         evm.ctx_mut().set_tx(tx_env);
         let evm_env = evm.ctx().evm_clone();
         evm.ctx_mut().set_evm(evm_env);
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn monad_evm_foundry_context_ext_implementation() {
+        let mut evm = alloy_monad_evm::MonadEvmFactory::default().create_evm(
+            EmptyDB::default(),
+            EvmEnv::new(
+                CfgEnv::new_with_spec(monad_revm::MonadHardfork::MonadNine),
+                BlockEnv::default(),
+            ),
+        );
+
+        // Test EVM Context Block mutation
+        evm.ctx_mut().block_mut().set_number(U256::from(123));
+        assert_eq!(evm.ctx().block().number(), U256::from(123));
+
+        // Test EVM Context Tx mutation
+        evm.ctx_mut().tx_mut().set_nonce(99);
+        assert_eq!(evm.ctx().tx().nonce(), 99);
+
+        // Test EVM Context Cfg mutation
+        evm.ctx_mut().cfg_mut().spec = monad_revm::MonadHardfork::MonadEight;
+        assert_eq!(evm.ctx().cfg().spec, monad_revm::MonadHardfork::MonadEight);
+
+        // Round-trip test to ensure no issues with cloning and setting tx_env and evm_env
+        let tx_env = evm.ctx().tx_clone();
+        evm.ctx_mut().set_tx(tx_env);
+        let evm_env = evm.ctx().evm_clone();
+        evm.ctx_mut().set_evm(evm_env);
+    }
+
+    #[test]
+    #[cfg(feature = "monad")]
+    fn monad_memory_limit_follows_hardfork_transitions() {
+        const FOUNDRY_MEMORY_LIMIT: u64 = 128 * 1024 * 1024;
+
+        let mut cfg = CfgEnv::new_with_spec(monad_revm::MonadHardfork::MonadEight);
+        cfg.memory_limit = FOUNDRY_MEMORY_LIMIT;
+        let mut evm = alloy_monad_evm::MonadEvmFactory::default()
+            .create_evm(EmptyDB::default(), EvmEnv::new(cfg, BlockEnv::default()));
+
+        assert_eq!(evm.ctx().cfg().memory_limit(), FOUNDRY_MEMORY_LIMIT);
+
+        evm.ctx_mut().set_spec_and_gas_params(monad_revm::MonadHardfork::MonadNine);
+        assert_eq!(evm.ctx().cfg().inner().memory_limit, FOUNDRY_MEMORY_LIMIT);
+        assert_eq!(evm.ctx().cfg().memory_limit(), monad_revm::cfg::MONAD_MEMORY_LIMIT);
+
+        evm.ctx_mut().set_spec_and_gas_params(monad_revm::MonadHardfork::MonadEight);
+        assert_eq!(evm.ctx().cfg().memory_limit(), FOUNDRY_MEMORY_LIMIT);
     }
 
     #[test]

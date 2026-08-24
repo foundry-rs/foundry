@@ -61,6 +61,37 @@ fn chained_named_call_layout_ignores_source_spacing() {
     }
 }
 
+// <https://github.com/foundry-rs/foundry/issues/3831>
+#[test]
+fn disable_line_uses_comment_context() {
+    let source = r#"contract  C {
+    function f() public {
+        // forgefmt: disable-line
+        assembly { sstore(   0, 0)
+            sstore(1,    1)
+        }
+
+        assembly { sstore(   2, 2) } // forgefmt: disable-line
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() public {
+        // forgefmt: disable-line
+        assembly { sstore(   0, 0)
+            sstore(1,    1)
+        }
+        assembly { sstore(   2, 2) } // forgefmt: disable-line
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
 fn tests_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
 }
@@ -230,8 +261,11 @@ fmt_tests! {
     IntTypes,
     LiteralExpression,
     MappingType,
+    MethodChain,
+    MethodChainCallOptions,
     ModifierDefinition,
     NamedCallArgsInChain,
+    NestedNamedCallArgumentChain,
     NamedFunctionCallExpression,
     NonKeywords,
     NumberLiteralUnderscore,

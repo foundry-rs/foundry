@@ -1,4 +1,5 @@
 use foundry_compilers::utils::read_json_file;
+use foundry_test_utils::TestProject;
 use std::{fs, path::Path, process::Command};
 
 fn assert_bindings_compile(bindings_path: &Path) {
@@ -14,6 +15,95 @@ fn assert_bindings_compile(bindings_path: &Path) {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+fn add_duplicate_events_source(prj: &TestProject) {
+    prj.add_source(
+        "DuplicateEvents.sol",
+        r#"
+interface IERC20Events {
+    event Transfer(address indexed from, address indexed to, uint256 value);
+}
+
+library EventsLib {
+    event Transfer(address indexed from, address indexed to, uint256 shares);
+}
+
+contract DuplicateEvents is IERC20Events {
+    function emitTransfer() external {
+        emit EventsLib.Transfer(msg.sender, address(0), 0);
+    }
+}
+"#,
+    );
+}
+
+fn add_namespaced_type_sources(prj: &TestProject) {
+    prj.add_source(
+        "External.sol",
+        r#"
+library External {
+    struct Something {
+        AnotherThing value;
+    }
+
+    struct AnotherThing {
+        uint64 number;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "MyContract.sol",
+        r#"
+import {External} from "./External.sol";
+
+contract MyContract {
+    event EmittedLog(External.Something value);
+}
+"#,
+    );
+}
+
+fn add_large_array_source(prj: &TestProject) {
+    prj.add_source(
+        "BigArrays.sol",
+        r#"
+interface serde_with {
+    struct LargeArrays {
+        uint256[48] values;
+    }
+
+    error LargeArrayError(uint256[48]);
+    event LargeArrayEvent(uint256[48] values);
+
+    function consume(uint256[48] calldata) external;
+    function fixedArray() external returns (uint256[48] memory);
+    function nestedArray() external returns (uint256[48][] memory);
+    function wrappedArray() external returns (LargeArrays memory);
+}
+"#,
+    );
+}
+
+fn add_namespaced_type_derives_test(bindings_path: &Path) {
+    let tests_path = bindings_path.join("tests");
+    fs::create_dir_all(&tests_path).unwrap();
+    fs::write(
+        tests_path.join("derives.rs"),
+        r#"
+use foundry_contracts::my_contract::MyContract::EmittedLog;
+use std::{fmt::Debug, hash::Hash};
+
+fn assert_all_derives<T: Default + Debug + PartialEq + Eq + Hash>() {}
+
+#[test]
+fn event_has_all_derives() {
+    assert_all_derives::<EmittedLog>();
+}
+"#,
+    )
+    .unwrap();
 }
 
 // <https://github.com/foundry-rs/foundry/issues/9482>
@@ -166,102 +256,21 @@ Bindings have been generated to [..]
 
 // <https://github.com/foundry-rs/foundry/issues/11538>
 forgetest!(bind_dedups_canonical_event_signatures, |prj, cmd| {
-    prj.add_source(
-        "DuplicateEvents.sol",
-        r#"
-interface IERC20Events {
-    event Transfer(address indexed from, address indexed to, uint256 value);
-}
-
-library EventsLib {
-    event Transfer(address indexed from, address indexed to, uint256 shares);
-}
-
-contract DuplicateEvents is IERC20Events {
-    function emitTransfer() external {
-        emit EventsLib.Transfer(msg.sender, address(0), 0);
-    }
-}
-"#,
-    );
+    add_duplicate_events_source(&prj);
 
     cmd.args(["bind", "--select", "^DuplicateEvents$"]).assert_success();
-
-    let bindings_path = prj.root().join("out/bindings");
-    assert_bindings_compile(&bindings_path);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10353>
 forgetest!(bind_namespaced_custom_type_derives, |prj, cmd| {
-    prj.add_source(
-        "External.sol",
-        r#"
-library External {
-    struct Something {
-        AnotherThing value;
-    }
-
-    struct AnotherThing {
-        uint64 number;
-    }
-}
-"#,
-    );
-    prj.add_source(
-        "MyContract.sol",
-        r#"
-import {External} from "./External.sol";
-
-contract MyContract {
-    event EmittedLog(External.Something value);
-}
-"#,
-    );
+    add_namespaced_type_sources(&prj);
 
     cmd.args(["bind", "--select", "^MyContract$"]).assert_success();
-
-    let bindings_path = prj.root().join("out/bindings");
-    let tests_path = bindings_path.join("tests");
-    fs::create_dir_all(&tests_path).unwrap();
-    fs::write(
-        tests_path.join("derives.rs"),
-        r#"
-use foundry_contracts::my_contract::MyContract::EmittedLog;
-use std::{fmt::Debug, hash::Hash};
-
-fn assert_all_derives<T: Default + Debug + PartialEq + Eq + Hash>() {}
-
-#[test]
-fn event_has_all_derives() {
-    assert_all_derives::<EmittedLog>();
-}
-"#,
-    )
-    .unwrap();
-
-    assert_bindings_compile(&bindings_path);
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10911>
 forgetest!(bind_large_fixed_arrays, |prj, cmd| {
-    prj.add_source(
-        "BigArrays.sol",
-        r#"
-interface serde_with {
-    struct LargeArrays {
-        uint256[48] values;
-    }
-
-    error LargeArrayError(uint256[48]);
-    event LargeArrayEvent(uint256[48] values);
-
-    function consume(uint256[48] calldata) external;
-    function fixedArray() external returns (uint256[48] memory);
-    function nestedArray() external returns (uint256[48][] memory);
-    function wrappedArray() external returns (LargeArrays memory);
-}
-"#,
-    );
+    add_large_array_source(&prj);
 
     cmd.args(["bind", "--select", "^serde_with$"])
         .assert_success()
@@ -285,7 +294,52 @@ OK.
 
 "#
     ]]);
+});
+
+forgetest!(bind_regression_fixtures_compile, |prj, cmd| {
+    add_duplicate_events_source(&prj);
+    add_namespaced_type_sources(&prj);
+    add_large_array_source(&prj);
+
+    cmd.args(["bind", "--select", "^(DuplicateEvents|MyContract|serde_with)$"]).assert_success();
 
     let bindings_path = prj.root().join("out/bindings");
+    add_namespaced_type_derives_test(&bindings_path);
     assert_bindings_compile(&bindings_path);
+});
+
+forgetest!(bind_single_file_crate_and_module_match, |prj, cmd| {
+    add_duplicate_events_source(&prj);
+    add_namespaced_type_sources(&prj);
+
+    let crate_path = prj.root().join("crate-bindings");
+    cmd.args([
+        "bind",
+        "--select",
+        "^(DuplicateEvents|MyContract)$",
+        "--single-file",
+        "--bindings-path",
+        crate_path.to_str().unwrap(),
+    ])
+    .assert_success();
+    assert_bindings_compile(&crate_path);
+
+    let module_path = prj.root().join("module-bindings");
+    cmd.forge_fuse()
+        .args([
+            "bind",
+            "--skip-build",
+            "--select",
+            "^(DuplicateEvents|MyContract)$",
+            "--single-file",
+            "--module",
+            "--bindings-path",
+            module_path.to_str().unwrap(),
+        ])
+        .assert_success();
+
+    assert_eq!(
+        fs::read(crate_path.join("src/lib.rs")).unwrap(),
+        fs::read(module_path.join("mod.rs")).unwrap()
+    );
 });

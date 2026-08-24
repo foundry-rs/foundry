@@ -18,7 +18,6 @@ use std::{
 };
 
 /// The general purpose trait for handling RPC requests and subscriptions
-#[async_trait::async_trait]
 pub trait PubSubRpcHandler: Clone + Send + Sync + Unpin + 'static {
     /// The request type to expect
     type Request: DeserializeOwned + Send + Sync + fmt::Debug;
@@ -28,7 +27,11 @@ pub trait PubSubRpcHandler: Clone + Send + Sync + Unpin + 'static {
     type Subscription: Stream<Item = serde_json::Value> + Send + Sync + Unpin;
 
     /// Invoked when the request was received
-    async fn on_request(&self, request: Self::Request, cx: PubSubContext<Self>) -> ResponseResult;
+    fn on_request(
+        &self,
+        request: Self::Request,
+        cx: PubSubContext<Self>,
+    ) -> impl Future<Output = ResponseResult> + Send;
 }
 
 type Subscriptions<SubscriptionId, Subscription> = Arc<Mutex<Vec<(SubscriptionId, Subscription)>>>;
@@ -97,12 +100,11 @@ impl<Handler: PubSubRpcHandler> Clone for ContextAwareHandler<Handler> {
     }
 }
 
-#[async_trait::async_trait]
 impl<Handler: PubSubRpcHandler> RpcHandler for ContextAwareHandler<Handler> {
     type Request = Handler::Request;
 
-    async fn on_request(&self, request: Self::Request) -> ResponseResult {
-        self.handler.on_request(request, self.context.clone()).await
+    fn on_request(&self, request: Self::Request) -> impl Future<Output = ResponseResult> + Send {
+        self.handler.on_request(request, self.context.clone())
     }
 }
 
@@ -133,19 +135,20 @@ impl<Handler: PubSubRpcHandler, Connection> PubSubConnection<Handler, Connection
         }
     }
 
-    /// Returns a compatibility `RpcHandler`
-    fn compat_helper(&self) -> ContextAwareHandler<Handler> {
-        ContextAwareHandler { handler: self.handler.clone(), context: self.context.clone() }
-    }
-
     fn process_request(&mut self, req: serde_json::Result<Request>) {
-        let handler = self.compat_helper();
+        let handler =
+            ContextAwareHandler { handler: self.handler.clone(), context: self.context.clone() };
         self.processing.push(Box::pin(async move {
             match req {
                 Ok(req) => handle_request(req, handler).await,
                 Err(err) => {
                     error!(target: "rpc", ?err, "invalid request");
-                    Some(Response::error(RpcError::invalid_request()))
+                    let err = if err.is_syntax() || err.is_eof() {
+                        RpcError::parse_error()
+                    } else {
+                        RpcError::invalid_request()
+                    };
+                    Some(Response::error(err))
                 }
             }
         }));
@@ -269,12 +272,17 @@ mod tests {
         request::{RequestParams, RpcCall, RpcNotification, Version},
         response::RpcResponse,
     };
-    use std::{pin::pin, task::Waker};
+    use std::{
+        pin::pin,
+        sync::atomic::{AtomicUsize, Ordering},
+        task::Waker,
+    };
 
-    #[derive(Clone)]
-    struct TestHandler;
+    #[derive(Clone, Default)]
+    struct TestHandler {
+        requests: Arc<AtomicUsize>,
+    }
 
-    #[async_trait::async_trait]
     impl PubSubRpcHandler for TestHandler {
         type Request = serde_json::Value;
         type SubscriptionId = u64;
@@ -285,6 +293,7 @@ mod tests {
             _request: Self::Request,
             _cx: PubSubContext<Self>,
         ) -> ResponseResult {
+            self.requests.fetch_add(1, Ordering::Relaxed);
             ResponseResult::success(serde_json::Value::Null)
         }
     }
@@ -309,7 +318,7 @@ mod tests {
 
     #[test]
     fn process_request_keeps_empty_batch_invalid() {
-        let mut connection = PubSubConnection::new((), TestHandler);
+        let mut connection = PubSubConnection::new((), TestHandler::default());
         connection.process_request(Ok(Request::Batch(vec![])));
 
         let response = run_ready(connection.processing.pop().unwrap());
@@ -320,11 +329,22 @@ mod tests {
     }
 
     #[test]
-    fn process_request_skips_notification_only_batch_response() {
-        let mut connection = PubSubConnection::new((), TestHandler);
+    fn process_request_returns_parse_error_for_malformed_json() {
+        let mut connection = PubSubConnection::new((), TestHandler::default());
+        connection.process_request(serde_json::from_str("{"));
+
+        let response = run_ready(connection.processing.pop().unwrap());
+        assert_eq!(response, Some(Response::error(RpcError::parse_error())));
+    }
+
+    #[test]
+    fn process_request_executes_notification_without_response() {
+        let handler = TestHandler::default();
+        let mut connection = PubSubConnection::new((), handler.clone());
         connection.process_request(Ok(Request::Batch(vec![notification()])));
 
         let response = run_ready(connection.processing.pop().unwrap());
         assert_eq!(response, None);
+        assert_eq!(handler.requests.load(Ordering::Relaxed), 1);
     }
 }

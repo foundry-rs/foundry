@@ -24,6 +24,7 @@ use crate::{
             call_after_invariant_function, call_invariant_function, did_fail_on_assert, execute_tx,
             snapshot_edge_fingerprint,
         },
+        should_ignore_revert,
     },
     inspectors::EdgeIndexMap,
 };
@@ -32,11 +33,7 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Selector, hex, keccak256};
 use eyre::Result;
 use foundry_config::FuzzCorpusConfig;
-use foundry_evm_core::{
-    constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
-    decode::SkipReason,
-    evm::FoundryEvmNetwork,
-};
+use foundry_evm_core::{constants::MAGIC_ASSUME, evm::FoundryEvmNetwork};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
 use std::{
@@ -323,10 +320,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             let fingerprint = snapshot_edge_fingerprint(&call_result);
             // `vm.assume` rejects and cheatcode `vm.skip` are discarded by the campaign: the call
             // is not committed, checked, or counted toward coverage.
-            if call_result.result.as_ref() == MAGIC_ASSUME
-                || (call_result.reverter == Some(CHEATCODE_ADDRESS)
-                    && SkipReason::decode(&call_result.result).is_some())
-            {
+            if call_result.result.as_ref() == MAGIC_ASSUME || call_result.skip_reason().is_some() {
                 continue;
             }
             // Coverage-collection asymmetry across calls within a stateful sequence:
@@ -520,10 +514,7 @@ pub fn replay_sequence_for_minimization<FEN: FoundryEvmNetwork>(
             tx.call_details.calldata.get(..4).map(Selector::from_slice).unwrap_or_default();
         let fingerprint = snapshot_edge_fingerprint(&call_result);
 
-        if call_result.result.as_ref() == MAGIC_ASSUME
-            || (call_result.reverter == Some(CHEATCODE_ADDRESS)
-                && SkipReason::decode(&call_result.result).is_some())
-        {
+        if call_result.result.as_ref() == MAGIC_ASSUME || call_result.skip_reason().is_some() {
             observation.skipped += 1;
             continue;
         }
@@ -710,15 +701,12 @@ fn fuzz_replay_call_succeeded<FEN: FoundryEvmNetwork>(
     call_result: &mut crate::executors::RawCallResult<FEN>,
     fail_on_revert: bool,
 ) -> bool {
-    if !fail_on_revert
-        && call_result
-            .reverter
-            .is_some_and(|reverter| reverter != target_addr && reverter != CHEATCODE_ADDRESS)
-    {
-        true
-    } else {
-        executor.is_raw_call_mut_success(target_addr, call_result, false)
-    }
+    should_ignore_revert(
+        fail_on_revert,
+        target_addr,
+        call_result.reverter,
+        executor.inspector().networks.extra_cheatcode_addresses(),
+    ) || executor.is_raw_call_mut_success(target_addr, call_result, false)
 }
 
 fn newly_broken_invariants<FEN: FoundryEvmNetwork>(

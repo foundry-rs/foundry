@@ -4406,6 +4406,86 @@
     },
     {
       "func": {
+        "id": "ecAddAffine",
+        "description": "Adds the secp256k1 affine points `point1 = (pointX1, pointY1)` and\n`point2 = (pointX2, pointY2)`.\nThe point at infinity is represented as `(0, 0)`.",
+        "declaration": "function ecAddAffine(uint256 pointX1, uint256 pointY1, uint256 pointX2, uint256 pointY2) external pure returns (uint256 resultX, uint256 resultY);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecAddAffine(uint256,uint256,uint256,uint256)",
+        "selector": "0x1af9eefc",
+        "selectorBytes": [
+          26,
+          249,
+          238,
+          252
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecAddProjective",
+        "description": "Adds the secp256k1 projective points `point1 = (pointX1, pointY1, pointZ1)` and\n`point2 = (pointX2, pointY2, pointZ2)`.\nThe point at infinity is accepted as `(0, y, 0)` for any non-zero `y` and returned as\n`(0, 1, 0)`. Any other result is normalized to `(x, y, 1)`.",
+        "declaration": "function ecAddProjective(uint256 pointX1, uint256 pointY1, uint256 pointZ1, uint256 pointX2, uint256 pointY2, uint256 pointZ2) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecAddProjective(uint256,uint256,uint256,uint256,uint256,uint256)",
+        "selector": "0x45b12879",
+        "selectorBytes": [
+          69,
+          177,
+          40,
+          121
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecMulAffine",
+        "description": "Multiplies the secp256k1 affine point `(pointX, pointY)` by `scalar`.\nThe scalar is reduced modulo the secp256k1 group order.\nThe point at infinity is represented as `(0, 0)`.",
+        "declaration": "function ecMulAffine(uint256 pointX, uint256 pointY, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecMulAffine(uint256,uint256,uint256)",
+        "selector": "0xc74ca094",
+        "selectorBytes": [
+          199,
+          76,
+          160,
+          148
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecMulProjective",
+        "description": "Multiplies the secp256k1 projective point `(pointX, pointY, pointZ)` by `scalar`.\nThe scalar is reduced modulo the secp256k1 group order.\nThe point at infinity is accepted as `(0, y, 0)` for any non-zero `y` and returned as\n`(0, 1, 0)`. Any other result is normalized to `(x, y, 1)`.",
+        "declaration": "function ecMulProjective(uint256 pointX, uint256 pointY, uint256 pointZ, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecMulProjective(uint256,uint256,uint256,uint256)",
+        "selector": "0x031661fc",
+        "selectorBytes": [
+          3,
+          22,
+          97,
+          252
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "eip712HashStruct_0",
         "description": "Generates the struct hash of the canonical EIP-712 type representation and its abi-encoded data.\nSupports 2 different inputs:\n 1. Name of the type (i.e. \"PermitSingle\"):\n    * requires previous binding generation with `forge bind-json`.\n    * bindings will be retrieved from the path configured in `foundry.toml`.\n 2. String representation of the type (i.e. \"Foo(Bar bar) Bar(uint256 baz)\").\n    * Note: the cheatcode will use the canonical type even if the input is malformed\n            with the wrong order of elements or with extra whitespaces.",
         "declaration": "function eip712HashStruct(string calldata typeNameOrDefinition, bytes calldata abiEncodedData) external pure returns (bytes32 typeHash);",
@@ -5386,6 +5466,26 @@
     },
     {
       "func": {
+        "id": "expectDelegateCall",
+        "description": "Expects a delegate call to an address with the specified calldata.\nCalldata can either be a strict or a partial match.",
+        "declaration": "function expectDelegateCall(address callee, bytes calldata data) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "expectDelegateCall(address,bytes)",
+        "selector": "0x3d6ac1e7",
+        "selectorBytes": [
+          61,
+          106,
+          193,
+          231
+        ]
+      },
+      "group": "testing",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
         "id": "expectEmitAnonymous_0",
         "description": "Prepare an expected anonymous log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).\nCall this function, then emit an anonymous event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data (as specified by the booleans).",
         "declaration": "function expectEmitAnonymous(bool checkTopic0, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;",
@@ -6058,6 +6158,66 @@
           22,
           4,
           103
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ffiBytes",
+        "description": "Performs a foreign function call via the terminal and decodes the output as hex bytes.",
+        "declaration": "function ffiBytes(string[] calldata commandInput) external returns (bytes memory result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "ffiBytes(string[])",
+        "selector": "0x32730d81",
+        "selectorBytes": [
+          50,
+          115,
+          13,
+          129
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ffiString",
+        "description": "Performs a foreign function call via the terminal and returns the output as a string.",
+        "declaration": "function ffiString(string[] calldata commandInput) external returns (string memory result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "ffiString(string[])",
+        "selector": "0x0d0d2f41",
+        "selectorBytes": [
+          13,
+          13,
+          47,
+          65
+        ]
+      },
+      "group": "filesystem",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ffiUint",
+        "description": "Performs a foreign function call via the terminal and parses the output as a `uint256`.",
+        "declaration": "function ffiUint(string[] calldata commandInput) external returns (uint256 result);",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "ffiUint(string[])",
+        "selector": "0xcdf7c6c4",
+        "selectorBytes": [
+          205,
+          247,
+          198,
+          196
         ]
       },
       "group": "filesystem",
@@ -7590,7 +7750,47 @@
     },
     {
       "func": {
-        "id": "parseJsonAddress",
+        "id": "parseJsonAddressArray_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `address[]`.",
+        "declaration": "function parseJsonAddressArray(string calldata json, string calldata key) external pure returns (address[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonAddressArray(string,string)",
+        "selector": "0x2fce7883",
+        "selectorBytes": [
+          47,
+          206,
+          120,
+          131
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonAddressArray_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonAddressArray(string calldata json, string calldata key, address[] calldata defaultValue) external pure returns (address[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonAddressArray(string,string,address[])",
+        "selector": "0x586afa51",
+        "selectorBytes": [
+          88,
+          106,
+          250,
+          81
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonAddress_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `address`.",
         "declaration": "function parseJsonAddress(string calldata json, string calldata key) external pure returns (address);",
         "visibility": "external",
@@ -7610,18 +7810,18 @@
     },
     {
       "func": {
-        "id": "parseJsonAddressArray",
-        "description": "Parses a string of JSON data at `key` and coerces it to `address[]`.",
-        "declaration": "function parseJsonAddressArray(string calldata json, string calldata key) external pure returns (address[] memory);",
+        "id": "parseJsonAddress_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `address`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonAddress(string calldata json, string calldata key, address defaultValue) external pure returns (address);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseJsonAddressArray(string,string)",
-        "selector": "0x2fce7883",
+        "signature": "parseJsonAddress(string,string,address)",
+        "selector": "0xddeecb75",
         "selectorBytes": [
-          47,
-          206,
-          120,
-          131
+          221,
+          238,
+          203,
+          117
         ]
       },
       "group": "json",
@@ -7650,27 +7850,7 @@
     },
     {
       "func": {
-        "id": "parseJsonBool",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bool`.",
-        "declaration": "function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);",
-        "visibility": "external",
-        "mutability": "pure",
-        "signature": "parseJsonBool(string,string)",
-        "selector": "0x9f86dc91",
-        "selectorBytes": [
-          159,
-          134,
-          220,
-          145
-        ]
-      },
-      "group": "json",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "parseJsonBoolArray",
+        "id": "parseJsonBoolArray_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `bool[]`.",
         "declaration": "function parseJsonBoolArray(string calldata json, string calldata key) external pure returns (bool[] memory);",
         "visibility": "external",
@@ -7690,18 +7870,18 @@
     },
     {
       "func": {
-        "id": "parseJsonBytes",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bytes`.",
-        "declaration": "function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);",
+        "id": "parseJsonBoolArray_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonBoolArray(string calldata json, string calldata key, bool[] calldata defaultValue) external pure returns (bool[] memory);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseJsonBytes(string,string)",
-        "selector": "0xfd921be8",
+        "signature": "parseJsonBoolArray(string,string,bool[])",
+        "selector": "0xcc9d6da5",
         "selectorBytes": [
-          253,
-          146,
-          27,
-          232
+          204,
+          157,
+          109,
+          165
         ]
       },
       "group": "json",
@@ -7710,18 +7890,18 @@
     },
     {
       "func": {
-        "id": "parseJsonBytes32",
-        "description": "Parses a string of JSON data at `key` and coerces it to `bytes32`.",
-        "declaration": "function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);",
+        "id": "parseJsonBool_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bool`.",
+        "declaration": "function parseJsonBool(string calldata json, string calldata key) external pure returns (bool);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseJsonBytes32(string,string)",
-        "selector": "0x1777e59d",
+        "signature": "parseJsonBool(string,string)",
+        "selector": "0x9f86dc91",
         "selectorBytes": [
-          23,
-          119,
-          229,
-          157
+          159,
+          134,
+          220,
+          145
         ]
       },
       "group": "json",
@@ -7730,7 +7910,27 @@
     },
     {
       "func": {
-        "id": "parseJsonBytes32Array",
+        "id": "parseJsonBool_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bool`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonBool(string calldata json, string calldata key, bool defaultValue) external pure returns (bool);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBool(string,string,bool)",
+        "selector": "0xf147484e",
+        "selectorBytes": [
+          241,
+          71,
+          72,
+          78
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonBytes32Array_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `bytes32[]`.",
         "declaration": "function parseJsonBytes32Array(string calldata json, string calldata key) external pure returns (bytes32[] memory);",
         "visibility": "external",
@@ -7750,7 +7950,67 @@
     },
     {
       "func": {
-        "id": "parseJsonBytesArray",
+        "id": "parseJsonBytes32Array_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonBytes32Array(string calldata json, string calldata key, bytes32[] calldata defaultValue) external pure returns (bytes32[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBytes32Array(string,string,bytes32[])",
+        "selector": "0xd503fb9e",
+        "selectorBytes": [
+          213,
+          3,
+          251,
+          158
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonBytes32_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bytes32`.",
+        "declaration": "function parseJsonBytes32(string calldata json, string calldata key) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBytes32(string,string)",
+        "selector": "0x1777e59d",
+        "selectorBytes": [
+          23,
+          119,
+          229,
+          157
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonBytes32_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonBytes32(string calldata json, string calldata key, bytes32 defaultValue) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBytes32(string,string,bytes32)",
+        "selector": "0x8d792033",
+        "selectorBytes": [
+          141,
+          121,
+          32,
+          51
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonBytesArray_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `bytes[]`.",
         "declaration": "function parseJsonBytesArray(string calldata json, string calldata key) external pure returns (bytes[] memory);",
         "visibility": "external",
@@ -7770,7 +8030,107 @@
     },
     {
       "func": {
-        "id": "parseJsonInt",
+        "id": "parseJsonBytesArray_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonBytesArray(string calldata json, string calldata key, bytes[] calldata defaultValue) external pure returns (bytes[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBytesArray(string,string,bytes[])",
+        "selector": "0xd1422c93",
+        "selectorBytes": [
+          209,
+          66,
+          44,
+          147
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonBytes_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bytes`.",
+        "declaration": "function parseJsonBytes(string calldata json, string calldata key) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBytes(string,string)",
+        "selector": "0xfd921be8",
+        "selectorBytes": [
+          253,
+          146,
+          27,
+          232
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonBytes_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonBytes(string calldata json, string calldata key, bytes calldata defaultValue) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonBytes(string,string,bytes)",
+        "selector": "0xb3d931af",
+        "selectorBytes": [
+          179,
+          217,
+          49,
+          175
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonIntArray_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `int256[]`.",
+        "declaration": "function parseJsonIntArray(string calldata json, string calldata key) external pure returns (int256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonIntArray(string,string)",
+        "selector": "0x9983c28a",
+        "selectorBytes": [
+          153,
+          131,
+          194,
+          138
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonIntArray_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonIntArray(string calldata json, string calldata key, int256[] calldata defaultValue) external pure returns (int256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonIntArray(string,string,int256[])",
+        "selector": "0xea1f44aa",
+        "selectorBytes": [
+          234,
+          31,
+          68,
+          170
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonInt_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `int256`.",
         "declaration": "function parseJsonInt(string calldata json, string calldata key) external pure returns (int256);",
         "visibility": "external",
@@ -7790,18 +8150,18 @@
     },
     {
       "func": {
-        "id": "parseJsonIntArray",
-        "description": "Parses a string of JSON data at `key` and coerces it to `int256[]`.",
-        "declaration": "function parseJsonIntArray(string calldata json, string calldata key) external pure returns (int256[] memory);",
+        "id": "parseJsonInt_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `int256`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonInt(string calldata json, string calldata key, int256 defaultValue) external pure returns (int256);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseJsonIntArray(string,string)",
-        "selector": "0x9983c28a",
+        "signature": "parseJsonInt(string,string,int256)",
+        "selector": "0xfa78931b",
         "selectorBytes": [
-          153,
-          131,
-          194,
-          138
+          250,
+          120,
+          147,
+          27
         ]
       },
       "group": "json",
@@ -7830,7 +8190,47 @@
     },
     {
       "func": {
-        "id": "parseJsonString",
+        "id": "parseJsonStringArray_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `string[]`.",
+        "declaration": "function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonStringArray(string,string)",
+        "selector": "0x498fdcf4",
+        "selectorBytes": [
+          73,
+          143,
+          220,
+          244
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonStringArray_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonStringArray(string calldata json, string calldata key, string[] calldata defaultValue) external pure returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonStringArray(string,string,string[])",
+        "selector": "0x88b70aff",
+        "selectorBytes": [
+          136,
+          183,
+          10,
+          255
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonString_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `string`.",
         "declaration": "function parseJsonString(string calldata json, string calldata key) external pure returns (string memory);",
         "visibility": "external",
@@ -7850,18 +8250,18 @@
     },
     {
       "func": {
-        "id": "parseJsonStringArray",
-        "description": "Parses a string of JSON data at `key` and coerces it to `string[]`.",
-        "declaration": "function parseJsonStringArray(string calldata json, string calldata key) external pure returns (string[] memory);",
+        "id": "parseJsonString_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `string`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonString(string calldata json, string calldata key, string calldata defaultValue) external pure returns (string memory);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseJsonStringArray(string,string)",
-        "selector": "0x498fdcf4",
+        "signature": "parseJsonString(string,string,string)",
+        "selector": "0x9d7824a8",
         "selectorBytes": [
-          73,
-          143,
-          220,
-          244
+          157,
+          120,
+          36,
+          168
         ]
       },
       "group": "json",
@@ -7930,7 +8330,47 @@
     },
     {
       "func": {
-        "id": "parseJsonUint",
+        "id": "parseJsonUintArray_0",
+        "description": "Parses a string of JSON data at `key` and coerces it to `uint256[]`.",
+        "declaration": "function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonUintArray(string,string)",
+        "selector": "0x522074ab",
+        "selectorBytes": [
+          82,
+          32,
+          116,
+          171
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonUintArray_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonUintArray(string calldata json, string calldata key, uint256[] calldata defaultValue) external pure returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseJsonUintArray(string,string,uint256[])",
+        "selector": "0xa7b8152a",
+        "selectorBytes": [
+          167,
+          184,
+          21,
+          42
+        ]
+      },
+      "group": "json",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseJsonUint_0",
         "description": "Parses a string of JSON data at `key` and coerces it to `uint256`.",
         "declaration": "function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);",
         "visibility": "external",
@@ -7950,18 +8390,18 @@
     },
     {
       "func": {
-        "id": "parseJsonUintArray",
-        "description": "Parses a string of JSON data at `key` and coerces it to `uint256[]`.",
-        "declaration": "function parseJsonUintArray(string calldata json, string calldata key) external pure returns (uint256[] memory);",
+        "id": "parseJsonUint_1",
+        "description": "Parses a string of JSON data at `key` and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseJsonUint(string calldata json, string calldata key, uint256 defaultValue) external pure returns (uint256);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseJsonUintArray(string,string)",
-        "selector": "0x522074ab",
+        "signature": "parseJsonUint(string,string,uint256)",
+        "selector": "0xbeb87f44",
         "selectorBytes": [
-          82,
-          32,
-          116,
-          171
+          190,
+          184,
+          127,
+          68
         ]
       },
       "group": "json",
@@ -8010,27 +8450,7 @@
     },
     {
       "func": {
-        "id": "parseTomlAddress",
-        "description": "Parses a string of TOML data at `key` and coerces it to `address`.",
-        "declaration": "function parseTomlAddress(string calldata toml, string calldata key) external pure returns (address);",
-        "visibility": "external",
-        "mutability": "pure",
-        "signature": "parseTomlAddress(string,string)",
-        "selector": "0x65e7c844",
-        "selectorBytes": [
-          101,
-          231,
-          200,
-          68
-        ]
-      },
-      "group": "toml",
-      "status": "stable",
-      "safety": "safe"
-    },
-    {
-      "func": {
-        "id": "parseTomlAddressArray",
+        "id": "parseTomlAddressArray_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `address[]`.",
         "declaration": "function parseTomlAddressArray(string calldata toml, string calldata key) external pure returns (address[] memory);",
         "visibility": "external",
@@ -8050,18 +8470,18 @@
     },
     {
       "func": {
-        "id": "parseTomlBool",
-        "description": "Parses a string of TOML data at `key` and coerces it to `bool`.",
-        "declaration": "function parseTomlBool(string calldata toml, string calldata key) external pure returns (bool);",
+        "id": "parseTomlAddressArray_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `address[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlAddressArray(string calldata toml, string calldata key, address[] calldata defaultValue) external pure returns (address[] memory);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseTomlBool(string,string)",
-        "selector": "0xd30dced6",
+        "signature": "parseTomlAddressArray(string,string,address[])",
+        "selector": "0xcbfdcaa6",
         "selectorBytes": [
-          211,
-          13,
-          206,
-          214
+          203,
+          253,
+          202,
+          166
         ]
       },
       "group": "toml",
@@ -8070,7 +8490,47 @@
     },
     {
       "func": {
-        "id": "parseTomlBoolArray",
+        "id": "parseTomlAddress_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `address`.",
+        "declaration": "function parseTomlAddress(string calldata toml, string calldata key) external pure returns (address);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlAddress(string,string)",
+        "selector": "0x65e7c844",
+        "selectorBytes": [
+          101,
+          231,
+          200,
+          68
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlAddress_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `address`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlAddress(string calldata toml, string calldata key, address defaultValue) external pure returns (address);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlAddress(string,string,address)",
+        "selector": "0x80db71c1",
+        "selectorBytes": [
+          128,
+          219,
+          113,
+          193
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBoolArray_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `bool[]`.",
         "declaration": "function parseTomlBoolArray(string calldata toml, string calldata key) external pure returns (bool[] memory);",
         "visibility": "external",
@@ -8090,18 +8550,18 @@
     },
     {
       "func": {
-        "id": "parseTomlBytes",
-        "description": "Parses a string of TOML data at `key` and coerces it to `bytes`.",
-        "declaration": "function parseTomlBytes(string calldata toml, string calldata key) external pure returns (bytes memory);",
+        "id": "parseTomlBoolArray_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bool[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlBoolArray(string calldata toml, string calldata key, bool[] calldata defaultValue) external pure returns (bool[] memory);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseTomlBytes(string,string)",
-        "selector": "0xd77bfdb9",
+        "signature": "parseTomlBoolArray(string,string,bool[])",
+        "selector": "0x50ddbb4e",
         "selectorBytes": [
-          215,
-          123,
-          253,
-          185
+          80,
+          221,
+          187,
+          78
         ]
       },
       "group": "toml",
@@ -8110,18 +8570,18 @@
     },
     {
       "func": {
-        "id": "parseTomlBytes32",
-        "description": "Parses a string of TOML data at `key` and coerces it to `bytes32`.",
-        "declaration": "function parseTomlBytes32(string calldata toml, string calldata key) external pure returns (bytes32);",
+        "id": "parseTomlBool_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bool`.",
+        "declaration": "function parseTomlBool(string calldata toml, string calldata key) external pure returns (bool);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseTomlBytes32(string,string)",
-        "selector": "0x8e214810",
+        "signature": "parseTomlBool(string,string)",
+        "selector": "0xd30dced6",
         "selectorBytes": [
-          142,
-          33,
-          72,
-          16
+          211,
+          13,
+          206,
+          214
         ]
       },
       "group": "toml",
@@ -8130,7 +8590,27 @@
     },
     {
       "func": {
-        "id": "parseTomlBytes32Array",
+        "id": "parseTomlBool_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bool`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlBool(string calldata toml, string calldata key, bool defaultValue) external pure returns (bool);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBool(string,string,bool)",
+        "selector": "0x6c254276",
+        "selectorBytes": [
+          108,
+          37,
+          66,
+          118
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes32Array_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `bytes32[]`.",
         "declaration": "function parseTomlBytes32Array(string calldata toml, string calldata key) external pure returns (bytes32[] memory);",
         "visibility": "external",
@@ -8150,7 +8630,67 @@
     },
     {
       "func": {
-        "id": "parseTomlBytesArray",
+        "id": "parseTomlBytes32Array_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes32[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlBytes32Array(string calldata toml, string calldata key, bytes32[] calldata defaultValue) external pure returns (bytes32[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes32Array(string,string,bytes32[])",
+        "selector": "0x36ad14a2",
+        "selectorBytes": [
+          54,
+          173,
+          20,
+          162
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes32_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes32`.",
+        "declaration": "function parseTomlBytes32(string calldata toml, string calldata key) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes32(string,string)",
+        "selector": "0x8e214810",
+        "selectorBytes": [
+          142,
+          33,
+          72,
+          16
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes32_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes32`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlBytes32(string calldata toml, string calldata key, bytes32 defaultValue) external pure returns (bytes32);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes32(string,string,bytes32)",
+        "selector": "0x88d60faa",
+        "selectorBytes": [
+          136,
+          214,
+          15,
+          170
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytesArray_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `bytes[]`.",
         "declaration": "function parseTomlBytesArray(string calldata toml, string calldata key) external pure returns (bytes[] memory);",
         "visibility": "external",
@@ -8170,7 +8710,107 @@
     },
     {
       "func": {
-        "id": "parseTomlInt",
+        "id": "parseTomlBytesArray_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlBytesArray(string calldata toml, string calldata key, bytes[] calldata defaultValue) external pure returns (bytes[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytesArray(string,string,bytes[])",
+        "selector": "0x7daa5e28",
+        "selectorBytes": [
+          125,
+          170,
+          94,
+          40
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes`.",
+        "declaration": "function parseTomlBytes(string calldata toml, string calldata key) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes(string,string)",
+        "selector": "0xd77bfdb9",
+        "selectorBytes": [
+          215,
+          123,
+          253,
+          185
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlBytes_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `bytes`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlBytes(string calldata toml, string calldata key, bytes calldata defaultValue) external pure returns (bytes memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlBytes(string,string,bytes)",
+        "selector": "0xc37b8f00",
+        "selectorBytes": [
+          195,
+          123,
+          143,
+          0
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlIntArray_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `int256[]`.",
+        "declaration": "function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlIntArray(string,string)",
+        "selector": "0xd3522ae6",
+        "selectorBytes": [
+          211,
+          82,
+          42,
+          230
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlIntArray_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `int256[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlIntArray(string calldata toml, string calldata key, int256[] calldata defaultValue) external pure returns (int256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlIntArray(string,string,int256[])",
+        "selector": "0xfcc0379f",
+        "selectorBytes": [
+          252,
+          192,
+          55,
+          159
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlInt_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `int256`.",
         "declaration": "function parseTomlInt(string calldata toml, string calldata key) external pure returns (int256);",
         "visibility": "external",
@@ -8190,18 +8830,18 @@
     },
     {
       "func": {
-        "id": "parseTomlIntArray",
-        "description": "Parses a string of TOML data at `key` and coerces it to `int256[]`.",
-        "declaration": "function parseTomlIntArray(string calldata toml, string calldata key) external pure returns (int256[] memory);",
+        "id": "parseTomlInt_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `int256`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlInt(string calldata toml, string calldata key, int256 defaultValue) external pure returns (int256);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseTomlIntArray(string,string)",
-        "selector": "0xd3522ae6",
+        "signature": "parseTomlInt(string,string,int256)",
+        "selector": "0x887da112",
         "selectorBytes": [
-          211,
-          82,
-          42,
-          230
+          136,
+          125,
+          161,
+          18
         ]
       },
       "group": "toml",
@@ -8230,7 +8870,47 @@
     },
     {
       "func": {
-        "id": "parseTomlString",
+        "id": "parseTomlStringArray_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `string[]`.",
+        "declaration": "function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlStringArray(string,string)",
+        "selector": "0x9f629281",
+        "selectorBytes": [
+          159,
+          98,
+          146,
+          129
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlStringArray_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `string[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlStringArray(string calldata toml, string calldata key, string[] calldata defaultValue) external pure returns (string[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlStringArray(string,string,string[])",
+        "selector": "0x6be16ce7",
+        "selectorBytes": [
+          107,
+          225,
+          108,
+          231
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlString_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `string`.",
         "declaration": "function parseTomlString(string calldata toml, string calldata key) external pure returns (string memory);",
         "visibility": "external",
@@ -8250,18 +8930,18 @@
     },
     {
       "func": {
-        "id": "parseTomlStringArray",
-        "description": "Parses a string of TOML data at `key` and coerces it to `string[]`.",
-        "declaration": "function parseTomlStringArray(string calldata toml, string calldata key) external pure returns (string[] memory);",
+        "id": "parseTomlString_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `string`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlString(string calldata toml, string calldata key, string calldata defaultValue) external pure returns (string memory);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseTomlStringArray(string,string)",
-        "selector": "0x9f629281",
+        "signature": "parseTomlString(string,string,string)",
+        "selector": "0xc32ef60d",
         "selectorBytes": [
-          159,
-          98,
-          146,
-          129
+          195,
+          46,
+          246,
+          13
         ]
       },
       "group": "toml",
@@ -8330,7 +9010,47 @@
     },
     {
       "func": {
-        "id": "parseTomlUint",
+        "id": "parseTomlUintArray_0",
+        "description": "Parses a string of TOML data at `key` and coerces it to `uint256[]`.",
+        "declaration": "function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlUintArray(string,string)",
+        "selector": "0xb5df27c8",
+        "selectorBytes": [
+          181,
+          223,
+          39,
+          200
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlUintArray_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `uint256[]`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlUintArray(string calldata toml, string calldata key, uint256[] calldata defaultValue) external pure returns (uint256[] memory);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "parseTomlUintArray(string,string,uint256[])",
+        "selector": "0x5fc56675",
+        "selectorBytes": [
+          95,
+          197,
+          102,
+          117
+        ]
+      },
+      "group": "toml",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "parseTomlUint_0",
         "description": "Parses a string of TOML data at `key` and coerces it to `uint256`.",
         "declaration": "function parseTomlUint(string calldata toml, string calldata key) external pure returns (uint256);",
         "visibility": "external",
@@ -8350,18 +9070,18 @@
     },
     {
       "func": {
-        "id": "parseTomlUintArray",
-        "description": "Parses a string of TOML data at `key` and coerces it to `uint256[]`.",
-        "declaration": "function parseTomlUintArray(string calldata toml, string calldata key) external pure returns (uint256[] memory);",
+        "id": "parseTomlUint_1",
+        "description": "Parses a string of TOML data at `key` and coerces it to `uint256`, or returns `defaultValue` if the key does not exist.",
+        "declaration": "function parseTomlUint(string calldata toml, string calldata key, uint256 defaultValue) external pure returns (uint256);",
         "visibility": "external",
         "mutability": "pure",
-        "signature": "parseTomlUintArray(string,string)",
-        "selector": "0xb5df27c8",
+        "signature": "parseTomlUint(string,string,uint256)",
+        "selector": "0x73317cb5",
         "selectorBytes": [
-          181,
-          223,
-          39,
-          200
+          115,
+          49,
+          124,
+          181
         ]
       },
       "group": "toml",
@@ -9147,6 +9867,66 @@
       "group": "evm",
       "status": "stable",
       "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "registerMappingSstoreHook",
+        "description": "Registers a callback after exact mapping-element SSTOREs rooted at `rootSlot` in `target`'s effective storage account.\nThe callback signature is `function(address account, bytes32 computedSlot, bytes32 rootSlot,\nbytes32[] keys, bytes32 oldValue, bytes32 newValue) external`; keys are raw words in\nroot-to-leaf order. Only complete 64-byte Keccak chains observed after the latest mapping\nhook registration for `target` in the current top-level execution match; provenance is\ncleared between top-level executions. Resolution follows the complete chain to its terminal\nroot and ignores registered intermediate hashes. Offsets, incomplete or unknown chains,\nhashes computed before registration or in an earlier top-level execution, and source layouts\ndo not match. The contract that calls this cheatcode receives the callback. Registration\npersists across reverts and replaces the same target/root callback; callback state rolls back\nwith its enclosing context, callback reverts propagate, and hooks are suppressed throughout\ncallback subtrees. The callback must authenticate `msg.sender == address(vm)` to prevent\nexternal spoofing. Raw and mapping SSTORE hooks conflict per target, while multiple mapping\nroots may be registered.",
+        "declaration": "function registerMappingSstoreHook(address target, bytes32 rootSlot, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerMappingSstoreHook(address,bytes32,bytes4)",
+        "selector": "0x12d14123",
+        "selectorBytes": [
+          18,
+          209,
+          65,
+          35
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "registerSloadHook",
+        "description": "Registers a callback invoked after each SLOAD against `target`'s effective storage account,\nincluding when its code runs by delegatecall.\nThe callback must have the signature `function(address,bytes32,bytes32) external`.\nRegistering another callback for the same target and access kind replaces it. Registration\nsurvives EVM reverts, while callback state follows the enclosing EVM context and rolls back\nwith it. Callback reverts propagate through the storage operation. Hooks are suppressed in\nthe callback and its entire call subtree. The callback must authenticate\n`msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from\nmocks, expectations, log recording, and storage-access recording. It does not inherit\nstaticness. The callback runs as an ordinary call frame and consumes one of the 1024\nprotocol call-depth slots; a load at the maximum legal call depth can have its callback\nrejected as too deep, propagating as a failure of the load.",
+        "declaration": "function registerSloadHook(address target, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerSloadHook(address,bytes4)",
+        "selector": "0x37c7cf5e",
+        "selectorBytes": [
+          55,
+          199,
+          207,
+          94
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
+    },
+    {
+      "func": {
+        "id": "registerSstoreHook",
+        "description": "Registers a callback invoked after each SSTORE against `target`'s effective storage account,\nincluding when its code runs by delegatecall.\nThe callback must have the signature `function(address,bytes32,bytes32,bytes32) external`.\nRegistering another callback for the same target and access kind replaces it. Registration\nsurvives EVM reverts, while callback state follows the enclosing EVM context and rolls back\nwith it. Callback reverts propagate through the storage operation. Hooks are suppressed in\nthe callback and its entire call subtree. The callback must authenticate\n`msg.sender == address(vm)` to prevent external spoofing. Callback execution is hidden from\nmocks, expectations, log recording, and storage-access recording. It does not inherit\nstaticness. The callback runs as an ordinary call frame and consumes one of the 1024\nprotocol call-depth slots; a store at the maximum legal call depth can have its callback\nrejected as too deep, propagating as a failure of the store.",
+        "declaration": "function registerSstoreHook(address target, bytes4 callback) external;",
+        "visibility": "external",
+        "mutability": "",
+        "signature": "registerSstoreHook(address,bytes4)",
+        "selector": "0xe0c3bdd9",
+        "selectorBytes": [
+          224,
+          195,
+          189,
+          217
+        ]
+      },
+      "group": "evm",
+      "status": "stable",
+      "safety": "unsafe"
     },
     {
       "func": {
@@ -11061,7 +11841,7 @@
     {
       "func": {
         "id": "startMappingRecording",
-        "description": "Starts recording all map SSTOREs for later retrieval.",
+        "description": "Starts recording mapping SSTOREs for later retrieval.",
         "declaration": "function startMappingRecording() external;",
         "visibility": "external",
         "mutability": "",
@@ -11301,7 +12081,7 @@
     {
       "func": {
         "id": "stopMappingRecording",
-        "description": "Stops recording all map SSTOREs for later retrieval and clears the recorded data.",
+        "description": "Stops recording mapping SSTOREs and clears the recorded data.",
         "declaration": "function stopMappingRecording() external;",
         "visibility": "external",
         "mutability": "",

@@ -1,0 +1,118 @@
+# Reusable workflow for Monad checks and tests.
+
+name: Monad
+
+permissions: {}
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  check:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Check Monad release binaries
+        run: cargo check --locked --bins --no-default-features --features "aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad"
+
+  library-tests:
+    name: library (${{ matrix.package }})
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - foundry-evm-hardforks
+          - foundry-evm-networks
+          - foundry-config
+          - foundry-evm-core
+          - foundry-cheatcodes
+          - foundry-evm
+          - foundry-evm-traces
+          - forge-script
+          - forge-verify
+          - chisel
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Build Forge for verification tests
+        if: matrix.package == 'forge-verify'
+        run: cargo build --locked -p forge --features monad
+      - name: Test Monad library
+        run: cargo test --locked -p ${{ matrix.package }} --features monad --lib -- --skip flaky_
+
+  integration-tests:
+    name: integration (${{ matrix.suite }})
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [anvil, cast, forge, chisel]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - name: Setup Python
+        if: matrix.suite == 'forge'
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install Vyper
+        if: matrix.suite == 'forge'
+        # Also update vyper version in .devcontainer/Dockerfile.dev
+        run: pip --version && pip install vyper==0.4.3
+      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Test Monad Anvil integration
+        if: matrix.suite == 'anvil'
+        run: |
+          cargo test --locked -p anvil --features monad --lib -- --skip flaky_
+          cargo test --locked -p anvil --features monad --test it monad -- --test-threads=1
+      - name: Test Monad Cast integration
+        if: matrix.suite == 'cast'
+        run: |
+          cargo test --locked --manifest-path crates/cast/Cargo.toml --features monad \
+            --lib normalized_hardfork_network_is_applied_to_evm_opts
+          cargo test --locked --manifest-path crates/cast/Cargo.toml --features monad \
+            --lib remote_trace_
+          cargo test --locked --manifest-path crates/cast/Cargo.toml --features monad \
+            --test cli monad -- --test-threads=1
+      - name: Test Monad Forge integration
+        if: matrix.suite == 'forge'
+        run: cargo test --locked -p forge --features monad --test cli monad -- --test-threads=1
+      - name: Test Monad Chisel integration
+        if: matrix.suite == 'chisel'
+        run: cargo test --locked -p chisel --features monad --test it monad -- --test-threads=1

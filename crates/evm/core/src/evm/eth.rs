@@ -4,7 +4,7 @@ use alloy_evm::{
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
-        BlockEnv, ContextTr, Evm as RevmEvm, LocalContextTr, TxEnv,
+        BlockEnv, ContextTr, Evm as RevmEvm, Journal, LocalContextTr, TxEnv,
         result::{EVMError, ResultAndState},
     },
     handler::{
@@ -12,7 +12,8 @@ use revm::{
     },
     inspector::InspectorHandler,
     interpreter::{
-        FrameInput, SharedMemory, interpreter::EthInterpreter, interpreter_action::FrameInit,
+        FrameInput, GasTracker, SharedMemory, interpreter::EthInterpreter,
+        interpreter_action::FrameInit,
     },
     primitives::hardfork::SpecId,
 };
@@ -20,7 +21,7 @@ use revm::{
 use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
-    evm::{FoundryEvmFactory, NestedEvm},
+    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor},
 };
 
 type EthEvmHandler<'db, I> = MainnetHandler<EthRevmEvm<'db, I>, EVMError<DatabaseError>, EthFrame>;
@@ -34,15 +35,26 @@ pub type EthRevmEvm<'db, I> = RevmEvm<
 >;
 
 impl FoundryEvmFactory for EthEvmFactory {
+    type Chain = ();
     type FoundryContext<'db> = EthEvmContext<&'db mut dyn DatabaseExt<Self>>;
 
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         EthEvm<&'db mut dyn DatabaseExt<Self>, I, Self::Precompiles>;
 
+    fn create_evm_with_context<DB: alloy_evm::Database>(
+        &self,
+        db: DB,
+        evm_env: EvmEnv,
+        _chain_context: Self::Chain,
+    ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
+        self.create_evm(db, evm_env)
+    }
+
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv,
+        _chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let chain_id = evm_env.cfg_env.chain_id;
@@ -59,9 +71,13 @@ impl FoundryEvmFactory for EthEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv,
+        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
-    ) -> Box<dyn NestedEvm<Spec = SpecId, Block = BlockEnv, Tx = TxEnv> + 'db> {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
+    ) -> NestedEvmFor<'db, Self> {
+        Box::new(
+            self.create_foundry_evm_with_inspector(db, evm_env, chain_context, inspector)
+                .into_inner(),
+        )
     }
 }
 
@@ -71,15 +87,27 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
     type Spec = SpecId;
     type Block = BlockEnv;
     type Tx = TxEnv;
+    type Chain = ();
+    type Journal = Journal<&'db mut dyn DatabaseExt<EthEvmFactory>>;
+
+    fn tx_mut(&mut self) -> &mut Self::Tx {
+        self.ctx_mut().tx_mut()
+    }
 
     fn journal_inner_mut(&mut self) -> &mut JournaledState {
         &mut self.ctx_mut().journaled_state.inner
     }
 
+    fn chain_mut(&mut self) -> &mut Self::Chain {
+        &mut self.ctx_mut().chain
+    }
+
+    fn journal_mut(&mut self) -> &mut Self::Journal {
+        &mut self.ctx_mut().journaled_state
+    }
+
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
         let mut handler = EthEvmHandler::<I>::default();
-        let reservoir = frame.reservoir();
-
         // Create first frame
         let memory =
             SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
@@ -89,12 +117,17 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
         let mut frame_result = handler.inspect_run_exec_loop(self, first_frame_input)?;
 
         // Handle last frame result
-        handler.last_frame_result(self, reservoir, &mut frame_result)?;
+        let mut parent_gas = GasTracker::new(
+            frame_result.gas().limit(),
+            frame_result.gas().remaining(),
+            frame_result.gas().reservoir(),
+        );
+        handler.last_frame_result(self, &mut frame_result, &mut parent_gas)?;
 
         Ok(frame_result)
     }
 
-    fn transact_raw(&mut self, tx: Self::Tx) -> Result<ResultAndState, EVMError<DatabaseError>> {
+    fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
         self.set_tx(tx);
 
         let result = EthEvmHandler::<I>::default().inspect_run(self)?;

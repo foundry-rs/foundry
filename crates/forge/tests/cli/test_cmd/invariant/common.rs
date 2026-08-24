@@ -439,6 +439,7 @@ forgetest_init!(invariant_fixtures, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 100;
+        config.fuzz.seed = Some(U256::from(1));
         // disable literals to test fixtures
         config.invariant.dictionary.max_fuzz_dictionary_literals = 0;
         config.fuzz.dictionary.max_fuzz_dictionary_literals = 0;
@@ -1180,7 +1181,7 @@ Compiler run successful!
 Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
 [FAIL: too many blocks mined]
 	[SEQUENCE]
- invariant_fork_handler_block() ([RUNS])
+ invariant_fork_handler_block() (block: 19812634) ([RUNS])
 
 [STATS]
 
@@ -1189,7 +1190,7 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkStateTest
 [FAIL: wrong supply]
 	[SEQUENCE]
- invariant_fork_handler_state() ([RUNS])
+ invariant_fork_handler_state() (block: 19812633) ([RUNS])
 
 [STATS]
 
@@ -1201,16 +1202,96 @@ Failing tests:
 Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
 [FAIL: too many blocks mined]
 	[SEQUENCE]
- invariant_fork_handler_block() ([RUNS])
+ invariant_fork_handler_block() (block: 19812634) ([RUNS])
 
 Encountered 1 failing test in test/InvariantRollFork.t.sol:InvariantRollForkStateTest
 [FAIL: wrong supply]
 	[SEQUENCE]
- invariant_fork_handler_state() ([RUNS])
+ invariant_fork_handler_state() (block: 19812633) ([RUNS])
 
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
+});
+
+forgetest_init!(invariant_roll_inactive_fork_preserves_active_block, |prj, cmd| {
+    prj.add_rpc_endpoints();
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(119u32));
+        config.invariant.shrink_run_limit = 0;
+    });
+
+    prj.add_test(
+        "InvariantInactiveRollFork.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract InactiveRollForkHandler is Test {
+    uint256 immutable inactiveFork;
+    uint256 public calls;
+
+    constructor(uint256 inactiveFork_) {
+        inactiveFork = inactiveFork_;
+    }
+
+    function work() external {
+        calls++;
+        if (calls == 1) {
+            vm.rollFork(block.number + 1);
+        } else {
+            vm.rollFork(inactiveFork, block.number + 1);
+        }
+    }
+}
+
+contract InvariantInactiveRollForkTest is Test {
+    InactiveRollForkHandler forkHandler;
+
+    function setUp() public {
+        vm.createSelectFork("mainnet", 19812632);
+        uint256 inactiveFork = vm.createFork("mainnet", 19812632);
+        forkHandler = new InactiveRollForkHandler(inactiveFork);
+        targetContract(address(forkHandler));
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 2
+    function invariant_inactive_roll_preserves_active_block() public view {
+        require(forkHandler.calls() < 2, "inactive fork rolled");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/InvariantInactiveRollFork.t.sol:InvariantInactiveRollForkTest
+[FAIL: inactive fork rolled]
+	[SEQUENCE]
+ invariant_inactive_roll_preserves_active_block() (block: 19812633) ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/InvariantInactiveRollFork.t.sol:InvariantInactiveRollForkTest
+[FAIL: inactive fork rolled]
+	[SEQUENCE]
+ invariant_inactive_roll_preserves_active_block() (block: 19812633) ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -2608,6 +2689,38 @@ contract InvariantOptimizeTest is Test {
 "#]]);
 });
 
+forgetest_init!(invariant_zero_delays_are_disabled, |prj, cmd| {
+    prj.add_test(
+        "InvariantZeroDelay.t.sol",
+        r#"
+contract InvariantZeroDelay {
+    Target target;
+
+    function setUp() public {
+        target = new Target();
+    }
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 1
+    /// forge-config: default.invariant.max_time_delay = 0
+    function invariant_zeroTimeDelay() public pure {}
+
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 1
+    /// forge-config: default.invariant.max_block_delay = 0
+    function invariant_zeroBlockDelay() public pure {}
+}
+
+contract Target {
+    function touch() public {}
+}
+"#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_zeroTimeDelay"]).assert_success();
+    cmd.forge_fuse().args(["test", "--mt", "invariant_zeroBlockDelay"]).assert_success();
+});
+
 // Test optimization mode with time-dependent logic using warp and fixed seed for reproducibility.
 // This test ensures warp values are correctly accumulated during shrinking.
 forgetest_init!(invariant_optimization_with_warp, |prj, cmd| {
@@ -2834,4 +2947,81 @@ contract InvariantMsgValue is Test {
 		ValueTarget([..]).deposit{value: [..]}();
 ...
 "#]]);
+});
+
+forgetest_init!(invariant_call_override_skips_storage_hook_callbacks, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 16;
+        config.invariant.depth = 8;
+        config.invariant.call_override = true;
+        config.invariant.fail_on_revert = true;
+    });
+
+    prj.add_test(
+        "InvariantStorageHooks.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageHookVm {
+    function registerSstoreHook(address target, bytes4 callback) external;
+}
+
+contract StorageHookTarget {
+    uint256 public value;
+
+    function store(uint256 newValue) external {
+        value = newValue;
+    }
+}
+
+contract StorageHookHelper {
+    function copy(uint256 value) external pure returns (uint256) {
+        if (value == 7) {
+            return 7;
+        }
+        return value;
+    }
+}
+
+contract StorageHookHandler {
+    StorageHookVm constant hookVm =
+        StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    StorageHookTarget public immutable target;
+    StorageHookHelper public immutable helper;
+    uint256 public ghostValue;
+
+    constructor(StorageHookTarget target_) {
+        target = target_;
+        helper = new StorageHookHelper();
+        hookVm.registerSstoreHook(address(target_), StorageHookHandler.onStore.selector);
+    }
+
+    function mutate(uint256 newValue) external {
+        target.store(newValue);
+    }
+
+    function onStore(address, bytes32, bytes32, bytes32 newValue) external {
+        require(msg.sender == address(hookVm), "only storage hook");
+        ghostValue = helper.copy(uint256(newValue));
+    }
+}
+
+contract InvariantStorageHooks is Test {
+    StorageHookTarget target;
+    StorageHookHandler handler;
+
+    function setUp() public {
+        target = new StorageHookTarget();
+        handler = new StorageHookHandler(target);
+    }
+
+    function invariant_hook_tracks_target() public view {
+        assertEq(handler.ghostValue(), target.value());
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).success();
 });

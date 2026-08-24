@@ -249,6 +249,136 @@ invariant_notHit()
     );
 });
 
+forgetest_init!(symbolic_secondary_replay_preserves_storage, |prj, cmd| {
+    skip_unless_z3!("symbolic_secondary_replay_preserves_storage");
+
+    prj.add_test(
+        "SymbolicSecondaryStorage.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface ArbitraryStorageVm {
+    function setArbitraryStorage(address target) external;
+}
+
+contract SecondaryExternalStore {
+    uint256 public value;
+}
+
+contract SecondaryStorageTarget {
+    SecondaryExternalStore store;
+    bool public hit;
+    bool public anchorHit;
+
+    constructor(SecondaryExternalStore store_) {
+        store = store_;
+    }
+
+    function useStore() external {
+        require(store.value() == 42);
+        hit = true;
+    }
+
+    function breakAnchor() external {
+        anchorHit = true;
+    }
+}
+
+contract SymbolicSecondaryStorage is Test {
+    SecondaryExternalStore store;
+    SecondaryStorageTarget target;
+
+    function setUp() public {
+        store = new SecondaryExternalStore();
+        target = new SecondaryStorageTarget(store);
+        ArbitraryStorageVm(address(vm)).setArbitraryStorage(address(store));
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public view {
+        require(!target.anchorHit(), "anchor hit");
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_secondary() public view {
+        require(!target.hit(), "hit");
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--fuzz-runs",
+            "0",
+            "--match-test",
+            "invariant_secondary",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_secondary()");
+    let artifact_ref = &result["invariant_failures"][0]["artifact"];
+    let original_artifact = read_artifact_ref(artifact_ref);
+    assert_eq!(original_artifact["invariant_failure"]["kind"], "predicate");
+    assert_eq!(original_artifact["invariant_failure"]["name"], "invariant_secondary");
+    assert!(original_artifact["invariant_failure"]["site"].is_object());
+
+    let persisted = prj
+        .root()
+        .join("cache/invariant/failures/SymbolicSecondaryStorage/invariants/invariant_secondary");
+    let persisted_anchor = prj
+        .root()
+        .join("cache/invariant/failures/SymbolicSecondaryStorage/invariants/invariant_anchor");
+    let original: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
+    assert_eq!(original["storage"].as_array().expect("storage assignments").len(), 1);
+    assert_eq!(original["storage"][0]["value"], "0x2a");
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    for _ in 0..2 {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "test",
+                "--symbolic",
+                "--json",
+                "--fuzz-runs",
+                "0",
+                "--match-test",
+                "invariant_",
+            ])
+            .assert_failure()
+            .get_output()
+            .stdout
+            .clone();
+        let result = json_test_result(&output, "invariant_anchor()");
+        assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+        let failures = result["invariant_failures"].as_array().expect("invariant failures");
+        assert_eq!(failures.len(), 2);
+        assert_eq!(failures[0]["name"], "invariant_anchor");
+        assert_eq!(failures[0]["reason"], "anchor hit");
+        assert_eq!(failures[1]["name"], "invariant_secondary");
+        assert_eq!(failures[1]["reason"], "hit");
+        assert_eq!(failures[1]["counterexample"]["Sequence"][1][0]["func_name"], "useStore");
+
+        let replayed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&persisted).unwrap()).unwrap();
+        assert_eq!(replayed, original);
+
+        let replayed_artifact = read_artifact_ref(artifact_ref);
+        assert_eq!(replayed_artifact["invariant_failure"], original_artifact["invariant_failure"]);
+
+        std::fs::remove_file(&persisted_anchor).unwrap();
+    }
+});
+
 forgetest_init!(symbolic_predicate_artifact_rejects_handler_assertion_replay, |prj, cmd| {
     skip_unless_z3!("symbolic_predicate_artifact_rejects_handler_assertion_replay");
 
@@ -783,6 +913,146 @@ contract SymbolicAfterInvariantTerminal is Test {
         .stdout
         .clone();
     let result = json_test_result(&output, "invariant_ok()");
+    assert_eq!(result["status"], "Success");
+    assert_eq!(result["symbolic"]["status"], "pass");
+});
+
+forgetest_init!(symbolic_invariant_checks_preserve_storage_hook_registration, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_checks_preserve_storage_hook_registration");
+
+    prj.add_test(
+        "SymbolicInvariantStorageHookRegistration.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface StorageHookVm {
+    function registerSstoreHook(address target, bytes4 callback) external;
+    function registerMappingSstoreHook(address target, bytes32 root, bytes4 callback) external;
+}
+
+contract MappingHookRegistrationTarget {
+    mapping(uint256 => uint256) public values;
+
+    function step(uint256 newValue) external {
+        values[newValue] = newValue;
+    }
+}
+
+contract StorageHookRegistrationTarget {
+    uint256 public value;
+    uint256 public steps;
+    MappingHookRegistrationTarget public mappingTarget;
+
+    constructor(MappingHookRegistrationTarget mappingTarget_) {
+        mappingTarget = mappingTarget_;
+    }
+
+    function step(uint256 newValue) external {
+        value = newValue;
+        steps++;
+        mappingTarget.step(newValue);
+    }
+}
+
+contract SymbolicInvariantStorageHookRegistration is Test {
+    StorageHookVm constant hookVm =
+        StorageHookVm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    StorageHookRegistrationTarget target;
+    MappingHookRegistrationTarget mappingTarget;
+    uint256 ghost;
+    uint256 mappingGhost;
+
+    modifier onlyStorageHook() {
+        require(msg.sender == address(hookVm), "only storage hook");
+        _;
+    }
+
+    function setUp() public {
+        mappingTarget = new MappingHookRegistrationTarget();
+        target = new StorageHookRegistrationTarget(mappingTarget);
+        hookVm.registerSstoreHook(address(target), this.initialHook.selector);
+        hookVm.registerMappingSstoreHook(address(mappingTarget), bytes32(0), this.initialMappingHook.selector);
+        targetContract(address(target));
+        targetSender(address(this));
+    }
+
+    function initialHook(address, bytes32, bytes32, bytes32) external onlyStorageHook {
+        ghost = 1;
+    }
+
+    function replacementHook(address, bytes32, bytes32, bytes32) external onlyStorageHook {
+        ghost = 2;
+    }
+
+    function afterInvariantHook(address, bytes32, bytes32, bytes32) external onlyStorageHook {
+        ghost = 3;
+    }
+
+    function initialMappingHook(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        mappingGhost = 1;
+    }
+
+    function replacementMappingHook(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        mappingGhost = 2;
+    }
+
+    function afterInvariantMappingHook(address, bytes32, bytes32, bytes32[] calldata, bytes32, bytes32)
+        external
+        onlyStorageHook
+    {
+        mappingGhost = 3;
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.invariant.check_interval = 1
+    /// forge-config: default.invariant.runs = 1
+    /// forge-config: default.invariant.depth = 1
+    function invariant_hookReplacementPersists() public {
+        if (target.steps() == 2) {
+            assertEq(ghost, 2);
+            assertEq(mappingGhost, 2);
+        }
+        hookVm.registerSstoreHook(address(target), this.replacementHook.selector);
+        hookVm.registerMappingSstoreHook(
+            address(mappingTarget), bytes32(0), this.replacementMappingHook.selector
+        );
+    }
+
+    function afterInvariant() public {
+        hookVm.registerSstoreHook(address(target), this.afterInvariantHook.selector);
+        hookVm.registerMappingSstoreHook(
+            address(mappingTarget), bytes32(0), this.afterInvariantMappingHook.selector
+        );
+        target.step(3);
+        assertEq(ghost, 3);
+        assertEq(mappingGhost, 3);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--fuzz-runs",
+            "0",
+            "--match-test",
+            "invariant_hookReplacementPersists",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let result = json_test_result(&output, "invariant_hookReplacementPersists()");
     assert_eq!(result["status"], "Success");
     assert_eq!(result["symbolic"]["status"], "pass");
 });

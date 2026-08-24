@@ -1,7 +1,7 @@
 //! Support for generating the state root for memdb storage
 
 use alloy_primitives::{
-    B256, U256, keccak256,
+    B256, Bytes, U256, keccak256,
     map::{AddressMap, B256Map, HashSet, U256Map},
 };
 use alloy_rlp::Encodable;
@@ -10,7 +10,7 @@ use alloy_trie::{
     nodes::{BranchNodeRef, ExtensionNodeRef, LeafNodeRef, RlpNode},
 };
 use revm::{
-    database::DbAccount,
+    database::{AccountState, DbAccount},
     state::{Account, AccountInfo},
 };
 use std::{array, mem};
@@ -77,7 +77,10 @@ impl StateRootCache {
         let trie = trie.as_mut().unwrap();
         for (address, dirty) in mem::take(dirty) {
             let hashed_address = keccak256(address);
-            let Some(account) = accounts.get(&address) else {
+            let Some(account) = accounts
+                .get(&address)
+                .filter(|account| account.account_state != AccountState::NotExisting)
+            else {
                 trie.accounts.remove(hashed_address);
                 trie.storage.remove(&hashed_address);
                 continue;
@@ -92,7 +95,8 @@ impl StateRootCache {
                 let storage_trie = trie.storage.entry(hashed_address).or_default();
                 for slot in dirty.storage {
                     let key = keccak256(slot.to_be_bytes::<32>());
-                    if let Some(value) = account.storage.get(&slot) {
+                    if let Some(value) = account.storage.get(&slot).filter(|value| !value.is_zero())
+                    {
                         storage_trie.insert(key, alloy_rlp::encode(value));
                     } else {
                         storage_trie.remove(key);
@@ -121,6 +125,9 @@ impl IncrementalStateTrie {
     fn from_accounts(accounts: &AddressMap<DbAccount>, rlp_buf: &mut Vec<u8>) -> Self {
         let mut trie = Self::default();
         for (address, account) in accounts {
+            if account.account_state == AccountState::NotExisting {
+                continue;
+            }
             let hashed_address = keccak256(address);
             let mut storage_trie = IncrementalTrie::from_storage(&account.storage);
             let storage_root = storage_trie.root_with_buf(rlp_buf);
@@ -147,7 +154,7 @@ struct IncrementalTrie {
 impl IncrementalTrie {
     fn from_storage(storage: &U256Map<U256>) -> Self {
         let mut trie = Self::default();
-        for (slot, value) in storage {
+        for (slot, value) in storage.iter().filter(|(_, value)| !value.is_zero()) {
             trie.insert(keccak256(slot.to_be_bytes::<32>()), alloy_rlp::encode(value));
         }
         trie
@@ -337,6 +344,13 @@ impl TrieNode {
             return Some(rlp.clone());
         }
 
+        let rlp = self.encode(out)?;
+        self.rlp = Some(rlp.clone());
+        Some(rlp)
+    }
+
+    /// Encodes this node into `out`, returning its RLP reference without consulting the cache.
+    fn encode(&mut self, out: &mut Vec<u8>) -> Option<RlpNode> {
         let rlp = match &mut self.kind {
             TrieNodeKind::Empty => return None,
             TrieNodeKind::Leaf { path, value } => {
@@ -363,9 +377,43 @@ impl TrieNode {
                 BranchNodeRef::new(&stack[..stack_len], state_mask).rlp(out)
             }
         };
-        self.rlp = Some(rlp.clone());
         Some(rlp)
     }
+
+    /// Appends the RLP encoding of this node and all of its descendants to `nodes`.
+    fn collect_nodes(&mut self, rlp_buf: &mut Vec<u8>, nodes: &mut Vec<Bytes>) {
+        match &mut self.kind {
+            TrieNodeKind::Empty => return,
+            TrieNodeKind::Leaf { .. } => {}
+            TrieNodeKind::Extension { child, .. } => child.collect_nodes(rlp_buf, nodes),
+            TrieNodeKind::Branch { children } => {
+                for child in children.iter_mut().flatten() {
+                    child.collect_nodes(rlp_buf, nodes);
+                }
+            }
+        }
+        self.encode(rlp_buf);
+        nodes.push(Bytes::copy_from_slice(rlp_buf));
+    }
+}
+
+/// Builds the state trie for the given accounts and returns its root together with the RLP
+/// encoding of every node of the account trie and all storage tries.
+///
+/// The node set is a witness for any execution against this state: it is a strict superset of
+/// the nodes touched by any particular block.
+pub fn state_trie_witness(accounts: &AddressMap<DbAccount>) -> (B256, Vec<Bytes>) {
+    let mut rlp_buf = Vec::new();
+    let mut trie = IncrementalStateTrie::from_accounts(accounts, &mut rlp_buf);
+    let mut nodes = Vec::new();
+    for storage_trie in trie.storage.values_mut() {
+        storage_trie.root.collect_nodes(&mut rlp_buf, &mut nodes);
+    }
+    trie.accounts.root.collect_nodes(&mut rlp_buf, &mut nodes);
+    let root = trie.root(&mut rlp_buf);
+    nodes.sort_unstable();
+    nodes.dedup();
+    (root, nodes)
 }
 
 pub fn build_root(values: impl IntoIterator<Item = (Nibbles, Vec<u8>)>) -> B256 {
@@ -390,6 +438,7 @@ pub fn storage_root(storage: &U256Map<U256>) -> B256 {
 pub fn trie_storage(storage: &U256Map<U256>) -> Vec<(Nibbles, Vec<u8>)> {
     let mut storage = storage
         .iter()
+        .filter(|(_, value)| !value.is_zero())
         .map(|(key, value)| {
             let data = alloy_rlp::encode(value);
             (Nibbles::unpack(keccak256(key.to_be_bytes::<32>())), data)
@@ -404,6 +453,7 @@ pub fn trie_storage(storage: &U256Map<U256>) -> Vec<(Nibbles, Vec<u8>)> {
 pub fn trie_accounts(accounts: &AddressMap<DbAccount>) -> Vec<(Nibbles, Vec<u8>)> {
     let mut accounts: Vec<(Nibbles, Vec<u8>)> = accounts
         .iter()
+        .filter(|(_, account)| account.account_state != AccountState::NotExisting)
         .map(|(address, account)| {
             let data = trie_account_rlp(&account.info, &account.storage);
             (Nibbles::unpack(keccak256(*address)), data)
@@ -432,6 +482,21 @@ fn trie_account_rlp_with_storage_root(info: &AccountInfo, storage_root: B256) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_roots_omit_zero_storage_and_non_existing_accounts() {
+        let mut storage = U256Map::default();
+        storage.insert(U256::from(1), U256::ZERO);
+        assert_eq!(storage_root(&storage), EMPTY_ROOT_HASH);
+
+        let mut accounts = AddressMap::default();
+        accounts.insert(
+            alloy_primitives::Address::with_last_byte(1),
+            DbAccount { account_state: AccountState::NotExisting, ..Default::default() },
+        );
+        assert_eq!(state_root(&accounts), EMPTY_ROOT_HASH);
+        assert_eq!(StateRootCache::default().root(&accounts), EMPTY_ROOT_HASH);
+    }
 
     fn rebuilt_root(values: &B256Map<Vec<u8>>) -> B256 {
         let mut leaves = values

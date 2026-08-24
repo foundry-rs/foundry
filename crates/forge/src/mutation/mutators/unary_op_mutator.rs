@@ -11,7 +11,7 @@ impl Mutator for UnaryOpMutator {
         let operations = vec![
             UnOpKind::PreInc, // number
             UnOpKind::PreDec, // n
-            UnOpKind::Neg,    // n @todo filter this one only for int
+            UnOpKind::Neg,    // n
             UnOpKind::BitNot, // n
         ];
 
@@ -19,12 +19,12 @@ impl Mutator for UnaryOpMutator {
 
         let expr = context.expr.unwrap();
 
-        let (op, target_span) = match &expr.kind {
-            ExprKind::Unary(un_op, target) => (un_op.kind, target.span),
+        let (op, target) = match &expr.kind {
+            ExprKind::Unary(un_op, target) => (un_op.kind, &**target),
             _ => unreachable!(),
         };
 
-        let target_content = extract_span_text(context.source.unwrap_or(""), target_span);
+        let target_content = extract_span_text(context.source.unwrap_or(""), target.span);
         if target_content.is_empty() {
             return Ok(vec![]);
         }
@@ -55,6 +55,10 @@ impl Mutator for UnaryOpMutator {
         mutations = operations
             .into_iter()
             .filter(|&kind| kind != op)
+            .filter(|&kind| {
+                !matches!(kind, UnOpKind::PreInc | UnOpKind::PreDec)
+                    || !is_definitely_non_lvalue(target)
+            })
             .map(|kind| {
                 let new_expression = format!("{}{}", kind.to_str(), target_content);
 
@@ -72,23 +76,26 @@ impl Mutator for UnaryOpMutator {
             })
             .collect();
 
-        mutations.extend(post_fixed_operations.into_iter().filter(|&kind| kind != op).map(
-            |kind| {
-                let new_expression = format!("{}{}", target_content, kind.to_str());
+        mutations.extend(
+            post_fixed_operations
+                .into_iter()
+                .filter(|&kind| kind != op && !is_definitely_non_lvalue(target))
+                .map(|kind| {
+                    let new_expression = format!("{}{}", target_content, kind.to_str());
 
-                let mutated = UnaryOpMutated::new(new_expression, kind);
+                    let mutated = UnaryOpMutated::new(new_expression, kind);
 
-                Mutant {
-                    span: expr.span,
-                    mutation: MutationType::UnaryOperator(mutated),
-                    path: context.path.clone(),
-                    original: original.clone(),
-                    source_line: source_line.clone(),
-                    line_number,
-                    column_number,
-                }
-            },
-        ));
+                    Mutant {
+                        span: expr.span,
+                        mutation: MutationType::UnaryOperator(mutated),
+                        path: context.path.clone(),
+                        original: original.clone(),
+                        source_line: source_line.clone(),
+                        line_number,
+                        column_number,
+                    }
+                }),
+        );
 
         Ok(mutations)
     }
@@ -102,6 +109,33 @@ impl Mutator for UnaryOpMutator {
 
         false
     }
+}
+
+fn is_definitely_non_lvalue(expr: &solar::ast::Expr<'_>) -> bool {
+    if let ExprKind::Call(callee, args) = &expr.peel_parens().kind {
+        return !(args.is_empty()
+            && matches!(
+                &callee.peel_parens().kind,
+                ExprKind::Member(_, member) if member.as_str() == "push"
+            ));
+    }
+
+    matches!(
+        &expr.peel_parens().kind,
+        ExprKind::Array(_)
+            | ExprKind::Assign(..)
+            | ExprKind::Binary(..)
+            | ExprKind::CallOptions(..)
+            | ExprKind::Delete(_)
+            | ExprKind::Lit(..)
+            | ExprKind::New(_)
+            | ExprKind::Payable(_)
+            | ExprKind::Ternary(..)
+            | ExprKind::Tuple(_)
+            | ExprKind::TypeCall(_)
+            | ExprKind::Type(_)
+            | ExprKind::Unary(..)
+    )
 }
 
 fn extract_span_text(source: &str, span: Span) -> String {

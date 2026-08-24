@@ -32,6 +32,12 @@ pub(crate) struct PathState {
     pub(crate) persistent_accounts: HashSet<Address>,
     pub(crate) wallets: IndexSet<Address>,
     pub(crate) labels: HashMap<Address, String>,
+    pub(crate) storage_load_hooks: HashMap<Address, SymbolicStorageHook>,
+    pub(crate) storage_store_hooks: HashMap<Address, SymbolicStorageHook>,
+    pub(crate) mapping_storage_store_hooks: HashMap<(Address, U256), SymbolicStorageHook>,
+    pub(crate) mapping_hook_keccak_preimages: HashMap<(Address, SymExpr), Arc<[SymExpr]>>,
+    pub(crate) storage_hook_active: bool,
+    pub(crate) pending_storage_hook_revert: bool,
 }
 
 impl PathState {
@@ -49,8 +55,7 @@ impl PathState {
         let gas_price = SymExpr::zero(cx);
         let block = SymbolicBlock::new(cx);
         let callvalue = SymExpr::constant(cx, callvalue);
-        let frame =
-            CallFrame::new(cx, address, address, address, caller, callvalue, false, call_data);
+        let frame = CallFrame::new(cx, address, address, caller, callvalue, false, call_data);
         Self {
             depth: 0,
             call_depth: 0,
@@ -82,6 +87,12 @@ impl PathState {
             persistent_accounts: HashSet::default(),
             wallets: IndexSet::default(),
             labels: HashMap::default(),
+            storage_load_hooks: HashMap::default(),
+            storage_store_hooks: HashMap::default(),
+            mapping_storage_store_hooks: HashMap::default(),
+            mapping_hook_keccak_preimages: HashMap::default(),
+            storage_hook_active: false,
+            pending_storage_hook_revert: false,
         }
     }
 
@@ -97,8 +108,7 @@ impl PathState {
         let callvalue = SymExpr::zero(cx);
         let calldata = SymBytes::empty(cx);
         let calldata = SymCalldata::from_bytes(cx, calldata);
-        let frame =
-            CallFrame::new(cx, address, address, address, caller, callvalue, false, calldata);
+        let frame = CallFrame::new(cx, address, address, caller, callvalue, false, calldata);
         Self {
             depth: 0,
             call_depth: 0,
@@ -130,6 +140,12 @@ impl PathState {
             persistent_accounts: HashSet::default(),
             wallets: IndexSet::default(),
             labels: HashMap::default(),
+            storage_load_hooks: HashMap::default(),
+            storage_store_hooks: HashMap::default(),
+            mapping_storage_store_hooks: HashMap::default(),
+            mapping_hook_keccak_preimages: HashMap::default(),
+            storage_hook_active: false,
+            pending_storage_hook_revert: false,
         }
     }
 
@@ -153,44 +169,63 @@ impl PathState {
             for (target, source) in cheats.arbitrary_storage_copied_target_sources() {
                 self.world.enable_arbitrary_storage_copy(source, target);
             }
+            self.storage_load_hooks.extend(cheats.storage_load_hooks().map(|(target, hook)| {
+                (
+                    target,
+                    SymbolicStorageHook {
+                        callback_target: hook.callback_target,
+                        callback_selector: hook.callback_selector,
+                    },
+                )
+            }));
+            self.storage_store_hooks.extend(cheats.storage_store_hooks().map(|(target, hook)| {
+                (
+                    target,
+                    SymbolicStorageHook {
+                        callback_target: hook.callback_target,
+                        callback_selector: hook.callback_selector,
+                    },
+                )
+            }));
+            self.mapping_storage_store_hooks.extend(cheats.mapping_storage_store_hooks().map(
+                |(target, root, hook)| {
+                    (
+                        (target, root.into()),
+                        SymbolicStorageHook {
+                            callback_target: hook.callback_target,
+                            callback_selector: hook.callback_selector,
+                        },
+                    )
+                },
+            ));
         }
     }
 
     pub(crate) fn child(&self, frame: CallFrame) -> Self {
-        Self {
-            depth: self.depth,
-            call_depth: self.call_depth + 1,
-            origin: self.origin,
-            origin_word: self.origin_word.clone(),
-            gas_price: self.gas_price.clone(),
-            ffi_enabled: self.ffi_enabled,
-            block: self.block.clone(),
-            frame,
-            world: self.world.clone(),
-            // A prank changes the call being entered; calls made by the callee use
-            // normal EVM caller semantics unless the callee sets its own prank.
-            prank: SymbolicPrank::default(),
-            constraints: self.constraints.clone(),
-            next_symbol: self.next_symbol,
-            recorded_logs: self.recorded_logs.clone(),
-            access_record: self.access_record.clone(),
-            root_calldata: self.root_calldata.clone(),
-            corpus_seed_models: self.corpus_seed_models.clone(),
-            branch_target: self.branch_target,
-            branch_target_reached: self.branch_target_reached,
-            needs_feasibility_check: self.needs_feasibility_check,
-            loop_jumps: HashMap::default(),
-            expected_revert: self.expected_revert.clone(),
-            assume_no_revert_next_call: self.assume_no_revert_next_call.clone(),
-            expected_emit: self.expected_emit.clone(),
-            expected_calls: self.expected_calls.clone(),
-            expected_creates: self.expected_creates.clone(),
-            call_mocks: self.call_mocks.clone(),
-            function_mocks: self.function_mocks.clone(),
-            persistent_accounts: self.persistent_accounts.clone(),
-            wallets: self.wallets.clone(),
-            labels: self.labels.clone(),
-        }
+        let mut child = self.clone();
+        child.call_depth += 1;
+        child.frame = frame;
+        // A prank changes the call being entered; calls made by the callee use normal EVM caller
+        // semantics unless the callee sets its own prank.
+        child.prank = SymbolicPrank::default();
+        child.loop_jumps.clear();
+        child
+    }
+
+    pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
+        let mut child = self.child(frame);
+        child.storage_hook_active = true;
+        child.recorded_logs = None;
+        child.access_record = None;
+        child.expected_revert = None;
+        child.assume_no_revert_next_call = None;
+        child.expected_emit = None;
+        child.expected_calls.clear();
+        child.expected_creates.clear();
+        child.call_mocks.clear();
+        child.function_mocks.clear();
+        child.set_branch_target(None);
+        child
     }
 
     pub(crate) fn copy_call_output_offset(
@@ -348,24 +383,40 @@ impl PathState {
         }
     }
 
-    pub(crate) fn merge_noncommitting_check_constraints(&mut self, check: &Self) {
-        self.constraints = check.constraints.clone();
+    pub(crate) fn take_noncommitting_check_state(&mut self, check: &mut Self) {
+        self.constraints = std::mem::take(&mut check.constraints);
         self.next_symbol = self.next_symbol.max(check.next_symbol);
         self.world.merge_replay_metadata_from(&check.world);
+        self.storage_load_hooks = std::mem::take(&mut check.storage_load_hooks);
+        self.storage_store_hooks = std::mem::take(&mut check.storage_store_hooks);
+        self.mapping_storage_store_hooks = std::mem::take(&mut check.mapping_storage_store_hooks);
     }
 
-    pub(crate) fn merge_reverted_top_level_effects(&mut self, reverted: &Self) {
-        self.merge_noncommitting_check_constraints(reverted);
-        self.block = reverted.block.clone();
-        self.recorded_logs = reverted.recorded_logs.clone();
-        self.access_record = reverted.access_record.clone();
-        self.expected_revert = reverted.expected_revert.clone();
-        self.assume_no_revert_next_call = reverted.assume_no_revert_next_call.clone();
-        self.expected_emit = reverted.expected_emit.clone();
-        self.expected_calls = reverted.expected_calls.clone();
-        self.expected_creates = reverted.expected_creates.clone();
-        self.call_mocks = reverted.call_mocks.clone();
-        self.function_mocks = reverted.function_mocks.clone();
+    pub(crate) fn take_call_outcome_state(&mut self, child: &mut Self) {
+        self.constraints = std::mem::take(&mut child.constraints);
+        self.next_symbol = child.next_symbol;
+        self.inherit_branch_target_progress(child);
+        self.storage_load_hooks = std::mem::take(&mut child.storage_load_hooks);
+        self.storage_store_hooks = std::mem::take(&mut child.storage_store_hooks);
+        self.mapping_storage_store_hooks = std::mem::take(&mut child.mapping_storage_store_hooks);
+        self.mapping_hook_keccak_preimages =
+            std::mem::take(&mut child.mapping_hook_keccak_preimages);
+        self.recorded_logs = child.recorded_logs.take();
+        self.access_record = child.access_record.take();
+    }
+
+    pub(crate) fn take_reverted_top_level_effects(&mut self, mut reverted: Self) {
+        self.take_noncommitting_check_state(&mut reverted);
+        self.block = reverted.block;
+        self.recorded_logs = reverted.recorded_logs;
+        self.access_record = reverted.access_record;
+        self.expected_revert = reverted.expected_revert;
+        self.assume_no_revert_next_call = reverted.assume_no_revert_next_call;
+        self.expected_emit = reverted.expected_emit;
+        self.expected_calls = reverted.expected_calls;
+        self.expected_creates = reverted.expected_creates;
+        self.call_mocks = reverted.call_mocks;
+        self.function_mocks = reverted.function_mocks;
     }
 
     pub(crate) const fn satisfies_branch_target(&self) -> bool {
@@ -810,6 +861,12 @@ impl PathState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SymbolicStorageHook {
+    pub(crate) callback_target: Address,
+    pub(crate) callback_selector: [u8; 4],
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SymbolicLog {
     topics: Arc<[SymExpr]>,
@@ -845,6 +902,7 @@ impl AccessRecord {
     }
 
     pub(crate) fn write(&mut self, address: Address, slot: SymExpr) {
+        self.read(address, slot.clone());
         Self::push_unique_slot(self.writes.entry(address).or_default(), slot);
     }
 
@@ -1343,8 +1401,6 @@ pub(crate) struct CallFrame {
     pub(crate) pc: usize,
     pub(crate) address: Address,
     pub(crate) address_word: SymExpr,
-    #[allow(dead_code)]
-    pub(crate) code_address: Address,
     pub(crate) storage_address: Address,
     pub(crate) caller: Address,
     pub(crate) caller_word: SymExpr,
@@ -1357,11 +1413,9 @@ pub(crate) struct CallFrame {
 }
 
 impl CallFrame {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         cx: &mut SymCx,
         address: Address,
-        code_address: Address,
         storage_address: Address,
         caller: Address,
         callvalue: SymExpr,
@@ -1372,7 +1426,6 @@ impl CallFrame {
             pc: 0,
             address,
             address_word: SymExpr::constant(cx, address_word(address)),
-            code_address,
             storage_address,
             caller,
             caller_word: SymExpr::constant(cx, address_word(caller)),
@@ -1384,48 +1437,6 @@ impl CallFrame {
             return_data: SymReturnData::empty(cx),
         }
     }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ExternalCallOutcome {
-    pub(crate) status: TopLevelCallStatus,
-    pub(crate) return_data: SymReturnData,
-    pub(crate) state: PathState,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct SequencePath {
-    pub(crate) state: PathState,
-    pub(crate) steps: Vec<SequenceStepTemplate>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct SequenceStepTemplate {
-    pub(crate) sender: Address,
-    pub(crate) address: Address,
-    pub(crate) contract_name: Option<String>,
-    pub(crate) function: Function,
-    pub(crate) calldata: SymbolicCalldata,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct InvariantCheckOutcome {
-    pub(crate) failed: bool,
-    pub(crate) state: PathState,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TopLevelCallStatus {
-    Success,
-    Revert,
-    Failure,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct TopLevelCallOutcome {
-    pub(crate) status: TopLevelCallStatus,
-    pub(crate) return_data: SymReturnData,
-    pub(crate) state: PathState,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1503,8 +1514,9 @@ impl StorageWrite {
     }
 }
 
+/// World data shared copy-on-write by branched paths and snapshots.
 #[derive(Clone, Debug, Default)]
-struct SymbolicWorldSnapshot {
+pub(crate) struct SymbolicWorldState {
     storage: Vec<StorageWrite>,
     transient_storage: Vec<StorageWrite>,
     created_accounts: HashSet<Address>,
@@ -1520,30 +1532,6 @@ struct SymbolicWorldSnapshot {
     zero_init_symbolic_storage: bool,
     symbolic_address_aliases: HashMap<SymExpr, Address>,
     replay_storage_slots: HashMap<Symbol, Vec<SymbolicReplayStorageSlot>>,
-}
-
-impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
-    fn from(world: &SymbolicWorld) -> Self {
-        Self {
-            storage: world.storage.clone(),
-            transient_storage: world.transient_storage.clone(),
-            created_accounts: world.created_accounts.clone(),
-            current_transaction_created_accounts: world
-                .current_transaction_created_accounts
-                .clone(),
-            balances: world.balances.clone(),
-            code_cache: world.code_cache.clone(),
-            nonces: world.nonces.clone(),
-            existing_accounts: world.existing_accounts.clone(),
-            destroyed_accounts: world.destroyed_accounts.clone(),
-            arbitrary_storage_accounts: world.arbitrary_storage_accounts.clone(),
-            arbitrary_storage_copies: world.arbitrary_storage_copies.clone(),
-            arbitrary_storage_all: world.arbitrary_storage_all,
-            zero_init_symbolic_storage: world.zero_init_symbolic_storage,
-            symbolic_address_aliases: world.symbolic_address_aliases.clone(),
-            replay_storage_slots: world.replay_storage_slots.clone(),
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -1554,26 +1542,24 @@ struct SymbolicReplayStorageSlot {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SymbolicWorld {
-    storage: Vec<StorageWrite>,
-    transient_storage: Vec<StorageWrite>,
-    created_accounts: HashSet<Address>,
-    current_transaction_created_accounts: HashSet<Address>,
-    balances: HashMap<Address, SymExpr>,
-    code_cache: HashMap<Address, SymCode>,
-    nonces: HashMap<Address, u64>,
-    existing_accounts: HashSet<Address>,
-    destroyed_accounts: HashSet<Address>,
-    arbitrary_storage_accounts: HashMap<Address, bool>,
-    arbitrary_storage_copies: HashMap<Address, Address>,
-    arbitrary_storage_all: bool,
-    zero_init_symbolic_storage: bool,
-    symbolic_address_aliases: HashMap<SymExpr, Address>,
-    replay_storage_slots: HashMap<Symbol, Vec<SymbolicReplayStorageSlot>>,
-    snapshots: HashMap<U256, SymbolicWorldSnapshot>,
+    state: Arc<SymbolicWorldState>,
+    snapshots: HashMap<U256, Arc<SymbolicWorldState>>,
     next_snapshot_id: u64,
 }
 
+impl Deref for SymbolicWorld {
+    type Target = SymbolicWorldState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
 impl SymbolicWorld {
+    fn state_mut(&mut self) -> &mut SymbolicWorldState {
+        Arc::make_mut(&mut self.state)
+    }
+
     pub(crate) fn is_destroyed(&self, address: Address) -> bool {
         self.destroyed_accounts.contains(&address)
     }
@@ -1589,7 +1575,7 @@ impl SymbolicWorld {
     }
 
     #[cfg(test)]
-    pub(crate) const fn storage_len(&self) -> usize {
+    pub(crate) fn storage_len(&self) -> usize {
         self.storage.len()
     }
 
@@ -1598,9 +1584,10 @@ impl SymbolicWorld {
         self.storage.get(index).map(StorageWrite::value)
     }
 
-    pub(crate) const fn set_storage_layout(&mut self, layout: SymbolicStorageLayout) {
-        self.arbitrary_storage_all = matches!(layout, SymbolicStorageLayout::Generic);
-        self.zero_init_symbolic_storage = matches!(layout, SymbolicStorageLayout::ZeroInit);
+    pub(crate) fn set_storage_layout(&mut self, layout: SymbolicStorageLayout) {
+        let state = self.state_mut();
+        state.arbitrary_storage_all = matches!(layout, SymbolicStorageLayout::Generic);
+        state.zero_init_symbolic_storage = matches!(layout, SymbolicStorageLayout::ZeroInit);
     }
 
     pub(crate) fn sload<FEN: FoundryEvmNetwork>(
@@ -1617,7 +1604,7 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn sstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
-        self.storage.push(StorageWrite::new(address, key, value));
+        self.state_mut().storage.push(StorageWrite::new(address, key, value));
     }
 
     pub(crate) fn tload(&self, cx: &mut SymCx, address: Address, key: SymExpr) -> SymExpr {
@@ -1626,18 +1613,20 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn tstore(&mut self, address: Address, key: SymExpr, value: SymExpr) {
-        self.transient_storage.push(StorageWrite::new(address, key, value));
+        self.state_mut().transient_storage.push(StorageWrite::new(address, key, value));
     }
 
     /// Clears transaction-scoped state at a top-level call boundary.
     pub(crate) fn clear_transaction_scoped_state(&mut self) {
-        self.transient_storage.clear();
-        self.current_transaction_created_accounts.clear();
+        let state = self.state_mut();
+        state.transient_storage.clear();
+        state.current_transaction_created_accounts.clear();
     }
 
     pub(crate) fn mark_current_transaction_created(&mut self, address: Address) {
-        self.created_accounts.insert(address);
-        self.current_transaction_created_accounts.insert(address);
+        let state = self.state_mut();
+        state.created_accounts.insert(address);
+        state.current_transaction_created_accounts.insert(address);
     }
 
     /// Returns whether `address` was created in the current top-level symbolic transaction.
@@ -1646,11 +1635,15 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn enable_arbitrary_storage(&mut self, address: Address, overwrite: bool) {
-        self.arbitrary_storage_accounts.insert(address, overwrite);
+        self.state_mut().arbitrary_storage_accounts.insert(address, overwrite);
     }
 
     pub(crate) fn enable_arbitrary_storage_copy(&mut self, source: Address, target: Address) {
-        self.arbitrary_storage_copies.insert(target, source);
+        self.state_mut().arbitrary_storage_copies.insert(target, source);
+    }
+
+    pub(crate) fn replay_storage_symbols(&self) -> SymbolicVars {
+        self.replay_storage_slots.keys().copied().collect()
     }
 
     pub(crate) fn replay_storage_assignments(
@@ -1696,7 +1689,7 @@ impl SymbolicWorld {
             return address;
         }
         let address = expr.representative_symbolic_address();
-        self.symbolic_address_aliases.insert(expr, address);
+        self.state_mut().symbolic_address_aliases.insert(expr, address);
         address
     }
 
@@ -1709,29 +1702,15 @@ impl SymbolicWorld {
     pub(crate) fn snapshot_state(&mut self) -> U256 {
         let id = U256::from(self.next_snapshot_id);
         self.next_snapshot_id = self.next_snapshot_id.saturating_add(1);
-        self.snapshots.insert(id, SymbolicWorldSnapshot::from(&*self));
+        self.snapshots.insert(id, Arc::clone(&self.state));
         id
     }
 
     pub(crate) fn restore_snapshot(&mut self, id: U256) -> bool {
-        let Some(snapshot) = self.snapshots.get(&id).cloned() else {
+        let Some(snapshot) = self.snapshots.get(&id) else {
             return false;
         };
-        self.storage = snapshot.storage;
-        self.transient_storage = snapshot.transient_storage;
-        self.created_accounts = snapshot.created_accounts;
-        self.current_transaction_created_accounts = snapshot.current_transaction_created_accounts;
-        self.balances = snapshot.balances;
-        self.code_cache = snapshot.code_cache;
-        self.nonces = snapshot.nonces;
-        self.existing_accounts = snapshot.existing_accounts;
-        self.destroyed_accounts = snapshot.destroyed_accounts;
-        self.arbitrary_storage_accounts = snapshot.arbitrary_storage_accounts;
-        self.arbitrary_storage_copies = snapshot.arbitrary_storage_copies;
-        self.arbitrary_storage_all = snapshot.arbitrary_storage_all;
-        self.zero_init_symbolic_storage = snapshot.zero_init_symbolic_storage;
-        self.symbolic_address_aliases = snapshot.symbolic_address_aliases;
-        self.replay_storage_slots = snapshot.replay_storage_slots;
+        self.state = Arc::clone(snapshot);
         true
     }
 
@@ -1845,10 +1824,16 @@ impl SymbolicWorld {
     }
 
     fn record_replay_storage_slot(&mut self, symbol: Symbol, address: Address, slot: U256) {
-        let slots = self.replay_storage_slots.entry(symbol).or_default();
-        if !slots.iter().any(|existing| existing.address == address && existing.slot == slot) {
-            slots.push(SymbolicReplayStorageSlot { address, slot });
+        if self.replay_storage_slots.get(&symbol).is_some_and(|slots| {
+            slots.iter().any(|existing| existing.address == address && existing.slot == slot)
+        }) {
+            return;
         }
+        self.state_mut()
+            .replay_storage_slots
+            .entry(symbol)
+            .or_default()
+            .push(SymbolicReplayStorageSlot { address, slot });
     }
 
     fn merge_replay_metadata_from(&mut self, other: &Self) {
@@ -1857,8 +1842,9 @@ impl SymbolicWorld {
                 self.record_replay_storage_slot(*symbol, slot.address, slot.slot);
             }
         }
+        let state = self.state_mut();
         for (expr, address) in &other.symbolic_address_aliases {
-            self.symbolic_address_aliases.entry(expr.clone()).or_insert(*address);
+            state.symbolic_address_aliases.entry(expr.clone()).or_insert(*address);
         }
     }
 
@@ -1917,10 +1903,12 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn set_balance_word(&mut self, address: Address, value: SymExpr) {
-        self.balances.insert(address, value.clone());
-        if !value.as_const().is_some_and(|value| value.is_zero()) {
-            self.existing_accounts.insert(address);
-            self.destroyed_accounts.remove(&address);
+        let account_exists = !value.as_const().is_some_and(|value| value.is_zero());
+        let state = self.state_mut();
+        state.balances.insert(address, value);
+        if account_exists {
+            state.existing_accounts.insert(address);
+            state.destroyed_accounts.remove(&address);
         }
     }
 
@@ -1962,10 +1950,11 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn set_nonce(&mut self, address: Address, nonce: u64) {
-        self.nonces.insert(address, nonce);
+        let state = self.state_mut();
+        state.nonces.insert(address, nonce);
         if nonce != 0 {
-            self.existing_accounts.insert(address);
-            self.destroyed_accounts.remove(&address);
+            state.existing_accounts.insert(address);
+            state.destroyed_accounts.remove(&address);
         }
     }
 
@@ -1992,9 +1981,10 @@ impl SymbolicWorld {
     }
 
     pub(crate) fn install_code(&mut self, address: Address, code: SymCode) {
-        self.code_cache.insert(address, code);
-        self.existing_accounts.insert(address);
-        self.destroyed_accounts.remove(&address);
+        let state = self.state_mut();
+        state.code_cache.insert(address, code);
+        state.existing_accounts.insert(address);
+        state.destroyed_accounts.remove(&address);
     }
 
     /// Implements legacy `SELFDESTRUCT` semantics.
@@ -2012,18 +2002,25 @@ impl SymbolicWorld {
                 SymExpr::binop(cx, SymBinOp::Add, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
         }
-        self.balances.insert(address, SymExpr::zero(cx));
-        self.code_cache.insert(address, SymCode::empty(cx));
-        if !self.nonces.contains_key(&address) {
-            let nonce = self.nonce(executor, address)?;
-            self.nonces.insert(address, nonce);
+        let nonce = if self.nonces.contains_key(&address) {
+            None
+        } else {
+            Some(self.nonce(executor, address)?)
+        };
+        let zero = SymExpr::zero(cx);
+        let empty_code = SymCode::empty(cx);
+        let state = self.state_mut();
+        state.balances.insert(address, zero);
+        state.code_cache.insert(address, empty_code);
+        if let Some(nonce) = nonce {
+            state.nonces.insert(address, nonce);
         }
-        self.storage.retain(|write| write.address() != address);
-        self.transient_storage.retain(|write| write.address() != address);
-        self.created_accounts.remove(&address);
-        self.current_transaction_created_accounts.remove(&address);
-        self.existing_accounts.remove(&address);
-        self.destroyed_accounts.insert(address);
+        state.storage.retain(|write| write.address() != address);
+        state.transient_storage.retain(|write| write.address() != address);
+        state.created_accounts.remove(&address);
+        state.current_transaction_created_accounts.remove(&address);
+        state.existing_accounts.remove(&address);
+        state.destroyed_accounts.insert(address);
         Ok(())
     }
 
@@ -2043,7 +2040,8 @@ impl SymbolicWorld {
             let beneficiary_balance =
                 SymExpr::binop(cx, SymBinOp::Add, beneficiary_balance, balance);
             self.set_balance_word(beneficiary, beneficiary_balance);
-            self.balances.insert(address, SymExpr::zero(cx));
+            let zero = SymExpr::zero(cx);
+            self.state_mut().balances.insert(address, zero);
         }
     }
 
@@ -2070,7 +2068,7 @@ impl SymbolicWorld {
             || self.nonces.get(&address).is_some_and(|nonce| *nonce != 0)
             || self.code_cache.get(&address).is_some_and(|code| !code.is_empty())
         {
-            self.existing_accounts.insert(address);
+            self.state_mut().existing_accounts.insert(address);
             return Ok(true);
         }
 
@@ -2083,15 +2081,17 @@ impl SymbolicWorld {
         };
 
         if account.nonce != 0 || !account.balance.is_zero() {
-            self.existing_accounts.insert(address);
+            self.state_mut().existing_accounts.insert(address);
             return Ok(true);
         }
 
         if let Some(code) = account.code.as_ref()
             && !code.is_empty()
         {
-            self.code_cache.insert(address, SymCode::from_bytecode(cx, code));
-            self.existing_accounts.insert(address);
+            let code = SymCode::from_bytecode(cx, code);
+            let state = self.state_mut();
+            state.code_cache.insert(address, code);
+            state.existing_accounts.insert(address);
             return Ok(true);
         }
 
@@ -2126,13 +2126,13 @@ impl SymbolicWorld {
                 || !account.balance.is_zero()
                 || account.code.as_ref().is_some_and(|code| !code.is_empty()))
         {
-            self.existing_accounts.insert(address);
+            self.state_mut().existing_accounts.insert(address);
         }
         let bytecode = account.as_ref().and_then(|account| account.code.as_ref());
         let code = bytecode
             .map(|bytecode| SymCode::from_bytecode(cx, bytecode))
             .unwrap_or_else(|| SymCode::empty(cx));
-        self.code_cache.insert(address, code.clone());
+        self.state_mut().code_cache.insert(address, code.clone());
         Ok(code)
     }
 
@@ -2280,6 +2280,172 @@ fn symbolic_storage_symbol(cx: &mut SymCx, address: Address, key: &SymExpr) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reverted_top_level_effects_preserve_storage_hook_registrations() {
+        let mut cx = SymCx::new();
+        let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+        let mut reverted = state.clone();
+        let target = Address::repeat_byte(0x11);
+        let hook = SymbolicStorageHook {
+            callback_target: Address::repeat_byte(0x22),
+            callback_selector: [0x12, 0x34, 0x56, 0x78],
+        };
+        reverted.storage_load_hooks.insert(target, hook);
+        reverted.storage_store_hooks.insert(target, hook);
+        reverted.mapping_storage_store_hooks.insert((target, U256::from(2)), hook);
+
+        state.take_reverted_top_level_effects(reverted);
+
+        assert_eq!(state.storage_load_hooks.get(&target), Some(&hook));
+        assert_eq!(state.storage_store_hooks.get(&target), Some(&hook));
+        assert_eq!(state.mapping_storage_store_hooks.get(&(target, U256::from(2))), Some(&hook));
+    }
+
+    #[test]
+    fn mapping_hook_provenance_is_account_and_path_local() {
+        let mut cx = SymCx::new();
+        let state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+        let account = Address::repeat_byte(0x11);
+        let other = Address::repeat_byte(0x22);
+        let hash = SymExpr::constant(&mut cx, U256::from(7));
+        let preimage = vec![SymExpr::zero(&mut cx); 64].into();
+        let mut branch = state.clone();
+        branch.mapping_hook_keccak_preimages.insert((account, hash.clone()), preimage);
+
+        assert!(branch.mapping_hook_keccak_preimages.contains_key(&(account, hash.clone())));
+        assert!(!branch.mapping_hook_keccak_preimages.contains_key(&(other, hash.clone())));
+        assert!(!state.mapping_hook_keccak_preimages.contains_key(&(account, hash)));
+    }
+
+    #[test]
+    fn cloned_world_shares_state_until_mutated() {
+        let mut cx = SymCx::new();
+        let address = Address::repeat_byte(0x11);
+        let mut world = SymbolicWorld::default();
+        world.sstore(
+            address,
+            SymExpr::constant(&mut cx, U256::from(1)),
+            SymExpr::constant(&mut cx, U256::from(2)),
+        );
+        let mut branch = world.clone();
+
+        assert!(Arc::ptr_eq(&world.state, &branch.state));
+        branch.sstore(
+            address,
+            SymExpr::constant(&mut cx, U256::from(3)),
+            SymExpr::constant(&mut cx, U256::from(4)),
+        );
+
+        assert!(!Arc::ptr_eq(&world.state, &branch.state));
+        assert_eq!(world.storage_len(), 1);
+        assert_eq!(branch.storage_len(), 2);
+    }
+
+    #[test]
+    fn noncommitting_checks_preserve_new_storage_hook_registrations() {
+        let mut cx = SymCx::new();
+        let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+        let mut check = state.clone();
+        let target = Address::repeat_byte(0x11);
+        let hook = SymbolicStorageHook {
+            callback_target: Address::repeat_byte(0x22),
+            callback_selector: [0x12, 0x34, 0x56, 0x78],
+        };
+        check.storage_load_hooks.insert(target, hook);
+        check.storage_store_hooks.insert(target, hook);
+        check.mapping_storage_store_hooks.insert((target, U256::from(2)), hook);
+
+        state.take_noncommitting_check_state(&mut check);
+
+        assert_eq!(state.storage_load_hooks.get(&target), Some(&hook));
+        assert_eq!(state.storage_store_hooks.get(&target), Some(&hook));
+        assert_eq!(state.mapping_storage_store_hooks.get(&(target, U256::from(2))), Some(&hook));
+    }
+
+    #[test]
+    fn noncommitting_checks_preserve_replaced_storage_hook_registrations() {
+        let mut cx = SymCx::new();
+        let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+        let mut check = state.clone();
+        let target = Address::repeat_byte(0x11);
+        let old_hook = SymbolicStorageHook {
+            callback_target: Address::repeat_byte(0x33),
+            callback_selector: [0x87, 0x65, 0x43, 0x21],
+        };
+        let hook = SymbolicStorageHook {
+            callback_target: Address::repeat_byte(0x22),
+            callback_selector: [0x12, 0x34, 0x56, 0x78],
+        };
+        state.storage_load_hooks.insert(target, old_hook);
+        state.storage_store_hooks.insert(target, old_hook);
+        state.mapping_storage_store_hooks.insert((target, U256::from(2)), old_hook);
+        check.storage_load_hooks.insert(target, hook);
+        check.storage_store_hooks.insert(target, hook);
+        check.mapping_storage_store_hooks.insert((target, U256::from(2)), hook);
+
+        state.take_noncommitting_check_state(&mut check);
+
+        assert_eq!(state.storage_load_hooks.get(&target), Some(&hook));
+        assert_eq!(state.storage_store_hooks.get(&target), Some(&hook));
+        assert_eq!(state.mapping_storage_store_hooks.get(&(target, U256::from(2))), Some(&hook));
+    }
+
+    #[test]
+    fn storage_hook_child_does_not_inherit_instrumentation_state() {
+        let mut cx = SymCx::new();
+        let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
+        state.set_branch_target(Some(SymbolicBranchTarget::new(
+            Address::ZERO,
+            0,
+            opcode::EQ,
+            false,
+        )));
+        state.recorded_logs = Some(Vec::new());
+        state.access_record = Some(AccessRecord::default());
+        state.expected_revert = Some(ExpectedRevert::new(ExpectedRevertData::Any, None, 1));
+        state.assume_no_revert_next_call = Some(AssumeNoRevert::Any);
+        state.expected_emit =
+            Some(ExpectedEmit::new(ExpectedEmitChecks::default_non_anonymous(), None, 1));
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+        state.expected_calls.push(ExpectedCall::new(
+            callee.clone(),
+            None,
+            None,
+            None,
+            data.clone(),
+            None,
+        ));
+        state.expected_creates.push(ExpectedCreate::new(
+            Vec::new(),
+            callee.clone(),
+            CreateKind::Create,
+        ));
+        state.call_mocks.push(CallMock::new(
+            callee.clone(),
+            None,
+            data.clone(),
+            vec![SymReturnData::empty(&mut cx)],
+            false,
+        ));
+        state.function_mocks.push(FunctionMock::new(callee, Address::ZERO, data));
+        let frame = state.frame.clone();
+
+        let child = state.storage_hook_child(frame);
+
+        assert!(child.storage_hook_active);
+        assert!(child.branch_target().is_none());
+        assert!(child.recorded_logs.is_none());
+        assert!(child.access_record.is_none());
+        assert!(child.expected_revert.is_none());
+        assert!(child.assume_no_revert_next_call.is_none());
+        assert!(child.expected_emit.is_none());
+        assert!(child.expected_calls.is_empty());
+        assert!(child.expected_creates.is_empty());
+        assert!(child.call_mocks.is_empty());
+        assert!(child.function_mocks.is_empty());
+    }
 
     #[test]
     fn copied_arbitrary_storage_uses_source_symbol_and_replays_both_accounts() {

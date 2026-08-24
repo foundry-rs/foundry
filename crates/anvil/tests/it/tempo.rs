@@ -17,25 +17,33 @@ use std::{
 
 #[cfg(feature = "cli")]
 use crate::utils::http_provider;
-use alloy_consensus::{BlockHeader, Sealable, Typed2718};
-use alloy_eips::eip2718::Encodable2718;
+use alloy_consensus::{
+    BlockHeader, Eip658Value, Receipt, Sealable, TxEip1559, Typed2718,
+    proofs::{calculate_receipt_root, calculate_transaction_root},
+    transaction::{SignableTransaction, SignerRecoverable},
+};
+use alloy_eips::eip2718::{Decodable2718, Encodable2718};
 use alloy_genesis::Genesis;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, aliases::U96, keccak256};
+use alloy_primitives::{
+    Address, B256, Bytes, Signature, TxKind, U256, address, aliases::U96, keccak256,
+};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rlp::Decodable;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{SolError, SolEvent, SolValue, sol};
+use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue, sol};
 use anvil::{NodeConfig, spawn};
 use anvil_core::eth::block::Block;
+use foundry_common::FoundryTransactionBuilder;
 use foundry_evm::core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, ITIP20ChannelReserve, PATH_USD_ADDRESS,
     TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
     active_tempo_precompile_addresses,
 };
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope, TempoTransactionRequest};
 use futures::StreamExt;
 use tempo_alloy::{TempoNetwork, primitives::TempoTxEnvelope, rpc::TempoHeaderResponse};
 use tempo_hardfork::{
@@ -44,15 +52,24 @@ use tempo_hardfork::{
 };
 use tempo_precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, DEFAULT_FEE_TOKEN,
-    RECEIVE_POLICY_GUARD_ADDRESS, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
-    TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
+    NONCE_PRECOMPILE_ADDRESS, RECEIVE_POLICY_GUARD_ADDRESS, STABLECOIN_DEX_ADDRESS,
+    TIP_FEE_MANAGER_ADDRESS, TIP20_CHANNEL_RESERVE_ADDRESS, TIP20_FACTORY_ADDRESS,
+    TIP403_REGISTRY_ADDRESS,
+    account_keychain::{
+        KeyRestrictions, SignatureType as KeychainSignatureType, TokenLimit as KeychainTokenLimit,
+        authorizeKeyCall,
+    },
     current_committee::{CURRENT_COMMITTEE_ADDRESS, ICurrentCommittee},
+    nonce::NonceManager,
     receive_policy_guard::{IReceivePolicyGuard, InboundKind},
     tip403_registry::{ALLOW_ALL_POLICY_ID, ITIP403Registry, REJECT_ALL_POLICY_ID},
 };
 use tempo_primitives::{
     AASigned, TempoHeader, TempoSignature, TempoTransaction,
-    transaction::{Call, KeyAuthorization, PrimitiveSignature, SignatureType},
+    transaction::{
+        Call, FEE_PAYER_SIGNATURE_MARKER, KeyAuthorization, KeychainSignature, PrimitiveSignature,
+        SignatureType, TokenLimit,
+    },
 };
 
 const PATH_USD: Address = PATH_USD_ADDRESS;
@@ -65,6 +82,64 @@ const DEX_MIN_ORDER_AMOUNT: u128 = 100_000_000;
 /// Gas limit for TIP20 transfer calls, including T1+ transaction accounting.
 const TIP20_TRANSFER_GAS: u64 = 1_000_000;
 const T5_PRECOMPILE_GAS: u64 = 10_000_000;
+
+fn tempo_transfer(recipient: Address, amount: U256) -> Call {
+    Call {
+        to: TxKind::Call(PATH_USD),
+        value: U256::ZERO,
+        input: IERC20::transferCall { to: recipient, amount }.abi_encode().into(),
+    }
+}
+
+fn tempo_call_request(from: Address, calls: impl IntoIterator<Item = Call>) -> serde_json::Value {
+    serde_json::json!({
+        "from": from,
+        "type": "0x76",
+        "gas": "0x1e8480",
+        "calls": calls.into_iter().collect::<Vec<_>>(),
+    })
+}
+
+async fn sponsored_tempo_request(
+    from: Address,
+    chain_id: u64,
+    gas_price: u128,
+    gas_limit: u64,
+    calls: Vec<Call>,
+) -> serde_json::Value {
+    let transaction = TempoTransaction {
+        chain_id,
+        fee_token: Some(ALPHA_USD),
+        max_priority_fee_per_gas: gas_price / 10,
+        max_fee_per_gas: gas_price * 2,
+        gas_limit,
+        calls,
+        access_list: Default::default(),
+        nonce_key: U256::ZERO,
+        nonce: 0,
+        fee_payer_signature: Some(Signature::new(U256::ZERO, U256::ZERO, false)),
+        valid_before: None,
+        valid_after: None,
+        key_authorization: None,
+        tempo_authorization_list: vec![],
+    };
+    let fee_payer_hash = transaction.fee_payer_signature_hash(from);
+    let fee_payer_signature = dev_key(1).sign_hash(&fee_payer_hash).await.unwrap();
+
+    serde_json::json!({
+        "from": from,
+        "type": "0x76",
+        "chainId": transaction.chain_id,
+        "nonceKey": transaction.nonce_key,
+        "nonce": transaction.nonce,
+        "gas": transaction.gas_limit,
+        "maxFeePerGas": transaction.max_fee_per_gas,
+        "maxPriorityFeePerGas": transaction.max_priority_fee_per_gas,
+        "feeToken": transaction.fee_token,
+        "feePayerSignature": fee_payer_signature,
+        "calls": transaction.calls,
+    })
+}
 
 fn assert_tempo_header_fields(header: &TempoHeaderResponse) {
     let inner: &TempoHeader = header.as_ref();
@@ -91,18 +166,13 @@ fn anvil_binary() -> PathBuf {
         return PathBuf::from(path);
     }
 
-    std::env::current_exe()
-        .expect("test executable path")
-        .parent()
-        .and_then(|deps| deps.parent())
-        .expect("target/debug directory")
-        .join("anvil")
+    foundry_test_utils::cargo_profile_dir().join("anvil")
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_tempo_header_by_number() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let provider = handle.http_provider();
     for number in ["0x1", "pending"] {
@@ -122,7 +192,7 @@ async fn tempo_new_heads_subscription_returns_full_header() {
     let subscription = provider.subscribe_blocks().await.unwrap();
     let mut blocks = subscription.into_stream();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let header = blocks.next().await.unwrap();
     assert_tempo_header_fields(&header);
 
@@ -134,8 +204,8 @@ async fn tempo_new_heads_subscription_returns_full_header() {
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_rpc_block_hashes_match_canonical_headers() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
-    api.mine_one().await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
+    api.mine_one().await.unwrap();
 
     let provider = handle.http_provider();
     let mut parent_hash = None;
@@ -170,7 +240,7 @@ async fn tempo_rpc_block_hashes_match_canonical_headers() {
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_rpc_projects_legacy_ethereum_headers() {
     let (source_api, _source_handle) = spawn(NodeConfig::test()).await;
-    source_api.mine_one().await;
+    source_api.mine_one().await.unwrap();
     let state = source_api.serialized_state(false).await.unwrap();
 
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
@@ -187,7 +257,7 @@ async fn tempo_rpc_projects_legacy_ethereum_headers() {
     assert_eq!(header.hash, legacy_hash);
     assert_ne!(header.as_ref().hash_slow(), legacy_hash);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let child: TempoHeaderResponse =
         provider.client().request("eth_getHeaderByNumber", ("0x2",)).await.unwrap();
     assert_eq!(child.parent_hash(), legacy_hash);
@@ -197,7 +267,7 @@ async fn tempo_rpc_projects_legacy_ethereum_headers() {
 #[tokio::test(flavor = "multi_thread")]
 async fn tempo_raw_header_and_block_use_tempo_rlp() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let provider = handle.http_provider();
     let header: TempoHeaderResponse =
@@ -240,7 +310,7 @@ async fn test_tempo_fork_detects_hardfork_from_fork_timestamp() {
     let node_info = api.anvil_node_info().await.unwrap();
     assert_eq!(node_info.hard_fork, "T3");
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -262,7 +332,7 @@ async fn test_tempo_reset_to_fork_uses_fee_manager_beneficiary() {
     .await
     .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -270,6 +340,23 @@ async fn test_tempo_reset_to_fork_uses_fee_manager_beneficiary() {
         .unwrap()
         .unwrap();
     assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_reset_to_memory_restores_genesis_beneficiary() {
+    let (_source_api, source_handle) = spawn(NodeConfig::test()).await;
+    let (api, handle) =
+        spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
+    let provider = handle.http_provider();
+
+    api.mine_one().await.unwrap();
+    let fork_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(fork_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+
+    api.anvil_reset(None).await.unwrap();
+
+    let genesis = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(genesis.header.beneficiary, Address::ZERO);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -286,7 +373,7 @@ async fn test_tempo_reset_to_fork_preserves_explicit_coinbase() {
     .await
     .unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -307,7 +394,7 @@ async fn test_tempo_fork_with_default_genesis_uses_fee_manager_beneficiary() {
     )
     .await;
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -330,7 +417,7 @@ async fn test_tempo_fork_with_loaded_zero_beneficiary_state_uses_fee_manager_ben
     )
     .await;
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -351,7 +438,7 @@ async fn test_tempo_fork_runtime_load_state_uses_fee_manager_beneficiary() {
 
     api.anvil_load_state(Bytes::from(serde_json::to_vec(&state).unwrap())).await.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -359,6 +446,122 @@ async fn test_tempo_fork_runtime_load_state_uses_fee_manager_beneficiary() {
         .unwrap()
         .unwrap();
     assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_forwards_request_extensions() {
+    let (source_api, source_handle) = spawn(NodeConfig::test_tempo()).await;
+    source_api.mine_one().await.unwrap();
+    let source_provider = source_handle.http_provider();
+    let from = source_handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let balance = IERC20::new(PATH_USD, &source_provider).balanceOf(from).call().await.unwrap();
+    let calls = [tempo_transfer(recipient, balance), tempo_transfer(recipient, U256::from(1))];
+    let request = tempo_call_request(from, calls.clone());
+
+    let (_fork_api, fork_handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let provider = fork_handle.http_provider();
+
+    for method in ["eth_call", "eth_estimateGas"] {
+        let error = provider
+            .raw_request::<_, serde_json::Value>(
+                method.into(),
+                serde_json::json!([request.clone(), "0x0"]),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("revert"), "unexpected {method} error: {error}");
+    }
+
+    let access_list = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_createAccessList".into(),
+            serde_json::json!([request.clone(), "0x0"]),
+        )
+        .await
+        .unwrap();
+    assert!(access_list["error"].as_str().is_some_and(|error| error.contains("revert")));
+
+    let payload = serde_json::json!({
+        "blockStateCalls": [{"calls": [request]}],
+        "returnFullTransactions": true,
+    });
+    let simulated = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_simulateV1".into(),
+            serde_json::json!([payload, "0x0"]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(simulated[0]["calls"][0]["status"], "0x0");
+    assert_eq!(simulated[0]["transactions"][0]["calls"], serde_json::to_value(calls).unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_executes_request_extensions_locally() {
+    let (source_api, source_handle) = spawn(NodeConfig::test_tempo()).await;
+    source_api.mine_one().await.unwrap();
+    let source_provider = source_handle.http_provider();
+    let from = source_handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let balance = IERC20::new(PATH_USD, &source_provider).balanceOf(from).call().await.unwrap();
+    let calls = [tempo_transfer(recipient, balance), tempo_transfer(recipient, U256::from(1))];
+    let request = tempo_call_request(from, calls.clone());
+
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let provider = fork_handle.http_provider();
+
+    fork_api.anvil_deal_tip20(from, PATH_USD, balance + U256::from(1)).await.unwrap();
+    fork_api.mine_one().await.unwrap();
+    assert_eq!(
+        IERC20::new(PATH_USD, &source_provider).balanceOf(from).call().await.unwrap(),
+        balance
+    );
+    assert_eq!(
+        IERC20::new(PATH_USD, &provider).balanceOf(from).call().await.unwrap(),
+        balance + U256::from(1)
+    );
+
+    for method in ["eth_call", "eth_estimateGas"] {
+        provider
+            .raw_request::<_, serde_json::Value>(
+                method.into(),
+                serde_json::json!([request.clone(), "latest"]),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("unexpected {method} error: {error}"));
+    }
+
+    let access_list = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_createAccessList".into(),
+            serde_json::json!([request.clone(), "latest"]),
+        )
+        .await
+        .unwrap();
+    assert!(access_list["error"].is_null(), "unexpected access list error: {access_list}");
+
+    let payload = serde_json::json!({
+        "blockStateCalls": [{"calls": [request]}],
+        "returnFullTransactions": true,
+    });
+    provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_simulateV1".into(),
+            serde_json::json!([payload, "latest"]),
+        )
+        .await
+        .unwrap();
 }
 
 sol! {
@@ -882,6 +1085,53 @@ async fn test_tempo_channel_reserve_compute_channel_id_call() {
         )
             .abi_encode(),
     );
+
+    assert_eq!(channel_id, expected);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_call_uses_rpc_simulation_channel_context() {
+    let (_api, handle) =
+        spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
+    let provider = handle.http_provider();
+    let accounts: Vec<_> = handle.dev_accounts().collect();
+    let payer = accounts[0];
+    let payee = accounts[1];
+    let reserve = ITIP20ChannelReserve::new(TIP20_CHANNEL_RESERVE_ADDRESS, &provider);
+    let salt = B256::repeat_byte(0x42);
+    let deposit = U96::from(1_000_000);
+    let open = reserve.open(payee, Address::ZERO, PATH_USD, deposit, salt, Address::ZERO);
+
+    let output = provider
+        .raw_request::<_, Bytes>(
+            "eth_call".into(),
+            (serde_json::json!({
+                "from": payer,
+                "type": "0x76",
+                "gas": "0x989680",
+                "calls": [{
+                    "to": TIP20_CHANNEL_RESERVE_ADDRESS,
+                    "value": "0x0",
+                    "input": open.calldata(),
+                }],
+            }),),
+        )
+        .await
+        .unwrap();
+    let channel_id = B256::abi_decode(&output).unwrap();
+    let expected = reserve
+        .computeChannelId(
+            payer,
+            payee,
+            Address::ZERO,
+            PATH_USD,
+            salt,
+            Address::ZERO,
+            B256::new(*b"TEMPO_RPC_SIMULATION_MPP_CONTEXT"),
+        )
+        .call()
+        .await
+        .unwrap();
 
     assert_eq!(channel_id, expected);
 }
@@ -2032,6 +2282,1371 @@ async fn test_tempo_send_transaction_preserves_calls() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_send_transaction_preserves_signed_identity() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let accounts = handle.dev_accounts().collect::<Vec<_>>();
+    let from = accounts[0];
+    let fee_payer = accounts[1];
+    let calls = vec![
+        Call {
+            to: TxKind::Call(Address::random()),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xde, 0xad]),
+        },
+        Call {
+            to: TxKind::Call(Address::random()),
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0xbe, 0xef]),
+        },
+    ];
+    let nonce_key = U256::from(7);
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let mut expected_tx = TempoTransaction {
+        chain_id: provider.get_chain_id().await.unwrap(),
+        fee_token: Some(ALPHA_USD),
+        max_priority_fee_per_gas: gas_price / 10,
+        max_fee_per_gas: gas_price * 2,
+        gas_limit: 1_000_000,
+        calls: calls.clone(),
+        access_list: Default::default(),
+        nonce_key,
+        nonce: 0,
+        fee_payer_signature: Some(Signature::new(U256::ZERO, U256::ZERO, false)),
+        valid_before: None,
+        valid_after: None,
+        key_authorization: None,
+        tempo_authorization_list: vec![],
+    };
+    let fee_payer_signature =
+        dev_key(1).sign_hash(&expected_tx.fee_payer_signature_hash(from)).await.unwrap();
+    expected_tx.fee_payer_signature = Some(fee_payer_signature);
+    let sender_signature = dev_key(0).sign_hash(&expected_tx.signature_hash()).await.unwrap();
+    let expected_signature =
+        TempoSignature::Primitive(PrimitiveSignature::Secp256k1(sender_signature));
+
+    let hash = provider
+        .raw_request::<_, B256>(
+            "eth_sendTransaction".into(),
+            (serde_json::json!({
+                "from": from,
+                "type": "0x76",
+                "chainId": expected_tx.chain_id,
+                "feeToken": expected_tx.fee_token,
+                "maxPriorityFeePerGas": expected_tx.max_priority_fee_per_gas,
+                "maxFeePerGas": expected_tx.max_fee_per_gas,
+                "gas": expected_tx.gas_limit,
+                "calls": expected_tx.calls,
+                "nonceKey": expected_tx.nonce_key,
+                "nonce": expected_tx.nonce,
+                "feePayerSignature": fee_payer_signature,
+            }),),
+        )
+        .await
+        .unwrap();
+
+    let transaction = provider
+        .raw_request::<_, serde_json::Value>("eth_getTransactionByHash".into(), (hash,))
+        .await
+        .unwrap();
+    let transaction = serde_json::from_value::<AASigned>(transaction).unwrap();
+    let recomputed_hash =
+        *AASigned::new_unhashed(transaction.tx().clone(), transaction.signature().clone()).hash();
+
+    assert_eq!(*transaction.hash(), hash);
+    assert_eq!(recomputed_hash, hash);
+    assert_eq!(transaction.tx().calls, calls);
+    assert_eq!(transaction.tx().nonce_key, nonce_key);
+    assert_eq!(transaction.tx().nonce, 0);
+    assert_eq!(transaction.signature(), &expected_signature);
+    assert_eq!(transaction.recover_signer().unwrap(), from);
+    assert_eq!(transaction.tx().fee_payer_signature, Some(fee_payer_signature));
+    assert_eq!(transaction.tx().recover_fee_payer(from).unwrap(), fee_payer);
+}
+
+/// Builds a sender-signed Tempo AA PathUSD transfer that requests sponsorship through the fee
+/// payer signature marker.
+async fn sponsorship_requested_transfer(
+    chain_id: u64,
+    gas_price: u128,
+    sender_index: u32,
+    recipient: Address,
+    amount: U256,
+    fee_token: Option<Address>,
+    nonce: u64,
+) -> AASigned {
+    let tempo_tx = TempoTransaction {
+        chain_id,
+        fee_token,
+        max_priority_fee_per_gas: gas_price / 10,
+        max_fee_per_gas: gas_price * 2,
+        gas_limit: TIP20_TRANSFER_GAS,
+        calls: vec![tempo_transfer(recipient, amount)],
+        access_list: Default::default(),
+        nonce_key: U256::ZERO,
+        nonce,
+        fee_payer_signature: Some(FEE_PAYER_SIGNATURE_MARKER),
+        valid_before: None,
+        valid_after: None,
+        key_authorization: None,
+        tempo_authorization_list: vec![],
+    };
+    let signature = dev_key(sender_index).sign_hash(&tempo_tx.signature_hash()).await.unwrap();
+    AASigned::new_unhashed(
+        tempo_tx,
+        TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
+    )
+}
+
+/// Encodes a Tempo AA transaction the way fee payer service clients submit it: the fee payer
+/// signature field carries the `0x00` placeholder and the fee token is omitted.
+fn fee_payer_service_encoded(tx: &AASigned) -> Bytes {
+    let mut buf = Vec::new();
+    tx.encode_for_fee_payer_service(&mut buf);
+    buf.into()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_sign_raw_transaction_sponsors_transaction() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let sender = accounts[0];
+    let sponsor = *accounts.last().unwrap();
+    let recipient = Address::random();
+    let amount = U256::from(100_000);
+
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let unsigned =
+        sponsorship_requested_transfer(chain_id, gas_price, 0, recipient, amount, None, 0).await;
+
+    let signed_raw = provider
+        .raw_request::<_, Bytes>(
+            "eth_signRawTransaction".into(),
+            (fee_payer_service_encoded(&unsigned),),
+        )
+        .await
+        .unwrap();
+
+    let TempoTxEnvelope::AA(signed) =
+        TempoTxEnvelope::decode_2718(&mut signed_raw.as_ref()).unwrap()
+    else {
+        panic!("expected a Tempo AA transaction");
+    };
+    assert_eq!(signed.signature(), unsigned.signature(), "sender signature must be preserved");
+    assert_eq!(signed.tx().calls, unsigned.tx().calls);
+    assert_eq!(signed.tx().fee_token, Some(PATH_USD), "sponsor pays with its stored fee token");
+    assert_eq!(signed.recover_signer().unwrap(), sender);
+    assert_eq!(signed.tx().recover_fee_payer(sender).unwrap(), sponsor);
+
+    // The returned transaction is fully signed and broadcasts through the regular path.
+    let token = IERC20::new(PATH_USD, &provider);
+    let sender_before = token.balanceOf(sender).call().await.unwrap();
+    let sponsor_before = token.balanceOf(sponsor).call().await.unwrap();
+
+    let receipt =
+        provider.send_raw_transaction(&signed_raw).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status(), "sponsored transaction should succeed");
+
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), amount);
+    assert_eq!(
+        token.balanceOf(sender).call().await.unwrap(),
+        sender_before - amount,
+        "sender must only pay the transfer amount"
+    );
+    assert!(
+        token.balanceOf(sponsor).call().await.unwrap() < sponsor_before,
+        "sponsor must pay the transaction fee"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_send_raw_transaction_auto_sponsors_placeholder() {
+    let sponsor = dev_key(1).address();
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_tempo_fee_payer(Some(sponsor))).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let amount = U256::from(50_000);
+
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+
+    let token = IERC20::new(PATH_USD, &provider);
+    let sender_before = token.balanceOf(sender).call().await.unwrap();
+    let sponsor_token = IERC20::new(BETA_USD, &provider);
+    let sponsor_before = sponsor_token.balanceOf(sponsor).call().await.unwrap();
+
+    // Sign-and-relay mode: the placeholder-marked raw transaction is sponsored on submission.
+    let unsigned =
+        sponsorship_requested_transfer(chain_id, gas_price, 0, recipient, amount, None, 0).await;
+    let receipt = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_sendRawTransactionSync".into(),
+            (fee_payer_service_encoded(&unsigned),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipt["status"], "0x1", "unexpected receipt: {receipt}");
+
+    let hash: B256 = serde_json::from_value(receipt["transactionHash"].clone()).unwrap();
+    let transaction = provider
+        .raw_request::<_, serde_json::Value>("eth_getTransactionByHash".into(), (hash,))
+        .await
+        .unwrap();
+    let transaction = serde_json::from_value::<AASigned>(transaction).unwrap();
+    assert_eq!(transaction.recover_signer().unwrap(), sender);
+    assert_eq!(transaction.tx().recover_fee_payer(sender).unwrap(), sponsor);
+    // The configured sponsor (dev account 1) pays with its stored fee token, BetaUSD.
+    assert_eq!(transaction.tx().fee_token, Some(BETA_USD));
+
+    // The same works for a placeholder signature in the standard encoding.
+    let unsigned =
+        sponsorship_requested_transfer(chain_id, gas_price, 0, recipient, amount, None, 1).await;
+    let receipt = provider
+        .send_raw_transaction(&TempoTxEnvelope::AA(unsigned).encoded_2718())
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status(), "sponsored transaction should succeed");
+
+    assert_eq!(token.balanceOf(recipient).call().await.unwrap(), amount * U256::from(2));
+    assert_eq!(
+        token.balanceOf(sender).call().await.unwrap(),
+        sender_before - amount * U256::from(2),
+        "sender must only pay the transfer amounts"
+    );
+    assert!(
+        sponsor_token.balanceOf(sponsor).call().await.unwrap() < sponsor_before,
+        "sponsor must pay the transaction fees"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_sign_raw_transaction_preserves_fee_token() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let sender = handle.dev_accounts().next().unwrap();
+
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    // The standard encoding keeps the sender's fee token choice, which the sponsor must honor.
+    let unsigned = sponsorship_requested_transfer(
+        chain_id,
+        gas_price,
+        0,
+        Address::random(),
+        U256::from(1),
+        Some(ALPHA_USD),
+        0,
+    )
+    .await;
+
+    let signed_raw = provider
+        .raw_request::<_, Bytes>(
+            "eth_signRawTransaction".into(),
+            (Bytes::from(TempoTxEnvelope::AA(unsigned).encoded_2718()),),
+        )
+        .await
+        .unwrap();
+
+    let TempoTxEnvelope::AA(signed) =
+        TempoTxEnvelope::decode_2718(&mut signed_raw.as_ref()).unwrap()
+    else {
+        panic!("expected a Tempo AA transaction");
+    };
+    assert_eq!(signed.tx().fee_token, Some(ALPHA_USD));
+    assert_eq!(
+        signed.tx().recover_fee_payer(sender).unwrap(),
+        dev_key(9).address(),
+        "default sponsor is the last dev account"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_sign_raw_transaction_rejects_invalid_requests() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let recipient = Address::random();
+
+    // The sponsor must not equal the transaction sender (the default sponsor is account 9).
+    let from_sponsor =
+        sponsorship_requested_transfer(chain_id, gas_price, 9, recipient, U256::from(1), None, 0)
+            .await;
+    let err = provider
+        .raw_request::<_, Bytes>(
+            "eth_signRawTransaction".into(),
+            (fee_payer_service_encoded(&from_sponsor),),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("must not equal the transaction sender"),
+        "unexpected error: {err}"
+    );
+
+    // Transactions that already carry a real fee payer signature are rejected.
+    let mut sponsored =
+        sponsorship_requested_transfer(chain_id, gas_price, 0, recipient, U256::from(1), None, 0)
+            .await;
+    let (mut tx, signature, _) = sponsored.into_parts();
+    let sender = dev_key(0).address();
+    tx.fee_payer_signature =
+        Some(dev_key(2).sign_hash(&tx.fee_payer_signature_hash(sender)).await.unwrap());
+    sponsored = tx.into_signed(signature);
+    let err = provider
+        .raw_request::<_, Bytes>(
+            "eth_signRawTransaction".into(),
+            (Bytes::from(TempoTxEnvelope::AA(sponsored).encoded_2718()),),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("already fee-payer signed"), "unexpected error: {err}");
+
+    // Transactions signed without the sponsorship placeholder are rejected: the sender signature
+    // commits to whether a fee payer is present, so sponsoring them would invalidate it.
+    let unsponsored =
+        sponsorship_requested_transfer(chain_id, gas_price, 0, recipient, U256::from(1), None, 0)
+            .await;
+    let (mut tx, signature, _) = unsponsored.into_parts();
+    tx.fee_payer_signature = None;
+    let unsponsored = tx.into_signed(signature);
+    let err = provider
+        .raw_request::<_, Bytes>(
+            "eth_signRawTransaction".into(),
+            (Bytes::from(TempoTxEnvelope::AA(unsponsored).encoded_2718()),),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("does not request sponsorship"), "unexpected error: {err}");
+
+    // Non-Tempo transactions cannot be fee-payer signed.
+    let eip1559 = TxEip1559 {
+        chain_id,
+        nonce: 0,
+        gas_limit: 21_000,
+        max_fee_per_gas: gas_price * 2,
+        max_priority_fee_per_gas: gas_price / 10,
+        to: TxKind::Call(recipient),
+        ..Default::default()
+    };
+    let signature = dev_key(0).sign_hash(&eip1559.signature_hash()).await.unwrap();
+    let raw = FoundryTxEnvelope::Eip1559(eip1559.into_signed(signature)).encoded_2718();
+    let err = provider
+        .raw_request::<_, Bytes>("eth_signRawTransaction".into(), (Bytes::from(raw),))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("only Tempo (0x76) transactions"), "unexpected error: {err}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_sign_raw_transaction_unsupported_without_tempo() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let err = provider
+        .raw_request::<_, Bytes>("eth_signRawTransaction".into(), (Bytes::from_static(&[0x76]),))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Not implemented"), "unexpected error: {err}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_call_executes_all_calls() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let token = IERC20::new(PATH_USD, &provider);
+    let balance = token.balanceOf(from).call().await.unwrap();
+
+    provider
+        .raw_request::<_, Bytes>(
+            "eth_call".into(),
+            (tempo_call_request(from, [tempo_transfer(recipient, U256::from(1))]),),
+        )
+        .await
+        .unwrap();
+
+    let err = provider
+        .raw_request::<_, Bytes>(
+            "eth_call".into(),
+            (tempo_call_request(
+                from,
+                [tempo_transfer(recipient, balance), tempo_transfer(recipient, U256::from(1))],
+            ),),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("revert"), "unexpected error: {err}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fields_do_not_change_ethereum_call_classification() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+
+    provider
+        .raw_request::<_, Bytes>(
+            "eth_call".into(),
+            (serde_json::json!({
+                "from": from,
+                "to": Address::random(),
+                "calls": [],
+            }),),
+        )
+        .await
+        .unwrap();
+
+    let error = provider
+        .raw_request::<_, Bytes>(
+            "eth_call".into(),
+            (serde_json::json!({
+                "from": from,
+                "to": Address::random(),
+                "type": "0x76",
+            }),),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("tempo transaction received"), "unexpected error: {error}");
+
+    let request = serde_json::json!({
+        "from": from,
+        "type": "0x76",
+        "gas": "0x1e8480",
+        "calls": [{
+            "to": Address::random(),
+            "value": "0x0",
+            "input": "0x",
+        }],
+    });
+    for (method, params) in [
+        ("eth_signTransaction", serde_json::json!([request.clone()])),
+        ("eth_fillTransaction", serde_json::json!([request])),
+    ] {
+        let error =
+            provider.raw_request::<_, serde_json::Value>(method.into(), params).await.unwrap_err();
+        assert!(
+            error.to_string().contains("tempo transaction received"),
+            "unexpected {method} error: {error}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fill_preserves_serialized_non_aa_transaction_type() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let request = TempoTransactionRequest {
+        inner: TransactionRequest::default()
+            .from(from)
+            .to(Address::random())
+            .with_gas_limit(21_000)
+            .with_max_fee_per_gas(1_000_000_000)
+            .with_max_priority_fee_per_gas(1_000_000),
+        ..Default::default()
+    };
+    let request = serde_json::to_value(request).unwrap();
+    assert!(request["feeToken"].is_null());
+    assert_eq!(request["calls"], serde_json::json!([]));
+
+    let filled = provider
+        .raw_request::<_, serde_json::Value>("eth_fillTransaction".into(), (request,))
+        .await
+        .unwrap();
+
+    assert_eq!(filled["tx"]["type"], "0x2");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_rpc_rejects_malformed_extension_fields() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let malformed_fields = [
+        ("calls", serde_json::json!("not-an-array")),
+        ("nonceKey", serde_json::json!("not-a-quantity")),
+        ("validBefore", serde_json::json!("not-a-quantity")),
+        ("validAfter", serde_json::json!(-1)),
+        ("feePayerSignature", serde_json::json!("not-a-signature")),
+    ];
+
+    for (field, value) in malformed_fields {
+        let mut request = serde_json::json!({
+            "from": from,
+            "type": "0x76",
+            "gas": "0x1e8480",
+            "calls": [{"to": Address::random(), "value": "0x0", "input": "0x"}],
+        });
+        request[field] = value;
+        let error =
+            provider.raw_request::<_, Bytes>("eth_call".into(), (request,)).await.unwrap_err();
+        assert!(!error.to_string().is_empty(), "{field} unexpectedly succeeded");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_call_many_executes_calls() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let token = IERC20::new(PATH_USD, &provider);
+    let balance = token.balanceOf(from).call().await.unwrap();
+    let request = tempo_call_request(
+        from,
+        [tempo_transfer(recipient, balance), tempo_transfer(recipient, U256::from(1))],
+    );
+
+    let response = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_callMany".into(),
+            (serde_json::json!([{"transactions": [request]}]),),
+        )
+        .await
+        .unwrap();
+
+    assert!(response[0][0]["error"].as_str().is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_call_many_distinguishes_expiring_nonce_transactions() {
+    for hardfork in [TempoHardfork::T1, TempoHardfork::T1B] {
+        let (_api, handle) = spawn(
+            NodeConfig::test_tempo()
+                .with_hardfork(Some(hardfork.into()))
+                .with_genesis_timestamp(Some(1u64)),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let from = handle.dev_accounts().next().unwrap();
+        let request = |target| {
+            serde_json::json!({
+                "from": from,
+                "type": "0x76",
+                "nonceKey": U256::MAX,
+                "gas": "0x1e8480",
+                "validBefore": 25,
+                "calls": [{"to": target, "value": "0x0", "input": "0x"}],
+            })
+        };
+
+        let response = provider
+            .raw_request::<_, serde_json::Value>(
+                "eth_callMany".into(),
+                (serde_json::json!([{
+                    "transactions": [request(Address::random()), request(Address::random())],
+                }]),),
+            )
+            .await
+            .unwrap();
+
+        assert!(response[0][0]["error"].is_null(), "{hardfork:?}: {response}");
+        assert!(response[0][1]["error"].is_null(), "{hardfork:?}: {response}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_trace_call_many_executes_calls() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let token = IERC20::new(PATH_USD, &provider);
+    let balance = token.balanceOf(from).call().await.unwrap();
+    let request = tempo_call_request(
+        from,
+        [tempo_transfer(recipient, balance), tempo_transfer(recipient, U256::from(1))],
+    );
+
+    let response = provider
+        .raw_request::<_, serde_json::Value>(
+            "trace_callMany".into(),
+            (serde_json::json!([[request, ["trace"]]]), "latest"),
+        )
+        .await
+        .unwrap();
+
+    assert!(
+        response[0]["trace"]
+            .as_array()
+            .is_some_and(|traces| traces.iter().any(|trace| !trace["error"].is_null()))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_trace_call_many_distinguishes_expiring_nonce_transactions() {
+    for hardfork in [TempoHardfork::T1, TempoHardfork::T1B] {
+        let (_api, handle) = spawn(
+            NodeConfig::test_tempo()
+                .with_hardfork(Some(hardfork.into()))
+                .with_genesis_timestamp(Some(1u64)),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let from = handle.dev_accounts().next().unwrap();
+        let request = |target| {
+            serde_json::json!({
+                "from": from,
+                "type": "0x76",
+                "nonceKey": U256::MAX,
+                "gas": "0x1e8480",
+                "validBefore": 25,
+                "calls": [{"to": target, "value": "0x0", "input": "0x"}],
+            })
+        };
+
+        let response = provider
+            .raw_request::<_, serde_json::Value>(
+                "trace_callMany".into(),
+                (
+                    serde_json::json!([
+                        [request(Address::random()), ["trace"]],
+                        [request(Address::random()), ["trace"]],
+                    ]),
+                    "latest",
+                ),
+            )
+            .await
+            .unwrap();
+
+        let results = response.as_array().unwrap();
+        assert_eq!(results.len(), 2, "{hardfork:?}: {response}");
+        for result in results {
+            let traces = result["trace"].as_array().unwrap();
+            assert!(!traces.is_empty(), "{hardfork:?}: {response}");
+            assert!(
+                traces.iter().all(|trace| trace["error"].is_null()),
+                "{hardfork:?}: {response}"
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_call_supports_top_level_create() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+
+    let output = provider
+        .raw_request::<_, Bytes>(
+            "eth_call".into(),
+            (serde_json::json!({
+                "from": from,
+                "type": "0x76",
+                "gas": "0xf4240",
+                "data": "0x602a5f526001601ff3",
+            }),),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(output, Bytes::from_static(&[0x2a]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_executes_and_returns_the_same_batch() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let calls =
+        [tempo_transfer(recipient, U256::from(1)), tempo_transfer(recipient, U256::from(2))];
+    let payload = serde_json::json!({
+        "blockStateCalls": [{
+            "calls": [tempo_call_request(from, calls.clone())],
+        }],
+        "returnFullTransactions": true,
+    });
+
+    let response = provider
+        .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
+        .await
+        .unwrap();
+    assert_eq!(response[0]["calls"][0]["status"], "0x1");
+    assert_eq!(response[0]["calls"][0]["logs"].as_array().unwrap().len(), 2);
+    assert_eq!(response[0]["transactions"][0]["type"], "0x76");
+    assert_eq!(response[0]["transactions"][0]["calls"], serde_json::to_value(calls).unwrap());
+
+    let transaction: AASigned =
+        serde_json::from_value(response[0]["transactions"][0].clone()).unwrap();
+    let transaction_hash = *transaction.hash();
+    assert_eq!(response[0]["transactions"][0]["hash"], serde_json::json!(transaction_hash));
+    assert!(
+        response[0]["calls"][0]["logs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|log| { log["transactionHash"] == serde_json::json!(transaction_hash) })
+    );
+
+    let transactions_root = calculate_transaction_root(&[FoundryTxEnvelope::Tempo(transaction)]);
+    assert_eq!(response[0]["transactionsRoot"], serde_json::json!(transactions_root));
+
+    let cumulative_gas_used = u64::from_str_radix(
+        response[0]["calls"][0]["gasUsed"].as_str().unwrap().trim_start_matches("0x"),
+        16,
+    )
+    .unwrap();
+    let logs = serde_json::from_value::<Vec<alloy_rpc_types::Log>>(
+        response[0]["calls"][0]["logs"].clone(),
+    )
+    .unwrap()
+    .into_iter()
+    .map(|log| log.inner)
+    .collect();
+    let receipt = FoundryReceiptEnvelope::Tempo(
+        Receipt { status: Eip658Value::Eip658(true), cumulative_gas_used, logs }.with_bloom(),
+    );
+    assert_eq!(response[0]["receiptsRoot"], serde_json::json!(calculate_receipt_root(&[receipt])));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_reverted_batch_discards_logs() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let balance = IERC20::new(PATH_USD, &provider).balanceOf(from).call().await.unwrap();
+    let reverted = tempo_call_request(
+        from,
+        [tempo_transfer(recipient, balance), tempo_transfer(recipient, U256::from(1))],
+    );
+    let succeeds = tempo_call_request(from, [tempo_transfer(recipient, U256::from(1))]);
+    let payload = serde_json::json!({
+        "blockStateCalls": [{"calls": [reverted, succeeds]}],
+    });
+
+    let response = provider
+        .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
+        .await
+        .unwrap();
+    assert_eq!(response[0]["calls"][0]["status"], "0x0");
+    assert_eq!(response[0]["calls"][0]["logs"], serde_json::json!([]));
+    assert_eq!(response[0]["calls"][1]["status"], "0x1");
+    assert_eq!(response[0]["calls"][1]["logs"][0]["logIndex"], "0x1");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_uses_default_response_signature_for_key_type_hints() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+
+    for key_type in ["p256", "webAuthn"] {
+        let payload = serde_json::json!({
+            "blockStateCalls": [{
+                "calls": [{
+                    "from": from,
+                    "type": "0x76",
+                    "gas": "0x1e8480",
+                    "keyType": key_type,
+                    "calls": [{"to": Address::random(), "value": "0x0", "input": "0x"}],
+                }],
+            }],
+            "returnFullTransactions": true,
+        });
+        let response = provider
+            .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
+            .await
+            .unwrap();
+        let transaction: AASigned =
+            serde_json::from_value(response[0]["transactions"][0].clone()).unwrap();
+        assert_eq!(transaction.signature(), &TempoSignature::default());
+        assert_eq!(
+            response[0]["transactionsRoot"],
+            serde_json::json!(calculate_transaction_root(&[FoundryTxEnvelope::Tempo(transaction)]))
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_preserves_sponsor_when_capping_execution_gas() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo().with_gas_limit(Some(100_000_000))).await;
+    let provider = handle.http_provider();
+    let accounts: Vec<_> = handle.dev_accounts().collect();
+    let gas_limit = 50_000_000;
+    let sponsored = sponsored_tempo_request(
+        accounts[0],
+        provider.get_chain_id().await.unwrap(),
+        provider.get_gas_price().await.unwrap(),
+        gas_limit,
+        vec![Call { to: TxKind::Call(Address::random()), value: U256::ZERO, input: Bytes::new() }],
+    )
+    .await;
+    let payload = serde_json::json!({
+        "blockStateCalls": [{
+            "calls": [
+                tempo_call_request(accounts[2], [tempo_transfer(Address::random(), U256::from(1))]),
+                sponsored,
+            ],
+        }],
+        "returnFullTransactions": true,
+    });
+
+    let response = provider
+        .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
+        .await
+        .unwrap();
+    assert_eq!(response[0]["calls"][1]["status"], "0x1");
+    let transaction: AASigned =
+        serde_json::from_value(response[0]["transactions"][1].clone()).unwrap();
+
+    assert_eq!(transaction.tx().gas_limit, gas_limit);
+    assert_eq!(transaction.tx().recover_fee_payer(accounts[0]).unwrap(), accounts[1]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_distinguishes_expiring_nonce_transactions() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let valid_before = provider
+        .get_block(BlockNumberOrTag::Latest.into())
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp
+        + 25;
+    let request = |amount| {
+        serde_json::json!({
+            "from": from,
+            "type": "0x76",
+            "nonceKey": U256::MAX,
+            "gas": "0x1e8480",
+            "validBefore": valid_before,
+            "calls": [tempo_transfer(recipient, U256::from(amount))],
+        })
+    };
+    let payload = serde_json::json!({
+        "blockStateCalls": [{"calls": [request(1), request(2)]}],
+        "returnFullTransactions": true,
+    });
+
+    let response = provider
+        .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
+        .await
+        .unwrap();
+    assert_eq!(response[0]["calls"][0]["status"], "0x1");
+    assert_eq!(response[0]["calls"][1]["status"], "0x1");
+    assert_ne!(response[0]["transactions"][0]["hash"], response[0]["transactions"][1]["hash"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_rejects_expiring_nonce_replay_with_different_fee_payer_signature() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let target = Address::random();
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let gas_price = provider.get_gas_price().await.unwrap();
+    let valid_before = provider
+        .get_block(BlockNumberOrTag::Latest.into())
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp
+        + 25;
+    let calls = vec![Call { to: TxKind::Call(target), value: U256::ZERO, input: Bytes::new() }];
+    let tempo_tx = TempoTransaction {
+        chain_id,
+        fee_token: Some(ALPHA_USD),
+        max_priority_fee_per_gas: gas_price / 10,
+        max_fee_per_gas: gas_price * 2,
+        gas_limit: 2_000_000,
+        calls: calls.clone(),
+        access_list: Default::default(),
+        nonce_key: U256::MAX,
+        nonce: 0,
+        fee_payer_signature: Some(Signature::new(U256::ZERO, U256::ZERO, false)),
+        valid_before: NonZeroU64::new(valid_before),
+        valid_after: None,
+        key_authorization: None,
+        tempo_authorization_list: vec![],
+    };
+    let fee_payer_hash = tempo_tx.fee_payer_signature_hash(from);
+    let first_signature = dev_key(1).sign_hash(&fee_payer_hash).await.unwrap();
+    let second_signature = dev_key(2).sign_hash(&fee_payer_hash).await.unwrap();
+    let request = |fee_payer_signature| {
+        serde_json::json!({
+            "from": from,
+            "type": "0x76",
+            "chainId": chain_id,
+            "nonceKey": U256::MAX,
+            "nonce": "0x0",
+            "gas": "0x1e8480",
+            "maxFeePerGas": tempo_tx.max_fee_per_gas,
+            "maxPriorityFeePerGas": tempo_tx.max_priority_fee_per_gas,
+            "feeToken": ALPHA_USD,
+            "validBefore": valid_before,
+            "feePayerSignature": fee_payer_signature,
+            "calls": calls,
+        })
+    };
+    let payload = serde_json::json!({
+        "blockStateCalls": [{
+            "calls": [request(first_signature), request(second_signature)],
+        }],
+    });
+
+    let error = provider
+        .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("ExpiringNonceReplay"), "unexpected error: {error}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_applies_state_and_block_overrides() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let target = Address::random();
+    let nonce_key = U256::from(9);
+    let nonce_slot = NonceManager::new().nonces[from][nonce_key].slot();
+    let timestamp = provider
+        .get_block(BlockNumberOrTag::Latest.into())
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp
+        + 100;
+    let payload = serde_json::json!({
+        "blockStateCalls": [{
+            "blockOverrides": {"time": format!("{timestamp:#x}")},
+            "stateOverrides": {
+                (target.to_string()): {"code": "0x4260005260206000f3"},
+                (NONCE_PRECOMPILE_ADDRESS.to_string()): {
+                    "stateDiff": {(format!("{nonce_slot:#066x}")): format!("{:#066x}", U256::from(7))}
+                }
+            },
+            "calls": [{
+                "from": from,
+                "type": "0x76",
+                "nonceKey": nonce_key,
+                "gas": "0x1e8480",
+                "calls": [{"to": target, "value": "0x0", "input": "0x"}],
+            }],
+        }],
+        "returnFullTransactions": true,
+    });
+
+    let response = provider
+        .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
+        .await
+        .unwrap();
+    assert_eq!(response[0]["transactions"][0]["nonce"], "0x7");
+    assert_eq!(
+        U256::from_be_slice(
+            &response[0]["calls"][0]["returnData"].as_str().unwrap().parse::<Bytes>().unwrap()
+        ),
+        U256::from(timestamp)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_increments_protocol_nonce_for_call_batches() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let request = tempo_call_request(
+        from,
+        [Call { to: TxKind::Call(Address::random()), value: U256::ZERO, input: Bytes::new() }],
+    );
+    let payload = serde_json::json!({
+        "blockStateCalls": [{
+            "calls": [request.clone(), request],
+        }],
+        "returnFullTransactions": true,
+    });
+
+    let response = provider
+        .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
+        .await
+        .unwrap();
+    let first: AASigned = serde_json::from_value(response[0]["transactions"][0].clone()).unwrap();
+    let second: AASigned = serde_json::from_value(response[0]["transactions"][1].clone()).unwrap();
+    assert_eq!(first.tx().nonce, 0);
+    assert_eq!(second.tx().nonce, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_simulate_resolves_omitted_lane_nonces() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let existing_nonce_key = U256::from(1);
+    let existing_nonce = 3;
+    let slot = NonceManager::new().nonces[from][existing_nonce_key].slot();
+    let valid_before = provider
+        .get_block(BlockNumberOrTag::Latest.into())
+        .await
+        .unwrap()
+        .unwrap()
+        .header
+        .timestamp
+        + 25;
+    api.anvil_set_storage_at(
+        NONCE_PRECOMPILE_ADDRESS,
+        slot,
+        B256::from(U256::from(existing_nonce).to_be_bytes::<32>()),
+    )
+    .await
+    .unwrap();
+    let omitted_nonce_request = serde_json::json!({
+        "from": from,
+        "type": "0x76",
+        "nonceKey": existing_nonce_key,
+        "gas": "0x1e8480",
+        "calls": [{"to": Address::random(), "value": "0x0", "input": "0x"}],
+    });
+    let filled = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_fillTransaction".into(),
+            (omitted_nonce_request.clone(),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(filled["tx"]["nonce"], "0x3");
+    provider
+        .raw_request::<_, Bytes>("eth_signTransaction".into(), (omitted_nonce_request.clone(),))
+        .await
+        .unwrap();
+    let payload = serde_json::json!({
+        "blockStateCalls": [{
+            "calls": [
+                {
+                    "from": from,
+                    "type": "0x76",
+                    "nonceKey": "0x1",
+                    "gas": "0x1e8480",
+                    "calls": [{"to": Address::random(), "value": "0x0", "input": "0x"}],
+                },
+                {
+                    "from": from,
+                    "type": "0x76",
+                    "nonceKey": "0x2",
+                    "gas": "0x1e8480",
+                    "calls": [{"to": Address::random(), "value": "0x0", "input": "0x"}],
+                },
+                {
+                    "from": from,
+                    "type": "0x76",
+                    "nonceKey": U256::MAX,
+                    "gas": "0x1e8480",
+                    "validBefore": valid_before,
+                    "calls": [{"to": Address::random(), "value": "0x0", "input": "0x"}],
+                }
+            ],
+        }],
+        "returnFullTransactions": true,
+    });
+
+    let response = provider
+        .raw_request::<_, serde_json::Value>("eth_simulateV1".into(), (payload,))
+        .await
+        .unwrap();
+    assert_eq!(response[0]["transactions"][0]["nonce"], "0x3");
+    assert_eq!(response[0]["transactions"][1]["nonce"], "0x0");
+    assert_eq!(response[0]["transactions"][2]["nonce"], "0x0");
+
+    let tx_hash = provider
+        .raw_request::<_, B256>("eth_sendTransaction".into(), (omitted_nonce_request,))
+        .await
+        .unwrap();
+    assert_ne!(tx_hash, B256::ZERO);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_estimate_and_access_list_execute_all_calls() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let token = IERC20::new(PATH_USD, &provider);
+    let balance = token.balanceOf(from).call().await.unwrap();
+    let cheap_estimate = provider
+        .raw_request::<_, U256>(
+            "eth_estimateGas".into(),
+            (serde_json::json!({
+                "from": from,
+                "type": "0x76",
+                "nonce": "0x1",
+                "gas": "0x1e8480",
+                "calls": [{"to": Address::random(), "value": "0x0", "input": "0x"}],
+            }),),
+        )
+        .await
+        .unwrap();
+    assert!(cheap_estimate < U256::from(53_000), "unexpected estimate: {cheap_estimate}");
+
+    let failing = tempo_call_request(
+        from,
+        [tempo_transfer(recipient, balance), tempo_transfer(recipient, U256::from(1))],
+    );
+    let err = provider
+        .raw_request::<_, U256>("eth_estimateGas".into(), (failing.clone(),))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("revert"), "unexpected error: {err}");
+
+    let access_list = provider
+        .raw_request::<_, serde_json::Value>("eth_createAccessList".into(), (failing,))
+        .await
+        .unwrap();
+    assert!(access_list["error"].as_str().is_some_and(|error| error.contains("revert")));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_estimate_gas_preserves_fee_payer_recovery_across_probes() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let accounts: Vec<_> = handle.dev_accounts().collect();
+    let token = IERC20::new(PATH_USD, &provider);
+    let request = sponsored_tempo_request(
+        accounts[0],
+        provider.get_chain_id().await.unwrap(),
+        provider.get_gas_price().await.unwrap(),
+        2_000_000,
+        vec![Call {
+            to: TxKind::Call(PATH_USD),
+            value: U256::ZERO,
+            input: token.transfer(accounts[2], U256::from(1)).calldata().clone(),
+        }],
+    )
+    .await;
+
+    let gas = provider.raw_request::<_, U256>("eth_estimateGas".into(), (request,)).await.unwrap();
+
+    assert!(gas < U256::from(2_000_000));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_estimate_gas_with_key_authorization_limits() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let account = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let signer = dev_key(0);
+    let access_key = PrivateKeySigner::random();
+    let chain_id = provider.get_chain_id().await.unwrap();
+
+    let authorization =
+        KeyAuthorization::unrestricted(chain_id, SignatureType::Secp256k1, access_key.address())
+            .with_limits(vec![TokenLimit { token: PATH_USD, limit: U256::from(1), period: 0 }]);
+    let signature = signer.sign_hash(&authorization.signature_hash()).await.unwrap();
+    let authorization = authorization.into_signed(PrimitiveSignature::Secp256k1(signature));
+    let request = serde_json::json!({
+        "from": account,
+        "type": "0x76",
+        "feeToken": PATH_USD,
+        "keyId": access_key.address(),
+        "keyAuthorization": authorization,
+        "calls": [tempo_transfer(recipient, U256::ZERO)],
+    });
+
+    let gas = provider
+        .raw_request::<_, U256>("eth_estimateGas".into(), (request.clone(),))
+        .await
+        .unwrap();
+    assert!(gas > U256::from(21_000));
+
+    let mut over_limit = request;
+    over_limit["calls"] = serde_json::json!([tempo_transfer(recipient, U256::from(2))]);
+    let err =
+        provider.raw_request::<_, U256>("eth_estimateGas".into(), (over_limit,)).await.unwrap_err();
+    assert!(err.to_string().contains("execution reverted"), "unexpected error: {err}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_estimate_gas_with_provisioned_key() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let account = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let access_key = PrivateKeySigner::random();
+    let spending_limit = U256::from(1_000_000);
+    let authorize = authorizeKeyCall {
+        keyId: access_key.address(),
+        signatureType: KeychainSignatureType::Secp256k1,
+        config: KeyRestrictions {
+            expiry: u64::MAX,
+            enforceLimits: true,
+            limits: vec![KeychainTokenLimit { token: PATH_USD, amount: spending_limit, period: 0 }],
+            allowAnyCalls: true,
+            allowedCalls: vec![],
+        },
+    };
+    let authorization_request = serde_json::json!({
+        "from": account,
+        "type": "0x76",
+        "gas": T5_PRECOMPILE_GAS,
+        "feeToken": PATH_USD,
+        "calls": [{
+            "to": ACCOUNT_KEYCHAIN_ADDRESS,
+            "value": "0x0",
+            "input": Bytes::from(authorize.abi_encode()),
+        }],
+    });
+    let tx_hash = provider
+        .raw_request::<_, B256>("eth_sendTransaction".into(), (authorization_request,))
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+    let receipt = provider.get_transaction_receipt(tx_hash).await.unwrap().unwrap();
+    assert!(receipt.status());
+
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let base_fee = provider.get_gas_price().await.unwrap();
+    let nonce = provider.get_transaction_count(account).await.unwrap();
+    let transfer_amount = U256::from(1);
+    let transfer = tempo_transfer(recipient, transfer_amount);
+    let request = serde_json::json!({
+        "from": account,
+        "type": "0x76",
+        "chainId": chain_id,
+        "feeToken": PATH_USD,
+        "maxPriorityFeePerGas": base_fee / 10,
+        "maxFeePerGas": base_fee * 2,
+        "nonce": nonce,
+        "keyId": access_key.address(),
+        "calls": [transfer],
+    });
+    let gas = provider
+        .raw_request::<_, U256>("eth_estimateGas".into(), (request.clone(),))
+        .await
+        .unwrap();
+    let gas_limit = gas.to::<u64>();
+
+    let token = IERC20::new(PATH_USD, &provider);
+    let recipient_balance = token.balanceOf(recipient).call().await.unwrap();
+    let tempo_tx = TempoTransaction {
+        chain_id,
+        fee_token: Some(PATH_USD),
+        max_priority_fee_per_gas: base_fee / 10,
+        max_fee_per_gas: base_fee * 2,
+        gas_limit,
+        calls: vec![transfer],
+        access_list: Default::default(),
+        nonce_key: U256::ZERO,
+        nonce,
+        fee_payer_signature: None,
+        valid_before: None,
+        valid_after: None,
+        key_authorization: None,
+        tempo_authorization_list: vec![],
+    };
+    let signing_hash = KeychainSignature::signing_hash(tempo_tx.signature_hash(), account);
+    let signature = access_key.sign_hash(&signing_hash).await.unwrap();
+    let tempo_signature = TempoSignature::Keychain(KeychainSignature::new(
+        account,
+        PrimitiveSignature::Secp256k1(signature),
+    ));
+    let envelope = TempoTxEnvelope::AA(AASigned::new_unhashed(tempo_tx, tempo_signature));
+    let mut encoded = Vec::new();
+    envelope.encode_2718(&mut encoded);
+
+    let receipt =
+        provider.send_raw_transaction(&encoded).await.unwrap().get_receipt().await.unwrap();
+    assert!(receipt.status(), "transaction should succeed with estimated gas: {gas_limit}");
+    assert!(
+        receipt.gas_used() <= gas_limit,
+        "gas used ({}) should not exceed estimate ({gas_limit})",
+        receipt.gas_used()
+    );
+    assert_eq!(
+        token.balanceOf(recipient).call().await.unwrap(),
+        recipient_balance + transfer_amount
+    );
+
+    let mut over_limit = request;
+    over_limit["nonce"] = serde_json::json!(nonce + 1);
+    over_limit["calls"] =
+        serde_json::json!([tempo_transfer(recipient, spending_limit + U256::from(1))]);
+    let err =
+        provider.raw_request::<_, U256>("eth_estimateGas".into(), (over_limit,)).await.unwrap_err();
+    assert!(err.to_string().contains("execution reverted"), "unexpected error: {err}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_create_access_list_accepts_sponsored_request_on_second_execution() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let target = Address::random();
+    let request = sponsored_tempo_request(
+        from,
+        provider.get_chain_id().await.unwrap(),
+        provider.get_gas_price().await.unwrap(),
+        2_000_000,
+        vec![Call { to: TxKind::Call(target), value: U256::ZERO, input: Bytes::new() }],
+    )
+    .await;
+    let state_override = serde_json::json!({
+        (target.to_string()): {
+            "code": "0x60005460005260206000f3",
+        },
+    });
+
+    let result = provider
+        .raw_request::<_, serde_json::Value>(
+            "eth_createAccessList".into(),
+            (request, serde_json::Value::Null, state_override),
+        )
+        .await
+        .unwrap();
+
+    assert!(result["error"].is_null(), "unexpected execution error: {result}");
+    assert!(!result["accessList"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_trace_call_executes_all_calls() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_accounts().next().unwrap();
+    let recipient = Address::random();
+    let token = IERC20::new(PATH_USD, &provider);
+    let balance = token.balanceOf(from).call().await.unwrap();
+    let request = tempo_call_request(
+        from,
+        [tempo_transfer(recipient, balance), tempo_transfer(recipient, U256::from(1))],
+    );
+
+    let debug_trace = provider
+        .raw_request::<_, serde_json::Value>(
+            "debug_traceCall".into(),
+            (request.clone(), "latest", serde_json::json!({})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(debug_trace["failed"], true);
+
+    let parity_trace = provider
+        .raw_request::<_, serde_json::Value>("trace_call".into(), (request, ["trace"], "latest"))
+        .await
+        .unwrap();
+    assert!(
+        parity_trace["trace"]
+            .as_array()
+            .is_some_and(|traces| { traces.iter().any(|trace| !trace["error"].is_null()) })
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_tempo_aa_transaction_with_2d_nonce() {
     let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
@@ -2412,7 +4027,7 @@ async fn test_tempo_aa_valid_after_future() {
     let pending = provider.send_raw_transaction(&encoded).await.unwrap();
     let tx_hash = *pending.tx_hash();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let receipt = provider.get_transaction_receipt(tx_hash).await.unwrap();
     assert!(receipt.is_none(), "Transaction should not be mined before valid_after");
     let recipient_balance = token.balanceOf(recipient).call().await.unwrap();
@@ -2420,7 +4035,7 @@ async fn test_tempo_aa_valid_after_future() {
 
     // Advance time past valid_after
     api.evm_set_next_block_timestamp(valid_after + 1).unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let receipt = pending.get_receipt().await.unwrap();
     assert!(receipt.status(), "Transaction should succeed after valid_after time");
@@ -2659,7 +4274,7 @@ async fn test_base_fee() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
 
@@ -2780,7 +4395,7 @@ async fn test_manual_mining() {
 
     let block_before = provider.get_block_number().await.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block_after = provider.get_block_number().await.unwrap();
     assert_eq!(block_after, block_before + 1);
@@ -2902,7 +4517,7 @@ async fn test_block_has_timestamp() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(1.into()).await.unwrap().unwrap();
     assert!(block.header.timestamp > 0, "Block should have a timestamp");
@@ -2917,13 +4532,13 @@ async fn test_block_timestamp_increases() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block1 = provider.get_block(1.into()).await.unwrap().unwrap();
 
     let future_timestamp = block1.header.timestamp + 100;
     api.evm_set_next_block_timestamp(future_timestamp).unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block2 = provider.get_block(2.into()).await.unwrap().unwrap();
 
     assert_eq!(block2.header.timestamp, future_timestamp);
@@ -2939,14 +4554,14 @@ async fn test_block_timestamps_are_monotonic() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block1 = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
     let timestamp1 = block1.header.timestamp;
 
     let future_timestamp = timestamp1 + 10;
     api.evm_set_next_block_timestamp(future_timestamp).unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let block2 = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
     let timestamp2 = block2.header.timestamp;
 
@@ -2966,7 +4581,7 @@ async fn test_block_gas_limit() {
     let (api, handle) = spawn(NodeConfig::test_tempo()).await;
     let provider = handle.http_provider();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
 
@@ -3038,7 +4653,7 @@ async fn test_multiple_transactions_in_block() {
     let pending1 = provider.send_transaction(tx1).await.unwrap();
     let pending2 = provider.send_transaction(tx2).await.unwrap();
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let receipt1 = pending1.get_receipt().await.unwrap();
     let receipt2 = pending2.get_receipt().await.unwrap();
@@ -3836,6 +5451,31 @@ async fn test_gas_estimation_tempo_aa_transaction() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_browser_webauthn_gas_estimation() {
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = alloy_provider::ProviderBuilder::new_with_network::<TempoNetwork>()
+        .connect_http(handle.http_endpoint().parse().unwrap());
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let request = tempo_alloy::rpc::TempoTransactionRequest {
+        inner: TransactionRequest::default().from(accounts[0]),
+        fee_token: Some(PATH_USD),
+        nonce_key: Some(U256::ZERO),
+        calls: vec![Call { to: TxKind::Call(accounts[1]), value: U256::ZERO, input: Bytes::new() }],
+        ..Default::default()
+    };
+
+    let secp256k1_estimate = provider.estimate_gas(request.clone()).await.unwrap();
+    let webauthn_estimate =
+        provider.estimate_gas(request.browser_wallet_gas_estimation_request()).await.unwrap();
+
+    assert!(
+        webauthn_estimate > secp256k1_estimate + 7_000,
+        "WebAuthn estimate should cover its variable signature data: \
+         secp256k1={secp256k1_estimate}, webauthn={webauthn_estimate}"
+    );
+}
+
 // ============================================================================
 // Gas Estimation: Tempo AA with 2D Nonce
 // ============================================================================
@@ -4405,7 +6045,7 @@ async fn test_tempo_pre_t7_base_fee_stays_fixed() {
     let provider = handle.http_provider();
 
     for _ in 0..5 {
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
     }
 
     let latest = provider.get_block(BlockId::latest()).await.unwrap().unwrap().header.number;
@@ -4427,11 +6067,11 @@ async fn test_tempo_base_fee_survives_reset() {
     let provider = handle.http_provider();
 
     for _ in 0..3 {
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
     }
 
     api.anvil_reset(None).await.unwrap();
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(
@@ -4449,7 +6089,7 @@ async fn test_tempo_t7_base_fee_is_dynamic() {
     let provider = handle.http_provider();
 
     for _ in 0..8 {
-        api.mine_one().await;
+        api.mine_one().await.unwrap();
     }
 
     // The genesis block keeps the 20B seed (matching Tempo's T7 genesis).
@@ -4474,4 +6114,35 @@ async fn test_tempo_t7_base_fee_is_dynamic() {
         (TEMPO_T7_BASE_FEE_FLOOR..=TEMPO_T7_BASE_FEE_CAP).contains(&last),
         "base fee should be clamped to the TIP-1067 range: {fees:?}"
     );
+
+    api.anvil_reset(None).await.unwrap();
+
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, Some(TEMPO_T1_BASE_FEE));
+    assert_eq!(api.base_fee().unwrap(), Some(U256::from(TEMPO_T7_BASE_FEE_CAP)));
+    api.mine_one().await.unwrap();
+    let first = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    assert_eq!(first.header.base_fee_per_gas, Some(TEMPO_T7_BASE_FEE_CAP));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_t7_reset_restores_explicit_base_fee() {
+    let explicit_base_fee = TEMPO_T1_BASE_FEE + 1;
+    let (api, handle) = spawn(
+        NodeConfig::test_tempo()
+            .with_hardfork(Some(TempoHardfork::T7.into()))
+            .with_base_fee(Some(explicit_base_fee)),
+    )
+    .await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_next_block_base_fee_per_gas(U256::from(TEMPO_T7_BASE_FEE_FLOOR)).await.unwrap();
+    api.anvil_reset(None).await.unwrap();
+
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+    assert_eq!(genesis.header.base_fee_per_gas, Some(explicit_base_fee));
+    assert_eq!(api.base_fee().unwrap(), Some(U256::from(TEMPO_T7_BASE_FEE_CAP)));
+    api.mine_one().await.unwrap();
+    let first = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    assert_eq!(first.header.base_fee_per_gas, Some(TEMPO_T7_BASE_FEE_CAP));
 }

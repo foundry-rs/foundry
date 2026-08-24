@@ -77,6 +77,14 @@ Display options:
           and
             backtraces with line numbers.
 
+Compiler options:
+      --allow-local-compiler
+          Allow use of local compiler executables without prompting
+
+Project options:
+      --allow-project-env
+          Allow loading project dotenv files without prompting
+
 Find more information in the book: https://getfoundry.sh/forge/overview
 
 "#]]);
@@ -695,8 +703,7 @@ forgetest!(fail_init_nonexistent_template, |prj, cmd| {
     prj.wipe();
     cmd.args(["init", "--template", "a"]).arg(prj.root()).assert_failure().stderr_eq(str![[r#"
 Initializing [..] from https://github.com/a...
-remote: Not Found
-fatal: repository 'https://github.com/a/' not found
+...
 Error: git fetch exited with code 128
 
 "#]]);
@@ -1391,6 +1398,77 @@ contract Foo {
 "0x60806040[..]"
 
 "#]]);
+});
+
+// tests that `forge inspect <contract> transientStorageLayout` works
+forgetest!(can_inspect_transient_storage_layout, |prj, cmd| {
+    prj.add_source(
+        "Transient.sol",
+        r#"
+contract Transient {
+    uint256 transient counter;
+    address transient owner;
+}
+    "#,
+    );
+
+    cmd.arg("inspect").args(["Transient", "transientStorageLayout"]).assert_success().stdout_eq(
+        str![[r#"
+
+╭---------+---------+------+--------+-------+-----------------------------╮
+| Name    | Type    | Slot | Offset | Bytes | Contract                    |
++=========================================================================+
+| counter | uint256 | 0    | 0      | 32    | src/Transient.sol:Transient |
+|---------+---------+------+--------+-------+-----------------------------|
+| owner   | address | 1    | 0      | 20    | src/Transient.sol:Transient |
+╰---------+---------+------+--------+-------+-----------------------------╯
+
+
+"#]],
+    );
+
+    // `--json` prints the raw storage layout object.
+    cmd.forge_fuse()
+        .args(["inspect", "Transient", "transientStorageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{
+  "storage": [
+    {
+      "astId": "{...}",
+      "contract": "src/Transient.sol:Transient",
+      "label": "counter",
+      "offset": 0,
+      "slot": "0",
+      "type": "t_uint256"
+    },
+    {
+      "astId": "{...}",
+      "contract": "src/Transient.sol:Transient",
+      "label": "owner",
+      "offset": 0,
+      "slot": "1",
+      "type": "t_address"
+    }
+  ],
+  "types": {
+    "t_address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "t_uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]
+            .is_json(),
+        );
 });
 
 forgetest!(can_inspect_linearization_markdown, |prj, cmd| {
@@ -4105,6 +4183,47 @@ forgetest!(inspect_multiple_contracts_with_different_paths, |prj, cmd| {
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/11146>
+forgetest!(inspect_contracts_by_exact_input_path, |prj, cmd| {
+    prj.add_test(
+        "InspectTarget.t.sol",
+        r#"
+contract InspectTarget {
+    function testValue() external pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "node_modules/example/Dependency.sol",
+        r#"
+pragma solidity ^0.8.0;
+
+contract Dependency {
+    function dependencyValue() external pure returns (uint256) {
+        return 2;
+    }
+}
+"#,
+    );
+    prj.update_config(|config| config.libs.push("node_modules".into()));
+
+    for (target, function) in [
+        ("test/InspectTarget.t.sol:InspectTarget", "testValue"),
+        ("node_modules/example/Dependency.sol:Dependency", "dependencyValue"),
+    ] {
+        let stdout = cmd
+            .forge_fuse()
+            .args(["inspect", target, "abi", "--json"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let abi: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert!(abi.as_array().unwrap().iter().any(|item| item["name"] == function));
+    }
+});
+
 forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
@@ -4643,21 +4762,6 @@ Flattened file written at [..]flat.sol
 "#]]);
 
     assert!(out.exists(), "flattened file should have been written");
-});
-
-// `forge generate test` writes the scaffolded file and emits its status string to stderr,
-// keeping stdout empty so agents can pipe the command without diagnostics.
-forgetest!(generate_test_writes_status_to_stderr, |prj, cmd| {
-    cmd.args(["generate", "test", "--contract-name", "Counter"])
-        .assert_success()
-        .stdout_eq(str![""])
-        .stderr_eq(str![[r#"
-Warning: `forge generate` is deprecated and will be removed in a future version
-Generated test file: test/Counter.t.sol
-
-"#]]);
-
-    assert!(prj.root().join("test/Counter.t.sol").exists(), "scaffolded test file should exist");
 });
 
 // `forge init` writes its status prose to stderr and keeps stdout empty so agents
