@@ -2221,6 +2221,14 @@ impl<N: Network> Backend<N> {
 
     fn inject_arbitrum_precompile(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
         let Some(block_number) = self.arbitrum_block_number(evm_env) else { return };
+        self.inject_arbitrum_precompile_at_block(precompiles, block_number);
+    }
+
+    fn inject_arbitrum_precompile_at_block(
+        &self,
+        precompiles: &mut PrecompilesMap,
+        block_number: u64,
+    ) {
         precompiles.apply_precompile(&arbitrum::ARB_SYS_ADDRESS, move |_| {
             Some(arbitrum::arb_sys_precompile(block_number))
         });
@@ -4976,8 +4984,12 @@ where
         replay: ForkTransactionReplay,
     ) -> Result<()> {
         let source_chain_id = self.protocol_chain_id();
-        let arbitrum_block_number = is_arbitrum(source_chain_id)
-            .then(|| arbitrum_replay_block_number(&replay.source_block));
+        let arbitrum_block_numbers = is_arbitrum(source_chain_id).then(|| {
+            (
+                replay.source_block.header().number(),
+                arbitrum_replay_block_number(&replay.source_block),
+            )
+        });
         let prepared = prepare_fork_transaction_replay(replay, self.is_monad())?;
         let fallback_execution_chain_id = self
             .get_fork()
@@ -5001,8 +5013,8 @@ where
 
         let best_number = self.blockchain.storage.read().best_number;
         let block_number = best_number.saturating_add(1);
-        if let Some(block_number) = arbitrum_block_number {
-            evm_env.block_env.number = block_number;
+        if arbitrum_block_numbers.is_some() {
+            evm_env.block_env.number = U256::from(block_number);
         } else {
             evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
         }
@@ -5019,6 +5031,10 @@ where
         );
 
         let mut replay_env = evm_env.clone();
+        let arbitrum_rpc_block_number = arbitrum_block_numbers.map(|(rpc, evm)| {
+            replay_env.block_env.number = evm;
+            rpc
+        });
         replay_env.cfg_env.chain_id = execution_chain_id;
         apply_chain_specific_tx_replay_env_changes_for_chain(&mut replay_env, source_chain_id);
         let inspector_tx_config = self.inspector_tx_config();
@@ -5084,6 +5100,7 @@ where
                 &mut overlay,
                 &replay_env,
                 best_hash,
+                arbitrum_rpc_block_number,
                 hardfork,
                 parent_beacon_block_root,
                 &transactions,
@@ -5202,6 +5219,7 @@ where
         db: DB,
         evm_env: &EvmEnv,
         parent_hash: B256,
+        arbitrum_rpc_block_number: Option<u64>,
         hardfork: FoundryHardfork,
         parent_beacon_block_root: Option<B256>,
         transactions: &[HistoricalReplayTransaction],
@@ -5243,7 +5261,11 @@ where
             }};
             ($evm:expr, $execute:expr) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
-                self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
+                if let Some(block_number) = arbitrum_rpc_block_number {
+                    self.inject_arbitrum_precompile_at_block($evm.precompiles_mut(), block_number);
+                } else {
+                    self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
+                }
                 let mut executor = AnvilBlockExecutor::new(
                     $evm,
                     parent_hash,
@@ -9380,24 +9402,18 @@ mod tests {
         ForkCacheNamespace, ForkCacheSource, StagedForkCacheLease, StagedForkDbUser,
         arbitrum_replay_block_number,
     };
-    use crate::{NodeConfig, spawn};
-    #[cfg(feature = "monad")]
-    use alloy_consensus::{BlockHeader, constants::EMPTY_ROOT_HASH};
-    #[cfg(feature = "monad")]
-    use alloy_network::TransactionBuilder;
-    use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader};
-    #[cfg(feature = "monad")]
-    use alloy_primitives::Address;
-    use alloy_primitives::{B256, U256};
-    #[cfg(feature = "monad")]
+    use crate::{NodeConfig, config::ForkTransactionReplay, spawn};
+    use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
+    use alloy_primitives::{B256, Bytes, U256};
     use alloy_provider::Provider;
-    #[cfg(feature = "monad")]
-    use alloy_rpc_types::TransactionRequest;
-    use alloy_rpc_types::{Block, BlockTransactions};
+    use alloy_rpc_types::{Block, BlockTransactions, TransactionRequest, state::EvmOverrides};
+    use alloy_serde::WithOtherFields;
+    use foundry_config::NamedChain;
     use foundry_evm::{
         backend::{BlockchainDb, BlockchainDbMeta},
         hardfork::{EthereumHardfork, FoundryHardfork},
     };
+    use foundry_evm_networks::arbitrum;
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -9421,6 +9437,70 @@ mod tests {
         block.other.insert("l1BlockNumber".to_string(), serde_json::json!("0x10276d3"));
 
         assert_eq!(arbitrum_replay_block_number(&block), U256::from(16_938_707));
+    }
+
+    #[tokio::test]
+    async fn fork_arbitrum_transaction_replay_preserves_rpc_block_number() {
+        const GENESIS_BLOCK: u64 = 101;
+        const L1_BLOCK: u64 = 10;
+        const REPLAY_BLOCK: u64 = GENESIS_BLOCK + 1;
+
+        let config = || {
+            NodeConfig::test()
+                .with_chain_id(Some(NamedChain::Arbitrum as u64))
+                .with_genesis_block_number(Some(GENESIS_BLOCK))
+        };
+        let (_source_api, source_handle) = spawn(config()).await;
+        let source_provider = source_handle.http_provider();
+        let sender = source_provider.get_accounts().await.unwrap()[0];
+        let receipt = source_provider
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default()
+                    .with_from(sender)
+                    .with_to(arbitrum::ARB_SYS_ADDRESS)
+                    .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
+            ))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let mut source_block = source_provider
+            .get_block_by_hash(receipt.block_hash.unwrap())
+            .full()
+            .await
+            .unwrap()
+            .unwrap();
+        source_block
+            .other
+            .insert("l1BlockNumber".to_string(), serde_json::json!(format!("0x{L1_BLOCK:x}")));
+
+        let (replay_api, _replay_handle) = spawn(config()).await;
+        replay_api
+            .backend
+            .apply_fork_transaction_replay(ForkTransactionReplay { source_block, target_index: 0 })
+            .await
+            .unwrap();
+
+        let expected = arbitrum::arb_block_number_output(REPLAY_BLOCK);
+        let replayed =
+            replay_api.backend.mined_transaction_receipt(receipt.transaction_hash).unwrap();
+        assert_eq!(replayed.out.unwrap(), expected);
+        assert_eq!(replay_api.block_number().unwrap(), U256::from(REPLAY_BLOCK));
+
+        let output = replay_api
+            .call(
+                WithOtherFields::new(
+                    TransactionRequest::default()
+                        .with_to(arbitrum::ARB_SYS_ADDRESS)
+                        .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
+                ),
+                None,
+                EvmOverrides::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(output, expected);
     }
 
     fn test_endpoint_identity(
