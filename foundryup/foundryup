@@ -17,9 +17,9 @@ FOUNDRYUP_INSTALLER_VERSION="2.0.0"
 #
 # The bash foundryup has been replaced by the Rust rewrite
 # (https://github.com/foundry-rs/foundryup). This script is a one-shot
-# bootstrap: on first run it installs the Rust `foundryup` binary directly onto
-# $FOUNDRY_DIR/bin/foundryup (replacing this script) and execs it. Subsequent
-# runs go straight to the Rust binary, so the bash implementation is gone.
+# bootstrap: on first run it replaces itself with the Rust `foundryup` binary
+# and execs it. Subsequent runs go straight to the Rust binary, so the bash
+# implementation is gone.
 #
 # It downloads and validates the Rust binary in a staging directory, then
 # atomically moves it over this script, so a failed or partial install never
@@ -31,13 +31,13 @@ FOUNDRY_DIR="${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}"
 FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
 
 # Pinned Rust foundryup version to bootstrap. Override for testing/emergencies.
-FOUNDRYUP_BOOTSTRAP_VERSION="${FOUNDRYUP_BOOTSTRAP_VERSION:-0.0.6}"
+FOUNDRYUP_BOOTSTRAP_VERSION="${FOUNDRYUP_BOOTSTRAP_VERSION:-0.0.8}"
 # `foundryup-init.sh` for the pinned bootstrap version.
 FOUNDRYUP_INIT_URL="${FOUNDRYUP_INIT_URL:-"https://raw.githubusercontent.com/foundry-rs/foundryup/v${FOUNDRYUP_BOOTSTRAP_VERSION}/foundryup-init.sh"}"
 
-# The Rust installer writes `bin/foundryup` (no `.exe`, even on Windows), so the
-# bootstrap replaces itself at the same extensionless path on every platform.
-FOUNDRY_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
+# Resolve the running launcher independently of FOUNDRY_DIR so an override only
+# changes where Rust foundryup manages its data and installed Foundry binaries.
+FOUNDRY_BIN_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
 
 # Temp paths cleaned up on exit; kept at script scope so the trap can reach them.
 _init=""
@@ -82,8 +82,8 @@ bootstrap() {
 
   trap cleanup EXIT INT TERM
   _init="$(mktemp)"
-  # Stage under the bin dir so the final move is an atomic same-filesystem rename.
-  _stage="$(mktemp -d "$FOUNDRY_BIN_DIR/.foundryup-bootstrap.XXXXXX")"
+  # Stage beside the launcher so the final move is an atomic same-filesystem rename.
+  _stage="$(mktemp -d "$(dirname "$FOUNDRY_BIN_PATH")/.foundryup-bootstrap.XXXXXX")"
 
   say "installing the Rust foundryup (v$FOUNDRYUP_BOOTSTRAP_VERSION)..."
 
@@ -121,7 +121,7 @@ bootstrap() {
   trap - EXIT
   cleanup
 
-  exec env FOUNDRYUP_BOOTSTRAP_ACTIVE=1 "$FOUNDRY_BIN_PATH" "$@"
+  exec env FOUNDRYUP_BOOTSTRAP_ACTIVE=1 FOUNDRY_DIR="$FOUNDRY_DIR" "$FOUNDRY_BIN_PATH" "$@"
 }
 
 ensure_replace() {

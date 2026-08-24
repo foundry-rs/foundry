@@ -16,6 +16,7 @@ export FOUNDRYUP_TEST=1
 . "$SCRIPT_DIR/foundryup"
 
 failures=0
+launcher_dir=""
 
 check_eq() {
   local desc="$1" expected="$2" actual="$3"
@@ -26,6 +27,11 @@ check_eq() {
     failures=$((failures + 1))
   fi
 }
+
+check_eq "launcher path resolves independently of FOUNDRY_DIR" \
+  "$SCRIPT_DIR/foundryup" "$FOUNDRY_BIN_PATH"
+check_eq "bootstrap pins the current Rust foundryup release" \
+  "0.0.8" "$FOUNDRYUP_BOOTSTRAP_VERSION"
 
 # Silence progress output; `err` keeps exiting via the overridden `say`.
 say() { :; }
@@ -39,12 +45,13 @@ exec() {
   exit 0
 }
 
-# Sets up an isolated FOUNDRY_DIR/bin for one test and re-points the shim globals
-# at it. Leaves a sentinel launcher so we can assert it is or isn't replaced.
+# Sets up separate launcher and FOUNDRY_DIR locations. Leaves a sentinel launcher
+# so we can assert it is or isn't replaced when FOUNDRY_DIR is overridden.
 setup_case() {
   FOUNDRY_DIR="$(mktemp -d)"
   FOUNDRY_BIN_DIR="$FOUNDRY_DIR/bin"
-  FOUNDRY_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
+  launcher_dir="$(mktemp -d)"
+  FOUNDRY_BIN_PATH="$launcher_dir/foundryup"
   mkdir -p "$FOUNDRY_BIN_DIR"
   printf 'original-launcher\n' > "$FOUNDRY_BIN_PATH"
   exec_marker="$(mktemp)"
@@ -52,14 +59,14 @@ setup_case() {
 }
 
 teardown_case() {
-  rm -rf "$FOUNDRY_DIR"
+  rm -rf "$FOUNDRY_DIR" "$launcher_dir"
   rm -f "$exec_marker"
 }
 
 # A `download` that writes a fake foundryup-init.sh installing a working fake
 # binary into the staging FOUNDRY_DIR. `$fake_bin_body` controls the binary.
 fake_bin_body='#!/usr/bin/env sh
-echo "foundryup 0.0.5 (test 2020)"'
+echo "foundryup 0.0.8 (test 2020)"'
 download() {
   cat > "$2" <<EOF
 #!/usr/bin/env sh
@@ -78,10 +85,10 @@ EOF
 setup_case
 out="$( ( bootstrap --install stable 2>/dev/null ) )"
 check_eq "bootstrap execs the installed Rust binary with original args" \
-  "env FOUNDRYUP_BOOTSTRAP_ACTIVE=1 $FOUNDRY_BIN_PATH --install stable" \
+  "env FOUNDRYUP_BOOTSTRAP_ACTIVE=1 FOUNDRY_DIR=$FOUNDRY_DIR $FOUNDRY_BIN_PATH --install stable" \
   "$(cat "$exec_marker")"
-check_eq "bootstrap replaces the launcher with the Rust binary" \
-  "foundryup 0.0.5 (test 2020)" "$("$FOUNDRY_BIN_PATH")"
+check_eq "bootstrap replaces the launcher outside FOUNDRY_DIR with the Rust binary" \
+  "foundryup 0.0.8 (test 2020)" "$("$FOUNDRY_BIN_PATH")"
 check_eq "bootstrap keeps stdout clean (installer chatter dropped)" "" "$out"
 teardown_case
 
