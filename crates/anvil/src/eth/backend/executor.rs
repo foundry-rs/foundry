@@ -45,6 +45,9 @@ use revm::{
 };
 use std::{fmt, fmt::Debug, mem::take, sync::Arc};
 
+#[cfg(feature = "optimism")]
+pub(crate) mod optimism;
+
 /// Determines whether an executor produces a complete block or a historical transaction prefix.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum BlockExecutionKind {
@@ -135,7 +138,7 @@ fn append_deposit_requests(
     Ok(())
 }
 
-/// Receipt builder for Foundry/Anvil that handles all transaction types
+/// Receipt builder for transaction types that do not require network-specific metadata.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
 pub struct FoundryReceiptBuilder;
@@ -167,27 +170,10 @@ impl FoundryReceiptBuilder {
         result: &ExecutionResult,
         logs: Vec<Log>,
         cumulative_gas_used: u64,
-        deposit_nonce: Option<u64>,
-        deposit_receipt_version: Option<u64>,
     ) -> FoundryReceiptEnvelope {
         let receipt =
             Receipt { status: Eip658Value::Eip658(result.is_success()), cumulative_gas_used, logs }
                 .with_bloom();
-        #[cfg(feature = "optimism")]
-        if tx_type == FoundryTxType::Deposit {
-            return FoundryReceiptEnvelope::Deposit(
-                op_alloy_consensus::OpDepositReceiptWithBloom {
-                    receipt: op_alloy_consensus::OpDepositReceipt {
-                        inner: receipt.receipt,
-                        deposit_nonce,
-                        deposit_receipt_version,
-                    },
-                    logs_bloom: receipt.logs_bloom,
-                },
-            );
-        }
-        #[cfg(not(feature = "optimism"))]
-        let _ = (deposit_nonce, deposit_receipt_version);
         Self::wrap_receipt(tx_type, receipt)
     }
 }
@@ -428,21 +414,7 @@ where
 
         #[cfg(feature = "optimism")]
         let receipt = if tx_type == FoundryTxType::Deposit {
-            let deposit_nonce = state.get(&sender).map(|acc| acc.info.nonce);
-            let receipt = alloy_consensus::Receipt {
-                status: Eip658Value::Eip658(result.is_success()),
-                cumulative_gas_used: self.gas_used,
-                logs: result.into_logs(),
-            }
-            .with_bloom();
-            FoundryReceiptEnvelope::Deposit(op_alloy_consensus::OpDepositReceiptWithBloom {
-                receipt: op_alloy_consensus::OpDepositReceipt {
-                    inner: receipt.receipt,
-                    deposit_nonce,
-                    deposit_receipt_version: deposit_nonce.map(|_| 1),
-                },
-                logs_bloom: receipt.logs_bloom,
-            })
+            optimism::build_mined_deposit_receipt(result, &state, sender, self.gas_used)
         } else {
             self.receipt_builder.build_receipt(ReceiptBuilderCtx {
                 tx_type,
