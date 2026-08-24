@@ -439,6 +439,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
         // Handle `vm.assume` before recording coverage or persisting the input.
         if kind == CampaignCallKind::AssumptionRejected {
+            // Account for the attempted corpus mutation without retaining or crediting the input.
+            coverage_metrics.process_inputs(&[], &[], false, None);
             return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
