@@ -62,6 +62,7 @@ const RESERVE_PROBE_ADDRESS: Address = address!("0x00000000000000000000000000000
 const BALANCE_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002001");
 const CHAIN_ID_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002002");
 const CLZ_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002003");
+const STORAGE_GAS_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002004");
 const DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
 const RESERVE_RETURN_PROBE_CODE: [u8; 25] =
     hex!("633a61584e5f5260205f6004601c5f6110015af15060205ff3");
@@ -82,6 +83,40 @@ async fn monad_nine_exposes_reserve_balance_precompile_for_calls() {
     let result = provider.call(tx.into()).await.unwrap();
 
     assert_eq!(result, Bytes::from(vec![0; 32]));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_ten_applies_mip8_storage_gas() {
+    for (config, hardfork, read_delta, write_delta) in [
+        (
+            NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into())),
+            MonadHardfork::MonadNine,
+            0,
+            0,
+        ),
+        (NodeConfig::test_monad(), MonadHardfork::MonadTen, 8_000, 10_800),
+    ] {
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+
+        assert_eq!(api.anvil_node_info().await.unwrap().hard_fork, hardfork.to_string());
+
+        api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_read_probe_code(127)).await.unwrap();
+        let same_page_read =
+            storage_probe_gas(provider.call(storage_gas_probe_call()).await.unwrap());
+        api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_read_probe_code(128)).await.unwrap();
+        let different_page_read =
+            storage_probe_gas(provider.call(storage_gas_probe_call()).await.unwrap());
+        assert_eq!(different_page_read - same_page_read, read_delta);
+
+        api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_write_probe_code(1)).await.unwrap();
+        let same_page_write =
+            storage_probe_gas(provider.call(storage_gas_probe_call()).await.unwrap());
+        api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_write_probe_code(128)).await.unwrap();
+        let different_page_write =
+            storage_probe_gas(provider.call(storage_gas_probe_call()).await.unwrap());
+        assert_eq!(different_page_write - same_page_write, write_delta);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2155,6 +2190,26 @@ fn reserve_balance_call() -> WithOtherFields<TransactionRequest> {
         .with_to(RESERVE_BALANCE_ADDRESS)
         .with_input(DIPPED_INTO_RESERVE_SELECTOR)
         .into()
+}
+
+fn storage_gas_probe_call() -> WithOtherFields<TransactionRequest> {
+    TransactionRequest::default().with_to(STORAGE_GAS_PROBE_ADDRESS).into()
+}
+
+fn storage_probe_gas(result: Bytes) -> u64 {
+    U256::from_be_slice(&result).to::<u64>()
+}
+
+fn storage_read_probe_code(second_slot: u8) -> Bytes {
+    let mut code = hex!("5a5f5450600054505a90035f5260205ff3");
+    code[5] = second_slot;
+    Bytes::from(code)
+}
+
+fn storage_write_probe_code(second_slot: u8) -> Bytes {
+    let mut code = hex!("5a60015f5560016000555a90035f5260205ff3");
+    code[8] = second_slot;
+    Bytes::from(code)
 }
 
 fn reserve_probe_tx(from: Address, nonce: u64, slot: u64, value: U256) -> TransactionRequest {
