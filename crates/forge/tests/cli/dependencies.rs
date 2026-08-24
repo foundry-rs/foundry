@@ -1047,3 +1047,56 @@ libs = ["lib", "lib2"]
         "a real submodule under a non-first `libs` entry must not be silently dropped: {json}"
     );
 });
+
+// A malformed `.gitmodules` (a real Git parse failure, distinct from a missing or genuinely
+// empty file) must not be silently treated as "no submodules are mapped" - that would flip every
+// healthy, checked-out submodule to `MissingMapping` and misreport it as orphaned with no url,
+// hiding the real (easily-fixable) `.gitmodules` syntax error entirely. `git config` exits 1 for
+// "no matches" (legitimately empty) and something else non-zero (128 here) for a genuine parse
+// failure - the two must not be collapsed into the same result.
+forgetest_init!(dependencies_errors_loudly_on_malformed_gitmodules, |prj, cmd| {
+    let remote = tempfile::tempdir().unwrap();
+    let run_git = |args: &[&str], cwd: &std::path::Path| {
+        let status = Command::new("git").args(args).current_dir(cwd).status().unwrap();
+        assert!(status.success(), "git {args:?} failed in {}", cwd.display());
+    };
+    run_git(&["init", "-q", "-b", "main"], remote.path());
+    run_git(&["commit", "-q", "--allow-empty", "-m", "init"], remote.path());
+
+    run_git(
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            remote.path().to_str().unwrap(),
+            "lib/gooddep",
+        ],
+        prj.root(),
+    );
+    run_git(&["add", "-A"], prj.root());
+    run_git(&["commit", "-q", "-m", "add healthy submodule"], prj.root());
+
+    // Corrupt `.gitmodules` with an unterminated section header - `git config` exits 128 on this,
+    // not 1 - while leaving the submodule's real, checked-out content on disk untouched.
+    let mut gitmodules = fs::read_to_string(prj.root().join(".gitmodules")).unwrap();
+    gitmodules.push_str("[submodule \"unterminated\n");
+    fs::write(prj.root().join(".gitmodules"), &gitmodules).unwrap();
+    assert_eq!(
+        Command::new("git")
+            .args(["config", "--null", "--file", ".gitmodules", "--get-regexp", "^submodule\\..*"])
+            .current_dir(prj.root())
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(128),
+        "test setup should reproduce a real git-config parse failure, not just an empty match"
+    );
+
+    cmd.arg("dependencies").assert_failure().stderr_eq(str![[r#"
+Error: failed to parse [..].gitmodules: fatal: bad config line [..] in file [..].gitmodules
+
+"#]]);
+});

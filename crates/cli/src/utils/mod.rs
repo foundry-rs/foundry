@@ -968,8 +968,27 @@ ignore them in the `.gitignore` file."
             .arg(&gitmodules)
             .args(["--get-regexp", r"^submodule\..*\.(path|url)$"])
             .output()?;
-        if output.status.code() != Some(0) {
-            return Ok(BTreeMap::new());
+        // `git config --get-regexp` exits 1 when nothing matches the pattern - a genuinely empty
+        // `.gitmodules` (or one with no `path`/`url` keys), which is not an error. Any OTHER
+        // non-zero exit (128 for a syntactically malformed `.gitmodules`, for one) is a real
+        // parse failure and must not be collapsed into the same "empty" result - this function's
+        // return value now also drives `MissingMapping` classification for every submodule in a
+        // project (see callers), not just the cosmetic URL lookup it originally served. Verified
+        // empirically: with `.gitmodules` hand-corrupted (unterminated `[submodule "..."` header,
+        // `git config` exits 128), treating that the same as "no entries" silently flipped a
+        // fully healthy, checked-out submodule to "orphaned" with no url and no indication
+        // `.gitmodules` itself was broken - actively misleading rather than merely incomplete.
+        // Matches `submodule_mappings_at`'s existing `Some(0)`/`Some(1)`/`_` handling.
+        match output.status.code() {
+            Some(0) => {}
+            Some(1) => return Ok(BTreeMap::new()),
+            _ => {
+                return Err(eyre::eyre!(
+                    "failed to parse {}: {}",
+                    gitmodules.display(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
         }
 
         // Collect both fields per section - `--get-regexp`'s output order isn't guaranteed to

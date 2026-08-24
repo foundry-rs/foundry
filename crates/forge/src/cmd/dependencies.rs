@@ -162,8 +162,13 @@ fn submodule_dependencies(config: &Config) -> Result<Vec<DependencyInfo>> {
     // of invocation cwd - so this is the one place that still needs a Git-root-relative path.
     let project_prefix = project_root.strip_prefix(&git_root).unwrap_or(Path::new(""));
     // Parsed once and reused for every submodule below, instead of re-parsing `.gitmodules` (and
-    // spawning a fresh `git config` subprocess) per submodule.
-    let gitmodules_entries = git.submodule_gitmodules_entries(&git_root).unwrap_or_default();
+    // spawning a fresh `git config` subprocess) per submodule. A genuine parse failure (a
+    // syntactically malformed `.gitmodules`, as opposed to a missing or genuinely empty one)
+    // propagates as a real error rather than being swallowed - this feeds `MissingMapping`
+    // classification below, so silently treating "can't parse" the same as "nothing mapped"
+    // would misreport every healthy submodule as orphaned instead of surfacing the real,
+    // easily-fixable `.gitmodules` syntax error.
+    let gitmodules_entries = git.submodule_gitmodules_entries(&git_root)?;
     // `submodules_in_worktree` needs to know which paths `.gitmodules` actually maps, to
     // classify `MissingMapping` - `gitmodules_entries`'s keys already are exactly that set (same
     // `.gitmodules` parse, same "has a `path` field" criterion), so this reuses it rather than

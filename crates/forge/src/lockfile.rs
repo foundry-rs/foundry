@@ -211,9 +211,13 @@ impl<'a> Lockfile<'a> {
         // The set of paths `.gitmodules` actually maps - `submodules_in_worktree` needs this to
         // classify `MissingMapping`, and takes it as a parameter (rather than deriving it
         // internally) so a caller looping over multiple paths against the same worktree can
-        // compute it once. This call site only calls it once, so behavior here is unchanged.
+        // compute it once. This call site only calls it once, so behavior here is unchanged. A
+        // genuine `.gitmodules` parse failure propagates as a real error rather than being
+        // swallowed as "no mappings" - under `--locked` that would otherwise report a false
+        // `MissingSubmoduleMapping` mismatch for every submodule instead of the actual,
+        // easily-fixable `.gitmodules` syntax error.
         let gitmodules_paths: BTreeSet<PathBuf> =
-            git.submodule_gitmodules_entries(&git_root).unwrap_or_default().into_keys().collect();
+            git.submodule_gitmodules_entries(&git_root)?.into_keys().collect();
         let git_submodules =
             git.submodules_in_worktree(&repository_path, &gitmodules_paths, project_prefix)?;
         let mut submodules = BTreeMap::new();
