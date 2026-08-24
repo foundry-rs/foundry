@@ -80,13 +80,12 @@ fn router_inner<S: Clone + Send + Sync + 'static>(
 }
 
 /// Helper trait that is used to execute ethereum rpc calls
-#[async_trait::async_trait]
 pub trait RpcHandler: Clone + Send + Sync + 'static {
     /// The request type to expect
     type Request: DeserializeOwned + Send + Sync + fmt::Debug;
 
     /// Invoked when the request was received
-    async fn on_request(&self, request: Self::Request) -> ResponseResult;
+    fn on_request(&self, request: Self::Request) -> impl Future<Output = ResponseResult> + Send;
 
     /// Invoked for every incoming [`RpcMethodCall`]. Notifications are adapted to method calls
     /// with an [`anvil_rpc::request::Id::Null`] identifier, and their responses are discarded.
@@ -97,33 +96,35 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
     ///
     /// **Note**: override this function if the expected `Request` deviates from `{ "method" :
     /// "<name>", "params": "<params>" }`
-    async fn on_call(&self, call: RpcMethodCall) -> RpcResponse {
-        trace!(target: "rpc",  id = ?call.id , method = ?call.method, params = ?call.params, "received method call");
-        let RpcMethodCall { method, params, id, .. } = call;
+    fn on_call(&self, call: RpcMethodCall) -> impl Future<Output = RpcResponse> + Send {
+        async move {
+            trace!(target: "rpc",  id = ?call.id , method = ?call.method, params = ?call.params, "received method call");
+            let RpcMethodCall { method, params, id, .. } = call;
 
-        let params: serde_json::Value = params.into();
-        let call = serde_json::json!({
-            "method": &method,
-            "params": params
-        });
+            let params: serde_json::Value = params.into();
+            let call = serde_json::json!({
+                "method": &method,
+                "params": params
+            });
 
-        match serde_json::from_value::<Self::Request>(call) {
-            Ok(req) => {
-                let result = self.on_request(req).await;
-                RpcResponse::new(id, result)
-            }
-            Err(err) => {
-                let err = err.to_string();
-                let method_not_found = serde_json::from_value::<Self::Request>(
-                    serde_json::json!({ "method": &method }),
-                )
-                .is_err_and(|err| err.to_string().contains("unknown variant"));
-                if method_not_found {
-                    error!(target: "rpc", ?method, "failed to deserialize method due to unknown variant");
-                    RpcResponse::new(id, RpcError::method_not_found())
-                } else {
-                    error!(target: "rpc", ?method, ?err, "failed to deserialize method");
-                    RpcResponse::new(id, RpcError::invalid_params(err))
+            match serde_json::from_value::<Self::Request>(call) {
+                Ok(req) => {
+                    let result = self.on_request(req).await;
+                    RpcResponse::new(id, result)
+                }
+                Err(err) => {
+                    let err = err.to_string();
+                    let method_not_found = serde_json::from_value::<Self::Request>(
+                        serde_json::json!({ "method": &method }),
+                    )
+                    .is_err_and(|err| err.to_string().contains("unknown variant"));
+                    if method_not_found {
+                        error!(target: "rpc", ?method, "failed to deserialize method due to unknown variant");
+                        RpcResponse::new(id, RpcError::method_not_found())
+                    } else {
+                        error!(target: "rpc", ?method, ?err, "failed to deserialize method");
+                        RpcResponse::new(id, RpcError::invalid_params(err))
+                    }
                 }
             }
         }

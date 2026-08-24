@@ -11,8 +11,6 @@ use alloy_primitives::{
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, NestedEvmClosureFor, Wallets};
 use foundry_common::{compile::Analysis, sh_warn};
 use foundry_config::FuzzCorpusConfig;
-#[cfg(feature = "monad")]
-use foundry_evm_core::FoundryJournal;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
     backend::{ContextUpdateFor, DatabaseError, DatabaseExt, JournaledState},
@@ -24,6 +22,7 @@ use foundry_evm_core::{
         with_cloned_context,
     },
     precompiles::P256_VERIFY,
+    refresh_chain_journal,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_networks::{NetworkConfigs, arbitrum};
@@ -210,7 +209,10 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
-    /// Set networks with enabled features.
+    /// Sets networks when building an inspector stack directly.
+    ///
+    /// [`ExecutorBuilder::build`](crate::executors::ExecutorBuilder::build) overrides this with its
+    /// explicit network configuration so the executor, backend, and inspector remain in sync.
     #[inline]
     pub const fn networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
@@ -473,7 +475,7 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         let factory = FEN::EvmFactory::default();
         let chain_context = ecx.chain().clone();
         #[cfg(feature = "monad")]
-        let state = ecx.journal().capture_reserve_balance();
+        let state = foundry_evm_core::FoundryJournal::capture_reserve_balance(ecx.journal());
         let mut nested_chain_context = None;
         #[cfg(feature = "monad")]
         let mut reserve_balance = None;
@@ -483,14 +485,16 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
             *evm.journal_inner_mut() = journaled_state;
             #[cfg(feature = "monad")]
             {
-                evm.journal_mut().restore_reserve_balance(state);
-                evm.refresh_chain_dependent_state();
+                foundry_evm_core::FoundryJournal::restore_reserve_balance(evm.journal_mut(), state);
+                foundry_evm_core::evm::refresh_nested_chain_journal(&mut *evm);
             }
             f(&mut *evm)?;
             nested_chain_context = Some(evm.chain_mut().clone());
             #[cfg(feature = "monad")]
             {
-                reserve_balance = Some(evm.journal_mut().capture_reserve_balance());
+                reserve_balance = Some(foundry_evm_core::FoundryJournal::capture_reserve_balance(
+                    evm.journal_mut(),
+                ));
             }
             let sub_inner = evm.journal_inner_mut().clone();
             let sub_evm_env = evm.to_evm_env();
@@ -498,9 +502,11 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         })?;
         *ecx.chain_mut() = nested_chain_context.expect("nested EVM chain context was captured");
         #[cfg(feature = "monad")]
-        ecx.journal_mut()
-            .restore_reserve_balance(reserve_balance.expect("nested EVM state was captured"));
-        ecx.refresh_chain_dependent_state();
+        foundry_evm_core::FoundryJournal::restore_reserve_balance(
+            ecx.journal_mut(),
+            reserve_balance.expect("nested EVM state was captured"),
+        );
+        refresh_chain_journal(ecx);
         Ok(())
     }
 
@@ -1040,7 +1046,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         };
 
         #[cfg(feature = "monad")]
-        let state = ecx.journal().capture_reserve_balance();
+        let state = foundry_evm_core::FoundryJournal::capture_reserve_balance(ecx.journal());
         #[cfg(feature = "monad")]
         let mut reserve_balance = None;
         let mut nested_chain_context = None;
@@ -1052,9 +1058,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 evm.journal_inner_mut().state = isolated_state;
                 #[cfg(feature = "monad")]
                 {
-                    evm.journal_mut().restore_reserve_balance(state);
-                    evm.refresh_chain_dependent_state();
-                    evm.journal_mut().set_preserve_reserve_balance(true);
+                    foundry_evm_core::FoundryJournal::restore_reserve_balance(
+                        evm.journal_mut(),
+                        state,
+                    );
+                    foundry_evm_core::evm::refresh_nested_chain_journal(&mut *evm);
+                    foundry_evm_core::FoundryJournal::set_preserve_reserve_balance(
+                        evm.journal_mut(),
+                        true,
+                    );
                 }
                 // Set depth to 1 to make sure traces are collected correctly.
                 evm.journal_inner_mut().depth = 1;
@@ -1062,7 +1074,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 nested_chain_context = Some(evm.chain_mut().clone());
                 #[cfg(feature = "monad")]
                 {
-                    reserve_balance = Some(evm.journal_mut().capture_reserve_balance());
+                    reserve_balance =
+                        Some(foundry_evm_core::FoundryJournal::capture_reserve_balance(
+                            evm.journal_mut(),
+                        ));
                 }
                 (res, evm.to_evm_env())
             };
@@ -1092,10 +1107,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let Ok(res) = res else {
             #[cfg(feature = "monad")]
-            ecx.journal_mut().restore_reserve_balance(
+            foundry_evm_core::FoundryJournal::restore_reserve_balance(
+                ecx.journal_mut(),
                 reserve_balance.expect("isolated transaction state was captured"),
             );
-            ecx.refresh_chain_dependent_state();
+            refresh_chain_journal(ecx);
             // Should we match, encode and propagate error as a revert reason?
             let result =
                 InterpreterResult { result: InstructionResult::Revert, output: Bytes::new(), gas };
@@ -1129,10 +1145,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
         }
         #[cfg(feature = "monad")]
-        ecx.journal_mut().restore_reserve_balance(
+        foundry_evm_core::FoundryJournal::restore_reserve_balance(
+            ecx.journal_mut(),
             reserve_balance.expect("isolated transaction state was captured"),
         );
-        ecx.refresh_chain_dependent_state();
+        refresh_chain_journal(ecx);
 
         let (result, address, output) = match res.result {
             ExecutionResult::Success { reason, gas: result_gas, logs: _, output } => {
@@ -1154,7 +1171,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             }
         };
         if rolled_back {
-            ecx.refresh_chain_dependent_state();
+            refresh_chain_journal(ecx);
         }
         (InterpreterResult { result, output, gas }, address, was_precompile_called)
     }
@@ -1219,7 +1236,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             *ecx.journal_mut().evm_state_mut() = std::mem::take(&mut self.top_frame_journal);
         }
 
-        ecx.refresh_chain_dependent_state();
+        refresh_chain_journal(ecx);
     }
 
     // We take extra care in optimizing `step` and `step_end`, as they're are likely the most

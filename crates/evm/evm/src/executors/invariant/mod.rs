@@ -7,6 +7,7 @@ use crate::{
         },
         corpus::{
             CorpusInsertionMode, DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed,
+            persist_campaign_optimization,
         },
     },
     inspectors::Fuzzer,
@@ -427,20 +428,6 @@ fn invariant_focus_seed(
         let mut rng = runner.new_rng();
         Some(U256::from_be_bytes(rng.random::<[u8; 32]>()))
     })
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum InvariantCorpusPersistence {
-    /// Preserve the legacy single-worker behavior: each interesting input is written immediately.
-    Live,
-    /// Parallel workers return interesting inputs to the campaign coordinator for merged writes.
-    Deferred,
-}
-
-impl InvariantCorpusPersistence {
-    const fn is_deferred(self) -> bool {
-        matches!(self, Self::Deferred)
-    }
 }
 
 /// Converts a cumulative campaign total into an average per-second rate.
@@ -948,11 +935,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 dynamic: Some(&dynamic),
             },
         )?;
-        let corpus_persistence = if actual_worker_count > 1 {
-            InvariantCorpusPersistence::Deferred
-        } else {
-            InvariantCorpusPersistence::Live
-        };
         let mut runner = self.runner.clone();
         let config = self.config.clone();
         let setup_contracts = self.setup_contracts;
@@ -962,7 +944,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let campaign_state =
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
 
-        let worker_outputs = if corpus_persistence.is_deferred() {
+        let worker_outputs = if actual_worker_count > 1 {
             let worker_jobs = worker_plans
                 .into_iter()
                 .map(|worker_plan| {
@@ -1010,10 +992,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         &campaign_state,
                         worker_campaign_seed,
                         worker_corpus_seed,
-                        corpus_persistence,
                         actual_worker_count,
                         gas_report_samples,
                     );
+                    if output.is_err() {
+                        campaign_state.request_terminal_stop();
+                    }
                     debug!("finished in {:?}", timer.elapsed());
                     output
                 })
@@ -1051,7 +1035,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 &campaign_state,
                 worker_campaign_seed,
                 worker_corpus_seed,
-                corpus_persistence,
                 actual_worker_count,
                 gas_report_samples,
             )?]
@@ -1061,27 +1044,16 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         for worker_output in worker_outputs {
             aggregator.push(worker_output);
         }
-        let (result, corpus_entries) = if campaign_state.is_timed_campaign() {
-            aggregator.finish_partial_with_corpus_entries()?
+        let result = if campaign_state.is_timed_campaign() {
+            aggregator.finish_partial()?
         } else {
-            aggregator.finish_with_corpus_entries()?
+            aggregator.finish_campaign()?
         };
-        if corpus_persistence.is_deferred() {
-            let dynamic_target_ctx = self.dynamic_target_ctx();
-            corpus_seed.persist_filtered_campaign_outputs(
-                &self.config.corpus,
-                corpus_entries,
-                &self.executor,
-                ReplayTarget {
-                    stateless: None,
-                    fuzzed_contracts: Some(&replay_targets),
-                    dynamic: Some(&dynamic_target_ctx),
-                },
-                result
-                    .optimization_best_value
-                    .map(|value| (value, result.optimization_best_sequence.as_slice())),
-            )?;
-        }
+        persist_campaign_optimization(
+            &self.config.corpus,
+            result.optimization_best_value,
+            &result.optimization_best_sequence,
+        );
         Ok(result)
     }
 
@@ -1101,7 +1073,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         campaign_state: &InvariantCampaignState,
         campaign_seed: InvariantCampaignSeed,
         corpus_seed: WorkerCorpusSeed,
-        corpus_persistence: InvariantCorpusPersistence,
         worker_count: usize,
         gas_report_samples: usize,
     ) -> Result<InvariantWorkerOutput> {
@@ -1123,8 +1094,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &campaign_seed,
             corpus_seed,
         )?;
-        let mut corpus_entries = Vec::new();
-
         let mut runs = 0;
         campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
 
@@ -1445,20 +1414,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 campaign_state.sync_handler_failures(&invariant_test.test_data.failures);
             }
 
-            let insertion_mode = if corpus_persistence.is_deferred() {
-                CorpusInsertionMode::Deferred
-            } else {
-                CorpusInsertionMode::Live
-            };
             for (observed_calls, parent_tx) in observed_call_entries {
-                if let Some(entry) = corpus_manager.hoist_observed_calls(
+                corpus_manager.hoist_observed_calls(
                     &observed_calls,
                     &parent_tx,
                     &invariant_test.targeted_contracts,
-                    insertion_mode,
-                ) {
-                    corpus_entries.push(entry);
-                }
+                    CorpusInsertionMode::Live,
+                );
             }
 
             // Extend corpus only after the run and its optional hook have completed.
@@ -1466,15 +1428,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
                 (v, prefix)
             });
-            if corpus_persistence.is_deferred() {
-                if let Some(input) = corpus_manager.process_inputs_for_campaign(
+            if worker_count > 1 {
+                corpus_manager.process_inputs_for_campaign(
                     &current_run.inputs,
                     &current_run.cmp_seq,
                     current_run.new_coverage,
                     optimization,
-                ) {
-                    corpus_entries.push(input);
-                }
+                );
             } else {
                 corpus_manager.process_inputs(
                     &current_run.inputs,
@@ -1545,11 +1505,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         }
                         msg.push_str(&format!("⚠ {handler_bugs} handler bug(s)"));
                     }
-                    let msg = if corpus_persistence.is_deferred() {
-                        format!("[w{}] {msg}", plan.worker_id)
-                    } else {
-                        msg
-                    };
+                    let msg =
+                        if worker_count > 1 { format!("[w{}] {msg}", plan.worker_id) } else { msg };
                     progress.set_message(msg);
                 }
             } else if edge_coverage_enabled
@@ -1626,7 +1583,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             // `first_global_run` offsets were computed from the original partition.
             plan
         };
-        Ok(InvariantWorkerOutput { plan: reported_plan, result: worker_result, corpus_entries })
+        Ok(InvariantWorkerOutput { plan: reported_plan, result: worker_result })
     }
 
     fn shrink_handler_failures(
@@ -2373,6 +2330,7 @@ mod tests {
                 EvmEnvFor::<EthEvmNetwork>::default(),
                 TxEnvFor::<EthEvmNetwork>::default(),
                 backend,
+                Default::default(),
             );
         let target = Address::repeat_byte(0x11);
         let mut code = vec![0x6e]; // PUSH15.
@@ -2771,6 +2729,7 @@ mod tests {
             EvmEnvFor::<EthEvmNetwork>::default(),
             TxEnvFor::<EthEvmNetwork>::default(),
             backend,
+            Default::default(),
         );
         // Return ABI-encoded `true` for the invariant predicate.
         executor
@@ -2851,7 +2810,6 @@ mod tests {
                     &campaign_state,
                     campaign_seed,
                     WorkerCorpusSeed::default(),
-                    InvariantCorpusPersistence::Live,
                     1,
                     1,
                 );
@@ -2878,7 +2836,6 @@ mod tests {
         assert!(output.result.line_coverage.is_none());
         assert!(output.result.metrics.is_empty());
         assert!(output.result.optimization_best_value.is_none());
-        assert!(output.corpus_entries.is_empty());
     }
 
     #[test]

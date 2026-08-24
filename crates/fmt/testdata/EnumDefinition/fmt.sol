@@ -6,6 +6,9 @@ contract EnumDefinitions {
         GoStraight,
         SitStill
     }
+    enum TrailingComments {
+        GoLeft
+        /* one */ /* two */ }
     enum States {
         State1,
         State2,

@@ -42,16 +42,13 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
-        FoundryBlock as _,
+        FoundryBlock as _, FoundryChain,
         evm::{
-            BlockContext, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, TempoEvmNetwork,
-            TxEnvFor,
+            BlockContext, ChainFor, EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor,
         },
     },
     executors::{EvmError, Executor, TracingExecutor},
@@ -172,7 +169,9 @@ impl RunArgs {
 
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
-            return self.run_with_evm::<MonadEvmNetwork>(config, evm_opts).await;
+            return self
+                .run_with_evm::<foundry_evm::core::evm::MonadEvmNetwork>(config, evm_opts)
+                .await;
         }
 
         #[cfg(feature = "optimism")]
@@ -374,7 +373,6 @@ impl RunArgs {
             return Ok(());
         }
 
-        let factory = FEN::EvmFactory::default();
         let target_tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
         let target_is_system = is_known_system_sender(tx.from())
             || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
@@ -525,7 +523,7 @@ impl RunArgs {
                     let is_system = is_known_system_sender(tx.from())
                         || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
                     let chain_context = block_context.as_ref().map_or_else(
-                        || factory.chain_context_for_transaction(&tx_env),
+                        || ChainFor::<FEN>::for_transaction(&tx_env),
                         |context| context.transaction(index),
                     );
 
@@ -633,7 +631,7 @@ impl RunArgs {
                 0
             };
             let chain_context = block_context.as_ref().map_or_else(
-                || factory.chain_context_for_transaction(&tx_env),
+                || ChainFor::<FEN>::for_transaction(&tx_env),
                 |context| context.transaction(target_index),
             );
 

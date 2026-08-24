@@ -932,7 +932,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
     /// Returns the configuration for a contract or function.
     fn inline_config(&self, func: Option<&Function>) -> Result<Config> {
-        inline_config_for(&self.config, &self.mcr.inline_config, self.name, func)
+        let mut config = inline_config_for(&self.config, &self.mcr.inline_config, self.name, func)?;
+        config.networks = config.networks.with_execution_profile(self.tcfg.evm_opts.networks);
+        Ok(config)
     }
 
     /// Collect fixtures from test contract.

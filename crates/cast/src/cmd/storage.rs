@@ -5,7 +5,10 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
-use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
+use comfy_table::{
+    Cell, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
+};
 use eyre::Result;
 use foundry_cli::{
     opts::{BuildOpts, EtherscanOpts, RpcOpts},
@@ -422,9 +425,9 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>) -> Result<()>
 
     let mut table = Table::new();
     if shell::is_markdown() {
-        table.load_preset(ASCII_MARKDOWN);
+        table.load_style(ASCII_MARKDOWN);
     } else {
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        table.load_style(ASCII_FULL.with_rounded_corners());
     }
 
     table.set_header(vec![

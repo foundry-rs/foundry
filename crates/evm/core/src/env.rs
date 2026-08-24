@@ -1,17 +1,10 @@
 use std::fmt::Debug;
-#[cfg(feature = "monad")]
-use std::ops::{Deref, DerefMut};
 
 use alloy_consensus::Typed2718;
 pub use alloy_evm::EvmEnv;
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256};
-#[cfg(feature = "monad")]
-use monad_revm::{
-    MonadCfgEnv, MonadChainContext, MonadJournal, MonadJournalTr,
-    reserve_balance::tracker::ReserveBalanceTracker,
-};
 #[cfg(feature = "optimism")]
 use op_revm::transaction::deposit::DEPOSIT_TRANSACTION_TYPE;
 use revm::{
@@ -419,21 +412,46 @@ impl FoundryTransaction for TempoTxEnv {
 
 /// Foundry extension for chain context type
 ///
-/// Every family that doesn't need chain metadata uses `()`
-pub trait FoundryChain: Clone + Debug + Default + Send + Sync {}
-impl<T: Clone + Debug + Default + Send + Sync> FoundryChain for T {}
+/// Every family that doesn't need chain metadata uses `()`.
+pub trait FoundryChain<Tx>: Clone + Debug + Default + Send + Sync {
+    /// Builds chain context for a standalone synthetic transaction.
+    fn for_transaction(_tx: &Tx) -> Self {
+        Self::default()
+    }
+
+    /// Builds chain context for a transaction at an exact block position.
+    fn for_block(
+        _grandparent: &[Tx],
+        _parent: &[Tx],
+        _current: &[Tx],
+        _current_tx_index: usize,
+    ) -> Self {
+        Self::default()
+    }
+
+    /// Refreshes journal state derived from the active chain position.
+    fn refresh_journal<J: FoundryJournal>(&self, _journal: &mut J) {}
+}
+
+impl<Tx> FoundryChain<Tx> for () {}
 
 /// Foundry extension for Journal type
 pub trait FoundryJournal: JournalExt {
     /// Captures Monad's reserve-balance tracker for the active transaction.
     #[cfg(feature = "monad")]
-    fn capture_reserve_balance(&self) -> ReserveBalanceTracker {
-        ReserveBalanceTracker::default()
+    fn capture_reserve_balance(
+        &self,
+    ) -> monad_revm::reserve_balance::tracker::ReserveBalanceTracker {
+        monad_revm::reserve_balance::tracker::ReserveBalanceTracker::default()
     }
 
     /// Restores Monad's reserve-balance tracker for the active transaction.
     #[cfg(feature = "monad")]
-    fn restore_reserve_balance(&mut self, _tracker: ReserveBalanceTracker) {}
+    fn restore_reserve_balance(
+        &mut self,
+        _tracker: monad_revm::reserve_balance::tracker::ReserveBalanceTracker,
+    ) {
+    }
 
     /// Whether transaction boundaries currently preserve the reserve-balance tracker, e.g. for
     /// an isolated call that models an inner call of the enclosing transaction rather than a
@@ -451,21 +469,26 @@ pub trait FoundryJournal: JournalExt {
 impl<DB: Database> FoundryJournal for Journal<DB> {}
 
 #[cfg(feature = "monad")]
-impl<DB: Database> FoundryJournal for MonadJournal<DB> {
-    fn capture_reserve_balance(&self) -> ReserveBalanceTracker {
-        self.reserve_balance().clone()
+impl<DB: Database> FoundryJournal for monad_revm::MonadJournal<DB> {
+    fn capture_reserve_balance(
+        &self,
+    ) -> monad_revm::reserve_balance::tracker::ReserveBalanceTracker {
+        monad_revm::MonadJournalTr::reserve_balance(self).clone()
     }
 
-    fn restore_reserve_balance(&mut self, tracker: ReserveBalanceTracker) {
-        *self.reserve_balance_mut() = tracker;
+    fn restore_reserve_balance(
+        &mut self,
+        tracker: monad_revm::reserve_balance::tracker::ReserveBalanceTracker,
+    ) {
+        *monad_revm::MonadJournalTr::reserve_balance_mut(self) = tracker;
     }
 
     fn preserves_reserve_balance(&self) -> bool {
-        self.preserves_reserve_balance_tracker()
+        monad_revm::MonadJournalTr::preserves_reserve_balance_tracker(self)
     }
 
     fn set_preserve_reserve_balance(&mut self, preserve: bool) {
-        self.set_preserve_reserve_balance_tracker(preserve);
+        monad_revm::MonadJournalTr::set_preserve_reserve_balance_tracker(self, preserve);
     }
 }
 
@@ -479,7 +502,7 @@ pub trait FoundryContextExt:
         Tx: FoundryTransaction + Clone,
         Cfg: Cfg<Spec = Self::Spec> + Clone + From<CfgEnv<Self::Spec>> + Into<CfgEnv<Self::Spec>>,
         Journal: FoundryJournal,
-        Chain: FoundryChain,
+        Chain: FoundryChain<Self::Tx>,
     >
 {
     /// Specification id type
@@ -512,14 +535,6 @@ pub trait FoundryContextExt:
     fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
         self.cfg_env_mut().set_spec_and_mainnet_gas_params(spec);
     }
-
-    /// Resyncs Monad's reserve-balance-tracker state that depends on the current chain-position
-    /// context.
-    ///
-    /// Called after the chain context is replaced or the journal changes underneath it.
-    /// Families without chain-dependent state (the default) have nothing to do here; Monad
-    /// overrides this to rebase its reserve-balance tracker against the live chain and state.
-    fn refresh_chain_dependent_state(&mut self) {}
 
     /// Sets block environment.
     fn set_block(&mut self, block: Self::Block) {
@@ -558,12 +573,18 @@ pub trait FoundryContextExt:
     }
 }
 
+/// Refreshes journal state derived from a context's active chain position.
+pub fn refresh_chain_journal<CTX: FoundryContextExt>(context: &mut CTX) {
+    let chain = context.chain().clone();
+    chain.refresh_journal(context.journal_mut());
+}
+
 impl<
     BLOCK: FoundryBlock + Clone,
     TX: FoundryTransaction + Clone,
     SPEC: Into<SpecId> + Copy + Debug,
     DB: Database,
-    C: FoundryChain,
+    C: FoundryChain<TX>,
 > FoundryContextExt for Context<BLOCK, TX, CfgEnv<SPEC>, DB, Journal<DB>, C>
 {
     type Spec = <Self::Cfg as Cfg>::Spec;
@@ -598,7 +619,14 @@ impl<
 
 #[cfg(feature = "monad")]
 impl<DB: Database> FoundryContextExt
-    for Context<BlockEnv, TxEnv, MonadCfgEnv, DB, MonadJournal<DB>, MonadChainContext>
+    for Context<
+        BlockEnv,
+        TxEnv,
+        monad_revm::MonadCfgEnv,
+        DB,
+        monad_revm::MonadJournal<DB>,
+        monad_revm::MonadChainContext,
+    >
 {
     type Spec = <Self::Cfg as Cfg>::Spec;
     fn block_mut(&mut self) -> &mut Self::Block {
@@ -624,20 +652,16 @@ impl<DB: Database> FoundryContextExt
     fn set_spec_and_gas_params(&mut self, spec: Self::Spec) {
         let mut cfg = self.cfg.clone().into_inner();
         cfg.spec = spec;
-        self.cfg = MonadCfgEnv::from(cfg);
-    }
-
-    fn refresh_chain_dependent_state(&mut self) {
-        crate::evm::monad::rebase_monad_context(self);
+        self.cfg = monad_revm::MonadCfgEnv::from(cfg);
     }
 
     fn db_journal_inner_mut(&mut self) -> (&mut Self::Db, &mut JournaledState) {
-        let journal: &mut Journal<DB> = self.journaled_state.deref_mut();
+        let journal: &mut Journal<DB> = std::ops::DerefMut::deref_mut(&mut self.journaled_state);
         (&mut journal.database, &mut journal.inner)
     }
 
     fn journal_inner(&self) -> &JournaledState {
-        let journal: &Journal<DB> = self.journaled_state.deref();
+        let journal: &Journal<DB> = std::ops::Deref::deref(&self.journaled_state);
         &journal.inner
     }
 }
@@ -919,15 +943,11 @@ mod tests {
     use super::*;
     use alloy_consensus::{Signed, TxEip1559, transaction::Recovered};
     use alloy_evm::{EthEvmFactory, EvmFactory};
-    #[cfg(feature = "monad")]
-    use alloy_monad_evm::MonadEvmFactory;
     use alloy_network::{AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction};
     use alloy_primitives::Signature;
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionInfo};
     use alloy_serde::WithOtherFields;
     use foundry_evm_hardforks::TempoHardfork;
-    #[cfg(feature = "monad")]
-    use monad_revm::{MonadHardfork, cfg::MONAD_MEMORY_LIMIT};
     use revm::database::EmptyDB;
     use tempo_alloy::primitives::{
         AASigned, TempoSignature, TempoTransaction, TempoTxEnvelope,
@@ -961,9 +981,12 @@ mod tests {
     #[test]
     #[cfg(feature = "monad")]
     fn monad_evm_foundry_context_ext_implementation() {
-        let mut evm = MonadEvmFactory::default().create_evm(
+        let mut evm = alloy_monad_evm::MonadEvmFactory::default().create_evm(
             EmptyDB::default(),
-            EvmEnv::new(CfgEnv::new_with_spec(MonadHardfork::MonadNine), BlockEnv::default()),
+            EvmEnv::new(
+                CfgEnv::new_with_spec(monad_revm::MonadHardfork::MonadNine),
+                BlockEnv::default(),
+            ),
         );
 
         // Test EVM Context Block mutation
@@ -975,8 +998,8 @@ mod tests {
         assert_eq!(evm.ctx().tx().nonce(), 99);
 
         // Test EVM Context Cfg mutation
-        evm.ctx_mut().cfg_mut().spec = MonadHardfork::MonadEight;
-        assert_eq!(evm.ctx().cfg().spec, MonadHardfork::MonadEight);
+        evm.ctx_mut().cfg_mut().spec = monad_revm::MonadHardfork::MonadEight;
+        assert_eq!(evm.ctx().cfg().spec, monad_revm::MonadHardfork::MonadEight);
 
         // Round-trip test to ensure no issues with cloning and setting tx_env and evm_env
         let tx_env = evm.ctx().tx_clone();
@@ -990,18 +1013,18 @@ mod tests {
     fn monad_memory_limit_follows_hardfork_transitions() {
         const FOUNDRY_MEMORY_LIMIT: u64 = 128 * 1024 * 1024;
 
-        let mut cfg = CfgEnv::new_with_spec(MonadHardfork::MonadEight);
+        let mut cfg = CfgEnv::new_with_spec(monad_revm::MonadHardfork::MonadEight);
         cfg.memory_limit = FOUNDRY_MEMORY_LIMIT;
-        let mut evm = MonadEvmFactory::default()
+        let mut evm = alloy_monad_evm::MonadEvmFactory::default()
             .create_evm(EmptyDB::default(), EvmEnv::new(cfg, BlockEnv::default()));
 
         assert_eq!(evm.ctx().cfg().memory_limit(), FOUNDRY_MEMORY_LIMIT);
 
-        evm.ctx_mut().set_spec_and_gas_params(MonadHardfork::MonadNine);
+        evm.ctx_mut().set_spec_and_gas_params(monad_revm::MonadHardfork::MonadNine);
         assert_eq!(evm.ctx().cfg().inner().memory_limit, FOUNDRY_MEMORY_LIMIT);
-        assert_eq!(evm.ctx().cfg().memory_limit(), MONAD_MEMORY_LIMIT);
+        assert_eq!(evm.ctx().cfg().memory_limit(), monad_revm::cfg::MONAD_MEMORY_LIMIT);
 
-        evm.ctx_mut().set_spec_and_gas_params(MonadHardfork::MonadEight);
+        evm.ctx_mut().set_spec_and_gas_params(monad_revm::MonadHardfork::MonadEight);
         assert_eq!(evm.ctx().cfg().memory_limit(), FOUNDRY_MEMORY_LIMIT);
     }
 

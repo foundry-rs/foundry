@@ -1,6 +1,4 @@
 //! In-memory blockchain storage
-#[cfg(feature = "monad")]
-use crate::eth::backend::db::MonadBlockReplayProfile;
 use crate::eth::{
     backend::{
         db::{
@@ -30,8 +28,6 @@ use anvil_core::eth::{
     block::{Block, create_block},
     transaction::{MaybeImpersonatedTransaction, TransactionInfo},
 };
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadBlockParticipants;
 use foundry_evm::{
     backend::MemDb,
     traces::{CallKind, ParityTraceBuilder, TracingInspectorConfig},
@@ -321,13 +317,20 @@ pub struct BlockchainStorage<N: Network> {
     pub total_difficulty: U256,
     /// Monad senders and authorities retained even when old transaction bodies are pruned.
     #[cfg(feature = "monad")]
-    pub monad_block_participants: B256HashMap<MonadBlockParticipants>,
+    pub monad_block_participants: B256HashMap<foundry_evm::core::evm::MonadBlockParticipants>,
     /// Execution profile used when each locally stored Monad block was created.
     #[cfg(feature = "monad")]
-    pub monad_block_replay_profiles: B256HashMap<MonadBlockReplayProfile>,
+    pub monad_block_replay_profiles: B256HashMap<crate::eth::backend::db::MonadBlockReplayProfile>,
 }
 
 impl<N: Network> BlockchainStorage<N> {
+    /// Removes all metadata associated with a locally stored Monad block.
+    #[cfg(feature = "monad")]
+    pub(super) fn remove_monad_block_metadata(&mut self, block_hash: &B256) {
+        self.monad_block_participants.remove(block_hash);
+        self.monad_block_replay_profiles.remove(block_hash);
+    }
+
     /// Creates a new storage with a genesis block
     pub fn new(
         evm_env: &EvmEnv,
@@ -421,9 +424,7 @@ impl<N: Network> BlockchainStorage<N> {
                     removed.push(block);
                 }
                 #[cfg(feature = "monad")]
-                self.monad_block_participants.remove(&hash);
-                #[cfg(feature = "monad")]
-                self.monad_block_replay_profiles.remove(&hash);
+                self.remove_monad_block_metadata(&hash);
                 self.hashes.remove(&i);
             }
         }

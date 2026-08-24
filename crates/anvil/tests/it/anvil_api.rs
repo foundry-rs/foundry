@@ -30,8 +30,6 @@ use anvil_core::{
 };
 use foundry_common::version::{COMMIT_SHA, SEMVER_VERSION};
 use foundry_evm::hardfork::EthereumHardfork;
-#[cfg(feature = "monad")]
-use foundry_evm::hardfork::MonadHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryTxEnvelope;
 use futures::{FutureExt, StreamExt};
@@ -1915,7 +1913,8 @@ async fn can_get_node_info_tempo_t1() {
 #[tokio::test(flavor = "multi_thread")]
 #[cfg(feature = "monad")]
 async fn can_get_node_info_monad() {
-    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadEight.into()));
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadEight.into()));
     let (api, handle) = spawn(config).await;
 
     let node_info = api.anvil_node_info().await.unwrap();

@@ -1,7 +1,7 @@
 //! Foundry's main executor backend abstraction and implementation.
 
 use crate::{
-    FoundryBlock, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
+    FoundryBlock, FoundryChain, FoundryInspectorExt, FoundryTransaction, FromAnyRpcTransaction,
     constants::{CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, TEST_CONTRACT_ADDRESS},
     evm::{
         BlockContext, BlockEnvFor, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor,
@@ -106,6 +106,14 @@ struct TransactionForkTarget {
     fork_block_number: u64,
     transaction: AnyRpcTransaction,
     block: AnyRpcBlock,
+    position: Option<TransactionPosition>,
+}
+
+/// Position of a transaction in its canonical block.
+#[derive(Clone, Copy)]
+struct TransactionPosition {
+    index: usize,
+    count: usize,
 }
 
 /// A fork roll prepared for atomic publication.
@@ -332,7 +340,7 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
 
     /// Returns transaction-position context for a synthetic transaction on the active database.
     fn chain_context_for_synthetic_transaction(&self, tx: &F::Tx) -> eyre::Result<F::Chain> {
-        Ok(F::default().chain_context_for_transaction(tx))
+        Ok(F::Chain::for_transaction(tx))
     }
 
     /// Returns the `ForkId` that's currently used in the database, if fork mode is on
@@ -1051,11 +1059,34 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         // get the block number we need to fork
         if let Some(tx_block) = tx.block_number() {
             let block = fork.backend().get_full_block(tx_block)?;
+            let position = if let BlockTransactions::Full(transactions) = block.transactions() {
+                let index = transactions.iter().position(|tx| tx.tx_hash() == transaction);
+                if self.networks.is_monad() && index.is_none() {
+                    eyre::bail!(
+                        "transaction {transaction:?} is missing from block {}",
+                        block.header().number()
+                    );
+                }
+                index.map(|index| TransactionPosition { index, count: transactions.len() })
+            } else {
+                if self.networks.is_monad() {
+                    eyre::bail!(
+                        "block {} does not contain full transactions",
+                        block.header().number()
+                    );
+                }
+                None
+            };
 
             // we need to subtract 1 here because we want the state before the transaction
             // was mined
             let fork_block = tx_block - 1;
-            Ok(TransactionForkTarget { fork_block_number: fork_block, transaction: tx, block })
+            Ok(TransactionForkTarget {
+                fork_block_number: fork_block,
+                transaction: tx,
+                block,
+                position,
+            })
         } else {
             if self.networks.is_monad() {
                 eyre::bail!(
@@ -1066,7 +1097,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
             let number = block.header().number();
 
-            Ok(TransactionForkTarget { fork_block_number: number, transaction: tx, block })
+            Ok(TransactionForkTarget {
+                fork_block_number: number,
+                transaction: tx,
+                block,
+                position: None,
+            })
         }
     }
 
@@ -1163,7 +1199,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         tx: &TxEnvFor<FEN>,
     ) -> eyre::Result<ChainFor<FEN>> {
         if !self.networks.is_monad() {
-            return Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx));
+            return Ok(ChainFor::<FEN>::for_transaction(tx));
         }
 
         let fork = self.inner.get_fork_by_id(id)?;
@@ -1301,7 +1337,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 let block_context = Self::block_context_inputs_from_backend(&backend, &block)?;
                 block_context.into_child().next_transaction(tx)
             } else {
-                FEN::EvmFactory::default().chain_context_for_transaction(tx)
+                ChainFor::<FEN>::for_transaction(tx)
             };
             ContextUpdate::Replace(chain_context)
         } else {
@@ -1369,30 +1405,18 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             trace!(?id, ?transaction, "roll fork to transaction");
             let id = self.ensure_fork(id)?;
             let affects_active = self.is_active_fork(id);
-            let TransactionForkTarget { fork_block_number, block, .. } =
+            let TransactionForkTarget { fork_block_number, block, position, .. } =
                 self.get_block_number_and_block_for_transaction(id, transaction)?;
-            let BlockTransactions::Full(transactions) = block.transactions() else {
-                eyre::bail!("block {} does not contain full transactions", block.header().number());
-            };
-            let transaction_index = transactions
-                .iter()
-                .position(|tx| tx.tx_hash() == transaction)
-                .ok_or_else(|| {
-                    eyre::eyre!(
-                        "transaction {transaction:?} is missing from block {}",
-                        block.header().number()
-                    )
-                })?;
-
+            let position = position.expect("Monad transaction target includes canonical position");
             let block_context = self.block_context_inputs(id, &block)?;
             let context_update = if affects_active && let Some(tx) = tx_env {
-                let position = ForkPosition::BeforeTransaction {
+                let fork_position = ForkPosition::BeforeTransaction {
                     block_number: block.header().number(),
-                    transaction_index,
+                    transaction_index: position.index,
                 };
                 ContextUpdate::Replace(Self::context_for_block_position(
                     block_context.clone(),
-                    position,
+                    fork_position,
                     tx,
                 )?)
             } else if affects_active {
@@ -1455,7 +1479,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             );
             staged_fork.fork.position = ForkPosition::BeforeTransaction {
                 block_number: block.header().number(),
-                transaction_index,
+                transaction_index: position.index,
             };
 
             // Once the handler update is enqueued, all remaining publication is infallible.
@@ -1481,21 +1505,8 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         let id = self.ensure_fork(id)?;
         let _affects_active = self.is_active_fork(id);
 
-        let TransactionForkTarget { fork_block_number, block, .. } =
+        let TransactionForkTarget { fork_block_number, block, position, .. } =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
-        let transaction_index = match block.transactions() {
-            BlockTransactions::Full(transactions) => {
-                transactions.iter().position(|tx| tx.tx_hash() == transaction)
-            }
-            _ => None,
-        };
-        if self.networks.is_monad() && transaction_index.is_none() {
-            eyre::bail!(
-                "transaction {transaction:?} is missing from block {}",
-                block.header().number()
-            );
-        }
-
         let block_context = if self.networks.is_monad() {
             Some(self.block_context_inputs(id, &block)?)
         } else {
@@ -1504,13 +1515,15 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         #[cfg(feature = "monad")]
         let context_update = if _affects_active && let Some(tx) = _tx_env {
             let chain_context = if let Some(context) = &block_context {
-                let position = ForkPosition::BeforeTransaction {
+                let fork_position = ForkPosition::BeforeTransaction {
                     block_number: block.header().number(),
-                    transaction_index: transaction_index.expect("checked above"),
+                    transaction_index: position
+                        .expect("Monad transaction target includes canonical position")
+                        .index,
                 };
-                Self::context_for_block_position(context.clone(), position, tx)?
+                Self::context_for_block_position(context.clone(), fork_position, tx)?
             } else {
-                FEN::EvmFactory::default().chain_context_for_transaction(tx)
+                ChainFor::<FEN>::for_transaction(tx)
             };
             ContextUpdate::Replace(chain_context)
         } else if _affects_active {
@@ -1542,11 +1555,11 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
             )?
         };
         if target.is_some()
-            && let Some(transaction_index) = transaction_index
+            && let Some(position) = position
         {
             self.inner.get_fork_by_id_mut(id)?.position = ForkPosition::BeforeTransaction {
                 block_number: block.header().number(),
-                transaction_index,
+                transaction_index: position.index,
             };
         }
 
@@ -1687,7 +1700,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         tx: &TxEnvFor<FEN>,
     ) -> eyre::Result<ChainFor<FEN>> {
         self.block_context_for_synthetic_transaction()?.map_or_else(
-            || Ok(FEN::EvmFactory::default().chain_context_for_transaction(tx)),
+            || Ok(ChainFor::<FEN>::for_transaction(tx)),
             |context| Ok(context.next_transaction(tx)),
         )
     }
@@ -2018,46 +2031,32 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         // transaction in the block and then the transaction is transacted:
         // <https://github.com/foundry-rs/foundry/issues/6538>
         // So we modify the env to match the transaction's block.
-        let TransactionForkTarget { transaction: tx, block, .. } =
+        let TransactionForkTarget { transaction: tx, block, position, .. } =
             self.get_block_number_and_block_for_transaction(id, transaction)?;
         let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&tx)?;
         update_env_block(&mut evm_env, block.header());
         self.apply_fork_tx_replay_env_changes(id, &mut evm_env)?;
 
-        let current_tx_position = if self.networks.is_monad() {
-            let BlockTransactions::Full(transactions) = block.transactions() else {
-                eyre::bail!("block {} does not contain full transactions", block.header().number());
-            };
-            let index = transactions.iter().position(|tx| tx.tx_hash() == transaction).ok_or_else(
-                || {
-                    eyre::eyre!(
-                        "transaction {transaction:?} is missing from block {}",
-                        block.header().number()
-                    )
-                },
-            )?;
-            Some((index, transactions.len()))
-        } else {
-            None
-        };
         let block_context = if self.networks.is_monad() {
             Some(self.block_context_inputs(id, &block)?)
         } else {
             None
         };
-        let chain_context = if let Some((current_tx_index, _)) = current_tx_position {
-            block_context.as_ref().expect("created above").transaction(current_tx_index)
+        let chain_context = if let Some(context) = &block_context {
+            context.transaction(
+                position.expect("Monad transaction target includes canonical position").index,
+            )
         } else {
-            FEN::EvmFactory::default().chain_context_for_transaction(&tx_env)
+            ChainFor::<FEN>::for_transaction(&tx_env)
         };
 
-        let next_position = if let Some((current_tx_index, transaction_count)) = current_tx_position
-        {
+        let next_position = if block_context.is_some() {
+            let position = position.expect("Monad transaction target includes canonical position");
             Some(
                 self.inner
                     .get_fork_by_id(id)?
                     .position
-                    .after_transaction(block.header().number(), current_tx_index, transaction_count)
+                    .after_transaction(block.header().number(), position.index, position.count)
                     .ok_or_else(|| {
                         eyre::eyre!(
                             "transaction {transaction} does not immediately follow the active \
@@ -2077,7 +2076,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
                     _outer_tx_env,
                 )?
             } else {
-                FEN::EvmFactory::default().chain_context_for_transaction(_outer_tx_env)
+                ChainFor::<FEN>::for_transaction(_outer_tx_env)
             })
         } else {
             ContextUpdate::Rebase
@@ -2977,12 +2976,7 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
             inspector,
         );
         evm.journal_inner_mut().depth = depth + 1;
-        #[cfg(feature = "monad")]
-        let result =
-            evm.transact_replay(tx_env).wrap_err("backend: failed committing transaction")?;
-        #[cfg(not(feature = "monad"))]
-        let result = evm.transact_raw(tx_env).wrap_err("backend: failed committing transaction")?;
-        result
+        evm.transact_raw(tx_env).wrap_err("backend: failed committing transaction")?
     };
     trace!(elapsed = ?now.elapsed(), "transacted transaction");
 
@@ -3046,10 +3040,6 @@ fn fork_block_number(fork: &ForkId) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::{Fork, apply_state_changeset};
-    #[cfg(feature = "monad")]
-    use crate::evm::MonadEvmNetwork;
-    #[cfg(feature = "monad")]
-    use crate::fork::CreateFork;
     use crate::{
         backend::{Backend, ForkPosition},
         evm::EthEvmNetwork,
@@ -3287,8 +3277,13 @@ mod tests {
             opts
         }
 
-        fn target_fork(opts: EvmOpts, url: String) -> CreateFork {
-            CreateFork { url, enable_caching: false, evm_opts: opts, expected_context: None }
+        fn target_fork(opts: EvmOpts, url: String) -> crate::fork::CreateFork {
+            crate::fork::CreateFork {
+                url,
+                enable_caching: false,
+                evm_opts: opts,
+                expected_context: None,
+            }
         }
 
         let (ethereum_base_api, ethereum_base) = spawn(NodeConfig::test()).await;
@@ -3314,7 +3309,7 @@ mod tests {
 
         let inferred_monad = pinned_opts(monad_base.http_endpoint(), None).await;
         assert!(inferred_monad.fork_network_is_inferred);
-        let error = Backend::<MonadEvmNetwork>::spawn(Some(target_fork(
+        let error = Backend::<crate::evm::MonadEvmNetwork>::spawn(Some(target_fork(
             inferred_monad,
             ethereum_target.http_endpoint(),
         )))
@@ -3338,7 +3333,7 @@ mod tests {
         let explicit_monad =
             pinned_opts(monad_base.http_endpoint(), Some(NetworkConfigs::with_monad())).await;
         assert!(!explicit_monad.fork_network_is_inferred);
-        let _backend = Backend::<MonadEvmNetwork>::spawn(Some(target_fork(
+        let _backend = Backend::<crate::evm::MonadEvmNetwork>::spawn(Some(target_fork(
             explicit_monad,
             ethereum_target.http_endpoint(),
         )))
@@ -3377,6 +3372,8 @@ mod tests {
             chain: None,
             block_env: evm_env.block_env,
             hosts: Default::default(),
+            fork_hash: None,
+            source_id: None,
         };
 
         let db = BlockchainDb::new(

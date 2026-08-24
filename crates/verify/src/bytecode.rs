@@ -32,17 +32,14 @@ use foundry_common::{
 };
 use foundry_compilers::info::ContractInfo;
 use foundry_config::{Chain, Config, figment, impl_figment_convert};
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
-        FoundryTransaction as _,
+        FoundryChain, FoundryTransaction as _,
         evm::{
-            BlockContext, ChainFor, EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork,
-            TempoEvmNetwork, TxEnvFor,
+            BlockContext, ChainFor, EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor,
         },
     },
     executors::EvmError,
@@ -277,7 +274,7 @@ impl VerifyBytecodeArgs {
             }
             #[cfg(feature = "monad")]
             NetworkVariant::Monad => {
-                self.run_with_network_and_config::<MonadEvmNetwork>(
+                self.run_with_network_and_config::<foundry_evm::core::evm::MonadEvmNetwork>(
                     config,
                     endpoint_identity,
                     network_was_inferred,
@@ -784,7 +781,6 @@ impl VerifyBytecodeArgs {
                 provider.get_transaction_count(transaction.from()).block_id(prev_block_id).await?;
 
             apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain.id());
-            let factory = FEN::EvmFactory::default();
             let mut target_context = None::<ChainFor<FEN>>;
             if let Some(ref block) = block {
                 let BlockTransactions::Full(txs) = block.transactions() else {
@@ -804,7 +800,7 @@ impl VerifyBytecodeArgs {
                     txs[target_index].from(),
                 );
                 target_context = Some(block_context.as_ref().map_or_else(
-                    || factory.chain_context_for_transaction(&target_tx_env),
+                    || ChainFor::<FEN>::for_transaction(&target_tx_env),
                     |context| context.transaction(target_index),
                 ));
 
@@ -819,7 +815,7 @@ impl VerifyBytecodeArgs {
                     let is_system = is_known_system_sender(tx.from())
                         || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
                     let chain_context = block_context.as_ref().map_or_else(
-                        || factory.chain_context_for_transaction(&tx_env),
+                        || ChainFor::<FEN>::for_transaction(&tx_env),
                         |context| context.transaction(index),
                     );
 
@@ -887,7 +883,7 @@ impl VerifyBytecodeArgs {
                 TxEnvFor::<FEN>::from_recovered_tx(transaction.as_ref(), transaction.from());
             tx_env.set_nonce(prev_block_nonce);
             let target_context =
-                target_context.unwrap_or_else(|| factory.chain_context_for_transaction(&tx_env));
+                target_context.unwrap_or_else(|| ChainFor::<FEN>::for_transaction(&tx_env));
 
             // Replace the `input` with local creation code in the creation tx.
             if let TxKind::Call(to) = kind {

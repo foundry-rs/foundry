@@ -15,10 +15,6 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolValue;
 use anvil::NodeConfig;
 use foundry_evm::core::tempo::PATH_USD_ADDRESS;
-#[cfg(feature = "monad")]
-use foundry_evm::hardfork::MonadHardfork;
-#[cfg(feature = "monad")]
-use foundry_test_utils::rpc::spawn_canonical_monad_system_rpc;
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
@@ -7021,6 +7017,86 @@ forgetest_async!(cast_call_debug_trace_call_local_artifacts_json_stdout, |prj, c
     });
 });
 
+casttest!(cast_call_decodes_custom_error, async |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    let signature = "RequestLimitExceeded(uint256,uint256)";
+    let selector = keccak256(signature);
+    let mut revert_data = selector[..4].to_vec();
+    revert_data.extend((U256::from(5), U256::from(3)).abi_encode());
+
+    // Runtime bytecode that copies the appended revert payload into memory and reverts with it.
+    let payload_len = u8::try_from(revert_data.len()).unwrap();
+    let mut runtime =
+        vec![0x60, payload_len, 0x60, 0x0a, 0x5f, 0x39, 0x60, payload_len, 0x5f, 0xfd];
+    runtime.extend(revert_data);
+
+    // Isolate and seed the signature cache so decoding is deterministic and offline.
+    let home = prj.root().join("home");
+    let cache_dir = home.join(".foundry/cache");
+    fs::create_dir_all(&cache_dir).unwrap();
+    let selector = format!("0x{}", hex::encode(&selector[..4]));
+    let mut errors = serde_json::Map::new();
+    errors.insert(selector, json!(signature));
+    fs::write(
+        cache_dir.join("signatures"),
+        serde_json::to_vec(&json!({
+            "functions": {},
+            "errors": errors,
+            "events": {},
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let target = "0x000000000000000000000000000000000000dead";
+    let code_override = format!("{target}:0x{}", hex::encode(runtime));
+    let endpoint = handle.http_endpoint();
+
+    cmd.env("HOME", &home);
+    cmd.env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+        "call",
+        target,
+        "--data",
+        "0x",
+        "--override-code",
+        &code_override,
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_failure()
+    .stdout_eq(str![""])
+    .stderr_eq(str![[r#"
+Error: execution reverted: RequestLimitExceeded(5, 3)
+
+Context:
+- server returned an error response:[..]
+
+"#]]);
+
+    cmd.cast_fuse();
+    cmd.env("HOME", &home);
+    cmd.env("FOUNDRY_OFFLINE", "true");
+    cmd.args([
+            "call",
+            target,
+            "--data",
+            "0x",
+            "--override-code",
+            &code_override,
+            "--rpc-url",
+            &endpoint,
+            "--json",
+        ])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+{"schema_version":1,"success":false,"data":null,"errors":[{"level":"error","code":"cast.error","message":"execution reverted: RequestLimitExceeded(5, 3)"},{"level":"error","code":"cast.error.context","message":"server returned an error response:[..]"}],"warnings":[]}
+
+"#]])
+        .stderr_eq(str![""]);
+});
+
 // `cast call --trace` decodes custom errors through the local signatures cache that `forge build`
 // populates, without requiring `--with-local-artifacts`.
 // <https://github.com/foundry-rs/foundry/issues/11085>
@@ -7525,7 +7601,8 @@ Transaction successfully executed.
 
 #[cfg(feature = "monad")]
 casttest!(monad_call_trace_uses_monad_evm_network, async |_prj, cmd| {
-    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (_api, handle) = anvil::spawn(config).await;
     let endpoint = handle.http_endpoint();
     let reserve_balance_address = MONAD_RESERVE_BALANCE_ADDRESS.to_string();
@@ -7552,7 +7629,7 @@ casttest!(monad_call_trace_uses_monad_evm_network, async |_prj, cmd| {
 #[cfg(feature = "monad")]
 casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
     let config = NodeConfig::test_monad()
-        .with_hardfork(Some(MonadHardfork::MonadEight.into()))
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadEight.into()))
         .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
         .with_genesis_timestamp(Some(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP - 1));
     let (_api, monad_eight_handle) = anvil::spawn(config).await;
@@ -7630,7 +7707,7 @@ casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
     );
 
     let config = NodeConfig::test_monad()
-        .with_hardfork(Some(MonadHardfork::MonadNine.into()))
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()))
         .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
         .with_genesis_timestamp(Some(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP));
     let (_origin_api, monad_nine_origin) = anvil::spawn(config).await;
@@ -7696,7 +7773,8 @@ casttest!(monad_call_trace_resolves_effective_hardfork, async |_prj, cmd| {
 
 #[cfg(feature = "monad")]
 casttest!(monad_call_trace_uses_parent_sender_context, async |_prj, cmd| {
-    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (api, handle) = anvil::spawn(config).await;
     let provider = handle.http_provider();
     let sender = provider.get_accounts().await.unwrap()[0];
@@ -7750,7 +7828,8 @@ casttest!(monad_call_trace_uses_parent_sender_context, async |_prj, cmd| {
 
 #[cfg(feature = "monad")]
 casttest!(monad_run_replays_reserve_balance_precompile_tx, async |_prj, cmd| {
-    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (_api, handle) = anvil::spawn(config).await;
     let provider = handle.http_provider();
     let from = provider.get_accounts().await.unwrap()[0];
@@ -7778,7 +7857,7 @@ casttest!(monad_run_replays_reserve_balance_precompile_tx, async |_prj, cmd| {
 #[cfg(feature = "monad")]
 casttest!(monad_run_preserves_endpoint_hardfork, async |_prj, cmd| {
     let origin_config = NodeConfig::test_monad()
-        .with_hardfork(Some(MonadHardfork::MonadNine.into()))
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()))
         .with_chain_id(Some(MONAD_TESTNET_CHAIN_ID))
         .with_genesis_timestamp(Some(MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP - 2));
     let (_origin_api, origin_handle) = anvil::spawn(origin_config).await;
@@ -7868,7 +7947,8 @@ casttest!(monad_run_preserves_endpoint_hardfork, async |_prj, cmd| {
 
 #[cfg(feature = "monad")]
 casttest!(monad_run_traces_protocol_system_call, async |_prj, cmd| {
-    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (api, handle) = anvil::spawn(config).await;
     let provider = handle.http_provider();
     api.anvil_impersonate_account(MONAD_SYSTEM_ADDRESS).await.unwrap();
@@ -7908,7 +7988,8 @@ casttest!(monad_run_traces_protocol_system_call, async |_prj, cmd| {
         original.stdout_lossy()
     );
 
-    let canonical_endpoint = spawn_canonical_monad_system_rpc(endpoint.clone(), tx_hash).await;
+    let canonical_endpoint =
+        foundry_test_utils::rpc::spawn_canonical_monad_system_rpc(endpoint.clone(), tx_hash).await;
     let output = cmd
         .cast_fuse()
         .args(["run", &tx_hash_string, "--rpc-url", &canonical_endpoint, "--quick"])
@@ -7954,7 +8035,8 @@ Replaying system transactions is currently not supported.
 
 #[cfg(feature = "monad")]
 casttest!(monad_run_replays_current_sender_context, async |_prj, cmd| {
-    let config = NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into()));
+    let config = NodeConfig::test_monad()
+        .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()));
     let (api, handle) = anvil::spawn(config).await;
     let provider = handle.http_provider();
     let sender = provider.get_accounts().await.unwrap()[0];
