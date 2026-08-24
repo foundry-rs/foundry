@@ -453,7 +453,7 @@ impl SequenceMutator {
     fn repeat(sequence: &[BasicTxDetails], runner: &mut TestRunner) -> Vec<BasicTxDetails> {
         let rng = runner.rng();
         let start = rng.random_range(0..sequence.len());
-        let end = rng.random_range(start..sequence.len());
+        let end = rng.random_range(start..=sequence.len());
         let repeated = sequence[rng.random_range(0..sequence.len())].clone();
         let mut result = Vec::with_capacity(sequence.len());
         result.extend_from_slice(&sequence[..start]);
@@ -747,6 +747,20 @@ mod tests {
             selected_second_final,
             "splice never selected the second entry's final transaction"
         );
+    }
+
+    #[test]
+    fn repeat_can_replace_final_transaction() {
+        let sequence = [tx(1), tx(2)];
+        let mut runner = TestRunner::deterministic();
+        let mut replaced_final = false;
+
+        for _ in 0..1000 {
+            let result = SequenceMutator::repeat(&sequence, &mut runner);
+            replaced_final |= result[1].sender != sequence[1].sender;
+        }
+
+        assert!(replaced_final, "repeat never replaced the final transaction");
     }
 
     #[test]
