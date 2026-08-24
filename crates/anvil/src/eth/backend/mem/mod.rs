@@ -211,6 +211,35 @@ use tempo_revm::{
 };
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 
+/// Creates an Ethereum-shaped genesis header from the EVM environment.
+fn genesis_header(
+    evm_env: &EvmEnv,
+    base_fee: Option<u64>,
+    timestamp: u64,
+    genesis_number: u64,
+) -> Header {
+    let spec_id = *evm_env.spec_id();
+    Header {
+        timestamp,
+        base_fee_per_gas: base_fee,
+        gas_limit: evm_env.block_env.gas_limit,
+        beneficiary: evm_env.block_env.beneficiary,
+        difficulty: evm_env.block_env.difficulty,
+        blob_gas_used: evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
+        excess_blob_gas: evm_env.block_env.blob_excess_gas(),
+        number: genesis_number,
+        parent_beacon_block_root: (spec_id >= SpecId::CANCUN).then_some(Default::default()),
+        withdrawals_root: (spec_id >= SpecId::SHANGHAI).then_some(EMPTY_WITHDRAWALS),
+        requests_hash: (spec_id >= SpecId::PRAGUE).then_some(EMPTY_REQUESTS_HASH),
+        ..Default::default()
+    }
+}
+
+/// Wraps an Ethereum-shaped header in the selected network's consensus header.
+fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
+    if networks.is_tempo() { FoundryHeader::tempo(header) } else { header.into() }
+}
+
 /// Side-channel container for OP-specific deposit info produced by
 /// [`Backend::build_call_env_with_base`] and consumed by the OP transact path.
 ///
@@ -3885,13 +3914,13 @@ impl<N: Network> Backend<N> {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
             Blockchain::forked(fork.block_number(), fork.block_hash(), fork.total_difficulty())
         } else {
-            Blockchain::new(
+            let header = genesis_header(
                 &env.read(),
                 fees.is_eip1559().then(|| fees.base_fee()),
                 genesis.timestamp,
                 genesis.number,
-                networks.is_tempo(),
-            )
+            );
+            Blockchain::new(foundry_header(&networks, header))
         };
 
         // Sync EVM block.number with genesis for non-fork mode.
@@ -4604,13 +4633,8 @@ impl<N: Network> Backend<N> {
         );
 
         let base_fee = staged_fees.is_eip1559().then_some(genesis_base_fee);
-        let staged_storage = BlockchainStorage::new(
-            &staged_env,
-            base_fee,
-            genesis_timestamp,
-            genesis_number,
-            self.is_tempo(),
-        );
+        let header = genesis_header(&staged_env, base_fee, genesis_timestamp, genesis_number);
+        let staged_storage = BlockchainStorage::new(foundry_header(&self.networks, header));
 
         // Seed the next block's fee state. Tempo always advances through its hardfork rule, an
         // implicit in-memory Ethereum reset restores Anvil's default, and explicit or
@@ -5365,7 +5389,7 @@ where
             slot_number: None,
         };
 
-        let block = create_block(FoundryHeader::new(header, self.is_tempo()), transactions);
+        let block = create_block(foundry_header(&self.networks, header), transactions);
         BlockInfo { block, transactions: transaction_infos, receipts: block_result.receipts }
     }
 
@@ -7440,7 +7464,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                     requests_hash: (spec_id >= SpecId::PRAGUE).then_some(EMPTY_REQUESTS_HASH),
                     ..Default::default()
                 };
-                let header = FoundryHeader::new(header, self.is_tempo());
+                let header = foundry_header(&self.networks, header);
                 let best_hash = header.hash_slow();
                 selected_header = Some(header.clone());
                 checkpoint = Some(create_block(

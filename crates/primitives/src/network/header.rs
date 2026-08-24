@@ -26,11 +26,6 @@ impl Default for FoundryHeader {
 }
 
 impl FoundryHeader {
-    /// Creates a header for the selected network.
-    pub const fn new(inner: Header, is_tempo: bool) -> Self {
-        if is_tempo { Self::tempo(inner) } else { Self::Ethereum(inner) }
-    }
-
     /// Creates a Tempo header from its Ethereum-shaped fields.
     pub const fn tempo(inner: Header) -> Self {
         Self::Tempo(TempoHeader {
