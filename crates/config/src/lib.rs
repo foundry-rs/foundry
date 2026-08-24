@@ -47,9 +47,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    fs, io,
+    fs,
+    io::{self, Write as _},
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Mutex,
 };
 
 mod macros;
@@ -153,6 +155,22 @@ pub use semver;
 
 #[cfg(not(test))]
 static SELECTED_PROFILE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new();
+static WARNED_LOCAL_COMPILERS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+fn warn_local_compiler(path: &Path) {
+    let mut warned = WARNED_LOCAL_COMPILERS.lock().unwrap_or_else(|err| err.into_inner());
+    if warned.iter().any(|warned_path| warned_path == path) {
+        return;
+    }
+    warned.push(path.to_path_buf());
+
+    let mut stderr = io::stderr().lock();
+    let _ = writeln!(
+        stderr,
+        "Warning: this project is configured to use a local compiler executable:\n  {path:?}\n\
+         Running this executable may execute arbitrary code."
+    );
+}
 
 /// Foundry configuration
 ///
@@ -1503,7 +1521,8 @@ impl Config {
                     if !solc.is_file() {
                         return Err(SolcError::msg(format!("`solc` {solc:?} does not exist")));
                     }
-                    Solc::new_with_approval(solc)?
+                    warn_local_compiler(solc);
+                    Solc::new(solc)?
                 }
             };
             return Ok(Some(solc));
@@ -1591,7 +1610,8 @@ impl Config {
             return Ok(None);
         }
         let vyper = if let Some(path) = &self.vyper.path {
-            Some(Vyper::new_with_approval(path)?)
+            warn_local_compiler(path);
+            Some(Vyper::new(path)?)
         } else {
             Vyper::new("vyper").ok()
         };
@@ -3108,7 +3128,10 @@ impl SolcReq {
     pub fn try_version(&self) -> Result<Version, SolcError> {
         match self {
             Self::Version(version) => Ok(version.clone()),
-            Self::Local(path) => Solc::new_with_approval(path).map(|solc| solc.version),
+            Self::Local(path) => {
+                warn_local_compiler(path);
+                Solc::new(path).map(|solc| solc.version)
+            }
         }
     }
 }
