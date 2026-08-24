@@ -14,6 +14,12 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
 
+        let offset = state.stack.peek(1)?.clone();
+        let size = state.stack.peek(2)?.clone();
+        if let Some(outcome) = self.guard_memory_range(executor, state, worklist, &offset, &size)? {
+            return Ok(outcome);
+        }
+
         let value = state.stack.pop()?;
         let offset = state.stack.pop()?;
         let size = state.stack.pop()?;
@@ -21,8 +27,7 @@ impl SymbolicExecutor {
             Some(Ok(size)) => BoundedCopySize::Concrete(size),
             Some(Err(_)) => {
                 state.return_data = SymReturnData::empty(&mut self.cx);
-                state.stack.push(SymExpr::zero(&mut self.cx))?;
-                return Ok(StepOutcome::Continue);
+                return Ok(StepOutcome::Revert);
             }
             None => {
                 let max_limit = self.config.max_calldata_bytes as usize;
@@ -43,6 +48,8 @@ impl SymbolicExecutor {
         };
         let salt =
             if matches!(kind, CreateKind::Create2) { Some(state.stack.pop()?) } else { None };
+
+        size.expand_memory(&mut self.cx, &mut state.memory, offset.clone());
 
         let initcode = match &size {
             BoundedCopySize::Concrete(size) => {

@@ -448,7 +448,7 @@ chrono = { version = "0.4", default-features = false, features = [
 axum = "0.8"
 ciborium = "0.2"
 color-eyre = "0.6"
-comfy-table = "7"
+comfy-table = "8"
 crossterm = "0.29"
 dirs = "6"
 dunce = "1"
