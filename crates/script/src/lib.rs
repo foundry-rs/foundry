@@ -1043,7 +1043,11 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             if let Some(backend) = self.backends.get(&resolved) {
                 backend.clone()
             } else {
-                let fork = self.evm_opts.get_fork_with_context(&self.config, resolved.context());
+                let fork = self.evm_opts.get_fork_resolved(
+                    &self.config,
+                    evm_env.cfg_env.chain_id,
+                    Some(&resolved),
+                );
                 let backend = Backend::spawn(fork)?;
                 self.backends.insert(resolved, backend.clone());
                 backend

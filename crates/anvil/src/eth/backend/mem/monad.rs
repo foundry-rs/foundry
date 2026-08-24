@@ -80,9 +80,8 @@ pub(super) struct PreparedExecution {
 
 /// Caches the fork blocks needed to construct the next Monad block's ancestor context.
 pub(super) async fn cache_fork_context(fork: &ClientFork) -> Result<(), BlockchainError> {
-    let block_number = fork.block_number();
     let block =
-        fork.block_by_number_full(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
+        fork.block_by_hash_full(fork.block_hash()).await?.ok_or(BlockchainError::BlockNotFound)?;
     let parent_hash = block.header().parent_hash();
     if !parent_hash.is_zero() {
         fork.block_by_hash_full(parent_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
