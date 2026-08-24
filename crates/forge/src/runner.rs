@@ -5023,9 +5023,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
             fuzz_config.corpus.corpus_dir = None;
         }
-        let persisted_failure = persisted_failure.filter(|failure| {
-            failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
-        });
 
         self.try_seed_fuzz_corpus_from_frontiers(func, &fuzz_config);
         self.try_seed_fuzz_corpus_symbolically(func, &fuzz_config);

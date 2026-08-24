@@ -4935,63 +4935,34 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     assert!(new_persist_dir.exists());
 });
 
-forgetest_init!(zero_fuzz_runs_replays_persisted_failure, |prj, cmd| {
-    prj.update_config(|config| {
-        config.fuzz.runs = 1;
-        config.fuzz.seed = Some(U256::from(1));
-    });
+forgetest_init!(zero_fuzz_runs_rejected, |prj, cmd| {
+    prj.update_config(|config| config.fuzz.runs = 0);
     prj.add_test(
         "ZeroFuzzRuns.t.sol",
         r#"
 contract ZeroFuzzRunsTest {
-    function testFuzz_alwaysFails(uint256) external pure {
-        revert("BUG");
-    }
+    function testFuzz_value(uint256) external pure {}
 }
    "#,
     );
 
-    let expected = str![[r#"
-...
-Ran 1 test for test/ZeroFuzzRuns.t.sol:ZeroFuzzRunsTest
-[FAIL: BUG; counterexample: calldata=[..] args=[..]] testFuzz_alwaysFails(uint256) (runs: 0, [AVG_GAS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-...
-"#]];
-    cmd.args(["test", "--mt", "testFuzz_alwaysFails", "-j1"])
-        .assert_failure()
-        .stdout_eq(expected.clone());
+    let output = cmd.arg("test").assert_failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(stderr.contains("`fuzz.runs` must be greater than 0"), "{stderr}");
 
-    prj.update_config(|config| config.fuzz.runs = 0);
-    cmd.forge_fuse()
-        .args(["test", "--mt", "testFuzz_alwaysFails", "-j1"])
-        .assert_failure()
-        .stdout_eq(expected);
-
-    let failure_path = prj.root().join("cache/fuzz/failures/ZeroFuzzRunsTest/testFuzz_alwaysFails");
-    let mut failure: BaseCounterExample =
-        serde_json::from_slice(&std::fs::read(&failure_path).unwrap()).unwrap();
-    let mut calldata = failure.calldata.to_vec();
-    calldata[..4].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
-    failure.calldata = calldata.into();
-    std::fs::write(&failure_path, serde_json::to_vec(&failure).unwrap()).unwrap();
-
-    let corpus_root = prj.root().join("zero-run-corpus");
-    prj.update_config(|config| config.fuzz.corpus.corpus_dir = Some(corpus_root.clone()));
-    cmd.forge_fuse()
-        .args(["test", "--mt", "testFuzz_alwaysFails", "-j1"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-No files changed, compilation skipped
-
-Ran 1 test for test/ZeroFuzzRuns.t.sol:ZeroFuzzRunsTest
-[PASS] testFuzz_alwaysFails(uint256) (runs: 0, [AVG_GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
-"#]]);
-    assert!(!corpus_root.exists());
+    prj.update_config(|config| config.fuzz.runs = 1);
+    prj.add_test(
+        "ZeroFuzzRuns.t.sol",
+        r#"
+contract ZeroFuzzRunsTest {
+    /// forge-config: default.fuzz.runs = 0
+    function testFuzz_value(uint256) external pure {}
+}
+   "#,
+    );
+    let output = cmd.forge_fuse().arg("test").assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("`fuzz.runs` must be greater than 0"), "{stdout}");
 });
 
 // https://github.com/foundry-rs/foundry/pull/735 behavior changed with https://github.com/foundry-rs/foundry/issues/3521

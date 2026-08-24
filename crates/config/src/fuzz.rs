@@ -2,13 +2,25 @@
 
 use alloy_primitives::U256;
 use foundry_compilers::utils::canonicalized;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error};
 use std::path::PathBuf;
+
+fn deserialize_fuzz_runs<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let runs = u32::deserialize(deserializer)?;
+    if runs == 0 {
+        return Err(D::Error::custom("`fuzz.runs` must be greater than 0"));
+    }
+    Ok(runs)
+}
 
 /// Contains for fuzz testing
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzConfig {
     /// The number of test cases that must execute for each property test
+    #[serde(deserialize_with = "deserialize_fuzz_runs")]
     pub runs: u32,
     /// Optional 1-based fuzz run to execute.
     pub run: Option<u32>,
