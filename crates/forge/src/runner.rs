@@ -2183,7 +2183,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         let mut fuzz_config = self.config.fuzz.clone();
-        let test_name = fuzz_test_path_name(&self.cr.contract.abi, func);
+        let test_name =
+            fuzz_test_path_name(&self.cr.contract.abi, func, &fuzz_config, self.cr.name);
         let _ = test_paths(
             &mut fuzz_config.corpus,
             fuzz_config.failure_persist_dir.clone().unwrap(),
@@ -4890,7 +4891,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let runner = self.fuzz_runner();
         let mut fuzz_config = self.config.fuzz.clone();
-        let test_name = fuzz_test_path_name(&self.cr.contract.abi, func);
+        let test_name =
+            fuzz_test_path_name(&self.cr.contract.abi, func, &fuzz_config, self.cr.name);
         let (failure_dir, failure_file) = test_paths(
             &mut fuzz_config.corpus,
             fuzz_config.failure_persist_dir.clone().unwrap(),
@@ -5582,9 +5584,32 @@ fn frontier_filter_display<T: std::fmt::Display>(values: &[T]) -> String {
 }
 
 /// Returns a stable path component that distinguishes overloaded fuzz tests.
-fn fuzz_test_path_name<'a>(abi: &JsonAbi, func: &'a Function) -> Cow<'a, str> {
-    if abi.functions.get(&func.name).is_some_and(|functions| functions.len() > 1) {
-        Cow::Owned(format!("{}-{}", func.name, hex::encode(func.selector())))
+fn fuzz_test_path_name<'a>(
+    abi: &JsonAbi,
+    func: &'a Function,
+    config: &FuzzConfig,
+    contract_name: &str,
+) -> Cow<'a, str> {
+    let test_name = format!("{}-{}", func.name, hex::encode(func.selector()));
+    let overloaded = abi.functions.get(&func.name).is_some_and(|functions| functions.len() > 1);
+    let contract = contract_name.split(':').next_back().unwrap();
+    let has_qualified_artifact = config
+        .failure_persist_dir
+        .as_ref()
+        .is_some_and(|dir| dir.join("failures").join(contract).join(&test_name).exists())
+        || config
+            .corpus
+            .corpus_dir
+            .as_ref()
+            .is_some_and(|dir| dir.join(contract).join(&test_name).exists())
+        || config
+            .corpus
+            .frontier_dir
+            .as_ref()
+            .is_some_and(|dir| dir.join(contract).join(&test_name).exists());
+
+    if overloaded || has_qualified_artifact {
+        Cow::Owned(test_name)
     } else {
         Cow::Borrowed(&func.name)
     }

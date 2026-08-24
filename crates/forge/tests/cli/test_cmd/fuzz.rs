@@ -404,6 +404,41 @@ contract OverloadedFuzzTest {
     let stdout = String::from_utf8_lossy(&uint_replay.get_output().stdout);
     assert!(stdout.contains("[FAIL: UINT_BUG; counterexample:"), "{stdout}");
 
+    prj.add_test(
+        "OverloadedFuzz.t.sol",
+        r#"
+contract OverloadedFuzzTest {
+    function testFuzz_collision(address) external pure {
+        revert("ADDRESS_BUG");
+    }
+}
+   "#,
+    );
+    let address_replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "OverloadedFuzzTest", "--mt", "testFuzz_collision"])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&address_replay.get_output().stdout);
+    assert!(stdout.contains("[FAIL: ADDRESS_BUG; counterexample:"), "{stdout}");
+    assert!(address_failure.exists());
+    assert!(!failure_root.join("testFuzz_collision").exists());
+    assert!(corpus_root.join("OverloadedFuzzTest").join(&address_name).exists());
+    assert!(!corpus_root.join("OverloadedFuzzTest/testFuzz_collision").exists());
+
+    prj.add_test(
+        "OverloadedFuzz.t.sol",
+        r#"
+contract OverloadedFuzzTest {
+    function testFuzz_collision(address) external pure {
+        revert("ADDRESS_BUG");
+    }
+
+    function testFuzz_collision(uint256) external pure {
+        revert("UINT_BUG");
+    }
+}
+   "#,
+    );
     std::fs::rename(&address_failure, failure_root.join("testFuzz_collision")).unwrap();
     std::fs::remove_file(&uint_failure).unwrap();
 
