@@ -1,6 +1,8 @@
 //! In-memory blockchain backend.
 use self::{in_memory_db::StateRootDb, state::trie_storage};
 
+#[cfg(feature = "optimism")]
+use crate::eth::backend::executor::optimism::build_simulated_deposit_receipt;
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::{ForkTransactionReplay, PruneStateHistoryConfig},
@@ -8236,7 +8238,7 @@ impl Backend<FoundryNetwork> {
                     let tx_hash = tx.as_ref().hash();
                     #[cfg(feature = "optimism")]
                     let receipt = if matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
-                        crate::eth::backend::executor::optimism::build_simulated_deposit_receipt(
+                        build_simulated_deposit_receipt(
                             self.hardfork(),
                             caller_nonce,
                             &result,
