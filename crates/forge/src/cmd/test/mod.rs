@@ -66,6 +66,7 @@ use foundry_evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
     executors::ShowmapDomain,
+    fork::ResolvedFork,
     fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
     hardforks::{ExecutionSpec, TempoHardfork},
     opts::EvmOpts,
@@ -2056,6 +2057,8 @@ impl TestArgs {
         // Clone config and evm_opts before dispatch (needed for mutation testing).
         let config_for_mutation = config.clone();
         let evm_opts_for_mutation = evm_opts.clone();
+        let mutation_fork =
+            if self.mutate.is_some() { evm_opts.resolve_fork().await? } else { None };
 
         // Detect per-test network annotations.
         let override_networks =
@@ -2072,6 +2075,7 @@ impl TestArgs {
                 output,
                 &mut filter,
                 execution.clone(),
+                mutation_fork.as_ref(),
             )
             .await?
         } else {
@@ -2095,6 +2099,7 @@ impl TestArgs {
                         },
                         ..execution.clone()
                     },
+                    None,
                 )
                 .await?;
 
@@ -2119,6 +2124,7 @@ impl TestArgs {
                             },
                             ..execution.clone()
                         },
+                        None,
                     )
                     .await?;
                 merge_outcomes(&mut outcome, pass_outcome);
@@ -2559,6 +2565,7 @@ impl TestArgs {
                 Arc::new(config_for_mutation.clone()),
                 output,
                 evm_opts_for_mutation.clone(),
+                mutation_fork,
                 mutation_config,
             )
             .await?;
@@ -2587,10 +2594,17 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
+        resolved_fork: Option<&ResolvedFork>,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
-        let (evm_env, tx_env, fork) =
-            evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+        let (evm_env, tx_env, fork) = if let Some(fork) = resolved_fork {
+            let (evm_env, tx_env) = evm_opts
+                .env_with_resolved_fork::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>(Some(fork))
+                .await?;
+            (evm_env, tx_env, Some(fork.clone()))
+        } else {
+            evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?
+        };
         let fork_context = fork.as_ref().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
@@ -2605,9 +2619,7 @@ impl TestArgs {
             .set_record_all_steps(self.evm_profile.is_some())
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(
-                fork_context.and_then(|context| evm_opts.get_fork_with_context(&config, context)),
-            )
+            .with_fork(evm_opts.get_fork_resolved(&config, evm_env.cfg_env.chain_id, fork.as_ref()))
             .with_fork_chain_id(fork_chain_id)
             .with_fork_hardfork(fork_hardfork)
             .enable_isolation(evm_opts.isolate)
@@ -2646,9 +2658,7 @@ impl TestArgs {
         MultiContractRunnerBuilder::new(config.clone(), options.inline_config)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
-            .with_fork(
-                fork_context.and_then(|context| evm_opts.get_fork_with_context(&config, context)),
-            )
+            .with_fork(evm_opts.get_fork_resolved(&config, evm_env.cfg_env.chain_id, fork.as_ref()))
             .with_fork_chain_id(fork_chain_id)
             .with_fork_hardfork(fork_hardfork)
             .enable_isolation(evm_opts.isolate)
@@ -2661,6 +2671,7 @@ impl TestArgs {
     }
 
     /// Dispatches `build_and_run_tests` to the correct network type based on `evm_opts.networks`.
+    #[allow(clippy::too_many_arguments)]
     async fn dispatch_network(
         &self,
         dispatch_opts: &EvmOpts,
@@ -2669,31 +2680,52 @@ impl TestArgs {
         output: &ProjectCompileOutput,
         filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
+        resolved_fork: Option<&ResolvedFork>,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         match network_dispatch_kind(dispatch_opts) {
             NetworkDispatchKind::Tempo => {
                 self.build_and_run_tests::<TempoEvmNetwork>(
-                    config, evm_opts, output, filter, execution,
+                    config,
+                    evm_opts,
+                    output,
+                    filter,
+                    execution,
+                    resolved_fork,
                 )
                 .await
             }
             #[cfg(feature = "monad")]
             NetworkDispatchKind::Monad => {
                 self.build_and_run_tests::<foundry_evm::core::evm::MonadEvmNetwork>(
-                    config, evm_opts, output, filter, execution,
+                    config,
+                    evm_opts,
+                    output,
+                    filter,
+                    execution,
+                    resolved_fork,
                 )
                 .await
             }
             #[cfg(feature = "optimism")]
             NetworkDispatchKind::Optimism => {
                 self.build_and_run_tests::<OpEvmNetwork>(
-                    config, evm_opts, output, filter, execution,
+                    config,
+                    evm_opts,
+                    output,
+                    filter,
+                    execution,
+                    resolved_fork,
                 )
                 .await
             }
             NetworkDispatchKind::Eth => {
                 self.build_and_run_tests::<EthEvmNetwork>(
-                    config, evm_opts, output, filter, execution,
+                    config,
+                    evm_opts,
+                    output,
+                    filter,
+                    execution,
+                    resolved_fork,
                 )
                 .await
             }

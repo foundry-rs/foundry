@@ -17,6 +17,7 @@ use std::{io::Write, path::PathBuf, str::FromStr};
 
 mod brutalize;
 mod core;
+mod exact_fork;
 mod fuzz;
 mod invariant;
 mod logs;
