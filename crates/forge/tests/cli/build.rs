@@ -503,6 +503,29 @@ Compiler run successful!
 "#]]);
 });
 
+forgetest_init!(verbose_build_displays_compiler_settings, |prj, cmd| {
+    prj.initialize_default_contracts();
+    prj.update_config(|config| {
+        config.optimizer = Some(true);
+        config.optimizer_runs = Some(777);
+        config.via_ir = true;
+        config.evm_version = EvmVersion::Cancun;
+    });
+
+    cmd.args(["build", "--force", "--no-lint", "-vv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler settings for [SOLC_VERSION] (profile: default): optimizer=true, optimizer_runs=777, via_ir=true, evm_version=cancun
+
+"#]]);
+});
+
 // tests build output is as expected
 forgetest_init!(build_sizes_no_forge_std, |prj, cmd| {
     prj.initialize_default_contracts();
