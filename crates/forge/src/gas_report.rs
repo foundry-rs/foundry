@@ -6,7 +6,8 @@ use crate::{
 };
 use alloy_primitives::{Address, map::HashSet};
 use comfy_table::{
-    Cell, CellAlignment, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
+    Cell, CellAlignment, Color, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
 use foundry_common::{TestFunctionExt, calc, shell};
 use foundry_evm::traces::CallKind;
@@ -221,9 +222,9 @@ impl GasReport {
     fn format_table_output(&self, contract: &ContractInfo, name: &str) -> Table {
         let mut table = Table::new();
         if shell::is_markdown() {
-            table.load_preset(ASCII_MARKDOWN);
+            table.load_style(ASCII_MARKDOWN);
         } else {
-            table.apply_modifier(UTF8_ROUND_CORNERS);
+            table.load_style(ASCII_FULL.with_rounded_corners());
         }
 
         table.set_header(vec![Cell::new(format!("{name} Contract")).fg(Color::Magenta)]);

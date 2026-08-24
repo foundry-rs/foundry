@@ -1,6 +1,7 @@
 use crate::cmd::test::TestOutcome;
 use comfy_table::{
-    Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
+    Cell, Color, Row, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
 use foundry_common::shell;
 use foundry_evm::executors::invariant::InvariantMetrics;
@@ -64,9 +65,9 @@ impl TestSummaryReport<'_> {
     fn format_table_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> Table {
         let mut table = Table::new();
         if shell::is_markdown() {
-            table.load_preset(ASCII_MARKDOWN);
+            table.load_style(ASCII_MARKDOWN);
         } else {
-            table.apply_modifier(UTF8_ROUND_CORNERS);
+            table.load_style(ASCII_FULL.with_rounded_corners());
         }
 
         let mut row = Row::from(vec![
@@ -142,9 +143,9 @@ pub(crate) fn format_invariant_metrics_table(
 ) -> Table {
     let mut table = Table::new();
     if shell::is_markdown() {
-        table.load_preset(ASCII_MARKDOWN);
+        table.load_style(ASCII_MARKDOWN);
     } else {
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        table.load_style(ASCII_FULL.with_rounded_corners());
     }
 
     table.set_header(vec![

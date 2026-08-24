@@ -1,6 +1,9 @@
 use alloy_primitives::hex;
 use clap::Parser;
-use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
+use comfy_table::{
+    Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
+};
 use eyre::Result;
 use foundry_cli::{
     opts::{BuildOpts, ProjectPathOpts},
@@ -218,9 +221,9 @@ impl SelectorsSubcommands {
                 } else {
                     let mut table = Table::new();
                     if shell::is_markdown() {
-                        table.load_preset(ASCII_MARKDOWN);
+                        table.load_style(ASCII_MARKDOWN);
                     } else {
-                        table.apply_modifier(UTF8_ROUND_CORNERS);
+                        table.load_style(ASCII_FULL.with_rounded_corners());
                     }
                     table.set_header([
                         String::from("Selector"),
@@ -328,9 +331,9 @@ impl SelectorsSubcommands {
                 if no_group {
                     let mut table = Table::new();
                     if shell::is_markdown() {
-                        table.load_preset(ASCII_MARKDOWN);
+                        table.load_style(ASCII_MARKDOWN);
                     } else {
-                        table.apply_modifier(UTF8_ROUND_CORNERS);
+                        table.load_style(ASCII_FULL.with_rounded_corners());
                     }
                     table.set_header(["Type", "Signature", "Selector", "Contract"]);
 
@@ -353,9 +356,9 @@ impl SelectorsSubcommands {
                         sh_println!("{}{contract}", if idx == 0 { "" } else { "\n" })?;
                         let mut table = Table::new();
                         if shell::is_markdown() {
-                            table.load_preset(ASCII_MARKDOWN);
+                            table.load_style(ASCII_MARKDOWN);
                         } else {
-                            table.apply_modifier(UTF8_ROUND_CORNERS);
+                            table.load_style(ASCII_FULL.with_rounded_corners());
                         }
                         table.set_header(["Type", "Signature", "Selector"]);
 
@@ -385,9 +388,9 @@ impl SelectorsSubcommands {
 
                 let mut table = Table::new();
                 if shell::is_markdown() {
-                    table.load_preset(ASCII_MARKDOWN);
+                    table.load_style(ASCII_MARKDOWN);
                 } else {
-                    table.apply_modifier(UTF8_ROUND_CORNERS);
+                    table.load_style(ASCII_FULL.with_rounded_corners());
                 }
 
                 table.set_header(["Type", "Signature", "Selector", "Contract"]);

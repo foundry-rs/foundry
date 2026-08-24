@@ -20,7 +20,7 @@ use alloy_primitives::{
 };
 use alloy_sol_types::{SolCall, sol};
 use foundry_evm_core::{
-    EvmEnv, FoundryBlock, FoundryTransaction,
+    EvmEnv, FoundryBlock, FoundryChain, FoundryTransaction,
     backend::{
         Backend, BackendError, BackendResult, CowBackend, DatabaseError, DatabaseExt,
         GLOBAL_FAIL_SLOT,
@@ -42,6 +42,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::ObservedCall;
+use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     bytecode::Bytecode,
@@ -164,12 +165,14 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         mut backend: Backend<FEN>,
         evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
-        inspector: InspectorStack<FEN>,
+        mut inspector: InspectorStack<FEN>,
+        networks: NetworkConfigs,
         gas_limit: u64,
         legacy_assertions: bool,
     ) -> Self {
-        backend.set_networks(inspector.networks);
-        let extra_cheatcode_addresses = inspector.networks.extra_cheatcode_addresses();
+        inspector.networks(networks);
+        backend.set_networks(networks);
+        let extra_cheatcode_addresses = networks.extra_cheatcode_addresses();
         backend.extend_persistent_accounts(extra_cheatcode_addresses.iter().copied());
 
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
@@ -732,8 +735,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
                 &mut backend,
                 evm_env.clone(),
-                FEN::EvmFactory::default()
-                    .chain_context_for_transaction(&TxEnvFor::<FEN>::default()),
+                ChainFor::<FEN>::for_transaction(&TxEnvFor::<FEN>::default()),
                 inspector,
             );
             let result =
@@ -1801,10 +1803,6 @@ mod tests {
     };
     use foundry_config::Config;
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
-    #[cfg(feature = "monad")]
-    use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
-    #[cfg(feature = "monad")]
-    use foundry_evm_networks::NetworkConfigs;
     use foundry_evm_traces::InternalTraceMode;
     use revm::context::TxEnv;
     use std::{sync::mpsc, thread};
@@ -1833,35 +1831,49 @@ mod tests {
     fn network_cheatcode_revert_handling_is_monad_specific() {
         let target = Address::from([0x11; 20]);
 
-        assert!(should_ignore_revert(false, target, Some(MONAD_CHEATCODE_ADDRESS), &[]));
+        assert!(should_ignore_revert(
+            false,
+            target,
+            Some(foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS),
+            &[]
+        ));
         assert!(!should_ignore_revert(
             false,
             target,
-            Some(MONAD_CHEATCODE_ADDRESS),
+            Some(foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS),
             NetworkConfigs::with_monad().extra_cheatcode_addresses(),
         ));
     }
 
     #[cfg(feature = "monad")]
     #[test]
-    fn extra_cheatcode_accounts_follow_the_active_network() {
-        let default_network = ExecutorBuilder::<MonadEvmNetwork>::default().build(
-            EvmEnvFor::<MonadEvmNetwork>::default(),
-            TxEnvFor::<MonadEvmNetwork>::default(),
+    fn executor_networks_follow_explicit_configuration() {
+        let ethereum = ExecutorBuilder::<EthEvmNetwork>::default().build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
             Backend::spawn(None).unwrap(),
+            NetworkConfigs::default(),
         );
-        assert!(!default_network.backend().networks().is_monad());
-        assert!(!default_network.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
+        assert!(!ethereum.backend().networks().is_monad());
+        assert!(
+            !ethereum
+                .backend()
+                .is_persistent(&foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS)
+        );
 
-        let monad = ExecutorBuilder::<MonadEvmNetwork>::default()
-            .inspectors(|stack| stack.networks(NetworkConfigs::with_monad()))
+        let monad = ExecutorBuilder::<foundry_evm_core::evm::MonadEvmNetwork>::default()
+            .inspectors(|stack| stack.networks(NetworkConfigs::default()))
             .build(
-                EvmEnvFor::<MonadEvmNetwork>::default(),
-                TxEnvFor::<MonadEvmNetwork>::default(),
+                EvmEnvFor::<foundry_evm_core::evm::MonadEvmNetwork>::default(),
+                TxEnvFor::<foundry_evm_core::evm::MonadEvmNetwork>::default(),
                 Backend::spawn(None).unwrap(),
+                NetworkConfigs::with_monad(),
             );
+        assert!(monad.inspector().networks.is_monad());
         assert!(monad.backend().networks().is_monad());
-        assert!(monad.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
+        assert!(
+            monad.backend().is_persistent(&foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS)
+        );
     }
 
     #[test]
@@ -1956,6 +1968,7 @@ mod tests {
             EvmEnvFor::<EthEvmNetwork>::default(),
             TxEnvFor::<EthEvmNetwork>::default(),
             backend,
+            NetworkConfigs::default(),
         );
 
         executor.evm_env_mut().cfg_env.set_spec_and_mainnet_gas_params(SpecId::HOMESTEAD);
@@ -2007,7 +2020,7 @@ mod tests {
             .inspectors(|stack| stack.cheatcodes(cheats_config))
             .spec_id(SpecId::AMSTERDAM)
             .gas_limit(1_000_000)
-            .build(EvmEnv::default(), TxEnv::default(), backend);
+            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default());
 
         let target = Address::repeat_byte(0x11);
         // PUSH0; PUSH0; PUSH0; CREATE; POP; STOP.
@@ -2039,7 +2052,7 @@ mod tests {
             .inspectors(|stack| stack.cheatcodes(cheats_config))
             .spec_id(SpecId::AMSTERDAM)
             .gas_limit(1_000_000)
-            .build(EvmEnv::default(), TxEnv::default(), backend);
+            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default());
 
         let target = Address::repeat_byte(0x11);
         let mocked = Address::repeat_byte(0x22);
@@ -2085,6 +2098,7 @@ mod tests {
             EvmEnvFor::<EthEvmNetwork>::default(),
             TxEnvFor::<EthEvmNetwork>::default(),
             backend,
+            NetworkConfigs::default(),
         );
         executor.evm_env_mut().cfg_env.disable_nonce_check = true;
         let target = Address::repeat_byte(0x11);
@@ -2128,6 +2142,7 @@ mod tests {
             EvmEnvFor::<EthEvmNetwork>::default(),
             TxEnvFor::<EthEvmNetwork>::default(),
             backend,
+            NetworkConfigs::default(),
         );
         let early_exit = EarlyExit::new(false);
         executor.inspector_mut().set_early_exit(early_exit.clone());
@@ -2167,6 +2182,7 @@ mod tests {
             EvmEnvFor::<EthEvmNetwork>::default(),
             TxEnvFor::<EthEvmNetwork>::default(),
             backend,
+            NetworkConfigs::default(),
         );
         let early_exit = EarlyExit::new(false);
         executor.inspector_mut().set_early_exit(early_exit.clone());
@@ -2188,6 +2204,7 @@ mod tests {
             EvmEnvFor::<EthEvmNetwork>::default(),
             TxEnvFor::<EthEvmNetwork>::default(),
             backend,
+            NetworkConfigs::default(),
         );
         let cancellation = EvmExecutionCancellation::campaign(
             EarlyExit::new(false),
@@ -2215,6 +2232,7 @@ mod tests {
             EvmEnvFor::<EthEvmNetwork>::default(),
             TxEnvFor::<EthEvmNetwork>::default(),
             backend,
+            NetworkConfigs::default(),
         );
         let before = executor.backend().basic_ref(SYSTEM_ADDRESS).unwrap();
 
@@ -2250,7 +2268,7 @@ mod tests {
         let mut executor = ExecutorBuilder::default()
             .inspectors(|stack| stack.cheatcodes(cheats_config))
             .spec_id(SpecId::CANCUN)
-            .build(EvmEnv::default(), TxEnv::default(), backend);
+            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default());
 
         let original: Vec<B256> = vec![B256::repeat_byte(0x11), B256::repeat_byte(0x22)];
         executor.tx_env_mut().set_blob_hashes(original.clone());

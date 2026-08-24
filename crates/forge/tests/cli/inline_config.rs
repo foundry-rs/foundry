@@ -599,3 +599,92 @@ Ran 3 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
 
 "#]]);
 });
+
+// Contract-level network configuration must not override the execution profile selected for each
+// multi-network pass. Function-level configuration can still select a different pass.
+forgetest!(contract_network_preserves_pass_profile, |prj, cmd| {
+    prj.add_test(
+        "inline.sol",
+        r#"
+        address constant TIP_FEE_MANAGER = 0xfeEC000000000000000000000000000000000000;
+
+        /// forge-config: default.networks.network = "tempo"
+        contract ContractNetwork {
+            /// forge-config: default.networks.network = "ethereum"
+            function test_fee_manager_absent_on_ethereum() public view {
+                require(
+                    TIP_FEE_MANAGER.code.length == 0,
+                    "TipFeeManager should not exist on Ethereum"
+                );
+            }
+
+            function test_fee_manager_callable_on_tempo() public view {
+                require(
+                    TIP_FEE_MANAGER.code.length > 0,
+                    "TipFeeManager must be deployed on Tempo"
+                );
+            }
+        }
+        "#,
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/inline.sol:ContractNetwork
+[PASS] test_fee_manager_absent_on_ethereum() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/inline.sol:ContractNetwork
+[PASS] test_fee_manager_callable_on_tempo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+});
+
+// TIP20 calls made in an inline Tempo pass should use the token name loaded from Tempo state in
+// rendered traces.
+forgetest!(tempo_pass_traces_tip20_name, |prj, cmd| {
+    prj.add_test(
+        "inline.sol",
+        r#"
+        interface ITIP20 {
+            function balanceOf(address account) external view returns (uint256);
+        }
+
+        contract TempoTraceLabels {
+            address constant ALPHA_USD = 0x20C0000000000000000000000000000000000001;
+
+            /// forge-config: default.networks.network = "tempo"
+            function test_tip20_trace_uses_name() public view {
+                ITIP20(ALPHA_USD).balanceOf(address(this));
+            }
+        }
+        "#,
+    );
+
+    cmd.args(["test", "--mt", "test_tip20_trace_uses_name", "-vvvv"]).assert_success().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/inline.sol:TempoTraceLabels
+[PASS] test_tip20_trace_uses_name() ([GAS])
+Traces:
+  [..] TempoTraceLabels::test_tip20_trace_uses_name()
+    ├─ [..] AlphaUSD::balanceOf([..]) [staticcall]
+    │   └─ ← [Return] [..]
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
+});

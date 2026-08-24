@@ -24,7 +24,7 @@ use crate::{
     evm::{FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor},
 };
 
-impl FoundryChain for L1BlockInfo {}
+impl FoundryChain<OpTx> for L1BlockInfo {}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OpEvmNetwork;

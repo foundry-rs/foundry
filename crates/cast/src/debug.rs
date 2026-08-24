@@ -7,10 +7,6 @@ use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler};
 use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{Config, FoundryHardfork, TracingConfig};
 use foundry_debugger::Debugger;
-#[cfg(all(test, feature = "monad"))]
-use foundry_evm::hardforks::EthereumHardfork;
-#[cfg(feature = "monad")]
-use foundry_evm::hardforks::MonadHardfork;
 use foundry_evm::{
     hardforks::{ExecutionSpec, TempoHardfork},
     opts::ForkEndpointIdentity,
@@ -92,7 +88,8 @@ pub(crate) async fn handle_traces(
     #[cfg(feature = "monad")]
     let is_monad = execution_network.is_monad();
     #[cfg(feature = "monad")]
-    let monad_hardfork = resolved_hardfork.and_then(MonadHardfork::from_foundry_hardfork);
+    let monad_hardfork =
+        resolved_hardfork.and_then(foundry_evm::hardforks::MonadHardfork::from_foundry_hardfork);
     let mut builder = CallTraceDecoderBuilder::new()
         .with_tracing_config(tracing)
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
@@ -103,9 +100,9 @@ pub(crate) async fn handle_traces(
         );
     #[cfg(feature = "monad")]
     {
-        builder = builder.with_monad_hardfork(
-            monad_hardfork.or_else(|| is_monad.then(|| config.evm_spec_id::<MonadHardfork>())),
-        );
+        builder = builder.with_monad_hardfork(monad_hardfork.or_else(|| {
+            is_monad.then(|| config.evm_spec_id::<foundry_evm::hardforks::MonadHardfork>())
+        }));
     }
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {
@@ -187,9 +184,9 @@ mod tests {
     #[test]
     #[cfg(feature = "monad")]
     fn remote_trace_hardfork_ignores_cross_network_override() {
-        let ethereum = FoundryHardfork::Ethereum(EthereumHardfork::Cancun);
-        let monad_eight = FoundryHardfork::Monad(MonadHardfork::MonadEight);
-        let monad_nine = FoundryHardfork::Monad(MonadHardfork::MonadNine);
+        let ethereum = FoundryHardfork::Ethereum(foundry_evm::hardforks::EthereumHardfork::Cancun);
+        let monad_eight = FoundryHardfork::Monad(foundry_evm::hardforks::MonadHardfork::MonadEight);
+        let monad_nine = FoundryHardfork::Monad(foundry_evm::hardforks::MonadHardfork::MonadNine);
 
         assert_eq!(
             select_remote_trace_hardfork(Some(ethereum), Some(monad_nine), NetworkVariant::Monad),

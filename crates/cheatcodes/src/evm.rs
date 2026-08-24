@@ -23,8 +23,6 @@ use foundry_common::{
     },
     tempo::{TIP20_MAX_LOGO_URI_BYTES, Tip20LogoUriValidationError, validate_tip20_logo_uri},
 };
-#[cfg(feature = "monad")]
-use foundry_evm_core::FoundryJournal;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction,
     backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
@@ -1608,6 +1606,8 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
     ccx.state.fork_block_number_override_snapshots.insert(id, ccx.state.fork_block_number_override);
     #[cfg(feature = "monad")]
     {
+        use foundry_evm_core::FoundryJournal as _;
+
         ccx.state
             .context_snapshots
             .insert(id, (ccx.ecx.chain().clone(), ccx.ecx.journal().capture_reserve_balance()));
@@ -1672,9 +1672,13 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ) {
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]
-        if let Some((context, state)) = ccx.state.context_snapshots.get(&snapshot_id) {
-            *ccx.ecx.chain_mut() = context.clone();
-            ccx.ecx.journal_mut().restore_reserve_balance(state.clone());
+        {
+            use foundry_evm_core::FoundryJournal as _;
+
+            if let Some((context, state)) = ccx.state.context_snapshots.get(&snapshot_id) {
+                *ccx.ecx.chain_mut() = context.clone();
+                ccx.ecx.journal_mut().restore_reserve_balance(state.clone());
+            }
         }
         refresh_chain_journal(ccx.ecx);
         ccx.ecx.set_evm(evm_env);
@@ -1712,9 +1716,13 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
     ) {
         ccx.ecx.set_journal_inner(restored);
         #[cfg(feature = "monad")]
-        if let Some((context, state)) = ccx.state.context_snapshots.remove(&snapshot_id) {
-            *ccx.ecx.chain_mut() = context;
-            ccx.ecx.journal_mut().restore_reserve_balance(state);
+        {
+            use foundry_evm_core::FoundryJournal as _;
+
+            if let Some((context, state)) = ccx.state.context_snapshots.remove(&snapshot_id) {
+                *ccx.ecx.chain_mut() = context;
+                ccx.ecx.journal_mut().restore_reserve_balance(state);
+            }
         }
         refresh_chain_journal(ccx.ecx);
         ccx.ecx.set_evm(evm_env);
