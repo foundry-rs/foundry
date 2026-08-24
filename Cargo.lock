@@ -404,8 +404,7 @@ dependencies = [
 [[package]]
 name = "alloy-monad-evm"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b488e1dd0352b471aecfc903657c5505125490442ecbb63494c885ed1c0188d6"
+source = "git+https://github.com/category-labs/alloy-monad-evm?rev=239dba8ba39d5442146925e25c09c26acce111f8#239dba8ba39d5442146925e25c09c26acce111f8"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
@@ -8054,8 +8053,7 @@ dependencies = [
 [[package]]
 name = "monad-revm"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b640502c0bcc1ac08d9eb2555467ba47fb9071715b0c53592d64f8a5fade2a41"
+source = "git+https://github.com/category-labs/monad-revm?rev=f512e36cdd9abffc63c519f2c6b2d0a47d0898e1#f512e36cdd9abffc63c519f2c6b2d0a47d0898e1"
 dependencies = [
  "alloy-sol-types",
  "auto_impl",
