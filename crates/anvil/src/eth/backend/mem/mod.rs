@@ -120,8 +120,6 @@ use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-#[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
 use foundry_evm::{
     backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
@@ -8237,26 +8235,30 @@ impl Backend<FoundryNetwork> {
                     };
                     let tx_hash = tx.as_ref().hash();
                     #[cfg(feature = "optimism")]
-                    let (deposit_nonce, deposit_receipt_version) =
-                        if matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
-                            let hardfork = OpHardfork::from(self.hardfork());
-                            (
-                                (hardfork >= OpHardfork::Regolith).then_some(caller_nonce),
-                                (hardfork >= OpHardfork::Canyon).then_some(1),
-                            )
-                        } else {
-                            (None, None)
-                        };
+                    let receipt = if matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
+                        crate::eth::backend::executor::optimism::build_simulated_deposit_receipt(
+                            self.hardfork(),
+                            caller_nonce,
+                            &result,
+                            canonical_logs.clone(),
+                            cumulative_gas_used,
+                        )
+                    } else {
+                        FoundryReceiptBuilder::build_simulated_receipt(
+                            tx.as_ref().tx_type(),
+                            &result,
+                            canonical_logs.clone(),
+                            cumulative_gas_used,
+                        )
+                    };
                     #[cfg(not(feature = "optimism"))]
-                    let (deposit_nonce, deposit_receipt_version) = (None, None);
-                    receipts.push(FoundryReceiptBuilder::build_simulated_receipt(
+                    let receipt = FoundryReceiptBuilder::build_simulated_receipt(
                         tx.as_ref().tx_type(),
                         &result,
                         canonical_logs.clone(),
                         cumulative_gas_used,
-                        deposit_nonce,
-                        deposit_receipt_version,
-                    ));
+                    );
+                    receipts.push(receipt);
                     transaction_envelopes.push(tx.as_ref().clone());
                     let rpc_tx =
                         transaction_build(Some(tx_hash), tx, None, None, Some(block_env.basefee));
