@@ -425,7 +425,7 @@ clap_complete_nushell = "4"
 # macros
 proc-macro2 = "1.0"
 quote = "1.0"
-syn = "3.0"
+syn = "=2.0.119"
 async-trait = "0.1"
 derive_more = { version = "2.1", features = ["full"] }
 thiserror = "2"
@@ -439,7 +439,7 @@ auto_impl = "1"
 bytes = "1.11"
 walkdir = "2"
 wait-timeout = "0.2"
-prettyplease = "0.3"
+prettyplease = "=0.2.37"
 base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = [
     "clock",
@@ -448,7 +448,7 @@ chrono = { version = "0.4", default-features = false, features = [
 axum = "0.8"
 ciborium = "0.2"
 color-eyre = "0.6"
-comfy-table = "8"
+comfy-table = "=7.2.2"
 crossterm = "0.29"
 dirs = "6"
 dunce = "1"
