@@ -744,6 +744,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             // If counterexample recorded, replay it first, without incrementing runs.
             let (input, fuzz_run, is_persisted_replay) = if worker_id == 0
                 && let Some(failure) = persisted_failure.take()
+                && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
                 let seed = failure.fuzz.seed.or(self.config.seed);
                 if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
