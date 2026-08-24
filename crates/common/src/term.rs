@@ -208,18 +208,10 @@ impl Reporter for SpinnerReporter {
         ));
     }
 
-    fn on_compiler_spawn_with_settings(
-        &self,
-        compiler_name: &str,
-        version: &Version,
-        profile: &str,
-        settings: &str,
-        dirty_files: &[PathBuf],
-    ) {
-        self.on_compiler_spawn(compiler_name, version, dirty_files);
+    fn on_compiler_settings(&self, compiler_name: &str, version: &Version, settings: &str) {
         if self.print_compiler_settings {
             self.send_msg(format!(
-                "Compiler settings for {compiler_name} {}.{}.{} (profile: {profile}): {settings}",
+                "Compiler settings for {compiler_name} {}.{}.{}: {settings}",
                 version.major, version.minor, version.patch
             ));
         }

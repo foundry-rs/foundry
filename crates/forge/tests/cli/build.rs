@@ -521,7 +521,7 @@ Compiler run successful!
 
 "#]])
         .stderr_eq(str![[r#"
-Compiler settings for [SOLC_VERSION] (profile: default): optimizer=true, optimizer_runs=777, via_ir=true, evm_version=cancun
+Compiler settings for [SOLC_VERSION]: optimizer=true, optimizer_runs=777, via_ir=true, evm_version=cancun
 
 "#]]);
 });
