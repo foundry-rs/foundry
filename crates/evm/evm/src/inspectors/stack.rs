@@ -1253,7 +1253,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
         self.inner.static_step_dispatch != OpcodeStepDispatch::None
             || self.inner.execution_cancellation.is_some()
-            || self.cheatcodes.as_ref().is_some_and(|cheats| cheats.has_step_hooks())
+            || self.cheatcodes.as_ref().is_some_and(|cheats| cheats.maybe_has_step_hooks())
     }
 
     #[inline(always)]
@@ -1266,6 +1266,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             return self.step_slow(interpreter, ecx);
         }
 
+        debug_assert!(
+            self.cheatcodes.as_ref().is_none_or(|cheats| !cheats.has_step_hooks()),
+            "opcode hook cache missed a cheatcode state change"
+        );
+
         // Nothing to dispatch: only the cheatcode program counter has to keep up.
         if let Some(cheats) = self.cheatcodes.as_mut() {
             cheats.pc = interpreter.bytecode.pc();
@@ -1274,6 +1279,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
     #[inline(never)]
     fn step_slow(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
+        if let Some(cheats) = self.cheatcodes.as_mut() {
+            cheats.refresh_opcode_hooks();
+        }
+
         let storage_hook_active = if let Some(cheats) = self.cheatcodes.as_mut() {
             if cheats.has_storage_hooks() && cheats.finish_storage_hook_callback(interpreter, ecx) {
                 return;
@@ -1350,6 +1359,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             {
                 crate::utils::cold_path();
                 cheats.step(interpreter, ecx);
+                cheats.mark_opcode_hooks_dirty();
             }
         }
     }
@@ -1359,7 +1369,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     fn needs_step_end_slow(&self) -> bool {
         self.has_static_step_end_inspectors
             || self.fuzzer.as_ref().is_some_and(|fuzzer| fuzzer.mapping_slots.is_some())
-            || self.cheatcodes.as_ref().is_some_and(|cheats| cheats.has_step_end_hooks())
+            || self.cheatcodes.as_ref().is_some_and(|cheats| cheats.maybe_has_step_end_hooks())
     }
 
     #[inline(always)]
@@ -1370,7 +1380,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     ) {
         if self.needs_step_end_slow() {
             self.step_end_slow(interpreter, ecx);
+            return;
         }
+
+        debug_assert!(
+            self.cheatcodes.as_ref().is_none_or(|cheats| !cheats.has_step_end_hooks()),
+            "opcode hook cache missed a cheatcode state change"
+        );
     }
 
     #[inline(never)]
@@ -1403,6 +1419,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         {
             crate::utils::cold_path();
             cheats.step_end(interpreter, ecx);
+            cheats.mark_opcode_hooks_dirty();
         }
     }
 }
