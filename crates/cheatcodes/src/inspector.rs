@@ -2094,6 +2094,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     #[inline(always)]
     fn has_active_env_overrides(&self) -> bool {
+        // The map stays empty unless `vm.fee`, `vm.txGasPrice` or `vm.blobhashes` ran, so the
+        // per-opcode path is a single length check and the scan is kept out of line.
+        !self.env_overrides.is_empty() && self.any_env_override_set()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn any_env_override_set(&self) -> bool {
         self.env_overrides.values().any(EnvOverrides::is_any_set)
     }
 

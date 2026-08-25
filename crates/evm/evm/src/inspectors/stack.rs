@@ -1247,12 +1247,36 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     // We want to `#[inline(always)]` these functions so that `InspectorStack` does not
     // delegate to `InspectorStackRefMut` in this case.
 
+    /// Whether [`Self::step_slow`] has anything to do for the current opcode.
+    #[inline(always)]
+    fn needs_step_slow(&self) -> bool {
+        #[cfg(test)]
+        if self.inner.early_exit_test_gate.is_some() {
+            return true;
+        }
+        self.inner.static_step_dispatch != OpcodeStepDispatch::None
+            || self.inner.execution_cancellation.is_some()
+            || self.cheatcodes.as_ref().is_some_and(|cheats| cheats.has_step_hooks())
+    }
+
     #[inline(always)]
     fn step_inlined(
         &mut self,
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
+        if self.needs_step_slow() {
+            return self.step_slow(interpreter, ecx);
+        }
+
+        // Nothing to dispatch: only the cheatcode program counter has to keep up.
+        if let Some(cheats) = self.cheatcodes.as_mut() {
+            cheats.pc = interpreter.bytecode.pc();
+        }
+    }
+
+    #[inline(never)]
+    fn step_slow(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
         let storage_hook_active = if let Some(cheats) = self.cheatcodes.as_mut() {
             if cheats.has_storage_hooks() && cheats.finish_storage_hook_callback(interpreter, ecx) {
                 return;
@@ -1333,8 +1357,27 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
     }
 
+    /// Whether [`Self::step_end_slow`] has anything to do for the current opcode.
+    #[inline(always)]
+    fn needs_step_end_slow(&self) -> bool {
+        self.has_static_step_end_inspectors
+            || self.fuzzer.as_ref().is_some_and(|fuzzer| fuzzer.mapping_slots.is_some())
+            || self.cheatcodes.as_ref().is_some_and(|cheats| cheats.has_step_end_hooks())
+    }
+
     #[inline(always)]
     fn step_end_inlined(
+        &mut self,
+        interpreter: &mut Interpreter,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+    ) {
+        if self.needs_step_end_slow() {
+            self.step_end_slow(interpreter, ecx);
+        }
+    }
+
+    #[inline(never)]
+    fn step_end_slow(
         &mut self,
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
