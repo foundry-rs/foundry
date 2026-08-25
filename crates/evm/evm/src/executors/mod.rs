@@ -2309,5 +2309,9 @@ mod tests {
             revert_result.tx_env.blob_hashes, original,
             "pre_override_blob_hashes must be restored to original non-empty hashes, not []",
         );
+        assert!(
+            executor.inspector().cheatcodes.as_ref().unwrap().env_overrides.is_empty(),
+            "inactive env overrides must be removed after restoring their metadata",
+        );
     }
 }
