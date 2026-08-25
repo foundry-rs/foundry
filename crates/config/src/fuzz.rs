@@ -5,17 +5,6 @@ use foundry_compilers::utils::canonicalized;
 use serde::{Deserialize, Deserializer, Serialize, de::Error};
 use std::path::PathBuf;
 
-fn deserialize_fuzz_runs<'de, D>(deserializer: D) -> Result<u32, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let runs = u32::deserialize(deserializer)?;
-    if runs == 0 {
-        return Err(D::Error::custom("`fuzz.runs` must be greater than 0"));
-    }
-    Ok(runs)
-}
-
 /// Contains for fuzz testing
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzConfig {
@@ -314,4 +303,15 @@ impl Default for FuzzCorpusMutationWeights {
             mutation_weight_cmp: 1,
         }
     }
+}
+
+fn deserialize_fuzz_runs<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let runs = u32::deserialize(deserializer)?;
+    if runs == 0 {
+        return Err(D::Error::custom("`fuzz.runs` must be greater than 0"));
+    }
+    Ok(runs)
 }
