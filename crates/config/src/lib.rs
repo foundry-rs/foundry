@@ -2723,7 +2723,8 @@ impl Config {
                 .ok()
                 .and_then(|version| self.evm_version.normalize_version_solc(&version))
         {
-            figment = figment.merge(("evm_version", version));
+            let profile = figment.profile().clone();
+            figment = figment.merge(Serialized::default("evm_version", version).profile(profile));
         }
 
         // Normalize `deny` based on the provided `deny_warnings` value.
@@ -5997,6 +5998,13 @@ mod tests {
 
             let loaded = Config::load().unwrap().sanitized();
             assert_eq!(loaded.evm_version, EvmVersion::London);
+
+            let figment = Config::figment_with_root(jail.directory()).merge(
+                Serialized::default("evm_version", EvmVersion::Amsterdam)
+                    .profile(Config::selected_profile()),
+            );
+            let loaded = Config::from_provider(figment).unwrap().sanitized();
+            assert_eq!(loaded.evm_version, EvmVersion::Amsterdam);
             Ok(())
         });
     }
