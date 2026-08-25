@@ -4933,7 +4933,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 .map(|corpus_dir| {
                     narrow_generated_fuzz_corpus_root(corpus_dir, self.cr.name, &test_name)
                 })
-                .or(legacy_corpus_dir.clone())
+                .or(legacy_corpus_dir)
                 .or_else(|| fuzz_config.corpus.corpus_dir.clone());
             let fuzzed_address = self.address;
             return self.run_showmap(
