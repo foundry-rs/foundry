@@ -1301,8 +1301,8 @@ impl ExpectedEmit {
         if let Some(expected_emitter) = &self.emitter {
             conditions.push(expected_emitter.address_match_condition(cx, actual.emitter));
         }
-        for idx in 0..self.checks.topics.len() {
-            if !self.checks.topics[idx] {
+        for (idx, &check_topic) in self.checks.topics.iter().enumerate() {
+            if !check_topic {
                 continue;
             }
             match (template.topics.get(idx), actual.topics.get(idx)) {

@@ -298,6 +298,31 @@ contract ModexpGasProbe {
     }
 }
 
+contract StorageGasProbe {
+    function measureRead(uint256 secondSlot)
+        external
+        view
+        returns (uint256 gasUsed, uint256 checksum)
+    {
+        assembly {
+            let gasBefore := gas()
+            let first := sload(0)
+            let second := sload(secondSlot)
+            gasUsed := sub(gasBefore, gas())
+            checksum := add(first, second)
+        }
+    }
+
+    function measureWrite(uint256 secondSlot) external returns (uint256 gasUsed) {
+        assembly {
+            let gasBefore := gas()
+            sstore(0, 1)
+            sstore(secondSlot, 1)
+            gasUsed := sub(gasBefore, gas())
+        }
+    }
+}
+
 contract MonadEvmVersionTest is Test {
     EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
     address constant CLZ_TARGET = address(uint160(0x0c17));
@@ -306,6 +331,9 @@ contract MonadEvmVersionTest is Test {
     ModexpGasProbe immutable modexpGasProbe = new ModexpGasProbe();
 
     function test_set_monad_evm_version() public {
+        assertEq(evm.getEvmVersion(), "monadten");
+        assertMip8Active();
+
         evm.setEvmVersion("MonadEight");
         vm.etch(CLZ_TARGET, hex"60011e60005260206000f3");
 
@@ -326,6 +354,11 @@ contract MonadEvmVersionTest is Test {
         (ok, output) = CLZ_TARGET.staticcall(hex"");
         assertTrue(ok, "CLZ should be available on MonadNine");
         assertEq(abi.decode(output, (uint256)), 255);
+        assertMip8Inactive();
+
+        evm.setEvmVersion("monad:MonadTen");
+        assertEq(evm.getEvmVersion(), "monadten");
+        assertMip8Active();
 
         evm.setEvmVersion("monad:MonadEight");
         assertEq(evm.getEvmVersion(), "monadeight");
@@ -340,6 +373,26 @@ contract MonadEvmVersionTest is Test {
         );
         (ok,) = CLZ_TARGET.staticcall(hex"");
         assertFalse(ok, "CLZ should be disabled after switching back to MonadEight");
+    }
+
+    function assertMip8Active() internal {
+        assertEq(storageReadGas(128) - storageReadGas(127), 8_000, "MIP-8 page read cost");
+        assertEq(storageWriteGas(128) - storageWriteGas(1), 10_800, "MIP-8 page write cost");
+    }
+
+    function assertMip8Inactive() internal {
+        assertEq(storageReadGas(128), storageReadGas(127), "legacy slot read cost");
+        assertEq(storageWriteGas(128), storageWriteGas(1), "legacy slot write cost");
+    }
+
+    function storageReadGas(uint256 secondSlot) internal returns (uint256 gasUsed) {
+        uint256 checksum;
+        (gasUsed, checksum) = new StorageGasProbe().measureRead(secondSlot);
+        assertEq(checksum, 0);
+    }
+
+    function storageWriteGas(uint256 secondSlot) internal returns (uint256) {
+        return new StorageGasProbe().measureWrite(secondSlot);
     }
 
     function memoryExpansionGasDelta() internal returns (uint256) {
@@ -373,8 +426,12 @@ contract MonadEvmVersionTest is Test {
 
 #[cfg(feature = "monad")]
 forgetest_async!(fork_resolves_monad_hardfork_from_timestamp, |prj, cmd| {
-    let activation =
+    let monad_nine_activation =
         foundry_evm::hardforks::MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
+    let mainnet_activation =
+        foundry_evm::hardforks::MonadHardfork::MonadTen.mainnet_activation_timestamp().unwrap();
+    let testnet_activation =
+        foundry_evm::hardforks::MonadHardfork::MonadTen.testnet_activation_timestamp().unwrap();
     prj.add_test(
         "MonadForkHardfork.t.sol",
         r#"
@@ -400,6 +457,14 @@ contract MonadForkHardforkTest {
             "expected MonadNine"
         );
     }
+
+    function test_monad_ten() public {
+        require(block.chainid == 1, "expected CHAINID override");
+        require(
+            keccak256(bytes(evm.getEvmVersion())) == keccak256("monadten"),
+            "expected MonadTen"
+        );
+    }
 }
    "#,
     );
@@ -407,7 +472,7 @@ contract MonadForkHardforkTest {
     let (_api, before) = anvil::spawn(
         anvil::NodeConfig::test()
             .with_chain_id(Some(143u64))
-            .with_genesis_timestamp(Some(activation - 1)),
+            .with_genesis_timestamp(Some(monad_nine_activation - 1)),
     )
     .await;
     cmd.args([
@@ -426,7 +491,7 @@ contract MonadForkHardforkTest {
     let (_api, after) = anvil::spawn(
         anvil::NodeConfig::test()
             .with_chain_id(Some(143u64))
-            .with_genesis_timestamp(Some(activation)),
+            .with_genesis_timestamp(Some(monad_nine_activation)),
     )
     .await;
     cmd.forge_fuse()
@@ -443,11 +508,91 @@ contract MonadForkHardforkTest {
         ])
         .assert_success();
 
+    let (_api, before) = anvil::spawn(
+        anvil::NodeConfig::test()
+            .with_chain_id(Some(143u64))
+            .with_genesis_timestamp(Some(mainnet_activation - 1)),
+    )
+    .await;
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--network",
+            "monad",
+            "--fork-url",
+            &before.http_endpoint(),
+            "--chain-id",
+            "1",
+            "--mt",
+            "test_monad_nine",
+        ])
+        .assert_success();
+
+    let (_api, after) = anvil::spawn(
+        anvil::NodeConfig::test()
+            .with_chain_id(Some(143u64))
+            .with_genesis_timestamp(Some(mainnet_activation)),
+    )
+    .await;
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--network",
+            "monad",
+            "--fork-url",
+            &after.http_endpoint(),
+            "--chain-id",
+            "1",
+            "--mt",
+            "test_monad_ten",
+        ])
+        .assert_success();
+
+    let (_api, before) = anvil::spawn(
+        anvil::NodeConfig::test()
+            .with_chain_id(Some(10143u64))
+            .with_genesis_timestamp(Some(testnet_activation - 1)),
+    )
+    .await;
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--network",
+            "monad",
+            "--fork-url",
+            &before.http_endpoint(),
+            "--chain-id",
+            "1",
+            "--mt",
+            "test_monad_nine",
+        ])
+        .assert_success();
+
+    let (_api, after) = anvil::spawn(
+        anvil::NodeConfig::test()
+            .with_chain_id(Some(10143u64))
+            .with_genesis_timestamp(Some(testnet_activation)),
+    )
+    .await;
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--network",
+            "monad",
+            "--fork-url",
+            &after.http_endpoint(),
+            "--chain-id",
+            "1",
+            "--mt",
+            "test_monad_ten",
+        ])
+        .assert_success();
+
     let (_api, overridden) = anvil::spawn(
         anvil::NodeConfig::test_monad()
             .with_chain_id(Some(143u64))
-            .with_genesis_timestamp(Some(activation))
-            .with_hardfork(Some(foundry_evm::hardforks::MonadHardfork::MonadEight.into())),
+            .with_genesis_timestamp(Some(mainnet_activation))
+            .with_hardfork(Some(foundry_evm::hardforks::MonadHardfork::MonadNine.into())),
     )
     .await;
     cmd.forge_fuse()
@@ -458,7 +603,7 @@ contract MonadForkHardforkTest {
             "--chain-id",
             "1",
             "--mt",
-            "test_monad_eight",
+            "test_monad_nine",
         ])
         .assert_success();
 });
