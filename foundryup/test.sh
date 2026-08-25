@@ -150,6 +150,54 @@ check_eq "failed validation leaves launcher untouched" \
 check_eq "failed validation does not exec" "" "$(cat "$exec_marker")"
 teardown_case
 
+# --- deprecated installer compatibility entrypoint -----------------------
+
+install_test_dir="$(mktemp -d)"
+mkdir -p "$install_test_dir/bin"
+install_args_marker="$install_test_dir/args"
+
+cat > "$install_test_dir/bin/curl" <<'EOF'
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output" ]; then
+    output="$2"
+    break
+  fi
+  shift
+done
+cat > "$output" <<'INSTALLER'
+#!/bin/sh
+printf '%s\n' "$*" > "$INSTALL_ARGS_MARKER"
+printf 'installer ran\n'
+INSTALLER
+EOF
+chmod +x "$install_test_dir/bin/curl"
+
+install_out="$(
+  PATH="$install_test_dir/bin:$PATH" \
+    FOUNDRYUP_INIT_URL="https://example.com/foundryup-init.sh" \
+    INSTALL_ARGS_MARKER="$install_args_marker" \
+    "$SCRIPT_DIR/install" --yes --version 2> "$install_test_dir/stderr"
+)"
+check_eq "deprecated installer delegates to the canonical installer" \
+  "installer ran" "$install_out"
+check_eq "deprecated installer forwards arguments" \
+  "--yes --version" "$(cat "$install_args_marker")"
+check_eq "deprecated installer warns with the canonical installer URL" \
+  "foundryup: warning: foundryup/install is deprecated; use https://example.com/foundryup-init.sh instead" \
+  "$(cat "$install_test_dir/stderr")"
+
+cat > "$install_test_dir/bin/curl" <<'EOF'
+#!/bin/sh
+exit 22
+EOF
+chmod +x "$install_test_dir/bin/curl"
+rc=0
+PATH="$install_test_dir/bin:$PATH" "$SCRIPT_DIR/install" >/dev/null 2>/dev/null || rc=$?
+check_eq "deprecated installer propagates download failures" "22" "$rc"
+
+rm -rf "$install_test_dir"
+
 # --- summary --------------------------------------------------------------
 
 if [ "$failures" -ne 0 ]; then
