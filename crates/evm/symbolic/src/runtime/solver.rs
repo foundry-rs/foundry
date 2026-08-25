@@ -854,17 +854,140 @@ impl SmtLibSubprocessSolver {
     }
 }
 
-/// Normalizes satisfiability constraints and removes soundly implied nonlinear comparisons.
+/// Normalizes satisfiability constraints and removes soundly redundant constraints.
 fn normalize_sat_constraints(
     cx: &mut SymCx,
     constraints: &[SymBoolExpr],
     normalization_cache: &mut HashMap<SymBoolExpr, SymBoolExpr>,
 ) -> Vec<SymBoolExpr> {
-    remove_implied_monotonic_constraints(normalize_constraints_for_solver_cached(
-        cx,
-        constraints,
-        normalization_cache,
-    ))
+    let constraints = remove_implied_monotonic_constraints(
+        normalize_constraints_for_solver_cached(cx, constraints, normalization_cache),
+    );
+    remove_witnessed_isolated_hash_constraints(cx, constraints)
+}
+
+/// Removes independently satisfiable constraints over one opaque hash symbol.
+///
+/// SMT treats symbolic hashes as free bit-vector symbols. If a constraint's only SMT symbol is a
+/// hash unused by other constraints, a concrete witness proves that it cannot affect conjunction
+/// satisfiability. The witness is discarded because hash values are not replayable inputs.
+fn remove_witnessed_isolated_hash_constraints(
+    cx: &mut SymCx,
+    constraints: Vec<SymBoolExpr>,
+) -> Vec<SymBoolExpr> {
+    if !constraints.iter().any(|constraint| {
+        constraint.visit_bool(|expr| {
+            matches!(expr.kind(), SymExprKind::Keccak { .. } | SymExprKind::Hash { .. })
+        })
+    }) {
+        return constraints;
+    }
+
+    let mut symbol_constraint_counts = HashMap::<Symbol, usize>::default();
+    let hash_candidates = constraints
+        .iter()
+        .map(|constraint| {
+            let mut symbols = SymbolicVars::default();
+            let contains_hash = collect_solver_vars(constraint, &mut symbols);
+            for symbol in &symbols {
+                *symbol_constraint_counts.entry(*symbol).or_default() += 1;
+            }
+            if contains_hash && symbols.len() == 1 { symbols.first().copied() } else { None }
+        })
+        .collect::<Vec<_>>();
+
+    constraints
+        .into_iter()
+        .zip(hash_candidates)
+        .filter_map(|(constraint, candidate)| {
+            let Some(symbol) =
+                candidate.filter(|symbol| symbol_constraint_counts.get(symbol) == Some(&1))
+            else {
+                return Some(constraint);
+            };
+            let abstracted = constraint.clone().fold_exprs(cx, &mut |cx, expr| match expr.kind() {
+                SymExprKind::Keccak { name, .. } | SymExprKind::Hash { name, .. }
+                    if *name == symbol =>
+                {
+                    SymExpr::get_var(cx, symbol)
+                }
+                _ => expr,
+            });
+            let removable = fallback_single_var_model(std::slice::from_ref(&abstracted)).is_some();
+            (!removable).then_some(constraint)
+        })
+        .collect()
+}
+
+/// Collects variables as the SMT writer sees them, stopping at opaque hash leaves.
+fn collect_solver_vars(constraint: &SymBoolExpr, vars: &mut SymbolicVars) -> bool {
+    fn visit_bool(expr: &SymBoolExpr, vars: &mut SymbolicVars) -> bool {
+        match expr.kind() {
+            SymBoolExprKind::Const(_) => false,
+            SymBoolExprKind::Not(expr) => visit_bool(expr, vars),
+            SymBoolExprKind::And(exprs) => {
+                let mut contains_hash = false;
+                for expr in exprs.iter() {
+                    contains_hash |= visit_bool(expr, vars);
+                }
+                contains_hash
+            }
+            SymBoolExprKind::Cmp(_, left, right) => {
+                visit_word(left, vars) | visit_word(right, vars)
+            }
+        }
+    }
+
+    fn visit_word(expr: &SymExpr, vars: &mut SymbolicVars) -> bool {
+        match expr.kind() {
+            SymExprKind::Const(_) => false,
+            SymExprKind::Var(symbol) | SymExprKind::GasLeft(symbol) => {
+                vars.insert(*symbol);
+                false
+            }
+            SymExprKind::Keccak { name, .. } | SymExprKind::Hash { name, .. } => {
+                vars.insert(*name);
+                true
+            }
+            SymExprKind::Not(expr) => visit_word(expr, vars),
+            SymExprKind::BinOp(_, left, right) => visit_word(left, vars) | visit_word(right, vars),
+            SymExprKind::TernOp(_, left, right, modulus) => {
+                visit_word(left, vars) | visit_word(right, vars) | visit_word(modulus, vars)
+            }
+            SymExprKind::Ite(condition, then_expr, else_expr) => {
+                visit_bool(condition, vars)
+                    | visit_word(then_expr, vars)
+                    | visit_word(else_expr, vars)
+            }
+        }
+    }
+
+    visit_bool(constraint, vars)
+}
+
+#[cfg(test)]
+#[test]
+fn removes_only_witnessed_isolated_hash_constraints() {
+    let mut cx = SymCx::new();
+    let input = SymExpr::var(&mut cx, "input");
+    let hash = keccak_word(&mut cx, vec![input.clone()]);
+    let modulus = SymExpr::constant(&mut cx, U256::MAX);
+    let mulmod = SymExpr::ternop(&mut cx, SymTernOp::MulMod, hash.clone(), hash.clone(), modulus);
+    let hash_branch = SymBoolExpr::eq_word_const(&mut cx, &mulmod, U256::ZERO);
+    let preimage_constraint = SymBoolExpr::eq_word_const(&mut cx, &input, U256::from(1));
+
+    let remaining = remove_witnessed_isolated_hash_constraints(
+        &mut cx,
+        vec![hash_branch.clone(), preimage_constraint.clone()],
+    );
+    assert_eq!(remaining, vec![preimage_constraint]);
+
+    let shared_hash_constraint = SymBoolExpr::eq_word_const(&mut cx, &hash, U256::from(1));
+    let remaining = remove_witnessed_isolated_hash_constraints(
+        &mut cx,
+        vec![hash_branch, shared_hash_constraint],
+    );
+    assert_eq!(remaining.len(), 2, "a shared hash symbol is not an independent component");
 }
 
 /// Returns a hard-arithmetic fallback model only after validating it against original constraints.
