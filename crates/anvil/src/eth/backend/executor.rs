@@ -29,7 +29,7 @@ use alloy_evm::{
     },
 };
 use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
-use alloy_primitives::{Address, B256, Bytes, Log, U256};
+use alloy_primitives::{Address, B256, Bytes, Log};
 use anvil_core::eth::transaction::{
     MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
@@ -506,6 +506,8 @@ pub struct PoolTxGasConfig {
 
 /// Hooks invoked around each candidate transaction's execution.
 pub struct PoolTransactionHooks<BeforeTransaction, ExecuteTransaction, OnExecutionError> {
+    /// Defers candidates that must remain queued until a later block.
+    pub defer_transaction: Option<fn(&FoundryTxEnvelope, u64) -> bool>,
     /// Runs after validation and immediately before execution.
     pub before_transaction: BeforeTransaction,
     /// Executes the candidate through the network-specific transaction entry point.
@@ -573,12 +575,10 @@ where
     for pool_tx in pool_transactions {
         let pending = &pool_tx.pending_transaction;
         let sender = *pending.sender();
-        let block_timestamp = executor.evm().block().timestamp();
 
-        if let FoundryTxEnvelope::Tempo(aa_tx) = pending.transaction.as_ref()
-            && let Some(valid_after) = aa_tx.tx().valid_after
-            && U256::from(valid_after.get()) > block_timestamp
-        {
+        if hooks.defer_transaction.is_some_and(|defer| {
+            defer(pending.transaction.as_ref(), executor.evm().block().timestamp().saturating_to())
+        }) {
             trace!(target: "backend", "[{:?}] transaction not valid yet, will retry later", pool_tx.hash());
             not_yet_valid.push(pool_tx.clone());
             continue;

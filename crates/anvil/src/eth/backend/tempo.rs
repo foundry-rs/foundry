@@ -12,6 +12,7 @@ use foundry_evm::core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
     initialize_tempo_genesis_at_hardfork,
 };
+use foundry_primitives::FoundryTxEnvelope;
 use revm::{
     DatabaseRef,
     context::{BlockEnv, journaled_state::JournalCheckpoint},
@@ -38,6 +39,12 @@ use super::db::Db;
 const SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 /// Admin address used for genesis initialization.
 const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
+
+/// Returns whether a Tempo transaction must wait for a later block timestamp.
+pub(crate) fn is_transaction_not_yet_valid(tx: &FoundryTxEnvelope, block_timestamp: u64) -> bool {
+    let FoundryTxEnvelope::Tempo(tx) = tx else { return false };
+    tx.tx().valid_after.is_some_and(|valid_after| valid_after.get() > block_timestamp)
+}
 
 /// Storage provider adapter for Anvil's Db to work with Tempo precompiles.
 pub struct AnvilStorageProvider<'a> {

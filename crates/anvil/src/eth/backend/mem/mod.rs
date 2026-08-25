@@ -31,7 +31,7 @@ use crate::{
                 PreparedForkTransactionReplay, execute_historical_replay,
                 prepare_fork_transaction_replay,
             },
-            tempo::AnvilStorageProvider,
+            tempo::{AnvilStorageProvider, is_transaction_not_yet_valid},
             time::{TimeManager, utc_from_secs},
             validate::TransactionValidator,
         },
@@ -2669,6 +2669,11 @@ impl<N: Network> Backend<N> {
                     .apply_pre_execution_changes()
                     .map_err(|err| BlockchainError::Internal(err.to_string()))?;
                 let mut hooks = PoolTransactionHooks {
+                    defer_transaction: if self.is_tempo() {
+                        Some(is_transaction_not_yet_valid as fn(&FoundryTxEnvelope, u64) -> bool)
+                    } else {
+                        None
+                    },
                     before_transaction: $before_transaction,
                     execute_transaction: $execute_transaction,
                     on_execution_error: $on_execution_error,

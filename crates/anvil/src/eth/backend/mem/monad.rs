@@ -184,6 +184,7 @@ impl<N: Network> Backend<N> {
             .apply_pre_execution_changes()
             .map_err(|err| BlockchainError::Internal(err.to_string()))?;
         let mut hooks = PoolTransactionHooks {
+            defer_transaction: None,
             before_transaction: prepare_transaction,
             execute_transaction: |executor: &mut AnvilBlockExecutor<_>,
                                   tx_env: TxEnv,
