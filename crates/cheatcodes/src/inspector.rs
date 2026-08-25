@@ -370,6 +370,47 @@ pub struct EnvOverrides {
     pending_blobhash_index: Option<u64>,
 }
 
+/// Conservative cache of the per-opcode hook predicates.
+///
+/// [`Cheatcodes::has_step_hooks`] and [`Cheatcodes::has_step_end_hooks`] read ten fields spread
+/// across the inspector, which is too much work to repeat for every executed opcode. This caches
+/// their results so the hot path is a single load, and starts out dirty: anything that can change
+/// one of those fields marks it dirty again, and the next opcode recomputes. Being dirty when
+/// nothing changed only costs one trip through the slow path, so the cache is never wrong in the
+/// direction that would skip a hook.
+#[derive(Clone, Copy, Debug)]
+struct OpcodeHooks(u8);
+
+impl Default for OpcodeHooks {
+    fn default() -> Self {
+        Self(Self::DIRTY)
+    }
+}
+
+impl OpcodeHooks {
+    /// The cached bits are stale and have to be recomputed before they are trusted.
+    const DIRTY: u8 = 1 << 0;
+    /// [`Cheatcodes::has_step_hooks`] was true when last computed.
+    const STEP: u8 = 1 << 1;
+    /// [`Cheatcodes::has_step_end_hooks`] was true when last computed.
+    const STEP_END: u8 = 1 << 2;
+
+    #[inline(always)]
+    const fn maybe_step(self) -> bool {
+        self.0 & (Self::DIRTY | Self::STEP) != 0
+    }
+
+    #[inline(always)]
+    const fn maybe_step_end(self) -> bool {
+        self.0 & (Self::DIRTY | Self::STEP_END) != 0
+    }
+
+    #[inline(always)]
+    const fn is_dirty(self) -> bool {
+        self.0 & Self::DIRTY != 0
+    }
+}
+
 impl EnvOverrides {
     /// Whether any override is set.
     #[inline]
@@ -864,6 +905,8 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pending_storage_hook: Option<PendingStorageHook>,
     /// Synthetic callback frame currently executing or awaiting parent cleanup.
     active_storage_hook: Option<ActiveStorageHook>,
+    /// Conservative cache of [`Self::has_step_hooks`] and [`Self::has_step_end_hooks`].
+    opcode_hooks: OpcodeHooks,
 
     /// Deprecated cheatcodes mapped to the reason. Used to report warnings on test results.
     pub deprecated: HashMap<&'static str, Option<&'static str>>,
@@ -989,6 +1032,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             storage_hooks_registered: Default::default(),
             pending_storage_hook: Default::default(),
             active_storage_hook: Default::default(),
+            opcode_hooks: Default::default(),
             deprecated: Default::default(),
             wallets: Default::default(),
             private_key_signers: Default::default(),
@@ -2049,6 +2093,45 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         true
     }
 
+    /// Cheap, conservative gate for the per-opcode `step` hook.
+    ///
+    /// May report `true` when [`Self::has_step_hooks`] is `false`; never the other way round.
+    #[inline(always)]
+    pub const fn maybe_has_step_hooks(&self) -> bool {
+        self.opcode_hooks.maybe_step()
+    }
+
+    /// Cheap, conservative gate for the per-opcode `step_end` hook.
+    ///
+    /// May report `true` when [`Self::has_step_end_hooks`] is `false`; never the other way round.
+    #[inline(always)]
+    pub const fn maybe_has_step_end_hooks(&self) -> bool {
+        self.opcode_hooks.maybe_step_end()
+    }
+
+    /// Marks the cached opcode hook gates stale.
+    ///
+    /// Must be called by anything that can change a field the hook predicates read.
+    #[inline(always)]
+    pub const fn mark_opcode_hooks_dirty(&mut self) {
+        self.opcode_hooks = OpcodeHooks(OpcodeHooks::DIRTY);
+    }
+
+    /// Recomputes the cached opcode hook gates if they are stale.
+    #[inline(always)]
+    pub fn refresh_opcode_hooks(&mut self) {
+        if self.opcode_hooks.is_dirty() {
+            let mut bits = 0;
+            if self.has_step_hooks() {
+                bits |= OpcodeHooks::STEP;
+            }
+            if self.has_step_end_hooks() {
+                bits |= OpcodeHooks::STEP_END;
+            }
+            self.opcode_hooks = OpcodeHooks(bits);
+        }
+    }
+
     #[inline(always)]
     pub fn has_step_hooks(&self) -> bool {
         self.broadcast.is_some()
@@ -2135,6 +2218,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
+        self.mark_opcode_hooks_dirty();
+
         // When the first interpreter is initialized we've circumvented the balance and gas checks,
         // so we apply our actual block data with the correct fees and all.
         if let Some(block) = self.block.take() {
@@ -2339,6 +2424,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
     }
 
     fn log(&mut self, _ecx: &mut FoundryContextFor<'_, FEN>, log: Log) {
+        self.mark_opcode_hooks_dirty();
         if !self.expected_emits.is_empty()
             && let Some(err) = expect::handle_expect_emit(self, &log, None)
         {
@@ -2358,6 +2444,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         _ecx: &mut FoundryContextFor<'_, FEN>,
         log: Log,
     ) {
+        self.mark_opcode_hooks_dirty();
         if !self.expected_emits.is_empty() {
             expect::handle_expect_emit(self, &log, Some(interpreter));
         }
@@ -2371,6 +2458,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         ecx: &mut FoundryContextFor<'_, FEN>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
+        self.mark_opcode_hooks_dirty();
         if self.is_storage_hook_callback(ecx, inputs) {
             return None;
         }
@@ -2383,6 +2471,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
+        self.mark_opcode_hooks_dirty();
         if self.finish_storage_hook_call(ecx, call, outcome) {
             return;
         }
@@ -2842,6 +2931,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         ecx: &mut FoundryContextFor<'_, FEN>,
         mut input: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
+        self.mark_opcode_hooks_dirty();
+
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
             ecx.set_spec_and_gas_params(spec_id);
@@ -2987,6 +3078,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
+        self.mark_opcode_hooks_dirty();
+
         let call = Some(call);
         let curr_depth = ecx.journal().depth();
 
