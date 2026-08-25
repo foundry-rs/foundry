@@ -12,7 +12,7 @@ use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm_core::{
     FoundryContextExt,
-    backend::{ContextUpdateFor, JournaledState, LocalForkId},
+    backend::{ContextUpdateFor, ForkAccountField, JournaledState, LocalForkId},
     evm::{BlockEnvFor, EvmFactoryFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     fork::CreateFork,
 };
@@ -237,7 +237,7 @@ impl Cheatcode for rpc_0Call {
         let url =
             ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
         let result = rpc_call(&url, method, params)?;
-        invalidate_active_fork_cache(ccx, method, params);
+        refresh_active_fork_state(ccx, method, params)?;
         Ok(result)
     }
 }
@@ -256,7 +256,7 @@ impl Cheatcode for rpcJson_0Call {
         let url =
             ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
         let result = rpc_json_call(&url, method, params)?;
-        invalidate_active_fork_cache(ccx, method, params);
+        refresh_active_fork_state(ccx, method, params)?;
         Ok(result)
     }
 }
@@ -416,7 +416,7 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
             && ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
         evm_opts,
-        expected_context: None,
+        resolved: None,
     };
     Ok(fork)
 }
@@ -552,50 +552,48 @@ fn rpc_json_call(url: &str, method: &str, params: &str) -> Result {
     Ok(serde_json::to_string(&result)?.abi_encode())
 }
 
-/// Invalidates the fork DB cache after a `vm.rpc` call on the active fork that mutates the node
-/// directly (bypassing the cache), so later DB reads (e.g. the broadcast simulation runner)
-/// re-fetch the new value. Only well-known Anvil/Hardhat account/storage setters are handled;
-/// chain-advancing methods (e.g. `eth_sendTransaction`) need re-forking, not eviction.
-fn invalidate_active_fork_cache<FEN: FoundryEvmNetwork>(
+/// Refreshes cached fork and journal state after a `vm.rpc` call on the active fork that mutates
+/// the node directly. Only well-known Anvil/Hardhat account/storage setters are handled;
+/// chain-advancing methods (e.g. `eth_sendTransaction`) need re-forking, not synchronization.
+fn refresh_active_fork_state<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     method: &str,
     params: &str,
-) {
-    const ACCOUNT_SETTERS: &[&str] = &[
-        "anvil_setBalance",
-        "hardhat_setBalance",
-        "tenderly_setBalance",
-        "anvil_addBalance",
-        "hardhat_addBalance",
-        "tenderly_addBalance",
-        "anvil_setNonce",
-        "hardhat_setNonce",
-        "evm_setAccountNonce",
-        "anvil_setCode",
-        "hardhat_setCode",
-    ];
-    let is_storage_setter = matches!(method, "anvil_setStorageAt" | "hardhat_setStorageAt");
-    if !is_storage_setter && !ACCOUNT_SETTERS.contains(&method) {
-        return;
-    }
+) -> Result<()> {
+    let account_field = match method {
+        "anvil_setBalance"
+        | "hardhat_setBalance"
+        | "tenderly_setBalance"
+        | "anvil_addBalance"
+        | "hardhat_addBalance"
+        | "tenderly_addBalance" => Some(ForkAccountField::Balance),
+        "anvil_setNonce" | "hardhat_setNonce" | "evm_setAccountNonce" => {
+            Some(ForkAccountField::Nonce)
+        }
+        "anvil_setCode" | "hardhat_setCode" => Some(ForkAccountField::Code),
+        "anvil_setStorageAt" | "hardhat_setStorageAt" => None,
+        _ => return Ok(()),
+    };
 
-    let Ok(params) = serde_json::from_str::<serde_json::Value>(params) else { return };
+    let Ok(params) = serde_json::from_str::<serde_json::Value>(params) else { return Ok(()) };
     let Some(address) =
         params.get(0).and_then(|v| v.as_str()).and_then(|s| s.parse::<Address>().ok())
     else {
-        return;
+        return Ok(());
     };
 
-    if is_storage_setter {
+    let (db, journaled_state) = ccx.ecx.db_journal_inner_mut();
+    if let Some(field) = account_field {
+        db.refresh_fork_account(address, field, journaled_state)?;
+    } else {
         let Some(slot) =
             params.get(1).and_then(|v| v.as_str()).and_then(|s| s.parse::<U256>().ok())
         else {
-            return;
+            return Ok(());
         };
-        ccx.ecx.db_mut().invalidate_fork_cache_storage(address, slot);
-    } else {
-        ccx.ecx.db_mut().invalidate_fork_cache_account(address);
+        db.refresh_fork_storage(address, slot, journaled_state)?;
     }
+    Ok(())
 }
 
 fn rpc_result(url: &str, method: &str, params: &str) -> Result<serde_json::Value> {

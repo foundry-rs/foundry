@@ -17,6 +17,7 @@ use std::{io::Write, path::PathBuf, str::FromStr};
 
 mod brutalize;
 mod core;
+mod exact_fork;
 mod fuzz;
 mod invariant;
 mod logs;
@@ -48,7 +49,6 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
     let testdata =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata").canonicalize().unwrap();
     cmd.current_dir(&testdata);
-    cmd.arg("--allow-project-env");
 
     let mut dotenv = std::fs::File::create(testdata.join(".env")).unwrap();
     for (name, endpoint) in rpc_endpoints().iter() {

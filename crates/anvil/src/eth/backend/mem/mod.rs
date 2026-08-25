@@ -1,6 +1,8 @@
 //! In-memory blockchain backend.
 use self::{in_memory_db::StateRootDb, state::trie_storage};
 
+#[cfg(feature = "optimism")]
+use crate::eth::backend::executor::optimism::build_simulated_deposit_receipt;
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::{ForkTransactionReplay, PruneStateHistoryConfig},
@@ -69,8 +71,9 @@ use alloy_evm::{
     precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
 };
 use alloy_network::{
-    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
-    NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
+    AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
+    BlockResponse, Network, NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope,
+    UnknownTypedTransaction,
 };
 #[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
@@ -119,8 +122,6 @@ use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-#[cfg(feature = "optimism")]
-use foundry_evm::hardfork::OpHardfork;
 use foundry_evm::{
     backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
@@ -161,6 +162,7 @@ use revm::{
         JournalTr,
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
+        transaction::TransactionType,
     },
     database::{AccountState, CacheDB, DbAccount, WrapDatabaseRef},
     handler::{
@@ -209,6 +211,35 @@ use tempo_revm::{
     evm::TempoContext, gas_params::tempo_gas_params,
 };
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
+
+/// Creates an Ethereum-shaped genesis header from the EVM environment.
+fn genesis_header(
+    evm_env: &EvmEnv,
+    base_fee: Option<u64>,
+    timestamp: u64,
+    genesis_number: u64,
+) -> Header {
+    let spec_id = *evm_env.spec_id();
+    Header {
+        timestamp,
+        base_fee_per_gas: base_fee,
+        gas_limit: evm_env.block_env.gas_limit,
+        beneficiary: evm_env.block_env.beneficiary,
+        difficulty: evm_env.block_env.difficulty,
+        blob_gas_used: evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
+        excess_blob_gas: evm_env.block_env.blob_excess_gas(),
+        number: genesis_number,
+        parent_beacon_block_root: (spec_id >= SpecId::CANCUN).then_some(Default::default()),
+        withdrawals_root: (spec_id >= SpecId::SHANGHAI).then_some(EMPTY_WITHDRAWALS),
+        requests_hash: (spec_id >= SpecId::PRAGUE).then_some(EMPTY_REQUESTS_HASH),
+        ..Default::default()
+    }
+}
+
+/// Wraps an Ethereum-shaped header in the selected network's consensus header.
+fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
+    if networks.is_tempo() { FoundryHeader::tempo(header) } else { header.into() }
+}
 
 /// Side-channel container for OP-specific deposit info produced by
 /// [`Backend::build_call_env_with_base`] and consumed by the OP transact path.
@@ -2220,6 +2251,14 @@ impl<N: Network> Backend<N> {
 
     fn inject_arbitrum_precompile(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
         let Some(block_number) = self.arbitrum_block_number(evm_env) else { return };
+        self.inject_arbitrum_precompile_at_block(precompiles, block_number);
+    }
+
+    fn inject_arbitrum_precompile_at_block(
+        &self,
+        precompiles: &mut PrecompilesMap,
+        block_number: u64,
+    ) {
         precompiles.apply_precompile(&arbitrum::ARB_SYS_ADDRESS, move |_| {
             Some(arbitrum::arb_sys_precompile(block_number))
         });
@@ -3247,7 +3286,11 @@ impl<N: Network> Backend<N> {
             tx_env.base_mut().gas_limit = gas_limit;
         }
         if let Some(access_list) = overrides.access_list {
-            tx_env.base_mut().access_list = access_list;
+            let tx_env = tx_env.base_mut();
+            tx_env.access_list = access_list;
+            if tx_env.tx_type == TransactionType::Legacy as u8 {
+                tx_env.tx_type = TransactionType::Eip2930 as u8;
+            }
         }
         let ResultAndState { result, state } = self.transact_call_with_inspector_ref(
             state,
@@ -3293,6 +3336,12 @@ impl<N: Network> Backend<N> {
         )?;
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         let access_list = inspector.access_list();
+        #[cfg(feature = "monad")]
+        let access_list = if self.is_monad() {
+            monad::normalize_access_list(access_list, self.monad_hardfork())
+        } else {
+            access_list
+        };
         Ok((exit_reason, out, gas_used, access_list))
     }
 
@@ -3876,13 +3925,13 @@ impl<N: Network> Backend<N> {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
             Blockchain::forked(fork.block_number(), fork.block_hash(), fork.total_difficulty())
         } else {
-            Blockchain::new(
+            let header = genesis_header(
                 &env.read(),
                 fees.is_eip1559().then(|| fees.base_fee()),
                 genesis.timestamp,
                 genesis.number,
-                networks.is_tempo(),
-            )
+            );
+            Blockchain::new(foundry_header(&networks, header))
         };
 
         // Sync EVM block.number with genesis for non-fork mode.
@@ -4595,13 +4644,8 @@ impl<N: Network> Backend<N> {
         );
 
         let base_fee = staged_fees.is_eip1559().then_some(genesis_base_fee);
-        let staged_storage = BlockchainStorage::new(
-            &staged_env,
-            base_fee,
-            genesis_timestamp,
-            genesis_number,
-            self.is_tempo(),
-        );
+        let header = genesis_header(&staged_env, base_fee, genesis_timestamp, genesis_number);
+        let staged_storage = BlockchainStorage::new(foundry_header(&self.networks, header));
 
         // Seed the next block's fee state. Tempo always advances through its hardfork rule, an
         // implicit in-memory Ethereum reset restores Anvil's default, and explicit or
@@ -4974,6 +5018,13 @@ where
         &self,
         replay: ForkTransactionReplay,
     ) -> Result<()> {
+        let source_chain_id = self.protocol_chain_id();
+        let arbitrum_block_numbers = is_arbitrum(source_chain_id).then(|| {
+            (
+                replay.source_block.header().number(),
+                arbitrum_replay_block_number(&replay.source_block),
+            )
+        });
         let prepared = prepare_fork_transaction_replay(replay, self.is_monad())?;
         let fallback_execution_chain_id = self
             .get_fork()
@@ -4991,14 +5042,13 @@ where
         let current_base_fee = self.base_fee();
         let current_excess_blob_gas_and_price = self.excess_blob_gas_and_price();
         let mut evm_env = self.evm_env.read().clone();
-        let source_chain_id = self.protocol_chain_id();
         if evm_env.block_env.basefee == 0 {
             evm_env.cfg_env.disable_base_fee = true;
         }
 
         let best_number = self.blockchain.storage.read().best_number;
         let block_number = best_number.saturating_add(1);
-        if is_arbitrum(source_chain_id) {
+        if arbitrum_block_numbers.is_some() {
             evm_env.block_env.number = U256::from(block_number);
         } else {
             evm_env.block_env.number = evm_env.block_env.number.saturating_add(U256::from(1));
@@ -5016,6 +5066,10 @@ where
         );
 
         let mut replay_env = evm_env.clone();
+        let arbitrum_rpc_block_number = arbitrum_block_numbers.map(|(rpc, evm)| {
+            replay_env.block_env.number = evm;
+            rpc
+        });
         replay_env.cfg_env.chain_id = execution_chain_id;
         apply_chain_specific_tx_replay_env_changes_for_chain(&mut replay_env, source_chain_id);
         let inspector_tx_config = self.inspector_tx_config();
@@ -5081,6 +5135,7 @@ where
                 &mut overlay,
                 &replay_env,
                 best_hash,
+                arbitrum_rpc_block_number,
                 hardfork,
                 parent_beacon_block_root,
                 &transactions,
@@ -5199,6 +5254,7 @@ where
         db: DB,
         evm_env: &EvmEnv,
         parent_hash: B256,
+        arbitrum_rpc_block_number: Option<u64>,
         hardfork: FoundryHardfork,
         parent_beacon_block_root: Option<B256>,
         transactions: &[HistoricalReplayTransaction],
@@ -5240,7 +5296,11 @@ where
             }};
             ($evm:expr, $execute:expr) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
-                self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
+                if let Some(block_number) = arbitrum_rpc_block_number {
+                    self.inject_arbitrum_precompile_at_block($evm.precompiles_mut(), block_number);
+                } else {
+                    self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
+                }
                 let mut executor = AnvilBlockExecutor::new(
                     $evm,
                     parent_hash,
@@ -5340,7 +5400,7 @@ where
             slot_number: None,
         };
 
-        let block = create_block(FoundryHeader::new(header, self.is_tempo()), transactions);
+        let block = create_block(foundry_header(&self.networks, header), transactions);
         BlockInfo { block, transactions: transaction_infos, receipts: block_result.receipts }
     }
 
@@ -7415,7 +7475,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                     requests_hash: (spec_id >= SpecId::PRAGUE).then_some(EMPTY_REQUESTS_HASH),
                     ..Default::default()
                 };
-                let header = FoundryHeader::new(header, self.is_tempo());
+                let header = foundry_header(&self.networks, header);
                 let best_hash = header.hash_slow();
                 selected_header = Some(header.clone());
                 checkpoint = Some(create_block(
@@ -8212,26 +8272,30 @@ impl Backend<FoundryNetwork> {
                     };
                     let tx_hash = tx.as_ref().hash();
                     #[cfg(feature = "optimism")]
-                    let (deposit_nonce, deposit_receipt_version) =
-                        if matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
-                            let hardfork = OpHardfork::from(self.hardfork());
-                            (
-                                (hardfork >= OpHardfork::Regolith).then_some(caller_nonce),
-                                (hardfork >= OpHardfork::Canyon).then_some(1),
-                            )
-                        } else {
-                            (None, None)
-                        };
+                    let receipt = if matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
+                        build_simulated_deposit_receipt(
+                            self.hardfork(),
+                            caller_nonce,
+                            &result,
+                            canonical_logs.clone(),
+                            cumulative_gas_used,
+                        )
+                    } else {
+                        FoundryReceiptBuilder::build_simulated_receipt(
+                            tx.as_ref().tx_type(),
+                            &result,
+                            canonical_logs.clone(),
+                            cumulative_gas_used,
+                        )
+                    };
                     #[cfg(not(feature = "optimism"))]
-                    let (deposit_nonce, deposit_receipt_version) = (None, None);
-                    receipts.push(FoundryReceiptBuilder::build_simulated_receipt(
+                    let receipt = FoundryReceiptBuilder::build_simulated_receipt(
                         tx.as_ref().tx_type(),
                         &result,
                         canonical_logs.clone(),
                         cumulative_gas_used,
-                        deposit_nonce,
-                        deposit_receipt_version,
-                    ));
+                    );
+                    receipts.push(receipt);
                     transaction_envelopes.push(tx.as_ref().clone());
                     let rpc_tx =
                         transaction_build(Some(tx_hash), tx, None, None, Some(block_env.basefee));
@@ -9356,6 +9420,15 @@ fn unpack_execution_result<H: IntoInstructionResult>(
     }
 }
 
+fn arbitrum_replay_block_number(block: &AnyRpcBlock) -> U256 {
+    block
+        .other
+        .get("l1BlockNumber")
+        .cloned()
+        .and_then(|number| serde_json::from_value(number).ok())
+        .unwrap_or_else(|| U256::from(block.header().number()))
+}
+
 /// Converts a halt reason into an [`InstructionResult`].
 ///
 /// Abstracts over network-specific halt reason types (`HaltReason`, `OpHaltReason`)
@@ -9364,13 +9437,22 @@ pub use foundry_evm::core::evm::IntoInstructionResult;
 
 #[cfg(test)]
 mod tests {
-    use super::{ForkCacheNamespace, ForkCacheSource, StagedForkCacheLease, StagedForkDbUser};
-    use crate::{NodeConfig, spawn};
-    use alloy_primitives::{B256, U256};
+    use super::{
+        ForkCacheNamespace, ForkCacheSource, StagedForkCacheLease, StagedForkDbUser,
+        arbitrum_replay_block_number,
+    };
+    use crate::{NodeConfig, config::ForkTransactionReplay, spawn};
+    use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
+    use alloy_primitives::{B256, Bytes, U256};
+    use alloy_provider::Provider;
+    use alloy_rpc_types::{Block, BlockTransactions, TransactionRequest, state::EvmOverrides};
+    use alloy_serde::WithOtherFields;
+    use foundry_config::NamedChain;
     use foundry_evm::{
         backend::{BlockchainDb, BlockchainDbMeta},
         hardfork::{EthereumHardfork, FoundryHardfork},
     };
+    use foundry_evm_networks::arbitrum;
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -9379,6 +9461,85 @@ mod tests {
         db.block_hashes().write().insert(U256::ZERO, B256::repeat_byte(0x11));
         db.cache().flush();
         db
+    }
+
+    #[test]
+    fn arbitrum_transaction_replay_uses_l1_block_number() {
+        let header = AnyHeader { number: 75_219_831, ..Default::default() };
+        let mut block = AnyRpcBlock::new(
+            Block::new(
+                AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                BlockTransactions::Full(Vec::new()),
+            )
+            .into(),
+        );
+        block.other.insert("l1BlockNumber".to_string(), serde_json::json!("0x10276d3"));
+
+        assert_eq!(arbitrum_replay_block_number(&block), U256::from(16_938_707));
+    }
+
+    #[tokio::test]
+    async fn fork_arbitrum_transaction_replay_preserves_rpc_block_number() {
+        const GENESIS_BLOCK: u64 = 101;
+        const L1_BLOCK: u64 = 10;
+        const REPLAY_BLOCK: u64 = GENESIS_BLOCK + 1;
+
+        let config = || {
+            NodeConfig::test()
+                .with_chain_id(Some(NamedChain::Arbitrum as u64))
+                .with_genesis_block_number(Some(GENESIS_BLOCK))
+        };
+        let (_source_api, source_handle) = spawn(config()).await;
+        let source_provider = source_handle.http_provider();
+        let sender = source_provider.get_accounts().await.unwrap()[0];
+        let receipt = source_provider
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default()
+                    .with_from(sender)
+                    .with_to(arbitrum::ARB_SYS_ADDRESS)
+                    .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
+            ))
+            .await
+            .unwrap()
+            .get_receipt()
+            .await
+            .unwrap();
+        let mut source_block = source_provider
+            .get_block_by_hash(receipt.block_hash.unwrap())
+            .full()
+            .await
+            .unwrap()
+            .unwrap();
+        source_block
+            .other
+            .insert("l1BlockNumber".to_string(), serde_json::json!(format!("0x{L1_BLOCK:x}")));
+
+        let (replay_api, _replay_handle) = spawn(config()).await;
+        replay_api
+            .backend
+            .apply_fork_transaction_replay(ForkTransactionReplay { source_block, target_index: 0 })
+            .await
+            .unwrap();
+
+        let expected = arbitrum::arb_block_number_output(REPLAY_BLOCK);
+        let replayed =
+            replay_api.backend.mined_transaction_receipt(receipt.transaction_hash).unwrap();
+        assert_eq!(replayed.out.unwrap(), expected);
+        assert_eq!(replay_api.block_number().unwrap(), U256::from(REPLAY_BLOCK));
+
+        let output = replay_api
+            .call(
+                WithOtherFields::new(
+                    TransactionRequest::default()
+                        .with_to(arbitrum::ARB_SYS_ADDRESS)
+                        .with_input(Bytes::copy_from_slice(&arbitrum::ARB_BLOCK_NUMBER_SELECTOR)),
+                ),
+                None,
+                EvmOverrides::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(output, expected);
     }
 
     fn test_endpoint_identity(
