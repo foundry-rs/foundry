@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, Bytes, U256, address, hex};
+use alloy_primitives::{Address, B256, Bytes, U256, address, hex};
 use anvil::{NodeConfig, spawn};
 use axum::{Router, body::Bytes as BodyBytes};
 use forge_script_sequence::ScriptSequence;
@@ -5256,4 +5256,65 @@ contract SetStorageViaRpc {
     cmd.arg("script")
         .args(["SetStorageViaRpc", "--rpc-url", &handle.http_endpoint()])
         .assert_success();
+});
+
+// An out-of-band storage mutation must survive the rollback of the call that issued it.
+forgetest_async!(vm_rpc_set_storage_survives_caught_revert_on_fork, |prj, cmd| {
+    prj.add_script(
+        "SetStorageThenRevert.s.sol",
+        r#"
+interface Vm {
+    function allowCheatcodes(address account) external;
+    function load(address target, bytes32 slot) external view returns (bytes32);
+    function rpc(string calldata method, string calldata params) external returns (bytes memory);
+    function store(address target, bytes32 slot, bytes32 value) external;
+    function toString(address value) external pure returns (string memory);
+    function toString(bytes32 value) external pure returns (string memory);
+}
+
+contract StorageMutator {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant TARGET = 0x0000000000000000000000000000000000001331;
+    bytes32 constant SLOT = bytes32(0);
+
+    function mutateAndRevert() external {
+        vm.store(TARGET, SLOT, bytes32(uint256(1)));
+        vm.rpc(
+            "anvil_setStorageAt",
+            string.concat(
+                "[\"", vm.toString(TARGET), "\", \"", vm.toString(SLOT), "\", \"",
+                vm.toString(bytes32(uint256(42))), "\"]"
+            )
+        );
+        require(vm.load(TARGET, SLOT) == bytes32(uint256(42)), "storage stayed stale");
+        revert("rollback local call");
+    }
+}
+
+contract SetStorageThenRevert {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant TARGET = 0x0000000000000000000000000000000000001331;
+    bytes32 constant SLOT = bytes32(0);
+
+    function run() external {
+        require(vm.load(TARGET, SLOT) == bytes32(0), "unexpected initial storage");
+        StorageMutator mutator = new StorageMutator();
+        vm.allowCheatcodes(address(mutator));
+
+        try mutator.mutateAndRevert() {} catch {}
+
+        require(vm.load(TARGET, SLOT) == bytes32(uint256(42)), "rpc storage was reverted");
+    }
+}
+"#,
+    );
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.arg("script")
+        .args(["SetStorageThenRevert", "--rpc-url", &handle.http_endpoint()])
+        .assert_success();
+
+    let target = address!("0x0000000000000000000000000000000000001331");
+    assert_eq!(api.storage_at(target, U256::ZERO, None).await.unwrap(), B256::from(U256::from(42)));
 });

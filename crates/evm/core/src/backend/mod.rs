@@ -208,6 +208,134 @@ impl ForkAccountField {
             }
         }
     }
+
+    fn update_journaled_state(
+        self,
+        journaled_state: &mut JournaledState,
+        address: Address,
+        refreshed: &AccountInfo,
+    ) {
+        match self {
+            Self::Balance => rebase_balance_journal(journaled_state, address, refreshed.balance),
+            Self::Nonce => {
+                for entry in &mut journaled_state.journal {
+                    match entry {
+                        JournalEntry::NonceChange { address: target, previous_nonce }
+                            if *target == address =>
+                        {
+                            *previous_nonce = refreshed.nonce;
+                        }
+                        JournalEntry::NonceBump { address: target } if *target == address => {
+                            *entry = JournalEntry::NonceChange {
+                                address,
+                                previous_nonce: refreshed.nonce,
+                            };
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Self::Code => {
+                for entry in &mut journaled_state.journal {
+                    if let JournalEntry::CodeChange { address: target, had_code_hash, had_code } =
+                        entry
+                        && *target == address
+                    {
+                        *had_code_hash = refreshed.code_hash;
+                        *had_code = refreshed.code.clone();
+                    }
+                }
+            }
+        }
+
+        if let Some(account) = journaled_state.state.get_mut(&address) {
+            self.update(&mut account.info, refreshed);
+        }
+    }
+}
+
+fn rebase_balance_journal(
+    journaled_state: &mut JournaledState,
+    address: Address,
+    refreshed_balance: U256,
+) {
+    let mut balances = journaled_state
+        .state
+        .iter()
+        .map(|(address, account)| (*address, account.info.balance))
+        .collect::<Map<_, _>>();
+
+    // Walk backwards so a transfer involving the refreshed account can be replaced with an exact
+    // restoration of only the counterparty's balance.
+    for entry in journaled_state.journal.iter_mut().rev() {
+        match entry {
+            JournalEntry::BalanceChange { address: target, old_balance } => {
+                let previous_balance = *old_balance;
+                if *target == address {
+                    *old_balance = refreshed_balance;
+                }
+                balances.insert(*target, previous_balance);
+            }
+            JournalEntry::BalanceTransfer { balance, from, to } => {
+                let (balance, from, to) = (*balance, *from, *to);
+                let from_before =
+                    balances.get(&from).copied().unwrap_or_default().wrapping_add(balance);
+                let to_before =
+                    balances.get(&to).copied().unwrap_or_default().wrapping_sub(balance);
+
+                if address == from && address != to {
+                    *entry = JournalEntry::BalanceChange { address: to, old_balance: to_before };
+                } else if address == to && address != from {
+                    *entry =
+                        JournalEntry::BalanceChange { address: from, old_balance: from_before };
+                }
+
+                balances.insert(from, from_before);
+                balances.insert(to, to_before);
+            }
+            JournalEntry::AccountDestroyed { had_balance, address: destroyed, target, .. } => {
+                let (destroyed, recipient, balance) = (*destroyed, *target, *had_balance);
+                let destroyed_before =
+                    balances.get(&destroyed).copied().unwrap_or_default().wrapping_add(balance);
+                balances.insert(destroyed, destroyed_before);
+
+                if destroyed != recipient {
+                    let recipient_before =
+                        balances.get(&recipient).copied().unwrap_or_default().wrapping_sub(balance);
+                    balances.insert(recipient, recipient_before);
+
+                    // Keep reverting the destruction itself, but do not roll back an out-of-band
+                    // balance update made to its recipient.
+                    if address == recipient {
+                        *target = destroyed;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn update_journaled_storage(
+    journaled_state: &mut JournaledState,
+    address: Address,
+    slot: U256,
+    value: U256,
+) {
+    for entry in &mut journaled_state.journal {
+        if let JournalEntry::StorageChanged { address: target, key, had_value } = entry
+            && *target == address
+            && *key == slot
+        {
+            *had_value = value;
+        }
+    }
+
+    if let Some(storage) =
+        journaled_state.state.get_mut(&address).and_then(|account| account.storage.get_mut(&slot))
+    {
+        storage.present_value = value;
+    }
 }
 
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
@@ -2458,12 +2586,8 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
                 cached.account_state = AccountState::None;
             }
         }
-        if let Some(journaled_account) = journaled_state.state.get_mut(&address) {
-            field.update(&mut journaled_account.info, &refreshed);
-        }
-        if let Some(journaled_account) = fork.journaled_state.state.get_mut(&address) {
-            field.update(&mut journaled_account.info, &refreshed);
-        }
+        field.update_journaled_state(journaled_state, address, &refreshed);
+        field.update_journaled_state(&mut fork.journaled_state, address, &refreshed);
         Ok(())
     }
 
@@ -2508,21 +2632,8 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
                 account.account_state = AccountState::None;
             }
         }
-        if let Some(storage) = journaled_state
-            .state
-            .get_mut(&address)
-            .and_then(|account| account.storage.get_mut(&slot))
-        {
-            storage.present_value = value;
-        }
-        if let Some(storage) = fork
-            .journaled_state
-            .state
-            .get_mut(&address)
-            .and_then(|account| account.storage.get_mut(&slot))
-        {
-            storage.present_value = value;
-        }
+        update_journaled_storage(journaled_state, address, slot, value);
+        update_journaled_storage(&mut fork.journaled_state, address, slot, value);
         Ok(())
     }
 
@@ -3280,6 +3391,8 @@ mod tests {
         cache::{BlockchainDb, BlockchainDbMeta},
     };
     use revm::{
+        JournalEntry,
+        bytecode::Bytecode,
         context::{BlockEnv, JournalInner, TxEnv},
         database::{AccountState, CacheDB, DatabaseRef, DbAccount},
         primitives::{KECCAK_EMPTY, hardfork::SpecId},
@@ -3442,6 +3555,101 @@ mod tests {
         let cached = &backend.active_fork().unwrap().db.cache.accounts[&target];
         assert_eq!(cached.info.code_hash, expected_hash);
         assert_eq!(cached.info.balance, U256::from(3));
+    }
+
+    #[test]
+    fn refreshed_fork_values_survive_journal_reverts() {
+        let target = Address::with_last_byte(1);
+        let counterparty = Address::with_last_byte(2);
+
+        let mut journaled_state = JournalInner::new();
+        journaled_state.state.insert(
+            target,
+            Account::default()
+                .with_info(AccountInfo { balance: U256::from(100), ..Default::default() }),
+        );
+        journaled_state.state.insert(counterparty, Account::default());
+        let checkpoint = journaled_state.checkpoint();
+        journaled_state.state.get_mut(&target).unwrap().info.balance = U256::from(190);
+        journaled_state.state.get_mut(&counterparty).unwrap().info.balance = U256::from(10);
+        journaled_state.journal.extend([
+            JournalEntry::BalanceChange { address: target, old_balance: U256::from(100) },
+            JournalEntry::BalanceTransfer {
+                balance: U256::from(10),
+                from: target,
+                to: counterparty,
+            },
+        ]);
+        ForkAccountField::Balance.update_journaled_state(
+            &mut journaled_state,
+            target,
+            &AccountInfo { balance: U256::from(42), ..Default::default() },
+        );
+        journaled_state.checkpoint_revert(checkpoint);
+        assert_eq!(journaled_state.state[&target].info.balance, U256::from(42));
+        assert_eq!(journaled_state.state[&counterparty].info.balance, U256::ZERO);
+
+        let mut journaled_state = JournalInner::new();
+        journaled_state.state.insert(target, Account::default());
+        let checkpoint = journaled_state.checkpoint();
+        journaled_state.state.get_mut(&target).unwrap().info.nonce = 1;
+        journaled_state.journal.push(JournalEntry::NonceBump { address: target });
+        ForkAccountField::Nonce.update_journaled_state(
+            &mut journaled_state,
+            target,
+            &AccountInfo { nonce: 42, ..Default::default() },
+        );
+        journaled_state.checkpoint_revert(checkpoint);
+        assert_eq!(journaled_state.state[&target].info.nonce, 42);
+
+        let mut journaled_state = JournalInner::new();
+        journaled_state.state.insert(target, Account::default());
+        let checkpoint = journaled_state.checkpoint();
+        let local_code = Bytecode::new_raw(Bytes::from_static(&[0x00]));
+        journaled_state.state.get_mut(&target).unwrap().info.code_hash = local_code.hash_slow();
+        journaled_state.state.get_mut(&target).unwrap().info.code = Some(local_code);
+        journaled_state.journal.push(JournalEntry::CodeChange {
+            address: target,
+            had_code_hash: KECCAK_EMPTY,
+            had_code: None,
+        });
+        let refreshed_code = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00]));
+        let refreshed_code_hash = refreshed_code.hash_slow();
+        ForkAccountField::Code.update_journaled_state(
+            &mut journaled_state,
+            target,
+            &AccountInfo {
+                code_hash: refreshed_code_hash,
+                code: Some(refreshed_code.clone()),
+                ..Default::default()
+            },
+        );
+        journaled_state.checkpoint_revert(checkpoint);
+        assert_eq!(journaled_state.state[&target].info.code_hash, refreshed_code_hash);
+        assert_eq!(journaled_state.state[&target].info.code, Some(refreshed_code));
+
+        let slot = U256::ZERO;
+        let mut account = Account::default();
+        account.storage.insert(slot, EvmStorageSlot::new(U256::ZERO, TransactionId::ZERO));
+        let mut journaled_state = JournalInner::new();
+        journaled_state.state.insert(target, account);
+        let checkpoint = journaled_state.checkpoint();
+        journaled_state
+            .state
+            .get_mut(&target)
+            .unwrap()
+            .storage
+            .get_mut(&slot)
+            .unwrap()
+            .present_value = U256::from(1);
+        journaled_state.journal.push(JournalEntry::StorageChanged {
+            address: target,
+            key: slot,
+            had_value: U256::ZERO,
+        });
+        super::update_journaled_storage(&mut journaled_state, target, slot, U256::from(42));
+        journaled_state.checkpoint_revert(checkpoint);
+        assert_eq!(journaled_state.state[&target].storage[&slot].present_value(), U256::from(42));
     }
 
     #[test]
