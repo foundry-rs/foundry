@@ -131,6 +131,23 @@ impl FeeManager {
         state.blob_excess_gas_and_price = snapshot.blob_excess_gas_and_price;
     }
 
+    /// Atomically publishes the chain-derived fee state for the next block.
+    pub(crate) fn set_next_block_fees(
+        &self,
+        base_fee: u64,
+        blob_excess_gas_and_price: BlobExcessGasAndPrice,
+    ) {
+        trace!(
+            target: "backend::fees",
+            ?base_fee,
+            ?blob_excess_gas_and_price,
+            "updated next block fees"
+        );
+        let mut state = self.state.write();
+        state.base_fee = base_fee;
+        state.blob_excess_gas_and_price = blob_excess_gas_and_price;
+    }
+
     /// Returns the active Tempo hardfork, if running a Tempo chain.
     pub fn tempo_hardfork(&self) -> Option<TempoHardfork> {
         self.state.read().rules.tempo_hardfork
