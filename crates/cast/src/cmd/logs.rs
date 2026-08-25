@@ -35,6 +35,9 @@ pub struct LogsArgs {
 
     /// The signature of the event to filter logs by which will be converted to the first topic or
     /// a topic to filter on.
+    ///
+    /// When an event signature is provided, the matching logs are also decoded and their
+    /// parameters are included in the output.
     #[arg(value_name = "SIG_OR_TOPIC")]
     sig_or_topic: Option<String>,
 
@@ -93,12 +96,15 @@ impl LogsArgs {
         let to_block =
             cast.convert_block_number(Some(to_block.unwrap_or_else(BlockId::latest))).await?;
 
-        let filter = build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
+        let (filter, event) =
+            build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
 
         if !subscribe {
             let logs = match query_size {
-                Some(chunk_size) => cast.filter_logs_chunked(filter, chunk_size).await?,
-                None => cast.filter_logs(filter).await?,
+                Some(chunk_size) => {
+                    cast.filter_logs_chunked(filter, chunk_size, event.as_ref()).await?
+                }
+                None => cast.filter_logs(filter, event.as_ref()).await?,
             };
             sh_println!("{logs}")?;
             return Ok(());
@@ -115,7 +121,7 @@ impl LogsArgs {
             .await?;
         let cast = Cast::new(&provider);
         let mut stdout = io::stdout();
-        cast.subscribe(filter, &mut stdout).await?;
+        cast.subscribe(filter, &mut stdout, event.as_ref()).await?;
 
         Ok(())
     }
@@ -124,37 +130,38 @@ impl LogsArgs {
 /// Builds a Filter by first trying to parse the `sig_or_topic` as an event signature. If
 /// successful, `topics_or_args` is parsed as indexed inputs and converted to topics. Otherwise,
 /// `sig_or_topic` is prepended to `topics_or_args` and used as raw topics.
+///
+/// Also returns the parsed [Event], when there is one, so that the matching logs can be decoded.
 fn build_filter(
     from_block: Option<BlockNumberOrTag>,
     to_block: Option<BlockNumberOrTag>,
     address: Option<Vec<Address>>,
     sig_or_topic: Option<String>,
     topics_or_args: Vec<String>,
-) -> Result<Filter, eyre::Error> {
-    let block_option = FilterBlockOption::Range { from_block, to_block };
-    let filter = match sig_or_topic {
+) -> Result<(Filter, Option<Event>), eyre::Error> {
+    let (filter, event) = match sig_or_topic {
         // Try and parse the signature as an event signature
         Some(sig_or_topic) => match foundry_common::abi::get_event(sig_or_topic.as_str()) {
-            Ok(event) => build_filter_event_sig(event, topics_or_args)?,
+            Ok(event) => (build_filter_event_sig(&event, topics_or_args)?, Some(event)),
             Err(_) => {
                 let topics = [vec![sig_or_topic], topics_or_args].concat();
-                build_filter_topics(topics)?
+                (build_filter_topics(topics)?, None)
             }
         },
-        None => Filter::default(),
+        None => (Filter::default(), None),
     };
 
-    let mut filter = filter.select(block_option);
+    let mut filter = filter.select(FilterBlockOption::Range { from_block, to_block });
 
     if let Some(address) = address {
         filter = filter.address(address)
     }
 
-    Ok(filter)
+    Ok((filter, event))
 }
 
 /// Creates a [Filter] from the given event signature and arguments.
-fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<Filter, eyre::Error> {
+fn build_filter_event_sig(event: &Event, args: Vec<String>) -> Result<Filter, eyre::Error> {
     let args = args.iter().map(|arg| arg.as_str()).collect::<Vec<_>>();
 
     // Match the args to indexed inputs. Enumerate so that the ordering can be restored
@@ -249,7 +256,7 @@ mod tests {
             address: ValueOrArray::Value(address.unwrap()).into(),
             topics: [vec![].into(), vec![].into(), vec![].into(), vec![].into()],
         };
-        let filter =
+        let (filter, _) =
             build_filter(from_block, to_block, address.map(|addr| vec![addr]), None, vec![])
                 .unwrap();
         assert_eq!(filter, expected)
@@ -267,7 +274,7 @@ mod tests {
                 vec![].into(),
             ],
         };
-        let filter =
+        let (filter, _) =
             build_filter(None, None, None, Some(TRANSFER_SIG.to_string()), vec![]).unwrap();
         assert_eq!(filter, expected)
     }
@@ -284,7 +291,7 @@ mod tests {
                 vec![].into(),
             ],
         };
-        let filter = build_filter(
+        let (filter, _) = build_filter(
             None,
             None,
             None,
@@ -309,7 +316,7 @@ mod tests {
                 vec![].into(),
             ],
         };
-        let filter = build_filter(
+        let (filter, _) = build_filter(
             None,
             None,
             None,
@@ -334,7 +341,7 @@ mod tests {
                 vec![].into(),
             ],
         };
-        let filter = build_filter(
+        let (filter, _) = build_filter(
             None,
             None,
             None,
@@ -357,7 +364,7 @@ mod tests {
                 vec![].into(),
             ],
         };
-        let filter = build_filter(
+        let (filter, _) = build_filter(
             None,
             None,
             None,
@@ -381,7 +388,7 @@ mod tests {
                 vec![].into(),
             ],
         };
-        let filter = build_filter(
+        let (filter, _) = build_filter(
             None,
             None,
             None,
@@ -405,7 +412,7 @@ mod tests {
                 vec![].into(),
             ],
         };
-        let filter = build_filter(
+        let (filter, _) = build_filter(
             None,
             None,
             Some(vec![Address::ZERO, ADDRESS.parse().unwrap()]),

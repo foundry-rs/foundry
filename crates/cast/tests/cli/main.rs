@@ -3435,7 +3435,7 @@ casttest!(logs_sig, |_prj, cmd| {
         "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
     ])
     .assert_success()
-    .stdout_eq(file!["../fixtures/cast_logs.stdout"]);
+    .stdout_eq(file!["../fixtures/cast_logs_decoded.stdout"]);
 });
 
 casttest!(logs_sig_2, |_prj, cmd| {
@@ -3453,7 +3453,52 @@ casttest!(logs_sig_2, |_prj, cmd| {
         "0x68A99f89E475a078645f4BAC491360aFe255Dff1",
     ])
     .assert_success()
-    .stdout_eq(file!["../fixtures/cast_logs.stdout"]);
+    .stdout_eq(file!["../fixtures/cast_logs_decoded.stdout"]);
+});
+
+// tests that logs matching the filter but not decodable with the provided signature (here the
+// `indexed` markers don't match the log topics) are shown raw, with a warning on stderr.
+casttest!(logs_sig_mismatched_indexed, |_prj, cmd| {
+    let rpc = next_http_archive_rpc_url();
+    cmd.args([
+        "logs",
+        "--rpc-url",
+        rpc.as_str(),
+        "--from-block",
+        "12421181",
+        "--to-block",
+        "12421182",
+        "Transfer(address indexed from, address to, uint256 value)",
+        "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
+    ])
+    .assert_success()
+    .stdout_eq(file!["../fixtures/cast_logs.stdout"])
+    .stderr_eq(str![[r#"
+Warning: failed to decode 1 of 1 logs with the provided event signature; make sure its indexed parameters match the log topics
+
+"#]]);
+});
+
+// tests that the decode-failure warning is only shown once when multiple logs fail to decode.
+casttest!(logs_decode_warning_shown_once, |_prj, cmd| {
+    let rpc = next_http_archive_rpc_url();
+    cmd.args([
+        "logs",
+        "--rpc-url",
+        rpc.as_str(),
+        "--address",
+        "0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE",
+        "--from-block",
+        "12421181",
+        "--to-block",
+        "12421182",
+        "Transfer(address indexed from, address to, uint256 value)",
+    ])
+    .assert_success()
+    .stderr_eq(str![[r#"
+Warning: failed to decode 31 of 31 logs with the provided event signature; make sure its indexed parameters match the log topics
+
+"#]]);
 });
 
 // Queries a 60k-block range (which `--query-size` splits into multiple chunks) and asserts the
@@ -9130,6 +9175,21 @@ casttest!(abi_encode_event_dynamic_strings, |_prj, cmd| {
 
 "#]],
     );
+});
+
+// tests that `cast decode-event` ignores indexed parameters and decodes only the data.
+casttest!(decode_event_with_indexed_params, |_prj, cmd| {
+    cmd.args([
+        "decode-event",
+        "--sig",
+        "Transfer(address indexed from, address indexed to, uint256 value)",
+        "0x000000000000000000000000000000000000000000000000000000000000002a",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+42
+
+"#]]);
 });
 
 casttest!(abi_encode_event_argument_count_mismatch, |_prj, cmd| {

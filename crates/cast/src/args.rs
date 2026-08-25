@@ -20,7 +20,7 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    abi::{get_error, get_event},
+    abi::{abi_decode_event_data, get_error, get_event},
     fmt::format_uint_exp,
     fs,
     provider::ProviderBuilder,
@@ -297,8 +297,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::DecodeEvent { sig, data } => {
             let decoded_event = if let Some(event_sig) = sig {
-                let event = get_event(event_sig.as_str())?;
-                event.decode_log_parts(core::iter::once(event.selector()), &hex::decode(data)?)?
+                abi_decode_event_data(&get_event(event_sig.as_str())?, &hex::decode(data)?)?
             } else {
                 let data = crate::strip_0x(&data);
                 let selector = data.get(..64).unwrap_or_default();

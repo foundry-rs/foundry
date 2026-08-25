@@ -699,6 +699,9 @@ pub enum CastSubcommand {
 
     /// Decode event data
     ///
+    /// Indexed parameters are emitted as log topics rather than data, so they are ignored when
+    /// decoding.
+    ///
     /// Examples:
     /// - cast decode-event --sig "Transfer(address,address,uint256)" $DATA
     /// - cast decode-event $DATA (topic0-prefixed data; looks up the signature)
