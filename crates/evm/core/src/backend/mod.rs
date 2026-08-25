@@ -189,6 +189,27 @@ pub const GLOBAL_FAIL_SLOT: U256 =
 
 pub type JournaledState = JournalInner<JournalEntry>;
 
+/// Account field changed by an out-of-band fork RPC mutation.
+#[derive(Clone, Copy, Debug)]
+pub enum ForkAccountField {
+    Balance,
+    Nonce,
+    Code,
+}
+
+impl ForkAccountField {
+    fn update(self, target: &mut AccountInfo, refreshed: &AccountInfo) {
+        match self {
+            Self::Balance => target.balance = refreshed.balance,
+            Self::Nonce => target.nonce = refreshed.nonce,
+            Self::Code => {
+                target.code_hash = refreshed.code_hash;
+                target.code = refreshed.code.clone();
+            }
+        }
+    }
+}
+
 /// An extension trait that allows us to easily extend the `revm::Inspector` capabilities
 #[auto_impl::auto_impl(&mut)]
 pub trait DatabaseExt<F: FoundryEvmFactory>:
@@ -433,12 +454,12 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
     /// Returns true if the given account is currently marked as persistent.
     fn is_persistent(&self, acc: &Address) -> bool;
 
-    /// Drops cached account info for `address` on the active fork and refreshes any already-loaded
-    /// journal entries from the node (used after out-of-band mutations like `anvil_setCode` via
-    /// `vm.rpc`).
+    /// Refreshes an account field changed out-of-band on the active fork in any already-loaded
+    /// cache and journal entries.
     fn refresh_fork_account(
         &mut self,
         address: Address,
+        field: ForkAccountField,
         journaled_state: &mut JournaledState,
     ) -> Result<(), BackendError>;
 
@@ -2403,34 +2424,45 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     fn refresh_fork_account(
         &mut self,
         address: Address,
+        field: ForkAccountField,
         journaled_state: &mut JournaledState,
     ) -> Result<(), BackendError> {
         let Some(fork) = self.active_fork_mut() else { return Ok(()) };
-        trace!(?address, "refresh fork account");
+        trace!(?address, ?field, "refresh fork account");
         fork.db.db.data().accounts.write().remove(&address);
-        // Keep the local entry if it holds in-script modifications (e.g. `vm.deal`).
-        if fork
+
+        let cache_modified = fork
             .db
             .cache
             .accounts
             .get(&address)
-            .is_some_and(|account| account.account_state == AccountState::None)
-        {
+            .is_some_and(|account| account.account_state != AccountState::None);
+        if !cache_modified {
             fork.db.cache.accounts.remove(&address);
         }
 
-        if !journaled_state.state.contains_key(&address)
+        if !cache_modified
+            && !journaled_state.state.contains_key(&address)
             && !fork.journaled_state.state.contains_key(&address)
         {
             return Ok(());
         }
 
-        let account = Database::basic(&mut fork.db, address)?.unwrap_or_default();
+        let mut refreshed = DatabaseRef::basic_ref(&fork.db.db, address)?.unwrap_or_default();
+        if matches!(field, ForkAccountField::Code) {
+            fork.db.insert_contract(&mut refreshed);
+        }
+        if let Some(cached) = fork.db.cache.accounts.get_mut(&address) {
+            field.update(&mut cached.info, &refreshed);
+            if cached.account_state == AccountState::NotExisting && !refreshed.is_empty() {
+                cached.account_state = AccountState::None;
+            }
+        }
         if let Some(journaled_account) = journaled_state.state.get_mut(&address) {
-            journaled_account.info = account.clone();
+            field.update(&mut journaled_account.info, &refreshed);
         }
         if let Some(journaled_account) = fork.journaled_state.state.get_mut(&address) {
-            journaled_account.info = account;
+            field.update(&mut journaled_account.info, &refreshed);
         }
         Ok(())
     }
@@ -2446,10 +2478,13 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
         if let Some(storage) = fork.db.db.data().storage.write().get_mut(&address) {
             storage.remove(&slot);
         }
-        // Keep the local slot if the account holds in-script modifications.
-        if let Some(account) = fork.db.cache.accounts.get_mut(&address)
-            && account.account_state == AccountState::None
-        {
+        let cache_modified = fork
+            .db
+            .cache
+            .accounts
+            .get(&address)
+            .is_some_and(|account| account.account_state != AccountState::None);
+        if !cache_modified && let Some(account) = fork.db.cache.accounts.get_mut(&address) {
             account.storage.remove(&slot);
         }
 
@@ -2462,11 +2497,17 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             .state
             .get(&address)
             .is_some_and(|account| account.storage.contains_key(&slot));
-        if !outer_loaded && !fork_loaded {
+        if !cache_modified && !outer_loaded && !fork_loaded {
             return Ok(());
         }
 
-        let value = Database::storage(&mut fork.db, address, slot)?;
+        let value = DatabaseRef::storage_ref(&fork.db.db, address, slot)?;
+        if let Some(account) = fork.db.cache.accounts.get_mut(&address) {
+            account.storage.insert(slot, value);
+            if account.account_state == AccountState::NotExisting && !value.is_zero() {
+                account.account_state = AccountState::None;
+            }
+        }
         if let Some(storage) = journaled_state
             .state
             .get_mut(&address)
@@ -3211,7 +3252,9 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
 
 #[cfg(test)]
 mod tests {
-    use super::{Fork, apply_state_changeset, ensure_block_identity, update_env_block};
+    use super::{
+        Fork, ForkAccountField, apply_state_changeset, ensure_block_identity, update_env_block,
+    };
     use crate::{
         backend::{Backend, DatabaseExt, ForkPosition},
         evm::EthEvmNetwork,
@@ -3374,21 +3417,31 @@ mod tests {
 
         let mut journaled_state = JournalInner::new();
         journaled_state.load_account(&mut backend, target).unwrap();
+        journaled_state.state.get_mut(&target).unwrap().info.balance = U256::from(1);
         let fork = backend.active_fork_mut().unwrap();
         fork.journaled_state.load_account(&mut fork.db, target).unwrap();
+        fork.journaled_state.state.get_mut(&target).unwrap().info.balance = U256::from(2);
+        let cached = fork.db.cache.accounts.get_mut(&target).unwrap();
+        cached.info.balance = U256::from(3);
+        cached.account_state = AccountState::Touched;
         assert_eq!(journaled_state.state[&target].info.code_hash, KECCAK_EMPTY);
         assert_eq!(fork.journaled_state.state[&target].info.code_hash, KECCAK_EMPTY);
 
         api.anvil_set_code(target, code.clone()).await.unwrap();
-        backend.refresh_fork_account(target, &mut journaled_state).unwrap();
+        backend.refresh_fork_account(target, ForkAccountField::Code, &mut journaled_state).unwrap();
 
         let expected_hash = keccak256(&code);
         let refreshed = &journaled_state.state[&target].info;
         assert_eq!(refreshed.code_hash, expected_hash);
         assert_eq!(refreshed.code.as_ref().unwrap().original_bytes(), code);
+        assert_eq!(refreshed.balance, U256::from(1));
         let refreshed = &backend.active_fork().unwrap().journaled_state.state[&target].info;
         assert_eq!(refreshed.code_hash, expected_hash);
         assert_eq!(refreshed.code.as_ref().unwrap().original_bytes(), code);
+        assert_eq!(refreshed.balance, U256::from(2));
+        let cached = &backend.active_fork().unwrap().db.cache.accounts[&target];
+        assert_eq!(cached.info.code_hash, expected_hash);
+        assert_eq!(cached.info.balance, U256::from(3));
     }
 
     #[test]

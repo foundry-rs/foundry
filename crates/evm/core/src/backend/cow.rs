@@ -4,7 +4,7 @@ use super::BackendError;
 use crate::{
     FoundryInspectorExt,
     backend::{
-        Backend, ContextUpdateFor, DatabaseExt, JournaledState, LocalForkId,
+        Backend, ContextUpdateFor, DatabaseExt, ForkAccountField, JournaledState, LocalForkId,
         RevertStateSnapshotAction, diagnostic::RevertDiagnostic,
     },
     evm::{
@@ -354,9 +354,10 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
     fn refresh_fork_account(
         &mut self,
         address: Address,
+        field: ForkAccountField,
         journaled_state: &mut JournaledState,
     ) -> Result<(), BackendError> {
-        self.backend.to_mut().refresh_fork_account(address, journaled_state)
+        self.backend.to_mut().refresh_fork_account(address, field, journaled_state)
     }
 
     fn refresh_fork_storage(

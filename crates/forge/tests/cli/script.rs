@@ -5165,6 +5165,7 @@ forgetest_async!(can_call_contract_after_vm_rpc_set_code_on_fork, |prj, cmd| {
         "SetCodeViaRpc.s.sol",
         r#"
 interface Vm {
+    function deal(address account, uint256 newBalance) external;
     function rpc(string calldata method, string calldata params) external returns (bytes memory);
     function toString(address value) external pure returns (string memory);
 }
@@ -5177,8 +5178,14 @@ contract SetCodeViaRpc {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     address constant TARGET = 0x0000000000000000000000000000000000001331;
 
+    function setUp() external {
+        vm.deal(TARGET, 123);
+    }
+
     function run() external {
         require(TARGET.code.length == 0, "target already has code");
+        require(TARGET.balance == 123, "setup balance missing");
+        vm.deal(TARGET, 456);
 
         vm.rpc(
             "anvil_setCode",
@@ -5186,6 +5193,7 @@ contract SetCodeViaRpc {
         );
 
         require(ITarget(TARGET).value() == 42, "unexpected value");
+        require(TARGET.balance == 456, "local balance was lost");
     }
 }
 "#,
@@ -5202,4 +5210,50 @@ contract SetCodeViaRpc {
         api.get_code(target, None).await.unwrap(),
         Bytes::from(hex!("602a60005260206000f3"))
     );
+});
+
+// An out-of-band storage mutation must replace the same locally modified slot.
+forgetest_async!(vm_rpc_set_storage_overrides_local_fork_slot, |prj, cmd| {
+    prj.add_script(
+        "SetStorageViaRpc.s.sol",
+        r#"
+interface Vm {
+    function load(address target, bytes32 slot) external view returns (bytes32);
+    function rpc(string calldata method, string calldata params) external returns (bytes memory);
+    function store(address target, bytes32 slot, bytes32 value) external;
+    function toString(address value) external pure returns (string memory);
+    function toString(bytes32 value) external pure returns (string memory);
+}
+
+contract SetStorageViaRpc {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant TARGET = 0x0000000000000000000000000000000000001331;
+    bytes32 constant SLOT = bytes32(0);
+
+    function setUp() external {
+        vm.store(TARGET, SLOT, bytes32(uint256(1)));
+    }
+
+    function run() external {
+        require(vm.load(TARGET, SLOT) == bytes32(uint256(1)), "setup value missing");
+
+        vm.rpc(
+            "anvil_setStorageAt",
+            string.concat(
+                "[\"", vm.toString(TARGET), "\", \"", vm.toString(SLOT), "\", \"",
+                vm.toString(bytes32(uint256(42))), "\"]"
+            )
+        );
+
+        require(vm.load(TARGET, SLOT) == bytes32(uint256(42)), "storage stayed stale");
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.arg("script")
+        .args(["SetStorageViaRpc", "--rpc-url", &handle.http_endpoint()])
+        .assert_success();
 });

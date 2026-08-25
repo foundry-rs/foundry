@@ -12,7 +12,7 @@ use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
 use foundry_evm_core::{
     FoundryContextExt,
-    backend::{ContextUpdateFor, JournaledState, LocalForkId},
+    backend::{ContextUpdateFor, ForkAccountField, JournaledState, LocalForkId},
     evm::{BlockEnvFor, EvmFactoryFor, FoundryContextFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     fork::CreateFork,
 };
@@ -560,23 +560,20 @@ fn refresh_active_fork_state<FEN: FoundryEvmNetwork>(
     method: &str,
     params: &str,
 ) -> Result<()> {
-    const ACCOUNT_SETTERS: &[&str] = &[
-        "anvil_setBalance",
-        "hardhat_setBalance",
-        "tenderly_setBalance",
-        "anvil_addBalance",
-        "hardhat_addBalance",
-        "tenderly_addBalance",
-        "anvil_setNonce",
-        "hardhat_setNonce",
-        "evm_setAccountNonce",
-        "anvil_setCode",
-        "hardhat_setCode",
-    ];
-    let is_storage_setter = matches!(method, "anvil_setStorageAt" | "hardhat_setStorageAt");
-    if !is_storage_setter && !ACCOUNT_SETTERS.contains(&method) {
-        return Ok(());
-    }
+    let account_field = match method {
+        "anvil_setBalance"
+        | "hardhat_setBalance"
+        | "tenderly_setBalance"
+        | "anvil_addBalance"
+        | "hardhat_addBalance"
+        | "tenderly_addBalance" => Some(ForkAccountField::Balance),
+        "anvil_setNonce" | "hardhat_setNonce" | "evm_setAccountNonce" => {
+            Some(ForkAccountField::Nonce)
+        }
+        "anvil_setCode" | "hardhat_setCode" => Some(ForkAccountField::Code),
+        "anvil_setStorageAt" | "hardhat_setStorageAt" => None,
+        _ => return Ok(()),
+    };
 
     let Ok(params) = serde_json::from_str::<serde_json::Value>(params) else { return Ok(()) };
     let Some(address) =
@@ -586,15 +583,15 @@ fn refresh_active_fork_state<FEN: FoundryEvmNetwork>(
     };
 
     let (db, journaled_state) = ccx.ecx.db_journal_inner_mut();
-    if is_storage_setter {
+    if let Some(field) = account_field {
+        db.refresh_fork_account(address, field, journaled_state)?;
+    } else {
         let Some(slot) =
             params.get(1).and_then(|v| v.as_str()).and_then(|s| s.parse::<U256>().ok())
         else {
             return Ok(());
         };
         db.refresh_fork_storage(address, slot, journaled_state)?;
-    } else {
-        db.refresh_fork_account(address, journaled_state)?;
     }
     Ok(())
 }
