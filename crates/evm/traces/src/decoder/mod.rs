@@ -31,6 +31,7 @@ use foundry_evm_core::{
 type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::TempoHardfork;
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant, celo::transfer::CELO_TRANSFER_LABEL};
+use futures::{Stream, StreamExt};
 use itertools::Itertools;
 use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
@@ -1423,6 +1424,23 @@ impl CallTraceDecoder {
         self.decode_event_inner(Some(address), log, true).await
     }
 
+    /// Decodes events emitted by known addresses concurrently.
+    ///
+    /// Decoded events are yielded in input order.
+    pub fn decode_events_with_address_signature<'a, I>(
+        &'a self,
+        events: I,
+        max_concurrent: usize,
+    ) -> impl Stream<Item = DecodedEvent> + 'a
+    where
+        I: IntoIterator<Item = (Address, &'a LogData)> + 'a,
+        I::IntoIter: 'a,
+    {
+        futures::stream::iter(events)
+            .map(|(address, log)| self.decode_event_with_address_signature(address, log))
+            .buffered(max_concurrent.max(1))
+    }
+
     async fn decode_event_inner(
         &self,
         address: Option<Address>,
@@ -1981,6 +1999,32 @@ mod tests {
         let decoded = decoder.decode_event_with_address_signature(address, &log).await;
         assert!(decoded.name.is_none());
         assert!(decoded.params.is_none());
+    }
+
+    #[tokio::test]
+    async fn event_stream_preserves_items_and_order() {
+        let address = Address::from([0x12; 20]);
+        let abi = JsonAbi::parse(["event First()", "event Second(uint256 value)"]).unwrap();
+        let decoder = CallTraceDecoderBuilder::new().with_address_events(address, &abi).build();
+        let first = abi.event("First").unwrap().first().unwrap();
+        let second = abi.event("Second").unwrap().first().unwrap();
+        let events = vec![
+            (
+                1,
+                address,
+                LogData::new_unchecked(vec![second.selector()], (42_u64,).abi_encode().into()),
+            ),
+            (0, address, LogData::new_unchecked(vec![first.selector()], Default::default())),
+        ];
+
+        let decoded = decoder
+            .decode_events_with_address_signature(events.iter().map(|event| (event.1, &event.2)), 2)
+            .collect::<Vec<_>>()
+            .await;
+
+        assert_eq!(events.iter().map(|event| event.0).collect::<Vec<_>>(), [1, 0]);
+        assert_eq!(decoded[0].name.as_deref(), Some("Second(uint256)"));
+        assert_eq!(decoded[1].name.as_deref(), Some("First()"));
     }
 
     #[tokio::test]

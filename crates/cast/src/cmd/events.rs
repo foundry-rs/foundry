@@ -21,7 +21,7 @@ use foundry_common::{fmt::serialize_value_as_json, shell};
 use foundry_config::{Chain, Config};
 use futures::StreamExt;
 use serde::{Serialize, Serializer};
-use std::{collections::BTreeSet, fmt::Write as _};
+use std::fmt::Write as _;
 
 foundry_config::impl_figment_convert!(EventsArgs, etherscan, rpc);
 
@@ -111,9 +111,8 @@ async fn decode_logs(
         .with_chain_id(config.chain.map(|chain| chain.id()));
 
     if let Some(mut identifier) = ExternalIdentifier::new(config, Some(explorer_chain))? {
-        let addresses =
-            logs.iter().map(Log::address).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>();
-        for (address, result) in identifier.get_abis(&addresses).await {
+        let mut abis = std::pin::pin!(identifier.get_abis(logs.iter().map(Log::address)));
+        while let Some((address, result)) = abis.next().await {
             match result {
                 Ok((abis, complete)) => {
                     if !complete {
@@ -129,15 +128,18 @@ async fn decode_logs(
     }
 
     let decoder = builder.build();
-    let events = futures::stream::iter(logs)
-        .map(|log| async {
-            let decoded =
-                decoder.decode_event_with_address_signature(log.address(), log.data()).await;
-            EventOutput::new(log, decoded)
-        })
-        .buffered(MAX_CONCURRENT_RPC_REQUESTS)
-        .collect()
+    let decoded = decoder
+        .decode_events_with_address_signature(
+            logs.iter().map(|log| (log.address(), log.data())),
+            MAX_CONCURRENT_RPC_REQUESTS,
+        )
+        .collect::<Vec<_>>()
         .await;
+    let events = logs
+        .into_iter()
+        .zip(decoded)
+        .map(|(log, decoded)| EventOutput::new(log, decoded))
+        .collect();
     Ok(events)
 }
 

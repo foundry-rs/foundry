@@ -18,6 +18,7 @@ use revm_inspectors::tracing::types::CallTraceNode;
 use serde::Deserialize;
 use std::{
     borrow::Cow,
+    collections::BTreeSet,
     pin::Pin,
     sync::{
         Arc,
@@ -210,10 +211,21 @@ impl ExternalIdentifier {
         }
     }
 
-    /// Fetches all verified ABIs and whether each proxy chain was fully resolved.
-    pub async fn get_abis(
+    /// Streams all verified ABIs and whether each proxy chain was fully resolved.
+    ///
+    /// Duplicate addresses are resolved once and results are yielded in address order.
+    pub fn get_abis(
         &mut self,
-        addresses: &[Address],
+        addresses: impl IntoIterator<Item = Address>,
+    ) -> impl Stream<Item = (Address, eyre::Result<(Vec<JsonAbi>, bool)>)> + '_ {
+        let addresses =
+            addresses.into_iter().collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>();
+        futures::stream::once(self.resolve_abis(addresses)).flat_map(futures::stream::iter)
+    }
+
+    async fn resolve_abis(
+        &mut self,
+        addresses: Vec<Address>,
     ) -> Vec<(Address, eyre::Result<(Vec<JsonAbi>, bool)>)> {
         const MAX_PROXY_DEPTH: usize = 16;
 
@@ -275,7 +287,7 @@ impl ExternalIdentifier {
 
         chains
             .into_iter()
-            .zip(addresses.iter().copied())
+            .zip(addresses)
             .map(|(mut chain, address)| {
                 chain.complete &= chain.current.is_none();
                 let result = if chain.abis.is_empty() {
@@ -941,7 +953,7 @@ mod tests {
         identifier
             .cache_fetched(implementation_address, (FetcherKind::Etherscan, Some(implementation)));
 
-        let mut results = identifier.get_abis(&[proxy]).await;
+        let mut results = identifier.get_abis([proxy]).collect::<Vec<_>>().await;
         let (result_address, result) = results.pop().unwrap();
         let (abis, complete) = result.unwrap();
         let event_names =
@@ -952,9 +964,37 @@ mod tests {
         assert_eq!(event_names, ["ImplementationEvent", "ProxyEvent"]);
 
         identifier.contracts.remove(&implementation_address);
-        let (_, result) = identifier.get_abis(&[proxy]).await.pop().unwrap();
+        let (_, result) = identifier.get_abis([proxy]).collect::<Vec<_>>().await.pop().unwrap();
         let (abis, complete) = result.unwrap();
         assert_eq!(abis.len(), 1);
         assert!(!complete);
+    }
+
+    #[tokio::test]
+    async fn abi_stream_deduplicates_and_orders_addresses() {
+        let first = Address::with_last_byte(1);
+        let second = Address::with_last_byte(2);
+        let mut identifier = test_identifier(Vec::new(), Duration::ZERO);
+        let mut first_metadata = metadata("First");
+        first_metadata.abi =
+            r#"[{"anonymous":false,"inputs":[],"name":"FirstEvent","type":"event"}]"#.to_string();
+        let mut second_metadata = metadata("Second");
+        second_metadata.abi =
+            r#"[{"anonymous":false,"inputs":[],"name":"SecondEvent","type":"event"}]"#.to_string();
+        identifier.cache_fetched(first, (FetcherKind::Etherscan, Some(first_metadata)));
+        identifier.cache_fetched(second, (FetcherKind::Etherscan, Some(second_metadata)));
+
+        let results = identifier
+            .get_abis([second, first, second])
+            .map(|(address, result)| (address, result.unwrap().0[0].clone()))
+            .collect::<Vec<_>>()
+            .await;
+
+        assert_eq!(
+            results.iter().map(|(address, _)| *address).collect::<Vec<_>>(),
+            [first, second]
+        );
+        assert_eq!(results[0].1.events().next().unwrap().name, "FirstEvent");
+        assert_eq!(results[1].1.events().next().unwrap().name, "SecondEvent");
     }
 }
