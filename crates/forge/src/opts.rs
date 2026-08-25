@@ -2,8 +2,8 @@ use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
     compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
     fmt::FmtArgs, fuzz::FuzzArgs, geiger, init::InitArgs, inspect, install::InstallArgs,
-    lint::LintArgs, remappings::RemappingArgs, remove::RemoveArgs, selectors::SelectorsSubcommands,
-    snapshot, soldeer, test, tree, update,
+    lint::LintArgs, lsp::LspArgs, remappings::RemappingArgs, remove::RemoveArgs,
+    selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
@@ -192,6 +192,9 @@ pub enum ForgeSubcommand {
     #[command(visible_alias = "l")]
     Lint(LintArgs),
 
+    /// Start the Solar language server.
+    Lsp(LspArgs),
+
     /// Get specialized information about a smart contract
     ///
     /// Examples:
@@ -241,5 +244,14 @@ mod tests {
     #[test]
     fn verify_cli() {
         Forge::command().debug_assert();
+    }
+
+    #[test]
+    fn parse_lsp_args() {
+        let args = Forge::try_parse_from(["forge", "lsp", "--stdio"]).unwrap();
+        let ForgeSubcommand::Lsp(args) = args.cmd else {
+            panic!("expected lsp subcommand");
+        };
+        assert!(args.stdio);
     }
 }

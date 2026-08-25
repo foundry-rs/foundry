@@ -563,6 +563,10 @@ mod tests {
             FoundryHardfork::Monad(MonadHardfork::MonadNine)
         );
         assert_eq!(
+            "monad:MonadTen".parse::<FoundryHardfork>().unwrap(),
+            FoundryHardfork::Monad(MonadHardfork::MonadTen)
+        );
+        assert_eq!(
             "m:MonadNext".parse::<FoundryHardfork>().unwrap(),
             FoundryHardfork::Monad(MonadHardfork::MonadNext)
         );
@@ -584,6 +588,7 @@ mod tests {
     fn test_monad_hardfork_spec_id_mapping() {
         assert_eq!(SpecId::from(FoundryHardfork::Monad(MonadHardfork::MonadEight)), SpecId::PRAGUE);
         assert_eq!(SpecId::from(FoundryHardfork::Monad(MonadHardfork::MonadNine)), SpecId::OSAKA);
+        assert_eq!(SpecId::from(FoundryHardfork::Monad(MonadHardfork::MonadTen)), SpecId::OSAKA);
         assert_eq!(
             MonadHardfork::from(FoundryHardfork::Monad(MonadHardfork::MonadNext)),
             MonadHardfork::MonadNext
@@ -670,6 +675,9 @@ mod tests {
     #[test]
     #[cfg(feature = "monad")]
     fn test_monad_hardfork_from_chain_and_timestamp() {
+        let mainnet_ten = MonadHardfork::MonadTen.mainnet_activation_timestamp().unwrap();
+        let testnet_ten = MonadHardfork::MonadTen.testnet_activation_timestamp().unwrap();
+
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(
                 monad_revm::MONAD_MAINNET_CHAIN_ID,
@@ -686,6 +694,20 @@ mod tests {
         );
         assert_eq!(
             FoundryHardfork::from_chain_and_timestamp(
+                monad_revm::MONAD_MAINNET_CHAIN_ID,
+                mainnet_ten - 1,
+            ),
+            Some(FoundryHardfork::Monad(MonadHardfork::MonadNine))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(
+                monad_revm::MONAD_MAINNET_CHAIN_ID,
+                mainnet_ten,
+            ),
+            Some(FoundryHardfork::Monad(MonadHardfork::MonadTen))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(
                 monad_revm::MONAD_TESTNET_CHAIN_ID,
                 1_773_152_999,
             ),
@@ -697,6 +719,20 @@ mod tests {
                 1_773_153_000,
             ),
             Some(FoundryHardfork::Monad(MonadHardfork::MonadNine))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(
+                monad_revm::MONAD_TESTNET_CHAIN_ID,
+                testnet_ten - 1,
+            ),
+            Some(FoundryHardfork::Monad(MonadHardfork::MonadNine))
+        );
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(
+                monad_revm::MONAD_TESTNET_CHAIN_ID,
+                testnet_ten,
+            ),
+            Some(FoundryHardfork::Monad(MonadHardfork::MonadTen))
         );
     }
 
@@ -713,6 +749,10 @@ mod tests {
             assert_eq!(
                 evm_spec_id_from_str::<MonadHardfork>("MonadNine"),
                 Some(MonadHardfork::MonadNine)
+            );
+            assert_eq!(
+                evm_spec_id_from_str::<MonadHardfork>("MonadTen"),
+                Some(MonadHardfork::MonadTen)
             );
             assert_eq!(
                 evm_spec_id_from_str::<MonadHardfork>("monad:MonadEight"),
