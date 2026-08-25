@@ -544,11 +544,11 @@ tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "d656ef5581
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "d656ef5581505b59f1611b358e611f5a602d399e" }
 
 # Monad
-alloy-monad-evm = { version = "0.6.0", default-features = false, features = [
+alloy-monad-evm = { version = "0.7.0", default-features = false, features = [
     "std",
     "memory_limit",
 ] }
-monad-revm = { version = "0.6.0", default-features = false, features = [
+monad-revm = { version = "0.7.0", default-features = false, features = [
     "std",
     "serde",
     "memory_limit",
