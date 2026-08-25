@@ -34,6 +34,7 @@ pub mod creation_code;
 pub mod da_estimate;
 pub mod erc20;
 pub mod estimate;
+pub mod events;
 pub mod find_block;
 pub mod interface;
 pub mod keychain;

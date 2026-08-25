@@ -44,7 +44,7 @@ pub mod identifier;
 use identifier::LocalTraceIdentifier;
 
 mod decoder;
-pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder};
+pub use decoder::{CallTraceDecoder, CallTraceDecoderBuilder, DecodedEvent};
 
 pub mod debug;
 pub use debug::DebugTraceIdentifier;
