@@ -1306,6 +1306,15 @@ impl<N: Network> Backend<N> {
         Ok(None)
     }
 
+    #[cfg(not(feature = "monad"))]
+    fn active_monad_context_before_mined_transaction(
+        &self,
+        _block: &Block,
+        _current_tx_index: usize,
+    ) -> Result<Option<MonadReplayContext>, BlockchainError> {
+        Ok(None)
+    }
+
     /// Returns the active hardfork.
     pub fn hardfork(&self) -> FoundryHardfork {
         if let Some(hardfork) =
@@ -5996,18 +6005,7 @@ where
                 tracing_options,
                 state_overrides,
                 block_overrides,
-                {
-                    #[cfg(feature = "monad")]
-                    {
-                        self.is_monad()
-                            .then(|| self.monad_context_before_mined_transaction(block, tx_index))
-                            .transpose()?
-                    }
-                    #[cfg(not(feature = "monad"))]
-                    {
-                        None
-                    }
-                },
+                self.active_monad_context_before_mined_transaction(block, tx_index)?,
                 Some((evm_env, hardfork)),
             )
         };
@@ -6273,17 +6271,10 @@ where
             Some(BlockRequest::Pending(pool_transactions)) => {
                 return self
                     .with_pending_block(pool_transactions, |state, block_info| {
-                        #[cfg(feature = "monad")]
-                        let context = if self.is_monad() {
-                            Some(self.monad_context_before_mined_transaction(
-                                &block_info.block,
-                                block_info.block.body.transactions.len(),
-                            )?)
-                        } else {
-                            None
-                        };
-                        #[cfg(not(feature = "monad"))]
-                        let context = None;
+                        let context = self.active_monad_context_before_mined_transaction(
+                            &block_info.block,
+                            block_info.block.body.transactions.len(),
+                        )?;
                         let block_env = block_env_from_header(&block_info.block.header);
                         f(state, block_env, context)
                     })
@@ -8475,19 +8466,15 @@ impl Backend<FoundryNetwork> {
                         header.gas_limit(),
                         header.base_fee_per_gas().unwrap_or_default(),
                     );
+                    let monad_context = self.active_monad_context_before_mined_transaction(
+                        &block.block,
+                        block.block.body.transactions.len(),
+                    )?;
                     #[cfg(feature = "monad")]
-                    let monad_context = if self.is_monad() {
-                        let mut context = self.monad_context_before_mined_transaction(
-                            &block.block,
-                            block.block.body.transactions.len(),
-                        )?;
+                    let monad_context = monad_context.map(|mut context| {
                         monad::advance_block(&mut context);
-                        Some(context)
-                    } else {
-                        None
-                    };
-                    #[cfg(not(feature = "monad"))]
-                    let monad_context = None;
+                        context
+                    });
                     simulate_at(
                         state,
                         block_env_from_header(header),
