@@ -80,8 +80,8 @@ that started the server. Solar's existing `initializationOptions.forgePath`
 option overrides that executable.
 
 `forge lsp` follows Forge's normal environment setup, global-option parsing, and
-command dispatch. It retains all process-wide setup while skipping project
-dotenv loading so the LSP transport can own stdin safely.
+command dispatch. Project dotenv warnings use stderr, leaving stdout reserved
+for the LSP transport.
 
 ## Contributing
 

@@ -11,7 +11,6 @@ use serde::de::DeserializeOwned;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::{OsStr, OsString},
-    io::{self, IsTerminal, Write},
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     str::FromStr,
@@ -199,44 +198,18 @@ pub fn now() -> Duration {
 }
 
 /// Common setup for all CLI tools. Does not include [tracing subscriber](subscriber).
-pub fn common_setup<C: clap::CommandFactory>() -> Result<()> {
-    common_setup_with_project_env::<C>(|_| true)
-}
-
-/// Common setup with command-aware control over loading project dotenv files.
-pub fn common_setup_with_project_env<C: clap::CommandFactory>(
-    should_load_project_env: impl FnOnce(&clap::ArgMatches) -> bool,
-) -> Result<()> {
+pub fn common_setup() {
     install_crypto_provider();
     crate::handler::install();
-    // Use the concrete command grammar so option-like positional values cannot grant approval.
-    // Ignore unrelated errors because dotenv may supply values before the strict CLI parse. Help
-    // is intentionally disabled because it short-circuits partial parsing before setup can inspect
-    // the selected subcommand.
-    let matches = C::command()
-        .disable_help_flag(true)
-        .disable_version_flag(true)
-        .ignore_errors(true)
-        .try_get_matches()
-        .ok();
-    if matches.as_ref().is_none_or(should_load_project_env) {
-        let allow_project_env = matches
-            .and_then(|matches| matches.get_one::<bool>("allow_project_env").copied())
-            .unwrap_or(false);
-        load_dotenv(allow_project_env)?;
-    }
+    load_dotenv();
     enable_paint();
-    Ok(())
 }
 
-/// Loads dotenv files from the cwd and project root after approval, ignoring parse failures.
+/// Loads dotenv files from the cwd and project root after warning, ignoring parse failures.
 ///
-/// We could use `warn!` here, but that would imply that the dotenv file can't configure
-/// the logging behavior of Foundry.
-///
-/// Similarly, we could just use `eprintln!`, but colors are off limits otherwise dotenv is implied
-/// to not be able to configure the colors. It would also mess up the JSON output.
-pub fn load_dotenv(allow_project_env: bool) -> Result<()> {
+/// The warning is written directly because dotenv may configure logging before the tracing
+/// subscriber is initialized.
+pub fn load_dotenv() {
     // we only want the .env file of the cwd and project root
     // `find_project_root` calls `current_dir` internally so both paths are either both `Ok` or
     // both `Err`
@@ -256,52 +229,27 @@ pub fn load_dotenv(allow_project_env: bool) -> Result<()> {
     }
 
     if paths.is_empty() {
-        return Ok(());
+        return;
     }
 
-    if !allow_project_env {
-        ensure_dotenv_approved(&paths)?;
+    {
+        use std::io::Write as _;
+
+        let mut stderr = std::io::stderr().lock();
+        let _ = writeln!(stderr, "Warning: loading project dotenv files:");
+        for path in &paths {
+            let _ = writeln!(stderr, "  {path:?}");
+        }
+        let _ = writeln!(
+            stderr,
+            "Project environment variables can affect executable and library loading. Only run \
+             commands in projects you trust."
+        );
     }
 
     for path in paths {
         dotenvy::from_path(path).ok();
     }
-    Ok(())
-}
-
-fn ensure_dotenv_approved(paths: &[PathBuf]) -> Result<()> {
-    if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
-        return Err(dotenv_not_approved(paths));
-    }
-
-    let mut stderr = io::stderr().lock();
-    writeln!(stderr, "Warning: this project contains dotenv files:")?;
-    for path in paths {
-        writeln!(stderr, "  {path:?}")?;
-    }
-    writeln!(
-        stderr,
-        "Dotenv files can configure executable and library loading through process environment \
-         variables. Loading an untrusted dotenv file may execute arbitrary code."
-    )?;
-    write!(stderr, "Do you trust these dotenv files and want to continue? [y/N] ")?;
-    stderr.flush()?;
-
-    let mut response = String::new();
-    io::stdin().read_line(&mut response)?;
-    if matches!(response.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
-        Ok(())
-    } else {
-        Err(dotenv_not_approved(paths))
-    }
-}
-
-fn dotenv_not_approved(paths: &[PathBuf]) -> eyre::Report {
-    let paths = paths.iter().map(|path| format!("{path:?}")).join(", ");
-    eyre::eyre!(
-        "refusing to load unapproved project dotenv files {paths}; pass `--allow-project-env` if \
-         you trust them"
-    )
 }
 
 /// Sets the default [`yansi`] color output condition.
@@ -1277,7 +1225,7 @@ impl<'a> IntoIterator for &'a Submodules {
 mod tests {
     use super::*;
     use foundry_common::fs;
-    use std::{env, fs::File};
+    use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
 
     #[test]
@@ -1411,7 +1359,7 @@ mod tests {
         unsafe { env::remove_var("BROWSER") };
         let cwd = env::current_dir().unwrap();
         env::set_current_dir(&nested).unwrap();
-        load_dotenv(true).unwrap();
+        load_dotenv();
         env::set_current_dir(cwd).unwrap();
 
         let loaded_browser = env::var_os("BROWSER");
