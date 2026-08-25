@@ -119,6 +119,12 @@ pub(super) fn resolve_execution_context(
     }
 }
 
+pub(super) fn next_execution_context(
+    context: &mut Option<MonadChainContext>,
+) -> Option<MonadExecutionContext<'_>> {
+    context.as_mut().map(MonadExecutionContext::Next)
+}
+
 pub(super) fn advance_block(context: &mut MonadChainContext) {
     let current = context
         .current_block_senders

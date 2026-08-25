@@ -1,4 +1,6 @@
 //! In-memory blockchain backend.
+#[cfg(feature = "monad")]
+use self::monad::next_execution_context as next_monad_context;
 use self::{in_memory_db::StateRootDb, state::trie_storage};
 
 #[cfg(feature = "optimism")]
@@ -473,9 +475,7 @@ enum MonadExecutionContext<'a> {
 }
 
 #[cfg(not(feature = "monad"))]
-struct MonadExecutionContext<'a> {
-    _marker: std::marker::PhantomData<&'a mut MonadReplayContext>,
-}
+type MonadExecutionContext<'a> = std::marker::PhantomData<&'a mut MonadReplayContext>;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum EnvelopeExecutionKind {
@@ -527,14 +527,11 @@ const fn monad_execution_context_at(
     None
 }
 
-#[cfg(feature = "monad")]
-const fn next_monad_context(context: &mut MonadReplayContext) -> MonadExecutionContext<'_> {
-    MonadExecutionContext::Next(context)
-}
-
 #[cfg(not(feature = "monad"))]
-const fn next_monad_context(_context: &mut MonadReplayContext) -> MonadExecutionContext<'_> {
-    MonadExecutionContext { _marker: std::marker::PhantomData }
+const fn next_monad_context(
+    _context: &mut Option<MonadReplayContext>,
+) -> Option<MonadExecutionContext<'_>> {
+    None
 }
 
 const fn noop_before_transaction<E, T>(_evm: &mut E, _tx: &T) {}
@@ -3213,7 +3210,7 @@ impl<N: Network> Backend<N> {
             &evm_env,
             &mut inspector,
             tx_env,
-            monad_context.as_mut().map(next_monad_context),
+            next_monad_context(&mut monad_context),
         )?;
 
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
@@ -3292,7 +3289,7 @@ impl<N: Network> Backend<N> {
             &evm_env,
             &mut inspector,
             tx_env,
-            monad_context.as_mut().map(next_monad_context),
+            next_monad_context(&mut monad_context),
         )?;
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         inspector.print_logs();
@@ -3327,7 +3324,7 @@ impl<N: Network> Backend<N> {
             &evm_env,
             &mut inspector,
             tx_env,
-            monad_context.as_mut().map(next_monad_context),
+            next_monad_context(&mut monad_context),
         )?;
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         let access_list = inspector.access_list();
@@ -3560,7 +3557,7 @@ impl<N: Network> Backend<N> {
                 &evm_env,
                 &mut inspector,
                 tx_env,
-                monad_context.as_mut().map(next_monad_context),
+                next_monad_context(&mut monad_context),
             )?;
 
             inspector
@@ -3656,7 +3653,7 @@ impl<N: Network> Backend<N> {
                 &evm_env,
                 &mut inspector,
                 &pending_transaction,
-                monad_context.as_mut().map(next_monad_context),
+                next_monad_context(&mut monad_context),
             )?;
 
             inspector
@@ -3700,7 +3697,7 @@ impl<N: Network> Backend<N> {
                     &evm_env,
                     &mut inspector,
                     tx_env,
-                    monad_context.as_mut().map(next_monad_context),
+                    next_monad_context(&mut monad_context),
                 )?;
 
                 let trace_result = inspector
@@ -4807,7 +4804,7 @@ impl<N: Network> Backend<N> {
                 &evm_env,
                 &mut inspector,
                 &tx.pending_transaction,
-                monad_context.as_mut().map(next_monad_context),
+                next_monad_context(&mut monad_context),
             )?;
         let (exit_reason, gas_used, out, logs) = unpack_execution_result(result);
 
@@ -6077,7 +6074,7 @@ where
                                 &evm_env,
                                 &mut inspector,
                                 tx_env,
-                                monad_context.as_mut().map(next_monad_context),
+                                next_monad_context(&mut monad_context),
                                 hardfork,
                             )?;
 
@@ -6115,7 +6112,7 @@ where
                             &evm_env,
                             &mut inspector,
                             tx_env,
-                            monad_context.as_mut().map(next_monad_context),
+                            next_monad_context(&mut monad_context),
                             hardfork,
                         )?;
 
@@ -6156,7 +6153,7 @@ where
                         &evm_env,
                         &mut inspector,
                         tx_env.clone(),
-                        monad_context.as_mut().map(next_monad_context),
+                        next_monad_context(&mut monad_context),
                         hardfork,
                     )?;
                     let res = inspector
@@ -6181,7 +6178,7 @@ where
                 &evm_env,
                 &mut inspector,
                 tx_env,
-                monad_context.as_mut().map(next_monad_context),
+                next_monad_context(&mut monad_context),
                 hardfork,
             )?;
 
@@ -7717,7 +7714,7 @@ impl Backend<FoundryNetwork> {
                             &evm_env,
                             &mut inspector,
                             &transaction,
-                            monad_context.as_mut().map(next_monad_context),
+                            next_monad_context(&mut monad_context),
                         )?;
 
                     let gas_price = tx.effective_tip_per_gas(base_fee).unwrap_or_default();
@@ -7825,7 +7822,7 @@ impl Backend<FoundryNetwork> {
                                 &evm_env,
                                 &mut inspector,
                                 tx_env,
-                                monad_context.as_mut().map(next_monad_context),
+                                next_monad_context(&mut monad_context),
                             )?;
 
                         let output = result.output().cloned().unwrap_or_default();
@@ -8188,7 +8185,7 @@ impl Backend<FoundryNetwork> {
                                 &evm_env,
                                 &mut inspector,
                                 tx_env,
-                                monad_context.as_mut().map(next_monad_context),
+                                next_monad_context(&mut monad_context),
                             ),
                         tx_env => self.transact_eth_with_inspector_ref_and_precompile_overrides(
                             &cache_db,
