@@ -31,7 +31,7 @@ pub fn run() -> Result<()> {
 
 /// Setup the global logger and other utilities.
 pub fn setup() -> Result<()> {
-    utils::common_setup::<Chisel>()?;
+    utils::common_setup();
     utils::subscriber();
 
     Ok(())
@@ -137,7 +137,7 @@ async fn run_command_with_network<FEN: FoundryEvmNetwork>(
         fork_chain_id_is_inferred,
         resolved_hardfork: None,
         source_chain_id: None,
-        backend: None,
+        cached_backend: None,
         calldata: None,
         ir_minimum: args.ir_minimum,
     })?;

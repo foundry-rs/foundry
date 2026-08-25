@@ -2,7 +2,10 @@
 //!
 //! This module contains the execution logic for the [SessionSource].
 
-use crate::prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper};
+use crate::{
+    prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper},
+    source::CachedBackend,
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
 use alloy_primitives::{Address, B256, U256, hex};
@@ -281,11 +284,38 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner<FEN>> {
-        let (mut evm_env, tx_env, fork_context) = self
-            .config
-            .evm_opts
-            .env_with_fork_context::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
-            .await?;
+        let (mut evm_env, tx_env, backend, resolved_fork) = match self.config.cached_backend.clone()
+        {
+            Some(CachedBackend { backend, resolved_fork }) => {
+                let (evm_env, tx_env) = self
+                    .config
+                    .evm_opts
+                    .env_with_resolved_fork::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>(
+                        resolved_fork.as_ref(),
+                    )
+                    .await?;
+                (evm_env, tx_env, backend, resolved_fork)
+            }
+            None => {
+                let (evm_env, tx_env, resolved_fork) = self
+                    .config
+                    .evm_opts
+                    .env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
+                    .await?;
+                let fork = self.config.evm_opts.get_fork_resolved(
+                    &self.config.foundry_config,
+                    evm_env.cfg_env.chain_id,
+                    resolved_fork.as_ref(),
+                );
+                let backend = Backend::spawn(fork)?;
+                self.config.cached_backend = Some(CachedBackend {
+                    backend: backend.clone(),
+                    resolved_fork: resolved_fork.clone(),
+                });
+                (evm_env, tx_env, backend, resolved_fork)
+            }
+        };
+        let fork_context = resolved_fork.as_ref().map(|fork| fork.context());
         let fork_chain_id = fork_context.map(|context| context.source_chain_id);
         let fork_hardfork = fork_context.and_then(|context| context.hardfork);
         self.config.source_chain_id = fork_chain_id;
@@ -297,18 +327,6 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             None,
             None,
         );
-
-        let backend = match self.config.backend.clone() {
-            Some(backend) => backend,
-            None => {
-                let fork = fork_context.and_then(|context| {
-                    self.config.evm_opts.get_fork_with_context(&self.config.foundry_config, context)
-                });
-                let backend = Backend::spawn(fork)?;
-                self.config.backend = Some(backend.clone());
-                backend
-            }
-        };
 
         let executor = ExecutorBuilder::default()
             .inspectors(|stack| {

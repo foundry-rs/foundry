@@ -444,7 +444,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         source.config.source_chain_id = None;
         // Clear the backend so that it is re-instantiated with the new fork
         // upon the next execution of the session source.
-        source.config.backend = None;
+        source.config.cached_backend = None;
 
         sh_println!("Set fork URL to {}", fork_url.yellow())?;
 
@@ -472,7 +472,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         source.config.foundry_config.chain = source.config.local_chain_id.map(Chain::from);
         source.config.resolved_hardfork = None;
         source.config.source_chain_id = None;
-        source.config.backend = None;
+        source.config.cached_backend = None;
         sh_println!("Now using local environment.")
     }
 

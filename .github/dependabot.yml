@@ -27,6 +27,19 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: syn
+        update-types:
+          - version-update:semver-major
+      - dependency-name: prettyplease
+        update-types:
+          - version-update:semver-minor
+      - dependency-name: p256
+        update-types:
+          - version-update:semver-minor
+      - dependency-name: ecdsa
+        update-types:
+          - version-update:semver-minor
     groups:
       cargo-weekly:
         patterns:

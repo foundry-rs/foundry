@@ -25,8 +25,8 @@ use alloy_evm::{
 };
 use alloy_monad_evm::{MonadContext, MonadEvm, MonadEvmFactory};
 use alloy_network::{BlockResponse, Network};
-use alloy_primitives::B256;
-use alloy_rpc_types::{BlockNumberOrTag as BlockNumber, BlockTransactions};
+use alloy_primitives::{B256, U256};
+use alloy_rpc_types::{AccessList, BlockNumberOrTag as BlockNumber, BlockTransactions};
 use anvil_core::eth::{
     block::Block,
     transaction::{MaybeImpersonatedTransaction, PendingTransaction},
@@ -78,11 +78,25 @@ pub(super) struct PreparedExecution {
     pub(super) hardfork: MonadHardfork,
 }
 
+pub(super) fn normalize_access_list(
+    mut access_list: AccessList,
+    hardfork: MonadHardfork,
+) -> AccessList {
+    if MonadHardfork::MonadTen.is_enabled_in(hardfork) {
+        for item in &mut access_list.0 {
+            item.storage_keys.sort_unstable();
+            item.storage_keys.dedup_by_key(|slot| {
+                monad_revm::page::page_index(U256::from_be_slice(slot.as_slice()))
+            });
+        }
+    }
+    access_list
+}
+
 /// Caches the fork blocks needed to construct the next Monad block's ancestor context.
 pub(super) async fn cache_fork_context(fork: &ClientFork) -> Result<(), BlockchainError> {
-    let block_number = fork.block_number();
     let block =
-        fork.block_by_number_full(block_number).await?.ok_or(BlockchainError::BlockNotFound)?;
+        fork.block_by_hash_full(fork.block_hash()).await?.ok_or(BlockchainError::BlockNotFound)?;
     let parent_hash = block.header().parent_hash();
     if !parent_hash.is_zero() {
         fork.block_by_hash_full(parent_hash).await?.ok_or(BlockchainError::BlockNotFound)?;

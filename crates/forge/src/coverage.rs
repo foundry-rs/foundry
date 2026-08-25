@@ -3,7 +3,8 @@
 use crate::result::{TestKind, TestOutcome, TestResult, TestStatus};
 use alloy_primitives::map::{HashMap, HashSet};
 use comfy_table::{
-    Attribute, Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
+    Attribute, Cell, Color, Row, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
 use evm_disassembler::disassemble_bytes;
 use foundry_common::{fs, shell};
@@ -43,9 +44,9 @@ impl Default for CoverageSummaryReporter {
     fn default() -> Self {
         let mut table = Table::new();
         if shell::is_markdown() {
-            table.load_preset(ASCII_MARKDOWN);
+            table.load_style(ASCII_MARKDOWN);
         } else {
-            table.apply_modifier(UTF8_ROUND_CORNERS);
+            table.load_style(ASCII_FULL.with_rounded_corners());
         }
 
         table.set_header(vec![
