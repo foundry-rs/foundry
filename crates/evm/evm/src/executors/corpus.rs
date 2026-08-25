@@ -2323,6 +2323,7 @@ mod tests {
         let seed = WorkerCorpusSeed::load_from_disk::<foundry_evm_core::evm::EthEvmNetwork>(
             &config,
             None,
+            None,
             ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None },
         )
         .unwrap();
@@ -2554,6 +2555,7 @@ mod tests {
             1,
             config,
             generator,
+            None,
             None,
             ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None },
         )
