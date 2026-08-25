@@ -4738,26 +4738,8 @@ impl<N: Network> Backend<N> {
             snapshots.remove(&id);
             snapshots.retain(|snapshot_id, _| *snapshot_id < id);
         }
-        {
-            // revert the storage that's newer than the snapshot
-            let current_height = self.best_number();
-            let mut storage = self.blockchain.storage.write();
-
-            for n in ((num + 1)..=current_height).rev() {
-                trace!(target: "backend", "reverting block {}", n);
-                let Some(hash) = storage.hashes.remove(&n) else { continue };
-                if let Some(block) = storage.blocks.remove(&hash) {
-                    for tx in block.body.transactions {
-                        let _ = storage.transactions.remove(&tx.hash());
-                    }
-                }
-                #[cfg(feature = "monad")]
-                storage.remove_monad_block_metadata(&hash);
-            }
-
-            storage.best_number = num;
-            storage.best_hash = hash;
-        }
+        // Revert the storage that's newer than the snapshot.
+        self.blockchain.storage.write().unwind_to(num, hash);
 
         let reset_time = block.header.timestamp();
         self.time.reset(reset_time);
