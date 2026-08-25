@@ -1887,11 +1887,11 @@ mod tests {
 
     #[test]
     #[cfg(feature = "monad")]
-    fn resolve_execution_spec_uses_monad_activation_timestamp() {
+    fn resolve_execution_spec_uses_monad_ten_activation_timestamp() {
         let config = Config::default();
         let networks = NetworkConfigs::with_monad();
         let activation =
-            foundry_evm_hardforks::MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
+            foundry_evm_hardforks::MonadHardfork::MonadTen.mainnet_activation_timestamp().unwrap();
 
         let mut before = monad_env(activation - 1);
         assert_eq!(
@@ -1903,9 +1903,9 @@ mod tests {
                 None,
                 None,
             ),
-            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadEight))
+            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadNine))
         );
-        assert_eq!(before.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadEight);
+        assert_eq!(before.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadNine);
 
         let mut after = monad_env(activation);
         assert_eq!(
@@ -1917,9 +1917,9 @@ mod tests {
                 None,
                 None,
             ),
-            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadNine))
+            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadTen))
         );
-        assert_eq!(after.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadNine);
+        assert_eq!(after.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadTen);
     }
 
     #[test]
@@ -1952,7 +1952,7 @@ mod tests {
         let config = Config::default();
         let networks = NetworkConfigs::with_monad();
         let activation =
-            foundry_evm_hardforks::MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
+            foundry_evm_hardforks::MonadHardfork::MonadTen.mainnet_activation_timestamp().unwrap();
         let mut env = monad_env(activation - 1);
 
         assert_eq!(
@@ -1964,9 +1964,9 @@ mod tests {
                 None,
                 None,
             ),
-            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadNine))
+            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadTen))
         );
-        assert_eq!(env.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadNine);
+        assert_eq!(env.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadTen);
     }
 
     #[test]

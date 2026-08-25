@@ -164,6 +164,7 @@ use revm::{
         JournalTr,
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
+        transaction::TransactionType,
     },
     database::{AccountState, CacheDB, DbAccount, WrapDatabaseRef},
     handler::{
@@ -3290,7 +3291,11 @@ impl<N: Network> Backend<N> {
             tx_env.base_mut().gas_limit = gas_limit;
         }
         if let Some(access_list) = overrides.access_list {
-            tx_env.base_mut().access_list = access_list;
+            let tx_env = tx_env.base_mut();
+            tx_env.access_list = access_list;
+            if tx_env.tx_type == TransactionType::Legacy as u8 {
+                tx_env.tx_type = TransactionType::Eip2930 as u8;
+            }
         }
         let ResultAndState { result, state } = self.transact_call_with_inspector_ref(
             state,
@@ -3336,6 +3341,12 @@ impl<N: Network> Backend<N> {
         )?;
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         let access_list = inspector.access_list();
+        #[cfg(feature = "monad")]
+        let access_list = if self.is_monad() {
+            monad::normalize_access_list(access_list, self.monad_hardfork())
+        } else {
+            access_list
+        };
         Ok((exit_reason, out, gas_used, access_list))
     }
 
