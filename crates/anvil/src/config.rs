@@ -39,10 +39,7 @@ use anvil_server::ServerConfig;
 use eyre::{Context, Result};
 use foundry_common::{
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
-    provider::{
-        ProviderBuilder, RetryProvider, is_rpc_method_not_found, is_rpc_method_unavailable,
-        redact_url,
-    },
+    provider::{ProviderBuilder, RetryProvider, is_rpc_method_not_found, redact_url},
 };
 use foundry_config::Config;
 use foundry_evm::{
@@ -124,7 +121,7 @@ impl AnvilNodeInfoProbe {
                 self.identified = true;
                 Ok(Some(node_info))
             }
-            Err(error) if !self.identified && is_rpc_method_unavailable(&error) => Ok(None),
+            Err(error) if !self.identified && is_rpc_method_not_found(&error) => Ok(None),
             Err(error) => {
                 Err(error).wrap_err("failed to determine network family from fork endpoint")
             }

@@ -23,7 +23,7 @@ use alloy_transport::{
 };
 use eyre::{Result, WrapErr};
 use foundry_config::Config;
-use reqwest::{StatusCode, Url};
+use reqwest::Url;
 use std::{
     marker::PhantomData,
     net::SocketAddr,
@@ -63,22 +63,6 @@ pub fn is_rpc_method_not_found(error: &TransportError) -> bool {
         .as_http_error()
         .and_then(|error| rpc_error_code(&error.body))
         .is_some_and(|code| code == -32601)
-}
-
-/// Returns whether an optional RPC method is unavailable at the provider.
-///
-/// Some gateways reject unsupported non-core methods at the HTTP authorization layer instead of
-/// returning JSON-RPC method-not-found. Callers must validate endpoint-wide authentication with a
-/// supported RPC method separately.
-pub fn is_rpc_method_unavailable(error: &TransportError) -> bool {
-    if is_rpc_method_not_found(error) {
-        return true;
-    }
-    let TransportError::Transport(error) = error else { return false };
-    error.as_http_error().is_some_and(|error| {
-        error.status == StatusCode::UNAUTHORIZED.as_u16()
-            || error.status == StatusCode::FORBIDDEN.as_u16()
-    })
 }
 
 /// Returns an RPC URL safe for display by retaining only its scheme, host, and port.
@@ -702,28 +686,6 @@ mod tests {
         assert!(!is_rpc_method_not_found(&internal_error));
         assert!(!is_rpc_method_not_found(&http_internal_error));
         assert!(!is_rpc_method_not_found(&transport_error));
-    }
-
-    #[test]
-    fn method_unavailable_includes_http_authorization_rejections() {
-        let unauthorized = alloy_transport::TransportErrorKind::http_error(
-            StatusCode::UNAUTHORIZED.as_u16(),
-            r#"{"jsonrpc":"2.0","error":{"code":-32600,"message":"Only core evm requests are allowed."}}"#
-                .to_string(),
-        );
-        let forbidden = alloy_transport::TransportErrorKind::http_error(
-            StatusCode::FORBIDDEN.as_u16(),
-            r#"{"jsonrpc":"2.0","error":{"code":-32004,"message":"method is not allowed"}}"#
-                .to_string(),
-        );
-        let rate_limited = alloy_transport::TransportErrorKind::http_error(
-            StatusCode::TOO_MANY_REQUESTS.as_u16(),
-            String::new(),
-        );
-
-        assert!(is_rpc_method_unavailable(&unauthorized));
-        assert!(is_rpc_method_unavailable(&forbidden));
-        assert!(!is_rpc_method_unavailable(&rate_limited));
     }
 
     #[test]
