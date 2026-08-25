@@ -351,12 +351,21 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         self.backend.is_persistent(acc)
     }
 
-    fn invalidate_fork_cache_account(&mut self, address: Address) {
-        self.backend.to_mut().invalidate_fork_cache_account(address)
+    fn refresh_fork_account(
+        &mut self,
+        address: Address,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), BackendError> {
+        self.backend.to_mut().refresh_fork_account(address, journaled_state)
     }
 
-    fn invalidate_fork_cache_storage(&mut self, address: Address, slot: U256) {
-        self.backend.to_mut().invalidate_fork_cache_storage(address, slot)
+    fn refresh_fork_storage(
+        &mut self,
+        address: Address,
+        slot: U256,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), BackendError> {
+        self.backend.to_mut().refresh_fork_storage(address, slot, journaled_state)
     }
 
     fn remove_persistent_account(&mut self, account: &Address) -> bool {

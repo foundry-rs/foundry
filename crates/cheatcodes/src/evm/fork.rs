@@ -237,7 +237,7 @@ impl Cheatcode for rpc_0Call {
         let url =
             ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
         let result = rpc_call(&url, method, params)?;
-        invalidate_active_fork_cache(ccx, method, params);
+        refresh_active_fork_state(ccx, method, params)?;
         Ok(result)
     }
 }
@@ -256,7 +256,7 @@ impl Cheatcode for rpcJson_0Call {
         let url =
             ccx.ecx.db().active_fork_url().ok_or_else(|| fmt_err!("no active fork URL found"))?;
         let result = rpc_json_call(&url, method, params)?;
-        invalidate_active_fork_cache(ccx, method, params);
+        refresh_active_fork_state(ccx, method, params)?;
         Ok(result)
     }
 }
@@ -552,15 +552,14 @@ fn rpc_json_call(url: &str, method: &str, params: &str) -> Result {
     Ok(serde_json::to_string(&result)?.abi_encode())
 }
 
-/// Invalidates the fork DB cache after a `vm.rpc` call on the active fork that mutates the node
-/// directly (bypassing the cache), so later DB reads (e.g. the broadcast simulation runner)
-/// re-fetch the new value. Only well-known Anvil/Hardhat account/storage setters are handled;
-/// chain-advancing methods (e.g. `eth_sendTransaction`) need re-forking, not eviction.
-fn invalidate_active_fork_cache<FEN: FoundryEvmNetwork>(
+/// Refreshes cached fork and journal state after a `vm.rpc` call on the active fork that mutates
+/// the node directly. Only well-known Anvil/Hardhat account/storage setters are handled;
+/// chain-advancing methods (e.g. `eth_sendTransaction`) need re-forking, not synchronization.
+fn refresh_active_fork_state<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     method: &str,
     params: &str,
-) {
+) -> Result<()> {
     const ACCOUNT_SETTERS: &[&str] = &[
         "anvil_setBalance",
         "hardhat_setBalance",
@@ -576,26 +575,28 @@ fn invalidate_active_fork_cache<FEN: FoundryEvmNetwork>(
     ];
     let is_storage_setter = matches!(method, "anvil_setStorageAt" | "hardhat_setStorageAt");
     if !is_storage_setter && !ACCOUNT_SETTERS.contains(&method) {
-        return;
+        return Ok(());
     }
 
-    let Ok(params) = serde_json::from_str::<serde_json::Value>(params) else { return };
+    let Ok(params) = serde_json::from_str::<serde_json::Value>(params) else { return Ok(()) };
     let Some(address) =
         params.get(0).and_then(|v| v.as_str()).and_then(|s| s.parse::<Address>().ok())
     else {
-        return;
+        return Ok(());
     };
 
+    let (db, journaled_state) = ccx.ecx.db_journal_inner_mut();
     if is_storage_setter {
         let Some(slot) =
             params.get(1).and_then(|v| v.as_str()).and_then(|s| s.parse::<U256>().ok())
         else {
-            return;
+            return Ok(());
         };
-        ccx.ecx.db_mut().invalidate_fork_cache_storage(address, slot);
+        db.refresh_fork_storage(address, slot, journaled_state)?;
     } else {
-        ccx.ecx.db_mut().invalidate_fork_cache_account(address);
+        db.refresh_fork_account(address, journaled_state)?;
     }
+    Ok(())
 }
 
 fn rpc_result(url: &str, method: &str, params: &str) -> Result<serde_json::Value> {

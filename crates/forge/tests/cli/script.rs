@@ -5157,3 +5157,49 @@ contract FundViaRpc is Script {
     let balance = api.balance(recipient, None).await.unwrap();
     assert_eq!(balance, U256::from(500) * U256::from(10).pow(U256::from(18)));
 });
+
+// Regression test for https://github.com/foundry-rs/foundry/issues/13312: an account loaded before
+// `anvil_setCode` must be refreshed before the next call in the same script execution.
+forgetest_async!(can_call_contract_after_vm_rpc_set_code_on_fork, |prj, cmd| {
+    prj.add_script(
+        "SetCodeViaRpc.s.sol",
+        r#"
+interface Vm {
+    function rpc(string calldata method, string calldata params) external returns (bytes memory);
+    function toString(address value) external pure returns (string memory);
+}
+
+interface ITarget {
+    function value() external view returns (uint256);
+}
+
+contract SetCodeViaRpc {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address constant TARGET = 0x0000000000000000000000000000000000001331;
+
+    function run() external {
+        require(TARGET.code.length == 0, "target already has code");
+
+        vm.rpc(
+            "anvil_setCode",
+            string.concat("[\"", vm.toString(TARGET), "\", \"0x602a60005260206000f3\"]")
+        );
+
+        require(ITarget(TARGET).value() == 42, "unexpected value");
+    }
+}
+"#,
+    );
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.arg("script")
+        .args(["SetCodeViaRpc", "--rpc-url", &handle.http_endpoint()])
+        .assert_success();
+
+    let target = address!("0x0000000000000000000000000000000000001331");
+    assert_eq!(
+        api.get_code(target, None).await.unwrap(),
+        Bytes::from(hex!("602a60005260206000f3"))
+    );
+});
