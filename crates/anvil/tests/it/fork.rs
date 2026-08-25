@@ -95,6 +95,16 @@ pub fn fork_config() -> NodeConfig {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_accepts_non_anvil_node_info_http_rejection() {
+    let (_api, origin) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let fork_url =
+        spawn_rpc_proxy_rejecting_method_after(origin.http_endpoint(), "anvil_nodeInfo", 0).await;
+
+    try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_rejects_anvil_node_info_rpc_error() {
     let (_api, origin) =
         spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
