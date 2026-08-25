@@ -860,11 +860,151 @@ fn normalize_sat_constraints(
     constraints: &[SymBoolExpr],
     normalization_cache: &mut HashMap<SymBoolExpr, SymBoolExpr>,
 ) -> Vec<SymBoolExpr> {
-    remove_implied_monotonic_constraints(normalize_constraints_for_solver_cached(
-        cx,
-        constraints,
-        normalization_cache,
-    ))
+    let constraints = remove_implied_monotonic_constraints(
+        normalize_constraints_for_solver_cached(cx, constraints, normalization_cache),
+    );
+    remove_witnessed_isolated_hash_constraints(cx, constraints)
+}
+
+/// Removes independently satisfiable constraints over one opaque hash symbol.
+///
+/// The SMT encoding treats symbolic hashes as free bit-vector symbols and does not serialize their
+/// preimages. If such a symbol occurs in only one constraint, a concrete witness for that
+/// constraint proves that it is an independent existential component of the SAT query. The
+/// witness is intentionally discarded: hash values are not replayable concrete inputs.
+fn remove_witnessed_isolated_hash_constraints(
+    cx: &mut SymCx,
+    constraints: Vec<SymBoolExpr>,
+) -> Vec<SymBoolExpr> {
+    if !constraints.iter().any(|constraint| {
+        constraint.visit_bool(|expr| {
+            matches!(expr.kind(), SymExprKind::Keccak { .. } | SymExprKind::Hash { .. })
+        })
+    }) {
+        return constraints;
+    }
+
+    let constraint_symbols = constraints.iter().map(solver_constraint_symbols).collect::<Vec<_>>();
+    let mut symbol_uses = HashMap::<Symbol, usize>::default();
+    for (symbols, _) in &constraint_symbols {
+        for symbol in symbols {
+            *symbol_uses.entry(*symbol).or_default() += 1;
+        }
+    }
+
+    let mut constraints = constraints;
+    let mut index = 0;
+    constraints.retain(|constraint| {
+        let (symbols, contains_hash) = &constraint_symbols[index];
+        index += 1;
+        let Some(symbol) = (symbols.len() == 1).then(|| *symbols.iter().next().unwrap()) else {
+            return true;
+        };
+        if !contains_hash || symbol_uses[&symbol] != 1 {
+            return true;
+        }
+
+        let abstracted = constraint.clone().fold_exprs(cx, &mut |cx, expr| match expr.kind() {
+            SymExprKind::Keccak { name, .. } | SymExprKind::Hash { name, .. }
+                if *name == symbol =>
+            {
+                SymExpr::get_var(cx, symbol)
+            }
+            _ => expr,
+        });
+        fallback_single_var_model(std::slice::from_ref(&abstracted)).is_none()
+    });
+    constraints
+}
+
+/// Collects variables as the SMT writer sees them, stopping at opaque hash leaves.
+fn solver_constraint_symbols(constraint: &SymBoolExpr) -> (SymbolicVars, bool) {
+    let mut symbols = SymbolicVars::default();
+    let mut contains_hash = false;
+    let mut seen_bools = HashSet::<SymBoolExpr>::default();
+    let mut seen_exprs = HashSet::<SymExpr>::default();
+    let mut bools = vec![constraint.clone()];
+    let mut exprs = Vec::new();
+
+    while !bools.is_empty() || !exprs.is_empty() {
+        if let Some(value) = bools.pop() {
+            if !seen_bools.insert(value.clone()) {
+                continue;
+            }
+            match value.kind() {
+                SymBoolExprKind::Const(_) => {}
+                SymBoolExprKind::Not(value) => bools.push(value.clone()),
+                SymBoolExprKind::And(values) => bools.extend(values.iter().cloned()),
+                SymBoolExprKind::Cmp(_, left, right) => {
+                    exprs.push(left.clone());
+                    exprs.push(right.clone());
+                }
+            }
+            continue;
+        }
+
+        let value = exprs.pop().unwrap();
+        if !seen_exprs.insert(value.clone()) {
+            continue;
+        }
+        match value.kind() {
+            SymExprKind::Const(_) => {}
+            SymExprKind::Var(symbol) | SymExprKind::GasLeft(symbol) => {
+                symbols.insert(*symbol);
+            }
+            SymExprKind::Keccak { name, .. } | SymExprKind::Hash { name, .. } => {
+                symbols.insert(*name);
+                contains_hash = true;
+            }
+            SymExprKind::Not(value) => exprs.push(value.clone()),
+            SymExprKind::BinOp(_, left, right) => {
+                exprs.push(left.clone());
+                exprs.push(right.clone());
+            }
+            SymExprKind::TernOp(_, left, right, modulus) => {
+                exprs.push(left.clone());
+                exprs.push(right.clone());
+                exprs.push(modulus.clone());
+            }
+            SymExprKind::Ite(condition, then_expr, else_expr) => {
+                bools.push(condition.clone());
+                exprs.push(then_expr.clone());
+                exprs.push(else_expr.clone());
+            }
+        }
+    }
+
+    (symbols, contains_hash)
+}
+
+#[cfg(test)]
+#[test]
+fn removes_only_witnessed_isolated_hash_constraints() {
+    let mut cx = SymCx::new();
+    let input = SymExpr::var(&mut cx, "input");
+    let hash_name = cx.intern("keccak_0");
+    let len = SymExpr::one(&mut cx);
+    let hash = SymExpr::keccak_symbol(&mut cx, hash_name, len, vec![input.clone()]);
+    let multiplier = SymExpr::constant(&mut cx, U256::MAX - U256::from(58));
+    let modulus = SymExpr::constant(&mut cx, U256::MAX - U256::from(188));
+    let mixed = SymExpr::ternop(&mut cx, SymTernOp::MulMod, hash.clone(), multiplier, modulus);
+    let mask = SymExpr::constant(&mut cx, U256::from(7));
+    let masked = SymExpr::binop(&mut cx, SymBinOp::And, mixed, mask);
+    let zero = SymExpr::zero(&mut cx);
+    let hash_branch = SymBoolExpr::eq(&mut cx, masked, zero);
+    let one = SymExpr::one(&mut cx);
+    let input_constraint = SymBoolExpr::eq(&mut cx, input, one);
+
+    let remaining = remove_witnessed_isolated_hash_constraints(
+        &mut cx,
+        vec![hash_branch.clone(), input_constraint.clone()],
+    );
+    assert_eq!(remaining, vec![input_constraint]);
+
+    let hash_again = SymBoolExpr::eq_word_const(&mut cx, &hash, U256::from(1));
+    let remaining =
+        remove_witnessed_isolated_hash_constraints(&mut cx, vec![hash_branch, hash_again]);
+    assert_eq!(remaining.len(), 2, "a shared hash symbol is not an independent component");
 }
 
 /// Returns a hard-arithmetic fallback model only after validating it against original constraints.
