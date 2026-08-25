@@ -15,6 +15,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
   docs:
@@ -30,6 +31,7 @@ jobs:
         with:
           toolchain: nightly-2026-07-01
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - name: Build documentation
         run: cargo doc --workspace --all-features --no-deps --document-private-items --locked
         env:
