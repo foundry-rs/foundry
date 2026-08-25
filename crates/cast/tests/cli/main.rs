@@ -139,14 +139,6 @@ Display options:
           and
             backtraces with line numbers.
 
-Compiler options:
-      --allow-local-compiler
-          Allow use of local compiler executables without prompting
-
-Project options:
-      --allow-project-env
-          Allow loading project dotenv files without prompting
-
 Find more information in the book: https://getfoundry.sh/cast/overview
 
 "#]]);
@@ -7017,6 +7009,8 @@ forgetest_async!(cast_call_debug_trace_call_local_artifacts_json_stdout, |prj, c
     });
 });
 
+// `dirs::home_dir()` ignores `HOME` on Windows, so the signature cache cannot be isolated there.
+#[cfg(not(windows))]
 casttest!(cast_call_decodes_custom_error, async |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 
