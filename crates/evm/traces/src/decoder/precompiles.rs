@@ -149,10 +149,7 @@ pub(crate) fn is_known_precompile(
         },
         |networks| networks.is_celo(),
     );
-    if is_celo_context && address == CELO_TRANSFER {
-        return true;
-    }
-    false
+    is_celo_context && address == CELO_TRANSFER
 }
 
 pub(crate) fn is_known_precompile_call(
