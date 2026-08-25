@@ -854,7 +854,7 @@ impl SmtLibSubprocessSolver {
     }
 }
 
-/// Normalizes satisfiability constraints and removes soundly implied nonlinear comparisons.
+/// Normalizes satisfiability constraints and removes soundly redundant constraints.
 fn normalize_sat_constraints(
     cx: &mut SymCx,
     constraints: &[SymBoolExpr],
@@ -868,10 +868,9 @@ fn normalize_sat_constraints(
 
 /// Removes independently satisfiable constraints over one opaque hash symbol.
 ///
-/// The SMT encoding treats symbolic hashes as free bit-vector symbols and does not serialize their
-/// preimages. If such a symbol occurs in only one constraint, a concrete witness for that
-/// constraint proves that it is an independent existential component of the SAT query. The
-/// witness is intentionally discarded: hash values are not replayable concrete inputs.
+/// SMT treats symbolic hashes as free bit-vector symbols. If a constraint's only SMT symbol is a
+/// hash unused by other constraints, a concrete witness proves that it cannot affect conjunction
+/// satisfiability. The witness is discarded because hash values are not replayable inputs.
 fn remove_witnessed_isolated_hash_constraints(
     cx: &mut SymCx,
     constraints: Vec<SymBoolExpr>,
@@ -884,97 +883,86 @@ fn remove_witnessed_isolated_hash_constraints(
         return constraints;
     }
 
-    let constraint_symbols = constraints.iter().map(solver_constraint_symbols).collect::<Vec<_>>();
-    let mut symbol_uses = HashMap::<Symbol, usize>::default();
-    for (symbols, _) in &constraint_symbols {
-        for symbol in symbols {
-            *symbol_uses.entry(*symbol).or_default() += 1;
-        }
-    }
-
-    let mut constraints = constraints;
-    let mut index = 0;
-    constraints.retain(|constraint| {
-        let (symbols, contains_hash) = &constraint_symbols[index];
-        index += 1;
-        let Some(symbol) = (symbols.len() == 1).then(|| *symbols.iter().next().unwrap()) else {
-            return true;
-        };
-        if !contains_hash || symbol_uses[&symbol] != 1 {
-            return true;
-        }
-
-        let abstracted = constraint.clone().fold_exprs(cx, &mut |cx, expr| match expr.kind() {
-            SymExprKind::Keccak { name, .. } | SymExprKind::Hash { name, .. }
-                if *name == symbol =>
-            {
-                SymExpr::get_var(cx, symbol)
+    let mut symbol_constraint_counts = HashMap::<Symbol, usize>::default();
+    let hash_candidates = constraints
+        .iter()
+        .map(|constraint| {
+            let mut symbols = SymbolicVars::default();
+            let contains_hash = collect_solver_vars(constraint, &mut symbols);
+            for symbol in &symbols {
+                *symbol_constraint_counts.entry(*symbol).or_default() += 1;
             }
-            _ => expr,
-        });
-        fallback_single_var_model(std::slice::from_ref(&abstracted)).is_none()
-    });
+            if contains_hash && symbols.len() == 1 { symbols.first().copied() } else { None }
+        })
+        .collect::<Vec<_>>();
+
     constraints
+        .into_iter()
+        .zip(hash_candidates)
+        .filter_map(|(constraint, candidate)| {
+            let Some(symbol) =
+                candidate.filter(|symbol| symbol_constraint_counts.get(symbol) == Some(&1))
+            else {
+                return Some(constraint);
+            };
+            let abstracted = constraint.clone().fold_exprs(cx, &mut |cx, expr| match expr.kind() {
+                SymExprKind::Keccak { name, .. } | SymExprKind::Hash { name, .. }
+                    if *name == symbol =>
+                {
+                    SymExpr::get_var(cx, symbol)
+                }
+                _ => expr,
+            });
+            let removable = fallback_single_var_model(std::slice::from_ref(&abstracted)).is_some();
+            (!removable).then_some(constraint)
+        })
+        .collect()
 }
 
 /// Collects variables as the SMT writer sees them, stopping at opaque hash leaves.
-fn solver_constraint_symbols(constraint: &SymBoolExpr) -> (SymbolicVars, bool) {
-    let mut symbols = SymbolicVars::default();
-    let mut contains_hash = false;
-    let mut seen_bools = HashSet::<SymBoolExpr>::default();
-    let mut seen_exprs = HashSet::<SymExpr>::default();
-    let mut bools = vec![constraint.clone()];
-    let mut exprs = Vec::new();
-
-    while !bools.is_empty() || !exprs.is_empty() {
-        if let Some(value) = bools.pop() {
-            if !seen_bools.insert(value.clone()) {
-                continue;
-            }
-            match value.kind() {
-                SymBoolExprKind::Const(_) => {}
-                SymBoolExprKind::Not(value) => bools.push(value.clone()),
-                SymBoolExprKind::And(values) => bools.extend(values.iter().cloned()),
-                SymBoolExprKind::Cmp(_, left, right) => {
-                    exprs.push(left.clone());
-                    exprs.push(right.clone());
+fn collect_solver_vars(constraint: &SymBoolExpr, vars: &mut SymbolicVars) -> bool {
+    fn visit_bool(expr: &SymBoolExpr, vars: &mut SymbolicVars) -> bool {
+        match expr.kind() {
+            SymBoolExprKind::Const(_) => false,
+            SymBoolExprKind::Not(expr) => visit_bool(expr, vars),
+            SymBoolExprKind::And(exprs) => {
+                let mut contains_hash = false;
+                for expr in exprs.iter() {
+                    contains_hash |= visit_bool(expr, vars);
                 }
+                contains_hash
             }
-            continue;
-        }
-
-        let value = exprs.pop().unwrap();
-        if !seen_exprs.insert(value.clone()) {
-            continue;
-        }
-        match value.kind() {
-            SymExprKind::Const(_) => {}
-            SymExprKind::Var(symbol) | SymExprKind::GasLeft(symbol) => {
-                symbols.insert(*symbol);
-            }
-            SymExprKind::Keccak { name, .. } | SymExprKind::Hash { name, .. } => {
-                symbols.insert(*name);
-                contains_hash = true;
-            }
-            SymExprKind::Not(value) => exprs.push(value.clone()),
-            SymExprKind::BinOp(_, left, right) => {
-                exprs.push(left.clone());
-                exprs.push(right.clone());
-            }
-            SymExprKind::TernOp(_, left, right, modulus) => {
-                exprs.push(left.clone());
-                exprs.push(right.clone());
-                exprs.push(modulus.clone());
-            }
-            SymExprKind::Ite(condition, then_expr, else_expr) => {
-                bools.push(condition.clone());
-                exprs.push(then_expr.clone());
-                exprs.push(else_expr.clone());
+            SymBoolExprKind::Cmp(_, left, right) => {
+                visit_word(left, vars) | visit_word(right, vars)
             }
         }
     }
 
-    (symbols, contains_hash)
+    fn visit_word(expr: &SymExpr, vars: &mut SymbolicVars) -> bool {
+        match expr.kind() {
+            SymExprKind::Const(_) => false,
+            SymExprKind::Var(symbol) | SymExprKind::GasLeft(symbol) => {
+                vars.insert(*symbol);
+                false
+            }
+            SymExprKind::Keccak { name, .. } | SymExprKind::Hash { name, .. } => {
+                vars.insert(*name);
+                true
+            }
+            SymExprKind::Not(expr) => visit_word(expr, vars),
+            SymExprKind::BinOp(_, left, right) => visit_word(left, vars) | visit_word(right, vars),
+            SymExprKind::TernOp(_, left, right, modulus) => {
+                visit_word(left, vars) | visit_word(right, vars) | visit_word(modulus, vars)
+            }
+            SymExprKind::Ite(condition, then_expr, else_expr) => {
+                visit_bool(condition, vars)
+                    | visit_word(then_expr, vars)
+                    | visit_word(else_expr, vars)
+            }
+        }
+    }
+
+    visit_bool(constraint, vars)
 }
 
 #[cfg(test)]
@@ -982,28 +970,23 @@ fn solver_constraint_symbols(constraint: &SymBoolExpr) -> (SymbolicVars, bool) {
 fn removes_only_witnessed_isolated_hash_constraints() {
     let mut cx = SymCx::new();
     let input = SymExpr::var(&mut cx, "input");
-    let hash_name = cx.intern("keccak_0");
-    let len = SymExpr::one(&mut cx);
-    let hash = SymExpr::keccak_symbol(&mut cx, hash_name, len, vec![input.clone()]);
-    let multiplier = SymExpr::constant(&mut cx, U256::MAX - U256::from(58));
-    let modulus = SymExpr::constant(&mut cx, U256::MAX - U256::from(188));
-    let mixed = SymExpr::ternop(&mut cx, SymTernOp::MulMod, hash.clone(), multiplier, modulus);
-    let mask = SymExpr::constant(&mut cx, U256::from(7));
-    let masked = SymExpr::binop(&mut cx, SymBinOp::And, mixed, mask);
-    let zero = SymExpr::zero(&mut cx);
-    let hash_branch = SymBoolExpr::eq(&mut cx, masked, zero);
-    let one = SymExpr::one(&mut cx);
-    let input_constraint = SymBoolExpr::eq(&mut cx, input, one);
+    let hash = keccak_word(&mut cx, vec![input.clone()]);
+    let modulus = SymExpr::constant(&mut cx, U256::MAX);
+    let mulmod = SymExpr::ternop(&mut cx, SymTernOp::MulMod, hash.clone(), hash.clone(), modulus);
+    let hash_branch = SymBoolExpr::eq_word_const(&mut cx, &mulmod, U256::ZERO);
+    let preimage_constraint = SymBoolExpr::eq_word_const(&mut cx, &input, U256::from(1));
 
     let remaining = remove_witnessed_isolated_hash_constraints(
         &mut cx,
-        vec![hash_branch.clone(), input_constraint.clone()],
+        vec![hash_branch.clone(), preimage_constraint.clone()],
     );
-    assert_eq!(remaining, vec![input_constraint]);
+    assert_eq!(remaining, vec![preimage_constraint]);
 
-    let hash_again = SymBoolExpr::eq_word_const(&mut cx, &hash, U256::from(1));
-    let remaining =
-        remove_witnessed_isolated_hash_constraints(&mut cx, vec![hash_branch, hash_again]);
+    let shared_hash_constraint = SymBoolExpr::eq_word_const(&mut cx, &hash, U256::from(1));
+    let remaining = remove_witnessed_isolated_hash_constraints(
+        &mut cx,
+        vec![hash_branch, shared_hash_constraint],
+    );
     assert_eq!(remaining.len(), 2, "a shared hash symbol is not an independent component");
 }
 
