@@ -2187,21 +2187,28 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let mut fuzz_config = self.config.fuzz.clone();
         let test_name =
             fuzz_test_path_name(&self.cr.contract.abi, func, &fuzz_config, self.cr.name);
+        let legacy_corpus_dir = legacy_fuzz_corpus_dir(
+            fuzz_config.corpus.corpus_dir.as_deref(),
+            self.cr.name,
+            func,
+            &test_name,
+        );
         let _ = test_paths(
             &mut fuzz_config.corpus,
             fuzz_config.failure_persist_dir.clone().unwrap(),
             self.cr.name,
             &test_name,
         );
+        let corpus_dir = legacy_corpus_dir.or_else(|| fuzz_config.corpus.corpus_dir.clone());
         let limit = self.config.symbolic.corpus_seed_limit;
         let mut metadata = SymbolicCorpusSeedMetadata {
-            corpus_dir: fuzz_config.corpus.corpus_dir.clone(),
+            corpus_dir: corpus_dir.clone(),
             limit,
             loaded: 0,
             skipped: 0,
             used: Vec::new(),
         };
-        let Some(corpus_dir) = fuzz_config.corpus.corpus_dir.clone() else {
+        let Some(corpus_dir) = corpus_dir else {
             let _ = sh_warn!(
                 "`--symbolic-use-fuzz-corpus` requires `--fuzz-corpus-dir` or `fuzz.corpus_dir`; \
                  running without imported corpus seeds"
@@ -4895,6 +4902,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let mut fuzz_config = self.config.fuzz.clone();
         let test_name =
             fuzz_test_path_name(&self.cr.contract.abi, func, &fuzz_config, self.cr.name);
+        let legacy_corpus_dir = legacy_fuzz_corpus_dir(
+            fuzz_config.corpus.corpus_dir.as_deref(),
+            self.cr.name,
+            func,
+            &test_name,
+        );
         let (failure_dir, failure_file) = test_paths(
             &mut fuzz_config.corpus,
             fuzz_config.failure_persist_dir.clone().unwrap(),
@@ -4920,6 +4933,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 .map(|corpus_dir| {
                     narrow_generated_fuzz_corpus_root(corpus_dir, self.cr.name, &test_name)
                 })
+                .or(legacy_corpus_dir.clone())
                 .or_else(|| fuzz_config.corpus.corpus_dir.clone());
             let fuzzed_address = self.address;
             return self.run_showmap(
@@ -5068,8 +5082,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .inspector_mut()
             .collect_sancov_trace_cmp(fuzz_config.corpus.collect_sancov_trace_cmp());
         // Run fuzz test.
-        let mut fuzzed_executor =
-            FuzzedExecutor::new(executor, runner, self.tcfg.sender, fuzz_config, persisted_failure);
+        let mut fuzzed_executor = FuzzedExecutor::new(
+            executor,
+            runner,
+            self.tcfg.sender,
+            fuzz_config,
+            persisted_failure,
+            legacy_corpus_dir,
+        );
         if self.cr.mcr.tcfg.fuzz_failure_replay {
             let result = match fuzzed_executor.replay_persisted_failure(
                 func,
@@ -5615,6 +5635,29 @@ fn fuzz_test_path_name<'a>(
     } else {
         Cow::Borrowed(&func.name)
     }
+}
+
+/// Returns the legacy unqualified corpus when the qualified corpus has no entries.
+fn legacy_fuzz_corpus_dir(
+    root: Option<&Path>,
+    contract_name: &str,
+    func: &Function,
+    test_name: &str,
+) -> Option<PathBuf> {
+    if test_name == func.name {
+        return None;
+    }
+    let contract = contract_name.split(':').next_back().unwrap();
+    let root = root?;
+    let qualified = root.join(contract).join(test_name);
+    if canonical_replay_dirs(&qualified).iter().any(|dir| read_corpus_dir(dir).next().is_some()) {
+        return None;
+    }
+    let legacy = root.join(contract).join(&func.name);
+    canonical_replay_dirs(&legacy)
+        .iter()
+        .any(|dir| read_corpus_dir(dir).next().is_some())
+        .then(|| canonicalized(legacy))
 }
 
 /// Helper function to set test corpus dir and to compose persisted failure paths.

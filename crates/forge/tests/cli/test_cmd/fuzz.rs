@@ -357,6 +357,43 @@ contract OverloadedFuzzTest {
     assert!(corpus_root.join("OverloadedFuzzTest").join(&address_name).exists());
     assert!(corpus_root.join("OverloadedFuzzTest").join(&uint_name).exists());
 
+    let address_corpus = corpus_root.join("OverloadedFuzzTest").join(&address_name);
+    let legacy_corpus = corpus_root.join("OverloadedFuzzTest/testFuzz_collision");
+    std::fs::rename(&address_corpus, &legacy_corpus).unwrap();
+
+    let legacy_showmap_root = prj.root().join("legacy-showmap");
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+            "--showmap-out",
+            "legacy-showmap",
+            "--showmap-trial",
+            "legacy",
+            "-j1",
+        ])
+        .assert_success();
+    let showmap_prefix = "replay__test_OverloadedFuzz.t.sol_OverloadedFuzzTest__";
+    assert!(
+        legacy_showmap_root.join(format!("{showmap_prefix}{address_name}/legacy.txt")).exists()
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+            "-j1",
+        ])
+        .assert_failure();
+    assert!(address_corpus.exists());
+    assert!(legacy_corpus.exists());
+
     let showmap_root = prj.root().join("overloaded-showmap");
     cmd.forge_fuse()
         .args([
@@ -372,9 +409,9 @@ contract OverloadedFuzzTest {
             "-j1",
         ])
         .assert_success();
-    let showmap_prefix = "replay__test_OverloadedFuzz.t.sol_OverloadedFuzzTest__";
     assert!(showmap_root.join(format!("{showmap_prefix}{address_name}/overloaded.txt")).exists());
     assert!(showmap_root.join(format!("{showmap_prefix}{uint_name}/overloaded.txt")).exists());
+    std::fs::remove_dir_all(&legacy_corpus).unwrap();
 
     let address_replay = cmd
         .forge_fuse()

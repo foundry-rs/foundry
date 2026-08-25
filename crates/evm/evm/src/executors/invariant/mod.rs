@@ -928,6 +928,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let dynamic = self.dynamic_target_ctx();
         let corpus_seed = WorkerCorpusSeed::load_from_disk(
             &self.config.corpus,
+            None,
             Some(&corpus_replay_executor),
             ReplayTarget {
                 stateless: None,
