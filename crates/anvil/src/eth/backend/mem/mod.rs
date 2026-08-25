@@ -162,6 +162,7 @@ use revm::{
         JournalTr,
         block::BlobExcessGasAndPrice,
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
+        transaction::TransactionType,
     },
     database::{AccountState, CacheDB, DbAccount, WrapDatabaseRef},
     handler::{
@@ -535,6 +536,16 @@ const fn next_monad_context(context: &mut MonadReplayContext) -> MonadExecutionC
 #[cfg(not(feature = "monad"))]
 const fn next_monad_context(_context: &mut MonadReplayContext) -> MonadExecutionContext<'_> {
     MonadExecutionContext { _marker: std::marker::PhantomData }
+}
+
+#[cfg(feature = "monad")]
+fn deduplicate_monad_storage_pages(access_list: &mut AccessList) {
+    for item in &mut access_list.0 {
+        item.storage_keys.sort_unstable();
+        item.storage_keys.dedup_by_key(|slot| {
+            monad_revm::page::page_index(U256::from_be_slice(slot.as_slice()))
+        });
+    }
 }
 
 const fn noop_before_transaction<E, T>(_evm: &mut E, _tx: &T) {}
@@ -3285,7 +3296,11 @@ impl<N: Network> Backend<N> {
             tx_env.base_mut().gas_limit = gas_limit;
         }
         if let Some(access_list) = overrides.access_list {
-            tx_env.base_mut().access_list = access_list;
+            let tx_env = tx_env.base_mut();
+            tx_env.access_list = access_list;
+            if tx_env.tx_type == TransactionType::Legacy as u8 {
+                tx_env.tx_type = TransactionType::Eip2930 as u8;
+            }
         }
         let ResultAndState { result, state } = self.transact_call_with_inspector_ref(
             state,
@@ -3330,7 +3345,13 @@ impl<N: Network> Backend<N> {
             monad_context.as_mut().map(next_monad_context),
         )?;
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
-        let access_list = inspector.access_list();
+        let mut access_list = inspector.access_list();
+        #[cfg(feature = "monad")]
+        if self.is_monad()
+            && monad_revm::MonadHardfork::MonadTen.is_enabled_in(self.monad_hardfork())
+        {
+            deduplicate_monad_storage_pages(&mut access_list);
+        }
         Ok((exit_reason, out, gas_used, access_list))
     }
 

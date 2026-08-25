@@ -12,7 +12,8 @@ use alloy_provider::{
     ext::{DebugApi, TraceApi},
 };
 use alloy_rpc_types::{
-    Authorization, BlockId, BlockNumberOrTag, Index, TransactionRequest,
+    AccessList, AccessListItem, Authorization, BlockId, BlockNumberOrTag, Index,
+    TransactionRequest,
     anvil::Forking,
     simulate::{SimBlock, SimulatePayload},
     state::{AccountOverride, StateOverride},
@@ -116,6 +117,121 @@ async fn monad_ten_applies_mip8_storage_gas() {
         let different_page_write =
             storage_probe_gas(provider.call(storage_gas_probe_call()).await.unwrap());
         assert_eq!(different_page_write - same_page_write, write_delta);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_ten_deduplicates_access_list_storage_pages() {
+    let one = B256::from(U256::ONE.to_be_bytes::<32>());
+    let two = B256::from(U256::from(2).to_be_bytes::<32>());
+    let page_one = B256::from(U256::from(129).to_be_bytes::<32>());
+
+    for (config, expected_same_page_keys, gas_delta) in [
+        (
+            NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into())),
+            vec![one, two],
+            0,
+        ),
+        (NodeConfig::test_monad(), vec![one], 1_900),
+    ] {
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+
+        api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_access_list_probe_code(2, 1))
+            .await
+            .unwrap();
+        let same_page = provider.create_access_list(&storage_gas_probe_call()).await.unwrap();
+        assert_eq!(
+            same_page.access_list,
+            AccessList::from(vec![AccessListItem {
+                address: STORAGE_GAS_PROBE_ADDRESS,
+                storage_keys: expected_same_page_keys,
+            }])
+        );
+
+        api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_access_list_probe_code(129, 1))
+            .await
+            .unwrap();
+        let different_page = provider.create_access_list(&storage_gas_probe_call()).await.unwrap();
+        assert_eq!(
+            different_page.access_list,
+            AccessList::from(vec![AccessListItem {
+                address: STORAGE_GAS_PROBE_ADDRESS,
+                storage_keys: vec![one, page_one],
+            }])
+        );
+        assert_eq!(different_page.gas_used - same_page.gas_used, U256::from(gas_delta));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn monad_ten_rpc_simulations_apply_mip8_storage_gas() {
+    for (config, read_delta, write_delta) in [
+        (NodeConfig::test_monad().with_hardfork(Some(MonadHardfork::MonadNine.into())), 0, 0),
+        (NodeConfig::test_monad(), 8_000, 10_800),
+    ] {
+        let (api, handle) = spawn(config).await;
+        let provider = handle.http_provider();
+
+        api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_read_probe_code(127)).await.unwrap();
+        let same_page_read_estimate =
+            provider.estimate_gas(storage_gas_probe_call()).await.unwrap();
+        let same_page_read_trace: TraceResults = provider
+            .client()
+            .request(
+                "trace_call",
+                (storage_gas_probe_call(), vec![TraceType::Trace], BlockId::latest()),
+            )
+            .await
+            .unwrap();
+
+        api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_read_probe_code(128)).await.unwrap();
+        let different_page_read_estimate =
+            provider.estimate_gas(storage_gas_probe_call()).await.unwrap();
+        let different_page_read_trace: TraceResults = provider
+            .client()
+            .request(
+                "trace_call",
+                (storage_gas_probe_call(), vec![TraceType::Trace], BlockId::latest()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(different_page_read_estimate - same_page_read_estimate, read_delta);
+        assert_eq!(
+            root_trace_gas(&different_page_read_trace) - root_trace_gas(&same_page_read_trace),
+            read_delta
+        );
+
+        api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_write_probe_code(1)).await.unwrap();
+        let same_page_write_estimate =
+            provider.estimate_gas(storage_gas_probe_call()).await.unwrap();
+        let same_page_write_trace: TraceResults = provider
+            .client()
+            .request(
+                "trace_call",
+                (storage_gas_probe_call(), vec![TraceType::Trace], BlockId::latest()),
+            )
+            .await
+            .unwrap();
+
+        api.anvil_set_code(STORAGE_GAS_PROBE_ADDRESS, storage_write_probe_code(128)).await.unwrap();
+        let different_page_write_estimate =
+            provider.estimate_gas(storage_gas_probe_call()).await.unwrap();
+        let different_page_write_trace: TraceResults = provider
+            .client()
+            .request(
+                "trace_call",
+                (storage_gas_probe_call(), vec![TraceType::Trace], BlockId::latest()),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(different_page_write_estimate - same_page_write_estimate, write_delta);
+        assert_eq!(
+            root_trace_gas(&different_page_write_trace) - root_trace_gas(&same_page_write_trace),
+            write_delta
+        );
     }
 }
 
@@ -2200,8 +2316,19 @@ fn storage_probe_gas(result: Bytes) -> u64 {
     U256::from_be_slice(&result).to::<u64>()
 }
 
+fn root_trace_gas(result: &TraceResults) -> u64 {
+    result.trace[0].result.as_ref().expect("root call trace should contain a result").gas_used()
+}
+
 fn storage_read_probe_code(second_slot: u8) -> Bytes {
     let mut code = hex!("5a5f5450600054505a90035f5260205ff3");
+    code[5] = second_slot;
+    Bytes::from(code)
+}
+
+fn storage_access_list_probe_code(first_slot: u8, second_slot: u8) -> Bytes {
+    let mut code = hex!("600054506000545000");
+    code[1] = first_slot;
     code[5] = second_slot;
     Bytes::from(code)
 }
