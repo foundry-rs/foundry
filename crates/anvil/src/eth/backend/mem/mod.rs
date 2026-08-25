@@ -122,6 +122,8 @@ use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadBlockParticipants;
 use foundry_evm::{
     backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
@@ -5159,41 +5161,13 @@ where
             db.insert_block_hash(U256::from(block_number), block_hash);
         }
 
-        let BlockInfo { block, transactions, receipts } = block_info;
-        let header = block.header.clone();
-        {
-            let mut storage = self.blockchain.storage.write();
-            storage.best_number = block_number;
-            storage.best_hash = block_hash;
-            if !self.is_eip3675() {
-                storage.total_difficulty =
-                    storage.total_difficulty.saturating_add(header.difficulty);
-            }
-            storage.blocks.insert(block_hash, block);
-            storage.hashes.insert(block_number, block_hash);
+        let header = block_info.block.header.clone();
+        self.store_block(
+            block_info,
+            block_hash,
             #[cfg(feature = "monad")]
-            if let Some(participants) = monad_participants {
-                monad::store_block_metadata(
-                    &mut storage,
-                    block_hash,
-                    participants,
-                    execution_chain_id,
-                    hardfork,
-                );
-            }
-            for (info, receipt) in transactions.into_iter().zip(receipts) {
-                let mined_tx = MinedTransaction { info, receipt, block_hash, block_number };
-                storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
-            }
-
-            if let Some(transaction_block_keeper) = self.transaction_block_keeper
-                && storage.blocks.len() > transaction_block_keeper
-            {
-                let to_clear = block_number
-                    .saturating_sub(transaction_block_keeper.try_into().unwrap_or(u64::MAX));
-                storage.remove_block_transactions_by_number(to_clear)
-            }
-        }
+            monad_participants.map(|participants| (participants, execution_chain_id, hardfork)),
+        );
 
         #[cfg(feature = "monad")]
         if self.is_monad() {
@@ -5393,6 +5367,54 @@ where
         BlockInfo { block, transactions: transaction_infos, receipts: block_result.receipts }
     }
 
+    /// Stores a newly executed block and advances the canonical chain head.
+    fn store_block(
+        &self,
+        block_info: BlockInfo<N>,
+        block_hash: B256,
+        #[cfg(feature = "monad")] monad_metadata: Option<(
+            MonadBlockParticipants,
+            u64,
+            FoundryHardfork,
+        )>,
+    ) {
+        let BlockInfo { block, transactions, receipts } = block_info;
+        let block_number = block.header.number();
+        let difficulty = block.header.difficulty();
+        let mut storage = self.blockchain.storage.write();
+
+        storage.best_number = block_number;
+        storage.best_hash = block_hash;
+        if !self.is_eip3675() {
+            storage.total_difficulty = storage.total_difficulty.saturating_add(difficulty);
+        }
+        storage.insert_block(block);
+
+        #[cfg(feature = "monad")]
+        if let Some((participants, execution_chain_id, hardfork)) = monad_metadata {
+            monad::store_block_metadata(
+                &mut storage,
+                block_hash,
+                participants,
+                execution_chain_id,
+                hardfork,
+            );
+        }
+
+        for (info, receipt) in transactions.into_iter().zip(receipts) {
+            let mined_tx = MinedTransaction { info, receipt, block_hash, block_number };
+            storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
+        }
+
+        if let Some(transaction_block_keeper) = self.transaction_block_keeper
+            && storage.blocks.len() > transaction_block_keeper
+        {
+            let to_clear = block_number
+                .saturating_sub(transaction_block_keeper.try_into().unwrap_or(u64::MAX));
+            storage.remove_block_transactions_by_number(to_clear)
+        }
+    }
+
     async fn do_mine_block(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
@@ -5514,10 +5536,8 @@ where
                 (block_info, included, invalid, not_yet_valid, block_hash, parent_state)
             };
 
-            // create the new block with the current timestamp
-            let BlockInfo { block, transactions, receipts } = block_info;
-
-            let header = block.header.clone();
+            // Create the new block with the current timestamp.
+            let header = block_info.block.header.clone();
             #[cfg(feature = "monad")]
             let monad_participants = self.is_monad().then(|| {
                 let tx_envs = included
@@ -5540,37 +5560,12 @@ where
                 target: "backend",
                 "Mined block {} with {} tx {:?}",
                 block_number,
-                transactions.len(),
-                transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
+                block_info.transactions.len(),
+                block_info.transactions.iter().map(|tx| tx.transaction_hash).collect::<Vec<_>>()
             );
-            let mut storage = self.blockchain.storage.write();
-            // update block metadata
-            storage.best_number = block_number;
-            storage.best_hash = block_hash;
-            // Difficulty is removed and not used after Paris (aka TheMerge). Value is replaced with
-            // prevrandao. https://github.com/bluealloy/revm/blob/1839b3fce8eaeebb85025576f2519b80615aca1e/crates/interpreter/src/instructions/host_env.rs#L27
-            if !self.is_eip3675() {
-                storage.total_difficulty =
-                    storage.total_difficulty.saturating_add(header.difficulty);
-            }
-
-            storage.blocks.insert(block_hash, block);
-            storage.hashes.insert(block_number, block_hash);
-            #[cfg(feature = "monad")]
-            if let Some(participants) = monad_participants {
-                monad::store_block_metadata(
-                    &mut storage,
-                    block_hash,
-                    participants,
-                    evm_env.cfg_env.chain_id,
-                    hardfork,
-                );
-            }
 
             node_info!("");
-            // insert all transactions
-            for (info, receipt) in transactions.into_iter().zip(receipts) {
-                // log some tx info
+            for info in &block_info.transactions {
                 node_info!("    Transaction: {:?}", info.transaction_hash);
                 if let Some(contract) = &info.contract_address {
                     node_info!("    Contract created: {contract}");
@@ -5584,19 +5579,15 @@ where
                     node_info!("    Error: reverted with: {r}");
                 }
                 node_info!("");
-
-                let mined_tx = MinedTransaction { info, receipt, block_hash, block_number };
-                storage.transactions.insert(mined_tx.info.transaction_hash, mined_tx);
             }
 
-            // remove old transactions that exceed the transaction block keeper
-            if let Some(transaction_block_keeper) = self.transaction_block_keeper
-                && storage.blocks.len() > transaction_block_keeper
-            {
-                let to_clear = block_number
-                    .saturating_sub(transaction_block_keeper.try_into().unwrap_or(u64::MAX));
-                storage.remove_block_transactions_by_number(to_clear)
-            }
+            self.store_block(
+                block_info,
+                block_hash,
+                #[cfg(feature = "monad")]
+                monad_participants
+                    .map(|participants| (participants, evm_env.cfg_env.chain_id, hardfork)),
+            );
 
             self.time.mark_block_created();
 
