@@ -682,12 +682,27 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         fork: Option<CreateFork>,
     ) -> eyre::Result<Self> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
+        let configured_networks =
+            fork.as_ref().map(|fork| fork.evm_opts.networks).unwrap_or_default();
+        configured_networks.validate().map_err(eyre::Report::msg)?;
+        let source_network_is_inferred = fork.as_ref().is_some_and(|fork| {
+            fork.evm_opts.fork_network_is_inferred || !configured_networks.has_network_selection()
+        });
+        let networks = if source_network_is_inferred
+            && configured_networks.execution_network() != FEN::EXECUTION_NETWORK
+        {
+            NetworkConfigs::default()
+        } else {
+            configured_networks
+        }
+        .normalize_for_execution_network(FEN::EXECUTION_NETWORK)
+        .map_err(eyre::Report::msg)?;
         // Note: this will take of registering the `fork`
         let persistent_accounts = HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS);
         let inner = BackendInner { persistent_accounts, ..Default::default() };
 
         let mut backend = Self {
-            networks: NetworkConfigs::default(),
+            networks,
             forks,
             mem_db: CacheDB::new(Default::default()),
             fork_init_journaled_state: inner.new_journaled_state(),
@@ -698,7 +713,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
         if let Some(fork) = fork {
             let ForkResult { id: fork_id, backend: fork, resolved, .. } =
-                backend.forks.create_fork(fork)?;
+                backend.create_typed_fork(fork)?;
             let context = resolved.context();
             let block = resolved.block();
             let fork_db = ForkDB::new(fork);
@@ -718,6 +733,38 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         Ok(backend)
     }
 
+    fn create_typed_fork(
+        &self,
+        mut fork: CreateFork,
+    ) -> eyre::Result<ForkResult<AnyNetwork, SpecFor<FEN>, BlockEnvFor<FEN>>> {
+        let require_source_family_match = fork.evm_opts.fork_network_is_inferred
+            || !fork.evm_opts.networks.has_network_selection();
+        if !require_source_family_match {
+            fork.evm_opts
+                .networks
+                .normalize_for_execution_network(FEN::EXECUTION_NETWORK)
+                .map_err(eyre::Report::msg)?;
+        }
+
+        // The backend's typed EVM is already fixed. Use its profile as the fallback for endpoints
+        // without authoritative metadata, while retaining the original provenance for the check
+        // against the resolved source below.
+        fork.evm_opts.networks = self.networks;
+        fork.evm_opts.fork_network_is_inferred = false;
+        let result = self.forks.create_fork(fork)?;
+        let context = result.resolved.context();
+        if require_source_family_match
+            && !self.networks.supports_fork_source(&context.network_profile)
+        {
+            eyre::bail!(
+                "cannot create a `{}` fork with an EVM instantiated for `{}`",
+                context.network,
+                self.networks.execution_network()
+            );
+        }
+        Ok(result)
+    }
+
     /// Creates a new instance of `Backend` with fork added to the fork database and sets the fork
     /// as active
     pub(crate) fn new_with_fork(
@@ -726,8 +773,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         journaled_state: JournaledState,
         networks: NetworkConfigs,
     ) -> eyre::Result<Self> {
-        let mut backend = Self::spawn(None)?;
-        backend.networks = networks;
+        let mut backend = Self::spawn(None)?.with_networks(networks)?;
         fork.journaled_state = journaled_state;
         let fork_ids = backend.inner.insert_fork(id.clone(), fork);
         backend.inner.launched_with_fork = Some((id.clone(), fork_ids.0, fork_ids.1));
@@ -753,9 +799,16 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         self.networks
     }
 
-    /// Sets the active network configuration.
-    pub const fn set_networks(&mut self, networks: NetworkConfigs) {
-        self.networks = networks;
+    /// Sets the active network configuration before the backend is used for execution.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the configuration conflicts with this backend's EVM family.
+    pub fn with_networks(mut self, networks: NetworkConfigs) -> eyre::Result<Self> {
+        self.networks = networks
+            .normalize_for_execution_network(FEN::EXECUTION_NETWORK)
+            .map_err(eyre::Report::msg)?;
+        Ok(self)
     }
 
     pub fn insert_account_info(&mut self, address: Address, account: AccountInfo) {
@@ -1924,7 +1977,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
     fn create_fork(&mut self, create_fork: CreateFork) -> eyre::Result<LocalForkId> {
         trace!("create fork");
         let ForkResult { id: fork_id, backend: fork, resolved, .. } =
-            self.forks.create_fork(create_fork)?;
+            self.create_typed_fork(create_fork)?;
         let context = resolved.context();
         let block = resolved.block();
         let fork_db = ForkDB::new(fork);
@@ -3257,7 +3310,7 @@ mod tests {
     };
     use crate::{
         backend::{Backend, DatabaseExt, ForkPosition},
-        evm::EthEvmNetwork,
+        evm::{EthEvmNetwork, TempoEvmNetwork},
         opts::EvmOpts,
     };
     use alloy_consensus::transaction::Recovered;
@@ -3301,6 +3354,61 @@ mod tests {
             journaled_state: JournalInner::new(),
             source_chain_id: 1,
             position: ForkPosition::AfterBlock { block: BlockNumHash::default() },
+        }
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn backend_networks_follow_the_evm_family() {
+        let monad = Backend::<crate::evm::MonadEvmNetwork>::spawn(None).unwrap();
+        assert!(monad.networks().is_monad());
+
+        let ethereum = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let error = ethereum.with_networks(NetworkConfigs::with_monad()).unwrap_err();
+        assert_eq!(error.to_string(), "network config `monad` conflicts with `ethereum` EVM");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn typed_backend_preserves_profiles_and_checks_inferred_fork_sources() {
+        fn fork(endpoint: String, networks: NetworkConfigs) -> crate::fork::CreateFork {
+            crate::fork::CreateFork {
+                url: endpoint.clone(),
+                enable_caching: false,
+                evm_opts: EvmOpts { fork_url: Some(endpoint), networks, ..Default::default() },
+                resolved: None,
+            }
+        }
+
+        let (_api, handle) = spawn(NodeConfig::test()).await;
+        let endpoint = handle.http_endpoint();
+
+        let celo = Backend::<EthEvmNetwork>::spawn(Some(fork(
+            endpoint.clone(),
+            NetworkConfigs::with_celo(),
+        )))
+        .unwrap();
+        assert!(celo.networks().is_celo());
+
+        let tempo = Backend::<TempoEvmNetwork>::spawn(Some(fork(
+            endpoint.clone(),
+            NetworkConfigs::default(),
+        )))
+        .unwrap();
+        assert!(tempo.networks().is_tempo());
+
+        #[cfg(feature = "monad")]
+        {
+            let error = Backend::<crate::evm::MonadEvmNetwork>::spawn(Some(fork(
+                endpoint,
+                NetworkConfigs::default(),
+            )))
+            .unwrap_err();
+            assert!(
+                error.to_string().contains(
+                    "cannot create a `ethereum` fork with an EVM instantiated for `monad`"
+                ),
+                "{error}"
+            );
         }
     }
 

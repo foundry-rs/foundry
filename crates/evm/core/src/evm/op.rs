@@ -1,5 +1,6 @@
 use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_op_evm::{OpEvm, OpEvmContext, OpEvmFactory, OpTx};
+use foundry_evm_networks::NetworkVariant;
 use foundry_fork_db::DatabaseError;
 use op_alloy_network::Optimism;
 use op_revm::{
@@ -29,6 +30,8 @@ impl FoundryChain<OpTx> for L1BlockInfo {}
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OpEvmNetwork;
 impl FoundryEvmNetwork for OpEvmNetwork {
+    const EXECUTION_NETWORK: NetworkVariant = NetworkVariant::Optimism;
+
     type Network = Optimism;
     type EvmFactory = OpEvmFactory;
 }

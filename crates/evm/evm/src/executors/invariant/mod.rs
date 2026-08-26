@@ -2331,7 +2331,8 @@ mod tests {
                 TxEnvFor::<EthEvmNetwork>::default(),
                 backend,
                 Default::default(),
-            );
+            )
+            .unwrap();
         let target = Address::repeat_byte(0x11);
         let mut code = vec![0x6e]; // PUSH15.
         code.extend_from_slice(MAGIC_ASSUME);
@@ -2725,12 +2726,15 @@ mod tests {
         let invariant_address = Address::repeat_byte(0x11);
         let handler_address = Address::repeat_byte(0x22);
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
-            backend,
-            Default::default(),
-        );
+        let mut executor = ExecutorBuilder::default()
+            .gas_limit(GAS_LIMIT)
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                backend,
+                Default::default(),
+            )
+            .unwrap();
         // Return ABI-encoded `true` for the invariant predicate.
         executor
             .set_code(

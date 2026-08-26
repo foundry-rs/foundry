@@ -513,6 +513,34 @@ impl NetworkConfigs {
         if let Some(network) = self.resolved_network() { network } else { NetworkVariant::Ethereum }
     }
 
+    /// Resolves this configuration for an instantiated EVM's execution family.
+    ///
+    /// An unspecified family inherits a non-Ethereum EVM family and remains unresolved for an
+    /// Ethereum EVM so later RPC profile inference still works. An explicit selection must agree
+    /// with the EVM family; compatible profiles such as Celo remain unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the configuration is invalid or its explicit family conflicts with
+    /// `expected`.
+    pub fn normalize_for_execution_network(self, expected: NetworkVariant) -> Result<Self, String> {
+        self.validate()?;
+        if !self.has_network_selection() {
+            return Ok(if expected.is_ethereum() {
+                self
+            } else {
+                self.with_execution_profile(expected.into())
+            });
+        }
+        if self.execution_network() != expected {
+            return Err(format!(
+                "network config `{}` conflicts with `{expected}` EVM",
+                self.execution_profile_name()
+            ));
+        }
+        Ok(self)
+    }
+
     /// Returns whether both configurations can use the same instantiated EVM backend.
     pub fn has_same_execution_profile(&self, other: &Self) -> bool {
         self.celo == other.celo
@@ -1280,6 +1308,33 @@ mod tests {
         );
         assert_eq!(NetworkConfigs::with_celo().execution_family_name(), "ethereum");
         assert_eq!(NetworkConfigs::with_celo().execution_profile_name(), "celo");
+    }
+
+    #[test]
+    fn execution_network_normalization_preserves_compatible_configuration() {
+        let ethereum = NetworkConfigs::default()
+            .normalize_for_execution_network(NetworkVariant::Ethereum)
+            .unwrap();
+        assert!(!ethereum.has_network_selection());
+
+        let default = NetworkConfigs { bypass_prevrandao: true, ..Default::default() }
+            .normalize_for_execution_network(NetworkVariant::Tempo)
+            .unwrap();
+        assert!(default.is_tempo());
+        assert!(default.bypass_prevrandao(NamedChain::Mainnet as u64));
+
+        let celo = NetworkConfigs::with_celo()
+            .normalize_for_execution_network(NetworkVariant::Ethereum)
+            .unwrap();
+        assert!(celo.is_celo());
+    }
+
+    #[test]
+    fn execution_network_normalization_rejects_explicit_conflicts() {
+        let error = NetworkConfigs::with_tempo()
+            .normalize_for_execution_network(NetworkVariant::Ethereum)
+            .unwrap_err();
+        assert_eq!(error, "network config `tempo` conflicts with `ethereum` EVM");
     }
 
     #[test]

@@ -347,7 +347,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             })
             .gas_limit(self.config.evm_opts.gas_limit())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
-            .build(evm_env, tx_env, backend, self.config.evm_opts.networks);
+            .build(evm_env, tx_env, backend, self.config.evm_opts.networks)?;
 
         Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }

@@ -511,7 +511,8 @@ mod tests {
                 TxEnvFor::<EthEvmNetwork>::default(),
                 backend,
                 Default::default(),
-            );
+            )
+            .unwrap();
         let invariant_address = Address::repeat_byte(0x11);
         executor
             .set_code(

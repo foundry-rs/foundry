@@ -862,6 +862,8 @@ struct JsonResult<'a, N: Network> {
 pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub config: Config,
     pub evm_opts: EvmOpts,
+    /// Whether the execution family was inferred from the initial fork endpoint.
+    execution_network_is_inferred: bool,
     /// Exact network hardfork selected for script execution.
     pub hardfork: Option<FoundryHardfork>,
     /// Source chain used for trace decoding and external identifiers.
@@ -881,6 +883,7 @@ async fn resolve_script_fork(
     config: &mut Config,
     evm_opts: &mut EvmOpts,
     active_networks: Option<NetworkConfigs>,
+    execution_network_is_inferred: bool,
 ) -> Result<Option<ResolvedFork>> {
     if evm_opts.fork_url.is_none() {
         return Ok(None);
@@ -888,13 +891,24 @@ async fn resolve_script_fork(
     if evm_opts.fork_endpoint.is_none() {
         evm_opts.infer_network_from_fork().await?;
     }
-    if let Some(active_networks) = active_networks
-        && !active_networks.supports_fork_source(&evm_opts.networks)
-    {
-        eyre::bail!(
-            "fork network `{}` is incompatible with the active EVM",
-            evm_opts.networks.execution_network()
-        );
+    if let Some(active_networks) = active_networks {
+        let source_networks = evm_opts
+            .fork_endpoint
+            .as_ref()
+            .map(|identity| identity.network_profile)
+            .unwrap_or(evm_opts.networks);
+        let require_source_family_match =
+            execution_network_is_inferred || !active_networks.has_network_selection();
+        if require_source_family_match && !active_networks.supports_fork_source(&source_networks) {
+            eyre::bail!(
+                "fork network `{}` is incompatible with the active EVM",
+                source_networks.execution_network()
+            );
+        }
+        // Typed dispatch has already fixed the execution family. Preserve the endpoint profile in
+        // the resolved fork context without letting it replace the active execution configuration.
+        evm_opts.networks = active_networks;
+        evm_opts.fork_network_is_inferred = false;
     }
     config.networks = evm_opts.networks;
     if let Some(identity) = evm_opts.fork_endpoint.clone() {
@@ -914,7 +928,8 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     ) -> Result<Self> {
         // Linking happens before runner construction, so resolve the fork context now and reuse it
         // for all preflight reads and environment construction.
-        let resolved_fork = resolve_script_fork(&mut config, &mut evm_opts, None).await?;
+        let resolved_fork = resolve_script_fork(&mut config, &mut evm_opts, None, false).await?;
+        let execution_network_is_inferred = evm_opts.fork_network_is_inferred;
         let sender_nonce = if let Some(sender_nonce) = sender_nonce_override {
             sender_nonce
         } else if evm_opts.fork_url.is_some() {
@@ -928,6 +943,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         Ok(Self {
             config,
             evm_opts,
+            execution_network_is_inferred,
             hardfork: None,
             source_chain_id: None,
             sender_nonce,
@@ -989,8 +1005,13 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             self.evm_opts.invalidate_fork_endpoint_if_source_changed(fork);
         }
 
-        let fork =
-            resolve_script_fork(&mut self.config, &mut self.evm_opts, active_networks).await?;
+        let fork = resolve_script_fork(
+            &mut self.config,
+            &mut self.evm_opts,
+            active_networks,
+            self.execution_network_is_inferred,
+        )
+        .await?;
         self.resolved_fork = fork.clone();
         Ok(fork)
     }
@@ -1095,7 +1116,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         tx_env.set_fee_token(self.tempo.fee_token);
 
         let mut runner = ScriptRunner::new(
-            builder.build(evm_env, tx_env, db, self.evm_opts.networks),
+            builder.build(evm_env, tx_env, db, self.evm_opts.networks)?,
             self.evm_opts.clone(),
         )
         .with_debug_bytecodes(debug);
@@ -1257,6 +1278,91 @@ mod tests {
         assert_eq!(second.number(), 3);
         assert_eq!(second.context().network_profile, NetworkConfigs::with_monad());
         assert_eq!(config.evm_opts.networks, NetworkConfigs::with_ethereum());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_inferred_tempo_execution_is_preserved_for_an_ethereum_rpc() {
+        let (tempo_api, tempo_handle) = spawn(NodeConfig::test_tempo()).await;
+        let (ethereum_api, ethereum_handle) = spawn(NodeConfig::test()).await;
+        tempo_api.anvil_mine(Some(U256::from(1)), None).await.unwrap();
+        ethereum_api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+
+        let evm_opts = EvmOpts {
+            fork_url: Some(tempo_handle.http_endpoint()),
+            sender: tempo_handle.dev_accounts().next().unwrap(),
+            ..Default::default()
+        };
+        let mut config = ScriptConfig::<TempoEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(config.evm_opts.networks.is_tempo());
+        assert!(config.evm_opts.fork_network_is_inferred);
+        config._get_runner(None, false, false).await.unwrap();
+
+        config.set_fork_url(ethereum_handle.http_endpoint());
+        let second = config.ensure_resolved_fork().await.unwrap().unwrap();
+
+        assert_eq!(second.number(), 2);
+        assert_eq!(second.context().network_profile, NetworkConfigs::default());
+        assert!(config.evm_opts.networks.is_tempo());
+        assert!(!config.evm_opts.fork_network_is_inferred);
+        config._get_runner(None, false, false).await.unwrap();
+    }
+
+    #[cfg(feature = "monad")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_inferred_execution_rejects_later_incompatible_rpc() {
+        let (_tempo_api, tempo_handle) = spawn(NodeConfig::test_tempo()).await;
+        let (_ethereum_api, ethereum_handle) = spawn(NodeConfig::test()).await;
+        let (_monad_api, monad_handle) = spawn(NodeConfig::test_monad()).await;
+
+        let evm_opts = EvmOpts {
+            fork_url: Some(tempo_handle.http_endpoint()),
+            sender: tempo_handle.dev_accounts().next().unwrap(),
+            ..Default::default()
+        };
+        let mut config = ScriptConfig::<TempoEvmNetwork>::new(
+            Config::default(),
+            evm_opts,
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        config.set_fork_url(ethereum_handle.http_endpoint());
+        config.ensure_resolved_fork().await.unwrap();
+        config.set_fork_url(monad_handle.http_endpoint());
+
+        let error = config.ensure_resolved_fork().await.unwrap_err();
+        assert_eq!(error.to_string(), "fork network `monad` is incompatible with the active EVM");
+    }
+
+    #[cfg(feature = "monad")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_unselected_execution_rejects_later_incompatible_rpc() {
+        let (_monad_api, monad_handle) = spawn(NodeConfig::test_monad()).await;
+        let mut config = ScriptConfig::<EthEvmNetwork>::new(
+            Config::default(),
+            EvmOpts::default(),
+            false,
+            TempoOpts::default(),
+            None,
+        )
+        .await
+        .unwrap();
+
+        config.set_fork_url(monad_handle.http_endpoint());
+
+        let error = config.ensure_resolved_fork().await.unwrap_err();
+        assert_eq!(error.to_string(), "fork network `monad` is incompatible with the active EVM");
     }
 
     #[tokio::test(flavor = "multi_thread")]

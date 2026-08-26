@@ -14,6 +14,7 @@ use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_config::ExecutionSpec;
+use foundry_evm_networks::NetworkVariant;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
 use revm::{
     Database,
@@ -52,6 +53,9 @@ pub use tempo::*;
 
 /// Foundry's compatibility trait associating a [`Network`] with a [`FoundryEvmFactory`].
 pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
+    /// The execution family implemented by this network's EVM factory.
+    const EXECUTION_NETWORK: NetworkVariant;
+
     type Network: Network<
             TxEnvelope: Decodable
                             + SignerRecoverable
@@ -71,6 +75,8 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EthEvmNetwork;
 impl FoundryEvmNetwork for EthEvmNetwork {
+    const EXECUTION_NETWORK: NetworkVariant = NetworkVariant::Ethereum;
+
     type Network = Ethereum;
     type EvmFactory = EthEvmFactory;
 }
@@ -78,6 +84,8 @@ impl FoundryEvmNetwork for EthEvmNetwork {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TempoEvmNetwork;
 impl FoundryEvmNetwork for TempoEvmNetwork {
+    const EXECUTION_NETWORK: NetworkVariant = NetworkVariant::Tempo;
+
     type Network = TempoNetwork;
     type EvmFactory = TempoEvmFactory;
 }
@@ -87,6 +95,8 @@ impl FoundryEvmNetwork for TempoEvmNetwork {
 pub struct MonadEvmNetwork;
 #[cfg(feature = "monad")]
 impl FoundryEvmNetwork for MonadEvmNetwork {
+    const EXECUTION_NETWORK: NetworkVariant = NetworkVariant::Monad;
+
     type Network = Ethereum;
     type EvmFactory = alloy_monad_evm::MonadEvmFactory;
 }

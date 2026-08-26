@@ -1919,12 +1919,15 @@ mod tests {
     }
 
     fn sync_test_executor(corpus_root: PathBuf, target: Address) -> Executor<EthEvmNetwork> {
-        let mut executor = ExecutorBuilder::<EthEvmNetwork>::default().gas_limit(1 << 24).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
-            Backend::spawn(None).unwrap(),
-            Default::default(),
-        );
+        let mut executor = ExecutorBuilder::<EthEvmNetwork>::default()
+            .gas_limit(1 << 24)
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                Backend::spawn(None).unwrap(),
+                Default::default(),
+            )
+            .unwrap();
         executor.inspector_mut().collect_edge_coverage_with_config(&corpus_config(corpus_root));
         // CALLDATALOAD(4); PUSH1 8; JUMPI; STOP; JUMPDEST; STOP.
         executor

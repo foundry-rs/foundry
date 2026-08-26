@@ -375,12 +375,10 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
 
         debug!("start executing all tests in contract");
 
-        let executor = self.tcfg.executor(
-            self.known_contracts.clone(),
-            self.analysis.clone(),
-            artifact_id,
-            db.clone(),
-        );
+        let executor = self
+            .tcfg
+            .executor(self.known_contracts.clone(), self.analysis.clone(), artifact_id, db.clone())
+            .expect("test runner network configuration matches its EVM");
         let runner = ContractRunner::new(&identifier, contract, executor, span, self, context);
         let r = runner.run_tests(filter);
 
@@ -611,7 +609,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         analysis: Arc<solar::sema::Compiler>,
         artifact_id: &ArtifactId,
         db: Backend<FEN>,
-    ) -> Executor<FEN> {
+    ) -> eyre::Result<Executor<FEN>> {
         let mut cheats_config = CheatsConfig::new(
             &self.config,
             self.evm_opts.clone(),

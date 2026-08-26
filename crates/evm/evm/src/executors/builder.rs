@@ -78,6 +78,10 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
     }
 
     /// Builds the executor as configured.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the network configuration conflicts with `FEN`'s execution family.
     #[inline]
     pub fn build(
         self,
@@ -85,8 +89,10 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
         tx_env: TxEnvFor<FEN>,
         db: Backend<FEN>,
         networks: NetworkConfigs,
-    ) -> Executor<FEN> {
+    ) -> eyre::Result<Executor<FEN>> {
         let Self { mut stack, gas_limit, spec, legacy_assertions, .. } = self;
+        let db = db.with_networks(networks)?;
+        let networks = db.networks();
         stack.networks = networks;
         if stack.block.is_none() {
             stack.block = Some(evm_env.block_env.clone());
@@ -98,6 +104,6 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
         if let Some(spec) = spec {
             evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
         }
-        Executor::new(db, evm_env, tx_env, stack.build(), networks, gas_limit, legacy_assertions)
+        Ok(Executor::new(db, evm_env, tx_env, stack.build(), gas_limit, legacy_assertions))
     }
 }

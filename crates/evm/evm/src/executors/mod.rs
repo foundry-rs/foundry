@@ -42,7 +42,6 @@ use foundry_evm_core::{
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::ObservedCall;
-use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     bytecode::Bytecode,
@@ -145,17 +144,15 @@ pub struct Executor<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     /// Creates a new `Executor` with the given arguments.
     #[inline]
-    pub fn new(
+    pub(crate) fn new(
         mut backend: Backend<FEN>,
         evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
-        mut inspector: InspectorStack<FEN>,
-        networks: NetworkConfigs,
+        inspector: InspectorStack<FEN>,
         gas_limit: u64,
         legacy_assertions: bool,
     ) -> Self {
-        inspector.networks(networks);
-        backend.set_networks(networks);
+        let networks = backend.networks();
         let extra_cheatcode_addresses = networks.extra_cheatcode_addresses();
         backend.extend_persistent_accounts(extra_cheatcode_addresses.iter().copied());
 
@@ -1802,7 +1799,8 @@ mod tests {
         Vm::{blobhashesCall, mockCallRevert_1Call, revertToStateCall, snapshotStateCall},
     };
     use foundry_config::Config;
-    use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
+    use foundry_evm_core::{constants::MAGIC_SKIP, evm::TempoEvmNetwork, opts::EvmOpts};
+    use foundry_evm_networks::NetworkConfigs;
     use foundry_evm_traces::InternalTraceMode;
     use revm::context::TxEnv;
     use std::{sync::mpsc, thread};
@@ -1848,12 +1846,14 @@ mod tests {
     #[cfg(feature = "monad")]
     #[test]
     fn executor_networks_follow_explicit_configuration() {
-        let ethereum = ExecutorBuilder::<EthEvmNetwork>::default().build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
-            Backend::spawn(None).unwrap(),
-            NetworkConfigs::default(),
-        );
+        let ethereum = ExecutorBuilder::<EthEvmNetwork>::default()
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                Backend::spawn(None).unwrap(),
+                NetworkConfigs::default(),
+            )
+            .unwrap();
         assert!(!ethereum.backend().networks().is_monad());
         assert!(
             !ethereum
@@ -1868,12 +1868,52 @@ mod tests {
                 TxEnvFor::<foundry_evm_core::evm::MonadEvmNetwork>::default(),
                 Backend::spawn(None).unwrap(),
                 NetworkConfigs::with_monad(),
-            );
+            )
+            .unwrap();
         assert!(monad.inspector().networks.is_monad());
         assert!(monad.backend().networks().is_monad());
         assert!(
             monad.backend().is_persistent(&foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS)
         );
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn executor_networks_normalize_defaults_and_reject_conflicts() {
+        let monad = ExecutorBuilder::<foundry_evm_core::evm::MonadEvmNetwork>::default()
+            .build(
+                EvmEnvFor::<foundry_evm_core::evm::MonadEvmNetwork>::default(),
+                TxEnvFor::<foundry_evm_core::evm::MonadEvmNetwork>::default(),
+                Backend::spawn(None).unwrap(),
+                NetworkConfigs::default(),
+            )
+            .unwrap();
+        assert!(monad.backend().networks().is_monad());
+
+        let error = ExecutorBuilder::<EthEvmNetwork>::default()
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                Backend::spawn(None).unwrap(),
+                NetworkConfigs::with_monad(),
+            )
+            .unwrap_err();
+        assert_eq!(error.to_string(), "network config `monad` conflicts with `ethereum` EVM");
+    }
+
+    #[test]
+    fn executor_normalizes_networks_before_building_inspectors() {
+        let tempo = ExecutorBuilder::<TempoEvmNetwork>::default()
+            .build(
+                EvmEnvFor::<TempoEvmNetwork>::default(),
+                TxEnvFor::<TempoEvmNetwork>::default(),
+                Backend::spawn(None).unwrap(),
+                NetworkConfigs::default(),
+            )
+            .unwrap();
+
+        assert!(tempo.inspector().networks.is_tempo());
+        assert!(tempo.inspector().inner.tempo_labels.is_some());
     }
 
     #[test]
@@ -1964,12 +2004,14 @@ mod tests {
     #[test]
     fn set_spec_id_updates_spec_dependent_cfg_state() {
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
+        let mut executor = ExecutorBuilder::default()
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                backend,
+                NetworkConfigs::default(),
+            )
+            .unwrap();
 
         executor.evm_env_mut().cfg_env.set_spec_and_mainnet_gas_params(SpecId::HOMESTEAD);
         assert_eq!(
@@ -2020,7 +2062,8 @@ mod tests {
             .inspectors(|stack| stack.cheatcodes(cheats_config))
             .spec_id(SpecId::AMSTERDAM)
             .gas_limit(1_000_000)
-            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default());
+            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default())
+            .unwrap();
 
         let target = Address::repeat_byte(0x11);
         // PUSH0; PUSH0; PUSH0; CREATE; POP; STOP.
@@ -2052,7 +2095,8 @@ mod tests {
             .inspectors(|stack| stack.cheatcodes(cheats_config))
             .spec_id(SpecId::AMSTERDAM)
             .gas_limit(1_000_000)
-            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default());
+            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default())
+            .unwrap();
 
         let target = Address::repeat_byte(0x11);
         let mocked = Address::repeat_byte(0x22);
@@ -2094,12 +2138,15 @@ mod tests {
     #[test]
     fn set_trace_requirements_replaces_trace_mode_between_transactions() {
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(1 << 20).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
+        let mut executor = ExecutorBuilder::default()
+            .gas_limit(1 << 20)
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                backend,
+                NetworkConfigs::default(),
+            )
+            .unwrap();
         executor.evm_env_mut().cfg_env.disable_nonce_check = true;
         let target = Address::repeat_byte(0x11);
         // PUSH1 4; JUMP; STOP; JUMPDEST; PUSH1 1; PUSH1 0; SSTORE; STOP.
@@ -2138,12 +2185,15 @@ mod tests {
     fn early_exit_interrupts_active_evm_execution() {
         const GAS_LIMIT: u64 = 1 << 24;
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
+        let mut executor = ExecutorBuilder::default()
+            .gas_limit(GAS_LIMIT)
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                backend,
+                NetworkConfigs::default(),
+            )
+            .unwrap();
         let early_exit = EarlyExit::new(false);
         executor.inspector_mut().set_early_exit(early_exit.clone());
 
@@ -2178,12 +2228,15 @@ mod tests {
     #[test]
     fn completed_execution_is_not_retroactively_cancelled() {
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(1 << 24).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
+        let mut executor = ExecutorBuilder::default()
+            .gas_limit(1 << 24)
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                backend,
+                NetworkConfigs::default(),
+            )
+            .unwrap();
         let early_exit = EarlyExit::new(false);
         executor.inspector_mut().set_early_exit(early_exit.clone());
 
@@ -2200,12 +2253,15 @@ mod tests {
     fn campaign_deadline_interrupts_active_evm_execution() {
         const GAS_LIMIT: u64 = 1 << 24;
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().gas_limit(GAS_LIMIT).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
+        let mut executor = ExecutorBuilder::default()
+            .gas_limit(GAS_LIMIT)
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                backend,
+                NetworkConfigs::default(),
+            )
+            .unwrap();
         let cancellation = EvmExecutionCancellation::campaign(
             EarlyExit::new(false),
             Arc::new(AtomicBool::new(false)),
@@ -2228,12 +2284,15 @@ mod tests {
     #[test]
     fn beacon_root_system_call_does_not_persist_system_address() {
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().spec_id(SpecId::CANCUN).build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            TxEnvFor::<EthEvmNetwork>::default(),
-            backend,
-            NetworkConfigs::default(),
-        );
+        let mut executor = ExecutorBuilder::default()
+            .spec_id(SpecId::CANCUN)
+            .build(
+                EvmEnvFor::<EthEvmNetwork>::default(),
+                TxEnvFor::<EthEvmNetwork>::default(),
+                backend,
+                NetworkConfigs::default(),
+            )
+            .unwrap();
         let before = executor.backend().basic_ref(SYSTEM_ADDRESS).unwrap();
 
         executor.apply_beacon_root(B256::repeat_byte(0x11)).unwrap();
@@ -2268,7 +2327,8 @@ mod tests {
         let mut executor = ExecutorBuilder::default()
             .inspectors(|stack| stack.cheatcodes(cheats_config))
             .spec_id(SpecId::CANCUN)
-            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default());
+            .build(EvmEnv::default(), TxEnv::default(), backend, NetworkConfigs::default())
+            .unwrap();
 
         let original: Vec<B256> = vec![B256::repeat_byte(0x11), B256::repeat_byte(0x22)];
         executor.tx_env_mut().set_blob_hashes(original.clone());
