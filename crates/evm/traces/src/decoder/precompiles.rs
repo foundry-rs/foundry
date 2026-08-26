@@ -57,156 +57,6 @@ interface Precompiles {
 }
 use Precompiles::*;
 
-pub(crate) fn is_known_precompile(
-    address: Address,
-    networks: Option<NetworkConfigs>,
-    chain_id: Option<u64>,
-    tempo_hardfork: Option<TempoHardfork>,
-    monad_hardfork: Option<MonadHardfork>,
-) -> bool {
-    #[cfg(not(feature = "monad"))]
-    let _ = monad_hardfork;
-
-    // Standard EVM precompiles (all chains).
-    // An 18-byte zero prefix, as `P256_VERIFY` (0x..0100) occupies the two lowest bytes.
-    let is_standard = address[..18].iter().all(|&x| x == 0)
-        && matches!(
-            address,
-            EC_RECOVER
-                | SHA_256
-                | RIPEMD_160
-                | IDENTITY
-                | MOD_EXP
-                | EC_ADD
-                | EC_MUL
-                | EC_PAIRING
-                | BLAKE_2F
-                | POINT_EVALUATION
-                | BLS12_G1ADD
-                | BLS12_G1MSM
-                | BLS12_G2ADD
-                | BLS12_G2MSM
-                | BLS12_PAIRING_CHECK
-                | BLS12_MAP_FP_TO_G1
-                | BLS12_MAP_FP2_TO_G2
-                | P256_VERIFY
-        );
-    if is_standard {
-        return true;
-    }
-    // Tempo precompiles and TIP20 fee tokens (only on Tempo chains).
-    let is_tempo_precompile = match tempo_hardfork {
-        Some(hardfork) => active_tempo_precompile_addresses(hardfork).any(|addr| addr == address),
-        None => TEMPO_PRECOMPILE_ADDRESSES.contains(&address),
-    };
-    let is_tempo_context = networks.map_or_else(
-        || {
-            chain_id
-                .map(|id| Chain::from_id(id).is_tempo())
-                .unwrap_or_else(|| tempo_hardfork.is_some())
-        },
-        |networks| networks.is_tempo(),
-    );
-    if is_tempo_context && (is_tempo_precompile || TEMPO_TIP20_TOKENS.contains(&address)) {
-        return true;
-    }
-    // Monad precompiles (only on a Monad chain or in an explicitly configured Monad context).
-    #[cfg(feature = "monad")]
-    {
-        let is_monad_context = networks.map_or_else(
-            || {
-                chain_id.is_some_and(|id| {
-                    matches!(
-                        Chain::from_id(id).named(),
-                        Some(NamedChain::Monad | NamedChain::MonadTestnet)
-                    )
-                }) || monad_hardfork.is_some()
-            },
-            |networks| networks.is_monad(),
-        );
-        if is_monad_context {
-            if address == monad_revm::staking::STAKING_ADDRESS {
-                return true;
-            }
-            if address == monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS
-                && monad_hardfork.is_none_or(|hardfork| {
-                    foundry_evm_networks::is_monad_precompile_active_at(address, hardfork)
-                })
-            {
-                return true;
-            }
-        }
-    }
-    // Celo transfer precompile (only on Celo chains).
-    let is_celo_context = networks.map_or_else(
-        || {
-            chain_id.is_some_and(|id| {
-                matches!(
-                    Chain::from_id(id).named(),
-                    Some(NamedChain::Celo | NamedChain::CeloSepolia)
-                )
-            })
-        },
-        |networks| networks.is_celo(),
-    );
-    is_celo_context && address == CELO_TRANSFER
-}
-
-pub(crate) fn is_known_precompile_call(
-    trace: &CallTrace,
-    networks: Option<NetworkConfigs>,
-    chain_id: Option<u64>,
-    tempo_hardfork: Option<TempoHardfork>,
-    monad_hardfork: Option<MonadHardfork>,
-) -> bool {
-    // Unlike the long-established low addresses, P256 is hardfork-dependent. Traces without an
-    // execution classification, such as RPC callTracer frames, cannot safely infer it by address.
-    if trace.address == P256_VERIFY && trace.maybe_precompile != Some(true) {
-        return false;
-    }
-    is_known_precompile(trace.address, networks, chain_id, tempo_hardfork, monad_hardfork)
-}
-
-/// Tries to decode a precompile call. Returns `Some` if successful.
-pub(super) fn decode(
-    trace: &CallTrace,
-    networks: Option<NetworkConfigs>,
-    chain_id: Option<u64>,
-    tempo_hardfork: Option<TempoHardfork>,
-    monad_hardfork: Option<MonadHardfork>,
-) -> Option<DecodedCallTrace> {
-    if !is_known_precompile_call(trace, networks, chain_id, tempo_hardfork, monad_hardfork) {
-        return None;
-    }
-
-    for &precompile in PRECOMPILES {
-        if trace.address == precompile.address() {
-            let signature = precompile.signature(&trace.data);
-
-            let args = precompile
-                .decode_call(&trace.data)
-                .unwrap_or_else(|_| vec![trace.data.to_string()]);
-
-            let return_data = precompile
-                .decode_return(&trace.output)
-                .unwrap_or_else(|_| vec![trace.output.to_string()]);
-            let return_data = if return_data.len() == 1 {
-                return_data.into_iter().next().unwrap()
-            } else {
-                format!("({})", return_data.join(", "))
-            };
-
-            return Some(DecodedCallTrace {
-                label: Some("PRECOMPILES".to_string()),
-                call_data: Some(DecodedCallData { signature: signature.to_string(), args }),
-                return_data: Some(return_data),
-            });
-        }
-    }
-
-    None
-}
-
 pub(super) trait Precompile {
     fn address(&self) -> Address;
     fn signature(&self, data: &[u8]) -> &'static str;
@@ -620,6 +470,156 @@ impl Precompile for P256Verify {
 fn take_at_most(data: &[u8], n: usize) -> (&[u8], &[u8]) {
     let n = n.min(data.len());
     data.split_at(n)
+}
+
+pub(crate) fn is_known_precompile(
+    address: Address,
+    networks: Option<NetworkConfigs>,
+    chain_id: Option<u64>,
+    tempo_hardfork: Option<TempoHardfork>,
+    monad_hardfork: Option<MonadHardfork>,
+) -> bool {
+    #[cfg(not(feature = "monad"))]
+    let _ = monad_hardfork;
+
+    // Standard EVM precompiles (all chains).
+    // An 18-byte zero prefix, as `P256_VERIFY` (0x..0100) occupies the two lowest bytes.
+    let is_standard = address[..18].iter().all(|&x| x == 0)
+        && matches!(
+            address,
+            EC_RECOVER
+                | SHA_256
+                | RIPEMD_160
+                | IDENTITY
+                | MOD_EXP
+                | EC_ADD
+                | EC_MUL
+                | EC_PAIRING
+                | BLAKE_2F
+                | POINT_EVALUATION
+                | BLS12_G1ADD
+                | BLS12_G1MSM
+                | BLS12_G2ADD
+                | BLS12_G2MSM
+                | BLS12_PAIRING_CHECK
+                | BLS12_MAP_FP_TO_G1
+                | BLS12_MAP_FP2_TO_G2
+                | P256_VERIFY
+        );
+    if is_standard {
+        return true;
+    }
+    // Tempo precompiles and TIP20 fee tokens (only on Tempo chains).
+    let is_tempo_precompile = match tempo_hardfork {
+        Some(hardfork) => active_tempo_precompile_addresses(hardfork).any(|addr| addr == address),
+        None => TEMPO_PRECOMPILE_ADDRESSES.contains(&address),
+    };
+    let is_tempo_context = networks.map_or_else(
+        || {
+            chain_id
+                .map(|id| Chain::from_id(id).is_tempo())
+                .unwrap_or_else(|| tempo_hardfork.is_some())
+        },
+        |networks| networks.is_tempo(),
+    );
+    if is_tempo_context && (is_tempo_precompile || TEMPO_TIP20_TOKENS.contains(&address)) {
+        return true;
+    }
+    // Monad precompiles (only on a Monad chain or in an explicitly configured Monad context).
+    #[cfg(feature = "monad")]
+    {
+        let is_monad_context = networks.map_or_else(
+            || {
+                chain_id.is_some_and(|id| {
+                    matches!(
+                        Chain::from_id(id).named(),
+                        Some(NamedChain::Monad | NamedChain::MonadTestnet)
+                    )
+                }) || monad_hardfork.is_some()
+            },
+            |networks| networks.is_monad(),
+        );
+        if is_monad_context {
+            if address == monad_revm::staking::STAKING_ADDRESS {
+                return true;
+            }
+            if address == monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS
+                && monad_hardfork.is_none_or(|hardfork| {
+                    foundry_evm_networks::is_monad_precompile_active_at(address, hardfork)
+                })
+            {
+                return true;
+            }
+        }
+    }
+    // Celo transfer precompile (only on Celo chains).
+    let is_celo_context = networks.map_or_else(
+        || {
+            chain_id.is_some_and(|id| {
+                matches!(
+                    Chain::from_id(id).named(),
+                    Some(NamedChain::Celo | NamedChain::CeloSepolia)
+                )
+            })
+        },
+        |networks| networks.is_celo(),
+    );
+    is_celo_context && address == CELO_TRANSFER
+}
+
+pub(crate) fn is_known_precompile_call(
+    trace: &CallTrace,
+    networks: Option<NetworkConfigs>,
+    chain_id: Option<u64>,
+    tempo_hardfork: Option<TempoHardfork>,
+    monad_hardfork: Option<MonadHardfork>,
+) -> bool {
+    // Unlike the long-established low addresses, P256 is hardfork-dependent. Traces without an
+    // execution classification, such as RPC callTracer frames, cannot safely infer it by address.
+    if trace.address == P256_VERIFY && trace.maybe_precompile != Some(true) {
+        return false;
+    }
+    is_known_precompile(trace.address, networks, chain_id, tempo_hardfork, monad_hardfork)
+}
+
+/// Tries to decode a precompile call. Returns `Some` if successful.
+pub(super) fn decode(
+    trace: &CallTrace,
+    networks: Option<NetworkConfigs>,
+    chain_id: Option<u64>,
+    tempo_hardfork: Option<TempoHardfork>,
+    monad_hardfork: Option<MonadHardfork>,
+) -> Option<DecodedCallTrace> {
+    if !is_known_precompile_call(trace, networks, chain_id, tempo_hardfork, monad_hardfork) {
+        return None;
+    }
+
+    for &precompile in PRECOMPILES {
+        if trace.address == precompile.address() {
+            let signature = precompile.signature(&trace.data);
+
+            let args = precompile
+                .decode_call(&trace.data)
+                .unwrap_or_else(|_| vec![trace.data.to_string()]);
+
+            let return_data = precompile
+                .decode_return(&trace.output)
+                .unwrap_or_else(|_| vec![trace.output.to_string()]);
+            let return_data = if return_data.len() == 1 {
+                return_data.into_iter().next().unwrap()
+            } else {
+                format!("({})", return_data.join(", "))
+            };
+
+            return Some(DecodedCallTrace {
+                label: Some("PRECOMPILES".to_string()),
+                call_data: Some(DecodedCallData { signature: signature.to_string(), args }),
+                return_data: Some(return_data),
+            });
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
