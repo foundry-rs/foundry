@@ -18,7 +18,9 @@ use crate::eth::{
     error::{BlockchainError, InvalidTransactionError},
     pool::transactions::PoolTransaction,
 };
-use alloy_consensus::{BlockHeader, constants::EMPTY_ROOT_HASH, transaction::Recovered};
+use alloy_consensus::{
+    BlockHeader, Transaction as _, constants::EMPTY_ROOT_HASH, transaction::Recovered,
+};
 use alloy_evm::{
     Database, Evm, EvmEnv, EvmFactory, RecoveredTx,
     block::{BlockExecutionError, BlockExecutionResult, BlockExecutor, StateDB},
@@ -49,7 +51,7 @@ use revm::{
     Inspector,
     context::{Transaction, TxEnv},
     context_interface::{
-        result::{HaltReason, ResultAndState},
+        result::{HaltReason, InvalidTransaction, ResultAndState},
         transaction::AuthorizationTr,
     },
     database_interface::WrapDatabaseRef,
@@ -57,6 +59,7 @@ use revm::{
     state::AccountInfo,
 };
 use std::sync::Arc;
+use tracing::debug;
 
 pub(super) fn store_block_metadata<N: Network>(
     storage: &mut BlockchainStorage<N>,
@@ -159,6 +162,75 @@ pub(super) fn rollback_transaction<DB: alloy_evm::Database>(
 }
 
 impl<N: Network> Backend<N> {
+    /// Validates Monad-specific transaction type restrictions.
+    pub(super) const fn validate_monad_transaction_type(
+        &self,
+        tx: &FoundryTxEnvelope,
+    ) -> Result<(), InvalidTransactionError> {
+        if self.is_monad() && tx.is_eip4844() {
+            return Err(InvalidTransactionError::MonadBlobTransactionUnsupported);
+        }
+        Ok(())
+    }
+
+    /// Validates Monad's gas-only transaction balance requirement.
+    ///
+    /// Returns whether the transaction was validated as a Monad transaction.
+    pub(super) fn validate_monad_transaction_funds(
+        &self,
+        pending: &PendingTransaction<FoundryTxEnvelope>,
+        account: &AccountInfo,
+        evm_env: &EvmEnv,
+    ) -> Result<bool, InvalidTransactionError> {
+        if !self.is_monad() {
+            return Ok(false);
+        }
+
+        let tx = &pending.transaction;
+        let effective_gas_price = tx.effective_gas_price(Some(evm_env.block_env.basefee));
+        let required = U256::from(tx.gas_limit()) * U256::from(effective_gas_price);
+        if account.balance < required {
+            debug!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance, required, *pending.sender());
+            return Err(InvalidTransactionError::InsufficientFunds);
+        }
+        Ok(true)
+    }
+
+    /// Validates a forced Monad protocol transaction selected for mining.
+    ///
+    /// Returns whether the transaction was recognized and fully validated as a protocol call.
+    pub(super) fn validate_monad_mining_pool_transaction_for(
+        &self,
+        pool_tx: &PoolTransaction<FoundryTxEnvelope>,
+        account: &AccountInfo,
+        evm_env: &EvmEnv,
+    ) -> Result<bool, InvalidTransactionError> {
+        if !self.is_monad() || !pool_tx.is_replay {
+            return Ok(false);
+        }
+
+        let tx_env: TxEnv = build_tx_env_for_pending(&pool_tx.pending_transaction, self.cheats());
+        let Some(system_call) = protocol_system_call(&tx_env).map_err(|err| {
+            InvalidTransactionError::Revm(InvalidTransaction::Str(err.to_string().into()))
+        })?
+        else {
+            return Ok(false);
+        };
+        if system_call.chain_id.is_some_and(|chain_id| chain_id != evm_env.cfg_env.chain_id) {
+            return Err(InvalidTransactionError::InvalidChainId);
+        }
+        if system_call.nonce < account.nonce {
+            return Err(InvalidTransactionError::NonceTooLow);
+        }
+        if system_call.nonce > account.nonce {
+            return Err(InvalidTransactionError::NonceTooHigh);
+        }
+        if system_call.nonce == u64::MAX {
+            return Err(InvalidTransactionError::NonceMaxValue);
+        }
+        Ok(true)
+    }
+
     /// Executes a candidate block through a concrete Monad EVM.
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub(super) fn execute_with_monad_block_executor<DB>(
