@@ -1,4 +1,6 @@
 //! In-memory blockchain backend.
+#[cfg(feature = "monad")]
+use self::monad::advance_block_context as advance_monad_context;
 use self::{in_memory_db::StateRootDb, state::trie_storage};
 
 #[cfg(feature = "optimism")]
@@ -508,6 +510,9 @@ const fn next_monad_context(context: &mut MonadReplayContext) -> MonadExecutionC
 const fn next_monad_context(_context: &mut MonadReplayContext) -> MonadExecutionContext<'_> {
     MonadExecutionContext { _marker: std::marker::PhantomData }
 }
+
+#[cfg(not(feature = "monad"))]
+const fn advance_monad_context(_context: &mut Option<MonadReplayContext>) {}
 
 const fn noop_before_transaction<E, T>(_evm: &mut E, _tx: &T) {}
 
@@ -7774,10 +7779,7 @@ impl Backend<FoundryNetwork> {
                     results.push(bundle_results);
                     block_env.number = block_env.number.saturating_add(U256::ONE);
                     block_env.timestamp = block_env.timestamp.saturating_add(U256::ONE);
-                    #[cfg(feature = "monad")]
-                    if let Some(context) = monad_context.as_mut() {
-                        monad::advance_block(context);
-                    }
+                    advance_monad_context(&mut monad_context);
                 }
 
                 Ok(results)
@@ -8385,11 +8387,7 @@ impl Backend<FoundryNetwork> {
                 parent_blob_gas_used = header.blob_gas_used().unwrap_or_default();
 
                 block_res.push(simulated_block);
-
-                #[cfg(feature = "monad")]
-                if let Some(context) = monad_context.as_mut() {
-                    monad::advance_block(context);
-                }
+                advance_monad_context(&mut monad_context);
             }
 
             Ok(block_res)
@@ -8405,18 +8403,17 @@ impl Backend<FoundryNetwork> {
                         header.base_fee_per_gas().unwrap_or_default(),
                     );
                     #[cfg(feature = "monad")]
-                    let monad_context = if self.is_monad() {
-                        let mut context = self.monad_context_before_mined_transaction(
+                    let mut monad_context = if self.is_monad() {
+                        Some(self.monad_context_before_mined_transaction(
                             &block.block,
                             block.block.body.transactions.len(),
-                        )?;
-                        monad::advance_block(&mut context);
-                        Some(context)
+                        )?)
                     } else {
                         None
                     };
                     #[cfg(not(feature = "monad"))]
-                    let monad_context = None;
+                    let mut monad_context = None;
+                    advance_monad_context(&mut monad_context);
                     simulate_at(
                         state,
                         block_env_from_header(header),

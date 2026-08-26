@@ -158,7 +158,8 @@ pub(super) fn resolve_execution_context(
     }
 }
 
-pub(super) fn advance_block(context: &mut MonadChainContext) {
+pub(super) fn advance_block_context(context: &mut Option<MonadChainContext>) {
+    let Some(context) = context else { return };
     let current = context
         .current_block_senders
         .iter()
