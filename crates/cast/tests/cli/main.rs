@@ -3551,7 +3551,11 @@ contract EventEmitter {
         .args(["--quiet", "events", tx_hash, "--rpc-url", &endpoint])
         .assert_success()
         .stdout_eq(str![[r#"
-[block 2, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3::Transfer(address,address,uint256) { from: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, to: 0x5FbDB2315678afecb367f032d93F642f64180aa3, amount: 42 }
+[block 2, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3
+  topic 0: 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+  topic 1: 0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266
+  topic 2: 0x0000000000000000000000005fbdb2315678afecb367f032d93f642f64180aa3
+  data: 0x000000000000000000000000000000000000000000000000000000000000002a
 
 "#]]);
 });
