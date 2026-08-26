@@ -536,7 +536,7 @@ impl<'hir> DelegateTargetCollector<'hir> {
             }
 
             self.paths = std::mem::take(&mut pending);
-            let next = if source == hir::LoopSource::For
+            let next = if source == hir::LoopSource::ForWithUpdate
                 && let Some((next, for_exits)) = self.visit_for_iteration(block)
             {
                 Self::extend_unique(&mut exits, for_exits);
