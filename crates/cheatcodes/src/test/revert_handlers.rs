@@ -23,16 +23,6 @@ static DUMMY_CALL_OUTPUT: Bytes = Bytes::from_static(&[0u8; 8192]);
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
 const DUMMY_CREATE_ADDRESS: Address = address!("0x0000000000000000000000000000000000000001");
 
-fn stringify(data: &[u8]) -> String {
-    if let Ok(s) = String::abi_decode(data) {
-        return s;
-    }
-    if data.is_ascii() {
-        return std::str::from_utf8(data).unwrap().to_owned();
-    }
-    hex::encode_prefixed(data)
-}
-
 /// Common parameters for expected or assumed reverts. Allows for code reuse.
 pub(crate) trait RevertParameters {
     fn reverter(&self) -> Option<Address>;
@@ -286,6 +276,16 @@ pub(crate) fn handle_expect_revert(
         )?;
         Ok(success_return())
     }
+}
+
+fn stringify(data: &[u8]) -> String {
+    if let Ok(s) = String::abi_decode(data) {
+        return s;
+    }
+    if data.is_ascii() {
+        return std::str::from_utf8(data).unwrap().to_owned();
+    }
+    hex::encode_prefixed(data)
 }
 
 fn decode_revert(revert: Vec<u8>) -> Vec<u8> {
