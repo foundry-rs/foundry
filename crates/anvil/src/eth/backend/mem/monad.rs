@@ -163,7 +163,7 @@ pub(super) fn rollback_transaction<DB: alloy_evm::Database>(
 
 impl<N: Network> Backend<N> {
     /// Validates Monad-specific transaction type restrictions.
-    pub(super) fn validate_monad_transaction_type(
+    pub(super) const fn validate_monad_transaction_type(
         &self,
         tx: &FoundryTxEnvelope,
     ) -> Result<(), InvalidTransactionError> {
