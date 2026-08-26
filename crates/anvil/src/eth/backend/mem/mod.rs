@@ -1,10 +1,6 @@
 //! In-memory blockchain backend.
-#[cfg(feature = "monad")]
-use self::monad::advance_block_context as advance_monad_context;
 use self::{in_memory_db::StateRootDb, state::trie_storage};
 
-#[cfg(feature = "optimism")]
-use crate::eth::backend::executor::optimism::build_simulated_deposit_receipt;
 use crate::{
     ForkChoice, NodeConfig, PrecompileFactory,
     config::{ForkTransactionReplay, PruneStateHistoryConfig},
@@ -510,9 +506,6 @@ const fn next_monad_context(context: &mut MonadReplayContext) -> MonadExecutionC
 const fn next_monad_context(_context: &mut MonadReplayContext) -> MonadExecutionContext<'_> {
     MonadExecutionContext { _marker: std::marker::PhantomData }
 }
-
-#[cfg(not(feature = "monad"))]
-const fn advance_monad_context(_context: &mut Option<MonadReplayContext>) {}
 
 const fn noop_before_transaction<E, T>(_evm: &mut E, _tx: &T) {}
 
@@ -7770,7 +7763,8 @@ impl Backend<FoundryNetwork> {
                     results.push(bundle_results);
                     block_env.number = block_env.number.saturating_add(U256::ONE);
                     block_env.timestamp = block_env.timestamp.saturating_add(U256::ONE);
-                    advance_monad_context(&mut monad_context);
+                    #[cfg(feature = "monad")]
+                    self::monad::advance_block_context(&mut monad_context);
                 }
 
                 Ok(results)
@@ -8184,7 +8178,7 @@ impl Backend<FoundryNetwork> {
                     let tx_hash = tx.as_ref().hash();
                     #[cfg(feature = "optimism")]
                     let receipt = if matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
-                        build_simulated_deposit_receipt(
+                        crate::eth::backend::executor::optimism::build_simulated_deposit_receipt(
                             self.hardfork(),
                             caller_nonce,
                             &result,
@@ -8378,7 +8372,8 @@ impl Backend<FoundryNetwork> {
                 parent_blob_gas_used = header.blob_gas_used().unwrap_or_default();
 
                 block_res.push(simulated_block);
-                advance_monad_context(&mut monad_context);
+                #[cfg(feature = "monad")]
+                self::monad::advance_block_context(&mut monad_context);
             }
 
             Ok(block_res)
@@ -8393,11 +8388,16 @@ impl Backend<FoundryNetwork> {
                         header.gas_limit(),
                         header.base_fee_per_gas().unwrap_or_default(),
                     );
-                    let mut monad_context = self.active_monad_context_before_mined_transaction(
+                    let monad_context = self.active_monad_context_before_mined_transaction(
                         &block.block,
                         block.block.body.transactions.len(),
                     )?;
-                    advance_monad_context(&mut monad_context);
+                    #[cfg(feature = "monad")]
+                    let monad_context = {
+                        let mut monad_context = monad_context;
+                        self::monad::advance_block_context(&mut monad_context);
+                        monad_context
+                    };
                     simulate_at(
                         state,
                         block_env_from_header(header),
