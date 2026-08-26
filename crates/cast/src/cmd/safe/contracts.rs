@@ -1,7 +1,7 @@
 // The Safe ABI fixes the number of transaction hash fields.
 #![allow(clippy::too_many_arguments)]
 
-use alloy_primitives::{Address, U256, address, hex};
+use alloy_primitives::{Address, address};
 use alloy_sol_types::sol;
 
 pub(super) const SAFE_V1_4_1: Address = address!("41675C099F32341bf84BFc5382aF534df5C7461a");
@@ -13,8 +13,8 @@ pub(super) const COMPATIBILITY_FALLBACK_HANDLER_V1_4_1: Address =
 pub(super) const SIMULATE_TX_ACCESSOR_V1_4_1: Address =
     address!("3d4BA2E0884aa488718476ca2FB8Efc291A46199");
 pub(super) const SENTINEL_OWNER: Address = address!("0000000000000000000000000000000000000001");
-pub(super) const PREDETERMINED_SALT_NONCE: U256 =
-    U256::from_be_bytes(hex!("b1073742015cbcf5a3a4d9d1ae33ecf619439710b89475f92e2abd2117e90f90"));
+pub(super) const PREDETERMINED_SALT_NONCE: &str =
+    "0xb1073742015cbcf5a3a4d9d1ae33ecf619439710b89475f92e2abd2117e90f90";
 
 sol! {
     #[sol(rpc)]
@@ -44,8 +44,6 @@ sol! {
             address refundReceiver,
             uint256 nonce
         ) external view returns (bytes32);
-
-        function getThreshold() external view returns (uint256);
 
         function simulateAndRevert(address targetContract, bytes calldata calldataPayload) external;
 

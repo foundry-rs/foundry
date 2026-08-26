@@ -30,12 +30,12 @@ pub(super) async fn run(
         "Transaction Service returned a different Safe transaction hash"
     );
     transaction.verify_hash(&provider).await?;
-    transaction.show_signing_summary()?;
+    transaction.show_transaction_summary()?;
     ensure_contract(&provider, accessor, "SimulateTxAccessor", "--accessor").await?;
 
-    let safe = transaction.safe()?;
+    let safe = transaction.safe;
     let accessor_call: Bytes = ISimulateTxAccessor::simulateCall {
-        to: transaction.to()?,
+        to: transaction.to,
         value: SafeTransaction::number(&transaction.value, "value")?,
         data: transaction.data.clone(),
         operation: transaction.operation,
@@ -48,10 +48,9 @@ pub(super) async fn run(
             .into();
     let request =
         TransactionRequest::default().with_from(safe).with_to(safe).with_input(simulation_call);
-    let error = provider
-        .call(request)
-        .await
-        .expect_err("Safe simulateAndRevert unexpectedly returned successfully");
+    let Err(error) = provider.call(request).await else {
+        eyre::bail!("Safe simulateAndRevert unexpectedly returned successfully");
+    };
     let revert_data = error
         .as_error_resp()
         .and_then(|payload| payload.as_revert_data())

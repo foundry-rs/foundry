@@ -54,30 +54,29 @@ pub(super) async fn propose(
         None => service.next_nonce(chain_id, safe, onchain_nonce).await?,
     };
     let mut transaction = SafeTransaction {
-        safe: safe.to_checksum(None),
-        to: to.to_checksum(None),
+        safe,
+        to,
         value: value.to_string(),
         data,
         operation: operation.as_u8(),
         safe_tx_gas: safe_tx_gas.to_string(),
         base_gas: base_gas.to_string(),
         gas_price: gas_price.to_string(),
-        gas_token: gas_token.to_checksum(None),
-        refund_receiver: refund_receiver.to_checksum(None),
+        gas_token,
+        refund_receiver,
         nonce: nonce.to_string(),
         safe_tx_hash: B256::ZERO,
-        signatures: Bytes::new(),
         confirmations: Vec::new(),
         is_executed: false,
         transaction_hash: None,
     };
     transaction.safe_tx_hash = transaction.calculate_hash(&provider).await?;
-    transaction.show_signing_summary()?;
+    transaction.show_transaction_summary()?;
     let signer = wallet.signer().await?;
     let signature = sign_safe_hash(&signer, transaction.safe_tx_hash).await?;
     let url = service.endpoint(
         chain_id,
-        &format!("v2/safes/{}/multisig-transactions/", transaction.safe()?.to_checksum(None)),
+        &format!("v2/safes/{}/multisig-transactions/", transaction.safe.to_checksum(None)),
     )?;
     let body = transaction.proposal_body(signer.address(), signature, origin);
     service.empty_response(service.request(Method::POST, url).json(&body)).await?;
@@ -101,7 +100,7 @@ pub(super) async fn sign(
         "Transaction Service returned a different Safe transaction hash"
     );
     transaction.verify_hash(&provider).await?;
-    transaction.show_signing_summary()?;
+    transaction.show_transaction_summary()?;
     let signer = wallet.signer().await?;
     let signature = sign_safe_hash(&signer, safe_tx_hash).await?;
     let url = service

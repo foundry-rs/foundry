@@ -1,14 +1,14 @@
 use crate::tempo;
 use alloy_consensus::{SignableTransaction, Signed};
-use alloy_network::{Ethereum, EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_network::{Ethereum, EthereumWallet, Network, ReceiptResponse};
+use alloy_primitives::{Address, B256, Bytes, hex};
 use alloy_provider::{Provider, fillers::RecommendedFillers};
 use alloy_rpc_types::Log;
 use alloy_signer::{Signature, Signer};
 use eyre::{Context, Result, ensure};
 use foundry_cli::{
     opts::{EthereumOpts, RpcOpts, TransactionOpts},
-    utils::{LoadConfig, get_chain, resolve_lane},
+    utils::{LoadConfig, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -17,13 +17,14 @@ use foundry_common::{
 };
 use foundry_wallets::WalletOpts;
 use serde::Serialize;
-use serde_json::{Value, json};
 use std::time::Duration;
 use tempo_alloy::TempoNetwork;
 
+use crate::tx::CastTxBuilder;
+
 pub(super) struct SafeSendResult {
     pub(super) tx_hash: B256,
-    pub(super) receipt: Value,
+    pub(super) logs: Vec<Log>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -37,7 +38,7 @@ pub(super) async fn send_safe_call(
     wallet: WalletOpts,
     tx: TransactionOpts,
 ) -> Result<SafeSendResult> {
-    let eth = EthereumOpts { rpc: rpc.clone(), wallet: wallet.clone(), ..Default::default() };
+    let eth = EthereumOpts { rpc, wallet, ..Default::default() };
     let (is_tempo, signer, access_key) =
         tempo::resolve_transaction_network_and_signer(&tx.tempo, &eth).await?;
     ensure!(
@@ -51,8 +52,8 @@ pub(super) async fn send_safe_call(
             confirmations,
             timeout,
             poll_interval,
-            rpc,
-            wallet,
+            eth.rpc,
+            eth.wallet,
             tx,
             signer,
         )
@@ -64,8 +65,8 @@ pub(super) async fn send_safe_call(
             confirmations,
             timeout,
             poll_interval,
-            rpc,
-            wallet,
+            eth.rpc,
+            eth.wallet,
             tx,
             signer,
         )
@@ -111,9 +112,8 @@ where
 
     let config = rpc.load_config()?;
     let timeout = timeout.unwrap_or(config.transaction_timeout);
-    let _resolved_lane = resolve_lane(&mut tx_opts.tempo, &config.root)?;
-    let expires_at = tx_opts.tempo.resolve_expires();
-    tempo::print_expires(expires_at)?;
+    resolve_lane(&mut tx_opts.tempo, &config.root)?;
+    tempo::print_expires(tx_opts.tempo.resolve_expires())?;
     let signer = match signer {
         Some(signer) => signer,
         None => wallet_opts.signer().await?,
@@ -125,9 +125,14 @@ where
     if let Some(interval) = poll_interval {
         provider.client().set_poll_interval(Duration::from_secs(interval));
     }
-    let chain = get_chain(config.chain, &provider).await?;
-    let mut request = N::TransactionRequest::default().with_to(to).with_input(data);
-    tx_opts.apply::<N>(&mut request, chain.is_legacy());
+    let builder = CastTxBuilder::new(&provider, tx_opts, &config)
+        .await?
+        .with_to(Some(to.into()))
+        .await?
+        .with_code_sig_and_args(None, Some(hex::encode_prefixed(data)), Vec::new())
+        .await?;
+    let chain = builder.chain();
+    let (mut request, _) = builder.build(from).await?;
     let fee_token = resolve_and_set_fee_token(
         (!config.eth_rpc_curl).then_some(&provider),
         Some(chain),
@@ -145,13 +150,9 @@ where
         .get_receipt()
         .await?;
     ensure!(receipt.status(), "Safe transaction reverted");
-    Ok(SafeSendResult {
-        tx_hash: receipt.transaction_hash(),
-        receipt: serde_json::to_value(receipt)?,
-    })
-}
-
-pub(super) fn receipt_logs(receipt: &Value) -> Result<Vec<Log>> {
-    serde_json::from_value(receipt.get("logs").cloned().unwrap_or_else(|| json!([])))
-        .wrap_err("invalid logs in transaction receipt")
+    let tx_hash = receipt.transaction_hash();
+    let receipt = serde_json::to_value(receipt)?;
+    let logs = serde_json::from_value(receipt["logs"].clone())
+        .wrap_err("invalid logs in transaction receipt")?;
+    Ok(SafeSendResult { tx_hash, logs })
 }

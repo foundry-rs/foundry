@@ -3,7 +3,7 @@ use super::{
         ISafe, ISafeProxyFactory, PREDETERMINED_SALT_NONCE, SAFE_L2_V1_4_1, SAFE_V1_4_1,
         SENTINEL_OWNER,
     },
-    transaction::{receipt_logs, send_safe_call},
+    transaction::send_safe_call,
 };
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, U256, keccak256};
@@ -37,7 +37,6 @@ pub(super) async fn run(
 ) -> Result<()> {
     let threshold = validate_owners(&owners, threshold)?;
     let config = rpc.load_config()?;
-    let timeout = timeout.unwrap_or(config.transaction_timeout);
     let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
     let chain_id = provider.get_chain_id().await?;
     let singleton =
@@ -76,19 +75,12 @@ pub(super) async fn run(
     }
     .abi_encode()
     .into();
-    let result = send_safe_call(
-        factory,
-        calldata,
-        confirmations,
-        Some(timeout),
-        poll_interval,
-        rpc,
-        wallet,
-        tx,
-    )
-    .await
-    .wrap_err("failed to submit Safe deployment")?;
-    let deployed = receipt_logs(&result.receipt)?
+    let result =
+        send_safe_call(factory, calldata, confirmations, timeout, poll_interval, rpc, wallet, tx)
+            .await
+            .wrap_err("failed to submit Safe deployment")?;
+    let deployed = result
+        .logs
         .iter()
         .filter(|log| log.address() == factory)
         .find_map(|log| ISafeProxyFactory::ProxyCreation::decode_log(&log.inner).ok())
@@ -117,8 +109,7 @@ fn validate_owners(owners: &[Address], threshold: Option<usize>) -> Result<usize
 }
 
 fn default_salt_nonce(chain_id: u64) -> U256 {
-    let seed = PREDETERMINED_SALT_NONCE.saturating_add(U256::from(chain_id));
-    U256::from_be_slice(keccak256(seed.to_be_bytes::<32>()).as_slice())
+    U256::from_be_slice(keccak256(format!("{PREDETERMINED_SALT_NONCE}{chain_id}")).as_slice())
 }
 
 pub(super) async fn ensure_contract<P>(
@@ -156,7 +147,7 @@ mod tests {
     fn matches_protocol_kit_default_salt_nonce() {
         assert_eq!(
             default_salt_nonce(1),
-            U256::from_str("0xb308456468acda3eb4fe71e3ab8775230027e741b75bbdec3b9ec3c32e724c60")
+            U256::from_str("0x69b348339eea4ed93f9d11931c3b894c8f9d8c7663a053024b11cb7eb4e5a1f6")
                 .unwrap()
         );
     }
