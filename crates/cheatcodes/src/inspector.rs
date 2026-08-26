@@ -394,6 +394,8 @@ impl OpcodeHooks {
     const STEP: u8 = 1 << 1;
     /// [`Cheatcodes::has_step_end_hooks`] was true when last computed.
     const STEP_END: u8 = 1 << 2;
+    /// [`Cheatcodes::has_recording_accesses_only_step_hook`] was true when last computed.
+    const STEP_RECORD_ONLY: u8 = 1 << 3;
 
     #[inline(always)]
     const fn maybe_step(self) -> bool {
@@ -403,6 +405,11 @@ impl OpcodeHooks {
     #[inline(always)]
     const fn maybe_step_end(self) -> bool {
         self.0 & (Self::DIRTY | Self::STEP_END) != 0
+    }
+
+    #[inline(always)]
+    const fn record_accesses_only(self) -> bool {
+        self.0 & Self::STEP_RECORD_ONLY != 0
     }
 
     #[inline(always)]
@@ -2101,6 +2108,19 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.opcode_hooks.maybe_step()
     }
 
+    /// Cheap, conservative gate for the per-opcode `step` hook, given the opcode about to run.
+    ///
+    /// `vm.record` on its own only observes `SLOAD` and `SSTORE`, so when it is the only active
+    /// hook every other opcode can stay on the fast path. `forge-std`'s `stdStorage` leaves
+    /// recording enabled for the rest of the test, which makes this the common case in suites
+    /// that use `stdstore` or `deal`.
+    #[inline(always)]
+    pub const fn needs_step_for(&self, opcode: u8) -> bool {
+        self.opcode_hooks.maybe_step()
+            && (!self.opcode_hooks.record_accesses_only()
+                || matches!(opcode, op::SLOAD | op::SSTORE))
+    }
+
     /// Cheap, conservative gate for the per-opcode `step_end` hook.
     ///
     /// May report `true` when [`Self::has_step_end_hooks`] is `false`; never the other way round.
@@ -2127,6 +2147,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
             if self.has_step_end_hooks() {
                 bits |= OpcodeHooks::STEP_END;
+            }
+            if self.has_recording_accesses_only_step_hook() {
+                bits |= OpcodeHooks::STEP_RECORD_ONLY;
             }
             self.opcode_hooks = OpcodeHooks(bits);
         }
