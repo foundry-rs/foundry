@@ -61,20 +61,6 @@ use revm::{
 use std::sync::Arc;
 use tracing::debug;
 
-pub(super) fn store_block_metadata<N: Network>(
-    storage: &mut BlockchainStorage<N>,
-    block_hash: B256,
-    participants: MonadBlockParticipants,
-    execution_chain_id: u64,
-    hardfork: FoundryHardfork,
-) {
-    storage.monad_block_participants.insert(block_hash, participants);
-    storage.monad_block_replay_profiles.insert(
-        block_hash,
-        MonadBlockReplayProfile { execution_chain_id, hardfork: MonadHardfork::from(hardfork) },
-    );
-}
-
 pub(super) struct PreparedExecution {
     pub(super) context: Option<MonadChainContext>,
     pub(super) kind: EnvelopeExecutionKind,
@@ -663,4 +649,18 @@ impl<N: Network> Backend<N> {
             }
         }
     }
+}
+
+pub(super) fn store_block_metadata<N: Network>(
+    storage: &mut BlockchainStorage<N>,
+    block_hash: B256,
+    participants: MonadBlockParticipants,
+    execution_chain_id: u64,
+    hardfork: FoundryHardfork,
+) {
+    storage.monad_block_participants.insert(block_hash, participants);
+    storage.monad_block_replay_profiles.insert(
+        block_hash,
+        MonadBlockReplayProfile { execution_chain_id, hardfork: MonadHardfork::from(hardfork) },
+    );
 }

@@ -212,35 +212,6 @@ use tempo_revm::{
 };
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 
-/// Creates an Ethereum-shaped genesis header from the EVM environment.
-fn genesis_header(
-    evm_env: &EvmEnv,
-    base_fee: Option<u64>,
-    timestamp: u64,
-    genesis_number: u64,
-) -> Header {
-    let spec_id = *evm_env.spec_id();
-    Header {
-        timestamp,
-        base_fee_per_gas: base_fee,
-        gas_limit: evm_env.block_env.gas_limit,
-        beneficiary: evm_env.block_env.beneficiary,
-        difficulty: evm_env.block_env.difficulty,
-        blob_gas_used: evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
-        excess_blob_gas: evm_env.block_env.blob_excess_gas(),
-        number: genesis_number,
-        parent_beacon_block_root: (spec_id >= SpecId::CANCUN).then_some(Default::default()),
-        withdrawals_root: (spec_id >= SpecId::SHANGHAI).then_some(EMPTY_WITHDRAWALS),
-        requests_hash: (spec_id >= SpecId::PRAGUE).then_some(EMPTY_REQUESTS_HASH),
-        ..Default::default()
-    }
-}
-
-/// Wraps an Ethereum-shaped header in the selected network's consensus header.
-fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
-    if networks.is_tempo() { FoundryHeader::tempo(header) } else { header.into() }
-}
-
 /// Side-channel container for OP-specific deposit info produced by
 /// [`Backend::build_call_env_with_base`] and consumed by the OP transact path.
 ///
@@ -9379,6 +9350,35 @@ fn arbitrum_replay_block_number(block: &AnyRpcBlock) -> U256 {
 /// Abstracts over network-specific halt reason types (`HaltReason`, `OpHaltReason`)
 /// so that anvil code doesn't need to match on each variant directly.
 pub use foundry_evm::core::evm::IntoInstructionResult;
+
+/// Creates an Ethereum-shaped genesis header from the EVM environment.
+fn genesis_header(
+    evm_env: &EvmEnv,
+    base_fee: Option<u64>,
+    timestamp: u64,
+    genesis_number: u64,
+) -> Header {
+    let spec_id = *evm_env.spec_id();
+    Header {
+        timestamp,
+        base_fee_per_gas: base_fee,
+        gas_limit: evm_env.block_env.gas_limit,
+        beneficiary: evm_env.block_env.beneficiary,
+        difficulty: evm_env.block_env.difficulty,
+        blob_gas_used: evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
+        excess_blob_gas: evm_env.block_env.blob_excess_gas(),
+        number: genesis_number,
+        parent_beacon_block_root: (spec_id >= SpecId::CANCUN).then_some(Default::default()),
+        withdrawals_root: (spec_id >= SpecId::SHANGHAI).then_some(EMPTY_WITHDRAWALS),
+        requests_hash: (spec_id >= SpecId::PRAGUE).then_some(EMPTY_REQUESTS_HASH),
+        ..Default::default()
+    }
+}
+
+/// Wraps an Ethereum-shaped header in the selected network's consensus header.
+fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
+    if networks.is_tempo() { FoundryHeader::tempo(header) } else { header.into() }
+}
 
 #[cfg(test)]
 mod tests {
