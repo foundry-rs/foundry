@@ -899,50 +899,6 @@ forgetest_init!(build_no_warning_without_soldeer_lock, |prj, cmd| {
 "#]]);
 });
 
-// tests that malformed foundry.lock triggers a warning during build
-forgetest_init!(build_warns_on_malformed_foundry_lock, |prj, cmd| {
-    let foundry_lock = prj.root().join("foundry.lock");
-    fs::write(&foundry_lock, "this is not valid toml { [ }").unwrap();
-
-    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
-Warning: Failed to check foundry.lock: Failed to read foundry.lock; expected ident at line 1 column 2
-...
-"#]]);
-});
-
-// tests that build warns when dependencies are missing from foundry.lock
-forgetest_init!(build_warns_without_foundry_lock, |prj, cmd| {
-    let foundry_lock = prj.root().join("foundry.lock");
-    // Remove foundry.lock if it exists from template
-    let _ = fs::remove_file(&foundry_lock);
-
-    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
-Warning: lib/forge-std: missing from foundry.lock (found [..])
-
-"#]]);
-});
-
-// tests that build warns when foundry.lock revision differs from actual submodule revision
-forgetest_init!(build_warns_on_foundry_lock_revision_mismatch, |prj, cmd| {
-    let foundry_lock = prj.root().join("foundry.lock");
-
-    // Write a foundry.lock with a fake/old revision for forge-std that differs from the actual
-    let lockfile_content = r#"{
-  "lib/forge-std": {
-    "tag": {
-      "name": "v1.9.7",
-      "rev": "0000000000000000000000000000000000000000"
-    }
-  }
-}"#;
-    fs::write(&foundry_lock, lockfile_content).unwrap();
-
-    cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
-Warning: lib/forge-std: expected 0000000000000000000000000000000000000000, found [..]
-
-"#]]);
-});
-
 forgetest_init!(build_locked_succeeds_when_dependencies_match, |_prj, cmd| {
     cmd.args(["build", "--locked"]).assert_success();
 });
@@ -1022,7 +978,7 @@ Context:
 "#]]);
 });
 
-forgetest_init!(build_locked_reports_revision_mismatch, |prj, cmd| {
+forgetest_init!(build_checks_foundry_lock_only_when_locked, |prj, cmd| {
     let foundry_lock = prj.root().join("foundry.lock");
     let lockfile = r#"{
   "lib/forge-std": {
@@ -1030,13 +986,18 @@ forgetest_init!(build_locked_reports_revision_mismatch, |prj, cmd| {
   }
 }"#;
     fs::write(&foundry_lock, lockfile).unwrap();
+
+    cmd.args(["build"]).assert_success().stderr_eq("");
+
     fs::write(prj.root().join("src/Broken.sol"), "this is not Solidity").unwrap();
 
-    cmd.args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[r#"
+    cmd.forge_fuse().args(["build", "--locked"]).assert_failure().stdout_eq("").stderr_eq(str![[
+        r#"
 Error: foundry.lock does not match installed dependencies:
   lib/forge-std: expected 0000000000000000000000000000000000000000, found [..]
 
-"#]]);
+"#
+    ]]);
     assert_eq!(fs::read_to_string(foundry_lock).unwrap(), lockfile);
 });
 
