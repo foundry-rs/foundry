@@ -8710,37 +8710,8 @@ where
         evm_env: &EvmEnv,
     ) -> Result<(), InvalidTransactionError> {
         #[cfg(feature = "monad")]
-        if self.is_monad() && pool_tx.is_replay {
-            let tx_env: TxEnv =
-                build_tx_env_for_pending(&pool_tx.pending_transaction, self.cheats());
-            match foundry_evm::core::evm::protocol_system_call(&tx_env) {
-                Ok(Some(system_call)) => {
-                    if system_call
-                        .chain_id
-                        .is_some_and(|chain_id| chain_id != evm_env.cfg_env.chain_id)
-                    {
-                        return Err(InvalidTransactionError::InvalidChainId);
-                    }
-                    if system_call.nonce < account.nonce {
-                        return Err(InvalidTransactionError::NonceTooLow);
-                    }
-                    if system_call.nonce > account.nonce {
-                        return Err(InvalidTransactionError::NonceTooHigh);
-                    }
-                    if system_call.nonce == u64::MAX {
-                        return Err(InvalidTransactionError::NonceMaxValue);
-                    }
-                    return Ok(());
-                }
-                Ok(None) => {}
-                Err(err) => {
-                    return Err(InvalidTransactionError::Revm(
-                        revm::context_interface::result::InvalidTransaction::Str(
-                            err.to_string().into(),
-                        ),
-                    ));
-                }
-            }
+        if self.validate_monad_mining_pool_transaction_for(pool_tx, account, evm_env)? {
+            return Ok(());
         }
 
         self.validate_pool_transaction_for(&pool_tx.pending_transaction, account, evm_env)
@@ -8871,9 +8842,8 @@ where
             return Err(InvalidTransactionError::NonceTooLow);
         }
 
-        if self.is_monad() && tx.is_eip4844() {
-            return Err(InvalidTransactionError::MonadBlobTransactionUnsupported);
-        }
+        #[cfg(feature = "monad")]
+        self.validate_monad_transaction_type(tx)?;
 
         // EIP-4844 structural validation
         if evm_env.cfg_env.spec >= SpecId::CANCUN && tx.is_eip4844() {
@@ -8993,15 +8963,8 @@ where
                     // Tempo AA transactions pay gas with fee tokens, not ETH.
                     // Fee token balance is validated in validate_pool_transaction (async).
                 }
-                _ if self.is_monad() => {
-                    let effective_gas_price =
-                        tx.effective_gas_price(Some(evm_env.block_env.basefee));
-                    let required = U256::from(tx.gas_limit()) * U256::from(effective_gas_price);
-                    if account.balance < required {
-                        debug!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance, required, *pending.sender());
-                        return Err(InvalidTransactionError::InsufficientFunds);
-                    }
-                }
+                #[cfg(feature = "monad")]
+                _ if self.validate_monad_transaction_funds(pending, account, evm_env)? => {}
                 _ => {
                     let max_cost = (tx.gas_limit() as u128)
                         .saturating_mul(tx.max_fee_per_gas())
