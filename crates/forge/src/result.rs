@@ -35,18 +35,10 @@ use std::{
 };
 use yansi::Paint;
 
-pub(crate) fn invariant_campaign_display_name(contract_name: &str) -> String {
-    format!("{contract_name} invariants")
-}
-
 const INVARIANT_CAMPAIGN_FALLBACK_NAME: &str = "Invariant campaign";
 const SYMBOLIC_RESULT_SCHEMA_VERSION: u32 = 1;
 pub const SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA: &str = "foundry:symbolic.counterexample@v1";
 pub const SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA_VERSION: u32 = 1;
-
-const fn symbolic_result_schema_version() -> u32 {
-    SYMBOLIC_RESULT_SCHEMA_VERSION
-}
 
 /// The aggregated result of a test run.
 #[derive(Clone, Debug)]
@@ -3089,4 +3081,12 @@ impl TestSetup {
     pub fn merge_coverages(&mut self, other_coverage: Option<HitMaps>) {
         HitMaps::merge_opt(&mut self.coverage, other_coverage);
     }
+}
+
+pub(crate) fn invariant_campaign_display_name(contract_name: &str) -> String {
+    format!("{contract_name} invariants")
+}
+
+const fn symbolic_result_schema_version() -> u32 {
+    SYMBOLIC_RESULT_SCHEMA_VERSION
 }

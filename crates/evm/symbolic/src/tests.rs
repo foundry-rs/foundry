@@ -4707,6 +4707,30 @@ fn is_sat_uses_two_var_witness_before_solver() {
 
 #[cfg(unix)]
 #[test]
+fn is_sat_uses_zero_witness_before_solver() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("zero-is-sat");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let x = SymExpr::var(&mut cx, "calldata_0");
+    let y = SymExpr::var(&mut cx, "calldata_1");
+    let z = SymExpr::var(&mut cx, "calldata_2");
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, x, y);
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, sum, z);
+    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    let constraints = vec![SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, sum, ten)];
+
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
 fn gasleft_can_use_single_var_witness_before_solver() {
     let mut cx = SymCx::new();
     let marker = portfolio_test_marker("gasleft-single-var");
@@ -4920,9 +4944,9 @@ fn is_sat_removes_implied_mul_div_monotonic_condition() {
     assert!(solver.is_sat_branch(&mut cx, &constraints).unwrap());
 
     let stats = solver.stats();
-    assert_eq!(stats.smt_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
     assert_eq!(solver.heuristic_witnesses(), 0);
-    assert_eq!(counted_solver_invocations(&marker), 1);
+    assert_eq!(counted_solver_invocations(&marker), 0);
     let _ = std::fs::remove_file(&marker);
 }
 
@@ -5168,7 +5192,7 @@ fn sat_cache_reuses_reversed_comparisons() {
     assert_eq!(stats.solver_queries, 3);
     assert_eq!(stats.sat_queries, 6);
     assert_eq!(stats.sat_cache_hits, 3);
-    assert_eq!(counted_solver_invocations(&marker), 3);
+    assert_eq!(counted_solver_invocations(&marker), 2);
     let _ = std::fs::remove_file(&marker);
 }
 

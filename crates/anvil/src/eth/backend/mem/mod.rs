@@ -122,8 +122,6 @@ use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadBlockParticipants;
 use foundry_evm::{
     backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
@@ -213,35 +211,6 @@ use tempo_revm::{
     evm::TempoContext, gas_params::tempo_gas_params,
 };
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
-
-/// Creates an Ethereum-shaped genesis header from the EVM environment.
-fn genesis_header(
-    evm_env: &EvmEnv,
-    base_fee: Option<u64>,
-    timestamp: u64,
-    genesis_number: u64,
-) -> Header {
-    let spec_id = *evm_env.spec_id();
-    Header {
-        timestamp,
-        base_fee_per_gas: base_fee,
-        gas_limit: evm_env.block_env.gas_limit,
-        beneficiary: evm_env.block_env.beneficiary,
-        difficulty: evm_env.block_env.difficulty,
-        blob_gas_used: evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
-        excess_blob_gas: evm_env.block_env.blob_excess_gas(),
-        number: genesis_number,
-        parent_beacon_block_root: (spec_id >= SpecId::CANCUN).then_some(Default::default()),
-        withdrawals_root: (spec_id >= SpecId::SHANGHAI).then_some(EMPTY_WITHDRAWALS),
-        requests_hash: (spec_id >= SpecId::PRAGUE).then_some(EMPTY_REQUESTS_HASH),
-        ..Default::default()
-    }
-}
-
-/// Wraps an Ethereum-shaped header in the selected network's consensus header.
-fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
-    if networks.is_tempo() { FoundryHeader::tempo(header) } else { header.into() }
-}
 
 /// Side-channel container for OP-specific deposit info produced by
 /// [`Backend::build_call_env_with_base`] and consumed by the OP transact path.
@@ -2222,12 +2191,21 @@ impl<N: Network> Backend<N> {
 
     /// Injects all configured precompiles into the given precompile map.
     ///
-    /// This applies four layers:
+    /// This applies five layers:
     /// 1. Network-specific precompiles (e.g. Tempo, OP)
     /// 2. Chain- and timestamp-specific precompiles
     /// 3. User-provided precompiles via [`PrecompileFactory`]
     /// 4. Cheatcode ecrecover overrides (if active)
+    /// 5. Block-specific precompiles (e.g. ArbSys)
     fn inject_precompiles(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
+        self.inject_configured_precompiles(precompiles, evm_env);
+
+        if let Some(block_number) = self.arbitrum_block_number(evm_env) {
+            self.inject_arbitrum_precompile_at_block(precompiles, block_number);
+        }
+    }
+
+    fn inject_configured_precompiles(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
         self.networks.inject_precompiles(precompiles);
         self.networks.inject_chain_precompiles(
             precompiles,
@@ -2249,11 +2227,6 @@ impl<N: Network> Backend<N> {
                 ))
             });
         }
-    }
-
-    fn inject_arbitrum_precompile(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
-        let Some(block_number) = self.arbitrum_block_number(evm_env) else { return };
-        self.inject_arbitrum_precompile_at_block(precompiles, block_number);
     }
 
     fn inject_arbitrum_precompile_at_block(
@@ -2293,7 +2266,6 @@ impl<N: Network> Backend<N> {
             PrecompileSpecId::from_spec_id(*evm_env.spec_id()),
         ));
         self.inject_precompiles(&mut precompiles, evm_env);
-        self.inject_arbitrum_precompile(&mut precompiles, evm_env);
         let precompile_addresses = precompiles.addresses().copied().collect::<HashSet<_>>();
 
         // Validate every source first so invalid-source errors take precedence over the more
@@ -2361,7 +2333,7 @@ impl<N: Network> Backend<N> {
         DB: Database,
         I: Inspector<TempoContext<DB>>,
     {
-        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        self.inject_configured_precompiles(evm.precompiles_mut(), evm_env);
         // Re-extend Tempo precompiles, preserving shared non-creditable slots.
         let cfg = evm.ctx().cfg.clone();
         let non_creditable_slots = evm.non_creditable_slots();
@@ -2417,7 +2389,6 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         if !overrides.moves.is_empty() {
             let warm_addresses =
                 self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
@@ -2446,7 +2417,6 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         if !overrides.moves.is_empty() {
             let warm_addresses =
                 self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
@@ -2665,7 +2635,6 @@ impl<N: Network> Backend<N> {
                 $on_execution_error:expr
             ) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
-                self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
                 let mut executor =
                     AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions);
                 executor
@@ -2739,7 +2708,6 @@ impl<N: Network> Backend<N> {
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         apply_ethereum_pre_execution_changes(&mut evm, parent_hash, transitions)
             .map_err(|err| BlockchainError::Internal(err.to_string()))
     }
@@ -2759,7 +2727,6 @@ impl<N: Network> Backend<N> {
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         apply_ethereum_post_execution_changes(&mut evm, transitions, receipts)
             .map_err(|err| BlockchainError::Internal(err.to_string()))
     }
@@ -4751,26 +4718,8 @@ impl<N: Network> Backend<N> {
             snapshots.remove(&id);
             snapshots.retain(|snapshot_id, _| *snapshot_id < id);
         }
-        {
-            // revert the storage that's newer than the snapshot
-            let current_height = self.best_number();
-            let mut storage = self.blockchain.storage.write();
-
-            for n in ((num + 1)..=current_height).rev() {
-                trace!(target: "backend", "reverting block {}", n);
-                let Some(hash) = storage.hashes.remove(&n) else { continue };
-                if let Some(block) = storage.blocks.remove(&hash) {
-                    for tx in block.body.transactions {
-                        let _ = storage.transactions.remove(&tx.hash());
-                    }
-                }
-                #[cfg(feature = "monad")]
-                storage.remove_monad_block_metadata(&hash);
-            }
-
-            storage.best_number = num;
-            storage.best_hash = hash;
-        }
+        // Revert the storage that's newer than the snapshot.
+        self.blockchain.storage.write().unwind_to(num, hash);
 
         let reset_time = block.header.timestamp();
         self.time.reset(reset_time);
@@ -5079,21 +5028,20 @@ where
         let scheduled_hardfork =
             FoundryHardfork::from_chain_and_timestamp(source_chain_id, timestamp);
         #[cfg(feature = "monad")]
-        let explicit_monad_hardfork =
-            if self.is_monad() { self.node_config.read().await.hardfork } else { None };
-        // The target block's schedule can cross a hardfork boundary after the selected parent.
-        // Explicit Monad overrides still take precedence over timestamp inference.
+        let mut monad_replay = self
+            .prepare_monad_fork_replay(
+                source_chain_id,
+                execution_chain_id,
+                timestamp,
+                best_hash,
+                &transactions,
+            )
+            .await?;
         #[cfg(feature = "monad")]
-        let hardfork = if self.is_monad() {
-            explicit_monad_hardfork
-                .or_else(|| {
-                    monad_revm::MonadHardfork::from_chain_and_timestamp(source_chain_id, timestamp)
-                        .map(FoundryHardfork::Monad)
-                })
-                .unwrap_or_else(|| self.hardfork())
-        } else {
-            scheduled_hardfork.unwrap_or_else(|| self.hardfork())
-        };
+        let hardfork = monad_replay
+            .as_ref()
+            .map(monad::ForkReplay::hardfork)
+            .unwrap_or_else(|| scheduled_hardfork.unwrap_or_else(|| self.hardfork()));
         #[cfg(not(feature = "monad"))]
         let hardfork = scheduled_hardfork.unwrap_or_else(|| self.hardfork());
         if !self.is_optimism() && !self.is_tempo() {
@@ -5110,20 +5058,9 @@ where
         }
 
         #[cfg(feature = "monad")]
-        let monad_context = if self.is_monad() {
-            Some(self.monad_context_for_child_of_block_hash(best_hash).await?)
-        } else {
-            None
-        };
+        let monad_context = monad_replay.as_mut().and_then(monad::ForkReplay::take_context);
         #[cfg(not(feature = "monad"))]
         let monad_context = None;
-
-        #[cfg(feature = "monad")]
-        let monad_participants = self.is_monad().then(|| {
-            foundry_evm::core::evm::monad_block_participants(
-                &self.monad_historical_replay_tx_envs(&transactions),
-            )
-        });
 
         let (block_info, state_changes, block_hash) = {
             let db = self.db.read().await;
@@ -5173,29 +5110,16 @@ where
         }
 
         let header = block_info.block.header.clone();
-        self.store_block(
-            block_info,
-            block_hash,
+        self.store_block(block_info, block_hash, |_storage| {
             #[cfg(feature = "monad")]
-            monad_participants.map(|participants| (participants, execution_chain_id, hardfork)),
-        );
+            if let Some(replay) = &mut monad_replay {
+                replay.store_metadata(_storage, block_hash);
+            }
+        });
 
         #[cfg(feature = "monad")]
-        if self.is_monad() {
-            let spec_id = SpecId::from(hardfork);
-            evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
-            self.fees.set_execution_rules(spec_id, self.networks.base_fee_params(timestamp), None);
-            self.fees
-                .set_blob_params(foundry_evm::utils::get_blob_params(source_chain_id, timestamp));
-
-            // An inferred hardfork follows the replayed source block. Keep an explicit override
-            // fixed, even when the source schedule differs.
-            if explicit_monad_hardfork.is_none() {
-                *self.hardfork.write() = hardfork;
-                if let Some(fork) = self.fork.read().clone() {
-                    fork.config.write().hardfork = Some(hardfork);
-                }
-            }
+        if let Some(replay) = &monad_replay {
+            self.finalize_monad_fork_replay(replay, &mut evm_env);
         }
 
         evm_env.block_env.difficulty = U256::ZERO;
@@ -5272,8 +5196,6 @@ where
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 if let Some(block_number) = arbitrum_rpc_block_number {
                     self.inject_arbitrum_precompile_at_block($evm.precompiles_mut(), block_number);
-                } else {
-                    self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
                 }
                 let mut executor = AnvilBlockExecutor::new(
                     $evm,
@@ -5383,11 +5305,7 @@ where
         &self,
         block_info: BlockInfo<N>,
         block_hash: B256,
-        #[cfg(feature = "monad")] monad_metadata: Option<(
-            MonadBlockParticipants,
-            u64,
-            FoundryHardfork,
-        )>,
+        store_metadata: impl FnOnce(&mut BlockchainStorage<N>),
     ) {
         let BlockInfo { block, transactions, receipts } = block_info;
         let block_number = block.header.number();
@@ -5401,16 +5319,7 @@ where
         }
         storage.insert_block(block);
 
-        #[cfg(feature = "monad")]
-        if let Some((participants, execution_chain_id, hardfork)) = monad_metadata {
-            monad::store_block_metadata(
-                &mut storage,
-                block_hash,
-                participants,
-                execution_chain_id,
-                hardfork,
-            );
-        }
+        store_metadata(&mut storage);
 
         for (info, receipt) in transactions.into_iter().zip(receipts) {
             let mined_tx = MinedTransaction { info, receipt, block_hash, block_number };
@@ -5592,13 +5501,18 @@ where
                 node_info!("");
             }
 
-            self.store_block(
-                block_info,
-                block_hash,
+            self.store_block(block_info, block_hash, |_storage| {
                 #[cfg(feature = "monad")]
-                monad_participants
-                    .map(|participants| (participants, evm_env.cfg_env.chain_id, hardfork)),
-            );
+                if let Some(participants) = monad_participants {
+                    monad::store_block_metadata(
+                        _storage,
+                        block_hash,
+                        participants,
+                        evm_env.cfg_env.chain_id,
+                        hardfork,
+                    );
+                }
+            });
 
             self.time.mark_block_created();
 
@@ -8719,37 +8633,8 @@ where
         evm_env: &EvmEnv,
     ) -> Result<(), InvalidTransactionError> {
         #[cfg(feature = "monad")]
-        if self.is_monad() && pool_tx.is_replay {
-            let tx_env: TxEnv =
-                build_tx_env_for_pending(&pool_tx.pending_transaction, self.cheats());
-            match foundry_evm::core::evm::protocol_system_call(&tx_env) {
-                Ok(Some(system_call)) => {
-                    if system_call
-                        .chain_id
-                        .is_some_and(|chain_id| chain_id != evm_env.cfg_env.chain_id)
-                    {
-                        return Err(InvalidTransactionError::InvalidChainId);
-                    }
-                    if system_call.nonce < account.nonce {
-                        return Err(InvalidTransactionError::NonceTooLow);
-                    }
-                    if system_call.nonce > account.nonce {
-                        return Err(InvalidTransactionError::NonceTooHigh);
-                    }
-                    if system_call.nonce == u64::MAX {
-                        return Err(InvalidTransactionError::NonceMaxValue);
-                    }
-                    return Ok(());
-                }
-                Ok(None) => {}
-                Err(err) => {
-                    return Err(InvalidTransactionError::Revm(
-                        revm::context_interface::result::InvalidTransaction::Str(
-                            err.to_string().into(),
-                        ),
-                    ));
-                }
-            }
+        if self.validate_monad_mining_pool_transaction_for(pool_tx, account, evm_env)? {
+            return Ok(());
         }
 
         self.validate_pool_transaction_for(&pool_tx.pending_transaction, account, evm_env)
@@ -8880,9 +8765,8 @@ where
             return Err(InvalidTransactionError::NonceTooLow);
         }
 
-        if self.is_monad() && tx.is_eip4844() {
-            return Err(InvalidTransactionError::MonadBlobTransactionUnsupported);
-        }
+        #[cfg(feature = "monad")]
+        self.validate_monad_transaction_type(tx)?;
 
         // EIP-4844 structural validation
         if evm_env.cfg_env.spec >= SpecId::CANCUN && tx.is_eip4844() {
@@ -9002,15 +8886,8 @@ where
                     // Tempo AA transactions pay gas with fee tokens, not ETH.
                     // Fee token balance is validated in validate_pool_transaction (async).
                 }
-                _ if self.is_monad() => {
-                    let effective_gas_price =
-                        tx.effective_gas_price(Some(evm_env.block_env.basefee));
-                    let required = U256::from(tx.gas_limit()) * U256::from(effective_gas_price);
-                    if account.balance < required {
-                        debug!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance, required, *pending.sender());
-                        return Err(InvalidTransactionError::InsufficientFunds);
-                    }
-                }
+                #[cfg(feature = "monad")]
+                _ if self.validate_monad_transaction_funds(pending, account, evm_env)? => {}
                 _ => {
                     let max_cost = (tx.gas_limit() as u128)
                         .saturating_mul(tx.max_fee_per_gas())
@@ -9425,6 +9302,35 @@ fn arbitrum_replay_block_number(block: &AnyRpcBlock) -> U256 {
 /// Abstracts over network-specific halt reason types (`HaltReason`, `OpHaltReason`)
 /// so that anvil code doesn't need to match on each variant directly.
 pub use foundry_evm::core::evm::IntoInstructionResult;
+
+/// Creates an Ethereum-shaped genesis header from the EVM environment.
+fn genesis_header(
+    evm_env: &EvmEnv,
+    base_fee: Option<u64>,
+    timestamp: u64,
+    genesis_number: u64,
+) -> Header {
+    let spec_id = *evm_env.spec_id();
+    Header {
+        timestamp,
+        base_fee_per_gas: base_fee,
+        gas_limit: evm_env.block_env.gas_limit,
+        beneficiary: evm_env.block_env.beneficiary,
+        difficulty: evm_env.block_env.difficulty,
+        blob_gas_used: evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
+        excess_blob_gas: evm_env.block_env.blob_excess_gas(),
+        number: genesis_number,
+        parent_beacon_block_root: (spec_id >= SpecId::CANCUN).then_some(Default::default()),
+        withdrawals_root: (spec_id >= SpecId::SHANGHAI).then_some(EMPTY_WITHDRAWALS),
+        requests_hash: (spec_id >= SpecId::PRAGUE).then_some(EMPTY_REQUESTS_HASH),
+        ..Default::default()
+    }
+}
+
+/// Wraps an Ethereum-shaped header in the selected network's consensus header.
+fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
+    if networks.is_tempo() { FoundryHeader::tempo(header) } else { header.into() }
+}
 
 #[cfg(test)]
 mod tests {

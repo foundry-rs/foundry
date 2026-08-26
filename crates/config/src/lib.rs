@@ -157,21 +157,6 @@ pub use semver;
 static SELECTED_PROFILE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new();
 static WARNED_LOCAL_COMPILERS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
-fn warn_local_compiler(path: &Path) {
-    let mut warned = WARNED_LOCAL_COMPILERS.lock().unwrap_or_else(|err| err.into_inner());
-    if warned.iter().any(|warned_path| warned_path == path) {
-        return;
-    }
-    warned.push(path.to_path_buf());
-
-    let mut stderr = io::stderr().lock();
-    let _ = writeln!(
-        stderr,
-        "Warning: this project is configured to use a local compiler executable:\n  {path:?}\n\
-         Running this executable may execute arbitrary code."
-    );
-}
-
 /// Foundry configuration
 ///
 /// # Defaults
@@ -3276,6 +3261,21 @@ pub(crate) mod from_str_lowercase {
     {
         String::deserialize(deserializer)?.to_lowercase().parse().map_err(serde::de::Error::custom)
     }
+}
+
+fn warn_local_compiler(path: &Path) {
+    let mut warned = WARNED_LOCAL_COMPILERS.lock().unwrap_or_else(|err| err.into_inner());
+    if warned.iter().any(|warned_path| warned_path == path) {
+        return;
+    }
+    warned.push(path.to_path_buf());
+
+    let mut stderr = io::stderr().lock();
+    let _ = writeln!(
+        stderr,
+        "Warning: this project is configured to use a local compiler executable:\n  {path:?}\n\
+         Running this executable may execute arbitrary code."
+    );
 }
 
 fn canonic(path: impl Into<PathBuf>) -> PathBuf {
