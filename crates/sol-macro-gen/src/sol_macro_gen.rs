@@ -81,9 +81,17 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
-    pub fn generate_bindings(&mut self, all_derives: bool) -> Result<()> {
+    pub fn generate_bindings(
+        &mut self,
+        all_derives: bool,
+        normalize: impl Fn(SolInput) -> syn::Result<SolInput> + Sync,
+    ) -> Result<()> {
         self.instances.par_iter_mut().try_for_each(|instance| {
-            Self::generate_binding(instance, all_derives).wrap_err_with(|| {
+            let result = instance
+                .get_sol_input()
+                .and_then(|input| normalize(input).map_err(Into::into))
+                .and_then(|input| Self::generate_binding(instance, input, all_derives));
+            result.wrap_err_with(|| {
                 format!(
                     "failed to generate bindings for {}:{}",
                     instance.path.display(),
@@ -93,8 +101,11 @@ impl MultiSolMacroGen {
         })
     }
 
-    fn generate_binding(instance: &mut SolMacroGen, all_derives: bool) -> Result<()> {
-        let input = instance.get_sol_input()?.normalize_json()?;
+    fn generate_binding(
+        instance: &mut SolMacroGen,
+        input: SolInput,
+        all_derives: bool,
+    ) -> Result<()> {
         let SolInput { attrs: _, path: _, kind } = input;
 
         let tokens = match kind {
@@ -137,8 +148,9 @@ impl MultiSolMacroGen {
         alloy_version: Option<String>,
         alloy_rev: Option<String>,
         all_derives: bool,
+        normalize: impl Fn(SolInput) -> syn::Result<SolInput> + Sync,
     ) -> Result<()> {
-        self.generate_bindings(all_derives)?;
+        self.generate_bindings(all_derives, normalize)?;
 
         let src = bindings_path.join("src");
         fs::create_dir_all(&src)?;
@@ -226,8 +238,9 @@ edition = "2021"
         bindings_path: &Path,
         single_file: bool,
         all_derives: bool,
+        normalize: impl Fn(SolInput) -> syn::Result<SolInput> + Sync,
     ) -> Result<()> {
-        self.generate_bindings(all_derives)?;
+        self.generate_bindings(all_derives, normalize)?;
 
         fs::create_dir_all(bindings_path)?;
 
