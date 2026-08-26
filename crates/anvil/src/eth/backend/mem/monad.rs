@@ -677,7 +677,7 @@ impl<N: Network> Backend<N> {
         self.is_monad().then(|| self.monad_context_for_mined_block(block)).transpose()
     }
 
-    pub(super) fn monad_context_before_mined_transaction(
+    fn monad_context_before_mined_transaction(
         &self,
         block: &Block,
         current_tx_index: usize,
@@ -694,6 +694,16 @@ impl<N: Network> Backend<N> {
             &current[..current_tx_index],
             current_tx_index,
         )
+    }
+
+    pub(super) fn active_monad_context_before_mined_transaction(
+        &self,
+        block: &Block,
+        current_tx_index: usize,
+    ) -> Result<Option<MonadChainContext>, BlockchainError> {
+        self.is_monad()
+            .then(|| self.monad_context_before_mined_transaction(block, current_tx_index))
+            .transpose()
     }
 
     /// Builds the Monad [`EvmEnv`] (spec and gas params) from a base env.
