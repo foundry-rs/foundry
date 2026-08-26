@@ -131,4 +131,4 @@ jobs:
             args+=(--partition "$NEXTEST_PARTITION")
           fi
           args+=(--no-fail-fast)
-          cargo nextest run --locked "${args[@]}"
+          cargo nextest run --locked --features monad "${args[@]}"

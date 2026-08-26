@@ -613,6 +613,13 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, false);
             return Ok(false);
         }
+        if !constraints.is_empty()
+            && model_satisfies_constraints(&SymbolicModel::default(), constraints)
+            && !constraints.iter().any(SymBoolExpr::contains_gasleft)
+        {
+            self.cache_sat_result(cache_key, true);
+            return Ok(true);
+        }
         if let Some(model) = fallback_single_var_model(&smt_constraints)
             && model_satisfies_constraints(&model, constraints)
         {

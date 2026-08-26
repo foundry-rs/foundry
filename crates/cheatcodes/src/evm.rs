@@ -1627,6 +1627,7 @@ fn sync_tx_after_env_override_restore<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCt
     let fork_id = ccx.ecx.db().active_fork_id();
     // Clone to avoid borrow conflicts when mutating ecx below.
     let env_overrides = ccx.state.env_overrides.get(&fork_id).cloned().unwrap_or_default();
+    let remove_inactive_entry = !env_overrides.is_any_set();
     match env_overrides.gas_price {
         Some(p) if !ccx.state.in_isolation_context => ccx.ecx.tx_mut().set_gas_price(p),
         None => {
@@ -1653,6 +1654,9 @@ fn sync_tx_after_env_override_restore<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCt
             ccx.ecx.tx_mut().set_tx_type(pre_type);
         }
         _ => {}
+    }
+    if remove_inactive_entry {
+        ccx.state.env_overrides.remove(&fork_id);
     }
 }
 

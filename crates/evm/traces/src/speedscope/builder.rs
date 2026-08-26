@@ -11,25 +11,6 @@ use revm_inspectors::tracing::{
 };
 use std::{borrow::Cow, collections::HashMap};
 
-/// Builds a speedscope profile from a call trace arena.
-///
-/// Walks the trace arena directly so the Time Order view preserves execution order.
-pub fn build<'a>(
-    arena: &CallTraceArena,
-    test_name: &str,
-    contract_name: &str,
-    isolate: bool,
-) -> SpeedscopeFile<'a> {
-    let name = format!("{contract_name}::{test_name}");
-    let mut builder = SpeedscopeBuilder::new(name);
-
-    if !arena.nodes().is_empty() {
-        builder.process_call_node(arena.nodes(), 0, isolate);
-    }
-
-    builder.build()
-}
-
 struct SpeedscopeBuilder<'a> {
     file: SpeedscopeFile<'a>,
     profile: EventedProfile<'a>,
@@ -129,6 +110,25 @@ impl<'a> SpeedscopeBuilder<'a> {
 struct StepExit {
     step_idx: usize,
     frame_idx: usize,
+}
+
+/// Builds a speedscope profile from a call trace arena.
+///
+/// Walks the trace arena directly so the Time Order view preserves execution order.
+pub fn build<'a>(
+    arena: &CallTraceArena,
+    test_name: &str,
+    contract_name: &str,
+    isolate: bool,
+) -> SpeedscopeFile<'a> {
+    let name = format!("{contract_name}::{test_name}");
+    let mut builder = SpeedscopeBuilder::new(name);
+
+    if !arena.nodes().is_empty() {
+        builder.process_call_node(arena.nodes(), 0, isolate);
+    }
+
+    builder.build()
 }
 
 fn call_frame_name(node: &CallTraceNode) -> String {

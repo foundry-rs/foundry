@@ -56,7 +56,9 @@ impl<'hir> LateLintPass<'hir> for CacheArrayLength {
         hir: &'hir hir::Hir<'hir>,
         stmt: &'hir hir::Stmt<'hir>,
     ) {
-        let StmtKind::Loop(block, LoopSource::For) = &stmt.kind else { return };
+        let StmtKind::Loop(block, LoopSource::For | LoopSource::ForWithUpdate) = &stmt.kind else {
+            return;
+        };
         let Some((condition, body)) = for_loop_parts(*block) else { return };
 
         let mut reads = Vec::new();

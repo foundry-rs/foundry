@@ -35,50 +35,6 @@ mod ws;
 #[cfg(feature = "ipc")]
 pub mod ipc;
 
-/// Configures an [`axum::Router`] that handles JSON-RPC calls via both HTTP and WS.
-pub fn http_ws_router<Http, Ws>(config: ServerConfig, http: Http, ws: Ws) -> Router
-where
-    Http: RpcHandler,
-    Ws: PubSubRpcHandler,
-{
-    router_inner(config, post(handler::handle).get(ws::handle_ws), (http, ws))
-}
-
-/// Configures an [`axum::Router`] that handles JSON-RPC calls via HTTP.
-pub fn http_router<Http>(config: ServerConfig, http: Http) -> Router
-where
-    Http: RpcHandler,
-{
-    router_inner(config, post(handler::handle), (http, ()))
-}
-
-fn router_inner<S: Clone + Send + Sync + 'static>(
-    config: ServerConfig,
-    root_method_router: MethodRouter<S>,
-    state: S,
-) -> Router {
-    let ServerConfig { allow_origin, no_cors, no_request_size_limit } = config;
-
-    let mut router = Router::new()
-        .route("/", root_method_router)
-        .with_state(state)
-        .layer(TraceLayer::new_for_http());
-    if !no_cors {
-        // See [`tower_http::cors`](https://docs.rs/tower-http/latest/tower_http/cors/index.html)
-        // for more details.
-        router = router.layer(
-            CorsLayer::new()
-                .allow_origin(allow_origin.0)
-                .allow_headers([header::CONTENT_TYPE])
-                .allow_methods([Method::GET, Method::POST]),
-        );
-    }
-    if no_request_size_limit {
-        router = router.layer(DefaultBodyLimit::disable());
-    }
-    router
-}
-
 /// Helper trait that is used to execute ethereum rpc calls
 pub trait RpcHandler: Clone + Send + Sync + 'static {
     /// The request type to expect
@@ -129,4 +85,48 @@ pub trait RpcHandler: Clone + Send + Sync + 'static {
             }
         }
     }
+}
+
+/// Configures an [`axum::Router`] that handles JSON-RPC calls via both HTTP and WS.
+pub fn http_ws_router<Http, Ws>(config: ServerConfig, http: Http, ws: Ws) -> Router
+where
+    Http: RpcHandler,
+    Ws: PubSubRpcHandler,
+{
+    router_inner(config, post(handler::handle).get(ws::handle_ws), (http, ws))
+}
+
+/// Configures an [`axum::Router`] that handles JSON-RPC calls via HTTP.
+pub fn http_router<Http>(config: ServerConfig, http: Http) -> Router
+where
+    Http: RpcHandler,
+{
+    router_inner(config, post(handler::handle), (http, ()))
+}
+
+fn router_inner<S: Clone + Send + Sync + 'static>(
+    config: ServerConfig,
+    root_method_router: MethodRouter<S>,
+    state: S,
+) -> Router {
+    let ServerConfig { allow_origin, no_cors, no_request_size_limit } = config;
+
+    let mut router = Router::new()
+        .route("/", root_method_router)
+        .with_state(state)
+        .layer(TraceLayer::new_for_http());
+    if !no_cors {
+        // See [`tower_http::cors`](https://docs.rs/tower-http/latest/tower_http/cors/index.html)
+        // for more details.
+        router = router.layer(
+            CorsLayer::new()
+                .allow_origin(allow_origin.0)
+                .allow_headers([header::CONTENT_TYPE])
+                .allow_methods([Method::GET, Method::POST]),
+        );
+    }
+    if no_request_size_limit {
+        router = router.layer(DefaultBodyLimit::disable());
+    }
+    router
 }

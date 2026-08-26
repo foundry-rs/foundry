@@ -25,12 +25,6 @@ type DynamicTargetArtifactMatchCache =
 type FuzzedFunction = (Address, Function);
 type FunctionLookup = HashMap<Selector, Function>;
 
-/// Returns true if the function returns `int256`, indicating optimization mode.
-/// In optimization mode, the fuzzer maximizes the return value instead of checking invariants.
-pub fn is_optimization_invariant(func: &Function) -> bool {
-    func.outputs.len() == 1 && func.outputs[0].ty == "int256"
-}
-
 /// Contracts identified as targets during a fuzz run.
 ///
 /// During execution, any newly created contract is added as target and used through the rest of
@@ -654,6 +648,12 @@ impl fmt::Display for InvariantSettings {
             self.fail_on_revert,
         )
     }
+}
+
+/// Returns true if the function returns `int256`, indicating optimization mode.
+/// In optimization mode, the fuzzer maximizes the return value instead of checking invariants.
+pub fn is_optimization_invariant(func: &Function) -> bool {
+    func.outputs.len() == 1 && func.outputs[0].ty == "int256"
 }
 
 #[cfg(test)]
