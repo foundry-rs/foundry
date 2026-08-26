@@ -769,6 +769,32 @@ contract StatelessSkipTest is Test {
     assert!(!has_regular_file(&corpus_root));
 });
 
+forgetest_init!(stateless_fuzz_does_not_persist_assume_rejects, |prj, cmd| {
+    let corpus_root = prj.root().join("fuzz_corpus");
+    prj.update_config(|config| {
+        config.fuzz.runs = 1;
+        config.fuzz.max_test_rejects = 1;
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.corpus.corpus_dir = Some(corpus_root.clone());
+    });
+    prj.add_test(
+        "StatelessAssumeReject.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract StatelessAssumeRejectTest is Test {
+    function testFuzz_assume(uint256) public view {
+        vm.assume(false);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "testFuzz_assume", "-q"]).assert_failure();
+
+    assert!(!has_regular_file(&corpus_root));
+});
+
 forgetest_init!(stateless_fuzz_preserves_payable_value, |prj, cmd| {
     let corpus_root = prj.root().join("fuzz_corpus");
     let frontier_root = prj.root().join("fuzz_frontiers");
@@ -4958,6 +4984,36 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
     });
     check(&mut cmd, false);
     assert!(new_persist_dir.exists());
+});
+
+forgetest_init!(zero_fuzz_runs_rejected, |prj, cmd| {
+    prj.update_config(|config| config.fuzz.runs = 0);
+    prj.add_test(
+        "ZeroFuzzRuns.t.sol",
+        r#"
+contract ZeroFuzzRunsTest {
+    function testFuzz_value(uint256) external pure {}
+}
+   "#,
+    );
+
+    let output = cmd.arg("test").assert_failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(stderr.contains("`fuzz.runs` must be greater than 0"), "{stderr}");
+
+    prj.update_config(|config| config.fuzz.runs = 1);
+    prj.add_test(
+        "ZeroFuzzRuns.t.sol",
+        r#"
+contract ZeroFuzzRunsTest {
+    /// forge-config: default.fuzz.runs = 0
+    function testFuzz_value(uint256) external pure {}
+}
+   "#,
+    );
+    let output = cmd.forge_fuse().arg("test").assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("`fuzz.runs` must be greater than 0"), "{stdout}");
 });
 
 // https://github.com/foundry-rs/foundry/pull/735 behavior changed with https://github.com/foundry-rs/foundry/issues/3521

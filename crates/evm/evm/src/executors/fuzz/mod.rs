@@ -437,6 +437,13 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let (mut call, kind) = checked.expect("depth-one campaign emits a check event");
         let tx = state.1.clone();
 
+        // Handle `vm.assume` before recording coverage or persisting the input.
+        if kind == CampaignCallKind::AssumptionRejected {
+            // Account for the attempted corpus mutation without retaining or crediting the input.
+            coverage_metrics.process_inputs(&[], &[], false, None);
+            return Err(TestCaseError::reject(FuzzError::AssumeReject));
+        }
+
         if call.skip_reason().is_some() {
             // Account for the attempted corpus mutation without retaining or crediting the input.
             coverage_metrics.process_inputs(&[], &[], false, None);
@@ -458,11 +465,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 new_coverage,
                 None,
             );
-        }
-
-        // Handle `vm.assume`.
-        if kind == CampaignCallKind::AssumptionRejected {
-            return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
         let (breakpoints, deprecated_cheatcodes) =
