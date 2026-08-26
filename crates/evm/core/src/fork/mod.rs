@@ -1,9 +1,9 @@
-use super::opts::{EvmOpts, ForkContext};
+use super::opts::EvmOpts;
 
 pub mod database;
 
 mod multi;
-pub use multi::{ForkId, MultiFork, MultiForkHandler};
+pub use multi::{ForkId, ForkResult, MultiFork, MultiForkHandler};
 
 mod resolved;
 pub use resolved::ResolvedFork;
@@ -17,6 +17,6 @@ pub struct CreateFork {
     pub url: String,
     /// All env settings as configured by the user
     pub evm_opts: EvmOpts,
-    /// Context already resolved by the runner that requested this backend.
-    pub expected_context: Option<ForkContext>,
+    /// Exact source and block identity resolved before fork construction.
+    pub resolved: Option<ResolvedFork>,
 }

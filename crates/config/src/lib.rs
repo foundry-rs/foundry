@@ -47,9 +47,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    fs, io,
+    fs,
+    io::{self, Write as _},
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Mutex,
 };
 
 mod macros;
@@ -153,6 +155,7 @@ pub use semver;
 
 #[cfg(not(test))]
 static SELECTED_PROFILE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new();
+static WARNED_LOCAL_COMPILERS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 /// Foundry configuration
 ///
@@ -1503,7 +1506,8 @@ impl Config {
                     if !solc.is_file() {
                         return Err(SolcError::msg(format!("`solc` {solc:?} does not exist")));
                     }
-                    Solc::new_with_approval(solc)?
+                    warn_local_compiler(solc);
+                    Solc::new(solc)?
                 }
             };
             return Ok(Some(solc));
@@ -1591,7 +1595,8 @@ impl Config {
             return Ok(None);
         }
         let vyper = if let Some(path) = &self.vyper.path {
-            Some(Vyper::new_with_approval(path)?)
+            warn_local_compiler(path);
+            Some(Vyper::new(path)?)
         } else {
             Vyper::new("vyper").ok()
         };
@@ -2703,7 +2708,8 @@ impl Config {
                 .ok()
                 .and_then(|version| self.evm_version.normalize_version_solc(&version))
         {
-            figment = figment.merge(("evm_version", version));
+            let profile = figment.profile().clone();
+            figment = figment.merge(Serialized::default("evm_version", version).profile(profile));
         }
 
         // Normalize `deny` based on the provided `deny_warnings` value.
@@ -3108,7 +3114,10 @@ impl SolcReq {
     pub fn try_version(&self) -> Result<Version, SolcError> {
         match self {
             Self::Version(version) => Ok(version.clone()),
-            Self::Local(path) => Solc::new_with_approval(path).map(|solc| solc.version),
+            Self::Local(path) => {
+                warn_local_compiler(path);
+                Solc::new(path).map(|solc| solc.version)
+            }
         }
     }
 }
@@ -3252,6 +3261,21 @@ pub(crate) mod from_str_lowercase {
     {
         String::deserialize(deserializer)?.to_lowercase().parse().map_err(serde::de::Error::custom)
     }
+}
+
+fn warn_local_compiler(path: &Path) {
+    let mut warned = WARNED_LOCAL_COMPILERS.lock().unwrap_or_else(|err| err.into_inner());
+    if warned.iter().any(|warned_path| warned_path == path) {
+        return;
+    }
+    warned.push(path.to_path_buf());
+
+    let mut stderr = io::stderr().lock();
+    let _ = writeln!(
+        stderr,
+        "Warning: this project is configured to use a local compiler executable:\n  {path:?}\n\
+         Running this executable may execute arbitrary code."
+    );
 }
 
 fn canonic(path: impl Into<PathBuf>) -> PathBuf {
@@ -5974,6 +5998,13 @@ mod tests {
 
             let loaded = Config::load().unwrap().sanitized();
             assert_eq!(loaded.evm_version, EvmVersion::London);
+
+            let figment = Config::figment_with_root(jail.directory()).merge(
+                Serialized::default("evm_version", EvmVersion::Amsterdam)
+                    .profile(Config::selected_profile()),
+            );
+            let loaded = Config::from_provider(figment).unwrap().sanitized();
+            assert_eq!(loaded.evm_version, EvmVersion::Amsterdam);
             Ok(())
         });
     }

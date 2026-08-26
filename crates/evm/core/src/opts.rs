@@ -28,13 +28,6 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use url::Url;
 
-fn fork_endpoint_description(endpoint: &str) -> String {
-    Url::parse(endpoint)
-        .ok()
-        .and_then(|url| url.host_str().map(|host| format!("provider {host}")))
-        .unwrap_or_else(|| "configured provider".to_string())
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EvmOpts {
     /// The EVM environment configuration.
@@ -224,7 +217,7 @@ fn endpoint_hardfork(
 /// Identity and block context of the remote chain backing a fork.
 ///
 /// The source chain ID remains distinct from the configured `CHAINID` opcode override.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
 pub struct ForkContext {
     /// Chain ID exposed through `eth_chainId`.
     pub execution_chain_id: ChainId,
@@ -901,22 +894,9 @@ impl EvmOpts {
         &self,
         fork: Option<&ResolvedFork>,
     ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, TX)> {
-        let (evm_env, tx, _) = self.env_with_resolved_fork_context(fork).await?;
-        Ok((evm_env, tx))
-    }
-
-    /// Returns environments at an exact fork block together with its current endpoint identity.
-    pub async fn env_with_resolved_fork_context<
-        SPEC: Into<SpecId> + Default + Copy,
-        BLOCK: FoundryBlock + Default,
-        TX: FoundryTransaction + Default,
-    >(
-        &self,
-        fork: Option<&ResolvedFork>,
-    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, TX, Option<ForkContext>)> {
         let Some(_) = &self.fork_url else {
             eyre::ensure!(fork.is_none(), "resolved fork provided without a configured fork");
-            return Ok((self.local_evm_env(), self.local_tx_env(), None));
+            return Ok((self.local_evm_env(), self.local_tx_env()));
         };
         let fork = fork.ok_or_else(|| eyre::eyre!("fork must be resolved"))?;
         let provider = self.provider_for_resolved_fork::<AnyNetwork>(fork)?;
@@ -941,7 +921,7 @@ impl EvmOpts {
             self.ensure_expected_fork_endpoint(&identity)?;
             if endpoint == fork.context() && endpoint.matches_identity(&identity) {
                 let chain_id = self.chain_id_override().unwrap_or(endpoint.execution_chain_id);
-                return Ok((evm_env, self.fork_tx_env(gas_price, chain_id), Some(endpoint)));
+                return Ok((evm_env, self.fork_tx_env(gas_price, chain_id)));
             }
         }
         eyre::bail!(
@@ -967,8 +947,8 @@ impl EvmOpts {
         Ok((evm_env, block.number))
     }
 
-    /// Returns the fork environment together with the remote chain identity used to build it.
-    pub(crate) async fn fork_evm_env_with_context<
+    /// Returns the EVM environment and block identity fetched from the fork endpoint.
+    pub(crate) async fn fork_evm_env_resolved<
         SPEC: Into<SpecId> + Default + Copy,
         BLOCK: FoundryBlock + Default,
         N: Network,
@@ -976,11 +956,12 @@ impl EvmOpts {
     >(
         &self,
         provider: &P,
-    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, ForkContext)> {
+    ) -> eyre::Result<(EvmEnv<SPEC, BLOCK>, ResolvedFork)> {
         let mut node_info_probe = self.anvil_node_info_probe();
-        let (evm_env, _, context) =
+        let (evm_env, block, context) =
             self.fork_evm_env_resolved_with_context(provider, &mut node_info_probe).await?;
-        Ok((evm_env, context))
+        let fork_url = self.fork_url.as_deref().unwrap_or_default();
+        Ok((evm_env, self.resolved_fork(fork_url, block, context)))
     }
 
     /// Returns the fork environment, exact block, and endpoint identity resolved together.
@@ -1167,6 +1148,25 @@ impl EvmOpts {
         Ok((evm_env, context))
     }
 
+    /// Reconstructs the fork environment at an already resolved exact block.
+    pub(crate) async fn fork_evm_env_at_resolved<
+        SPEC: Into<SpecId> + Default + Copy,
+        BLOCK: FoundryBlock + Default,
+        N: Network,
+        P: Provider<N>,
+    >(
+        &self,
+        provider: &P,
+        expected: &ResolvedFork,
+    ) -> eyre::Result<EvmEnv<SPEC, BLOCK>> {
+        let mut node_info_probe = self.anvil_node_info_probe();
+        node_info_probe.identified |= expected.context().hardfork.is_some();
+        let (evm_env, _) = self
+            .fork_evm_env_at_resolved_with_context(provider, expected, &mut node_info_probe)
+            .await?;
+        Ok(evm_env)
+    }
+
     fn fork_env_from_block<
         SPEC: Into<SpecId> + Default + Copy,
         BLOCK: FoundryBlock + Default,
@@ -1271,11 +1271,33 @@ impl EvmOpts {
     pub fn get_fork(
         &self,
         config: &Config,
-        source_chain_id: u64,
+        chain_id: u64,
         fork_block_number: Option<BlockNumber>,
     ) -> Option<CreateFork> {
+        self.get_fork_with_identity(config, chain_id, fork_block_number, None)
+    }
+
+    /// Returns a fork configuration pinned to an already resolved block identity.
+    pub fn get_fork_resolved(
+        &self,
+        config: &Config,
+        chain_id: u64,
+        fork: Option<&ResolvedFork>,
+    ) -> Option<CreateFork> {
+        let fork_block_number = fork.map(ResolvedFork::number);
+        let source_chain_id = fork.map(|fork| fork.context().source_chain_id).unwrap_or(chain_id);
+        self.get_fork_with_identity(config, source_chain_id, fork_block_number, fork.cloned())
+    }
+
+    fn get_fork_with_identity(
+        &self,
+        config: &Config,
+        chain_id: u64,
+        fork_block_number: Option<BlockNumber>,
+        resolved: Option<ResolvedFork>,
+    ) -> Option<CreateFork> {
         let url = self.fork_url.clone()?;
-        let enable_caching = config.enable_caching(&url, source_chain_id);
+        let enable_caching = config.enable_caching(&url, chain_id);
 
         // Pin fork_block_number to the block that was already fetched in env, so subsequent
         // fork operations use the same block. This prevents inconsistencies when forking at
@@ -1286,19 +1308,7 @@ impl EvmOpts {
             evm_opts.fork_block_number_is_inferred = fork_block_number.is_some();
         }
 
-        Some(CreateFork { url, enable_caching, evm_opts, expected_context: None })
-    }
-
-    /// Builds a fork request constrained to a previously resolved endpoint context.
-    pub fn get_fork_with_context(
-        &self,
-        config: &Config,
-        context: ForkContext,
-    ) -> Option<CreateFork> {
-        let mut fork =
-            self.get_fork(config, context.source_chain_id, Some(context.block_number))?;
-        fork.expected_context = Some(context);
-        Some(fork)
+        Some(CreateFork { url, enable_caching, evm_opts, resolved })
     }
 
     /// Returns the gas limit to use
@@ -1525,6 +1535,13 @@ pub struct Env {
     /// EIP-170: Contract code size limit in bytes. Useful to increase this because of tests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_size_limit: Option<usize>,
+}
+
+fn fork_endpoint_description(endpoint: &str) -> String {
+    Url::parse(endpoint)
+        .ok()
+        .and_then(|url| url.host_str().map(|host| format!("provider {host}")))
+        .unwrap_or_else(|| "configured provider".to_string())
 }
 
 async fn option_try_or_else<T, E>(
@@ -1870,11 +1887,11 @@ mod tests {
 
     #[test]
     #[cfg(feature = "monad")]
-    fn resolve_execution_spec_uses_monad_activation_timestamp() {
+    fn resolve_execution_spec_uses_monad_ten_activation_timestamp() {
         let config = Config::default();
         let networks = NetworkConfigs::with_monad();
         let activation =
-            foundry_evm_hardforks::MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
+            foundry_evm_hardforks::MonadHardfork::MonadTen.mainnet_activation_timestamp().unwrap();
 
         let mut before = monad_env(activation - 1);
         assert_eq!(
@@ -1886,9 +1903,9 @@ mod tests {
                 None,
                 None,
             ),
-            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadEight))
+            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadNine))
         );
-        assert_eq!(before.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadEight);
+        assert_eq!(before.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadNine);
 
         let mut after = monad_env(activation);
         assert_eq!(
@@ -1900,9 +1917,9 @@ mod tests {
                 None,
                 None,
             ),
-            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadNine))
+            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadTen))
         );
-        assert_eq!(after.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadNine);
+        assert_eq!(after.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadTen);
     }
 
     #[test]
@@ -1935,7 +1952,7 @@ mod tests {
         let config = Config::default();
         let networks = NetworkConfigs::with_monad();
         let activation =
-            foundry_evm_hardforks::MonadHardfork::MonadNine.mainnet_activation_timestamp().unwrap();
+            foundry_evm_hardforks::MonadHardfork::MonadTen.mainnet_activation_timestamp().unwrap();
         let mut env = monad_env(activation - 1);
 
         assert_eq!(
@@ -1947,9 +1964,9 @@ mod tests {
                 None,
                 None,
             ),
-            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadNine))
+            Some(FoundryHardfork::Monad(foundry_evm_hardforks::MonadHardfork::MonadTen))
         );
-        assert_eq!(env.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadNine);
+        assert_eq!(env.cfg_env.spec, foundry_evm_hardforks::MonadHardfork::MonadTen);
     }
 
     #[test]
@@ -2725,24 +2742,34 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn fork_backend_rejects_changed_expected_context() {
+    async fn fork_backend_rejects_changed_resolved_context() {
         let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
         let mut evm_opts = EvmOpts { fork_url: Some(handle.http_endpoint()), ..Default::default() };
         evm_opts.infer_network_from_fork().await.unwrap();
-        let (_, _, context) =
-            evm_opts.env_with_fork_context::<SpecId, BlockEnv, TxEnv>().await.unwrap();
-        let mut context = context.unwrap();
+        let (_, _, resolved) = evm_opts.env_resolved::<SpecId, BlockEnv, TxEnv>().await.unwrap();
+        let resolved = resolved.unwrap();
+        let mut context = resolved.context();
         let mut invalid_instance = context.instance_id.unwrap_or_default();
         invalid_instance[31] ^= 1;
         context.instance_id = Some(invalid_instance);
-        let fork = evm_opts.get_fork_with_context(&Config::default(), context).unwrap();
+        let invalid = ResolvedFork::new(
+            evm_opts.fork_url.as_deref().unwrap(),
+            evm_opts.fork_source_headers(),
+            evm_opts.rpc_jwt.as_deref(),
+            evm_opts.fork_block_number,
+            resolved.block(),
+            context,
+        );
+        let fork = evm_opts
+            .get_fork_resolved(&Config::default(), context.execution_chain_id, Some(&invalid))
+            .unwrap();
 
         let error =
             crate::backend::Backend::<crate::evm::EthEvmNetwork>::spawn(Some(fork)).unwrap_err();
         assert!(
-            error.to_string().contains(
-                "fork endpoint changed while the execution environment and backend were being built"
-            ),
+            error
+                .to_string()
+                .contains("changed after its block and execution context were resolved"),
             "{error}"
         );
     }

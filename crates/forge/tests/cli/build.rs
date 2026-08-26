@@ -33,7 +33,7 @@ fn add_local_submodule(root: &Path, path: &str) -> String {
 }
 
 #[cfg(unix)]
-forgetest!(local_compiler_requires_approval, |prj, cmd| {
+forgetest!(local_compiler_warns_and_runs, |prj, cmd| {
     let solc = prj.root().join("payload");
     let invoked = prj.root().join("payload.invoked");
     fs::write(
@@ -59,33 +59,16 @@ exit 1
 
     let output = cmd.arg("build").assert_failure();
     let stderr = output.get_output().stderr_lossy();
-    assert!(stderr.contains("refusing to run unapproved local compiler"), "{stderr}");
-    assert!(stderr.contains("--allow-local-compiler"), "{stderr}");
-    assert!(!invoked.exists(), "local compiler ran without approval");
-
-    cmd.forge_fuse().args(["build", "--allow-local-compiler"]).assert_failure();
-    assert!(invoked.exists(), "approved local compiler did not run");
+    assert!(stderr.contains("configured to use a local compiler executable"), "{stderr}");
+    assert!(invoked.exists(), "local compiler did not run after warning");
 });
 
-forgetest!(project_dotenv_requires_approval, |prj, cmd| {
+forgetest!(project_dotenv_loads_with_warning, |prj, cmd| {
     fs::write(prj.root().join(".env"), "FOUNDRY_SRC=dotenv-src").unwrap();
 
-    let output = cmd.args(["config", "--json"]).assert_failure();
+    let output = cmd.args(["config", "--json"]).assert_success();
     let stderr = output.get_output().stderr_lossy();
-    assert!(stderr.contains("refusing to load unapproved project dotenv"), "{stderr}");
-    assert!(stderr.contains("--allow-project-env"), "{stderr}");
-
-    let output = cmd.forge_fuse().args([
-        "create",
-        "src/Contract.sol:Contract",
-        "--constructor-args",
-        "--allow-project-env",
-    ]);
-    let stderr = output.assert_failure().get_output().stderr_lossy();
-    assert!(stderr.contains("refusing to load unapproved project dotenv"), "{stderr}");
-
-    let output =
-        cmd.forge_fuse().args(["config", "--json", "--allow-project-env"]).assert_success();
+    assert!(stderr.contains("Warning: loading project dotenv"), "{stderr}");
     let config: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
     assert_eq!(config["src"], "dotenv-src");
 });

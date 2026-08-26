@@ -9,9 +9,9 @@ use crate::eth::{
     },
     pool::transactions::PoolTransaction,
 };
-use alloy_consensus::{BlockHeader, Header, constants::EMPTY_WITHDRAWALS};
-use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
-use alloy_evm::EvmEnv;
+use alloy_consensus::BlockHeader;
+#[cfg(test)]
+use alloy_consensus::Header;
 use alloy_network::Network;
 use alloy_primitives::{
     B256, Bytes, U256,
@@ -36,7 +36,6 @@ use foundry_evm::{
 use foundry_primitives::FoundryNetwork;
 use foundry_primitives::{FoundryHeader, FoundryReceiptEnvelope, FoundryTxEnvelope};
 use parking_lot::RwLock;
-use revm::{context::Block as RevmBlock, primitives::hardfork::SpecId};
 use std::{collections::VecDeque, fmt, path::PathBuf, sync::Arc, time::Duration};
 // use yansi::Paint;
 
@@ -326,45 +325,18 @@ pub struct BlockchainStorage<N: Network> {
 impl<N: Network> BlockchainStorage<N> {
     /// Removes all metadata associated with a locally stored Monad block.
     #[cfg(feature = "monad")]
-    pub(super) fn remove_monad_block_metadata(&mut self, block_hash: &B256) {
+    fn remove_monad_block_metadata(&mut self, block_hash: &B256) {
         self.monad_block_participants.remove(block_hash);
         self.monad_block_replay_profiles.remove(block_hash);
     }
 
-    /// Creates a new storage with a genesis block
-    pub fn new(
-        evm_env: &EvmEnv,
-        base_fee: Option<u64>,
-        timestamp: u64,
-        genesis_number: u64,
-        is_tempo: bool,
-    ) -> Self {
-        let is_shanghai = *evm_env.spec_id() >= SpecId::SHANGHAI;
-        let is_cancun = *evm_env.spec_id() >= SpecId::CANCUN;
-        let is_prague = *evm_env.spec_id() >= SpecId::PRAGUE;
-
-        // create a dummy genesis block
-        let header = Header {
-            timestamp,
-            base_fee_per_gas: base_fee,
-            gas_limit: evm_env.block_env.gas_limit,
-            beneficiary: evm_env.block_env.beneficiary,
-            difficulty: evm_env.block_env.difficulty,
-            blob_gas_used: evm_env.block_env.blob_excess_gas_and_price.as_ref().map(|_| 0),
-            excess_blob_gas: evm_env.block_env.blob_excess_gas(),
-            number: genesis_number,
-            parent_beacon_block_root: is_cancun.then_some(Default::default()),
-            withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
-            requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
-            ..Default::default()
-        };
-        let block = create_block(
-            FoundryHeader::new(header, is_tempo),
-            Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
-        );
+    /// Creates a new storage with a genesis block.
+    pub fn new(header: FoundryHeader) -> Self {
+        let block =
+            create_block(header, Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new());
         let genesis_hash = block.header.hash_slow();
         let best_hash = genesis_hash;
-        let best_number = genesis_number;
+        let best_number = block.header.number();
 
         let mut blocks = B256HashMap::default();
         blocks.insert(genesis_hash, block);
@@ -377,7 +349,7 @@ impl<N: Network> BlockchainStorage<N> {
             best_hash,
             best_number,
             genesis_hash,
-            genesis_number,
+            genesis_number: best_number,
             transactions: Default::default(),
             total_difficulty: Default::default(),
             #[cfg(feature = "monad")]
@@ -560,23 +532,9 @@ pub struct Blockchain<N: Network> {
 }
 
 impl<N: Network> Blockchain<N> {
-    /// Creates a new storage with a genesis block
-    pub fn new(
-        evm_env: &EvmEnv,
-        base_fee: Option<u64>,
-        timestamp: u64,
-        genesis_number: u64,
-        is_tempo: bool,
-    ) -> Self {
-        Self {
-            storage: Arc::new(RwLock::new(BlockchainStorage::new(
-                evm_env,
-                base_fee,
-                timestamp,
-                genesis_number,
-                is_tempo,
-            ))),
-        }
+    /// Creates a new storage with a genesis block.
+    pub fn new(header: FoundryHeader) -> Self {
+        Self { storage: Arc::new(RwLock::new(BlockchainStorage::new(header))) }
     }
 
     pub fn forked(block_number: u64, block_hash: B256, total_difficulty: U256) -> Self {

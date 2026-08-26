@@ -4,7 +4,7 @@ use super::BackendError;
 use crate::{
     FoundryInspectorExt,
     backend::{
-        Backend, ContextUpdateFor, DatabaseExt, JournaledState, LocalForkId,
+        Backend, ContextUpdateFor, DatabaseExt, ForkAccountField, JournaledState, LocalForkId,
         RevertStateSnapshotAction, diagnostic::RevertDiagnostic,
     },
     evm::{
@@ -130,7 +130,7 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
         chain_context: ChainFor<FEN>,
-        inspector: I,
+        inspector: &mut I,
     ) -> eyre::Result<Option<ResultAndState<revm::context_interface::result::HaltReason>>> {
         if !self.backend.networks().is_monad()
             || crate::evm::protocol_system_call(tx_env)?.is_none()
@@ -141,9 +141,8 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
         let factory = FEN::EvmFactory::default();
-        let mut inspector = inspector;
         let mut evm =
-            factory.create_foundry_nested_evm(self, evm_env.clone(), chain_context, &mut inspector);
+            factory.create_foundry_nested_evm(self, evm_env.clone(), chain_context, inspector);
         let result = evm.transact_raw(tx_env.clone())?;
 
         // A successful specialized replay replaces the EVM transaction with its synthetic system
@@ -351,12 +350,22 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
         self.backend.is_persistent(acc)
     }
 
-    fn invalidate_fork_cache_account(&mut self, address: Address) {
-        self.backend.to_mut().invalidate_fork_cache_account(address)
+    fn refresh_fork_account(
+        &mut self,
+        address: Address,
+        field: ForkAccountField,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), BackendError> {
+        self.backend.to_mut().refresh_fork_account(address, field, journaled_state)
     }
 
-    fn invalidate_fork_cache_storage(&mut self, address: Address, slot: U256) {
-        self.backend.to_mut().invalidate_fork_cache_storage(address, slot)
+    fn refresh_fork_storage(
+        &mut self,
+        address: Address,
+        slot: U256,
+        journaled_state: &mut JournaledState,
+    ) -> Result<(), BackendError> {
+        self.backend.to_mut().refresh_fork_storage(address, slot, journaled_state)
     }
 
     fn remove_persistent_account(&mut self, account: &Address) -> bool {

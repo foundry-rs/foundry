@@ -17,6 +17,7 @@ use std::{io::Write, path::PathBuf, str::FromStr};
 
 mod brutalize;
 mod core;
+mod exact_fork;
 mod fuzz;
 mod invariant;
 mod logs;
@@ -48,7 +49,6 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
     let testdata =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata").canonicalize().unwrap();
     cmd.current_dir(&testdata);
-    cmd.arg("--allow-project-env");
 
     let mut dotenv = std::fs::File::create(testdata.join(".env")).unwrap();
     for (name, endpoint) in rpc_endpoints().iter() {
@@ -6576,7 +6576,7 @@ Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing te
 "#]]);
 });
 
-forgetest_init!(zero_runs, |prj, cmd| {
+forgetest_init!(zero_invariant_runs, |prj, cmd| {
     prj.wipe_contracts();
     prj.add_test(
         "ZeroRuns.t.sol",
@@ -6592,11 +6592,6 @@ contract Handler is Test {
 contract ZeroRuns is Test {
     Handler handler = new Handler();
 
-    /// forge-config: default.fuzz.runs = 0
-    function test_fuzzZeroRuns(uint256 x) public {
-        revert("unreachable");
-    }
-
     /// forge-config: default.invariant.runs = 0
     function invariant_zeroRuns() public {}
 
@@ -6608,13 +6603,12 @@ contract ZeroRuns is Test {
 
     cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
 ...
-Ran 3 tests for test/ZeroRuns.t.sol:ZeroRuns
+Ran 2 tests for test/ZeroRuns.t.sol:ZeroRuns
 [PASS] invariant_zeroDepth() (runs: 256, calls: 0, reverts: 0)
 [PASS] invariant_zeroRuns() (runs: 0, calls: 0, reverts: 0)
-[PASS] test_fuzzZeroRuns(uint256) (runs: 0, [AVG_GAS])
-Suite result: ok. 3 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 });

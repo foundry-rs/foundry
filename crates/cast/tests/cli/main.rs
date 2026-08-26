@@ -139,14 +139,6 @@ Display options:
           and
             backtraces with line numbers.
 
-Compiler options:
-      --allow-local-compiler
-          Allow use of local compiler executables without prompting
-
-Project options:
-      --allow-project-env
-          Allow loading project dotenv files without prompting
-
 Find more information in the book: https://getfoundry.sh/cast/overview
 
 "#]]);
@@ -3494,6 +3486,74 @@ casttest!(logs_chunked, |_prj, cmd| {
     // Sanity check: results actually span the first and last chunk of the range.
     assert!(chunked.contains("12400314"), "missing log from the first chunk");
     assert!(chunked.contains("12454418"), "missing log from the last chunk");
+});
+
+forgetest_async!(events_quiet_preserves_output, |prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+    prj.add_source(
+        "EventEmitter",
+        r#"
+contract EventEmitter {
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    function emitTransfer() external {
+        emit Transfer(msg.sender, address(this), 42);
+    }
+}
+"#,
+    );
+    cmd.forge_fuse().args(["build"]).assert_success();
+
+    let artifact = prj.root().join("out/EventEmitter.sol/EventEmitter.json");
+    let contract: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(artifact).unwrap()).unwrap();
+    let bytecode = contract["bytecode"]["object"].as_str().unwrap();
+    let deployment = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--json",
+            "--private-key",
+            private_key,
+            "--rpc-url",
+            &endpoint,
+            "--create",
+            bytecode,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let deployment: serde_json::Value = serde_json::from_str(&deployment).unwrap();
+    let address = deployment["contractAddress"].as_str().unwrap();
+
+    let receipt = cmd
+        .cast_fuse()
+        .args([
+            "send",
+            "--json",
+            "--private-key",
+            private_key,
+            "--rpc-url",
+            &endpoint,
+            address,
+            "emitTransfer()",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let receipt: serde_json::Value = serde_json::from_str(&receipt).unwrap();
+    let tx_hash = receipt["transactionHash"].as_str().unwrap();
+
+    cmd.cast_fuse()
+        .args(["--quiet", "events", tx_hash, "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[block 2, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3::Transfer(address,address,uint256) { from: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, to: 0x5FbDB2315678afecb367f032d93F642f64180aa3, amount: 42 }
+
+"#]]);
 });
 
 // tests that `cast create2` writes `address\tsalt` to stdout and prose to stderr
@@ -7017,6 +7077,8 @@ forgetest_async!(cast_call_debug_trace_call_local_artifacts_json_stdout, |prj, c
     });
 });
 
+// `dirs::home_dir()` ignores `HOME` on Windows, so the signature cache cannot be isolated there.
+#[cfg(not(windows))]
 casttest!(cast_call_decodes_custom_error, async |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
 

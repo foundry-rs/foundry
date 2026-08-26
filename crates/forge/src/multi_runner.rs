@@ -1188,7 +1188,7 @@ mod tests {
             enable_caching: false,
             url: "http://localhost:8545".into(),
             evm_opts: evm_opts.clone(),
-            expected_context: None,
+            resolved: None,
         });
         assert!(!builder.create2_deployer_available(&evm_opts));
         builder.fork = None;

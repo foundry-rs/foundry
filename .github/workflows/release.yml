@@ -33,6 +33,7 @@ jobs:
       pull-requests: read
     outputs:
       tag_name: ${{ steps.release_info.outputs.tag_name }}
+      release_tag_name: ${{ steps.release_info.outputs.release_tag_name }}
       release_name: ${{ steps.release_info.outputs.release_name }}
       changelog: ${{ steps.build_changelog.outputs.changelog }}
       skip_assets: ${{ steps.existing_release.outputs.skip_assets || 'false' }}
@@ -79,6 +80,7 @@ jobs:
 
           if [[ ${IS_NIGHTLY} == 'true' ]]; then
             tag_name="nightly-${GITHUB_SHA}"
+            release_tag_name="staging-release-${GITHUB_SHA}"
             release_name="Nightly ($(date '+%Y-%m-%d'))"
             is_prerelease=true
             # Find the previous nightly tag for changelog generation,
@@ -87,6 +89,7 @@ jobs:
               --format='%(refname:strip=2)' 'refs/tags/nightly-*')
           else
             tag_name="$GITHUB_REF_NAME"
+            release_tag_name="$tag_name"
             release_name="$GITHUB_REF_NAME"
 
             if [[ "$GITHUB_REF_NAME" =~ $stable_pattern ]]; then
@@ -125,6 +128,7 @@ jobs:
           fi
           {
             printf 'tag_name=%s\n' "$tag_name"
+            printf 'release_tag_name=%s\n' "$release_tag_name"
             printf 'release_name=%s\n' "$release_name"
             printf 'is_prerelease=%s\n' "$is_prerelease"
             printf 'from_tag=%s\n' "$from_tag"
@@ -137,33 +141,67 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
+          RELEASE_TAG_NAME: ${{ steps.release_info.outputs.release_tag_name }}
+          EXPECTED_SHA: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
           skip_assets=false
-          if is_draft="$(gh release view "$TAG_NAME" --json isDraft --jq .isDraft 2>/dev/null)"; then
-            if [[ "$is_draft" == "true" ]]; then
-              echo "Draft nightly release $TAG_NAME already exists; continuing so assets can be uploaded."
-            else
-              echo "Published nightly release $TAG_NAME already exists; skipping assets and retrying finalization."
-              skip_assets=true
+          releases="$(gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100" | jq 'add')"
+          final="$(jq -c --arg tag "$TAG_NAME" '[.[] | select(.tag_name == $tag)]' <<< "$releases")"
+          staging="$(jq -c --arg tag "$RELEASE_TAG_NAME" '[.[] | select(.tag_name == $tag)]' <<< "$releases")"
+          final_count="$(jq 'length' <<< "$final")"
+          staging_count="$(jq 'length' <<< "$staging")"
+
+          if (( final_count > 1 || staging_count > 1 )); then
+            echo "::error::Found duplicate final or staging nightly releases."
+            exit 1
+          fi
+          if (( final_count == 1 && staging_count == 1 )); then
+            echo "::error::Both final release $TAG_NAME and staging release $RELEASE_TAG_NAME exist."
+            exit 1
+          fi
+          if (( final_count == 0 )); then
+            tag_error="$(mktemp)"
+            if final_ref="$(gh api "repos/$GH_REPO/git/ref/tags/$TAG_NAME" 2>"$tag_error")"; then
+              if [[ "$(jq -r '.object.type' <<< "$final_ref")" != "commit" || "$(jq -r '.object.sha' <<< "$final_ref")" != "$EXPECTED_SHA" ]]; then
+                echo "::error::Final nightly tag $TAG_NAME does not point to $EXPECTED_SHA."
+                exit 1
+              fi
+              echo "Final nightly tag $TAG_NAME already points to $EXPECTED_SHA; allowing publication retry."
+            elif ! grep -q 'HTTP 404' "$tag_error"; then
+              cat "$tag_error" >&2
+              echo "::error::Could not determine whether final nightly tag $TAG_NAME exists."
+              exit 1
             fi
           fi
+          if (( final_count == 1 )); then
+            if [[ "$(jq -r '.[0].draft' <<< "$final")" == "true" ]]; then
+              echo "::error::Final nightly release $TAG_NAME unexpectedly exists as a draft."
+              exit 1
+            fi
+            if [[ "$(jq -r '.[0].prerelease' <<< "$final")" != "true" ]]; then
+              echo "::error::Final nightly release $TAG_NAME is not a prerelease."
+              exit 1
+            fi
+            echo "Published nightly release $TAG_NAME already exists; skipping assets and retrying finalization."
+            skip_assets=true
+          elif (( staging_count == 1 )); then
+            if [[ "$(jq -r '.[0].draft' <<< "$staging")" != "true" ]]; then
+              echo "::error::Staging nightly release $RELEASE_TAG_NAME is already published."
+              exit 1
+            fi
+            if [[ "$(jq -r '.[0].prerelease' <<< "$staging")" != "true" ]]; then
+              echo "::error::Staging nightly release $RELEASE_TAG_NAME is not a prerelease."
+              exit 1
+            fi
+            if [[ "$(jq -r '.[0].target_commitish' <<< "$staging")" != "$EXPECTED_SHA" ]]; then
+              echo "::error::Staging nightly release $RELEASE_TAG_NAME does not target $EXPECTED_SHA."
+              exit 1
+            fi
+            echo "Draft nightly release $RELEASE_TAG_NAME already exists; continuing so assets can be uploaded."
+          fi
           printf 'skip_assets=%s\n' "$skip_assets" >> "$GITHUB_OUTPUT"
-
-      # Creates a `nightly-SHA` tag for this specific nightly
-      # This tag is used for this specific nightly version's release
-      # which allows users to roll back. It is also used to build
-      # the changelog.
-      - name: Create build-specific nightly tag
-        if: ${{ env.IS_NIGHTLY == 'true' && steps.existing_release.outputs.skip_assets != 'true' }}
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        env:
-          TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
-        with:
-          script: |
-            const createTag = require('./.github/scripts/create-tag.js')
-            await createTag({ github, context }, process.env.TAG_NAME)
 
       - name: Build changelog
         id: build_changelog
@@ -172,7 +210,9 @@ jobs:
         with:
           configuration: "./.github/changelog.json"
           fromTag: ${{ steps.release_info.outputs.from_tag || '' }}
-          toTag: ${{ steps.release_info.outputs.tag_name }}
+          # The canonical nightly tag is created only when the complete release
+          # is published, so use its commit directly while building the notes.
+          toTag: ${{ (env.IS_NIGHTLY == 'true' && github.sha) || steps.release_info.outputs.tag_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -187,18 +227,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
+          TAG_NAME: ${{ steps.release_info.outputs.release_tag_name }}
+          FINAL_TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
           RELEASE_NAME: ${{ steps.release_info.outputs.release_name }}
           CHANGELOG: ${{ steps.build_changelog.outputs.changelog }}
           EXPECTED_PRERELEASE: ${{ steps.release_info.outputs.is_prerelease }}
         shell: bash
         run: |
           set -euo pipefail
-          if release_state="$(gh release view "$TAG_NAME" --json isDraft,isPrerelease --jq '[.isDraft, .isPrerelease] | @tsv' 2>/dev/null)"; then
-            read -r is_draft is_prerelease <<< "$release_state"
+          if release_state="$(gh release view "$TAG_NAME" --json isDraft,isPrerelease,targetCommitish --jq '[.isDraft, .isPrerelease, .targetCommitish] | @tsv' 2>/dev/null)"; then
+            read -r is_draft is_prerelease target_commitish <<< "$release_state"
             if [[ "$is_draft" == "true" ]]; then
               if [[ "$is_prerelease" != "$EXPECTED_PRERELEASE" ]]; then
                 echo "::error::Draft release $TAG_NAME has prerelease=$is_prerelease; expected $EXPECTED_PRERELEASE."
+                exit 1
+              fi
+              if [[ "$TAG_NAME" != "$FINAL_TAG_NAME" && "$target_commitish" != "$GITHUB_SHA" ]]; then
+                echo "::error::Draft release $TAG_NAME targets $target_commitish; expected $GITHUB_SHA."
                 exit 1
               fi
               echo "Draft release $TAG_NAME already exists; reusing it."
@@ -209,7 +254,12 @@ jobs:
           fi
           notes_file="$(mktemp)"
           printf '%s' "$CHANGELOG" > "$notes_file"
-          flags=(--draft --verify-tag --title "$RELEASE_NAME" --notes-file "$notes_file")
+          flags=(--draft --title "$RELEASE_NAME" --notes-file "$notes_file")
+          if [[ "$TAG_NAME" == "$FINAL_TAG_NAME" ]]; then
+            flags+=(--verify-tag)
+          else
+            flags+=(--target "$GITHUB_SHA")
+          fi
           if [[ "$EXPECTED_PRERELEASE" == "true" ]]; then
             flags+=(--prerelease)
           fi
@@ -521,7 +571,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+          TAG_NAME: ${{ needs.prepare.outputs.release_tag_name }}
           FILE_NAME: ${{ steps.artifacts.outputs.file_name }}
           FOUNDRY_ATTESTATION: ${{ steps.artifacts.outputs.foundry_attestation }}
           FOUNDRY_SBOM: ${{ steps.artifacts.outputs.foundry_sbom }}
@@ -572,9 +622,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+          RELEASE_TAG_NAME: ${{ needs.prepare.outputs.release_tag_name }}
           DIGEST: ${{ needs.release-docker.outputs.digest }}
         shell: bash
-        run: python3 .github/scripts/finalize-release.py nightly --tag "$TAG_NAME" --digest "$DIGEST"
+        run: python3 .github/scripts/finalize-release.py nightly --tag "$TAG_NAME" --release-tag "$RELEASE_TAG_NAME" --digest "$DIGEST"
 
   # If any of the jobs fail, this will create a high-priority issue to signal so.
   issue:

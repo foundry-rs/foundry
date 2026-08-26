@@ -16,91 +16,6 @@ use solar::{
 };
 use std::ops::ControlFlow;
 
-pub(super) fn visit_payable_loop_expressions<'ctx, 's, 'hir, 'cb>(
-    ctx: &'ctx LintContext<'s, 'ctx>,
-    gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
-    func: &'hir Function<'hir>,
-    f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Expr<'hir>) + 'cb,
-) {
-    if !is_payable_entry_point(func) {
-        return;
-    }
-
-    visit_loop_statements_and_expressions_with_options(
-        ctx,
-        gcx,
-        hir,
-        func,
-        true,
-        true,
-        |_, _, _, _| {},
-        f,
-    );
-}
-
-pub(super) fn visit_loop_statements_and_expressions<'ctx, 's, 'hir, 'cb>(
-    ctx: &'ctx LintContext<'s, 'ctx>,
-    gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
-    func: &'hir Function<'hir>,
-    mut stmt_f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Stmt<'hir>)
-    + 'cb,
-    mut expr_f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Expr<'hir>)
-    + 'cb,
-) {
-    visit_loop_statements_and_expressions_with_options(
-        ctx,
-        gcx,
-        hir,
-        func,
-        false,
-        false,
-        &mut stmt_f,
-        &mut expr_f,
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn visit_loop_statements_and_expressions_with_options<'ctx, 's, 'hir, 'cb>(
-    ctx: &'ctx LintContext<'s, 'ctx>,
-    gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
-    func: &'hir Function<'hir>,
-    follow_calls_outside_loop: bool,
-    report_local_loops_in_internal_calls: bool,
-    mut stmt_f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Stmt<'hir>)
-    + 'cb,
-    mut expr_f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Expr<'hir>)
-    + 'cb,
-) {
-    let Some(body) = func.body else { return };
-
-    let mut checker = LoopContextChecker {
-        ctx,
-        hir,
-        gcx,
-        loop_depth: 0,
-        placeholder: None,
-        modifier_stack: Vec::new(),
-        call_stack: Vec::new(),
-        internal_call_loop_depths: Vec::new(),
-        dispatch_contract: func.contract,
-        current_contract: func.contract,
-        follow_calls_outside_loop,
-        report_local_loops_in_internal_calls,
-        stmt_f: &mut stmt_f,
-        expr_f: &mut expr_f,
-    };
-    checker.visit_modifier_chain(func.modifiers, 0, body, func.contract);
-}
-
-fn is_payable_entry_point(func: &Function<'_>) -> bool {
-    !matches!(func.kind, FunctionKind::Constructor | FunctionKind::Modifier)
-        && func.state_mutability == StateMutability::Payable
-        && matches!(func.visibility, Visibility::Public | Visibility::External)
-}
-
 type LoopExprCallback<'ctx, 's, 'hir, 'cb> =
     dyn FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Expr<'hir>) + 'cb;
 type LoopStmtCallback<'ctx, 's, 'hir, 'cb> =
@@ -748,4 +663,89 @@ fn variable_data_location(hir: &Hir<'_>, var_id: VariableId) -> Option<DataLocat
 
 pub(super) fn is_address_ty(ty: Ty<'_>) -> bool {
     matches!(ty.peel_refs().kind, TyKind::Elementary(ElementaryType::Address(_)))
+}
+
+pub(super) fn visit_payable_loop_expressions<'ctx, 's, 'hir, 'cb>(
+    ctx: &'ctx LintContext<'s, 'ctx>,
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    func: &'hir Function<'hir>,
+    f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Expr<'hir>) + 'cb,
+) {
+    if !is_payable_entry_point(func) {
+        return;
+    }
+
+    visit_loop_statements_and_expressions_with_options(
+        ctx,
+        gcx,
+        hir,
+        func,
+        true,
+        true,
+        |_, _, _, _| {},
+        f,
+    );
+}
+
+pub(super) fn visit_loop_statements_and_expressions<'ctx, 's, 'hir, 'cb>(
+    ctx: &'ctx LintContext<'s, 'ctx>,
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    func: &'hir Function<'hir>,
+    mut stmt_f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Stmt<'hir>)
+    + 'cb,
+    mut expr_f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Expr<'hir>)
+    + 'cb,
+) {
+    visit_loop_statements_and_expressions_with_options(
+        ctx,
+        gcx,
+        hir,
+        func,
+        false,
+        false,
+        &mut stmt_f,
+        &mut expr_f,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn visit_loop_statements_and_expressions_with_options<'ctx, 's, 'hir, 'cb>(
+    ctx: &'ctx LintContext<'s, 'ctx>,
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    func: &'hir Function<'hir>,
+    follow_calls_outside_loop: bool,
+    report_local_loops_in_internal_calls: bool,
+    mut stmt_f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Stmt<'hir>)
+    + 'cb,
+    mut expr_f: impl FnMut(&'ctx LintContext<'s, 'ctx>, Gcx<'hir>, &'hir Hir<'hir>, &'hir Expr<'hir>)
+    + 'cb,
+) {
+    let Some(body) = func.body else { return };
+
+    let mut checker = LoopContextChecker {
+        ctx,
+        hir,
+        gcx,
+        loop_depth: 0,
+        placeholder: None,
+        modifier_stack: Vec::new(),
+        call_stack: Vec::new(),
+        internal_call_loop_depths: Vec::new(),
+        dispatch_contract: func.contract,
+        current_contract: func.contract,
+        follow_calls_outside_loop,
+        report_local_loops_in_internal_calls,
+        stmt_f: &mut stmt_f,
+        expr_f: &mut expr_f,
+    };
+    checker.visit_modifier_chain(func.modifiers, 0, body, func.contract);
+}
+
+fn is_payable_entry_point(func: &Function<'_>) -> bool {
+    !matches!(func.kind, FunctionKind::Constructor | FunctionKind::Modifier)
+        && func.state_mutability == StateMutability::Payable
+        && matches!(func.visibility, Visibility::Public | Visibility::External)
 }
