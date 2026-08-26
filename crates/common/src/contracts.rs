@@ -34,21 +34,6 @@ const CALL_PROTECTION_BYTECODE_PREFIX: [u8; 21] =
 /// `address(uint160(uint256(keccak256("foundry library deployer"))))`
 pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
 
-/// Returns whether `creation_code` is exactly this contract's linked creation bytecode followed by
-/// a complete, canonically encoded constructor argument tuple.
-pub fn matches_contract_creation(contract: &ContractData, creation_code: &[u8]) -> bool {
-    let Some(bytecode) = contract.bytecode() else { return false };
-    let Some(arguments) = creation_code.strip_prefix(bytecode.as_ref()) else { return false };
-    match contract.abi.constructor() {
-        Some(constructor) => constructor
-            .abi_decode_input(arguments)
-            .ok()
-            .and_then(|values| constructor.abi_encode_input(&values).ok())
-            .is_some_and(|encoded| encoded == arguments),
-        None => arguments.is_empty(),
-    }
-}
-
 /// Subset of [CompactBytecode] excluding sourcemaps.
 #[expect(missing_docs)]
 #[derive(Debug, Clone)]
@@ -473,6 +458,21 @@ pub type ContractsByAddress = BTreeMap<Address, (String, JsonAbi)>;
 /// Very simple fuzzy matching of contract bytecode.
 ///
 /// Returns a value between `0.0` (identical) and `1.0` (completely different).
+/// Returns whether `creation_code` is exactly this contract's linked creation bytecode followed by
+/// a complete, canonically encoded constructor argument tuple.
+pub fn matches_contract_creation(contract: &ContractData, creation_code: &[u8]) -> bool {
+    let Some(bytecode) = contract.bytecode() else { return false };
+    let Some(arguments) = creation_code.strip_prefix(bytecode.as_ref()) else { return false };
+    match contract.abi.constructor() {
+        Some(constructor) => constructor
+            .abi_decode_input(arguments)
+            .ok()
+            .and_then(|values| constructor.abi_encode_input(&values).ok())
+            .is_some_and(|encoded| encoded == arguments),
+        None => arguments.is_empty(),
+    }
+}
+
 pub fn bytecode_diff_score<'a>(mut a: &'a [u8], mut b: &'a [u8]) -> f64 {
     // Make sure `a` is the longer one.
     if a.len() < b.len() {
