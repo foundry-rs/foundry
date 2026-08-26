@@ -14,27 +14,6 @@ const MAX_CORPUS_TREE_DEPTH: usize = 64;
 const MAX_CORPUS_TREE_DIRS: usize = 10_000;
 const MAX_CORPUS_ENTRIES: usize = 1_000_000;
 
-/// Returns every `worker*/corpus/` under `root`, or `[root]` if none exist.
-pub fn canonical_replay_dirs(root: &Path) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(root)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| {
-            let p = e.path();
-            let name = p.file_name()?.to_str()?;
-            (e.file_type().ok()?.is_dir() && name.starts_with(WORKER_DIR_PREFIX))
-                .then(|| p.join(CORPUS_SUBDIR))
-                .filter(|d| is_dir_no_symlink(d))
-        })
-        .collect();
-    dirs.sort();
-    if dirs.is_empty() {
-        dirs.push(root.to_path_buf());
-    }
-    dirs
-}
-
 /// A single corpus file on disk.
 pub struct CorpusDirEntry {
     pub path: PathBuf,
@@ -223,6 +202,27 @@ pub fn parse_corpus_filename(name: &str) -> Result<(Uuid, u64)> {
     let (uuid_str, timestamp_str) =
         name.rsplit_once('-').ok_or_else(|| eyre!("invalid corpus filename format: {name}"))?;
     Ok((Uuid::parse_str(uuid_str)?, timestamp_str.parse()?))
+}
+
+/// Returns every `worker*/corpus/` under `root`, or `[root]` if none exist.
+pub fn canonical_replay_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            let name = p.file_name()?.to_str()?;
+            (e.file_type().ok()?.is_dir() && name.starts_with(WORKER_DIR_PREFIX))
+                .then(|| p.join(CORPUS_SUBDIR))
+                .filter(|d| is_dir_no_symlink(d))
+        })
+        .collect();
+    dirs.sort();
+    if dirs.is_empty() {
+        dirs.push(root.to_path_buf());
+    }
+    dirs
 }
 
 #[cfg(test)]

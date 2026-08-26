@@ -4,15 +4,6 @@ use revm_inspectors::tracing::{
     types::{CallTraceNode, CallTraceStep, DecodedTraceStep, TraceMemberOrder},
 };
 
-/// Builds a folded stack trace from a call trace arena.
-pub fn build(arena: &CallTraceArena, isolate: bool) -> Vec<String> {
-    let mut fst = EvmFoldedStackTraceBuilder::new(isolate);
-    if !arena.nodes().is_empty() {
-        fst.process_call_node(arena.nodes(), 0);
-    }
-    fst.build()
-}
-
 /// Wrapper for building a folded stack trace using EVM call trace node.
 #[derive(Default)]
 pub struct EvmFoldedStackTraceBuilder {
@@ -226,6 +217,15 @@ impl FoldedStackTraceBuilder {
             }
         }
     }
+}
+
+/// Builds a folded stack trace from a call trace arena.
+pub fn build(arena: &CallTraceArena, isolate: bool) -> Vec<String> {
+    let mut fst = EvmFoldedStackTraceBuilder::new(isolate);
+    if !arena.nodes().is_empty() {
+        fst.process_call_node(arena.nodes(), 0);
+    }
+    fst.build()
 }
 
 #[cfg(test)]

@@ -96,22 +96,6 @@ pub use trace::TracingExecutor;
 
 const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
 
-/// Returns whether a nested revert can be ignored when fail-on-revert is disabled.
-#[inline]
-pub fn should_ignore_revert(
-    fail_on_revert: bool,
-    target: Address,
-    reverter: Option<Address>,
-    extra_cheatcode_addresses: &[Address],
-) -> bool {
-    !fail_on_revert
-        && reverter.is_some_and(|reverter| {
-            reverter != target
-                && reverter != CHEATCODE_ADDRESS
-                && !extra_cheatcode_addresses.contains(&reverter)
-        })
-}
-
 sol! {
     interface ITest {
         function setUp() external;
@@ -1790,6 +1774,22 @@ impl EvmExecutionCancellation {
             Self::EarlyExit(early_exit) | Self::Campaign { early_exit, .. } => early_exit,
         }
     }
+}
+
+/// Returns whether a nested revert can be ignored when fail-on-revert is disabled.
+#[inline]
+pub fn should_ignore_revert(
+    fail_on_revert: bool,
+    target: Address,
+    reverter: Option<Address>,
+    extra_cheatcode_addresses: &[Address],
+) -> bool {
+    !fail_on_revert
+        && reverter.is_some_and(|reverter| {
+            reverter != target
+                && reverter != CHEATCODE_ADDRESS
+                && !extra_cheatcode_addresses.contains(&reverter)
+        })
 }
 
 #[cfg(test)]
