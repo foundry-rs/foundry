@@ -53,60 +53,6 @@ use revm_inspectors::tracing::types::CallKind;
 use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 use tempo_primitives::transaction::Call;
 
-pub async fn estimate_gas<N: Network, P: Provider<N>>(
-    tx: &mut N::TransactionRequest,
-    provider: &P,
-    estimate_multiplier: u64,
-    tempo_browser: bool,
-) -> Result<()>
-where
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
-{
-    // if already set, some RPC endpoints might simply return the gas value that is already
-    // set in the request and omit the estimate altogether, so we remove it here
-    tx.reset_gas_limit();
-
-    let request =
-        if tempo_browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
-    tx.set_gas_limit(
-        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?
-            * estimate_multiplier
-            / 100,
-    );
-    Ok(())
-}
-
-/// Returns `caller`'s nonce at an already resolved fork block.
-pub(super) async fn next_nonce_resolved(
-    caller: Address,
-    evm_opts: &EvmOpts,
-    fork: &ResolvedFork,
-) -> eyre::Result<u64> {
-    evm_opts.transaction_count_at_resolved_fork(caller, fork).await
-}
-
-fn reject_access_key_create<N: Network>(
-    tx: &N::TransactionRequest,
-    uses_access_key: bool,
-) -> Result<()>
-where
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
-{
-    if uses_access_key && tx.tempo_calls().iter().any(|(to, _)| to.is_create()) {
-        bail!("Tempo access-key transactions cannot use CREATE");
-    }
-    Ok(())
-}
-
-fn convert_tempo_aa_create<N: Network>(tx: &mut N::TransactionRequest)
-where
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
-{
-    if tx.is_tempo_aa() {
-        tx.convert_create_to_call();
-    }
-}
-
 /// Represents how to send a single transaction.
 #[derive(Clone)]
 pub enum SendTransactionKind<'a, N: Network> {
@@ -1368,6 +1314,60 @@ async fn wait_for_batch_receipt<N: Network>(
         }
 
         tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+pub async fn estimate_gas<N: Network, P: Provider<N>>(
+    tx: &mut N::TransactionRequest,
+    provider: &P,
+    estimate_multiplier: u64,
+    tempo_browser: bool,
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    // if already set, some RPC endpoints might simply return the gas value that is already
+    // set in the request and omit the estimate altogether, so we remove it here
+    tx.reset_gas_limit();
+
+    let request =
+        if tempo_browser { tx.browser_wallet_gas_estimation_request() } else { tx.clone() };
+    tx.set_gas_limit(
+        provider.estimate_gas(request).await.wrap_err("Failed to estimate gas for tx")?
+            * estimate_multiplier
+            / 100,
+    );
+    Ok(())
+}
+
+/// Returns `caller`'s nonce at an already resolved fork block.
+pub(super) async fn next_nonce_resolved(
+    caller: Address,
+    evm_opts: &EvmOpts,
+    fork: &ResolvedFork,
+) -> eyre::Result<u64> {
+    evm_opts.transaction_count_at_resolved_fork(caller, fork).await
+}
+
+fn reject_access_key_create<N: Network>(
+    tx: &N::TransactionRequest,
+    uses_access_key: bool,
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    if uses_access_key && tx.tempo_calls().iter().any(|(to, _)| to.is_create()) {
+        bail!("Tempo access-key transactions cannot use CREATE");
+    }
+    Ok(())
+}
+
+fn convert_tempo_aa_create<N: Network>(tx: &mut N::TransactionRequest)
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    if tx.is_tempo_aa() {
+        tx.convert_create_to_call();
     }
 }
 
