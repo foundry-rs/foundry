@@ -184,7 +184,8 @@ heredoc with real newlines; never pass escaped `\n` sequences.
 Every pull request must add or update at least one `.changelog/*.md` entry unless
 a maintainer applies the `L-ignore` label. Add an entry by default; when a change
 should not appear in release notes, such as a CI-only or repository-maintenance
-change, call out that a maintainer must apply `L-ignore`.
+change, apply the `L-ignore` label to the pull request when opening or updating
+it instead of adding a changelog entry.
 
 Use a descriptive, unique filename and the format documented in
 `.changelog/README.md`:
