@@ -23,6 +23,7 @@ use crate::cmd::{
     receive_policy::ReceivePolicySubcommand,
     rpc::RpcArgs,
     run::RunArgs,
+    safe::SafeSubcommand,
     send::SendTxArgs,
     storage::StorageArgs,
     storage_credits::StorageCreditsSubcommand,
@@ -1225,6 +1226,12 @@ pub enum CastSubcommand {
     Wallet {
         #[command(subcommand)]
         command: WalletSubcommands,
+    },
+
+    /// Create, propose, and sign Safe transactions.
+    Safe {
+        #[command(subcommand)]
+        command: SafeSubcommand,
     },
 
     /// Download a contract creation code from Etherscan and RPC.

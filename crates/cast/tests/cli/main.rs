@@ -40,6 +40,7 @@ extern crate foundry_test_utils;
 mod erc20;
 mod keychain;
 mod remote_trace;
+mod safe;
 mod selectors;
 mod tempo;
 
