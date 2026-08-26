@@ -4446,6 +4446,106 @@
     },
     {
       "func": {
+        "id": "ecAffineToProjective",
+        "description": "Converts the secp256k1 affine point `(pointX, pointY)` to projective coordinates.\nThe point at infinity is converted from `(0, 0)` to `(0, 1, 0)`.",
+        "declaration": "function ecAffineToProjective(uint256 pointX, uint256 pointY) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecAffineToProjective(uint256,uint256)",
+        "selector": "0xc1290181",
+        "selectorBytes": [
+          193,
+          41,
+          1,
+          129
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecIdentityAffine",
+        "description": "Returns the secp256k1 point at infinity in affine coordinates as `(0, 0)`.",
+        "declaration": "function ecIdentityAffine() external pure returns (uint256 resultX, uint256 resultY);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecIdentityAffine()",
+        "selector": "0x3f132b63",
+        "selectorBytes": [
+          63,
+          19,
+          43,
+          99
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecIdentityProjective",
+        "description": "Returns the secp256k1 point at infinity in projective coordinates as `(0, 1, 0)`.",
+        "declaration": "function ecIdentityProjective() external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecIdentityProjective()",
+        "selector": "0xe6d3a255",
+        "selectorBytes": [
+          230,
+          211,
+          162,
+          85
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecIsIdentityAffine",
+        "description": "Returns whether the secp256k1 affine point `(pointX, pointY)` is the point at infinity,\nrepresented as `(0, 0)`.",
+        "declaration": "function ecIsIdentityAffine(uint256 pointX, uint256 pointY) external pure returns (bool);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecIsIdentityAffine(uint256,uint256)",
+        "selector": "0x6e957d1c",
+        "selectorBytes": [
+          110,
+          149,
+          125,
+          28
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecIsIdentityProjective",
+        "description": "Returns whether the secp256k1 projective point `(pointX, pointY, pointZ)` is the point at\ninfinity. The value of `pointY` is ignored.",
+        "declaration": "function ecIsIdentityProjective(uint256 pointX, uint256 pointY, uint256 pointZ) external pure returns (bool);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecIsIdentityProjective(uint256,uint256,uint256)",
+        "selector": "0x5276b7ff",
+        "selectorBytes": [
+          82,
+          118,
+          183,
+          255
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "ecMulAffine",
         "description": "Multiplies the secp256k1 affine point `(pointX, pointY)` by `scalar`.\nThe scalar is reduced modulo the secp256k1 group order.\nThe point at infinity is represented as `(0, 0)`.",
         "declaration": "function ecMulAffine(uint256 pointX, uint256 pointY, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY);",
@@ -4478,6 +4578,26 @@
           22,
           97,
           252
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecProjectiveToAffine",
+        "description": "Converts the secp256k1 projective point `(pointX, pointY, pointZ)` to affine coordinates.\nThe point at infinity is converted from `(0, y, 0)` for any non-zero `y` to `(0, 0)`.",
+        "declaration": "function ecProjectiveToAffine(uint256 pointX, uint256 pointY, uint256 pointZ) external pure returns (uint256 resultX, uint256 resultY);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecProjectiveToAffine(uint256,uint256,uint256)",
+        "selector": "0xe6be5995",
+        "selectorBytes": [
+          230,
+          190,
+          89,
+          149
         ]
       },
       "group": "crypto",
