@@ -83,7 +83,7 @@ impl ForkReplay {
         self.hardfork
     }
 
-    pub(super) fn take_context(&mut self) -> Option<MonadChainContext> {
+    pub(super) const fn take_context(&mut self) -> Option<MonadChainContext> {
         self.context.take()
     }
 
