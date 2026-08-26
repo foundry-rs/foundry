@@ -2191,12 +2191,21 @@ impl<N: Network> Backend<N> {
 
     /// Injects all configured precompiles into the given precompile map.
     ///
-    /// This applies four layers:
+    /// This applies five layers:
     /// 1. Network-specific precompiles (e.g. Tempo, OP)
     /// 2. Chain- and timestamp-specific precompiles
     /// 3. User-provided precompiles via [`PrecompileFactory`]
     /// 4. Cheatcode ecrecover overrides (if active)
+    /// 5. Block-specific precompiles (e.g. ArbSys)
     fn inject_precompiles(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
+        self.inject_configured_precompiles(precompiles, evm_env);
+
+        if let Some(block_number) = self.arbitrum_block_number(evm_env) {
+            self.inject_arbitrum_precompile_at_block(precompiles, block_number);
+        }
+    }
+
+    fn inject_configured_precompiles(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
         self.networks.inject_precompiles(precompiles);
         self.networks.inject_chain_precompiles(
             precompiles,
@@ -2218,11 +2227,6 @@ impl<N: Network> Backend<N> {
                 ))
             });
         }
-    }
-
-    fn inject_arbitrum_precompile(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
-        let Some(block_number) = self.arbitrum_block_number(evm_env) else { return };
-        self.inject_arbitrum_precompile_at_block(precompiles, block_number);
     }
 
     fn inject_arbitrum_precompile_at_block(
@@ -2262,7 +2266,6 @@ impl<N: Network> Backend<N> {
             PrecompileSpecId::from_spec_id(*evm_env.spec_id()),
         ));
         self.inject_precompiles(&mut precompiles, evm_env);
-        self.inject_arbitrum_precompile(&mut precompiles, evm_env);
         let precompile_addresses = precompiles.addresses().copied().collect::<HashSet<_>>();
 
         // Validate every source first so invalid-source errors take precedence over the more
@@ -2330,7 +2333,7 @@ impl<N: Network> Backend<N> {
         DB: Database,
         I: Inspector<TempoContext<DB>>,
     {
-        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        self.inject_configured_precompiles(evm.precompiles_mut(), evm_env);
         // Re-extend Tempo precompiles, preserving shared non-creditable slots.
         let cfg = evm.ctx().cfg.clone();
         let non_creditable_slots = evm.non_creditable_slots();
@@ -2386,7 +2389,6 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         if !overrides.moves.is_empty() {
             let warm_addresses =
                 self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
@@ -2415,7 +2417,6 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         if !overrides.moves.is_empty() {
             let warm_addresses =
                 self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
@@ -2634,7 +2635,6 @@ impl<N: Network> Backend<N> {
                 $on_execution_error:expr
             ) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
-                self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
                 let mut executor =
                     AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions);
                 executor
@@ -2708,7 +2708,6 @@ impl<N: Network> Backend<N> {
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         apply_ethereum_pre_execution_changes(&mut evm, parent_hash, transitions)
             .map_err(|err| BlockchainError::Internal(err.to_string()))
     }
@@ -2728,7 +2727,6 @@ impl<N: Network> Backend<N> {
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         apply_ethereum_post_execution_changes(&mut evm, transitions, receipts)
             .map_err(|err| BlockchainError::Internal(err.to_string()))
     }
@@ -5251,8 +5249,6 @@ where
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 if let Some(block_number) = arbitrum_rpc_block_number {
                     self.inject_arbitrum_precompile_at_block($evm.precompiles_mut(), block_number);
-                } else {
-                    self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
                 }
                 let mut executor = AnvilBlockExecutor::new(
                     $evm,
