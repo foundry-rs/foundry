@@ -250,7 +250,6 @@ impl<N: Network> Backend<N> {
             .expect("Monad ancestor context must be available before block execution");
         evm.ctx_mut().chain = transaction_context;
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
 
         let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, None);
         executor
@@ -331,7 +330,6 @@ impl<N: Network> Backend<N> {
         evm.ctx_mut().chain = transaction_context
             .ok_or_else(|| eyre::eyre!("Monad replay ancestor context is unavailable"))?;
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
 
         let mut executor = AnvilBlockExecutor::new(evm, parent_hash, *evm_env.spec_id(), None)
             .with_state_changes();
@@ -637,7 +635,7 @@ impl<N: Network> Backend<N> {
             execution.context.unwrap_or_else(|| MonadChainContext::for_transaction(&tx_env));
         let mut evm = factory.create_evm_with_inspector(WrapDatabaseRef(db), monad_env, inspector);
         evm.ctx_mut().chain = context;
-        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        self.inject_configured_precompiles(evm.precompiles_mut(), evm_env);
         match execution.kind {
             EnvelopeExecutionKind::Transaction => Ok(evm.transact(tx_env)?),
             EnvelopeExecutionKind::Replay => {
