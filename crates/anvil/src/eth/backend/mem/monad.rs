@@ -44,6 +44,7 @@ use foundry_evm::{
         },
     },
     hardfork::FoundryHardfork,
+    utils::get_blob_params,
 };
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use monad_revm::{MonadChainContext, MonadHardfork, instructions::monad_gas_params};
@@ -65,6 +66,40 @@ pub(super) struct PreparedExecution {
     pub(super) context: Option<MonadChainContext>,
     pub(super) kind: EnvelopeExecutionKind,
     pub(super) hardfork: MonadHardfork,
+}
+
+pub(super) struct ForkReplay {
+    hardfork: FoundryHardfork,
+    context: Option<MonadChainContext>,
+    participants: MonadBlockParticipants,
+    execution_chain_id: u64,
+    source_chain_id: u64,
+    timestamp: u64,
+    inferred_hardfork: bool,
+}
+
+impl ForkReplay {
+    pub(super) const fn hardfork(&self) -> FoundryHardfork {
+        self.hardfork
+    }
+
+    pub(super) fn take_context(&mut self) -> Option<MonadChainContext> {
+        self.context.take()
+    }
+
+    pub(super) fn store_metadata<N: Network>(
+        &mut self,
+        storage: &mut BlockchainStorage<N>,
+        block_hash: B256,
+    ) {
+        store_block_metadata(
+            storage,
+            block_hash,
+            std::mem::take(&mut self.participants),
+            self.execution_chain_id,
+            self.hardfork,
+        );
+    }
 }
 
 pub(super) fn normalize_access_list(
@@ -148,6 +183,62 @@ pub(super) fn rollback_transaction<DB: alloy_evm::Database>(
 }
 
 impl<N: Network> Backend<N> {
+    /// Prepares the Monad-specific inputs for replaying a historical transaction prefix.
+    pub(super) async fn prepare_monad_fork_replay(
+        &self,
+        source_chain_id: u64,
+        execution_chain_id: u64,
+        timestamp: u64,
+        parent_hash: B256,
+        transactions: &[HistoricalReplayTransaction],
+    ) -> Result<Option<ForkReplay>> {
+        if !self.is_monad() {
+            return Ok(None);
+        }
+
+        let explicit_hardfork = self.node_config.read().await.hardfork;
+        // The target block's schedule can cross a hardfork boundary after the selected parent.
+        // Explicit overrides still take precedence over timestamp inference.
+        let hardfork = explicit_hardfork
+            .or_else(|| {
+                MonadHardfork::from_chain_and_timestamp(source_chain_id, timestamp)
+                    .map(FoundryHardfork::Monad)
+            })
+            .unwrap_or_else(|| self.hardfork());
+        let context = self.monad_context_for_child_of_block_hash(parent_hash).await?;
+        let participants =
+            monad_block_participants(&self.monad_historical_replay_tx_envs(transactions));
+
+        Ok(Some(ForkReplay {
+            hardfork,
+            context: Some(context),
+            participants,
+            execution_chain_id,
+            source_chain_id,
+            timestamp,
+            inferred_hardfork: explicit_hardfork.is_none(),
+        }))
+    }
+
+    /// Applies the Monad execution rules selected for a completed fork replay.
+    pub(super) fn finalize_monad_fork_replay(&self, replay: &ForkReplay, evm_env: &mut EvmEnv) {
+        let spec_id = SpecId::from(replay.hardfork);
+        evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
+        self.fees.set_execution_rules(
+            spec_id,
+            self.networks.base_fee_params(replay.timestamp),
+            None,
+        );
+        self.fees.set_blob_params(get_blob_params(replay.source_chain_id, replay.timestamp));
+
+        if replay.inferred_hardfork {
+            *self.hardfork.write() = replay.hardfork;
+            if let Some(fork) = self.fork.read().clone() {
+                fork.config.write().hardfork = Some(replay.hardfork);
+            }
+        }
+    }
+
     /// Validates Monad-specific transaction type restrictions.
     pub(super) const fn validate_monad_transaction_type(
         &self,
