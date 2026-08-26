@@ -33,50 +33,6 @@ use crate::{
 // Will be removed when the next revm release includes bluealloy/revm#3518.
 pub type TempoRevmEvm<'db, I> = tempo_revm::TempoEvm<&'db mut dyn DatabaseExt<TempoEvmFactory>, I>;
 
-/// Initialize Tempo precompiles and contracts for a newly created EVM.
-///
-/// In non-fork mode, runs full genesis initialization (precompile sentinel bytecode,
-/// TIP20 fee tokens, standard contracts) via [`StorageCtx::enter_evm`].
-///
-/// In fork mode, warms up precompile and TIP20 token addresses with sentinel bytecode
-/// to prevent repeated RPC round-trips for addresses that are Rust-native precompiles
-/// on Tempo nodes (no real EVM bytecode on-chain).
-pub(crate) fn initialize_tempo_evm<
-    'db,
-    I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>,
->(
-    evm: &mut TempoEvm<&'db mut dyn DatabaseExt<TempoEvmFactory>, I>,
-    is_forked: bool,
-) {
-    let ctx = evm.ctx_mut();
-    StorageCtx::enter_evm(
-        &mut ctx.journaled_state,
-        &ctx.block,
-        &ctx.cfg,
-        &ctx.tx,
-        StorageActions::disabled(),
-        || {
-            if is_forked {
-                // In fork mode, warm up precompile accounts to avoid repeated RPC fetches.
-                let mut sctx = StorageCtx;
-                let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
-                for addr in TEMPO_PRECOMPILE_ADDRESSES
-                    .iter()
-                    .copied()
-                    .chain(TEMPO_TIP20_TOKENS.iter().copied())
-                {
-                    sctx.set_code(addr, sentinel.clone())
-                        .expect("failed to warm tempo precompile address");
-                }
-            } else {
-                // In non-fork mode, run full genesis initialization.
-                initialize_tempo_test_genesis_inner(TEST_CONTRACT_ADDRESS, CALLER)
-                    .expect("tempo genesis initialization failed");
-            }
-        },
-    );
-}
-
 impl FoundryEvmFactory for TempoEvmFactory {
     type Chain = ();
     type FoundryContext<'db> = TempoContext<&'db mut dyn DatabaseExt<Self>>;
@@ -221,4 +177,48 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {
         self.ctx_ref().evm_clone()
     }
+}
+
+/// Initialize Tempo precompiles and contracts for a newly created EVM.
+///
+/// In non-fork mode, runs full genesis initialization (precompile sentinel bytecode,
+/// TIP20 fee tokens, standard contracts) via [`StorageCtx::enter_evm`].
+///
+/// In fork mode, warms up precompile and TIP20 token addresses with sentinel bytecode
+/// to prevent repeated RPC round-trips for addresses that are Rust-native precompiles
+/// on Tempo nodes (no real EVM bytecode on-chain).
+pub(crate) fn initialize_tempo_evm<
+    'db,
+    I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>,
+>(
+    evm: &mut TempoEvm<&'db mut dyn DatabaseExt<TempoEvmFactory>, I>,
+    is_forked: bool,
+) {
+    let ctx = evm.ctx_mut();
+    StorageCtx::enter_evm(
+        &mut ctx.journaled_state,
+        &ctx.block,
+        &ctx.cfg,
+        &ctx.tx,
+        StorageActions::disabled(),
+        || {
+            if is_forked {
+                // In fork mode, warm up precompile accounts to avoid repeated RPC fetches.
+                let mut sctx = StorageCtx;
+                let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
+                for addr in TEMPO_PRECOMPILE_ADDRESSES
+                    .iter()
+                    .copied()
+                    .chain(TEMPO_TIP20_TOKENS.iter().copied())
+                {
+                    sctx.set_code(addr, sentinel.clone())
+                        .expect("failed to warm tempo precompile address");
+                }
+            } else {
+                // In non-fork mode, run full genesis initialization.
+                initialize_tempo_test_genesis_inner(TEST_CONTRACT_ADDRESS, CALLER)
+                    .expect("tempo genesis initialization failed");
+            }
+        },
+    );
 }

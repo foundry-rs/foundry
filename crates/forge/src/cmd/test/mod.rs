@@ -1811,10 +1811,23 @@ impl TestArgs {
         let quiet = shell::is_json() || self.junit;
 
         if self.list {
-            let output = compile_abi_project(
-                &mut project,
-                ProjectCompiler::new().dynamic_test_linking(dynamic_test_linking).quiet(quiet),
-            )?;
+            let compiler =
+                ProjectCompiler::new().dynamic_test_linking(dynamic_test_linking).quiet(quiet);
+            let compiler = if filter.args().path_pattern.is_some()
+                && config.extra_output.is_empty()
+                && config.extra_output_files.is_empty()
+                && !config.build_info
+            {
+                let files = project
+                    .paths
+                    .input_files_iter()
+                    .filter(|path| filter.matches_path(path))
+                    .collect::<Vec<_>>();
+                if files.is_empty() { compiler } else { compiler.files(files) }
+            } else {
+                compiler
+            };
+            let output = compile_abi_project(&mut project, compiler)?;
             let inline_config = Arc::new(InlineConfig::new_parsed(&output, &config)?);
             return Ok(CompiledTestProject {
                 project_root,

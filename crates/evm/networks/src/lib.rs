@@ -87,24 +87,6 @@ const BSC_TESTNET_HABER_TIMESTAMP: u64 = 1_716_962_820;
 const BSC_MAINNET_OSAKA_TIMESTAMP: u64 = 1_777_343_400;
 const BSC_TESTNET_OSAKA_TIMESTAMP: u64 = 1_774_319_400;
 
-/// Returns the BSC P256 precompile for the given timestamp. The outer option distinguishes BSC
-/// chains from unrelated chains, while the inner option disables P256 before Haber.
-const fn bsc_p256_precompile(chain_id: ChainId, timestamp: u64) -> Option<Option<RevmPrecompile>> {
-    let (haber_timestamp, osaka_timestamp) = match chain_id {
-        BSC_MAINNET_CHAIN_ID => (BSC_MAINNET_HABER_TIMESTAMP, BSC_MAINNET_OSAKA_TIMESTAMP),
-        BSC_TESTNET_CHAIN_ID => (BSC_TESTNET_HABER_TIMESTAMP, BSC_TESTNET_OSAKA_TIMESTAMP),
-        _ => return None,
-    };
-
-    if timestamp < haber_timestamp {
-        Some(None)
-    } else if timestamp < osaka_timestamp {
-        Some(Some(P256VERIFY))
-    } else {
-        Some(Some(P256VERIFY_OSAKA))
-    }
-}
-
 /// All well-known Tempo precompile addresses.
 pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
     NONCE_PRECOMPILE_ADDRESS,
@@ -122,39 +104,6 @@ pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
     STORAGE_CREDITS_ADDRESS,
     CURRENT_COMMITTEE_ADDRESS,
 ];
-
-/// Returns whether a well-known Tempo precompile address is active at `hardfork`.
-pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) -> bool {
-    if address == CURRENT_COMMITTEE_ADDRESS {
-        hardfork.is_t8()
-    } else if address == TIP20_CHANNEL_RESERVE_ADDRESS {
-        hardfork.is_t5()
-    } else if address == RECEIVE_POLICY_GUARD_ADDRESS {
-        hardfork.is_t6()
-    } else if address == STORAGE_CREDITS_ADDRESS {
-        hardfork.is_t7()
-    } else if address == ADDRESS_REGISTRY_ADDRESS || address == SIGNATURE_VERIFIER_ADDRESS {
-        hardfork.is_t3()
-    } else {
-        true
-    }
-}
-
-/// Returns the well-known Tempo precompile addresses active at `hardfork`.
-pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterator<Item = Address> {
-    TEMPO_PRECOMPILE_ADDRESSES
-        .iter()
-        .copied()
-        .filter(move |&address| is_tempo_precompile_active_at(address, hardfork))
-}
-
-/// Returns whether a well-known Monad precompile address is active at `hardfork`.
-#[cfg(feature = "monad")]
-pub fn is_monad_precompile_active_at(address: Address, hardfork: MonadHardfork) -> bool {
-    address == monad_revm::staking::STAKING_ADDRESS
-        || (address == monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS
-            && MonadHardfork::MonadNine.is_enabled_in(hardfork))
-}
 
 #[derive(
     Clone,
@@ -914,6 +863,57 @@ impl From<NetworkVariant> for NetworkConfigs {
             }
         }
     }
+}
+
+/// Returns the BSC P256 precompile for the given timestamp. The outer option distinguishes BSC
+/// chains from unrelated chains, while the inner option disables P256 before Haber.
+const fn bsc_p256_precompile(chain_id: ChainId, timestamp: u64) -> Option<Option<RevmPrecompile>> {
+    let (haber_timestamp, osaka_timestamp) = match chain_id {
+        BSC_MAINNET_CHAIN_ID => (BSC_MAINNET_HABER_TIMESTAMP, BSC_MAINNET_OSAKA_TIMESTAMP),
+        BSC_TESTNET_CHAIN_ID => (BSC_TESTNET_HABER_TIMESTAMP, BSC_TESTNET_OSAKA_TIMESTAMP),
+        _ => return None,
+    };
+
+    if timestamp < haber_timestamp {
+        Some(None)
+    } else if timestamp < osaka_timestamp {
+        Some(Some(P256VERIFY))
+    } else {
+        Some(Some(P256VERIFY_OSAKA))
+    }
+}
+
+/// Returns whether a well-known Tempo precompile address is active at `hardfork`.
+pub fn is_tempo_precompile_active_at(address: Address, hardfork: TempoHardfork) -> bool {
+    if address == CURRENT_COMMITTEE_ADDRESS {
+        hardfork.is_t8()
+    } else if address == TIP20_CHANNEL_RESERVE_ADDRESS {
+        hardfork.is_t5()
+    } else if address == RECEIVE_POLICY_GUARD_ADDRESS {
+        hardfork.is_t6()
+    } else if address == STORAGE_CREDITS_ADDRESS {
+        hardfork.is_t7()
+    } else if address == ADDRESS_REGISTRY_ADDRESS || address == SIGNATURE_VERIFIER_ADDRESS {
+        hardfork.is_t3()
+    } else {
+        true
+    }
+}
+
+/// Returns the well-known Tempo precompile addresses active at `hardfork`.
+pub fn active_tempo_precompile_addresses(hardfork: TempoHardfork) -> impl Iterator<Item = Address> {
+    TEMPO_PRECOMPILE_ADDRESSES
+        .iter()
+        .copied()
+        .filter(move |&address| is_tempo_precompile_active_at(address, hardfork))
+}
+
+/// Returns whether a well-known Monad precompile address is active at `hardfork`.
+#[cfg(feature = "monad")]
+pub fn is_monad_precompile_active_at(address: Address, hardfork: MonadHardfork) -> bool {
+    address == monad_revm::staking::STAKING_ADDRESS
+        || (address == monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS
+            && MonadHardfork::MonadNine.is_enabled_in(hardfork))
 }
 
 #[cfg(test)]

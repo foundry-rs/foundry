@@ -199,6 +199,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          LABEL: T-perf
         run: |
           DATE=$(date -u +%Y-%m-%d)
           BODY="$(cat results/regression.md)
@@ -210,8 +211,8 @@ jobs:
           **Repo benchmarked**: \`aave/aave-v4\` (pinned commit)
           **Threshold**: Per-benchmark calibrated thresholds from \`.github/benchmark-regression-thresholds.json\`"
 
-          gh issue create \
-            --title "[Nightly Regression] ${DATE}" \
-            --body "$BODY" \
-            --label "regression" \
-            --repo "$GH_REPO"
+          # `gh issue create` resolves labels before it creates anything, so a label that does not
+          # exist fails the whole step and the regression goes unreported. That silently dropped
+          # four consecutive nightly alerts, so fall back to filing the issue without the label.
+          ARGS=(--title "[Nightly Regression] ${DATE}" --body "$BODY" --repo "$GH_REPO")
+          gh issue create "${ARGS[@]}" --label "$LABEL" || gh issue create "${ARGS[@]}"

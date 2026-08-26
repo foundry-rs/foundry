@@ -4,168 +4,6 @@ use super::{hashcons::HashConsed, *};
 // unique nodes so adversarial expression trees cannot make construction unbounded.
 const MAX_BITWISE_BOOL_WORD_VISITS: usize = 256;
 
-pub(crate) fn keccak_word(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymExpr {
-    let len = bytes.len();
-    let len = SymExpr::constant(cx, U256::from(len));
-    keccak_word_with_len(cx, bytes, len)
-}
-
-pub(crate) fn keccak_word_with_len(cx: &mut SymCx, bytes: Vec<SymExpr>, len: SymExpr) -> SymExpr {
-    if let Some(len) = len.as_const()
-        && let Ok(len) = usize::try_from(len)
-        && len <= bytes.len()
-        && let Ok(concrete) = concrete_expr_bytes(&bytes[..len], "symbolic keccak input")
-    {
-        let hash = U256::from_be_bytes(keccak256(concrete).0);
-        if len == 64 {
-            cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
-        }
-        return SymExpr::constant(cx, hash);
-    }
-
-    let exprs = bytes;
-    let name = stable_symbol(cx, "keccak", format!("{len:?}:{exprs:?}").as_bytes());
-    SymExpr::keccak_symbol(cx, name, len, exprs)
-}
-
-pub(crate) fn symbolic_hash_word_with_len(
-    cx: &mut SymCx,
-    algorithm: &'static str,
-    bytes: Vec<SymExpr>,
-    len: SymExpr,
-) -> SymExpr {
-    let exprs = bytes;
-    let name = stable_symbol(cx, algorithm, format!("{len:?}:{exprs:?}").as_bytes());
-    let mut identity = Vec::with_capacity(exprs.len() + 1);
-    identity.push(len);
-    identity.extend(exprs);
-    SymExpr::hash_symbol(cx, name, algorithm, identity)
-}
-
-pub(crate) fn create2_address_word(
-    cx: &mut SymCx,
-    state: &mut PathState,
-    creator: Address,
-    salt: SymExpr,
-    initcode: &SymCode,
-) -> Result<(SymExpr, Address), SymbolicError> {
-    match (salt.as_const(), initcode.concrete_bytes(cx, "symbolic CREATE2 initcode")) {
-        (Some(salt), Ok(initcode)) => {
-            let address = creator.create2_from_code(salt.to_be_bytes::<32>(), &initcode);
-            Ok((SymExpr::constant(cx, address_word(address)), address))
-        }
-        (None, Ok(initcode)) => {
-            let initcode_hash = keccak256(&initcode);
-            let word = symbolic_create2_address_word(
-                cx,
-                state,
-                format!("{creator:?}"),
-                salt,
-                format!("{initcode_hash:?}"),
-            );
-            let address = state.world.symbolic_address_slot(word.clone());
-            Ok((word, address))
-        }
-        (_, Err(SymbolicError::Unsupported("symbolic CREATE2 initcode"))) => {
-            let initcode_bytes = initcode.read_byte_exprs(cx, 0, initcode.len());
-            let word = symbolic_create2_address_word(
-                cx,
-                state,
-                format!("{creator:?}"),
-                salt,
-                format!("{initcode_bytes:?}"),
-            );
-            let address = state.world.symbolic_address_slot(word.clone());
-            Ok((word, address))
-        }
-        (_, Err(err)) => Err(err),
-    }
-}
-
-pub(crate) fn compute_create2_address_word(
-    cx: &mut SymCx,
-    state: &mut PathState,
-    deployer: SymExpr,
-    salt: SymExpr,
-    init_code_hash: SymExpr,
-) -> Result<SymExpr, SymbolicError> {
-    let deployer_concrete = state.constrained_word(cx, &deployer).map(word_to_address);
-    let salt_concrete = state.constrained_word(cx, &salt);
-    let init_code_hash_concrete = state.constrained_word(cx, &init_code_hash);
-
-    if let (Some(deployer), Some(salt), Some(init_code_hash)) =
-        (deployer_concrete, salt_concrete, init_code_hash_concrete)
-    {
-        let init_code_hash = B256::from(init_code_hash.to_be_bytes::<32>());
-        let address = deployer.create2(B256::from(salt.to_be_bytes::<32>()), init_code_hash);
-        return Ok(SymExpr::constant(cx, address_word(address)));
-    }
-
-    let deployer_identity = deployer_concrete
-        .map(|deployer| format!("{deployer:?}"))
-        .unwrap_or_else(|| format!("{deployer:?}"));
-    let init_code_hash_identity = init_code_hash_concrete
-        .map(|init_code_hash| {
-            let init_code_hash = B256::from(init_code_hash.to_be_bytes::<32>());
-            format!("{init_code_hash:?}")
-        })
-        .unwrap_or_else(|| format!("{init_code_hash:?}"));
-
-    Ok(symbolic_create2_address_word(cx, state, deployer_identity, salt, init_code_hash_identity))
-}
-
-pub(crate) fn compute_create_address_word(
-    cx: &mut SymCx,
-    state: &mut PathState,
-    deployer: SymExpr,
-    nonce: SymExpr,
-) -> Result<SymExpr, SymbolicError> {
-    let deployer_concrete = state.constrained_word(cx, &deployer).map(word_to_address);
-    let nonce_concrete = state.constrained_word(cx, &nonce);
-
-    if let (Some(deployer), Some(nonce)) = (deployer_concrete, nonce_concrete) {
-        let Ok(nonce) = u64::try_from(nonce) else {
-            return Err(SymbolicError::Unsupported("symbolic vm.computeCreateAddress nonce"));
-        };
-        return Ok(SymExpr::constant(cx, address_word(deployer.create(nonce))));
-    }
-
-    let deployer_identity = deployer_concrete
-        .map(|deployer| format!("{deployer:?}"))
-        .unwrap_or_else(|| format!("{deployer:?}"));
-    Ok(symbolic_create_address_word(cx, state, deployer_identity, nonce))
-}
-
-pub(crate) fn symbolic_create_address_word(
-    cx: &mut SymCx,
-    state: &mut PathState,
-    creator_identity: String,
-    nonce: SymExpr,
-) -> SymExpr {
-    let name =
-        stable_symbol(cx, "create_address", format!("{creator_identity}:{nonce:?}").as_bytes());
-    let word = SymExpr::get_var(cx, name);
-    state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
-    word
-}
-
-pub(crate) fn symbolic_create2_address_word(
-    cx: &mut SymCx,
-    state: &mut PathState,
-    creator_identity: String,
-    salt: SymExpr,
-    initcode_identity: String,
-) -> SymExpr {
-    let name = stable_symbol(
-        cx,
-        "create2_address",
-        format!("{creator_identity}:{salt:?}:{initcode_identity}").as_bytes(),
-    );
-    let word = SymExpr::get_var(cx, name);
-    state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
-    word
-}
-
 impl SymExpr {
     pub(crate) fn select_storage_write(
         self,
@@ -2355,6 +2193,168 @@ impl SymBinOp {
             }
         }
     }
+}
+
+pub(crate) fn keccak_word(cx: &mut SymCx, bytes: Vec<SymExpr>) -> SymExpr {
+    let len = bytes.len();
+    let len = SymExpr::constant(cx, U256::from(len));
+    keccak_word_with_len(cx, bytes, len)
+}
+
+pub(crate) fn keccak_word_with_len(cx: &mut SymCx, bytes: Vec<SymExpr>, len: SymExpr) -> SymExpr {
+    if let Some(len) = len.as_const()
+        && let Ok(len) = usize::try_from(len)
+        && len <= bytes.len()
+        && let Ok(concrete) = concrete_expr_bytes(&bytes[..len], "symbolic keccak input")
+    {
+        let hash = U256::from_be_bytes(keccak256(concrete).0);
+        if len == 64 {
+            cx.record_concrete_keccak_preimage(hash, bytes[..len].to_vec().into());
+        }
+        return SymExpr::constant(cx, hash);
+    }
+
+    let exprs = bytes;
+    let name = stable_symbol(cx, "keccak", format!("{len:?}:{exprs:?}").as_bytes());
+    SymExpr::keccak_symbol(cx, name, len, exprs)
+}
+
+pub(crate) fn symbolic_hash_word_with_len(
+    cx: &mut SymCx,
+    algorithm: &'static str,
+    bytes: Vec<SymExpr>,
+    len: SymExpr,
+) -> SymExpr {
+    let exprs = bytes;
+    let name = stable_symbol(cx, algorithm, format!("{len:?}:{exprs:?}").as_bytes());
+    let mut identity = Vec::with_capacity(exprs.len() + 1);
+    identity.push(len);
+    identity.extend(exprs);
+    SymExpr::hash_symbol(cx, name, algorithm, identity)
+}
+
+pub(crate) fn create2_address_word(
+    cx: &mut SymCx,
+    state: &mut PathState,
+    creator: Address,
+    salt: SymExpr,
+    initcode: &SymCode,
+) -> Result<(SymExpr, Address), SymbolicError> {
+    match (salt.as_const(), initcode.concrete_bytes(cx, "symbolic CREATE2 initcode")) {
+        (Some(salt), Ok(initcode)) => {
+            let address = creator.create2_from_code(salt.to_be_bytes::<32>(), &initcode);
+            Ok((SymExpr::constant(cx, address_word(address)), address))
+        }
+        (None, Ok(initcode)) => {
+            let initcode_hash = keccak256(&initcode);
+            let word = symbolic_create2_address_word(
+                cx,
+                state,
+                format!("{creator:?}"),
+                salt,
+                format!("{initcode_hash:?}"),
+            );
+            let address = state.world.symbolic_address_slot(word.clone());
+            Ok((word, address))
+        }
+        (_, Err(SymbolicError::Unsupported("symbolic CREATE2 initcode"))) => {
+            let initcode_bytes = initcode.read_byte_exprs(cx, 0, initcode.len());
+            let word = symbolic_create2_address_word(
+                cx,
+                state,
+                format!("{creator:?}"),
+                salt,
+                format!("{initcode_bytes:?}"),
+            );
+            let address = state.world.symbolic_address_slot(word.clone());
+            Ok((word, address))
+        }
+        (_, Err(err)) => Err(err),
+    }
+}
+
+pub(crate) fn compute_create2_address_word(
+    cx: &mut SymCx,
+    state: &mut PathState,
+    deployer: SymExpr,
+    salt: SymExpr,
+    init_code_hash: SymExpr,
+) -> Result<SymExpr, SymbolicError> {
+    let deployer_concrete = state.constrained_word(cx, &deployer).map(word_to_address);
+    let salt_concrete = state.constrained_word(cx, &salt);
+    let init_code_hash_concrete = state.constrained_word(cx, &init_code_hash);
+
+    if let (Some(deployer), Some(salt), Some(init_code_hash)) =
+        (deployer_concrete, salt_concrete, init_code_hash_concrete)
+    {
+        let init_code_hash = B256::from(init_code_hash.to_be_bytes::<32>());
+        let address = deployer.create2(B256::from(salt.to_be_bytes::<32>()), init_code_hash);
+        return Ok(SymExpr::constant(cx, address_word(address)));
+    }
+
+    let deployer_identity = deployer_concrete
+        .map(|deployer| format!("{deployer:?}"))
+        .unwrap_or_else(|| format!("{deployer:?}"));
+    let init_code_hash_identity = init_code_hash_concrete
+        .map(|init_code_hash| {
+            let init_code_hash = B256::from(init_code_hash.to_be_bytes::<32>());
+            format!("{init_code_hash:?}")
+        })
+        .unwrap_or_else(|| format!("{init_code_hash:?}"));
+
+    Ok(symbolic_create2_address_word(cx, state, deployer_identity, salt, init_code_hash_identity))
+}
+
+pub(crate) fn compute_create_address_word(
+    cx: &mut SymCx,
+    state: &mut PathState,
+    deployer: SymExpr,
+    nonce: SymExpr,
+) -> Result<SymExpr, SymbolicError> {
+    let deployer_concrete = state.constrained_word(cx, &deployer).map(word_to_address);
+    let nonce_concrete = state.constrained_word(cx, &nonce);
+
+    if let (Some(deployer), Some(nonce)) = (deployer_concrete, nonce_concrete) {
+        let Ok(nonce) = u64::try_from(nonce) else {
+            return Err(SymbolicError::Unsupported("symbolic vm.computeCreateAddress nonce"));
+        };
+        return Ok(SymExpr::constant(cx, address_word(deployer.create(nonce))));
+    }
+
+    let deployer_identity = deployer_concrete
+        .map(|deployer| format!("{deployer:?}"))
+        .unwrap_or_else(|| format!("{deployer:?}"));
+    Ok(symbolic_create_address_word(cx, state, deployer_identity, nonce))
+}
+
+pub(crate) fn symbolic_create_address_word(
+    cx: &mut SymCx,
+    state: &mut PathState,
+    creator_identity: String,
+    nonce: SymExpr,
+) -> SymExpr {
+    let name =
+        stable_symbol(cx, "create_address", format!("{creator_identity}:{nonce:?}").as_bytes());
+    let word = SymExpr::get_var(cx, name);
+    state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
+    word
+}
+
+pub(crate) fn symbolic_create2_address_word(
+    cx: &mut SymCx,
+    state: &mut PathState,
+    creator_identity: String,
+    salt: SymExpr,
+    initcode_identity: String,
+) -> SymExpr {
+    let name = stable_symbol(
+        cx,
+        "create2_address",
+        format!("{creator_identity}:{salt:?}:{initcode_identity}").as_bytes(),
+    );
+    let word = SymExpr::get_var(cx, name);
+    state.constraints.push(SymBoolExpr::cmp_word_const(cx, SymCmpOp::Ult, &word, U256::ONE << 160));
+    word
 }
 
 #[cfg(test)]

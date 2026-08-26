@@ -18,7 +18,9 @@ use crate::eth::{
     error::{BlockchainError, InvalidTransactionError},
     pool::transactions::PoolTransaction,
 };
-use alloy_consensus::{BlockHeader, constants::EMPTY_ROOT_HASH, transaction::Recovered};
+use alloy_consensus::{
+    BlockHeader, Transaction as _, constants::EMPTY_ROOT_HASH, transaction::Recovered,
+};
 use alloy_evm::{
     Database, Evm, EvmEnv, EvmFactory, RecoveredTx,
     block::{BlockExecutionError, BlockExecutionResult, BlockExecutor, StateDB},
@@ -42,6 +44,7 @@ use foundry_evm::{
         },
     },
     hardfork::FoundryHardfork,
+    utils::get_blob_params,
 };
 use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use monad_revm::{MonadChainContext, MonadHardfork, instructions::monad_gas_params};
@@ -49,7 +52,7 @@ use revm::{
     Inspector,
     context::{Transaction, TxEnv},
     context_interface::{
-        result::{HaltReason, ResultAndState},
+        result::{HaltReason, InvalidTransaction, ResultAndState},
         transaction::AuthorizationTr,
     },
     database_interface::WrapDatabaseRef,
@@ -57,25 +60,46 @@ use revm::{
     state::AccountInfo,
 };
 use std::sync::Arc;
-
-pub(super) fn store_block_metadata<N: Network>(
-    storage: &mut BlockchainStorage<N>,
-    block_hash: B256,
-    participants: MonadBlockParticipants,
-    execution_chain_id: u64,
-    hardfork: FoundryHardfork,
-) {
-    storage.monad_block_participants.insert(block_hash, participants);
-    storage.monad_block_replay_profiles.insert(
-        block_hash,
-        MonadBlockReplayProfile { execution_chain_id, hardfork: MonadHardfork::from(hardfork) },
-    );
-}
+use tracing::debug;
 
 pub(super) struct PreparedExecution {
     pub(super) context: Option<MonadChainContext>,
     pub(super) kind: EnvelopeExecutionKind,
     pub(super) hardfork: MonadHardfork,
+}
+
+pub(super) struct ForkReplay {
+    hardfork: FoundryHardfork,
+    context: Option<MonadChainContext>,
+    participants: MonadBlockParticipants,
+    execution_chain_id: u64,
+    source_chain_id: u64,
+    timestamp: u64,
+    inferred_hardfork: bool,
+}
+
+impl ForkReplay {
+    pub(super) const fn hardfork(&self) -> FoundryHardfork {
+        self.hardfork
+    }
+
+    pub(super) const fn take_context(&mut self) -> Option<MonadChainContext> {
+        self.context.take()
+    }
+
+    pub(super) fn store_metadata<N: Network>(
+        &mut self,
+        storage: &mut BlockchainStorage<N>,
+        block_hash: B256,
+    ) {
+        store_block_metadata(
+            storage,
+            block_hash,
+            std::mem::take(&mut self.participants),
+            self.execution_chain_id,
+            self.hardfork,
+        );
+    }
 }
 
 pub(super) fn normalize_access_list(
@@ -134,7 +158,8 @@ pub(super) fn resolve_execution_context(
     }
 }
 
-pub(super) fn advance_block(context: &mut MonadChainContext) {
+pub(super) fn advance_block_context(context: &mut Option<MonadChainContext>) {
+    let Some(context) = context else { return };
     let current = context
         .current_block_senders
         .iter()
@@ -159,6 +184,131 @@ pub(super) fn rollback_transaction<DB: alloy_evm::Database>(
 }
 
 impl<N: Network> Backend<N> {
+    /// Prepares the Monad-specific inputs for replaying a historical transaction prefix.
+    pub(super) async fn prepare_monad_fork_replay(
+        &self,
+        source_chain_id: u64,
+        execution_chain_id: u64,
+        timestamp: u64,
+        parent_hash: B256,
+        transactions: &[HistoricalReplayTransaction],
+    ) -> Result<Option<ForkReplay>> {
+        if !self.is_monad() {
+            return Ok(None);
+        }
+
+        let explicit_hardfork = self.node_config.read().await.hardfork;
+        // The target block's schedule can cross a hardfork boundary after the selected parent.
+        // Explicit overrides still take precedence over timestamp inference.
+        let hardfork = explicit_hardfork
+            .or_else(|| {
+                MonadHardfork::from_chain_and_timestamp(source_chain_id, timestamp)
+                    .map(FoundryHardfork::Monad)
+            })
+            .unwrap_or_else(|| self.hardfork());
+        let context = self.monad_context_for_child_of_block_hash(parent_hash).await?;
+        let participants =
+            monad_block_participants(&self.monad_historical_replay_tx_envs(transactions));
+
+        Ok(Some(ForkReplay {
+            hardfork,
+            context: Some(context),
+            participants,
+            execution_chain_id,
+            source_chain_id,
+            timestamp,
+            inferred_hardfork: explicit_hardfork.is_none(),
+        }))
+    }
+
+    /// Applies the Monad execution rules selected for a completed fork replay.
+    pub(super) fn finalize_monad_fork_replay(&self, replay: &ForkReplay, evm_env: &mut EvmEnv) {
+        let spec_id = SpecId::from(replay.hardfork);
+        evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
+        self.fees.set_execution_rules(
+            spec_id,
+            self.networks.base_fee_params(replay.timestamp),
+            None,
+        );
+        self.fees.set_blob_params(get_blob_params(replay.source_chain_id, replay.timestamp));
+
+        if replay.inferred_hardfork {
+            *self.hardfork.write() = replay.hardfork;
+            if let Some(fork) = self.fork.read().clone() {
+                fork.config.write().hardfork = Some(replay.hardfork);
+            }
+        }
+    }
+
+    /// Validates Monad-specific transaction type restrictions.
+    pub(super) const fn validate_monad_transaction_type(
+        &self,
+        tx: &FoundryTxEnvelope,
+    ) -> Result<(), InvalidTransactionError> {
+        if self.is_monad() && tx.is_eip4844() {
+            return Err(InvalidTransactionError::MonadBlobTransactionUnsupported);
+        }
+        Ok(())
+    }
+
+    /// Validates Monad's gas-only transaction balance requirement.
+    ///
+    /// Returns whether the transaction was validated as a Monad transaction.
+    pub(super) fn validate_monad_transaction_funds(
+        &self,
+        pending: &PendingTransaction<FoundryTxEnvelope>,
+        account: &AccountInfo,
+        evm_env: &EvmEnv,
+    ) -> Result<bool, InvalidTransactionError> {
+        if !self.is_monad() {
+            return Ok(false);
+        }
+
+        let tx = &pending.transaction;
+        let effective_gas_price = tx.effective_gas_price(Some(evm_env.block_env.basefee));
+        let required = U256::from(tx.gas_limit()) * U256::from(effective_gas_price);
+        if account.balance < required {
+            debug!(target: "backend", "[{:?}] insufficient balance={}, required={} account={:?}", tx.hash(), account.balance, required, *pending.sender());
+            return Err(InvalidTransactionError::InsufficientFunds);
+        }
+        Ok(true)
+    }
+
+    /// Validates a forced Monad protocol transaction selected for mining.
+    ///
+    /// Returns whether the transaction was recognized and fully validated as a protocol call.
+    pub(super) fn validate_monad_mining_pool_transaction_for(
+        &self,
+        pool_tx: &PoolTransaction<FoundryTxEnvelope>,
+        account: &AccountInfo,
+        evm_env: &EvmEnv,
+    ) -> Result<bool, InvalidTransactionError> {
+        if !self.is_monad() || !pool_tx.is_replay {
+            return Ok(false);
+        }
+
+        let tx_env: TxEnv = build_tx_env_for_pending(&pool_tx.pending_transaction, self.cheats());
+        let Some(system_call) = protocol_system_call(&tx_env).map_err(|err| {
+            InvalidTransactionError::Revm(InvalidTransaction::Str(err.to_string().into()))
+        })?
+        else {
+            return Ok(false);
+        };
+        if system_call.chain_id.is_some_and(|chain_id| chain_id != evm_env.cfg_env.chain_id) {
+            return Err(InvalidTransactionError::InvalidChainId);
+        }
+        if system_call.nonce < account.nonce {
+            return Err(InvalidTransactionError::NonceTooLow);
+        }
+        if system_call.nonce > account.nonce {
+            return Err(InvalidTransactionError::NonceTooHigh);
+        }
+        if system_call.nonce == u64::MAX {
+            return Err(InvalidTransactionError::NonceMaxValue);
+        }
+        Ok(true)
+    }
+
     /// Executes a candidate block through a concrete Monad EVM.
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub(super) fn execute_with_monad_block_executor<DB>(
@@ -192,7 +342,6 @@ impl<N: Network> Backend<N> {
             .expect("Monad ancestor context must be available before block execution");
         evm.ctx_mut().chain = transaction_context;
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
 
         let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, None);
         executor
@@ -273,7 +422,6 @@ impl<N: Network> Backend<N> {
         evm.ctx_mut().chain = transaction_context
             .ok_or_else(|| eyre::eyre!("Monad replay ancestor context is unavailable"))?;
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
 
         let mut executor = AnvilBlockExecutor::new(evm, parent_hash, *evm_env.spec_id(), None)
             .with_state_changes();
@@ -589,7 +737,7 @@ impl<N: Network> Backend<N> {
             execution.context.unwrap_or_else(|| MonadChainContext::for_transaction(&tx_env));
         let mut evm = factory.create_evm_with_inspector(WrapDatabaseRef(db), monad_env, inspector);
         evm.ctx_mut().chain = context;
-        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        self.inject_configured_precompiles(evm.precompiles_mut(), evm_env);
         match execution.kind {
             EnvelopeExecutionKind::Transaction => Ok(evm.transact(tx_env)?),
             EnvelopeExecutionKind::Replay => {
@@ -601,4 +749,18 @@ impl<N: Network> Backend<N> {
             }
         }
     }
+}
+
+pub(super) fn store_block_metadata<N: Network>(
+    storage: &mut BlockchainStorage<N>,
+    block_hash: B256,
+    participants: MonadBlockParticipants,
+    execution_chain_id: u64,
+    hardfork: FoundryHardfork,
+) {
+    storage.monad_block_participants.insert(block_hash, participants);
+    storage.monad_block_replay_profiles.insert(
+        block_hash,
+        MonadBlockReplayProfile { execution_chain_id, hardfork: MonadHardfork::from(hardfork) },
+    );
 }
