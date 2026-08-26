@@ -9,20 +9,6 @@ use std::{
     str::FromStr,
 };
 
-/// Expand globs with a root path.
-pub fn expand_globs(
-    root: &Path,
-    patterns: impl IntoIterator<Item = impl AsRef<str>>,
-) -> eyre::Result<Vec<PathBuf>> {
-    let mut expanded = Vec::new();
-    for pattern in patterns {
-        for paths in glob::glob(&root.join(pattern.as_ref()).display().to_string())? {
-            expanded.push(paths?);
-        }
-    }
-    Ok(expanded)
-}
-
 /// A `globset::Glob` that creates its `globset::GlobMatcher` when its created, so it doesn't need
 /// to be compiled when the filter functions `TestFilter` functions are called.
 #[derive(Clone, Debug)]
@@ -195,6 +181,20 @@ impl FromStr for SkipBuildFilter {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(Self::new(s))
     }
+}
+
+/// Expand globs with a root path.
+pub fn expand_globs(
+    root: &Path,
+    patterns: impl IntoIterator<Item = impl AsRef<str>>,
+) -> eyre::Result<Vec<PathBuf>> {
+    let mut expanded = Vec::new();
+    for pattern in patterns {
+        for paths in glob::glob(&root.join(pattern.as_ref()).display().to_string())? {
+            expanded.push(paths?);
+        }
+    }
+    Ok(expanded)
 }
 
 #[cfg(test)]

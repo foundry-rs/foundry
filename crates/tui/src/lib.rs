@@ -23,13 +23,6 @@ pub type CrosstermTerminal = Terminal<CrosstermBackend<Stdout>>;
 
 type PanicHandler = Box<dyn Fn(&PanicHookInfo<'_>) + 'static + Sync + Send>;
 
-/// Runs a closure with the default Foundry terminal setup.
-pub fn with_terminal<T>(f: impl FnMut(&mut CrosstermTerminal) -> T) -> IoResult<T> {
-    let backend = CrosstermBackend::new(stdout());
-    let terminal = Terminal::new(backend)?;
-    Ok(TerminalGuard::with(terminal, f))
-}
-
 /// The resolved mode for a requested TUI run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TuiMode {
@@ -207,6 +200,13 @@ impl<B: Backend + Write> Drop for TerminalGuard<B> {
     fn drop(&mut self) {
         self.restore();
     }
+}
+
+/// Runs a closure with the default Foundry terminal setup.
+pub fn with_terminal<T>(f: impl FnMut(&mut CrosstermTerminal) -> T) -> IoResult<T> {
+    let backend = CrosstermBackend::new(stdout());
+    let terminal = Terminal::new(backend)?;
+    Ok(TerminalGuard::with(terminal, f))
 }
 
 #[cfg(test)]
