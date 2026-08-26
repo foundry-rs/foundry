@@ -5028,21 +5028,20 @@ where
         let scheduled_hardfork =
             FoundryHardfork::from_chain_and_timestamp(source_chain_id, timestamp);
         #[cfg(feature = "monad")]
-        let explicit_monad_hardfork =
-            if self.is_monad() { self.node_config.read().await.hardfork } else { None };
-        // The target block's schedule can cross a hardfork boundary after the selected parent.
-        // Explicit Monad overrides still take precedence over timestamp inference.
+        let mut monad_replay = self
+            .prepare_monad_fork_replay(
+                source_chain_id,
+                execution_chain_id,
+                timestamp,
+                best_hash,
+                &transactions,
+            )
+            .await?;
         #[cfg(feature = "monad")]
-        let hardfork = if self.is_monad() {
-            explicit_monad_hardfork
-                .or_else(|| {
-                    monad_revm::MonadHardfork::from_chain_and_timestamp(source_chain_id, timestamp)
-                        .map(FoundryHardfork::Monad)
-                })
-                .unwrap_or_else(|| self.hardfork())
-        } else {
-            scheduled_hardfork.unwrap_or_else(|| self.hardfork())
-        };
+        let hardfork = monad_replay
+            .as_ref()
+            .map(monad::ForkReplay::hardfork)
+            .unwrap_or_else(|| scheduled_hardfork.unwrap_or_else(|| self.hardfork()));
         #[cfg(not(feature = "monad"))]
         let hardfork = scheduled_hardfork.unwrap_or_else(|| self.hardfork());
         if !self.is_optimism() && !self.is_tempo() {
@@ -5059,20 +5058,9 @@ where
         }
 
         #[cfg(feature = "monad")]
-        let monad_context = if self.is_monad() {
-            Some(self.monad_context_for_child_of_block_hash(best_hash).await?)
-        } else {
-            None
-        };
+        let monad_context = monad_replay.as_mut().and_then(monad::ForkReplay::take_context);
         #[cfg(not(feature = "monad"))]
         let monad_context = None;
-
-        #[cfg(feature = "monad")]
-        let monad_participants = self.is_monad().then(|| {
-            foundry_evm::core::evm::monad_block_participants(
-                &self.monad_historical_replay_tx_envs(&transactions),
-            )
-        });
 
         let (block_info, state_changes, block_hash) = {
             let db = self.db.read().await;
@@ -5134,14 +5122,8 @@ where
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
             #[cfg(feature = "monad")]
-            if let Some(participants) = monad_participants {
-                monad::store_block_metadata(
-                    &mut storage,
-                    block_hash,
-                    participants,
-                    execution_chain_id,
-                    hardfork,
-                );
+            if let Some(replay) = &mut monad_replay {
+                replay.store_metadata(&mut storage, block_hash);
             }
             for (info, receipt) in transactions.into_iter().zip(receipts) {
                 let mined_tx = MinedTransaction { info, receipt, block_hash, block_number };
@@ -5158,21 +5140,8 @@ where
         }
 
         #[cfg(feature = "monad")]
-        if self.is_monad() {
-            let spec_id = SpecId::from(hardfork);
-            evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
-            self.fees.set_execution_rules(spec_id, self.networks.base_fee_params(timestamp), None);
-            self.fees
-                .set_blob_params(foundry_evm::utils::get_blob_params(source_chain_id, timestamp));
-
-            // An inferred hardfork follows the replayed source block. Keep an explicit override
-            // fixed, even when the source schedule differs.
-            if explicit_monad_hardfork.is_none() {
-                *self.hardfork.write() = hardfork;
-                if let Some(fork) = self.fork.read().clone() {
-                    fork.config.write().hardfork = Some(hardfork);
-                }
-            }
+        if let Some(replay) = &monad_replay {
+            self.finalize_monad_fork_replay(replay, &mut evm_env);
         }
 
         evm_env.block_env.difficulty = U256::ZERO;
