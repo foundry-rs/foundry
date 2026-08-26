@@ -2103,7 +2103,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 }
 
-fn frame_gas(gas: &Gas) -> Vm::Gas {
+const fn frame_gas(gas: &Gas) -> Vm::Gas {
     Vm::Gas {
         gasLimit: gas.limit(),
         gasTotalUsed: gas.total_gas_spent(),
