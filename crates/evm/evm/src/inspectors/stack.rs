@@ -1246,14 +1246,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
     /// Whether [`Self::step_slow`] has anything to do for the current opcode.
     #[inline(always)]
-    fn needs_step_slow(&self) -> bool {
+    fn needs_step_slow(&self, interpreter: &Interpreter) -> bool {
         #[cfg(test)]
         if self.inner.early_exit_test_gate.is_some() {
             return true;
         }
         self.inner.static_step_dispatch != OpcodeStepDispatch::None
             || self.inner.execution_cancellation.is_some()
-            || self.cheatcodes.as_ref().is_some_and(|cheats| cheats.maybe_has_step_hooks())
+            || self
+                .cheatcodes
+                .as_ref()
+                .is_some_and(|cheats| cheats.needs_step_for(interpreter.bytecode.opcode()))
     }
 
     #[inline(always)]
@@ -1262,12 +1265,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         interpreter: &mut Interpreter,
         ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
-        if self.needs_step_slow() {
+        if self.needs_step_slow(interpreter) {
             return self.step_slow(interpreter, ecx);
         }
 
         debug_assert!(
-            self.cheatcodes.as_ref().is_none_or(|cheats| !cheats.has_step_hooks()),
+            self.cheatcodes.as_ref().is_none_or(|cheats| !cheats.has_step_hooks()
+                || (cheats.has_recording_accesses_only_step_hook()
+                    && !matches!(interpreter.bytecode.opcode(), op::SLOAD | op::SSTORE))),
             "opcode hook cache missed a cheatcode state change"
         );
 
