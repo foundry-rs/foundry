@@ -2103,6 +2103,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 }
 
+fn frame_gas(gas: &Gas) -> Vm::Gas {
+    Vm::Gas {
+        gasLimit: gas.limit(),
+        gasTotalUsed: gas.total_gas_spent(),
+        gasMemoryUsed: 0,
+        gasRefunded: gas.refunded(),
+        gasRemaining: gas.remaining(),
+        gasStateUsed: gas.state_gas_spent(),
+    }
+}
+
 impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcodes<FEN> {
     fn initialize_interp(
         &mut self,
@@ -2549,14 +2560,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
         // Record the gas usage of the call, this allows the `lastFrameGas` cheatcode to
         // retrieve the gas usage of the last call or create.
-        let gas = outcome.result.gas;
-        let frame_gas = crate::Vm::Gas {
-            gasLimit: gas.limit(),
-            gasTotalUsed: gas.total_gas_spent(),
-            gasMemoryUsed: 0,
-            gasRefunded: gas.refunded(),
-            gasRemaining: gas.remaining(),
-        };
+        let frame_gas = frame_gas(&outcome.result.gas);
         self.gas_metering.last_call_gas = Some(frame_gas.clone());
         self.gas_metering.last_frame_gas = Some(frame_gas);
 
@@ -3059,14 +3063,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if curr_depth > 0 {
             // Record the gas usage of the create frame, this allows the `lastFrameGas` cheatcode to
             // retrieve the gas usage of the last call or create.
-            let gas = outcome.result.gas;
-            self.gas_metering.last_frame_gas = Some(crate::Vm::Gas {
-                gasLimit: gas.limit(),
-                gasTotalUsed: gas.total_gas_spent(),
-                gasMemoryUsed: 0,
-                gasRefunded: gas.refunded(),
-                gasRemaining: gas.remaining(),
-            });
+            self.gas_metering.last_frame_gas = Some(frame_gas(&outcome.result.gas));
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
@@ -4269,6 +4266,18 @@ mod tests {
             Default::default(),
         ));
         assert!(cheats.has_log_hooks());
+    }
+
+    #[test]
+    fn frame_gas_includes_state_gas() {
+        let mut gas = Gas::new_with_regular_gas_and_reservoir(100_000, 50_000);
+        assert!(gas.record_regular_cost(1_000));
+        assert!(gas.record_state_cost(20_000));
+
+        let frame_gas = frame_gas(&gas);
+        assert_eq!(frame_gas.gasTotalUsed, 1_000);
+        assert_eq!(frame_gas.gasStateUsed, 20_000);
+        assert_eq!(frame_gas.gasRemaining, 99_000);
     }
 
     #[test]

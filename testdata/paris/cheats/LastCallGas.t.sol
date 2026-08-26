@@ -160,6 +160,7 @@ abstract contract LastCallGasFixture is Test {
         assertEq(lhs.gasTotalUsed, rhs.gasTotalUsed);
         assertEq(lhs.gasMemoryUsed, rhs.gasMemoryUsed);
         assertEq(lhs.gasRefunded, rhs.gasRefunded);
+        assertEq(lhs.gasStateUsed, 0);
     }
 
     function _assertGasRecorded(Vm.Gas memory gas) internal {
@@ -167,6 +168,7 @@ abstract contract LastCallGasFixture is Test {
         assertGt(gas.gasRemaining, 0);
         assertGt(gas.gasTotalUsed, 0);
         assertEq(gas.gasMemoryUsed, 0);
+        assertEq(gas.gasStateUsed, 0);
     }
 }
 

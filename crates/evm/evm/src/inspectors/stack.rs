@@ -1118,6 +1118,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             return (result, None, was_precompile_called);
         };
 
+        gas.set_state_gas_spent(
+            i64::try_from(res.result.gas().state_gas_spent_final())
+                .expect("transaction state gas originates from a signed gas tracker"),
+        );
+
         let rolled_back = !res.result.is_success();
 
         for (addr, mut acc) in res.state {

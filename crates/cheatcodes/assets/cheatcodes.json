@@ -524,7 +524,7 @@
         {
           "name": "gasTotalUsed",
           "ty": "uint64",
-          "description": "The total gas used."
+          "description": "The total regular gas used."
         },
         {
           "name": "gasMemoryUsed",
@@ -540,6 +540,11 @@
           "name": "gasRemaining",
           "ty": "uint64",
           "description": "The amount of gas remaining."
+        },
+        {
+          "name": "gasStateUsed",
+          "ty": "int64",
+          "description": "The amount of state gas used. May be negative within a nested frame when state gas is refunded."
         }
       ]
     },

@@ -84,6 +84,48 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
 
 forgetest_init!(can_test_with_solc_0_8_36_amsterdam, |prj, cmd| {
     prj.initialize_default_contracts();
+    prj.add_test(
+        "StateGas.t.sol",
+        r#"
+pragma solidity =0.8.36;
+
+import "forge-std/Test.sol";
+
+interface VmGas {
+    struct Gas {
+        uint64 gasLimit;
+        uint64 gasTotalUsed;
+        uint64 gasMemoryUsed;
+        int64 gasRefunded;
+        uint64 gasRemaining;
+        int64 gasStateUsed;
+    }
+
+    function lastFrameGas() external view returns (Gas memory gas);
+}
+
+contract StateGasTarget {
+    uint256 value;
+
+    function setValue() external {
+        value = 1;
+    }
+}
+
+contract StateGasTest is Test {
+    VmGas constant vmGas = VmGas(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    function testLastFrameGasReportsStateGas() public {
+        StateGasTarget target = new StateGasTarget();
+        target.setValue();
+
+        VmGas.Gas memory gas = vmGas.lastFrameGas();
+        assertGt(gas.gasTotalUsed, 0, "regular gas was not recorded");
+        assertTrue(gas.gasStateUsed > 0, "state gas was not recorded");
+    }
+}
+"#,
+    );
 
     // Amsterdam is an experimental EVM version in solc 0.8.36.
     cmd.args(["test", "--use", "0.8.36", "--evm-version", "amsterdam", "--experimental"])

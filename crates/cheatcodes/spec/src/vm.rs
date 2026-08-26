@@ -100,7 +100,7 @@ interface Vm {
     struct Gas {
         /// The gas limit of the call.
         uint64 gasLimit;
-        /// The total gas used.
+        /// The total regular gas used.
         uint64 gasTotalUsed;
         /// DEPRECATED: The amount of gas used for memory expansion. Ref: <https://github.com/foundry-rs/foundry/pull/7934#pullrequestreview-2069236939>
         uint64 gasMemoryUsed;
@@ -108,6 +108,8 @@ interface Vm {
         int64 gasRefunded;
         /// The amount of gas remaining.
         uint64 gasRemaining;
+        /// The amount of state gas used. May be negative within a nested frame when state gas is refunded.
+        int64 gasStateUsed;
     }
 
     /// An RPC URL and its alias. Returned by `rpcUrlStructs`.
