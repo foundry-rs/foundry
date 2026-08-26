@@ -482,6 +482,42 @@ impl<P: Provider> Provider for BackwardsCompatTomlProvider<P> {
     }
 }
 
+/// A provider that serves an already-materialized [`Provider::data`] result.
+///
+/// The TOML chain is merged once per standalone section and once more per profile, and every one of
+/// those merges re-runs the snake-case and backwards-compat passes over the whole file. Wrapping
+/// the chain in this runs them once instead.
+pub(crate) struct CachedProvider {
+    metadata: Metadata,
+    profile: Option<Profile>,
+    data: Result<Map<Profile, Dict>, Error>,
+}
+
+impl CachedProvider {
+    pub(crate) fn new(provider: impl Provider) -> Self {
+        Self { metadata: provider.metadata(), profile: provider.profile(), data: provider.data() }
+    }
+
+    /// Whether the materialized data contains the given profile.
+    pub(crate) fn contains_profile(&self, profile: &str) -> bool {
+        self.data.as_ref().is_ok_and(|data| data.contains_key(&Profile::new(profile)))
+    }
+}
+
+impl Provider for CachedProvider {
+    fn metadata(&self) -> Metadata {
+        self.metadata.clone()
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, Error> {
+        self.data.clone()
+    }
+
+    fn profile(&self) -> Option<Profile> {
+        self.profile.clone()
+    }
+}
+
 /// Adapts deprecated labels from arbitrary external providers.
 pub(crate) struct LegacyLabelsProvider<P>(pub(crate) P);
 

@@ -2666,7 +2666,8 @@ impl Config {
         // Apply key fixes before selecting profiles, while standalone sections and profile names
         // are still distinguishable.
         let provider = ForcedSnakeCaseData(toml_provider).strict_select(profiles);
-        let provider = &BackwardsCompatTomlProvider(provider);
+        let provider = CachedProvider::new(BackwardsCompatTomlProvider(provider));
+        let provider = &provider;
 
         // merge the default profile as a base
         if profile != Self::DEFAULT_PROFILE {
@@ -2674,17 +2675,27 @@ impl Config {
         }
         // merge special keys into config
         for standalone_key in Self::STANDALONE_SECTIONS {
-            if let Some((_, fallback)) =
-                STANDALONE_FALLBACK_SECTIONS.iter().find(|(key, _)| standalone_key == key)
+            let fallback = STANDALONE_FALLBACK_SECTIONS
+                .iter()
+                .find(|(key, _)| standalone_key == key)
+                .map(|(_, fallback)| *fallback);
+
+            // Merging a section the file does not define contributes nothing, but still walks and
+            // clones the whole parsed file, so skip it.
+            if !provider.contains_profile(standalone_key)
+                && !fallback.is_some_and(|fallback| provider.contains_profile(fallback))
             {
-                figment = figment.merge(
+                continue;
+            }
+
+            figment = match fallback {
+                Some(fallback) => figment.merge(
                     provider
                         .fallback(standalone_key, fallback)
                         .wrap(profile.clone(), standalone_key),
-                );
-            } else {
-                figment = figment.merge(provider.wrap(profile.clone(), standalone_key));
-            }
+                ),
+                None => figment.merge(provider.wrap(profile.clone(), standalone_key)),
+            };
         }
         // merge the profile
         figment = figment.merge(provider);

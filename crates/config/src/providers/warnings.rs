@@ -4,7 +4,20 @@ use figment::{
     value::{Dict, Map, Value},
 };
 use heck::ToSnakeCase;
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::LazyLock,
+};
+
+/// The serialized default [`Config`], used to decide which keys a `foundry.toml` may contain.
+///
+/// Only key names are read from this, and those are fixed by the struct definitions, so it is built
+/// once instead of once per config load. Serializing a default `Config` is not cheap: it walks
+/// every field of the struct and of all its nested section configs.
+static DEFAULT_CONFIG_DICT: LazyLock<Option<Dict>> = LazyLock::new(|| {
+    let data = figment::providers::Serialized::defaults(&Config::default()).data().ok()?;
+    data.get(&Config::DEFAULT_PROFILE).cloned()
+});
 
 /// Allowed keys for CompilationRestrictions.
 const COMPILATION_RESTRICTIONS_KEYS: &[&str] = &[
@@ -152,11 +165,15 @@ impl<P: Provider> WarningsProvider<P> {
 
         let mut out = self.old_warnings.clone()?;
 
+        // Resolving the source rebuilds the underlying provider's metadata, so do it once here
+        // rather than per warning site.
+        let source = self.provider.metadata().source.map(|source| source.to_string());
+
         // Add warning for unknown sections.
         out.extend(data.keys().filter(|k| !Config::is_standalone_section(k.as_str())).map(
-            |unknown_section| {
-                let source = self.provider.metadata().source.map(|s| s.to_string());
-                Warning::UnknownSection { unknown_section: unknown_section.clone(), source }
+            |unknown_section| Warning::UnknownSection {
+                unknown_section: unknown_section.clone(),
+                source: source.clone(),
             },
         ));
 
@@ -184,9 +201,7 @@ impl<P: Provider> WarningsProvider<P> {
         self.collect_deprecated_label_warnings(&data, profiles.clone(), &mut out);
 
         // Add warning for unknown keys within profiles (root keys only here).
-        if let Ok(default_map) = figment::providers::Serialized::defaults(&Config::default()).data()
-            && let Some(default_dict) = default_map.get(&Config::DEFAULT_PROFILE)
-        {
+        if let Some(default_dict) = DEFAULT_CONFIG_DICT.as_ref() {
             let allowed_keys: BTreeSet<String> = default_dict.keys().cloned().collect();
             for profile_map in profiles.clone() {
                 for (profile, value) in profile_map {
@@ -194,12 +209,7 @@ impl<P: Provider> WarningsProvider<P> {
                         continue;
                     };
 
-                    let source = self
-                        .provider
-                        .metadata()
-                        .source
-                        .map(|s| s.to_string())
-                        .unwrap_or(Config::FILE_NAME.to_string());
+                    let source = source.clone().unwrap_or_else(|| Config::FILE_NAME.to_string());
                     for key in profile_dict.keys() {
                         let is_not_deprecated = !Self::is_deprecated_profile_key(key);
                         let is_not_allowed = !allowed_keys.contains(key)
@@ -233,7 +243,12 @@ impl<P: Provider> WarningsProvider<P> {
             }
 
             // Add warning for unknown keys in standalone sections.
-            self.collect_standalone_section_warnings(&data, default_dict, &mut out);
+            self.collect_standalone_section_warnings(
+                &data,
+                default_dict,
+                source.as_deref(),
+                &mut out,
+            );
         }
 
         Ok(out)
@@ -244,14 +259,10 @@ impl<P: Provider> WarningsProvider<P> {
         &self,
         data: &Map<Profile, Dict>,
         default_dict: &Dict,
+        source: Option<&str>,
         out: &mut Vec<Warning>,
     ) {
-        let source = self
-            .provider
-            .metadata()
-            .source
-            .map(|s| s.to_string())
-            .unwrap_or(Config::FILE_NAME.to_string());
+        let source = source.unwrap_or(Config::FILE_NAME).to_string();
 
         for section_name in Config::STANDALONE_SECTIONS {
             // Get the section from the parsed data
