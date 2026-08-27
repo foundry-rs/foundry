@@ -34,7 +34,7 @@ SYMBOLIC_REPOSITORIES=$(join_repositories \
   "SorellaLabs/angstrom:73b55b8eca667b9a50fa4d8b6a7f45ec647420f5" \
   "farcasterxyz/contracts:3f37e21db8e9c6319b4a3d5f62b1c514ef01c36b")
 
-NIGHTLY_REPOSITORIES="aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35"
+NIGHTLY_REPOSITORIES="aave/aave-v4:1e8de8630dfeb26ad309d986eaec44c1ceb48a6d"
 
 SUITE_PROFILES=()
 SUITE_NAMES=()
