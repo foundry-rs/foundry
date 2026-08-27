@@ -1558,8 +1558,8 @@ mod tests {
     use alloy_rpc_types::TransactionRequest;
     use alloy_serde::WithOtherFields;
     use foundry_test_utils::rpc::{
-        spawn_rpc_proxy_invalid_request_before, spawn_rpc_proxy_method_not_found_before,
-        spawn_rpc_proxy_rejecting_method_after,
+        spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_invalid_request_before,
+        spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
     };
     #[cfg(feature = "optimism")]
     use op_revm::OpSpecId;
@@ -2248,8 +2248,7 @@ mod tests {
             anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64)))
                 .await;
         let fork_url =
-            spawn_rpc_proxy_rejecting_method_after(handle.http_endpoint(), "anvil_nodeInfo", 0)
-                .await;
+            spawn_rpc_proxy_internal_error_after(handle.http_endpoint(), "anvil_nodeInfo", 0).await;
         let mut evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
 
         let error = evm_opts.infer_network_from_fork().await.unwrap_err();
@@ -2258,6 +2257,22 @@ mod tests {
             error.to_string().contains("failed to determine network family from endpoint"),
             "{error}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_node_info_method_not_supported_is_optional() {
+        let (_api, handle) =
+            anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64)))
+                .await;
+        let fork_url =
+            spawn_rpc_proxy_rejecting_method_after(handle.http_endpoint(), "anvil_nodeInfo", 0)
+                .await;
+        let mut evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
+
+        evm_opts.infer_network_from_fork().await.unwrap();
+
+        assert_eq!(evm_opts.networks, NetworkConfigs::default());
+        assert_eq!(evm_opts.env.chain_id, Some(NamedChain::Mainnet as u64));
     }
 
     #[tokio::test(flavor = "multi_thread")]

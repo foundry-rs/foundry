@@ -552,10 +552,12 @@ pub fn is_rpc_method_not_found(error: &TransportError) -> bool {
 
 /// Returns whether an RPC transport error reports that an optional method is unavailable.
 ///
-/// Some RPC gateways return invalid-request instead of method-not-found for methods they do not
-/// expose.
+/// Endpoints disagree on how they report a method they do not expose: the JSON-RPC spec reserves
+/// `-32601` (method not found), some RPC gateways answer `-32600` (invalid request), and
+/// EIP-1474 defines `-32004` (method not supported). Authentication, internal, and transport
+/// errors remain visible to callers.
 pub fn is_rpc_method_unavailable(error: &TransportError) -> bool {
-    matches!(rpc_error_code(error), Some(-32601 | -32600))
+    matches!(rpc_error_code(error), Some(-32601 | -32600 | -32004))
 }
 
 /// Returns an RPC URL safe for display by retaining only its scheme, host, and port.
@@ -699,18 +701,34 @@ mod tests {
     }
 
     #[test]
-    fn method_unavailable_recognizes_invalid_request() {
-        let invalid_request = TransportError::ErrorResp(ErrorPayload::invalid_request());
-        let http_invalid_request = alloy_transport::TransportErrorKind::http_error(
-            400,
-            r#"{"jsonrpc":"2.0","error":{"code":-32600,"message":"Unsupported method"}}"#
-                .to_owned(),
-        );
-        let internal_error = TransportError::ErrorResp(ErrorPayload::internal_error());
+    fn method_unavailable_recognizes_unsupported_method_codes() {
+        for code in [-32601, -32600, -32004] {
+            let error_response = TransportError::ErrorResp(ErrorPayload {
+                code,
+                message: "method unavailable".into(),
+                data: None,
+            });
+            let http_error = alloy_transport::TransportErrorKind::http_error(
+                403,
+                format!(
+                    r#"{{"jsonrpc":"2.0","error":{{"code":{code},"message":"method unavailable"}}}}"#
+                ),
+            );
 
-        assert!(is_rpc_method_unavailable(&invalid_request));
-        assert!(is_rpc_method_unavailable(&http_invalid_request));
+            assert!(is_rpc_method_unavailable(&error_response), "{code}");
+            assert!(is_rpc_method_unavailable(&http_error), "{code}");
+        }
+
+        let internal_error = TransportError::ErrorResp(ErrorPayload::internal_error());
+        let http_internal_error = alloy_transport::TransportErrorKind::http_error(
+            500,
+            r#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"internal error"}}"#.to_owned(),
+        );
+        let transport_error = alloy_transport::TransportErrorKind::backend_gone();
+
         assert!(!is_rpc_method_unavailable(&internal_error));
+        assert!(!is_rpc_method_unavailable(&http_internal_error));
+        assert!(!is_rpc_method_unavailable(&transport_error));
     }
 
     #[test]

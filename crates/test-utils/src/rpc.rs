@@ -345,6 +345,24 @@ pub async fn spawn_rpc_proxy_invalid_request_before(
     .await
 }
 
+/// Spawns an RPC proxy that returns a JSON-RPC internal error for `method` after forwarding
+/// `successful_calls` requests.
+pub async fn spawn_rpc_proxy_internal_error_after(
+    endpoint: String,
+    method: &'static str,
+    successful_calls: usize,
+) -> String {
+    spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::After(successful_calls),
+        StatusCode::OK,
+        -32603,
+        "internal error",
+    )
+    .await
+}
+
 /// Spawns an RPC proxy that returns a vendor-specific JSON-RPC error for `method` after
 /// forwarding `successful_calls` requests.
 pub async fn spawn_rpc_proxy_erroring_method_after(

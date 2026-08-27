@@ -44,7 +44,8 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
     self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_erroring_method_after,
-    spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
+    spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
+    spawn_rpc_proxy_rejecting_method_after,
 };
 use futures::StreamExt;
 use revm::{
@@ -95,11 +96,23 @@ pub fn fork_config() -> NodeConfig {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_rejects_anvil_node_info_rpc_error() {
+async fn test_fork_accepts_node_info_method_not_supported() {
     let (_api, origin) =
         spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
     let fork_url =
         spawn_rpc_proxy_erroring_method_after(origin.http_endpoint(), "anvil_nodeInfo", 0).await;
+
+    let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
+
+    assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_rejects_anvil_node_info_internal_error() {
+    let (_api, origin) =
+        spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
+    let fork_url =
+        spawn_rpc_proxy_internal_error_after(origin.http_endpoint(), "anvil_nodeInfo", 0).await;
 
     let result = try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
     let Err(error) = result else { panic!("expected fork startup to fail") };
