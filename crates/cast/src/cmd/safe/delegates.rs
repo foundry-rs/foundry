@@ -7,8 +7,12 @@ use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use eyre::{Result, ensure};
-use foundry_cli::{json::print_json_object, opts::RpcOpts, utils::LoadConfig};
-use foundry_common::{provider::ProviderBuilder, sh_println};
+use foundry_cli::{
+    json::{print_json_object, print_scalar},
+    opts::RpcOpts,
+    utils::LoadConfig,
+};
+use foundry_common::provider::ProviderBuilder;
 use foundry_wallets::WalletOpts;
 use reqwest::Method;
 use serde_json::json;
@@ -36,7 +40,7 @@ pub(super) async fn add(
         "signature": signature,
     });
     service.empty_response(service.request(Method::POST, url).json(&body)).await?;
-    sh_println!("{}", delegate.to_checksum(None))?;
+    print_scalar(delegate.to_checksum(None))?;
     Ok(())
 }
 
@@ -75,6 +79,6 @@ pub(super) async fn remove(
         "signature": signature,
     });
     service.empty_response(service.request(Method::DELETE, url).json(&body)).await?;
-    sh_println!("{}", delegate.to_checksum(None))?;
+    print_scalar(delegate.to_checksum(None))?;
     Ok(())
 }

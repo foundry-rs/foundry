@@ -134,10 +134,15 @@ impl SafeTransaction {
             .wrap_err("failed to calculate Safe transaction hash")
     }
 
-    pub(super) async fn verify_hash<P>(&self, provider: &P) -> Result<()>
+    pub(super) async fn verify_hash<P>(&self, expected_safe: Address, provider: &P) -> Result<()>
     where
         P: alloy_provider::Provider<Ethereum>,
     {
+        ensure!(
+            self.safe == expected_safe,
+            "Transaction Service returned Safe {}, expected {expected_safe}",
+            self.safe
+        );
         ensure!(self.operation <= 1, "invalid Safe operation: {}", self.operation);
         let calculated = self.calculate_hash(provider).await?;
         ensure!(

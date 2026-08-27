@@ -9,11 +9,10 @@ use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use eyre::{Result, ensure};
-use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
+use foundry_cli::{json::print_scalar, opts::RpcOpts, utils::LoadConfig};
 use foundry_common::{
     abi::{encode_function_args, get_func},
     provider::ProviderBuilder,
-    sh_println,
 };
 use foundry_wallets::WalletOpts;
 use reqwest::Method;
@@ -80,11 +79,12 @@ pub(super) async fn propose(
     )?;
     let body = transaction.proposal_body(signer.address(), signature, origin);
     service.empty_response(service.request(Method::POST, url).json(&body)).await?;
-    sh_println!("{}", transaction.safe_tx_hash)?;
+    print_scalar(transaction.safe_tx_hash)?;
     Ok(())
 }
 
 pub(super) async fn sign(
+    safe: Address,
     safe_tx_hash: B256,
     service: SafeServiceOpts,
     rpc: RpcOpts,
@@ -99,7 +99,7 @@ pub(super) async fn sign(
         transaction.safe_tx_hash == safe_tx_hash,
         "Transaction Service returned a different Safe transaction hash"
     );
-    transaction.verify_hash(&provider).await?;
+    transaction.verify_hash(safe, &provider).await?;
     transaction.show_transaction_summary()?;
     let signer = wallet.signer().await?;
     let signature = sign_safe_hash(&signer, safe_tx_hash).await?;
@@ -110,6 +110,6 @@ pub(super) async fn sign(
             "signature": signature,
         })))
         .await?;
-    sh_println!("{signature}")?;
+    print_scalar(signature)?;
     Ok(())
 }

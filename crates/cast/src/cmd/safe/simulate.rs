@@ -15,7 +15,9 @@ use reqwest::Method;
 use serde_json::json;
 
 pub(super) async fn run(
+    safe: Address,
     safe_tx_hash: B256,
+    from: Option<Address>,
     accessor: Address,
     service: SafeServiceOpts,
     rpc: RpcOpts,
@@ -29,11 +31,17 @@ pub(super) async fn run(
         transaction.safe_tx_hash == safe_tx_hash,
         "Transaction Service returned a different Safe transaction hash"
     );
-    transaction.verify_hash(&provider).await?;
+    transaction.verify_hash(safe, &provider).await?;
     transaction.show_transaction_summary()?;
+    let from = match from {
+        Some(executor) => executor,
+        None if transaction.operation == 1 => {
+            eyre::bail!("--from is required to simulate a Safe DELEGATECALL")
+        }
+        None => safe,
+    };
     ensure_contract(&provider, accessor, "SimulateTxAccessor", "--accessor").await?;
 
-    let safe = transaction.safe;
     let accessor_call: Bytes = ISimulateTxAccessor::simulateCall {
         to: transaction.to,
         value: SafeTransaction::number(&transaction.value, "value")?,
@@ -47,7 +55,7 @@ pub(super) async fn run(
             .abi_encode()
             .into();
     let request =
-        TransactionRequest::default().with_from(safe).with_to(safe).with_input(simulation_call);
+        TransactionRequest::default().with_from(from).with_to(safe).with_input(simulation_call);
     let Err(error) = provider.call(request).await else {
         eyre::bail!("Safe simulateAndRevert unexpectedly returned successfully");
     };

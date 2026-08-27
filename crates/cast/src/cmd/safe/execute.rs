@@ -20,6 +20,7 @@ use reqwest::Method;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
+    safe: Address,
     safe_tx_hash: B256,
     confirmations: u64,
     timeout: Option<u64>,
@@ -44,11 +45,10 @@ pub(super) async fn run(
         transaction.transaction_hash.map(|hash| format!(" onchain as {hash}")).unwrap_or_default()
     );
 
-    transaction.verify_hash(&read_provider).await?;
+    transaction.verify_hash(safe, &read_provider).await?;
     transaction.show_transaction_summary()?;
 
     let signatures = transaction.packed_signatures()?;
-    let safe_address = transaction.safe;
 
     sh_status!("Executing Safe transaction {safe_tx_hash}")?;
     let calldata: Bytes = ISafe::execTransactionCall {
@@ -65,20 +65,12 @@ pub(super) async fn run(
     }
     .abi_encode()
     .into();
-    let result = send_safe_call(
-        safe_address,
-        calldata,
-        confirmations,
-        timeout,
-        poll_interval,
-        rpc,
-        wallet,
-        tx,
-    )
-    .await
-    .wrap_err("failed to submit Safe transaction")?;
+    let result =
+        send_safe_call(safe, calldata, confirmations, timeout, poll_interval, rpc, wallet, tx)
+            .await
+            .wrap_err("failed to submit Safe transaction")?;
     ensure!(
-        execution_succeeded(&result.logs, safe_address, safe_tx_hash)?,
+        execution_succeeded(&result.logs, safe, safe_tx_hash)?,
         "Safe inner transaction failed"
     );
     print_scalar(result.tx_hash)?;

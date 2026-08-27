@@ -202,6 +202,9 @@ pub enum SafeSubcommand {
 
     /// Sign and submit a confirmation for a proposed Safe transaction.
     Sign {
+        /// Safe account address.
+        safe: Address,
+
         /// Safe transaction hash from the Transaction Service.
         safe_tx_hash: B256,
 
@@ -221,8 +224,15 @@ pub enum SafeSubcommand {
     /// the Safe nonce, owner signatures, threshold, guard hooks, or gas reimbursement.
     #[command(verbatim_doc_comment)]
     Simulate {
+        /// Safe account address.
+        safe: Address,
+
         /// Safe transaction hash from the Transaction Service.
         safe_tx_hash: B256,
+
+        /// Executor address. Required for DELEGATECALL simulation.
+        #[arg(long, env = "ETH_FROM", value_name = "ADDRESS")]
+        from: Option<Address>,
 
         /// SimulateTxAccessor address.
         #[arg(long, default_value_t = SIMULATE_TX_ACCESSOR_V1_4_1)]
@@ -237,6 +247,9 @@ pub enum SafeSubcommand {
 
     /// Execute a confirmed Safe transaction onchain.
     Execute {
+        /// Safe account address.
+        safe: Address,
+
         /// Safe transaction hash from the Transaction Service.
         safe_tx_hash: B256,
 
@@ -366,13 +379,14 @@ impl SafeSubcommand {
                 )
                 .await?;
             }
-            Self::Sign { safe_tx_hash, service, rpc, wallet } => {
-                proposal::sign(safe_tx_hash, *service, *rpc, *wallet).await?;
+            Self::Sign { safe, safe_tx_hash, service, rpc, wallet } => {
+                proposal::sign(safe, safe_tx_hash, *service, *rpc, *wallet).await?;
             }
-            Self::Simulate { safe_tx_hash, accessor, service, rpc } => {
-                simulate::run(safe_tx_hash, accessor, *service, *rpc).await?;
+            Self::Simulate { safe, safe_tx_hash, from, accessor, service, rpc } => {
+                simulate::run(safe, safe_tx_hash, from, accessor, *service, *rpc).await?;
             }
             Self::Execute {
+                safe,
                 safe_tx_hash,
                 confirmations,
                 timeout,
@@ -383,6 +397,7 @@ impl SafeSubcommand {
                 tx,
             } => {
                 execute::run(
+                    safe,
                     safe_tx_hash,
                     confirmations,
                     timeout,

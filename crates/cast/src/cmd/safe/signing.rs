@@ -2,16 +2,22 @@ use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, B256, hex};
 use alloy_signer::Signer;
 use eyre::Result;
+use foundry_wallets::WalletSigner;
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(super) async fn sign_delegate(
-    signer: &foundry_wallets::WalletSigner,
+    signer: &WalletSigner,
     delegate: Address,
     chain_id: u64,
 ) -> Result<String> {
     let totp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() / 3600;
-    let typed_data: TypedData = serde_json::from_value(json!({
+    let typed_data = delegate_typed_data(delegate, chain_id, totp)?;
+    sign_delegate_typed_data(signer, &typed_data, matches!(signer, WalletSigner::Trezor(_))).await
+}
+
+fn delegate_typed_data(delegate: Address, chain_id: u64, totp: u64) -> Result<TypedData> {
+    Ok(serde_json::from_value(json!({
         "types": {
             "EIP712Domain": [
                 { "name": "name", "type": "string" },
@@ -33,15 +39,23 @@ pub(super) async fn sign_delegate(
             "delegateAddress": delegate.to_checksum(None),
             "totp": totp
         }
-    }))?;
-    let signature = signer.sign_dynamic_typed_data(&typed_data).await?;
-    Ok(normalize_signature(&signature.as_bytes(), false))
+    }))?)
 }
 
-pub(super) async fn sign_safe_hash(
-    signer: &foundry_wallets::WalletSigner,
-    safe_tx_hash: B256,
+async fn sign_delegate_typed_data(
+    signer: &WalletSigner,
+    typed_data: &TypedData,
+    safe_eth_sign: bool,
 ) -> Result<String> {
+    let signature = if safe_eth_sign {
+        signer.sign_message(typed_data.eip712_signing_hash()?.as_slice()).await?
+    } else {
+        signer.sign_dynamic_typed_data(typed_data).await?
+    };
+    Ok(normalize_signature(&signature.as_bytes(), safe_eth_sign))
+}
+
+pub(super) async fn sign_safe_hash(signer: &WalletSigner, safe_tx_hash: B256) -> Result<String> {
     let signature = signer.sign_message(safe_tx_hash.as_slice()).await?;
     Ok(normalize_signature(&signature.as_bytes(), true))
 }
@@ -61,6 +75,7 @@ fn normalize_signature(signature: &[u8], safe_eth_sign: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::Signature;
 
     #[test]
     fn normalizes_safe_eth_sign_v() {
@@ -77,5 +92,31 @@ mod tests {
         let mut signature = [0u8; 65];
         signature[64] = 0;
         assert!(normalize_signature(&signature, false).ends_with("1b"));
+    }
+
+    #[tokio::test]
+    async fn signs_delegate_typed_data_with_supported_safe_signatures() -> Result<()> {
+        let typed_data = delegate_typed_data(Address::repeat_byte(0x11), 1, 1)?;
+        let signer = WalletSigner::from_private_key(&B256::repeat_byte(1))?;
+        let signing_hash = typed_data.eip712_signing_hash()?;
+
+        for safe_eth_sign in [false, true] {
+            let signature = sign_delegate_typed_data(&signer, &typed_data, safe_eth_sign).await?;
+            let mut bytes = hex::decode(signature.strip_prefix("0x").unwrap())?;
+            if safe_eth_sign {
+                assert!(matches!(bytes[64], 31 | 32));
+                bytes[64] -= 4;
+            } else {
+                assert!(matches!(bytes[64], 27 | 28));
+            }
+            let signature = Signature::from_raw(&bytes)?;
+            let recovered = if safe_eth_sign {
+                signature.recover_address_from_msg(signing_hash.as_slice())?
+            } else {
+                signature.recover_address_from_prehash(&signing_hash)?
+            };
+            assert_eq!(recovered, signer.address());
+        }
+        Ok(())
     }
 }
