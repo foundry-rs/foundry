@@ -108,7 +108,7 @@ interface Vm {
         int64 gasRefunded;
         /// The amount of gas remaining.
         uint64 gasRemaining;
-        /// The amount of state gas used. May be negative within a nested frame when state gas is refunded.
+        /// The net state gas used. Zero for reverted or halted frames; may be negative within a nested frame when state gas is refunded.
         int64 gasStateUsed;
     }
 

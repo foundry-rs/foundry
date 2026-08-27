@@ -1118,10 +1118,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             return (result, None, was_precompile_called);
         };
 
+        let result_gas = res.result.gas();
+        let state_gas_used = result_gas.state_gas_spent_final();
+        let regular_gas_used = result_gas.tx_gas_used().saturating_sub(state_gas_used);
         gas.set_state_gas_spent(
-            i64::try_from(res.result.gas().state_gas_spent_final())
+            i64::try_from(state_gas_used)
                 .expect("transaction state gas originates from a signed gas tracker"),
         );
+        let _ = gas.record_regular_cost(regular_gas_used);
 
         let rolled_back = !res.result.is_success();
 
@@ -1159,21 +1163,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let (result, address, output) = match res.result {
             ExecutionResult::Success { reason, gas: result_gas, logs: _, output } => {
                 gas.set_refund(result_gas.final_refunded() as i64);
-                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
                 let address = match output {
                     Output::Create(_, address) => address,
                     Output::Call(_) => None,
                 };
                 (reason.into(), address, output.into_data())
             }
-            ExecutionResult::Halt { reason, gas: result_gas, .. } => {
-                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
+            ExecutionResult::Halt { reason, .. } => {
                 (InstructionResult::from(reason), None, Bytes::new())
             }
-            ExecutionResult::Revert { gas: result_gas, output, .. } => {
-                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
-                (InstructionResult::Revert, None, output)
-            }
+            ExecutionResult::Revert { output, .. } => (InstructionResult::Revert, None, output),
         };
         if rolled_back {
             refresh_chain_journal(ecx);

@@ -544,7 +544,7 @@
         {
           "name": "gasStateUsed",
           "ty": "int64",
-          "description": "The amount of state gas used. May be negative within a nested frame when state gas is refunded."
+          "description": "The net state gas used. Zero for reverted or halted frames; may be negative within a nested frame when state gas is refunded."
         }
       ]
     },

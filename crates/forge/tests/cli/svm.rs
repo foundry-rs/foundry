@@ -101,6 +101,7 @@ interface VmGas {
         int64 gasStateUsed;
     }
 
+    function lastCallGas() external view returns (Gas memory gas);
     function lastFrameGas() external view returns (Gas memory gas);
 }
 
@@ -110,24 +111,45 @@ contract StateGasTarget {
     function setValue() external {
         value = 1;
     }
+
+    function setValueAndRevert() external {
+        value = 1;
+        revert();
+    }
 }
 
 contract StateGasTest is Test {
+    uint64 constant STORAGE_SET_STATE_GAS = 64 * 1530;
     VmGas constant vmGas = VmGas(address(uint160(uint256(keccak256("hevm cheat code")))));
 
     function testLastFrameGasReportsStateGas() public {
         StateGasTarget target = new StateGasTarget();
         target.setValue();
 
-        VmGas.Gas memory gas = vmGas.lastFrameGas();
+        assertGasSplit(vmGas.lastCallGas());
+        assertGasSplit(vmGas.lastFrameGas());
+
+        StateGasTarget revertingTarget = new StateGasTarget();
+        (bool success,) = address(revertingTarget).call(
+            abi.encodeCall(revertingTarget.setValueAndRevert, ())
+        );
+        assertFalse(success, "state gas call should revert");
+        assertEq(vmGas.lastCallGas().gasStateUsed, 0, "reverted call used state gas");
+        assertEq(vmGas.lastFrameGas().gasStateUsed, 0, "reverted frame used state gas");
+    }
+
+    function assertGasSplit(VmGas.Gas memory gas) internal pure {
         assertGt(gas.gasTotalUsed, 0, "regular gas was not recorded");
-        assertTrue(gas.gasStateUsed > 0, "state gas was not recorded");
+        assertLt(gas.gasTotalUsed, STORAGE_SET_STATE_GAS, "state gas counted as regular gas");
+        assertEq(gas.gasStateUsed, int64(STORAGE_SET_STATE_GAS), "wrong state gas");
     }
 }
 "#,
     );
 
     // Amsterdam is an experimental EVM version in solc 0.8.36.
-    cmd.args(["test", "--use", "0.8.36", "--evm-version", "amsterdam", "--experimental"])
-        .assert_success();
+    let args = ["test", "--use", "0.8.36", "--evm-version", "amsterdam", "--experimental"];
+    cmd.args(args).assert_success();
+    cmd.forge_fuse().args(args).arg("--enable-tx-gas-limit").assert_success();
+    cmd.forge_fuse().args(args).arg("--isolate").assert_success();
 });

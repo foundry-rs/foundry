@@ -2103,14 +2103,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 }
 
-const fn frame_gas(gas: &Gas) -> Vm::Gas {
+const fn frame_gas(gas: &Gas, success: bool) -> Vm::Gas {
     Vm::Gas {
         gasLimit: gas.limit(),
-        gasTotalUsed: gas.total_gas_spent(),
+        gasTotalUsed: gas.total_gas_spent().saturating_sub(gas.state_gas_spilled()),
         gasMemoryUsed: 0,
         gasRefunded: gas.refunded(),
         gasRemaining: gas.remaining(),
-        gasStateUsed: gas.state_gas_spent(),
+        gasStateUsed: if success { gas.state_gas_spent() } else { 0 },
     }
 }
 
@@ -2560,7 +2560,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
         // Record the gas usage of the call, this allows the `lastFrameGas` cheatcode to
         // retrieve the gas usage of the last call or create.
-        let frame_gas = frame_gas(&outcome.result.gas);
+        let frame_gas = frame_gas(&outcome.result.gas, outcome.result.is_ok());
         self.gas_metering.last_call_gas = Some(frame_gas.clone());
         self.gas_metering.last_frame_gas = Some(frame_gas);
 
@@ -3063,7 +3063,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if curr_depth > 0 {
             // Record the gas usage of the create frame, this allows the `lastFrameGas` cheatcode to
             // retrieve the gas usage of the last call or create.
-            self.gas_metering.last_frame_gas = Some(frame_gas(&outcome.result.gas));
+            self.gas_metering.last_frame_gas =
+                Some(frame_gas(&outcome.result.gas, outcome.result.is_ok()));
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
@@ -4269,15 +4270,21 @@ mod tests {
     }
 
     #[test]
-    fn frame_gas_includes_state_gas() {
-        let mut gas = Gas::new_with_regular_gas_and_reservoir(100_000, 50_000);
-        assert!(gas.record_regular_cost(1_000));
-        assert!(gas.record_state_cost(20_000));
+    fn frame_gas_splits_regular_and_state_gas() {
+        for mut gas in [Gas::new(100_000), Gas::new_with_regular_gas_and_reservoir(100_000, 50_000)]
+        {
+            assert!(gas.record_regular_cost(1_000));
+            assert!(gas.record_state_cost(20_000));
 
-        let frame_gas = frame_gas(&gas);
-        assert_eq!(frame_gas.gasTotalUsed, 1_000);
-        assert_eq!(frame_gas.gasStateUsed, 20_000);
-        assert_eq!(frame_gas.gasRemaining, 99_000);
+            let reported = frame_gas(&gas, true);
+            assert_eq!(reported.gasTotalUsed, 1_000);
+            assert_eq!(reported.gasStateUsed, 20_000);
+            assert_eq!(frame_gas(&gas, false).gasStateUsed, 0);
+        }
+
+        let mut gas = Gas::new(100_000);
+        gas.refill_reservoir(20_000);
+        assert_eq!(frame_gas(&gas, true).gasStateUsed, -20_000);
     }
 
     #[test]
