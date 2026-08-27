@@ -7,21 +7,28 @@ use crate::{
     },
 };
 use alloy_dyn_abi::DynSolValue;
+use alloy_json_abi::JsonAbi;
+use alloy_network::Network;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
 use alloy_provider::Provider;
-use alloy_rpc_types::Log;
+use alloy_rpc_types::{BlockId, Log};
 use clap::{ArgGroup, Parser};
 use eyre::Result;
 use foundry_cli::{
     json::print_json_object,
     opts::{EtherscanOpts, RpcOpts},
-    utils::{self, LoadConfig},
+    utils::{self, LoadConfig, load_config_from_provider},
 };
-use foundry_common::{fmt::serialize_value_as_json, shell};
+use foundry_common::{
+    ContractsByArtifact, compile::ProjectCompiler, fmt::serialize_value_as_json, shell,
+};
 use foundry_config::{Chain, Config};
 use futures::StreamExt;
 use serde::{Serialize, Serializer};
-use std::{collections::BTreeSet, fmt::Write as _};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write as _,
+};
 
 foundry_config::impl_figment_convert!(EventsArgs, etherscan, rpc);
 
@@ -58,13 +65,25 @@ pub struct EventsArgs {
 
     #[command(flatten)]
     rpc: RpcOpts,
+
+    /// Use current project artifacts for event decoding.
+    ///
+    /// Only supported when querying by transaction hash.
+    #[arg(long, visible_alias = "la")]
+    with_local_artifacts: bool,
 }
 
 impl EventsArgs {
     pub async fn run(self) -> Result<()> {
+        let project_config = self.with_local_artifacts.then(|| {
+            load_config_from_provider(self.rpc.clone().into_figment(true).merge(&self.etherscan))
+        });
         let mut config = self.load_config()?;
-        let Self { tx_hash, mut query, etherscan: _, rpc: _ } = self;
+        let Self { tx_hash, mut query, etherscan: _, rpc: _, with_local_artifacts } = self;
         let tx_hash = tx_hash.or_else(|| query.take_transaction_hash());
+        if with_local_artifacts && tx_hash.is_none() {
+            eyre::bail!("--with-local-artifacts is only supported with a transaction hash");
+        }
         let provider = utils::get_provider(&config)?;
         let chain_id = provider.get_chain_id().await?;
         let (rpc_chain, explorer_chain) = resolve_chains(config.chain, Chain::from(chain_id));
@@ -81,7 +100,12 @@ impl EventsArgs {
             }
         };
 
-        let events = decode_logs(logs, &config, explorer_chain).await?;
+        let local_abis = if with_local_artifacts {
+            local_event_abis(&provider, &logs, &project_config.unwrap()?).await?
+        } else {
+            BTreeMap::new()
+        };
+        let events = decode_logs(logs, &config, explorer_chain, local_abis).await?;
         if shell::is_json() {
             print_json_object(events)?;
         } else {
@@ -99,10 +123,50 @@ fn resolve_chains(configured_chain: Option<Chain>, rpc_chain: Chain) -> (Chain, 
     (rpc_chain, configured_chain.unwrap_or(rpc_chain))
 }
 
+async fn local_event_abis<N: Network, P: Provider<N>>(
+    provider: &P,
+    logs: &[Log],
+    config: &Config,
+) -> Result<BTreeMap<Address, JsonAbi>> {
+    let addresses = logs.iter().map(Log::address).collect::<BTreeSet<_>>();
+    let Some(block_number) = logs.first().and_then(|log| log.block_number) else {
+        return Ok(BTreeMap::new());
+    };
+
+    let mut bytecodes = BTreeMap::new();
+    let mut requests = futures::stream::iter(addresses.iter().copied())
+        .map(|address| async move {
+            (address, provider.get_code_at(address).block_id(BlockId::number(block_number)).await)
+        })
+        .buffer_unordered(MAX_CONCURRENT_RPC_REQUESTS);
+    while let Some((address, code)) = requests.next().await {
+        match code {
+            Ok(code) if !code.is_empty() => {
+                bytecodes.insert(address, code);
+            }
+            Ok(_) => {}
+            Err(err) => sh_warn!("Failed to fetch code for {address}: {err}")?,
+        }
+    }
+
+    let project = config.project()?;
+    let output = ProjectCompiler::new().quiet(true).compile(&project)?;
+    let contracts = ContractsByArtifact::from(output);
+    Ok(addresses
+        .iter()
+        .filter_map(|&address| {
+            let code = bytecodes.get(&address)?;
+            let (_, contract) = contracts.find_by_deployed_code_exact_unique(code)?;
+            Some((address, contract.abi.clone()))
+        })
+        .collect())
+}
+
 async fn decode_logs(
     logs: Vec<Log>,
     config: &Config,
     explorer_chain: Chain,
+    local_abis: BTreeMap<Address, JsonAbi>,
 ) -> Result<Vec<EventOutput>> {
     let signature_identifier = SignaturesIdentifier::from_config(config)?;
     let mut builder = CallTraceDecoderBuilder::new()
@@ -110,12 +174,14 @@ async fn decode_logs(
         .with_networks(config.networks)
         .with_chain_id(config.chain.map(|chain| chain.id()));
 
+    let mut externally_resolved = BTreeSet::new();
     if let Some(mut identifier) = ExternalIdentifier::new(config, Some(explorer_chain))? {
         let addresses =
             logs.iter().map(Log::address).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>();
         for (address, result) in identifier.get_abis(&addresses).await {
             match result {
                 Ok((abis, complete)) => {
+                    externally_resolved.insert(address);
                     if !complete {
                         sh_warn!("Only partially resolved proxy ABI chain for {address}")?;
                     }
@@ -125,6 +191,12 @@ async fn decode_logs(
                 }
                 Err(err) => sh_warn!("Failed to fetch ABI for {address}: {err}")?,
             }
+        }
+    }
+
+    for (address, abi) in local_abis {
+        if !externally_resolved.contains(&address) {
+            builder = builder.with_address_events(address, &abi);
         }
     }
 
