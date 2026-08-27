@@ -1429,18 +1429,29 @@ impl CallTraceDecoder {
         log: &LogData,
         canonical_signature: bool,
     ) -> DecodedEvent {
-        let regular_events = log.topics().first().and_then(|&topic| {
-            let key = (topic, log.topics().len() - 1);
+        let key = log.topics().first().map(|&topic| (topic, log.topics().len() - 1));
+        let address_events = key.and_then(|key| {
             address
                 .and_then(|address| self.events_by_address.as_deref()?.get(&address))
                 .and_then(|events| events.get(&key))
-                .or_else(|| self.events.get(&key))
         });
+        let global_events = key.and_then(|key| self.events.get(&key));
+        let regular_events = address_events.or(global_events);
         let anonymous_events = address
             .and_then(|address| self.anonymous_events_by_address.as_deref()?.get(&address))
             .and_then(|events| events.get(&log.topics().len()));
 
-        let decoded = if canonical_signature || anonymous_events.is_some() {
+        let decoded = if canonical_signature && address_events.is_none() {
+            // Topic zero does not encode indexed parameter placement, so global metadata is only
+            // a hint. Try every compatible layout and reject ambiguity.
+            let mut events = global_events
+                .into_iter()
+                .flatten()
+                .flat_map(|event| indexed_event_candidates(event.clone(), log))
+                .collect::<Vec<_>>();
+            events.extend(anonymous_events.into_iter().flatten().cloned());
+            self.decode_unique_event_candidates(address, log, &events, true)
+        } else if canonical_signature || anonymous_events.is_some() {
             self.decode_unique_event_candidates(
                 address,
                 log,
@@ -1981,6 +1992,42 @@ mod tests {
         let decoded = decoder.decode_event_with_address_signature(address, &log).await;
         assert!(decoded.name.is_none());
         assert!(decoded.params.is_none());
+    }
+
+    #[tokio::test]
+    async fn canonical_global_events_require_a_unique_indexed_placement() {
+        let known = Event::parse(
+            "event AmbiguousLayout(address indexed from, address indexed to, uint256 amount)",
+        )
+        .unwrap();
+        let emitted = Event::parse(
+            "event AmbiguousLayout(address from, address indexed to, uint256 indexed amount)",
+        )
+        .unwrap();
+        assert_eq!(known.selector(), emitted.selector());
+
+        let address = Address::from([0x12; 20]);
+        let from = Address::from([0x34; 20]);
+        let to = Address::from([0x56; 20]);
+        let amount = U256::from(42);
+        let log = LogData::new_unchecked(
+            vec![emitted.selector(), to.into_word(), amount.into()],
+            (from,).abi_encode().into(),
+        );
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.push_event(known);
+
+        let decoded = decoder.decode_event_with_address_signature(address, &log).await;
+        assert!(decoded.name.is_none());
+        assert!(decoded.params.is_none());
+
+        decoder.push_address_event(address, emitted);
+        let decoded = decoder.decode_event_with_address_signature(address, &log).await;
+        assert_eq!(decoded.name.as_deref(), Some("AmbiguousLayout(address,address,uint256)"));
+        let params = decoded.params.unwrap();
+        assert_eq!(params[0].2, DynSolValue::Address(from));
+        assert_eq!(params[1].2, DynSolValue::Address(to));
+        assert_eq!(params[2].2, DynSolValue::Uint(amount, 256));
     }
 
     #[tokio::test]

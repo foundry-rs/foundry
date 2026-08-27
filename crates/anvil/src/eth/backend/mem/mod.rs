@@ -1,4 +1,6 @@
 //! In-memory blockchain backend.
+#[cfg(feature = "monad")]
+use self::monad::advance_block_context as advance_monad_context;
 use self::{in_memory_db::StateRootDb, state::trie_storage};
 
 #[cfg(feature = "optimism")]
@@ -508,6 +510,9 @@ const fn next_monad_context(context: &mut MonadReplayContext) -> MonadExecutionC
 const fn next_monad_context(_context: &mut MonadReplayContext) -> MonadExecutionContext<'_> {
     MonadExecutionContext { _marker: std::marker::PhantomData }
 }
+
+#[cfg(not(feature = "monad"))]
+const fn advance_monad_context(_context: &mut Option<MonadReplayContext>) {}
 
 const fn noop_before_transaction<E, T>(_evm: &mut E, _tx: &T) {}
 
@@ -1274,6 +1279,15 @@ impl<N: Network> Backend<N> {
     fn active_monad_context_for_mined_block(
         &self,
         _block: &Block,
+    ) -> Result<Option<MonadReplayContext>, BlockchainError> {
+        Ok(None)
+    }
+
+    #[cfg(not(feature = "monad"))]
+    fn active_monad_context_before_mined_transaction(
+        &self,
+        _block: &Block,
+        _current_tx_index: usize,
     ) -> Result<Option<MonadReplayContext>, BlockchainError> {
         Ok(None)
     }
@@ -2191,12 +2205,21 @@ impl<N: Network> Backend<N> {
 
     /// Injects all configured precompiles into the given precompile map.
     ///
-    /// This applies four layers:
+    /// This applies five layers:
     /// 1. Network-specific precompiles (e.g. Tempo, OP)
     /// 2. Chain- and timestamp-specific precompiles
     /// 3. User-provided precompiles via [`PrecompileFactory`]
     /// 4. Cheatcode ecrecover overrides (if active)
+    /// 5. Block-specific precompiles (e.g. ArbSys)
     fn inject_precompiles(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
+        self.inject_configured_precompiles(precompiles, evm_env);
+
+        if let Some(block_number) = self.arbitrum_block_number(evm_env) {
+            self.inject_arbitrum_precompile_at_block(precompiles, block_number);
+        }
+    }
+
+    fn inject_configured_precompiles(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
         self.networks.inject_precompiles(precompiles);
         self.networks.inject_chain_precompiles(
             precompiles,
@@ -2218,11 +2241,6 @@ impl<N: Network> Backend<N> {
                 ))
             });
         }
-    }
-
-    fn inject_arbitrum_precompile(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
-        let Some(block_number) = self.arbitrum_block_number(evm_env) else { return };
-        self.inject_arbitrum_precompile_at_block(precompiles, block_number);
     }
 
     fn inject_arbitrum_precompile_at_block(
@@ -2262,7 +2280,6 @@ impl<N: Network> Backend<N> {
             PrecompileSpecId::from_spec_id(*evm_env.spec_id()),
         ));
         self.inject_precompiles(&mut precompiles, evm_env);
-        self.inject_arbitrum_precompile(&mut precompiles, evm_env);
         let precompile_addresses = precompiles.addresses().copied().collect::<HashSet<_>>();
 
         // Validate every source first so invalid-source errors take precedence over the more
@@ -2330,7 +2347,7 @@ impl<N: Network> Backend<N> {
         DB: Database,
         I: Inspector<TempoContext<DB>>,
     {
-        self.inject_precompiles(evm.precompiles_mut(), evm_env);
+        self.inject_configured_precompiles(evm.precompiles_mut(), evm_env);
         // Re-extend Tempo precompiles, preserving shared non-creditable slots.
         let cfg = evm.ctx().cfg.clone();
         let non_creditable_slots = evm.non_creditable_slots();
@@ -2386,7 +2403,6 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         if !overrides.moves.is_empty() {
             let warm_addresses =
                 self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
@@ -2415,7 +2431,6 @@ impl<N: Network> Backend<N> {
             inspector,
         );
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         if !overrides.moves.is_empty() {
             let warm_addresses =
                 self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
@@ -2634,7 +2649,6 @@ impl<N: Network> Backend<N> {
                 $on_execution_error:expr
             ) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
-                self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
                 let mut executor =
                     AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions);
                 executor
@@ -2708,7 +2722,6 @@ impl<N: Network> Backend<N> {
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         apply_ethereum_pre_execution_changes(&mut evm, parent_hash, transitions)
             .map_err(|err| BlockchainError::Internal(err.to_string()))
     }
@@ -2728,7 +2741,6 @@ impl<N: Network> Backend<N> {
         let mut evm =
             EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        self.inject_arbitrum_precompile(evm.precompiles_mut(), evm_env);
         apply_ethereum_post_execution_changes(&mut evm, transitions, receipts)
             .map_err(|err| BlockchainError::Internal(err.to_string()))
     }
@@ -5030,21 +5042,20 @@ where
         let scheduled_hardfork =
             FoundryHardfork::from_chain_and_timestamp(source_chain_id, timestamp);
         #[cfg(feature = "monad")]
-        let explicit_monad_hardfork =
-            if self.is_monad() { self.node_config.read().await.hardfork } else { None };
-        // The target block's schedule can cross a hardfork boundary after the selected parent.
-        // Explicit Monad overrides still take precedence over timestamp inference.
+        let mut monad_replay = self
+            .prepare_monad_fork_replay(
+                source_chain_id,
+                execution_chain_id,
+                timestamp,
+                best_hash,
+                &transactions,
+            )
+            .await?;
         #[cfg(feature = "monad")]
-        let hardfork = if self.is_monad() {
-            explicit_monad_hardfork
-                .or_else(|| {
-                    monad_revm::MonadHardfork::from_chain_and_timestamp(source_chain_id, timestamp)
-                        .map(FoundryHardfork::Monad)
-                })
-                .unwrap_or_else(|| self.hardfork())
-        } else {
-            scheduled_hardfork.unwrap_or_else(|| self.hardfork())
-        };
+        let hardfork = monad_replay
+            .as_ref()
+            .map(monad::ForkReplay::hardfork)
+            .unwrap_or_else(|| scheduled_hardfork.unwrap_or_else(|| self.hardfork()));
         #[cfg(not(feature = "monad"))]
         let hardfork = scheduled_hardfork.unwrap_or_else(|| self.hardfork());
         if !self.is_optimism() && !self.is_tempo() {
@@ -5061,20 +5072,9 @@ where
         }
 
         #[cfg(feature = "monad")]
-        let monad_context = if self.is_monad() {
-            Some(self.monad_context_for_child_of_block_hash(best_hash).await?)
-        } else {
-            None
-        };
+        let monad_context = monad_replay.as_mut().and_then(monad::ForkReplay::take_context);
         #[cfg(not(feature = "monad"))]
         let monad_context = None;
-
-        #[cfg(feature = "monad")]
-        let monad_participants = self.is_monad().then(|| {
-            foundry_evm::core::evm::monad_block_participants(
-                &self.monad_historical_replay_tx_envs(&transactions),
-            )
-        });
 
         let (block_info, state_changes, block_hash) = {
             let db = self.db.read().await;
@@ -5136,14 +5136,8 @@ where
             storage.blocks.insert(block_hash, block);
             storage.hashes.insert(block_number, block_hash);
             #[cfg(feature = "monad")]
-            if let Some(participants) = monad_participants {
-                monad::store_block_metadata(
-                    &mut storage,
-                    block_hash,
-                    participants,
-                    execution_chain_id,
-                    hardfork,
-                );
+            if let Some(replay) = &mut monad_replay {
+                replay.store_metadata(&mut storage, block_hash);
             }
             for (info, receipt) in transactions.into_iter().zip(receipts) {
                 let mined_tx = MinedTransaction { info, receipt, block_hash, block_number };
@@ -5160,21 +5154,8 @@ where
         }
 
         #[cfg(feature = "monad")]
-        if self.is_monad() {
-            let spec_id = SpecId::from(hardfork);
-            evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
-            self.fees.set_execution_rules(spec_id, self.networks.base_fee_params(timestamp), None);
-            self.fees
-                .set_blob_params(foundry_evm::utils::get_blob_params(source_chain_id, timestamp));
-
-            // An inferred hardfork follows the replayed source block. Keep an explicit override
-            // fixed, even when the source schedule differs.
-            if explicit_monad_hardfork.is_none() {
-                *self.hardfork.write() = hardfork;
-                if let Some(fork) = self.fork.read().clone() {
-                    fork.config.write().hardfork = Some(hardfork);
-                }
-            }
+        if let Some(replay) = &monad_replay {
+            self.finalize_monad_fork_replay(replay, &mut evm_env);
         }
 
         evm_env.block_env.difficulty = U256::ZERO;
@@ -5251,8 +5232,6 @@ where
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 if let Some(block_number) = arbitrum_rpc_block_number {
                     self.inject_arbitrum_precompile_at_block($evm.precompiles_mut(), block_number);
-                } else {
-                    self.inject_arbitrum_precompile($evm.precompiles_mut(), evm_env);
                 }
                 let mut executor = AnvilBlockExecutor::new(
                     $evm,
@@ -5960,18 +5939,7 @@ where
                 tracing_options,
                 state_overrides,
                 block_overrides,
-                {
-                    #[cfg(feature = "monad")]
-                    {
-                        self.is_monad()
-                            .then(|| self.monad_context_before_mined_transaction(block, tx_index))
-                            .transpose()?
-                    }
-                    #[cfg(not(feature = "monad"))]
-                    {
-                        None
-                    }
-                },
+                self.active_monad_context_before_mined_transaction(block, tx_index)?,
                 Some((evm_env, hardfork)),
             )
         };
@@ -6237,17 +6205,10 @@ where
             Some(BlockRequest::Pending(pool_transactions)) => {
                 return self
                     .with_pending_block(pool_transactions, |state, block_info| {
-                        #[cfg(feature = "monad")]
-                        let context = if self.is_monad() {
-                            Some(self.monad_context_before_mined_transaction(
-                                &block_info.block,
-                                block_info.block.body.transactions.len(),
-                            )?)
-                        } else {
-                            None
-                        };
-                        #[cfg(not(feature = "monad"))]
-                        let context = None;
+                        let context = self.active_monad_context_before_mined_transaction(
+                            &block_info.block,
+                            block_info.block.body.transactions.len(),
+                        )?;
                         let block_env = block_env_from_header(&block_info.block.header);
                         f(state, block_env, context)
                     })
@@ -7809,10 +7770,7 @@ impl Backend<FoundryNetwork> {
                     results.push(bundle_results);
                     block_env.number = block_env.number.saturating_add(U256::ONE);
                     block_env.timestamp = block_env.timestamp.saturating_add(U256::ONE);
-                    #[cfg(feature = "monad")]
-                    if let Some(context) = monad_context.as_mut() {
-                        monad::advance_block(context);
-                    }
+                    advance_monad_context(&mut monad_context);
                 }
 
                 Ok(results)
@@ -8420,11 +8378,7 @@ impl Backend<FoundryNetwork> {
                 parent_blob_gas_used = header.blob_gas_used().unwrap_or_default();
 
                 block_res.push(simulated_block);
-
-                #[cfg(feature = "monad")]
-                if let Some(context) = monad_context.as_mut() {
-                    monad::advance_block(context);
-                }
+                advance_monad_context(&mut monad_context);
             }
 
             Ok(block_res)
@@ -8439,19 +8393,11 @@ impl Backend<FoundryNetwork> {
                         header.gas_limit(),
                         header.base_fee_per_gas().unwrap_or_default(),
                     );
-                    #[cfg(feature = "monad")]
-                    let monad_context = if self.is_monad() {
-                        let mut context = self.monad_context_before_mined_transaction(
-                            &block.block,
-                            block.block.body.transactions.len(),
-                        )?;
-                        monad::advance_block(&mut context);
-                        Some(context)
-                    } else {
-                        None
-                    };
-                    #[cfg(not(feature = "monad"))]
-                    let monad_context = None;
+                    let mut monad_context = self.active_monad_context_before_mined_transaction(
+                        &block.block,
+                        block.block.body.transactions.len(),
+                    )?;
+                    advance_monad_context(&mut monad_context);
                     simulate_at(
                         state,
                         block_env_from_header(header),

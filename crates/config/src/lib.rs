@@ -2108,8 +2108,13 @@ impl Config {
     }
 
     fn _with_root(root: &Path) -> Self {
-        // autodetect paths
-        let paths = ProjectPathsConfig::builder().build_with_root::<()>(root);
+        // Autodetect the source, artifact and library directories from `root`.
+        let paths = ProjectPathsConfig::builder()
+            // The builder autodetects remappings too, which is a separate and far more expensive
+            // scan: it recursively walks every directory under every library path. Only the
+            // directories are read below, so opt out of it.
+            .remappings(Vec::new())
+            .build_with_root::<()>(root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         let mut config = Self::default();
         if config.uses_default_src() {
