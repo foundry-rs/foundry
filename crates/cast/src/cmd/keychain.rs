@@ -21,7 +21,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     FoundryTransactionBuilder,
-    provider::ProviderBuilder,
+    provider::{NO_PARAMS, ProviderBuilder},
     sh_warn, shell,
     tempo::{
         self, AccountsStoreView, KeyType, maybe_print_fee_token, read_tempo_accounts_store,
@@ -3831,7 +3831,7 @@ async fn anvil_tempo_hardfork_active<P>(
 where
     P: Provider<TempoNetwork>,
 {
-    let info = provider.raw_request::<_, AnvilNodeInfo>("anvil_nodeInfo".into(), ()).await?;
+    let info = provider.raw_request::<_, AnvilNodeInfo>("anvil_nodeInfo".into(), NO_PARAMS).await?;
     Ok(active_from_anvil_node_info(&info, hardfork))
 }
 

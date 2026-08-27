@@ -40,8 +40,8 @@ use eyre::{Context, Result};
 use foundry_common::{
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
     provider::{
-        ProviderBuilder, RetryProvider, is_rpc_method_not_found, is_rpc_method_unavailable,
-        redact_url,
+        NO_PARAMS, ProviderBuilder, RetryProvider, is_rpc_method_not_found,
+        is_rpc_method_unavailable, redact_url,
     },
 };
 use foundry_config::Config;
@@ -119,7 +119,7 @@ impl AnvilNodeInfoProbe {
     }
 
     async fn request(&mut self, provider: &RetryProvider) -> Result<Option<NodeInfo>> {
-        match provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await {
+        match provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), NO_PARAMS).await {
             Ok(node_info) => {
                 self.identified = true;
                 Ok(Some(node_info))
@@ -1566,7 +1566,7 @@ impl NodeConfig {
             instance_id,
             source_fork_block_number,
             source_fork_block_hash,
-        ) = match provider.raw_request::<_, Metadata>("anvil_metadata".into(), ()).await {
+        ) = match provider.raw_request::<_, Metadata>("anvil_metadata".into(), NO_PARAMS).await {
             Ok(metadata) => (
                 metadata.chain_id,
                 source_chain_id_override.unwrap_or_else(|| {
