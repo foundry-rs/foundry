@@ -11,6 +11,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
 use super::lsp_client::{LspClient, request};
 
 const SYMBOL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -129,6 +132,40 @@ fn lsp_reloads_host_resolved_config_after_manifest_change() {
         })
         .unwrap();
     wait_for_workspace_symbols(&mut client, "NewContract", "OldContract");
+    client.shutdown();
+}
+
+#[cfg(unix)]
+#[test]
+fn lsp_preserves_aliased_workspace_root() {
+    let project = tempfile::tempdir().unwrap();
+    let project_root = dunce::canonicalize(project.path()).unwrap();
+    fs::write(project_root.join("foundry.toml"), "[profile.default]\nsrc = \"src\"\n").unwrap();
+    fs::create_dir_all(project_root.join("src")).unwrap();
+    fs::write(project_root.join("src/Alias.sol"), "contract AliasContract {}\n").unwrap();
+
+    let alias_parent = tempfile::tempdir().unwrap();
+    let alias_root = alias_parent.path().join("project-alias");
+    symlink(&project_root, &alias_root).unwrap();
+
+    let empty_path = tempfile::tempdir().unwrap();
+    let mut client = LspClient::spawn(&alias_root, empty_path.path(), &["lsp", "--stdio"]);
+    let initialize = request(
+        &client.runtime,
+        client.server.initialize(InitializeParams {
+            capabilities: ClientCapabilities::default(),
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: Url::from_directory_path(&alias_root).unwrap(),
+                name: "fixture".into(),
+            }]),
+            ..InitializeParams::default()
+        }),
+    );
+    assert!(initialize.capabilities.workspace_symbol_provider.is_some());
+    client.server.initialized(InitializedParams {}).unwrap();
+    client.wait_for_log_message();
+
+    wait_for_workspace_symbols(&mut client, "AliasContract", "MissingContract");
     client.shutdown();
 }
 
