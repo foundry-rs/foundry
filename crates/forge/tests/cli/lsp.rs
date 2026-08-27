@@ -1,8 +1,9 @@
 use async_lsp::{
     LanguageServer,
     lsp_types::{
-        ClientCapabilities, InitializeParams, InitializedParams, Url, WorkspaceFolder,
-        WorkspaceSymbolParams, WorkspaceSymbolResponse,
+        ClientCapabilities, DidChangeWatchedFilesParams, FileChangeType, FileEvent,
+        InitializeParams, InitializedParams, Url, WorkspaceFolder, WorkspaceSymbolParams,
+        WorkspaceSymbolResponse,
     },
 };
 use std::{
@@ -13,6 +14,39 @@ use std::{
 use super::lsp_client::{LspClient, request};
 
 const SYMBOL_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn wait_for_workspace_symbols(client: &mut LspClient, expected: &str, unexpected: &str) {
+    let deadline = Instant::now() + SYMBOL_TIMEOUT;
+    let mut last_names = Vec::new();
+    while Instant::now() < deadline {
+        let response = request(
+            &client.runtime,
+            client.server.symbol(WorkspaceSymbolParams {
+                query: String::new(),
+                ..WorkspaceSymbolParams::default()
+            }),
+        );
+        last_names = match response {
+            None => Vec::new(),
+            Some(WorkspaceSymbolResponse::Flat(symbols)) => {
+                symbols.into_iter().map(|symbol| symbol.name).collect()
+            }
+            Some(WorkspaceSymbolResponse::Nested(symbols)) => {
+                symbols.into_iter().map(|symbol| symbol.name).collect()
+            }
+        };
+        if last_names.iter().any(|name| name == expected)
+            && last_names.iter().all(|name| name != unexpected)
+        {
+            return;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    panic!(
+        "expected workspace symbol `{expected}` without `{unexpected}`; observed: {last_names:?}"
+    );
+}
 
 #[test]
 fn lsp_profile_selects_workspace_sources() {
@@ -51,35 +85,51 @@ fn lsp_profile_selects_workspace_sources() {
     client.server.initialized(InitializedParams {}).unwrap();
     client.wait_for_log_message();
 
-    let deadline = Instant::now() + SYMBOL_TIMEOUT;
-    let mut last_names = Vec::new();
-    while Instant::now() < deadline {
-        let response = request(
-            &client.runtime,
-            client.server.symbol(WorkspaceSymbolParams {
-                query: String::new(),
-                ..WorkspaceSymbolParams::default()
-            }),
-        );
-        last_names = match response {
-            None => Vec::new(),
-            Some(WorkspaceSymbolResponse::Flat(symbols)) => {
-                symbols.into_iter().map(|symbol| symbol.name).collect()
-            }
-            Some(WorkspaceSymbolResponse::Nested(symbols)) => {
-                symbols.into_iter().map(|symbol| symbol.name).collect()
-            }
-        };
-        if last_names.iter().any(|name| name == "CustomContract")
-            && last_names.iter().all(|name| name != "DefaultContract")
-        {
-            client.shutdown();
-            return;
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
+    wait_for_workspace_symbols(&mut client, "CustomContract", "DefaultContract");
+    client.shutdown();
+}
 
-    panic!("custom profile was not used for workspace indexing; observed symbols: {last_names:?}");
+#[test]
+fn lsp_reloads_host_resolved_config_after_manifest_change() {
+    let project = tempfile::tempdir().unwrap();
+    let project_root = dunce::canonicalize(project.path()).unwrap();
+    let manifest = project_root.join("foundry.toml");
+    fs::write(&manifest, "[profile.default]\nsrc = \"old-src\"\n").unwrap();
+    fs::create_dir_all(project_root.join("old-src")).unwrap();
+    fs::create_dir_all(project_root.join("new-src")).unwrap();
+    fs::write(project_root.join("old-src/Old.sol"), "contract OldContract {}\n").unwrap();
+    fs::write(project_root.join("new-src/New.sol"), "contract NewContract {}\n").unwrap();
+
+    let empty_path = tempfile::tempdir().unwrap();
+    let mut client = LspClient::spawn(&project_root, empty_path.path(), &["lsp", "--stdio"]);
+    let initialize = request(
+        &client.runtime,
+        client.server.initialize(InitializeParams {
+            capabilities: ClientCapabilities::default(),
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: Url::from_directory_path(&project_root).unwrap(),
+                name: "fixture".into(),
+            }]),
+            ..InitializeParams::default()
+        }),
+    );
+    assert!(initialize.capabilities.workspace_symbol_provider.is_some());
+    client.server.initialized(InitializedParams {}).unwrap();
+    client.wait_for_log_message();
+    wait_for_workspace_symbols(&mut client, "OldContract", "NewContract");
+
+    fs::write(&manifest, "[profile.default]\nsrc = \"new-src\"\n").unwrap();
+    client
+        .server
+        .did_change_watched_files(DidChangeWatchedFilesParams {
+            changes: vec![FileEvent {
+                uri: Url::from_file_path(&manifest).unwrap(),
+                typ: FileChangeType::CHANGED,
+            }],
+        })
+        .unwrap();
+    wait_for_workspace_symbols(&mut client, "NewContract", "OldContract");
+    client.shutdown();
 }
 
 #[test]
