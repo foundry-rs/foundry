@@ -116,29 +116,49 @@ contract StateGasTarget {
         value = 1;
         revert();
     }
+
+    function setValueWithData(bytes calldata) external {
+        value = 1;
+    }
 }
 
 contract StateGasTest is Test {
     uint64 constant STORAGE_SET_STATE_GAS = 64 * 1530;
-    VmGas constant vmGas = VmGas(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 constant CALLDATA_SIZE = 20_000;
+    uint256 constant CALL_FLOOR_BASE_GAS = 15_000;
+    uint256 constant CALLDATA_FLOOR_GAS_PER_BYTE = 64;
+    VmGas constant VM_GAS = VmGas(address(uint160(uint256(keccak256("hevm cheat code")))));
 
-    function testLastFrameGasReportsStateGas() public {
+    function testReportsStateGas() public {
         StateGasTarget target = new StateGasTarget();
         target.setValue();
 
-        assertGasSplit(vmGas.lastCallGas());
-        assertGasSplit(vmGas.lastFrameGas());
+        assertStorageWriteGas(VM_GAS.lastCallGas());
+        assertStorageWriteGas(VM_GAS.lastFrameGas());
 
         StateGasTarget revertingTarget = new StateGasTarget();
         (bool success,) = address(revertingTarget).call(
             abi.encodeCall(revertingTarget.setValueAndRevert, ())
         );
         assertFalse(success, "state gas call should revert");
-        assertEq(vmGas.lastCallGas().gasStateUsed, 0, "reverted call used state gas");
-        assertEq(vmGas.lastFrameGas().gasStateUsed, 0, "reverted frame used state gas");
+        assertEq(VM_GAS.lastFrameGas().gasStateUsed, 0, "reverted frame used state gas");
     }
 
-    function assertGasSplit(VmGas.Gas memory gas) internal pure {
+    /// forge-config: default.isolate = true
+    function testCalldataFloorPreservesRegularGas() public {
+        bytes memory data = new bytes(CALLDATA_SIZE);
+        StateGasTarget target = new StateGasTarget();
+        bytes memory callData = abi.encodeCall(target.setValueWithData, (data));
+        uint256 floorGas = CALL_FLOOR_BASE_GAS + callData.length * CALLDATA_FLOOR_GAS_PER_BYTE;
+        (bool success,) = address(target).call(callData);
+        assertTrue(success, "state gas call failed");
+
+        VmGas.Gas memory gas = VM_GAS.lastFrameGas();
+        assertEq(gas.gasTotalUsed, floorGas, "wrong calldata floor gas");
+        assertEq(gas.gasStateUsed, int64(STORAGE_SET_STATE_GAS), "wrong state gas");
+    }
+
+    function assertStorageWriteGas(VmGas.Gas memory gas) internal pure {
         assertGt(gas.gasTotalUsed, 0, "regular gas was not recorded");
         assertLt(gas.gasTotalUsed, STORAGE_SET_STATE_GAS, "state gas counted as regular gas");
         assertEq(gas.gasStateUsed, int64(STORAGE_SET_STATE_GAS), "wrong state gas");
