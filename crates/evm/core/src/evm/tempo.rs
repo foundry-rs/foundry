@@ -25,7 +25,7 @@ use tempo_revm::{
 use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
-    constants::{CALLER, TEST_CONTRACT_ADDRESS},
+    constants::{CALLER, SYSTEM_PRECOMPILE_STUB, TEST_CONTRACT_ADDRESS},
     evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor},
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
 };
@@ -205,7 +205,7 @@ pub(crate) fn initialize_tempo_evm<
             if is_forked {
                 // In fork mode, warm up precompile accounts to avoid repeated RPC fetches.
                 let mut sctx = StorageCtx;
-                let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
+                let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
                 for addr in TEMPO_PRECOMPILE_ADDRESSES
                     .iter()
                     .copied()
