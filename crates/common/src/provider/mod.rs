@@ -547,14 +547,15 @@ impl<N: Network> ProviderBuilder<N> {
 /// normal JSON-RPC response. Only the exact `-32601` code is treated as method unavailability;
 /// authentication, internal, and transport errors must remain visible to callers.
 pub fn is_rpc_method_not_found(error: &TransportError) -> bool {
-    if error.as_error_resp().is_some_and(|response| response.code == -32601) {
-        return true;
-    }
-    let TransportError::Transport(error) = error else { return false };
-    error
-        .as_http_error()
-        .and_then(|error| rpc_error_code(&error.body))
-        .is_some_and(|code| code == -32601)
+    rpc_error_code(error) == Some(-32601)
+}
+
+/// Returns whether an RPC transport error reports that an optional method is unavailable.
+///
+/// Some RPC gateways return invalid-request instead of method-not-found for methods they do not
+/// expose.
+pub fn is_rpc_method_unavailable(error: &TransportError) -> bool {
+    matches!(rpc_error_code(error), Some(-32601 | -32600))
 }
 
 /// Returns an RPC URL safe for display by retaining only its scheme, host, and port.
@@ -570,12 +571,21 @@ pub fn redact_url(raw: &str) -> String {
     redacted.to_string()
 }
 
-fn rpc_error_code(body: &str) -> Option<i64> {
+fn rpc_error_code(error: &TransportError) -> Option<i64> {
+    if let Some(response) = error.as_error_resp() {
+        return Some(response.code);
+    }
+    let TransportError::Transport(error) = error else { return None };
+    error.as_http_error().and_then(|error| rpc_error_code_from_body(&error.body))
+}
+
+fn rpc_error_code_from_body(body: &str) -> Option<i64> {
     // HTTP transports may append human-readable diagnostics after the JSON-RPC body. Parse the
     // first complete JSON value instead of requiring the entire body to be JSON.
     let value =
         serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>().next()?.ok()?;
-    value.get("error").unwrap_or(&value).get("code")?.as_i64()
+    let error = value.get("error").unwrap_or(&value);
+    error.get("code")?.as_i64()
 }
 
 /// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
@@ -686,6 +696,21 @@ mod tests {
         assert!(!is_rpc_method_not_found(&internal_error));
         assert!(!is_rpc_method_not_found(&http_internal_error));
         assert!(!is_rpc_method_not_found(&transport_error));
+    }
+
+    #[test]
+    fn method_unavailable_recognizes_invalid_request() {
+        let invalid_request = TransportError::ErrorResp(ErrorPayload::invalid_request());
+        let http_invalid_request = alloy_transport::TransportErrorKind::http_error(
+            400,
+            r#"{"jsonrpc":"2.0","error":{"code":-32600,"message":"Unsupported method"}}"#
+                .to_owned(),
+        );
+        let internal_error = TransportError::ErrorResp(ErrorPayload::internal_error());
+
+        assert!(is_rpc_method_unavailable(&invalid_request));
+        assert!(is_rpc_method_unavailable(&http_invalid_request));
+        assert!(!is_rpc_method_unavailable(&internal_error));
     }
 
     #[test]
