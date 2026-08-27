@@ -5495,6 +5495,7 @@ contract Counter {
 }
    ",
     );
+    prj.add_source("Broken.sol", "contract Broken { function broken() public { missing(); } }");
 
     let artifact = prj.paths().artifacts.join("Counter.sol/Counter.json");
     let output = cmd.args(["selectors", "list", "Counter"]).assert_success();
