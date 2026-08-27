@@ -1,5 +1,6 @@
 use crate::utils::generate_large_init_contract;
-use foundry_compilers::artifacts::EvmVersion;
+use foundry_compilers::artifacts::{BytecodeHash, EvmVersion};
+use foundry_config::{CompilationRestrictions, SettingsOverrides};
 use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt};
 use globset::Glob;
 use std::{
@@ -486,27 +487,64 @@ Compiler run successful!
 "#]]);
 });
 
-forgetest_init!(verbose_build_displays_compiler_settings, |prj, cmd| {
-    prj.initialize_default_contracts();
+forgetest_init!(verbose_build_displays_compiler_profiles_in_combined_output, |prj, cmd| {
+    prj.add_source("Default.sol", "contract Default {}");
+    prj.add_source("NoMetadata.sol", "contract NoMetadata {}");
     prj.update_config(|config| {
         config.optimizer = Some(true);
         config.optimizer_runs = Some(777);
         config.via_ir = true;
         config.evm_version = EvmVersion::Cancun;
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "no-metadata".to_string(),
+            via_ir: None,
+            evm_version: None,
+            optimizer: None,
+            optimizer_runs: None,
+            bytecode_hash: Some(BytecodeHash::None),
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "src/NoMetadata.sol".parse().unwrap(),
+            version: None,
+            via_ir: None,
+            bytecode_hash: Some(BytecodeHash::None),
+            min_optimizer_runs: None,
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: None,
+            max_evm_version: None,
+        }];
     });
 
-    cmd.args(["build", "--force", "--no-lint", "-vv"])
-        .assert_success()
-        .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-"#]])
-        .stderr_eq(str![[r#"
-Compiler settings for [SOLC_VERSION]: optimizer=true, optimizer_runs=777, via_ir=true, evm_version=cancun
-
-"#]]);
+    let combined_path = prj.root().join("combined-build-output.log");
+    let stdout = fs::File::create(&combined_path).unwrap();
+    let stderr = stdout.try_clone().unwrap();
+    let status = cmd
+        .cmd()
+        .args(["build", "--force", "--no-lint", "-vv"])
+        .stdout(stdout)
+        .stderr(stderr)
+        .status()
+        .unwrap();
+    let output = fs::read_to_string(combined_path).unwrap();
+    assert!(status.success(), "{output}");
+    let mut settings = output
+        .lines()
+        .filter(|line| line.starts_with("Compiler settings for "))
+        .map(|line| {
+            let (_, settings) = line.split_once(" (profile: ").unwrap();
+            format!("Compiler settings (profile: {settings}")
+        })
+        .collect::<Vec<_>>();
+    settings.sort_unstable();
+    assert_data_eq!(
+        settings.join("\n").into_data(),
+        str![[r#"
+Compiler settings (profile: default): optimizer=true, optimizer_runs=777, via_ir=true, evm_version=cancun
+Compiler settings (profile: no-metadata): optimizer=true, optimizer_runs=777, via_ir=true, evm_version=cancun
+"#]],
+    );
 });
 
 // tests build output is as expected
