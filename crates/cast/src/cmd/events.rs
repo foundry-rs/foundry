@@ -17,7 +17,7 @@ use eyre::Result;
 use foundry_cli::{
     json::print_json_object,
     opts::{EtherscanOpts, RpcOpts},
-    utils::{self, LoadConfig, load_config_from_provider},
+    utils::{self, load_config_from_provider},
 };
 use foundry_common::{
     ContractsByArtifact, compile::ProjectCompiler, fmt::serialize_value_as_json, shell,
@@ -75,10 +75,9 @@ pub struct EventsArgs {
 
 impl EventsArgs {
     pub async fn run(self) -> Result<()> {
-        let project_config = self.with_local_artifacts.then(|| {
-            load_config_from_provider(self.rpc.clone().into_figment(true).merge(&self.etherscan))
-        });
-        let mut config = self.load_config()?;
+        let figment =
+            self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self.etherscan);
+        let mut config = load_config_from_provider(figment)?;
         let Self { tx_hash, mut query, etherscan: _, rpc: _, with_local_artifacts } = self;
         let tx_hash = tx_hash.or_else(|| query.take_transaction_hash());
         if with_local_artifacts && tx_hash.is_none() {
@@ -101,7 +100,7 @@ impl EventsArgs {
         };
 
         let local_abis = if with_local_artifacts {
-            local_event_abis(&provider, &logs, &project_config.unwrap()?).await?
+            local_event_abis(&provider, &logs, &config).await?
         } else {
             BTreeMap::new()
         };
