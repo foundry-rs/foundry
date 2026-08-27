@@ -1365,14 +1365,7 @@ impl<N: Network> Backend<N> {
         }
 
         // Extend with configured network precompiles.
-        #[cfg(feature = "monad")]
-        let monad_hardfork = self.is_monad().then(|| self.monad_hardfork());
-        #[cfg(not(feature = "monad"))]
-        let monad_hardfork = None;
-        precompiles_map.extend(
-            self.networks
-                .precompiles(self.is_tempo().then(|| self.tempo_hardfork()), monad_hardfork),
-        );
+        precompiles_map.extend(self.networks.precompiles(Some(self.hardfork())));
 
         if let Some(factory) = &self.precompile_factory {
             for (address, precompile) in factory.precompiles() {
