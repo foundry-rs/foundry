@@ -251,135 +251,167 @@ impl ContractsByArtifact {
     /// Finds a contract which deployed bytecode exactly matches the given code. Accounts for link
     /// references and immutables.
     pub fn find_by_deployed_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
+        self.find_by_deployed_code_exact_inner(code, false)
+    }
+
+    /// Finds the only contract whose deployed bytecode exactly matches the given code.
+    pub fn find_by_deployed_code_exact_unique(
+        &self,
+        code: &[u8],
+    ) -> Option<ArtifactWithContractRef<'_>> {
+        self.find_by_deployed_code_exact_inner(code, true)
+    }
+
+    fn find_by_deployed_code_exact_inner(
+        &self,
+        code: &[u8],
+        unique: bool,
+    ) -> Option<ArtifactWithContractRef<'_>> {
         // Immediately return None if the code is empty.
         if code.is_empty() {
             return None;
         }
 
         let mut partial_match = None;
-        self.iter()
-            .find(|(id, contract)| {
-                let Some(deployed_bytecode) = &contract.deployed_bytecode else {
-                    return false;
-                };
-                let Some(deployed_code) = &deployed_bytecode.object else {
-                    return false;
-                };
+        let mut unique_match = None;
+        let matched = self.iter().find(|(id, contract)| {
+            let Some(deployed_bytecode) = &contract.deployed_bytecode else {
+                return false;
+            };
+            let Some(deployed_code) = &deployed_bytecode.object else {
+                return false;
+            };
 
-                let len = match deployed_code {
-                    BytecodeObject::Bytecode(bytes) => bytes.len(),
-                    BytecodeObject::Unlinked(bytes) => bytes.len() / 2,
-                };
+            let len = match deployed_code {
+                BytecodeObject::Bytecode(bytes) => bytes.len(),
+                BytecodeObject::Unlinked(bytes) => bytes.len() / 2,
+            };
 
-                if len != code.len() {
-                    return false;
+            if len != code.len() {
+                return false;
+            }
+
+            // Collect ignored offsets by chaining link and immutable references.
+            let mut ignored = deployed_bytecode
+                .immutable_references
+                .values()
+                .chain(deployed_bytecode.link_references.values().flat_map(|v| v.values()))
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>();
+
+            // For libraries solidity adds a call protection prefix to the bytecode. We need to
+            // ignore it as it includes library address determined at runtime.
+            // See https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries and
+            // https://github.com/NomicFoundation/hardhat/blob/af7807cf38842a4f56e7f4b966b806e39631568a/packages/hardhat-verify/src/internal/solc/bytecode.ts#L172
+            let has_call_protection = match deployed_code {
+                BytecodeObject::Bytecode(bytes) => {
+                    bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
                 }
-
-                // Collect ignored offsets by chaining link and immutable references.
-                let mut ignored = deployed_bytecode
-                    .immutable_references
-                    .values()
-                    .chain(deployed_bytecode.link_references.values().flat_map(|v| v.values()))
-                    .flatten()
-                    .cloned()
-                    .collect::<Vec<_>>();
-
-                // For libraries solidity adds a call protection prefix to the bytecode. We need to
-                // ignore it as it includes library address determined at runtime.
-                // See https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries and
-                // https://github.com/NomicFoundation/hardhat/blob/af7807cf38842a4f56e7f4b966b806e39631568a/packages/hardhat-verify/src/internal/solc/bytecode.ts#L172
-                let has_call_protection = match deployed_code {
-                    BytecodeObject::Bytecode(bytes) => {
+                BytecodeObject::Unlinked(bytes) => {
+                    if let Ok(bytes) =
+                        Bytes::from_str(&bytes[..CALL_PROTECTION_BYTECODE_PREFIX.len() * 2])
+                    {
                         bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
+                    } else {
+                        false
                     }
+                }
+            };
+
+            if has_call_protection {
+                ignored.push(Offsets { start: 1, length: 20 });
+            }
+
+            let metadata_start = find_metadata_start(code);
+
+            if let Some(metadata) = metadata_start {
+                ignored.push(Offsets {
+                    start: metadata as u32,
+                    length: (code.len() - metadata) as u32,
+                });
+            }
+
+            ignored.sort_by_key(|o| o.start);
+
+            let mut left = 0;
+            for offset in ignored {
+                let right = offset.start as usize;
+
+                let matched = match deployed_code {
+                    BytecodeObject::Bytecode(bytes) => bytes[left..right] == code[left..right],
                     BytecodeObject::Unlinked(bytes) => {
-                        if let Ok(bytes) =
-                            Bytes::from_str(&bytes[..CALL_PROTECTION_BYTECODE_PREFIX.len() * 2])
-                        {
-                            bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
+                        if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..right * 2]) {
+                            bytes == code[left..right]
                         } else {
                             false
                         }
                     }
                 };
 
-                if has_call_protection {
-                    ignored.push(Offsets { start: 1, length: 20 });
-                }
-
-                let metadata_start = find_metadata_start(code);
-
-                if let Some(metadata) = metadata_start {
-                    ignored.push(Offsets {
-                        start: metadata as u32,
-                        length: (code.len() - metadata) as u32,
-                    });
-                }
-
-                ignored.sort_by_key(|o| o.start);
-
-                let mut left = 0;
-                for offset in ignored {
-                    let right = offset.start as usize;
-
-                    let matched = match deployed_code {
-                        BytecodeObject::Bytecode(bytes) => bytes[left..right] == code[left..right],
-                        BytecodeObject::Unlinked(bytes) => {
-                            if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..right * 2]) {
-                                bytes == code[left..right]
-                            } else {
-                                false
-                            }
-                        }
-                    };
-
-                    if !matched {
-                        return false;
-                    }
-
-                    left = right + offset.length as usize;
-                }
-
-                let is_partial = if left < code.len() {
-                    match deployed_code {
-                        BytecodeObject::Bytecode(bytes) => bytes[left..] == code[left..],
-                        BytecodeObject::Unlinked(bytes) => {
-                            if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..]) {
-                                bytes == code[left..]
-                            } else {
-                                false
-                            }
-                        }
-                    }
-                } else {
-                    true
-                };
-
-                if !is_partial {
+                if !matched {
                     return false;
                 }
 
-                let Some(metadata) = metadata_start else { return true };
+                left = right + offset.length as usize;
+            }
 
-                let exact_match = match deployed_code {
-                    BytecodeObject::Bytecode(bytes) => bytes[metadata..] == code[metadata..],
+            let is_partial = if left < code.len() {
+                match deployed_code {
+                    BytecodeObject::Bytecode(bytes) => bytes[left..] == code[left..],
                     BytecodeObject::Unlinked(bytes) => {
-                        if let Ok(bytes) = Bytes::from_str(&bytes[metadata * 2..]) {
-                            bytes == code[metadata..]
+                        if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..]) {
+                            bytes == code[left..]
                         } else {
                             false
                         }
                     }
-                };
-
-                if exact_match {
-                    true
-                } else {
-                    partial_match = Some((*id, *contract));
-                    false
                 }
-            })
-            .or(partial_match)
+            } else {
+                true
+            };
+
+            if !is_partial {
+                return false;
+            }
+
+            let Some(metadata) = metadata_start else {
+                if unique && unique_match.is_none() {
+                    unique_match = Some((*id, *contract));
+                    return false;
+                }
+                return true;
+            };
+
+            let exact_match = match deployed_code {
+                BytecodeObject::Bytecode(bytes) => bytes[metadata..] == code[metadata..],
+                BytecodeObject::Unlinked(bytes) => {
+                    if let Ok(bytes) = Bytes::from_str(&bytes[metadata * 2..]) {
+                        bytes == code[metadata..]
+                    } else {
+                        false
+                    }
+                }
+            };
+
+            if exact_match {
+                if unique && unique_match.is_none() {
+                    unique_match = Some((*id, *contract));
+                    false
+                } else {
+                    true
+                }
+            } else {
+                partial_match = Some((*id, *contract));
+                false
+            }
+        });
+
+        if unique {
+            matched.is_none().then_some(unique_match).flatten()
+        } else {
+            matched.or(partial_match)
+        }
     }
 
     /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
@@ -658,6 +690,32 @@ mod tests {
     use super::*;
     use alloy_dyn_abi::DynSolValue;
     use alloy_primitives::U256;
+    use semver::Version;
+
+    fn deployed_artifact(name: &str, code: Bytes) -> (ArtifactId, CompactContractBytecode) {
+        (
+            ArtifactId {
+                path: format!("out/{name}.json").into(),
+                name: name.to_owned(),
+                source: format!("src/{name}.sol").into(),
+                version: Version::new(0, 8, 30),
+                build_id: String::new(),
+                profile: "default".to_owned(),
+            },
+            CompactContractBytecode {
+                abi: Some(Default::default()),
+                bytecode: None,
+                deployed_bytecode: Some(CompactDeployedBytecode {
+                    bytecode: Some(CompactBytecode {
+                        object: BytecodeObject::Bytecode(code),
+                        source_map: None,
+                        link_references: Default::default(),
+                    }),
+                    immutable_references: Default::default(),
+                }),
+            },
+        )
+    }
 
     #[test]
     fn exact_creation_match_requires_canonical_constructor_suffix() {
@@ -708,5 +766,29 @@ mod tests {
         let contracts = ContractsByArtifact::new(vec![]);
 
         assert!(contracts.find_by_deployed_code_exact(&[]).is_none());
+    }
+
+    #[test]
+    fn find_by_deployed_code_exact_unique_rejects_ambiguity() {
+        let code = Bytes::from_static(&[0x60, 0x00]);
+        let contracts = ContractsByArtifact::new([
+            deployed_artifact("A", code.clone()),
+            deployed_artifact("B", code.clone()),
+        ]);
+
+        assert!(contracts.find_by_deployed_code_exact_unique(&code).is_none());
+
+        let contracts = ContractsByArtifact::new([deployed_artifact("A", code.clone())]);
+        assert_eq!(contracts.find_by_deployed_code_exact_unique(&code).unwrap().0.name, "A");
+    }
+
+    #[test]
+    fn find_by_deployed_code_exact_unique_rejects_partial_metadata_match() {
+        let artifact_code = Bytes::from_static(&[0x60, 0x00, 0xa0, 0x00, 0x01]);
+        let deployed_code = Bytes::from_static(&[0x60, 0x00, 0xf6, 0x00, 0x01]);
+        let contracts = ContractsByArtifact::new([deployed_artifact("A", artifact_code)]);
+
+        assert!(contracts.find_by_deployed_code_exact(&deployed_code).is_some());
+        assert!(contracts.find_by_deployed_code_exact_unique(&deployed_code).is_none());
     }
 }

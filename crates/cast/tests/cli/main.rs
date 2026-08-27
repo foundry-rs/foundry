@@ -3492,12 +3492,22 @@ forgetest_async!(events_quiet_preserves_output, |prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    cmd.set_current_dir(prj.root());
+    prj.update_config(|config| {
+        config.cbor_metadata = false;
+        config.bytecode_hash = "none".parse().unwrap();
+    });
 
     prj.add_source(
         "EventEmitter",
         r#"
 contract EventEmitter {
+    event Constructed(address indexed owner, uint256 value);
     event Transfer(address indexed from, address indexed to, uint256 value);
+
+    constructor() {
+        emit Constructed(msg.sender, 42);
+    }
 
     function emitTransfer() external {
         emit Transfer(msg.sender, address(this), 42);
@@ -3528,6 +3538,22 @@ contract EventEmitter {
         .stdout_lossy();
     let deployment: serde_json::Value = serde_json::from_str(&deployment).unwrap();
     let address = deployment["contractAddress"].as_str().unwrap();
+    let deployment_tx_hash = deployment["transactionHash"].as_str().unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "--quiet",
+            "events",
+            deployment_tx_hash,
+            "--with-local-artifacts",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[block 1, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3::Constructed(address,uint256) { owner: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, value: 42 }
+
+"#]]);
 
     let receipt = cmd
         .cast_fuse()
@@ -3549,6 +3575,43 @@ contract EventEmitter {
 
     cmd.cast_fuse()
         .args(["--quiet", "events", tx_hash, "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[block 2, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3
+  topic 0: 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+  topic 1: 0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266
+  topic 2: 0x0000000000000000000000005fbdb2315678afecb367f032d93f642f64180aa3
+  data: 0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args([
+            "--quiet",
+            "events",
+            tx_hash,
+            "--with-local-artifacts",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[block 2, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3::Transfer(address,address,uint256) { from: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, to: 0x5FbDB2315678afecb367f032d93F642f64180aa3, value: 42 }
+
+"#]]);
+
+    prj.add_source(
+        "AmbiguousEventEmitter",
+        r#"
+import {EventEmitter} from "./EventEmitter.sol";
+
+contract AmbiguousEventEmitter is EventEmitter {
+    event Ambiguous(uint256 value);
+}
+"#,
+    );
+    cmd.cast_fuse()
+        .args(["--quiet", "events", tx_hash, "--with-local-artifacts", "--rpc-url", &endpoint])
         .assert_success()
         .stdout_eq(str![[r#"
 [block 2, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3
