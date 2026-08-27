@@ -327,6 +327,24 @@ pub async fn spawn_rpc_proxy_method_not_found_before(
     .await
 }
 
+/// Spawns an RPC proxy that returns invalid-request for the first `unavailable_calls` requests to
+/// `method`.
+pub async fn spawn_rpc_proxy_invalid_request_before(
+    endpoint: String,
+    method: &'static str,
+    unavailable_calls: usize,
+) -> String {
+    spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::Before(unavailable_calls),
+        StatusCode::BAD_REQUEST,
+        -32600,
+        "invalid request",
+    )
+    .await
+}
+
 /// Spawns an RPC proxy that returns a vendor-specific JSON-RPC error for `method` after
 /// forwarding `successful_calls` requests.
 pub async fn spawn_rpc_proxy_erroring_method_after(

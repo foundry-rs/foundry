@@ -18,7 +18,7 @@ use alloy_rpc_types::{
 use eyre::{OptionExt, WrapErr};
 use foundry_common::{
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING,
-    provider::{ProviderBuilder, is_rpc_method_not_found},
+    provider::{ProviderBuilder, is_rpc_method_not_found, is_rpc_method_unavailable},
 };
 use foundry_config::{Chain, Config, ExecutionSpec, FoundryHardfork, GasLimit};
 use foundry_evm_hardforks::TempoHardfork;
@@ -188,7 +188,7 @@ impl AnvilNodeInfoProbe {
                 self.identified = true;
                 Ok(Some(node_info))
             }
-            Err(error) if !self.identified && is_rpc_method_not_found(&error) => Ok(None),
+            Err(error) if !self.identified && is_rpc_method_unavailable(&error) => Ok(None),
             Err(error) => Err(error).wrap_err("failed to determine network family from endpoint"),
         }
     }
@@ -1558,7 +1558,8 @@ mod tests {
     use alloy_rpc_types::TransactionRequest;
     use alloy_serde::WithOtherFields;
     use foundry_test_utils::rpc::{
-        spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
+        spawn_rpc_proxy_invalid_request_before, spawn_rpc_proxy_method_not_found_before,
+        spawn_rpc_proxy_rejecting_method_after,
     };
     #[cfg(feature = "optimism")]
     use op_revm::OpSpecId;
@@ -2257,6 +2258,22 @@ mod tests {
             error.to_string().contains("failed to determine network family from endpoint"),
             "{error}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_node_info_invalid_request_is_optional() {
+        let (_api, handle) =
+            anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64)))
+                .await;
+        let fork_url =
+            spawn_rpc_proxy_invalid_request_before(handle.http_endpoint(), "anvil_nodeInfo", 1)
+                .await;
+        let mut evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
+
+        evm_opts.infer_network_from_fork().await.unwrap();
+
+        assert_eq!(evm_opts.networks, NetworkConfigs::default());
+        assert_eq!(evm_opts.env.chain_id, Some(NamedChain::Mainnet as u64));
     }
 
     #[tokio::test(flavor = "multi_thread")]
