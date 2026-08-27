@@ -754,6 +754,9 @@ mod tests {
                 gas_refund_counter: 0,
                 gas_used: 0,
                 gas_cost: 0,
+                state_gas_cost: None,
+                state_gas_reservoir: None,
+                state_gas_spent: 0,
                 storage_change: Some(Box::new(StorageChange {
                     key: U256::from(1),
                     value: U256::from(2),
