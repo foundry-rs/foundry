@@ -125,6 +125,7 @@ impl BuildArgs {
         let mut output = ProjectCompiler::new()
             .files(files)
             .dynamic_test_linking(config.dynamic_test_linking)
+            .print_compiler_settings(shell::verbosity() >= 2)
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
