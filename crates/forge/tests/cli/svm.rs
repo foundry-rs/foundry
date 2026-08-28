@@ -103,6 +103,8 @@ interface VmGas {
 
     function lastCallGas() external view returns (Gas memory gas);
     function lastFrameGas() external view returns (Gas memory gas);
+    function snapshotGasLastCall(string calldata name) external returns (uint256 gasUsed);
+    function snapshotGasLastFrame(string calldata name) external returns (uint256 gasUsed);
 }
 
 contract StateGasTarget {
@@ -131,17 +133,41 @@ contract StateGasTest is Test {
 
     function testReportsStateGas() public {
         StateGasTarget target = new StateGasTarget();
+        VmGas.Gas memory createGas = VM_GAS.lastFrameGas();
+        assertEq(
+            VM_GAS.snapshotGasLastFrame("stateGasCreate"),
+            createGas.gasLimit - createGas.gasRemaining,
+            "create snapshot changed"
+        );
         target.setValue();
 
-        assertStorageWriteGas(VM_GAS.lastCallGas());
-        assertStorageWriteGas(VM_GAS.lastFrameGas());
+        VmGas.Gas memory callGas = VM_GAS.lastCallGas();
+        VmGas.Gas memory frameGas = VM_GAS.lastFrameGas();
+        assertStorageWriteGas(callGas);
+        assertStorageWriteGas(frameGas);
+        assertEq(
+            VM_GAS.snapshotGasLastCall("stateGasCall"),
+            callGas.gasLimit - callGas.gasRemaining,
+            "last call snapshot changed"
+        );
+        assertEq(
+            VM_GAS.snapshotGasLastFrame("stateGasFrame"),
+            frameGas.gasLimit - frameGas.gasRemaining,
+            "last frame snapshot changed"
+        );
 
         StateGasTarget revertingTarget = new StateGasTarget();
         (bool success,) = address(revertingTarget).call(
             abi.encodeCall(revertingTarget.setValueAndRevert, ())
         );
         assertFalse(success, "state gas call should revert");
-        assertEq(VM_GAS.lastFrameGas().gasStateUsed, 0, "reverted frame used state gas");
+        VmGas.Gas memory revertedGas = VM_GAS.lastFrameGas();
+        assertEq(revertedGas.gasStateUsed, 0, "reverted frame used state gas");
+        assertEq(
+            VM_GAS.snapshotGasLastFrame("stateGasRevert"),
+            revertedGas.gasLimit - revertedGas.gasRemaining,
+            "reverted frame snapshot changed"
+        );
     }
 
     /// forge-config: default.isolate = true

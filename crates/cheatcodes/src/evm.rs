@@ -956,7 +956,8 @@ impl Cheatcode for snapshotGasLastCall_0Call {
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
         };
-        inner_last_gas_snapshot(ccx, None, Some(name.clone()), last_call_gas.gasTotalUsed)
+        let gas_used = snapshot_gas_used(last_call_gas);
+        inner_last_gas_snapshot(ccx, None, Some(name.clone()), gas_used)
     }
 }
 
@@ -966,12 +967,8 @@ impl Cheatcode for snapshotGasLastCall_1Call {
         let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
             bail!("no external call was made yet");
         };
-        inner_last_gas_snapshot(
-            ccx,
-            Some(group.clone()),
-            Some(name.clone()),
-            last_call_gas.gasTotalUsed,
-        )
+        let gas_used = snapshot_gas_used(last_call_gas);
+        inner_last_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()), gas_used)
     }
 }
 
@@ -981,7 +978,8 @@ impl Cheatcode for snapshotGasLastFrame_0Call {
         let Some(last_frame_gas) = &ccx.state.gas_metering.last_frame_gas else {
             bail!("no external call or create was made yet");
         };
-        inner_last_gas_snapshot(ccx, None, Some(name.clone()), last_frame_gas.gasTotalUsed)
+        let gas_used = snapshot_gas_used(last_frame_gas);
+        inner_last_gas_snapshot(ccx, None, Some(name.clone()), gas_used)
     }
 }
 
@@ -991,12 +989,8 @@ impl Cheatcode for snapshotGasLastFrame_1Call {
         let Some(last_frame_gas) = &ccx.state.gas_metering.last_frame_gas else {
             bail!("no external call or create was made yet");
         };
-        inner_last_gas_snapshot(
-            ccx,
-            Some(group.clone()),
-            Some(name.clone()),
-            last_frame_gas.gasTotalUsed,
-        )
+        let gas_used = snapshot_gas_used(last_frame_gas);
+        inner_last_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()), gas_used)
     }
 }
 
@@ -1759,6 +1753,10 @@ fn inner_value_snapshot<FEN: FoundryEvmNetwork>(
     Ok(Default::default())
 }
 
+const fn snapshot_gas_used(gas: &Gas) -> u64 {
+    gas.gasLimit.saturating_sub(gas.gasRemaining)
+}
+
 fn inner_last_gas_snapshot<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     group: Option<String>,
@@ -2363,5 +2361,31 @@ fn set_cold_slot<FEN: FoundryEvmNetwork>(
         && let Some(storage_slot) = account.storage.get_mut(&slot)
     {
         storage_slot.is_cold = cold;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_gas_preserves_total_used() {
+        for (case, gas_total_used, gas_remaining, gas_refunded, gas_state_used, expected) in [
+            ("state gas spill", 1_000, 79_000, 5_000, 20_000, 21_000),
+            ("state gas reservoir", 1_000, 99_000, 0, 20_000, 1_000),
+            ("reverted frame", 1_000, 99_000, 0, 0, 1_000),
+            ("halted frame", 100_000, 0, 0, 0, 100_000),
+            ("nested state gas refund", 0, 100_000, 0, -20_000, 0),
+        ] {
+            let gas = Gas {
+                gasLimit: 100_000,
+                gasTotalUsed: gas_total_used,
+                gasMemoryUsed: 0,
+                gasRefunded: gas_refunded,
+                gasRemaining: gas_remaining,
+                gasStateUsed: gas_state_used,
+            };
+            assert_eq!(snapshot_gas_used(&gas), expected, "{case}");
+        }
     }
 }
