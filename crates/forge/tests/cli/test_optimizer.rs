@@ -1817,9 +1817,11 @@ forgetest_init!(preprocess_contract_with_active_prank, |prj, cmd| {
 contract Counter {
     uint256 public number;
     address public deployer;
+    address public origin;
 
     constructor() {
         deployer = msg.sender;
+        origin = tx.origin;
     }
 }
     "#,
@@ -1834,9 +1836,35 @@ import {Counter} from "../src/Counter.sol";
 contract CounterTest is Test {
     function test_deployer() public {
         address deployer = makeAddr("deployer");
-        vm.startPrank(deployer);
-        Counter counter = new Counter{salt: 0}();
-        assertEq(counter.deployer(), deployer);
+        address origin = makeAddr("origin");
+        vm.startPrank(deployer, origin);
+        Counter first = new Counter{salt: 0}();
+        Counter second = new Counter{salt: bytes32(uint256(1))}();
+        assertEq(first.deployer(), deployer);
+        assertEq(first.origin(), origin);
+        assertEq(second.deployer(), deployer);
+        assertEq(second.origin(), origin);
+    }
+
+    function test_consecutive_single_call_pranks() public {
+        address firstDeployer = makeAddr("firstDeployer");
+        address firstOrigin = makeAddr("firstOrigin");
+        vm.prank(firstDeployer, firstOrigin);
+        Counter first = new Counter();
+
+        address secondDeployer = makeAddr("secondDeployer");
+        address secondOrigin = makeAddr("secondOrigin");
+        vm.prank(secondDeployer, secondOrigin);
+        Counter second = new Counter();
+
+        assertEq(first.deployer(), firstDeployer);
+        assertEq(first.origin(), firstOrigin);
+        assertEq(second.deployer(), secondDeployer);
+        assertEq(second.origin(), secondOrigin);
+
+        Counter unpranked = new Counter();
+        assertEq(unpranked.deployer(), address(this));
+        assertEq(unpranked.origin(), tx.origin);
     }
 }
     "#,
@@ -1847,11 +1875,12 @@ contract CounterTest is Test {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 1 test for test/Counter.t.sol:CounterTest
+Ran 2 tests for test/Counter.t.sol:CounterTest
+[PASS] test_consecutive_single_call_pranks() ([GAS])
 [PASS] test_deployer() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 });
