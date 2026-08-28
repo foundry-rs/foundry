@@ -1,8 +1,7 @@
 use crate::{Error, Result};
-use alloy_dyn_abi::{DynSolValue, ErrorExt};
 use alloy_primitives::{Address, Bytes, address, hex};
 use alloy_sol_types::{SolError, SolValue};
-use foundry_common::{ContractsByArtifact, abi::get_error};
+use foundry_common::ContractsByArtifact;
 use foundry_evm_core::decode::RevertDecoder;
 use revm::interpreter::{InstructionResult, return_ok};
 use spec::Vm;
@@ -84,6 +83,11 @@ fn handle_revert(
         return Ok(());
     }
 
+    // Compare raw data before decoding, which may ignore trailing ABI data.
+    if actual_revert == expected_reason {
+        return Ok(());
+    }
+
     // Try decoding as known errors.
     actual_revert = decode_revert(actual_revert);
 
@@ -93,29 +97,20 @@ fn handle_revert(
         return Ok(());
     }
 
-    // If expected reason is `Error(string)` then decode and compare with actual revert.
-    // See <https://github.com/foundry-rs/foundry/issues/12511>
-    if expected_reason.len() >= 4
-        && let Ok(e) = get_error("Error(string)")
-        && let Ok(dec) = e.decode_error(expected_reason)
-        && let Some(DynSolValue::String(revert_str)) = dec.body.first()
-        && revert_str.as_str() == String::from_utf8_lossy(&actual_revert)
-    {
-        return Ok(());
-    }
-
-    let (actual, expected) = if let Some(contracts) = known_contracts {
+    let (mut actual, mut expected) = if let Some(contracts) = known_contracts {
         let decoder = RevertDecoder::new().with_abis(contracts.values().map(|c| &c.abi));
         (
-            &decoder.decode(actual_revert.as_slice(), Some(status)),
-            &decoder.decode(expected_reason, Some(status)),
+            decoder.decode(actual_revert.as_slice(), Some(status)),
+            decoder.decode(expected_reason, Some(status)),
         )
     } else {
-        (&stringify(&actual_revert), &stringify(expected_reason))
+        (stringify(&actual_revert), stringify(expected_reason))
     };
 
+    // Fall back to raw data if lossy decoding rendered distinct payloads identically.
     if expected == actual {
-        return Ok(());
+        actual = hex::encode_prefixed(retdata);
+        expected = hex::encode_prefixed(expected_reason);
     }
 
     Err(fmt_err!("Error != expected error: {} != {}", actual, expected))

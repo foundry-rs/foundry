@@ -3098,6 +3098,14 @@ contract Counter {
         }
         number = newNumber;
     }
+    function revertWithMessage(string memory message) public pure {
+        revert(message);
+    }
+    function revertWithData(bytes memory data) public pure {
+        assembly ("memory-safe") {
+            revert(add(data, 0x20), mload(data))
+        }
+    }
 }
 contract CounterTest is Test {
     Counter public counter;
@@ -3113,14 +3121,39 @@ contract CounterTest is Test {
         vm.expectRevert(abi.encodePacked(Counter.NumberNotEven.selector, uint(2)));
         counter.setNumber(1);
     }
+    // https://github.com/foundry-rs/foundry/issues/16424
+    function test_decode_actual_error_with_trailing_data() public {
+        vm.expectRevert(bytes("reason"));
+        counter.revertWithData(
+            abi.encodePacked(abi.encodeWithSignature("Error(string)", "reason"), uint256(2))
+        );
+    }
+    function test_decode_error_with_trailing_data() public {
+        vm.expectRevert(
+            abi.encodePacked(abi.encodeWithSignature("Error(string)", "reason"), uint256(2))
+        );
+        counter.revertWithMessage("reason");
+    }
+    function test_decode_with_trailing_data() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(Counter.NumberNotEven.selector, uint256(1), uint256(2))
+        );
+        counter.setNumber(1);
+    }
 }
    "#,
     );
 
-    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "--match-test", "test_decode_actual_error_with_trailing_data"])
+        .assert_success();
+
+    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: Error != expected error: NumberNotEven(1) != RandomError()] test_decode() ([GAS])
+[PASS] test_decode_actual_error_with_trailing_data() ([GAS])
+[FAIL: Error != expected error: 0x[..] != 0x[..]] test_decode_error_with_trailing_data() ([GAS])
 [FAIL: Error != expected error: NumberNotEven(1) != NumberNotEven(2)] test_decode_with_args() ([GAS])
+[FAIL: Error != expected error: 0x[..] != 0x[..]] test_decode_with_trailing_data() ([GAS])
 ...
 "#]]);
 });
