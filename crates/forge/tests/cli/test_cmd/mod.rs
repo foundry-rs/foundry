@@ -3160,20 +3160,29 @@ contract CounterTest is Test {
         );
         counter.setNumber(1);
     }
+    function test_rejects_bare_string_actual() public {
+        vm.expectRevert(abi.encodeWithSignature("Error(string)", "reason"));
+        counter.revertWithData(bytes("reason"));
+    }
+    function test_rejects_padded_custom_error_data() public {
+        vm.expectRevert(abi.encodeWithSelector(Counter.NumberNotEven.selector, uint256(1)));
+        counter.revertWithData(
+            abi.encodePacked(abi.encodeWithSelector(Counter.NumberNotEven.selector, uint256(1)), bytes28(0))
+        );
+    }
 }
    "#,
     );
 
-    cmd.args(["test", "--match-test", "test_raw_message_matches_error_with_trailing_data"])
-        .assert_success();
-
-    cmd.forge_fuse().args(["test"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: Error != expected error: NumberNotEven(1) != RandomError()] test_decode() ([GAS])
 [FAIL: Error != expected error: NumberNotEven(1) != NumberNotEven(2)] test_decode_with_args() ([GAS])
 [PASS] test_raw_message_matches_error_with_trailing_data() ([GAS])
-[FAIL: Error != expected error: 0x[..] != 0x[..]] test_rejects_trailing_expected_custom_error_data() ([GAS])
-[FAIL: Error != expected error: 0x[..] != 0x[..]] test_rejects_trailing_expected_error_data() ([GAS])
+[FAIL: Error != expected error: 0x726561736f6e != 0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000006726561736f6e0000000000000000000000000000000000000000000000000000] test_rejects_bare_string_actual() ([GAS])
+[FAIL: Error != expected error: 0xeb598fa3000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000 != 0xeb598fa30000000000000000000000000000000000000000000000000000000000000001] test_rejects_padded_custom_error_data() ([GAS])
+[FAIL: Error != expected error: 0xeb598fa30000000000000000000000000000000000000000000000000000000000000001 != 0xeb598fa300000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002] test_rejects_trailing_expected_custom_error_data() ([GAS])
+[FAIL: Error != expected error: 0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000006726561736f6e0000000000000000000000000000000000000000000000000000 != 0x08c379a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000006726561736f6e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002] test_rejects_trailing_expected_error_data() ([GAS])
 ...
 "#]]);
 });
