@@ -161,7 +161,13 @@ contract StateGasTest is Test {
             abi.encodeCall(revertingTarget.setValueAndRevert, ())
         );
         assertFalse(success, "state gas call should revert");
-        assertEq(VM_GAS.lastFrameGas().gasStateUsed, 0, "reverted frame used state gas");
+        VmGas.Gas memory revertedGas = VM_GAS.lastFrameGas();
+        assertEq(revertedGas.gasStateUsed, 0, "reverted frame used state gas");
+        assertEq(
+            VM_GAS.snapshotGasLastFrame("stateGasRevert"),
+            revertedGas.gasLimit - revertedGas.gasRemaining,
+            "reverted frame snapshot changed"
+        );
     }
 
     /// forge-config: default.isolate = true
