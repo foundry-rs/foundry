@@ -1256,10 +1256,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         }
         self.inner.static_step_dispatch != OpcodeStepDispatch::None
             || self.inner.execution_cancellation.is_some()
-            || self
-                .cheatcodes
-                .as_ref()
-                .is_some_and(|cheats| cheats.needs_step_for(interpreter.bytecode.opcode()))
+            || self.cheatcodes.as_ref().is_some_and(|cheats| cheats.needs_step(interpreter))
     }
 
     #[inline(always)]
@@ -1362,12 +1359,14 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             && cheats.has_step_hooks()
         {
             let opcode = interpreter.bytecode.opcode();
-            if !cheats.has_recording_accesses_only_step_hook()
-                || matches!(opcode, op::SLOAD | op::SSTORE)
-            {
+            let record_accesses_only = cheats.has_recording_accesses_only_step_hook();
+            if !record_accesses_only || matches!(opcode, op::SLOAD | op::SSTORE) {
                 crate::utils::cold_path();
                 cheats.step(interpreter, ecx);
-                cheats.mark_opcode_hooks_dirty();
+                if !record_accesses_only {
+                    // Recording accesses only updates collected data, not the hook predicates.
+                    cheats.mark_opcode_hooks_dirty();
+                }
             }
         }
     }

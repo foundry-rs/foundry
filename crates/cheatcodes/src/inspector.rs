@@ -381,12 +381,6 @@ pub struct EnvOverrides {
 #[derive(Clone, Copy, Debug)]
 struct OpcodeHooks(u8);
 
-impl Default for OpcodeHooks {
-    fn default() -> Self {
-        Self(Self::DIRTY)
-    }
-}
-
 impl OpcodeHooks {
     /// The cached bits are stale and have to be recomputed before they are trusted.
     const DIRTY: u8 = 1 << 0;
@@ -1039,7 +1033,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             storage_hooks_registered: Default::default(),
             pending_storage_hook: Default::default(),
             active_storage_hook: Default::default(),
-            opcode_hooks: Default::default(),
+            opcode_hooks: OpcodeHooks(OpcodeHooks::DIRTY),
             deprecated: Default::default(),
             wallets: Default::default(),
             private_key_signers: Default::default(),
@@ -2102,23 +2096,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     /// Cheap, conservative gate for the per-opcode `step` hook.
     ///
-    /// May report `true` when [`Self::has_step_hooks`] is `false`; never the other way round.
-    #[inline(always)]
-    pub const fn maybe_has_step_hooks(&self) -> bool {
-        self.opcode_hooks.maybe_step()
-    }
-
-    /// Cheap, conservative gate for the per-opcode `step` hook, given the opcode about to run.
-    ///
     /// `vm.record` on its own only observes `SLOAD` and `SSTORE`, so when it is the only active
     /// hook every other opcode can stay on the fast path. `forge-std`'s `stdStorage` leaves
     /// recording enabled for the rest of the test, which makes this the common case in suites
     /// that use `stdstore` or `deal`.
     #[inline(always)]
-    pub const fn needs_step_for(&self, opcode: u8) -> bool {
-        self.opcode_hooks.maybe_step()
-            && (!self.opcode_hooks.record_accesses_only()
-                || matches!(opcode, op::SLOAD | op::SSTORE))
+    pub fn needs_step(&self, interpreter: &Interpreter) -> bool {
+        if !self.opcode_hooks.maybe_step() {
+            return false;
+        }
+        !self.opcode_hooks.record_accesses_only()
+            || matches!(interpreter.bytecode.opcode(), op::SLOAD | op::SSTORE)
     }
 
     /// Cheap, conservative gate for the per-opcode `step_end` hook.
@@ -2200,14 +2188,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
     #[inline(always)]
     fn has_active_env_overrides(&self) -> bool {
-        // The map stays empty unless `vm.fee`, `vm.txGasPrice` or `vm.blobhashes` ran, so the
-        // per-opcode path is a single length check and the scan is kept out of line.
-        !self.env_overrides.is_empty() && self.any_env_override_set()
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn any_env_override_set(&self) -> bool {
         self.env_overrides.values().any(EnvOverrides::is_any_set)
     }
 
@@ -3495,6 +3475,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         let active = self.active_storage_hook.take().expect("active storage hook exists");
         Self::restore_storage_hook_access(ecx, active.journal_start);
         self.restore_storage_hook_inspector_state(active.inspector_state);
+        self.mark_opcode_hooks_dirty();
         let _ = interpreter.stack.pop();
         if let Some(item) = active.saved_stack_item {
             let result = interpreter.stack.push(item);
@@ -4347,6 +4328,39 @@ mod tests {
         assert!(cheats.has_step_hooks());
         assert!(cheats.has_step_end_hooks());
         assert!(!cheats.has_recording_accesses_only_step_hook());
+    }
+
+    #[test]
+    fn opcode_hook_cache_transitions_are_conservative() {
+        let mut cheats = Cheatcodes::<EthEvmNetwork>::new(Arc::default());
+
+        assert!(cheats.opcode_hooks.is_dirty());
+        assert!(cheats.opcode_hooks.maybe_step());
+        assert!(cheats.opcode_hooks.maybe_step_end());
+
+        cheats.refresh_opcode_hooks();
+        assert!(!cheats.opcode_hooks.maybe_step());
+        assert!(!cheats.opcode_hooks.maybe_step_end());
+
+        cheats.recording_accesses = true;
+        cheats.mark_opcode_hooks_dirty();
+        cheats.refresh_opcode_hooks();
+        assert!(cheats.opcode_hooks.maybe_step());
+        assert!(cheats.opcode_hooks.record_accesses_only());
+        assert!(!cheats.opcode_hooks.maybe_step_end());
+
+        cheats.gas_metering.touched = true;
+        cheats.mark_opcode_hooks_dirty();
+        cheats.refresh_opcode_hooks();
+        assert!(cheats.opcode_hooks.record_accesses_only());
+        assert!(cheats.opcode_hooks.maybe_step_end());
+
+        cheats.gas_metering.paused = true;
+        cheats.mark_opcode_hooks_dirty();
+        cheats.refresh_opcode_hooks();
+        assert!(cheats.opcode_hooks.maybe_step());
+        assert!(cheats.opcode_hooks.maybe_step_end());
+        assert!(!cheats.opcode_hooks.record_accesses_only());
     }
 
     #[test]
