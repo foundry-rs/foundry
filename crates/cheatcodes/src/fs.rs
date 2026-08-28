@@ -13,7 +13,7 @@ use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
 use foundry_common::{contracts::ContractData, fs};
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_core::evm::FoundryEvmNetwork;
+use foundry_evm_core::{FoundryTransaction, env::FoundryContextExt, evm::FoundryEvmNetwork};
 use revm::{
     context::{Cfg, ContextTr, CreateScheme, JournalTr},
     interpreter::CreateInputs,
@@ -513,9 +513,31 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     let scheme =
         if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
 
-    // If prank active at current depth, then use it as caller for create input.
-    let caller =
-        ccx.state.get_prank(ccx.ecx.journal().depth()).map_or(ccx.caller, |prank| prank.new_caller);
+    // The nested EVM executes the synthetic create one level deeper, so apply the prank at the
+    // original depth just as the native create inspector would.
+    let depth = ccx.ecx.journal().depth();
+    let mut caller = ccx.caller;
+    if let Some(prank) = ccx.state.get_prank(depth).copied()
+        && depth >= prank.depth
+        && caller == prank.prank_caller
+    {
+        let prank_applied = if depth == prank.depth {
+            caller = prank.new_caller;
+            true
+        } else {
+            false
+        };
+        let prank_applied = if let Some(new_origin) = prank.new_origin {
+            ccx.ecx.tx_mut().set_caller(new_origin);
+            true
+        } else {
+            prank_applied
+        };
+
+        if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
+            ccx.state.pranks.insert(depth, applied_prank);
+        }
+    }
 
     let outcome = exec_create(
         executor,
@@ -528,7 +550,19 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
             0,
         ),
         ccx,
-    )?;
+    );
+
+    // Restore the prank state at the original depth as native create cleanup would.
+    if let Some(prank) = ccx.state.get_prank(depth).copied()
+        && depth == prank.depth
+    {
+        ccx.ecx.tx_mut().set_caller(prank.prank_origin);
+        if prank.single_call {
+            std::mem::take(&mut ccx.state.pranks);
+        }
+    }
+
+    let outcome = outcome?;
 
     if !outcome.result.result.is_ok() {
         return Err(crate::Error::from(outcome.result.output));
