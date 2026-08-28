@@ -355,7 +355,7 @@ interface Vm {
     struct PotentialRevert {
         /// The allowed origin of the revert opcode; address(0) allows reverts from any address
         address reverter;
-        /// When true, only matches on the beginning of the revert data, otherwise, matches on entire revert data
+        /// When true, only matches on the first 4 bytes (usually the selector) of the revert data, otherwise, matches on entire revert data
         bool partialMatch;
         /// The data to use to match encountered reverts
         bytes revertData;
@@ -1375,7 +1375,7 @@ interface Vm {
     #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]
     function _expectCheatcodeRevert(bytes4 revertData) external;
 
-    /// Expects an error on next cheatcode call that exactly matches the revert data.
+    /// Expects an error on next cheatcode call that contains the revert data.
     #[cheatcode(group = Testing, safety = Unsafe, status = Internal)]
     function _expectCheatcodeRevert(bytes calldata revertData) external;
 

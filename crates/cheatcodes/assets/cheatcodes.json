@@ -658,7 +658,7 @@
         {
           "name": "partialMatch",
           "ty": "bool",
-          "description": "When true, only matches on the beginning of the revert data, otherwise, matches on entire revert data"
+          "description": "When true, only matches on the first 4 bytes (usually the selector) of the revert data, otherwise, matches on entire revert data"
         },
         {
           "name": "revertData",
@@ -728,7 +728,7 @@
     {
       "func": {
         "id": "_expectCheatcodeRevert_2",
-        "description": "Expects an error on next cheatcode call that exactly matches the revert data.",
+        "description": "Expects an error on next cheatcode call that contains the revert data.",
         "declaration": "function _expectCheatcodeRevert(bytes calldata revertData) external;",
         "visibility": "external",
         "mutability": "",
