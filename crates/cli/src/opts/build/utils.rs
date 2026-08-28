@@ -319,8 +319,9 @@ fn configure_pcx_from_solc_cli(
     project_paths: &ProjectPathsConfig,
     cli_settings: &foundry_compilers::solc::CliSettings,
 ) {
-    pcx.file_resolver
-        .set_current_dir(cli_settings.base_path.as_ref().unwrap_or(&project_paths.root));
+    let base_path = cli_settings.base_path.as_ref().unwrap_or(&project_paths.root);
+    pcx.file_resolver.set_base_path(base_path);
+    pcx.file_resolver.set_current_dir(base_path);
     for remapping in &project_paths.remappings {
         let context = remapping.context.clone().unwrap_or_default();
         // Solar compares the context directly with the parent source path. Match the slash form
