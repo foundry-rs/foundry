@@ -18,10 +18,8 @@ type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
 #[cfg(feature = "optimism")]
 use foundry_evm_hardforks::OpHardfork;
 use foundry_evm_hardforks::{
-    EthereumHardfork, FoundryHardfork, TempoHardfork, latest_active_tempo_hardfork,
+    EthereumHardfork, ExecutionSpec, FoundryHardfork, TempoHardfork, latest_active_tempo_hardfork,
 };
-#[cfg(not(feature = "monad"))]
-type MonadHardfork = ();
 use revm::precompile::{
     Precompile as RevmPrecompile,
     secp256r1::{P256VERIFY, P256VERIFY_OSAKA},
@@ -760,19 +758,15 @@ impl NetworkConfigs {
         });
     }
 
-    /// Returns precompiles label for configured networks, to be used in traces.
-    pub fn precompiles_label(
-        self,
-        tempo_hardfork: Option<TempoHardfork>,
-        monad_hardfork: Option<MonadHardfork>,
-    ) -> AddressHashMap<String> {
-        #[cfg(not(feature = "monad"))]
-        let _ = monad_hardfork;
+    /// Returns precompile labels for configured networks at the given hardfork, to be used in
+    /// traces.
+    pub fn precompiles_label(self, hardfork: Option<FoundryHardfork>) -> AddressHashMap<String> {
         let mut labels = AddressHashMap::default();
         if self.is_celo() {
             labels.insert(CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL.to_string());
         }
         if self.is_tempo() {
+            let tempo_hardfork = hardfork.and_then(TempoHardfork::from_foundry_hardfork);
             labels.extend(
                 TEMPO_PRECOMPILES
                     .iter()
@@ -787,6 +781,7 @@ impl NetworkConfigs {
         }
         #[cfg(feature = "monad")]
         if self.is_monad() {
+            let monad_hardfork = hardfork.and_then(MonadHardfork::from_foundry_hardfork);
             labels.extend(
                 MONAD_PRECOMPILE_LABELS
                     .iter()
@@ -802,20 +797,15 @@ impl NetworkConfigs {
         labels
     }
 
-    /// Returns precompiles for configured networks.
-    pub fn precompiles(
-        self,
-        tempo_hardfork: Option<TempoHardfork>,
-        monad_hardfork: Option<MonadHardfork>,
-    ) -> BTreeMap<String, Address> {
-        #[cfg(not(feature = "monad"))]
-        let _ = monad_hardfork;
+    /// Returns precompiles for configured networks at the given hardfork.
+    pub fn precompiles(self, hardfork: Option<FoundryHardfork>) -> BTreeMap<String, Address> {
         let mut precompiles = BTreeMap::new();
         if self.is_celo() {
             precompiles
                 .insert(PRECOMPILE_ID_CELO_TRANSFER.name().to_string(), CELO_TRANSFER_ADDRESS);
         }
         if self.is_tempo() {
+            let tempo_hardfork = hardfork.and_then(TempoHardfork::from_foundry_hardfork);
             precompiles.extend(
                 TEMPO_PRECOMPILES
                     .iter()
@@ -830,6 +820,7 @@ impl NetworkConfigs {
         }
         #[cfg(feature = "monad")]
         if self.is_monad() {
+            let monad_hardfork = hardfork.and_then(MonadHardfork::from_foundry_hardfork);
             precompiles.extend(
                 MONAD_PRECOMPILES
                     .iter()
@@ -1402,8 +1393,8 @@ mod tests {
         let via_old = NetworkConfigs { tempo: true, ..Default::default() };
         assert_eq!(via_new.is_tempo(), via_old.is_tempo());
         assert_eq!(via_new.active_network_name(), via_old.active_network_name());
-        assert_eq!(via_new.precompiles(None, None), via_old.precompiles(None, None));
-        assert_eq!(via_new.precompiles_label(None, None), via_old.precompiles_label(None, None));
+        assert_eq!(via_new.precompiles(None), via_old.precompiles(None));
+        assert_eq!(via_new.precompiles_label(None), via_old.precompiles_label(None));
     }
 
     fn bsc_p256_gas_used(chain_id: ChainId, timestamp: u64) -> Option<u64> {
@@ -1457,35 +1448,37 @@ mod tests {
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
 
         assert_eq!(
-            cfg.precompiles(None, None).get("TIP20ChannelReserve"),
+            cfg.precompiles(None).get("TIP20ChannelReserve"),
             Some(&TIP20_CHANNEL_RESERVE_ADDRESS)
         );
         assert!(
-            !cfg.precompiles(Some(TempoHardfork::T4), None).contains_key("TIP20ChannelReserve")
+            !cfg.precompiles(Some(TempoHardfork::T4.into())).contains_key("TIP20ChannelReserve")
         );
-        assert!(!cfg.precompiles(Some(TempoHardfork::T4), None).contains_key("ReceivePolicyGuard"));
-        assert!(!cfg.precompiles(Some(TempoHardfork::T2), None).contains_key("AddressRegistry"));
-        assert!(!cfg.precompiles(Some(TempoHardfork::T2), None).contains_key("SignatureVerifier"));
+        assert!(
+            !cfg.precompiles(Some(TempoHardfork::T4.into())).contains_key("ReceivePolicyGuard")
+        );
+        assert!(!cfg.precompiles(Some(TempoHardfork::T2.into())).contains_key("AddressRegistry"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T2.into())).contains_key("SignatureVerifier"));
         assert_eq!(
-            cfg.precompiles(Some(TempoHardfork::T3), None).get("AddressRegistry"),
+            cfg.precompiles(Some(TempoHardfork::T3.into())).get("AddressRegistry"),
             Some(&ADDRESS_REGISTRY_ADDRESS)
         );
         assert_eq!(
-            cfg.precompiles(Some(TempoHardfork::T3), None).get("SignatureVerifier"),
+            cfg.precompiles(Some(TempoHardfork::T3.into())).get("SignatureVerifier"),
             Some(&SIGNATURE_VERIFIER_ADDRESS)
         );
         assert_eq!(
-            cfg.precompiles_label(Some(TempoHardfork::T5), None)
+            cfg.precompiles_label(Some(TempoHardfork::T5.into()))
                 .get(&TIP20_CHANNEL_RESERVE_ADDRESS),
             Some(&"TIP20ChannelReserve".to_string())
         );
-        assert!(cfg.precompiles_label(None, None).contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
+        assert!(cfg.precompiles_label(None).contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
         assert!(
-            !cfg.precompiles_label(Some(TempoHardfork::T5), None)
+            !cfg.precompiles_label(Some(TempoHardfork::T5.into()))
                 .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
         );
         assert!(
-            cfg.precompiles_label(Some(TempoHardfork::T6), None)
+            cfg.precompiles_label(Some(TempoHardfork::T6.into()))
                 .contains_key(&RECEIVE_POLICY_GUARD_ADDRESS)
         );
     }
@@ -1496,28 +1489,28 @@ mod tests {
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Monad), ..Default::default() };
 
         assert_eq!(
-            cfg.precompiles(None, Some(MonadHardfork::MonadEight)).get("MonadStaking"),
+            cfg.precompiles(Some(MonadHardfork::MonadEight.into())).get("MonadStaking"),
             Some(&monad_revm::staking::STAKING_ADDRESS)
         );
         assert!(
-            !cfg.precompiles(None, Some(MonadHardfork::MonadEight))
+            !cfg.precompiles(Some(MonadHardfork::MonadEight.into()))
                 .contains_key("MonadReserveBalance")
         );
         assert_eq!(
-            cfg.precompiles(None, Some(MonadHardfork::MonadNine)).get("MonadReserveBalance"),
+            cfg.precompiles(Some(MonadHardfork::MonadNine.into())).get("MonadReserveBalance"),
             Some(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
         );
         assert_eq!(
-            cfg.precompiles_label(None, Some(MonadHardfork::MonadNine))
+            cfg.precompiles_label(Some(MonadHardfork::MonadNine.into()))
                 .get(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS),
             Some(&"ReserveBalance".to_string())
         );
         assert!(
-            cfg.precompiles_label(None, None)
+            cfg.precompiles_label(None)
                 .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
         );
         assert!(
-            !cfg.precompiles_label(None, Some(MonadHardfork::MonadEight))
+            !cfg.precompiles_label(Some(MonadHardfork::MonadEight.into()))
                 .contains_key(&monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS)
         );
     }
@@ -1530,8 +1523,8 @@ mod tests {
 
         // The hardfork-filtered precompile map must honor the same T7 activation.
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
-        assert!(!cfg.precompiles(Some(TempoHardfork::T6), None).contains_key("StorageCredits"));
-        assert!(cfg.precompiles(Some(TempoHardfork::T7), None).contains_key("StorageCredits"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T6.into())).contains_key("StorageCredits"));
+        assert!(cfg.precompiles(Some(TempoHardfork::T7.into())).contains_key("StorageCredits"));
     }
 
     #[test]
@@ -1541,8 +1534,8 @@ mod tests {
         assert!(TEMPO_PRECOMPILE_ADDRESSES.contains(&CURRENT_COMMITTEE_ADDRESS));
 
         let cfg = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
-        assert!(!cfg.precompiles(Some(TempoHardfork::T7), None).contains_key("CurrentCommittee"));
-        assert!(cfg.precompiles(Some(TempoHardfork::T8), None).contains_key("CurrentCommittee"));
+        assert!(!cfg.precompiles(Some(TempoHardfork::T7.into())).contains_key("CurrentCommittee"));
+        assert!(cfg.precompiles(Some(TempoHardfork::T8.into())).contains_key("CurrentCommittee"));
     }
 
     // --- resolved() / active_network_name ---
