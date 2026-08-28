@@ -1266,6 +1266,29 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/16413>
+forgetest_async!(fork_endpoint_without_anvil_node_info, |prj, cmd| {
+    let (api, handle) = spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    api.anvil_mine(Some(U256::ONE), None).await.unwrap();
+    let endpoint =
+        rpc::spawn_rpc_proxy_rejecting_method_after(handle.http_endpoint(), "anvil_nodeInfo", 0)
+            .await;
+
+    prj.add_test(
+        "NonAnvilFork.t.sol",
+        r#"
+contract NonAnvilForkTest {
+    function testFork() external view {
+        require(block.chainid == 1, "wrong chain");
+        require(block.number == 1, "wrong block");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--fork-url", &endpoint, "--match-test", "testFork"]).assert_success();
+});
+
 // <https://github.com/foundry-rs/foundry/issues/7574>
 forgetest_async!(failed_fork_test_reports_block_number, |prj, cmd| {
     let (api, handle) = spawn(NodeConfig::test()).await;
