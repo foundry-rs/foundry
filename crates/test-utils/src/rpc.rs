@@ -292,23 +292,6 @@ pub async fn spawn_rpc_proxy_rejecting_method_after(
     .await
 }
 
-/// Spawns an RPC proxy that rejects the first `rejected_calls` requests to `method`.
-pub async fn spawn_rpc_proxy_rejecting_method_before(
-    endpoint: String,
-    method: &'static str,
-    rejected_calls: usize,
-) -> String {
-    spawn_rpc_proxy_rejecting_method(
-        endpoint,
-        method,
-        RpcMethodRejection::Before(rejected_calls),
-        StatusCode::FORBIDDEN,
-        -32004,
-        "method is not allowed",
-    )
-    .await
-}
-
 /// Spawns an RPC proxy whose rejection of `method` can be enabled after startup.
 pub async fn spawn_rpc_proxy_rejecting_method_when_enabled(
     endpoint: String,
@@ -345,24 +328,6 @@ pub async fn spawn_rpc_proxy_method_not_found_before(
     .await
 }
 
-/// Spawns an RPC proxy that returns invalid-request for the first `unavailable_calls` requests to
-/// `method`.
-pub async fn spawn_rpc_proxy_invalid_request_before(
-    endpoint: String,
-    method: &'static str,
-    unavailable_calls: usize,
-) -> String {
-    spawn_rpc_proxy_rejecting_method(
-        endpoint,
-        method,
-        RpcMethodRejection::Before(unavailable_calls),
-        StatusCode::BAD_REQUEST,
-        -32600,
-        "invalid request",
-    )
-    .await
-}
-
 /// Spawns an RPC proxy that returns a JSON-RPC internal error for `method` after forwarding
 /// `successful_calls` requests.
 pub async fn spawn_rpc_proxy_internal_error_after(
@@ -377,24 +342,6 @@ pub async fn spawn_rpc_proxy_internal_error_after(
         StatusCode::OK,
         -32603,
         "internal error",
-    )
-    .await
-}
-
-/// Spawns an RPC proxy that returns a vendor-specific JSON-RPC error for `method` after
-/// forwarding `successful_calls` requests.
-pub async fn spawn_rpc_proxy_erroring_method_after(
-    endpoint: String,
-    method: &'static str,
-    successful_calls: usize,
-) -> String {
-    spawn_rpc_proxy_rejecting_method(
-        endpoint,
-        method,
-        RpcMethodRejection::After(successful_calls),
-        StatusCode::OK,
-        -32004,
-        "method is not allowed",
     )
     .await
 }

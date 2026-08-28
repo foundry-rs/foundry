@@ -550,14 +550,6 @@ pub fn is_rpc_method_not_found(error: &TransportError) -> bool {
     rpc_error_code(error) == Some(-32601)
 }
 
-/// Returns whether an RPC transport error reports that an optional method is unavailable.
-///
-/// Some RPC gateways return invalid-request instead of method-not-found for methods they do not
-/// expose.
-pub fn is_rpc_method_unavailable(error: &TransportError) -> bool {
-    matches!(rpc_error_code(error), Some(-32601 | -32600))
-}
-
 /// Empty JSON-RPC parameters, serialized as `[]`.
 ///
 /// Passing `()` to a raw request serializes to `"params": null`, but JSON-RPC parameters must be
@@ -702,21 +694,6 @@ mod tests {
         assert!(!is_rpc_method_not_found(&internal_error));
         assert!(!is_rpc_method_not_found(&http_internal_error));
         assert!(!is_rpc_method_not_found(&transport_error));
-    }
-
-    #[test]
-    fn method_unavailable_recognizes_invalid_request() {
-        let invalid_request = TransportError::ErrorResp(ErrorPayload::invalid_request());
-        let http_invalid_request = alloy_transport::TransportErrorKind::http_error(
-            400,
-            r#"{"jsonrpc":"2.0","error":{"code":-32600,"message":"Unsupported method"}}"#
-                .to_owned(),
-        );
-        let internal_error = TransportError::ErrorResp(ErrorPayload::internal_error());
-
-        assert!(is_rpc_method_unavailable(&invalid_request));
-        assert!(is_rpc_method_unavailable(&http_invalid_request));
-        assert!(!is_rpc_method_unavailable(&internal_error));
     }
 
     #[test]

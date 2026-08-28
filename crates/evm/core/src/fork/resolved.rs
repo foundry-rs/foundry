@@ -3,13 +3,13 @@ use alloy_eips::{BlockId, BlockNumHash};
 use alloy_primitives::{B256, BlockNumber, keccak256};
 use std::fmt;
 
-/// An exact fork snapshot resolved from a configured RPC source.
+/// An exact fork snapshot resolved from a fully configured RPC source.
 ///
-/// The snapshot binds three layers that must travel together: the authenticated source (URL,
-/// headers, and JWT), the configured selector (`latest` or a block number), and the observed exact
-/// block (number and hash) plus endpoint context. `latest` is retained as the configured selector,
-/// while `block` is always exact. Reusing this value keeps preflight reads, environment
-/// reconstruction, cache identity, and backend construction on the same remote state.
+/// The snapshot binds three layers that must travel together: the source URL, request headers, and
+/// JWT; the configured selector (`latest` or a block number); and the observed exact block (number
+/// and hash) plus endpoint context. `latest` is retained as the configured selector, while `block`
+/// is always exact. Reusing this value keeps preflight reads, environment reconstruction, cache
+/// identity, and backend construction on the same remote state.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct ResolvedFork {
     source: ForkSource,
@@ -106,7 +106,7 @@ impl ResolvedFork {
         resolved
     }
 
-    /// Returns an opaque identity for the complete authenticated RPC source.
+    /// Returns an opaque identity for the complete configured RPC source.
     pub(crate) fn source_id(&self) -> B256 {
         let mut encoded = Vec::new();
         encoded.extend_from_slice(b"foundry-resolved-fork-source-v1");
@@ -216,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn authenticated_source_identity_is_unambiguous() {
+    fn configured_source_identity_is_unambiguous() {
         let block = BlockNumHash::new(1, B256::with_last_byte(1));
         let context = context(1);
         let plain = ResolvedFork::new("http://localhost:8545", None, None, None, block, context);

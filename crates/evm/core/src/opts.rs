@@ -30,14 +30,10 @@ use url::Url;
 
 /// EVM execution options, including the configured remote fork.
 ///
-/// Fork setup has two separate phases:
-///
-/// 1. [`Self::infer_network_from_fork`] uses [`Self::discover_fork_endpoint`] to identify the
-///    endpoint's execution family before selecting a concrete EVM implementation. This caches the
-///    endpoint identity but does not select a fork block.
-/// 2. [`Self::resolve_fork`] or [`Self::env_resolved`] resolves the configured block selector to an
-///    exact number and hash while the endpoint identity is stable. Callers reuse the returned
-///    [`ResolvedFork`] for preflight reads, environment reconstruction, and backend construction.
+/// Fork handling separates two responsibilities. Endpoint discovery identifies and caches the
+/// execution family without selecting a block. Exact resolution binds the configured source and
+/// selector to a block number, hash, and endpoint context. Forge normally performs discovery
+/// before resolution, while callers that already know the network can resolve directly.
 ///
 /// An implicit `latest` selector remains unchanged in these options; only the returned
 /// [`ResolvedFork`] is pinned to the exact block observed during resolution.
@@ -154,13 +150,14 @@ pub struct EvmOpts {
 ///
 /// This identity is independent of the block selector Forge resolves. In particular,
 /// `source_fork_block_*` describes the upstream block from which an Anvil endpoint was itself
-/// forked; the target block selected for local execution belongs to [`ResolvedFork`]. Equality is
-/// used to detect endpoint resets and execution-profile changes between related RPC reads.
+/// forked; the target block selected for local execution belongs to [`ResolvedFork`]. Equality
+/// detects observable endpoint identity changes, including Anvil instance resets, and
+/// execution-profile changes between related RPC reads.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ForkEndpointIdentity {
     /// RPC URL from which this identity was discovered.
     ///
-    /// Authentication headers and JWT credentials are bound separately by [`ResolvedFork`].
+    /// Request headers and JWT credentials are bound separately by [`ResolvedFork`].
     pub endpoint: String,
     /// Chain ID exposed through `eth_chainId`.
     pub execution_chain_id: ChainId,
@@ -243,7 +240,7 @@ fn endpoint_hardfork(
 
 /// Endpoint identity paired with the remote block number backing a fork.
 ///
-/// [`ResolvedFork`] adds the exact block hash and authenticated RPC source. The remote
+/// [`ResolvedFork`] adds the exact block hash and configured RPC source. The remote
 /// `block_number` may differ from a remapped EVM block number on L2s, and the source chain ID
 /// remains distinct from a configured `CHAINID` opcode override.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
@@ -475,7 +472,7 @@ impl EvmOpts {
     /// `self`.
     ///
     /// Endpoint identity is read before and after the target block and the operation is retried if
-    /// it changes. The result binds the authenticated RPC source, configured selector, exact block
+    /// it changes. The result binds the configured RPC source, configured selector, exact block
     /// number and hash, and [`ForkContext`]. When the selector is implicit `latest`, only the
     /// returned [`ResolvedFork`] is pinned.
     pub async fn resolve_fork(&self) -> eyre::Result<Option<ResolvedFork>> {
@@ -677,8 +674,9 @@ impl EvmOpts {
     ///
     /// Each attempt reads `eth_chainId` and the optional Anvil identity methods before and after,
     /// and returns only when both snapshots agree. Before Anvil is positively identified, a failed
-    /// `anvil_nodeInfo` probe is treated as a normal non-Anvil endpoint. Later probe failures are
-    /// strict. This method does not mutate or cache the returned identity in `self`.
+    /// `anvil_nodeInfo` probe is treated as absence of optional Anvil identity information for that
+    /// snapshot. Later probe failures are strict. This method does not mutate or cache the returned
+    /// identity in `self`.
     pub async fn discover_fork_endpoint(&self) -> eyre::Result<ForkEndpointIdentity> {
         let fork_url = self.fork_url.as_deref().ok_or_eyre("fork URL is not configured")?;
         let provider = self.fork_provider_with_url::<AnyNetwork>(fork_url)?;
@@ -1618,8 +1616,8 @@ mod tests {
     use alloy_rpc_types::TransactionRequest;
     use alloy_serde::WithOtherFields;
     use foundry_test_utils::rpc::{
-        spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_invalid_request_before,
-        spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
+        spawn_rpc_proxy_internal_error_after, spawn_rpc_proxy_method_not_found_before,
+        spawn_rpc_proxy_rejecting_method_after,
     };
     #[cfg(feature = "optimism")]
     use op_revm::OpSpecId;
@@ -2309,22 +2307,6 @@ mod tests {
                 .await;
         let fork_url =
             spawn_rpc_proxy_internal_error_after(handle.http_endpoint(), "anvil_nodeInfo", 0).await;
-        let mut evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
-
-        evm_opts.infer_network_from_fork().await.unwrap();
-
-        assert_eq!(evm_opts.networks, NetworkConfigs::default());
-        assert_eq!(evm_opts.env.chain_id, Some(NamedChain::Mainnet as u64));
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn fork_node_info_invalid_request_is_optional() {
-        let (_api, handle) =
-            anvil::spawn(anvil::NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64)))
-                .await;
-        let fork_url =
-            spawn_rpc_proxy_invalid_request_before(handle.http_endpoint(), "anvil_nodeInfo", 1)
-                .await;
         let mut evm_opts = EvmOpts { fork_url: Some(fork_url), ..Default::default() };
 
         evm_opts.infer_network_from_fork().await.unwrap();
