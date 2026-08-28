@@ -626,6 +626,9 @@ impl CallArgs {
             let (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork) =
                 TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
             let context_block_number = evm_env.block_env.number().saturating_to();
+            // Modify settings usually set in eth_call while keeping execution gas bounded.
+            evm_env.cfg_env.disable_block_gas_limit = true;
+            evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
 
             // Apply the block overrides.
             if let Some(block_overrides) = block_overrides {
