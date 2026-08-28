@@ -136,6 +136,58 @@ pub struct CloneArgs {
     pub install: DependencyInstallOpts,
 }
 
+/// Downloads the verified sources of an on-chain contract into `root` and returns the name of the
+/// contract at `address`.
+///
+/// The project written to `root` carries the compiler settings the contract was verified with, so
+/// compiling it reproduces the on-chain artifact.
+pub(crate) async fn dump_verified_sources(
+    address: Address,
+    root: &Path,
+    etherscan: &EtherscanOpts,
+) -> Result<String> {
+    let config = etherscan.load_config()?;
+    let chain = config.chain.unwrap_or_default();
+    let client = config
+        .get_etherscan_config_with_chain(Some(chain))?
+        .ok_or_else(|| eyre::eyre!("No Etherscan API key configured for chain {chain}"))?
+        .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
+
+    dump_verified_sources_with_client(&client, address, root, chain).await
+}
+
+/// Downloads the verified sources of `address` from `client` into `root`, returning the name of
+/// the contract.
+async fn dump_verified_sources_with_client<C: ExplorerClient>(
+    client: &C,
+    address: Address,
+    root: &Path,
+    chain: Chain,
+) -> Result<String> {
+    sh_status!("Downloading the source code of {address} from Etherscan...")?;
+    let (_, meta) = CloneArgs::collect_metadata_from_client(address, client, false).await?;
+
+    // The sources come with their own remappings, so the project needs no dependencies and no
+    // git repository of its own.
+    let init = InitArgs {
+        root: root.to_path_buf(),
+        install: DependencyInstallOpts { no_git: true, ..Default::default() },
+        empty: true,
+        offline: true,
+        ..Default::default()
+    };
+    init.run().await.map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
+    // Dumping the sources expects a library directory, which an offline init never creates
+    // because it installs no dependencies.
+    let path_config = ProjectPathsConfig::builder().build_with_root::<Solc>(root);
+    fs::create_dir_all(&path_config.libraries[0])?;
+
+    let root = dunce::canonicalize(root)?;
+    CloneArgs::parse_metadata(&meta, chain, &root, false, false).await?;
+
+    Ok(meta.contract_name)
+}
+
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
         let Self {
@@ -1386,6 +1438,36 @@ mod tests {
                 pick_creation_info(&address.to_string()).expect("creation code not found");
             assert_compilation_result(rv, contract_name, stripped_creation_code);
         }
+    }
+
+    // `forge inspect <address>` needs only the sources, so this path must not depend on the
+    // creation data that `forge clone` additionally fetches, and the project it writes must
+    // compile on its own.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_dump_verified_sources() {
+        let address: Address = "0x35Fb958109b70799a8f9Bc2a8b1Ee4cC62034193".parse().unwrap();
+        let metadata_file = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../testdata/etherscan")
+            .join(address.to_string())
+            .join("metadata.json");
+        let metadata: ContractMetadata =
+            serde_json::from_str(&std::fs::read_to_string(metadata_file).unwrap()).unwrap();
+        let mut client = super::MockExplorerClient::new();
+        client.expect_contract_source_code().times(1).returning(move |_| Ok(metadata.clone()));
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let name = super::dump_verified_sources_with_client(
+            &client,
+            address,
+            temp_dir.path(),
+            Chain::mainnet(),
+        )
+        .await
+        .unwrap();
+
+        let root = dunce::canonicalize(temp_dir.path()).unwrap();
+        let output = assert_successful_compilation(&root);
+        find_main_contract(&output, &name).expect("cloned contract not found in the project");
     }
 
     #[tokio::test(flavor = "multi_thread")]

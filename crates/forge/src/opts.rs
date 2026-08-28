@@ -201,6 +201,7 @@ pub enum ForgeSubcommand {
     /// - forge inspect Counter abi
     /// - forge inspect Counter bytecode
     /// - forge inspect src/Counter.sol:Counter storageLayout
+    /// - forge inspect 0xdAC17F958D2ee523a2206206994597C13D831ec7 storageLayout --chain mainnet
     #[command(verbatim_doc_comment, visible_alias = "in")]
     Inspect(inspect::InspectArgs),
 
