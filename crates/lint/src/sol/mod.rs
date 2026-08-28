@@ -55,7 +55,14 @@ static DEFAULT_LINT_SPECIFIC_CONFIG: LazyLock<LintSpecificConfig> =
     LazyLock::new(LintSpecificConfig::default);
 
 struct OwnedLintPolicy {
-    inline: Option<InlineConfig<Vec<String>>>,
+    source: Option<Arc<SourceLintPolicy>>,
+    active: Arc<Vec<&'static str>>,
+    sources: Option<Arc<Vec<Arc<SourceLintPolicy>>>>,
+}
+
+struct SourceLintPolicy {
+    file: Arc<solar::interface::source_map::SourceFile>,
+    inline: InlineConfig<Vec<String>>,
     active: Vec<&'static str>,
 }
 
@@ -65,7 +72,21 @@ impl LintPolicy for OwnedLintPolicy {
     }
 
     fn is_lint_suppressed(&self, id: &str, span: solar::interface::Span) -> bool {
-        self.inline.as_ref().is_some_and(|inline| inline.is_id_disabled(span, id))
+        if !span.is_dummy()
+            && let Some(sources) = &self.sources
+        {
+            // Late passes can follow inheritance or calls into another file. Apply the policy of
+            // the file that owns the diagnostic span, not the file whose visitor emitted it.
+            let source = sources
+                .partition_point(|source| source.file.start_pos <= span.lo())
+                .checked_sub(1)
+                .map(|idx| &sources[idx])
+                .filter(|source| source.file.contains(span.lo()));
+            return source.is_none_or(|source| {
+                !source.active.contains(&id) || source.inline.is_id_disabled(span, id)
+            });
+        }
+        self.source.as_ref().is_some_and(|source| source.inline.is_id_disabled(span, id))
     }
 }
 
@@ -77,6 +98,8 @@ pub struct ForgeLintSuite {
     lints_included: Option<Vec<SolLint>>,
     lints_excluded: Option<Vec<SolLint>>,
     registry: Arc<LintRegistry>,
+    sources: Option<Arc<Vec<Arc<SourceLintPolicy>>>>,
+    run_active: Option<Arc<Vec<&'static str>>>,
 }
 
 impl std::fmt::Debug for ForgeLintSuite {
@@ -126,15 +149,40 @@ impl LintSuite for ForgeLintSuite {
     }
 
     fn source_policy(&self, source: LintSource<'_, '_>) -> Arc<dyn LintPolicy> {
-        let comments = Comments::new(source.file, source.session.source_map(), false, false, None);
+        let source_policy = self
+            .sources
+            .as_ref()
+            .and_then(|sources| {
+                sources
+                    .binary_search_by_key(&source.file.start_pos, |source| source.file.start_pos)
+                    .ok()
+                    .map(|idx| sources[idx].clone())
+            })
+            .unwrap_or_else(|| {
+                let comments =
+                    Comments::new(source.file, source.session.source_map(), false, false, None);
+                Arc::new(SourceLintPolicy {
+                    file: source.file.clone(),
+                    inline: parse_inline_config(source.session, &comments, source.ast),
+                    active: self.active_lints(Some(source.path)),
+                })
+            });
         Arc::new(OwnedLintPolicy {
-            inline: Some(parse_inline_config(source.session, &comments, source.ast)),
-            active: self.active_lints(Some(source.path)),
+            source: Some(source_policy.clone()),
+            active: self
+                .run_active
+                .clone()
+                .unwrap_or_else(|| Arc::new(source_policy.active.clone())),
+            sources: self.sources.clone(),
         })
     }
 
     fn project_policy(&self) -> Arc<dyn LintPolicy> {
-        Arc::new(OwnedLintPolicy { inline: None, active: self.active_lints(None) })
+        Arc::new(OwnedLintPolicy {
+            source: None,
+            active: Arc::new(self.active_lints(None)),
+            sources: None,
+        })
     }
 }
 
@@ -219,6 +267,8 @@ impl<'a> SolidityLinter<'a> {
             lints_included: self.lints_included.clone(),
             lints_excluded: self.lints_excluded.clone(),
             registry: Arc::new(registry),
+            sources: None,
+            run_active: None,
         }
     }
 }
@@ -292,7 +342,31 @@ impl<'a> Linter for SolidityLinter<'a> {
                 }
             }
 
-            let suite = self.to_suite();
+            let mut suite = self.to_suite();
+            let mut sources = targets
+                .iter()
+                .map(|path| {
+                    let (_, source) =
+                        gcx.get_ast_source(path).expect("lint target was validated above");
+                    let ast = source.ast.as_ref().expect("lint target AST was validated above");
+                    let comments =
+                        Comments::new(&source.file, gcx.sess.source_map(), false, false, None);
+                    Arc::new(SourceLintPolicy {
+                        file: source.file.clone(),
+                        inline: parse_inline_config(gcx.sess, &comments, ast),
+                        active: suite.active_lints(Some(path)),
+                    })
+                })
+                .collect::<Vec<_>>();
+            sources.sort_unstable_by_key(|source| source.file.start_pos);
+            suite.run_active = Some(Arc::new(
+                suite
+                    .active_lints(None)
+                    .into_iter()
+                    .filter(|id| sources.iter().any(|source| source.active.contains(id)))
+                    .collect(),
+            ));
+            suite.sources = Some(Arc::new(sources));
             run_lints(
                 &suite,
                 LintRunContext {
