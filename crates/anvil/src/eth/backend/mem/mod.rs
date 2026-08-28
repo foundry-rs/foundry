@@ -8931,6 +8931,24 @@ where
     Signed::new_unchecked(t, sig, hash)
 }
 
+fn build_rpc_transaction(
+    envelope: AnyTxEnvelope,
+    from: Address,
+    block: Option<&Block>,
+    info: Option<&TransactionInfo>,
+    effective_gas_price: Option<u128>,
+) -> AnyRpcTransaction {
+    let tx = Transaction {
+        inner: Recovered::new_unchecked(envelope, from),
+        block_hash: block.map(|block| block.header.hash_slow()),
+        block_number: block.map(|block| block.header.number()),
+        transaction_index: info.map(|info| info.transaction_index),
+        effective_gas_price,
+        block_timestamp: block.map(|block| block.header.timestamp()),
+    };
+    AnyRpcTransaction::from(WithOtherFields::new(tx))
+}
+
 /// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
 pub fn transaction_build(
     tx_hash: Option<B256>,
@@ -8968,21 +8986,13 @@ pub fn transaction_build(
                     inner,
                 });
 
-                let tx = Transaction {
-                    inner: Recovered::new_unchecked(
-                        envelope,
-                        mined_from.unwrap_or(deposit_tx.from),
-                    ),
-                    block_hash: block
-                        .as_ref()
-                        .map(|block| B256::from(keccak256(alloy_rlp::encode(&block.header)))),
-                    block_number: block.as_ref().map(|block| block.header.number()),
-                    transaction_index: info.as_ref().map(|info| info.transaction_index),
-                    effective_gas_price: None,
-                    block_timestamp: block.as_ref().map(|block| block.header.timestamp()),
-                };
-
-                return AnyRpcTransaction::from(WithOtherFields::new(tx));
+                return build_rpc_transaction(
+                    envelope,
+                    mined_from.unwrap_or(deposit_tx.from),
+                    block,
+                    info.as_ref(),
+                    None,
+                );
             }
             Err(_) => {
                 error!(target: "backend", "failed to serialize deposit transaction");
@@ -9008,16 +9018,7 @@ pub fn transaction_build(
                     inner,
                 });
 
-                let tx = Transaction {
-                    inner: Recovered::new_unchecked(envelope, from),
-                    block_hash: block.as_ref().map(|block| block.header.hash_slow()),
-                    block_number: block.as_ref().map(|block| block.header.number()),
-                    transaction_index: info.as_ref().map(|info| info.transaction_index),
-                    effective_gas_price: None,
-                    block_timestamp: block.as_ref().map(|block| block.header.timestamp()),
-                };
-
-                return AnyRpcTransaction::from(WithOtherFields::new(tx));
+                return build_rpc_transaction(envelope, from, block, info.as_ref(), None);
             }
             Err(_) => {
                 error!(target: "backend", "failed to serialize tempo transaction");
@@ -9050,16 +9051,7 @@ pub fn transaction_build(
         TxEnvelope::Eip7702(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(rehash(s, hash))),
     };
 
-    let tx = Transaction {
-        inner: Recovered::new_unchecked(envelope, from),
-        block_hash: block.as_ref().map(|block| block.header.hash_slow()),
-        block_number: block.as_ref().map(|block| block.header.number()),
-        transaction_index: info.as_ref().map(|info| info.transaction_index),
-        // deprecated
-        effective_gas_price: Some(effective_gas_price),
-        block_timestamp: block.as_ref().map(|block| block.header.timestamp()),
-    };
-    AnyRpcTransaction::from(WithOtherFields::new(tx))
+    build_rpc_transaction(envelope, from, block, info.as_ref(), Some(effective_gas_price))
 }
 
 /// Prove a storage key's existence or nonexistence in the account's storage trie.
