@@ -136,58 +136,6 @@ pub struct CloneArgs {
     pub install: DependencyInstallOpts,
 }
 
-/// Downloads the verified sources of an on-chain contract into `root` and returns the name of the
-/// contract at `address`.
-///
-/// The project written to `root` carries the compiler settings the contract was verified with, so
-/// compiling it reproduces the on-chain artifact.
-pub(crate) async fn dump_verified_sources(
-    address: Address,
-    root: &Path,
-    etherscan: &EtherscanOpts,
-) -> Result<String> {
-    let config = etherscan.load_config()?;
-    let chain = config.chain.unwrap_or_default();
-    let client = config
-        .get_etherscan_config_with_chain(Some(chain))?
-        .ok_or_else(|| eyre::eyre!("No Etherscan API key configured for chain {chain}"))?
-        .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
-
-    dump_verified_sources_with_client(&client, address, root, chain).await
-}
-
-/// Downloads the verified sources of `address` from `client` into `root`, returning the name of
-/// the contract.
-async fn dump_verified_sources_with_client<C: ExplorerClient>(
-    client: &C,
-    address: Address,
-    root: &Path,
-    chain: Chain,
-) -> Result<String> {
-    sh_status!("Downloading the source code of {address} from Etherscan...")?;
-    let (_, meta) = CloneArgs::collect_metadata_from_client(address, client, false).await?;
-
-    // The sources come with their own remappings, so the project needs no dependencies and no
-    // git repository of its own.
-    let init = InitArgs {
-        root: root.to_path_buf(),
-        install: DependencyInstallOpts { no_git: true, ..Default::default() },
-        empty: true,
-        offline: true,
-        ..Default::default()
-    };
-    init.run().await.map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
-    // Dumping the sources expects a library directory, which an offline init never creates
-    // because it installs no dependencies.
-    let path_config = ProjectPathsConfig::builder().build_with_root::<Solc>(root);
-    fs::create_dir_all(&path_config.libraries[0])?;
-
-    let root = dunce::canonicalize(root)?;
-    CloneArgs::parse_metadata(&meta, chain, &root, false, false).await?;
-
-    Ok(meta.contract_name)
-}
-
 impl CloneArgs {
     pub async fn run(self) -> Result<()> {
         let Self {
@@ -217,12 +165,7 @@ impl CloneArgs {
         // step 1. get the metadata from client based on source type
         let (address, meta, explorer_name, sourcify_client) = match source {
             SourceExplorer::Etherscan => {
-                let client = config
-                    .get_etherscan_config_with_chain(Some(chain))?
-                    .ok_or_else(|| {
-                        eyre::eyre!("No Etherscan API key configured for chain {chain}")
-                    })?
-                    .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
+                let client = etherscan_client(&config, chain)?;
                 sh_status!("Downloading the source code of {address} from Etherscan...")?;
                 let (address, meta) =
                     Self::collect_metadata_from_client(address, &client, implementation).await?;
@@ -443,6 +386,62 @@ impl CloneArgs {
     }
 }
 
+/// Downloads the verified sources of an on-chain contract into `root` and returns its metadata.
+///
+/// The project written to `root` carries the compiler settings the contract was verified with, so
+/// compiling it reproduces the on-chain artifact. With `implementation`, a proxy `address` is
+/// resolved to its implementation contract, whose sources are downloaded instead.
+pub(crate) async fn dump_verified_sources(
+    address: Address,
+    root: &Path,
+    etherscan: &EtherscanOpts,
+    implementation: bool,
+) -> Result<Metadata> {
+    let config = etherscan.load_config()?;
+    let chain = config.chain.unwrap_or_default();
+    let client = etherscan_client(&config, chain)?;
+
+    dump_verified_sources_with_client(&client, address, root, chain, implementation).await
+}
+
+/// Downloads the verified sources of `address` from `client` into `root`, returning the metadata
+/// of the contract.
+async fn dump_verified_sources_with_client<C: ExplorerClient>(
+    client: &C,
+    address: Address,
+    root: &Path,
+    chain: Chain,
+    implementation: bool,
+) -> Result<Metadata> {
+    sh_status!("Downloading the source code of {address} from Etherscan...")?;
+    let (_, meta) =
+        CloneArgs::collect_metadata_from_client(address, client, implementation).await?;
+
+    // The sources come with their own remappings, so the project needs no dependencies and no
+    // git repository of its own.
+    let init = InitArgs {
+        root: root.to_path_buf(),
+        install: DependencyInstallOpts { no_git: true, ..Default::default() },
+        empty: true,
+        offline: true,
+        ..Default::default()
+    };
+    init.run().await.map_err(|e| eyre::eyre!("Project init error: {:?}", e))?;
+
+    let root = dunce::canonicalize(root)?;
+    CloneArgs::parse_metadata(&meta, chain, &root, false, false).await?;
+
+    Ok(meta)
+}
+
+/// Creates an Etherscan client for `chain`, failing if no API key is configured.
+fn etherscan_client(config: &Config, chain: Chain) -> Result<Client> {
+    Ok(config
+        .get_etherscan_config_with_chain(Some(chain))?
+        .ok_or_else(|| eyre::eyre!("No Etherscan API key configured for chain {chain}"))?
+        .into_client_with_no_proxy(config.eth_rpc_no_proxy)?)
+}
+
 /// Update the configuration file with the metadata.
 /// This function will update the configuration file with the metadata from the contract.
 /// It will update the following fields:
@@ -617,9 +616,10 @@ fn dump_sources(meta: &Metadata, root: &PathBuf, no_reorg: bool) -> Result<Vec<R
                 || folder_name.to_string_lossy().starts_with('@')
         });
 
-    // ensure `src` and `lib` directories exist
-    eyre::ensure!(Path::exists(&root.join(src_dir)), "`src` directory must exists");
-    eyre::ensure!(Path::exists(&root.join(lib_dir)), "`lib` directory must exists");
+    // ensure `src` and `lib` directories exist; an offline empty init does not create `lib`
+    // because it installs no dependencies.
+    fs::create_dir_all(root.join(src_dir))?;
+    fs::create_dir_all(root.join(lib_dir))?;
 
     // move source files
     for entry in std::fs::read_dir(tmp_dump_dir.join(contract_name))? {
@@ -1456,18 +1456,53 @@ mod tests {
         client.expect_contract_source_code().times(1).returning(move |_| Ok(metadata.clone()));
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let name = super::dump_verified_sources_with_client(
+        let meta = super::dump_verified_sources_with_client(
             &client,
             address,
             temp_dir.path(),
             Chain::mainnet(),
+            false,
         )
         .await
         .unwrap();
 
         let root = dunce::canonicalize(temp_dir.path()).unwrap();
         let output = assert_successful_compilation(&root);
-        find_main_contract(&output, &name).expect("cloned contract not found in the project");
+        find_main_contract(&output, &meta.contract_name)
+            .expect("cloned contract not found in the project");
+    }
+
+    // With `--implementation`, inspecting a proxy address must dump the implementation's sources.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_dump_verified_sources_follows_proxy() {
+        let proxy = "0x0000000000000000000000000000000000000001".parse().unwrap();
+        let implementation = "0x0000000000000000000000000000000000000002".parse().unwrap();
+        let proxy_meta = contract_metadata("Proxy", true, Some(implementation));
+        let implementation_meta = contract_metadata("Implementation", false, None);
+        let mut client = super::MockExplorerClient::new();
+        client.expect_contract_source_code().times(2).returning(move |address| {
+            if address == proxy {
+                Ok(proxy_meta.clone())
+            } else if address == implementation {
+                Ok(implementation_meta.clone())
+            } else {
+                unreachable!("unexpected address: {address}")
+            }
+        });
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let meta = super::dump_verified_sources_with_client(
+            &client,
+            proxy,
+            temp_dir.path(),
+            Chain::mainnet(),
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(meta.contract_name, "Implementation");
+        assert!(temp_dir.path().join("foundry.toml").exists());
     }
 
     #[tokio::test(flavor = "multi_thread")]

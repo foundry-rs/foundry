@@ -1556,6 +1556,31 @@ Error: linearization inspection is only supported for Solidity contracts (.sol t
 "#]]);
 });
 
+// The on-chain inspect target fetches sources into a temporary project, so `--root` has nothing
+// to point at, and `--implementation` only makes sense for an address target.
+forgetest!(inspect_onchain_target_flag_guards, |prj, cmd| {
+    cmd.args([
+        "inspect",
+        "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        "abi",
+        "--root",
+        prj.root().to_str().unwrap(),
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: --root is not supported when inspecting an on-chain contract; the sources are fetched into a temporary project
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["inspect", "Counter", "abi", "--implementation"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: --implementation is only supported when inspecting an on-chain contract by address
+
+"#]]);
+});
+
 // test that `forge snapshot` commands work
 forgetest!(can_check_snapshot, |prj, cmd| {
     prj.insert_ds_test();

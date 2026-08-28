@@ -71,6 +71,10 @@ pub struct InspectArgs {
     #[command(flatten)]
     etherscan: EtherscanOpts,
 
+    /// Inspect the implementation contract if the target address is a proxy.
+    #[arg(long)]
+    pub implementation: bool,
+
     /// Whether to remove comments when inspecting `ir` and `irOptimized` artifact fields.
     #[arg(long, short, help_heading = "Display options")]
     pub strip_yul_comments: bool,
@@ -82,18 +86,57 @@ pub struct InspectArgs {
 
 impl InspectArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { contract, field, mut build, strip_yul_comments, wrap, etherscan } = self;
+        let Self {
+            contract,
+            field,
+            mut build,
+            strip_yul_comments,
+            wrap,
+            etherscan,
+            implementation,
+        } = self;
 
         // An on-chain contract is downloaded into a throwaway project, which then takes exactly
         // the same compile-and-inspect path as a local one. The directory is held until the end
         // of the command so it outlives the compilation.
         let (contract, _tmp_project) = match contract {
-            InspectTarget::Local(contract) => (contract, None),
+            InspectTarget::Local(contract) => {
+                eyre::ensure!(
+                    !implementation,
+                    "--implementation is only supported when inspecting an on-chain contract by \
+                     address"
+                );
+                (contract, None)
+            }
             InspectTarget::OnChain(address) => {
+                eyre::ensure!(
+                    build.project_paths.root.is_none(),
+                    "--root is not supported when inspecting an on-chain contract; the sources \
+                     are fetched into a temporary project"
+                );
                 let tmp = tempfile::tempdir()?;
-                let name = dump_verified_sources(address, tmp.path(), &etherscan).await?;
+                let meta =
+                    dump_verified_sources(address, tmp.path(), &etherscan, implementation).await?;
+                if !implementation
+                    && meta.proxy != 0
+                    && let Some(impl_addr) = meta.implementation
+                {
+                    sh_warn!(
+                        "{address} is a proxy; pass --implementation to inspect its \
+                         implementation at {impl_addr}"
+                    )?;
+                }
+                if field == ContractArtifactField::StorageLayout
+                    && let Ok(version) = meta.compiler_version()
+                    && version < semver::Version::new(0, 5, 13)
+                {
+                    sh_warn!(
+                        "the contract was verified with solc {version}, which does not emit \
+                         storage layouts; the layout will be empty"
+                    )?;
+                }
                 build.project_paths.root = Some(tmp.path().to_path_buf());
-                (PathOrContractInfo::from_str(&name)?, Some(tmp))
+                (PathOrContractInfo::from_str(&meta.contract_name)?, Some(tmp))
             }
         };
 
