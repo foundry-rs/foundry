@@ -634,6 +634,7 @@ impl<N: Network> EthApi<N> {
             config.fork_urls = vec![url.clone()];
             config.fork_chain_id = None;
             config.endpoint_identity = endpoint_identity;
+            node_config.fork_endpoint_is_anvil = endpoint_identity.is_authoritative();
         }
         // Keep node_config in sync so a subsequent URL-less fork reset uses the updated endpoint.
         node_config.fork_urls = vec![url];

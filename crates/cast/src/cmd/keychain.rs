@@ -21,7 +21,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     FoundryTransactionBuilder,
-    provider::ProviderBuilder,
+    provider::{ProviderBuilder, is_rpc_method_not_found},
     sh_warn, shell,
     tempo::{
         self, AccountsStoreView, KeyType, maybe_print_fee_token, read_tempo_accounts_store,
@@ -3844,10 +3844,6 @@ fn active_from_anvil_node_info(info: &AnvilNodeInfo, hardfork: TempoHardfork) ->
     })
 }
 
-fn is_rpc_method_not_found(err: &TransportError) -> bool {
-    err.as_error_resp().is_some_and(|payload| payload.code == -32601)
-}
-
 fn resolve_key_metadata(
     key_address: Address,
     root_account: Option<Address>,
@@ -4293,7 +4289,6 @@ fn decoded_entry_key_authorization(entry: &tempo::KeyEntry) -> Option<SignedKeyA
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_json_rpc::ErrorPayload;
     use std::str::FromStr;
 
     #[test]
@@ -5272,19 +5267,5 @@ mod tests {
 
         assert!(sanitized.contains("private-key://<redacted>"));
         assert!(!sanitized.contains("super-secret"));
-    }
-
-    #[test]
-    fn test_rpc_method_not_found_detection() {
-        let method_missing: TransportError =
-            TransportError::ErrorResp(ErrorPayload::method_not_found());
-        assert!(is_rpc_method_not_found(&method_missing));
-
-        let internal_error: TransportError =
-            TransportError::ErrorResp(ErrorPayload::internal_error());
-        assert!(!is_rpc_method_not_found(&internal_error));
-
-        let transport_error = alloy_transport::TransportErrorKind::backend_gone();
-        assert!(!is_rpc_method_not_found(&transport_error));
     }
 }

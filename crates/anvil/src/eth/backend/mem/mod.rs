@@ -4303,6 +4303,13 @@ impl<N: Network> Backend<N> {
         if rpc_url_was_provided {
             staged_config.fork_chain_id = None;
         }
+        let configured_endpoint_is_anvil = staged_config.fork_endpoint_is_anvil
+            && staged_config.fork_urls.contains(target_rpc_url);
+        let cached_endpoint_is_anvil = previous_source.as_ref().is_some_and(|source| {
+            source.rpc_url == *target_rpc_url && source.endpoint_identity.is_authoritative()
+        });
+        staged_config.fork_endpoint_is_anvil =
+            configured_endpoint_is_anvil || cached_endpoint_is_anvil;
         staged_config.fork_urls = target_rpc_urls.to_vec();
         staged_config.fork_choice = block_number.map(|number| ForkChoice::Block(number as i128));
         let mut staged_env = self.evm_env.read().clone();
@@ -4535,6 +4542,7 @@ impl<N: Network> Backend<N> {
         let mut staged_config = self.node_config.read().await.clone();
         staged_config.fork_source_chain_id = None;
         staged_config.fork_execution_chain_id = None;
+        staged_config.fork_endpoint_is_anvil = false;
         staged_config.restore_fork_overrides();
         let local_chain_id = staged_config.get_chain_id();
         staged_config.update_wallet_chain_id(local_chain_id);

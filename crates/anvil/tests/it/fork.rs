@@ -43,8 +43,9 @@ use foundry_config::Config;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
-    self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_erroring_method_after,
+    self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_internal_error_after,
     spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
+    spawn_rpc_proxy_rejecting_method_when_enabled,
 };
 use futures::StreamExt;
 use revm::{
@@ -53,7 +54,7 @@ use revm::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
     time::Duration,
 };
 
@@ -95,19 +96,15 @@ pub fn fork_config() -> NodeConfig {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_rejects_anvil_node_info_rpc_error() {
+async fn test_fork_ignores_initial_anvil_node_info_rpc_error() {
     let (_api, origin) =
         spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
     let fork_url =
-        spawn_rpc_proxy_erroring_method_after(origin.http_endpoint(), "anvil_nodeInfo", 0).await;
+        spawn_rpc_proxy_internal_error_after(origin.http_endpoint(), "anvil_nodeInfo", 0).await;
 
-    let result = try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
-    let Err(error) = result else { panic!("expected fork startup to fail") };
+    let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
 
-    assert!(
-        error.to_string().contains("failed to determine network family from fork endpoint"),
-        "{error}"
-    );
+    assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -137,6 +134,89 @@ async fn test_fork_reset_keeps_node_info_probe_strict_after_identification_durin
 
     let error = api
         .anvil_reset(Some(Forking { json_rpc_url: Some(fork_url), block_number: None }))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains("failed to determine network family from fork endpoint"),
+        "{error}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_keeps_cached_anvil_node_info_probe_strict() {
+    let (_origin_api, origin) = spawn(NodeConfig::test()).await;
+    let (fork_url, reject_node_info) =
+        spawn_rpc_proxy_rejecting_method_when_enabled(origin.http_endpoint(), "anvil_nodeInfo")
+            .await;
+    let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url.clone()))).await;
+    api.anvil_reset(None).await.unwrap();
+    reject_node_info.store(true, Ordering::SeqCst);
+
+    let error = api
+        .anvil_reset(Some(Forking { json_rpc_url: Some(fork_url), block_number: None }))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains("failed to determine network family from fork endpoint"),
+        "{error}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_does_not_carry_anvil_identity_to_new_endpoint() {
+    let (_initial_api, initial_origin) = spawn(NodeConfig::test()).await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(initial_origin.http_endpoint()))).await;
+    let (_target_api, target_origin) = spawn(NodeConfig::test().with_chain_id(Some(56u64))).await;
+    let target_url =
+        spawn_rpc_proxy_rejecting_method_after(target_origin.http_endpoint(), "anvil_nodeInfo", 0)
+            .await;
+
+    api.anvil_reset(Some(Forking { json_rpc_url: Some(target_url), block_number: None }))
+        .await
+        .unwrap();
+
+    assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), 56);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_keeps_set_rpc_url_anvil_node_info_probe_strict() {
+    let (_initial_api, initial_origin) = spawn(NodeConfig::test()).await;
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(initial_origin.http_endpoint()))).await;
+    let (replacement_url, reject_node_info) = spawn_rpc_proxy_rejecting_method_when_enabled(
+        initial_origin.http_endpoint(),
+        "anvil_nodeInfo",
+    )
+    .await;
+    api.anvil_set_rpc_url(replacement_url).await.unwrap();
+    reject_node_info.store(true, Ordering::SeqCst);
+
+    let error = api
+        .anvil_reset(Some(Forking { json_rpc_url: None, block_number: None }))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains("failed to determine network family from fork endpoint"),
+        "{error}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_keeps_validated_mirror_anvil_node_info_probe_strict() {
+    let (_origin_api, origin) = spawn(NodeConfig::test()).await;
+    let primary_url = origin.http_endpoint();
+    let (mirror_url, reject_node_info) =
+        spawn_rpc_proxy_rejecting_method_when_enabled(primary_url.clone(), "anvil_nodeInfo").await;
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_fork_urls(vec![primary_url, mirror_url.clone()])).await;
+    reject_node_info.store(true, Ordering::SeqCst);
+
+    let error = api
+        .anvil_reset(Some(Forking { json_rpc_url: Some(mirror_url), block_number: None }))
         .await
         .unwrap_err();
 
