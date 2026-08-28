@@ -8954,20 +8954,21 @@ casttest!(cast_call_trace_selects_tempo_network, async |_prj, cmd| {
     }
 });
 
-// tests that `cast call --trace` executes the call with the gas limit given via `--gas-limit`,
-// matching a plain `cast call` rather than running with an unbounded gas limit.
+// tests that `cast call --trace` executes the call with the configured gas limit or the limit given
+// via `--gas-limit` rather than running with an unbounded gas limit.
 // <https://github.com/foundry-rs/foundry/issues/15357>
-forgetest_async!(cast_call_trace_respects_gas_limit, |prj, cmd| {
+forgetest_async!(cast_call_trace_respects_gas_limits, |prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
+    prj.update_config(|config| config.gas_limit = 1_000_000.into());
 
     // Contract that reverts when the call is given an unrealistically large gas limit.
     prj.add_source(
         "GasDependent",
         r#"
 contract GasDependent {
-    function run() external view returns (uint256) {
-        require(gasleft() < 30_000_000, "unrealistic gas limit");
+    function run(uint256 maxGas) external view returns (uint256) {
+        require(gasleft() < maxGas, "unrealistic gas limit");
         return gasleft();
     }
 }
@@ -9000,7 +9001,20 @@ contract GasDependent {
 
     // A plain `cast call` (eth_call) uses a realistic gas limit, so it succeeds.
     cmd.cast_fuse()
-        .args(["call", &address, "run()(uint256)", "--rpc-url", &endpoint])
+        .args(["call", &address, "run(uint256)(uint256)", "30000000", "--rpc-url", &endpoint])
+        .assert_success();
+
+    // `--trace` uses the configured gas limit when no CLI limit is provided.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            &address,
+            "run(uint256)(uint256)",
+            "2000000",
+            "--trace",
+            "--rpc-url",
+            &endpoint,
+        ])
         .assert_success();
 
     // `--trace` with an explicit `--gas-limit` executes the call with that limit, so it succeeds
@@ -9010,10 +9024,11 @@ contract GasDependent {
         .args([
             "call",
             &address,
-            "run()(uint256)",
+            "run(uint256)(uint256)",
+            "750000",
             "--trace",
             "--gas-limit",
-            "1000000",
+            "500000",
             "--rpc-url",
             &endpoint,
         ])
