@@ -79,7 +79,11 @@ fn handle_revert(
     };
 
     // Compare only the first 4 bytes if partial match.
-    if revert_params.partial_match() && actual_revert.get(..4) == expected_reason.get(..4) {
+    if revert_params.partial_match()
+        && let (Some(actual_prefix), Some(expected_prefix)) =
+            (actual_revert.get(..4), expected_reason.get(..4))
+        && actual_prefix == expected_prefix
+    {
         return Ok(());
     }
 
