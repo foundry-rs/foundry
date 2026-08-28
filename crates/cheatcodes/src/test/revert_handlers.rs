@@ -111,10 +111,12 @@ fn handle_revert(
         (&stringify(&actual_reason), &stringify(expected_reason))
     };
 
-    // Fall back to raw data if lossy decoding rendered distinct payloads identically.
+    // Lossy decoding can render distinct payloads identically; append the raw data to
+    // disambiguate. Note that `retdata` is the original revert data, unlike `actual_reason`,
+    // which may have been synthesized from the status or unwrapped by `decode_revert`.
     if expected == actual {
         return Err(fmt_err!(
-            "Error != expected error: {} != {}",
+            "Error != expected error: {actual} (raw {}) != {expected} (raw {})",
             hex::encode_prefixed(retdata),
             hex::encode_prefixed(expected_reason)
         ));
