@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 use std::{
     env,
     sync::{
-        LazyLock,
-        atomic::{AtomicUsize, Ordering},
+        Arc, LazyLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -309,6 +309,24 @@ pub async fn spawn_rpc_proxy_rejecting_method_before(
     .await
 }
 
+/// Spawns an RPC proxy whose rejection of `method` can be enabled after startup.
+pub async fn spawn_rpc_proxy_rejecting_method_when_enabled(
+    endpoint: String,
+    method: &'static str,
+) -> (String, Arc<AtomicBool>) {
+    let enabled = Arc::new(AtomicBool::new(false));
+    let proxy = spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::Enabled(enabled.clone()),
+        StatusCode::FORBIDDEN,
+        -32004,
+        "method is not allowed",
+    )
+    .await;
+    (proxy, enabled)
+}
+
 /// Spawns an RPC proxy that returns method-not-found for the first `unavailable_calls` requests to
 /// `method`.
 pub async fn spawn_rpc_proxy_method_not_found_before(
@@ -345,6 +363,24 @@ pub async fn spawn_rpc_proxy_invalid_request_before(
     .await
 }
 
+/// Spawns an RPC proxy that returns a JSON-RPC internal error for `method` after forwarding
+/// `successful_calls` requests.
+pub async fn spawn_rpc_proxy_internal_error_after(
+    endpoint: String,
+    method: &'static str,
+    successful_calls: usize,
+) -> String {
+    spawn_rpc_proxy_rejecting_method(
+        endpoint,
+        method,
+        RpcMethodRejection::After(successful_calls),
+        StatusCode::OK,
+        -32603,
+        "internal error",
+    )
+    .await
+}
+
 /// Spawns an RPC proxy that returns a vendor-specific JSON-RPC error for `method` after
 /// forwarding `successful_calls` requests.
 pub async fn spawn_rpc_proxy_erroring_method_after(
@@ -363,17 +399,19 @@ pub async fn spawn_rpc_proxy_erroring_method_after(
     .await
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum RpcMethodRejection {
     Before(usize),
     After(usize),
+    Enabled(Arc<AtomicBool>),
 }
 
 impl RpcMethodRejection {
-    const fn rejects(self, call: usize) -> bool {
+    fn rejects(&self, call: usize) -> bool {
         match self {
-            Self::Before(rejected_calls) => call < rejected_calls,
-            Self::After(successful_calls) => call >= successful_calls,
+            Self::Before(rejected_calls) => call < *rejected_calls,
+            Self::After(successful_calls) => call >= *successful_calls,
+            Self::Enabled(enabled) => enabled.load(Ordering::SeqCst),
         }
     }
 }
@@ -394,6 +432,7 @@ async fn spawn_rpc_proxy_rejecting_method(
             let client = client.clone();
             let endpoint = endpoint.clone();
             let calls = calls.clone();
+            let rejection = rejection.clone();
             async move {
                 if request.get("method").and_then(Value::as_str) == Some(method)
                     && rejection.rejects(calls.fetch_add(1, Ordering::Relaxed))

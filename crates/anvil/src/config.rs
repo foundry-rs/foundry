@@ -39,7 +39,7 @@ use anvil_server::ServerConfig;
 use eyre::{Context, Result};
 use foundry_common::{
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, REQUEST_TIMEOUT,
-    provider::{ProviderBuilder, RetryProvider, is_rpc_method_not_found, redact_url},
+    provider::{NO_PARAMS, ProviderBuilder, RetryProvider, is_rpc_method_not_found, redact_url},
 };
 use foundry_config::Config;
 use foundry_evm::{
@@ -104,7 +104,12 @@ struct StableForkSnapshot {
     gas_price: u128,
 }
 
-/// Tracks whether `anvil_nodeInfo` has positively identified the endpoint as Anvil.
+/// Best-effort Anvil detection that becomes strict after positive identification.
+///
+/// Before the first successful `anvil_nodeInfo` response, any probe failure means that the
+/// optional capability is unavailable. Mandatory standard RPC reads still expose endpoint-wide
+/// failures. Once a response or cached endpoint identity identifies Anvil, every later probe
+/// failure is returned so it cannot hide an endpoint reset or execution-profile change.
 #[derive(Clone, Copy, Debug, Default)]
 struct AnvilNodeInfoProbe {
     identified: bool,
@@ -116,12 +121,12 @@ impl AnvilNodeInfoProbe {
     }
 
     async fn request(&mut self, provider: &RetryProvider) -> Result<Option<NodeInfo>> {
-        match provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await {
+        match provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), NO_PARAMS).await {
             Ok(node_info) => {
                 self.identified = true;
                 Ok(Some(node_info))
             }
-            Err(error) if !self.identified && is_rpc_method_not_found(&error) => Ok(None),
+            Err(_) if !self.identified => Ok(None),
             Err(error) => {
                 Err(error).wrap_err("failed to determine network family from fork endpoint")
             }
@@ -216,6 +221,8 @@ pub struct NodeConfig {
     pub fork_source_chain_id: Option<u64>,
     /// Chain ID exposed by the active fork endpoint.
     pub fork_execution_chain_id: Option<u64>,
+    /// Whether the active fork endpoint has positively identified itself as Anvil.
+    pub(crate) fork_endpoint_is_anvil: bool,
     /// Network family most recently inferred from a fork endpoint.
     inferred_fork_network: Option<NetworkVariant>,
     /// Network configuration replaced by chain-ID inference, if any.
@@ -606,6 +613,7 @@ impl Default for NodeConfig {
             fork_chain_id: None,
             fork_source_chain_id: None,
             fork_execution_chain_id: None,
+            fork_endpoint_is_anvil: false,
             inferred_fork_network: None,
             chain_id_network_base: None,
             fork_overrides: None,
@@ -1010,7 +1018,11 @@ impl NodeConfig {
     #[must_use]
     pub fn with_eth_rpc_url<U: Into<String>>(mut self, eth_rpc_url: Option<U>) -> Self {
         if let Some(url) = eth_rpc_url {
-            self.fork_urls = vec![url.into()];
+            let fork_urls = vec![url.into()];
+            if self.fork_urls != fork_urls {
+                self.fork_endpoint_is_anvil = false;
+            }
+            self.fork_urls = fork_urls;
         }
         self
     }
@@ -1018,6 +1030,9 @@ impl NodeConfig {
     /// Sets the fork URLs for load-balanced multi-endpoint forking.
     #[must_use]
     pub fn with_fork_urls(mut self, fork_urls: Vec<String>) -> Self {
+        if self.fork_urls != fork_urls {
+            self.fork_endpoint_is_anvil = false;
+        }
         self.fork_urls = fork_urls;
         self
     }
@@ -1563,7 +1578,7 @@ impl NodeConfig {
             instance_id,
             source_fork_block_number,
             source_fork_block_hash,
-        ) = match provider.raw_request::<_, Metadata>("anvil_metadata".into(), ()).await {
+        ) = match provider.raw_request::<_, Metadata>("anvil_metadata".into(), NO_PARAMS).await {
             Ok(metadata) => (
                 metadata.chain_id,
                 source_chain_id_override.unwrap_or_else(|| {
@@ -1681,7 +1696,7 @@ impl NodeConfig {
         provider: &Arc<RetryProvider>,
         fork_overrides: ForkOverrides,
     ) -> Result<StableForkSnapshot> {
-        let mut node_info_probe = AnvilNodeInfoProbe::default();
+        let mut node_info_probe = AnvilNodeInfoProbe::new(self.fork_endpoint_is_anvil);
         for _ in 0..3 {
             let before =
                 self.resolved_fork_endpoint_identity(provider, &mut node_info_probe).await?;
@@ -1847,6 +1862,7 @@ impl NodeConfig {
             block,
             gas_price,
         } = self.stable_fork_snapshot(&provider, fork_overrides).await?;
+        self.fork_endpoint_is_anvil = fork_identity.is_authoritative();
 
         let target_network = fork_identity.network.unwrap_or(NetworkVariant::Ethereum);
         let target_profile = fork_identity.network_profile.unwrap_or_default();

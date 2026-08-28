@@ -77,7 +77,10 @@ impl ForkEndpointIdentity {
     }
 }
 
-/// Ensures the fork network can be executed by Anvil's EVM backend.
+/// Ensures the discovered upstream source network can be executed by Anvil's EVM backend.
+///
+/// This validates the source identity after discovery; a local chain-ID override does not change
+/// which bytecode format the remote fork state contains.
 pub(crate) fn ensure_fork_network_supported(chain_id: u64) -> Result<(), BlockchainError> {
     if matches!(NamedChain::try_from(chain_id), Ok(NamedChain::ZkSync | NamedChain::ZkSyncTestnet))
     {
