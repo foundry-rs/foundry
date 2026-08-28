@@ -115,8 +115,12 @@ pub struct CallArgs {
     ///
     /// The destination's runtime code is applied as a code override on the `--from` address and
     /// the call is then made to that address, so the destination's code runs in the caller's
-    /// storage context, exactly as an on-chain `delegatecall` would.
-    #[arg(long, requires = "from")]
+    /// storage context, like an on-chain `delegatecall`.
+    ///
+    /// Note that the executed code observes `msg.sender` (and `tx.origin`) equal to the `--from`
+    /// address itself, whereas in an on-chain `delegatecall` `msg.sender` is preserved from the
+    /// delegating contract's own caller.
+    #[arg(long, requires = "from", conflicts_with = "browser")]
     delegate: bool,
 
     /// Fetch the call trace from the node via `debug_traceCall` (callTracer) and render it,
@@ -395,33 +399,32 @@ impl CallArgs {
 
         // A `delegatecall` runs the destination's code against the caller's storage, which
         // `eth_call` cannot express. Overriding the caller's code with the destination's and
-        // then calling the caller reproduces exactly that context.
+        // then calling the caller reproduces that context. The retarget to the caller happens
+        // after the transaction is built, so calldata encoding and function resolution still
+        // see the destination.
         if delegate {
+            if command.is_some() {
+                eyre::bail!("`--delegate` cannot be combined with `--create`");
+            }
             let Some(target) = to else {
                 eyre::bail!("`--delegate` requires a destination address");
             };
             let target = target.resolve(&provider).await?;
+            let overrides = state_overrides.get_or_insert_with(Default::default);
+            if overrides.get(&from).is_some_and(|account| account.code.is_some()) {
+                eyre::bail!("`--delegate` conflicts with `--override-code` for the sender {from}");
+            }
             // A code override for the destination is the state this call runs against, so it
             // takes precedence over the deployed code.
-            let code = match state_overrides
-                .as_ref()
-                .and_then(|overrides| overrides.get(&target))
-                .and_then(|account| account.code.clone())
-            {
+            let code = match overrides.get(&target).and_then(|account| account.code.clone()) {
                 Some(code) => code,
                 None => provider.get_code_at(target).block_id(block.unwrap_or_default()).await?,
             };
             if code.is_empty() {
                 eyre::bail!("`--delegate` destination {target} has no code to delegate to");
             }
-
-            let account =
-                state_overrides.get_or_insert_with(Default::default).entry(from).or_default();
-            if account.code.is_some() {
-                eyre::bail!("`--delegate` conflicts with `--override-code` for the sender {from}");
-            }
-            account.code = Some(code);
-            to = Some(NameOrAddress::Address(from));
+            overrides.entry(from).or_default().code = Some(code);
+            to = Some(NameOrAddress::Address(target));
         }
 
         let code = if let Some(CallSubcommands::Create {
@@ -456,7 +459,13 @@ impl CallArgs {
         {
             return Ok(());
         }
-        let (tx, func) = builder.build(sender).await?;
+        let (mut tx, func) = builder.build(sender).await?;
+
+        // The delegate override put the destination's code on the sender, so the built call is
+        // aimed at the sender; the calldata above was still encoded against the destination.
+        if delegate {
+            tx.set_to(from);
+        }
 
         if debug_trace_call {
             let endpoint_identity = endpoint_identity
@@ -755,7 +764,10 @@ impl CallArgs {
             .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
             .await?;
 
+        // With `--delegate` the call targets the sender, whose code comes from the override and
+        // was already checked to be non-empty, so the on-chain code lookup would be misleading.
         if response == "0x"
+            && !delegate
             && let Some(contract_address) = tx.to()
         {
             let code = provider.get_code_at(contract_address).await?;
