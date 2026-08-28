@@ -626,10 +626,9 @@ impl CallArgs {
             let (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork) =
                 TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
             let context_block_number = evm_env.block_env.number().saturating_to();
-            // modify settings that usually set in eth_call
+            // Modify settings usually set in eth_call while keeping execution gas bounded.
             evm_env.cfg_env.disable_block_gas_limit = true;
             evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
-            evm_env.block_env.set_gas_limit(u64::MAX);
 
             // Apply the block overrides.
             if let Some(block_overrides) = block_overrides {
@@ -679,8 +678,7 @@ impl CallArgs {
 
             // Apply a user-provided `--gas-limit` to the executor. `build_test_env` propagates the
             // executor's gas limit to the executed call/deploy, so setting it here is what takes
-            // effect; writing it onto the tx env directly would be overwritten. When no limit is
-            // given, the executor keeps the block gas limit (`u64::MAX`) set above.
+            // effect; writing it onto the tx env directly would be overwritten.
             if let Some(gas_limit) = tx.gas_limit() {
                 executor.set_gas_limit(gas_limit);
             }
