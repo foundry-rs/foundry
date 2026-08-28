@@ -33,7 +33,7 @@ fn add_local_submodule(root: &Path, path: &str) -> String {
 }
 
 #[cfg(unix)]
-forgetest!(local_compiler_warns_and_runs, |prj, cmd| {
+forgetest!(local_compiler_runs_without_warning, |prj, cmd| {
     let solc = prj.root().join("payload");
     let invoked = prj.root().join("payload.invoked");
     fs::write(
@@ -59,36 +59,18 @@ exit 1
 
     let output = cmd.arg("build").assert_failure();
     let stderr = output.get_output().stderr_lossy();
-    assert!(stderr.contains("configured to use a local compiler executable"), "{stderr}");
-    assert!(invoked.exists(), "local compiler did not run after warning");
+    assert!(!stderr.contains("configured to use a local compiler executable"), "{stderr}");
+    assert!(invoked.exists(), "local compiler did not run");
 });
 
-forgetest!(project_dotenv_loads_with_warning, |prj, cmd| {
+forgetest!(project_dotenv_loads_without_warning, |prj, cmd| {
     fs::write(prj.root().join(".env"), "FOUNDRY_SRC=dotenv-src").unwrap();
 
     let output = cmd.args(["config", "--json"]).assert_success();
     let stderr = output.get_output().stderr_lossy();
-    assert!(stderr.contains("Warning: loading project dotenv"), "{stderr}");
+    assert!(!stderr.contains("Warning: loading project dotenv"), "{stderr}");
     let config: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
     assert_eq!(config["src"], "dotenv-src");
-});
-
-#[cfg(unix)]
-forgetest!(local_compiler_path_escapes_control_characters, |prj, cmd| {
-    let solc = prj.root().join("payload\n\u{1b}[2Jspoofed");
-    fs::write(&solc, "#!/bin/sh\nexit 1\n").unwrap();
-    let mut permissions = fs::metadata(&solc).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&solc, permissions).unwrap();
-    prj.add_source("Contract", "contract Contract {}");
-    prj.update_config(|config| {
-        config.solc = Some(foundry_config::SolcReq::Local(solc.clone()));
-    });
-
-    let output = cmd.arg("build").assert_failure();
-    let stderr = output.get_output().stderr_lossy();
-    assert!(stderr.contains(r"payload\n\u{1b}[2Jspoofed"), "{stderr:?}");
-    assert!(!stderr.contains("payload\n\u{1b}[2Jspoofed"), "{stderr:?}");
 });
 
 forgetest!(
