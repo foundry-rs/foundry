@@ -84,6 +84,9 @@ use std::str::FromStr;
 ///   --override-state 0x123:0x1:0x1234
 ///   --override-state-diff 0x123:0x1:0x1234
 /// ```
+///
+/// `--delegate` builds on the same mechanism: it overrides the code of the `--from` address with
+/// the destination's code so the call runs as a `delegatecall`.
 #[derive(Debug, Parser)]
 pub struct CallArgs {
     /// The destination of the transaction.
@@ -107,6 +110,14 @@ pub struct CallArgs {
     /// Forks the remote rpc, executes the transaction locally and prints a trace
     #[arg(long, default_value_t = false)]
     trace: bool,
+
+    /// Simulate the call as a `delegatecall` from the `--from` address.
+    ///
+    /// The destination's runtime code is applied as a code override on the `--from` address and
+    /// the call is then made to that address, so the destination's code runs in the caller's
+    /// storage context, exactly as an on-chain `delegatecall` would.
+    #[arg(long, requires = "from")]
+    delegate: bool,
 
     /// Fetch the call trace from the node via `debug_traceCall` (callTracer) and render it,
     /// instead of re-executing the call locally like `--trace`.
@@ -229,6 +240,11 @@ impl CallArgs {
             if self.browser.browser {
                 eyre::bail!("--browser cannot be combined with --curl; use --from <ADDRESS>");
             }
+            if self.delegate {
+                // The code override that makes the call a `delegatecall` is read from the node,
+                // which `--curl` deliberately never contacts.
+                eyre::bail!("--delegate cannot be combined with --curl");
+            }
             return self.run_curl().await;
         }
 
@@ -336,13 +352,13 @@ impl CallArgs {
         <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
     {
         config.networks = evm_opts.networks;
-        let state_overrides = self.get_state_overrides()?;
+        let mut state_overrides = self.get_state_overrides()?;
         let block_overrides = self.get_block_overrides()?;
         config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
         let tracing = config.tracing.clone();
 
         let Self {
-            to,
+            mut to,
             mut sig,
             mut args,
             mut tx,
@@ -357,6 +373,7 @@ impl CallArgs {
             wallet,
             browser,
             force,
+            delegate,
             ..
         } = self;
 
@@ -375,6 +392,37 @@ impl CallArgs {
             SenderKind::from_wallet_opts(wallet).await?
         };
         let from = sender.address();
+
+        // A `delegatecall` runs the destination's code against the caller's storage, which
+        // `eth_call` cannot express. Overriding the caller's code with the destination's and
+        // then calling the caller reproduces exactly that context.
+        if delegate {
+            let Some(target) = to else {
+                eyre::bail!("`--delegate` requires a destination address");
+            };
+            let target = target.resolve(&provider).await?;
+            // A code override for the destination is the state this call runs against, so it
+            // takes precedence over the deployed code.
+            let code = match state_overrides
+                .as_ref()
+                .and_then(|overrides| overrides.get(&target))
+                .and_then(|account| account.code.clone())
+            {
+                Some(code) => code,
+                None => provider.get_code_at(target).block_id(block.unwrap_or_default()).await?,
+            };
+            if code.is_empty() {
+                eyre::bail!("`--delegate` destination {target} has no code to delegate to");
+            }
+
+            let account =
+                state_overrides.get_or_insert_with(Default::default).entry(from).or_default();
+            if account.code.is_some() {
+                eyre::bail!("`--delegate` conflicts with `--override-code` for the sender {from}");
+            }
+            account.code = Some(code);
+            to = Some(NameOrAddress::Address(from));
+        }
 
         let code = if let Some(CallSubcommands::Create {
             code,

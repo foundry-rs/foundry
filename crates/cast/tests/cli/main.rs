@@ -6932,6 +6932,84 @@ Transaction successfully executed.
 "#]]);
 });
 
+// https://github.com/foundry-rs/foundry/issues/11521
+// `--delegate` must run the destination's code against the sender's storage. The destination's
+// runtime returns slot 0, and only the sender holds a value there, so a plain call returns zero
+// and the delegated call returns the sender's value.
+casttest!(cast_call_delegate_uses_sender_storage, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let from = "0x00000000000000000000000000000000000000d0";
+    let to = "0x00000000000000000000000000000000000000d1";
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--from",
+            from,
+            "--delegate",
+            // runtime: PUSH1 0 SLOAD PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+            "--override-code",
+            &format!("{to}:0x60005460005260206000f3"),
+            "--override-state",
+            &format!("{from}:0x0:0x1234"),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+4660
+
+"#]]);
+
+    // Without `--delegate` the same call runs against the destination's own empty storage.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--from",
+            from,
+            "--override-code",
+            &format!("{to}:0x60005460005260206000f3"),
+            "--override-state",
+            &format!("{from}:0x0:0x1234"),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0
+
+"#]]);
+});
+
+// A code override on the sender is what `--delegate` installs, so the two cannot both win.
+casttest!(cast_call_delegate_rejects_sender_code_override, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let from = "0x00000000000000000000000000000000000000d2";
+    let to = "0x00000000000000000000000000000000000000d3";
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "--from",
+            from,
+            "--delegate",
+            "--override-code",
+            &format!("{to}:0x60005460005260206000f3,{from}:0x00"),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: `--delegate` conflicts with `--override-code` for the sender 0x00000000000000000000000000000000000000D2
+
+"#]]);
+});
+
 // `--debug-trace-call` must render a multi-node trace (a call that emits a log AND makes a
 // sub-call), exercising the log/sub-call interleaving and nesting through the real pipeline, not
 // just in the unit tests. The overridden runtime emits a LOG0 then STATICCALLs the identity
