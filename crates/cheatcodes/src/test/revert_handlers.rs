@@ -69,7 +69,7 @@ fn handle_revert(
         return Ok(());
     };
 
-    let mut actual_revert = if retdata.is_empty() && !expected_reason.is_empty() {
+    let actual_revert = if retdata.is_empty() && !expected_reason.is_empty() {
         if status == InstructionResult::Revert {
             bail!("call reverted as expected, but without data");
         }
@@ -83,34 +83,37 @@ fn handle_revert(
         return Ok(());
     }
 
-    // Compare raw data before decoding, which may ignore trailing ABI data.
+    // Compare complete payloads before decoding, which may ignore trailing ABI data.
     if actual_revert == expected_reason {
         return Ok(());
     }
 
-    // Try decoding as known errors.
-    actual_revert = decode_revert(actual_revert);
+    // Unwrap string errors for legacy raw-message matching.
+    let actual_reason = decode_revert(actual_revert);
 
-    if actual_revert == expected_reason
-        || (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
+    if actual_reason == expected_reason
+        || (is_cheatcode && memchr::memmem::find(&actual_reason, expected_reason).is_some())
     {
         return Ok(());
     }
 
-    let (mut actual, mut expected) = if let Some(contracts) = known_contracts {
+    let (actual, expected) = if let Some(contracts) = known_contracts {
         let decoder = RevertDecoder::new().with_abis(contracts.values().map(|c| &c.abi));
         (
-            decoder.decode(actual_revert.as_slice(), Some(status)),
-            decoder.decode(expected_reason, Some(status)),
+            &decoder.decode(actual_reason.as_slice(), Some(status)),
+            &decoder.decode(expected_reason, Some(status)),
         )
     } else {
-        (stringify(&actual_revert), stringify(expected_reason))
+        (&stringify(&actual_reason), &stringify(expected_reason))
     };
 
     // Fall back to raw data if lossy decoding rendered distinct payloads identically.
     if expected == actual {
-        actual = hex::encode_prefixed(retdata);
-        expected = hex::encode_prefixed(expected_reason);
+        return Err(fmt_err!(
+            "Error != expected error: {} != {}",
+            hex::encode_prefixed(retdata),
+            hex::encode_prefixed(expected_reason)
+        ));
     }
 
     Err(fmt_err!("Error != expected error: {} != {}", actual, expected))
