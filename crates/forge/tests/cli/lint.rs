@@ -897,6 +897,32 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 "#]]);
 });
 
+forgetest!(build_lint_resolves_imports_with_explicit_root, |prj, cmd| {
+    prj.add_source("Imported", "contract Imported {}");
+    prj.add_source(
+        "RelativeImporter",
+        r#"
+import {Imported} from "./Imported.sol";
+
+contract RelativeImporter is Imported {}
+"#,
+    );
+    prj.add_source(
+        "Importer",
+        r#"
+import {RelativeImporter} from "src/RelativeImporter.sol";
+
+contract Importer is RelativeImporter {}
+"#,
+    );
+
+    let root = prj.root();
+    cmd.current_dir(root.parent().unwrap())
+        .args(["build", "--force", "--no-cache", "--root"])
+        .arg(root.file_name().unwrap())
+        .assert_success();
+});
+
 forgetest!(build_no_lint_flag_skips_lint, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT);
 
