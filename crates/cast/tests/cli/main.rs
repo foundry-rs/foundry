@@ -6932,6 +6932,240 @@ Transaction successfully executed.
 "#]]);
 });
 
+// https://github.com/foundry-rs/foundry/issues/11521
+// `--delegate` must run the destination's code against the sender's storage. The destination's
+// runtime returns slot 0, and only the sender holds a value there, so a plain call returns zero
+// and the delegated call returns the sender's value.
+casttest!(cast_call_delegate_uses_sender_storage, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let from = "0x00000000000000000000000000000000000000d0";
+    let to = "0x00000000000000000000000000000000000000d1";
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--from",
+            from,
+            "--delegate",
+            // runtime: PUSH1 0 SLOAD PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+            "--override-code",
+            &format!("{to}:0x60005460005260206000f3"),
+            "--override-state",
+            &format!("{from}:0x0:0x1234"),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+4660
+
+"#]]);
+
+    // Without `--delegate` the same call runs against the destination's own empty storage.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--from",
+            from,
+            "--override-code",
+            &format!("{to}:0x60005460005260206000f3"),
+            "--override-state",
+            &format!("{from}:0x0:0x1234"),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0
+
+"#]]);
+});
+
+// A code override on the sender is what `--delegate` installs, so the two cannot both win.
+casttest!(cast_call_delegate_rejects_sender_code_override, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let from = "0x00000000000000000000000000000000000000d2";
+    let to = "0x00000000000000000000000000000000000000d3";
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "--from",
+            from,
+            "--delegate",
+            "--override-code",
+            &format!("{to}:0x60005460005260206000f3,{from}:0x00"),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: `--delegate` conflicts with `--override-code` for the sender 0x00000000000000000000000000000000000000D2
+
+"#]]);
+});
+
+// The primary `--delegate` path reads the destination's runtime code from the node: no override
+// flags are involved, the delegated code and the sender's storage both come from chain state.
+casttest!(cast_call_delegate_fetches_code_from_node, async |_prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let from = "0x00000000000000000000000000000000000000d4";
+    let to = "0x00000000000000000000000000000000000000d5";
+
+    // runtime: PUSH1 0 SLOAD PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+    api.anvil_set_code(to.parse().unwrap(), "0x60005460005260206000f3".parse().unwrap())
+        .await
+        .unwrap();
+    api.anvil_set_storage_at(from.parse().unwrap(), U256::ZERO, B256::from(U256::from(0x1234)))
+        .await
+        .unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--from",
+            from,
+            "--delegate",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+4660
+
+"#]]);
+
+    // A delegated call that returns no data must not trip the empty-code warning: the sender has
+    // no on-chain code, but the delegate override guarantees executable code.
+    let void = "0x00000000000000000000000000000000000000d6";
+    // runtime: STOP
+    api.anvil_set_code(void.parse().unwrap(), "0x00".parse().unwrap()).await.unwrap();
+    cmd.cast_fuse()
+        .args(["call", void, "--from", from, "--delegate", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x
+
+"#]])
+        .stderr_eq(str![""]);
+});
+
+// The motivating invocation in issue #11521 is `cast call --trace --from <safe> <to>`, so the
+// delegate override must reach the local tracing executor as well. The trace shows the call
+// executing at the sender address, which is where the delegated code runs.
+casttest!(cast_call_delegate_trace_uses_sender_storage, async |_prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let from = "0x00000000000000000000000000000000000000d7";
+    let to = "0x00000000000000000000000000000000000000d8";
+
+    // runtime: PUSH1 0 SLOAD PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+    api.anvil_set_code(to.parse().unwrap(), "0x60005460005260206000f3".parse().unwrap())
+        .await
+        .unwrap();
+    api.anvil_set_storage_at(from.parse().unwrap(), U256::ZERO, B256::from(U256::from(0x1234)))
+        .await
+        .unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--from",
+            from,
+            "--delegate",
+            "--trace",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x00000000000000000000000000000000000000d7::number()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// Documents the identity semantics: the delegated code observes the sender itself as
+// `msg.sender`, not the delegating contract's caller as an on-chain `delegatecall` would.
+casttest!(cast_call_delegate_msg_sender_is_from, async |_prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let from = "0x00000000000000000000000000000000000000d9";
+    let to = "0x00000000000000000000000000000000000000da";
+
+    // runtime: CALLER PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+    api.anvil_set_code(to.parse().unwrap(), "0x3360005260206000f3".parse().unwrap()).await.unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "sender()(address)",
+            "--from",
+            from,
+            "--delegate",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x00000000000000000000000000000000000000D9
+
+"#]]);
+});
+
+// `--delegate` needs runtime code at the destination; a codeless address is an explicit error.
+casttest!(cast_call_delegate_no_code_destination, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x00000000000000000000000000000000000000db",
+            "number()(uint256)",
+            "--from",
+            "0x00000000000000000000000000000000000000dc",
+            "--delegate",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: `--delegate` destination 0x00000000000000000000000000000000000000db has no code to delegate to
+
+"#]]);
+});
+
+// `--curl` builds the request offline, but the delegate override needs the destination's code
+// from the node.
+casttest!(cast_call_delegate_rejects_curl, |_prj, cmd| {
+    cmd.args([
+        "call",
+        "0x00000000000000000000000000000000000000dd",
+        "--from",
+        "0x00000000000000000000000000000000000000de",
+        "--delegate",
+        "--curl",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: --delegate cannot be combined with --curl
+
+"#]]);
+});
+
 // `--debug-trace-call` must render a multi-node trace (a call that emits a log AND makes a
 // sub-call), exercising the log/sub-call interleaving and nesting through the real pipeline, not
 // just in the unit tests. The overridden runtime emits a LOG0 then STATICCALLs the identity
