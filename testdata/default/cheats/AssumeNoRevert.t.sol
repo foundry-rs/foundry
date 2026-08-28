@@ -57,6 +57,13 @@ contract Reverter {
         }
         return true;
     }
+
+    function revertWithMessageIf2(uint256 value) public pure returns (bool) {
+        if (value == 2) {
+            revert("revert message");
+        }
+        return true;
+    }
 }
 
 contract ReverterTest is Test {
@@ -130,6 +137,26 @@ contract ReverterTest is Test {
         });
         vm.assumeNoRevert(revertData);
         reverter.twoPossibleReverts(x);
+    }
+
+    /// @dev Test that `assumeNoRevert` anticipates a byte-exact ABI-encoded `Error(string)` payload
+    function testAssumeErrorStringExact(uint256 x) public view {
+        vm.assumeNoRevert(
+            Vm.PotentialRevert({
+                revertData: abi.encodeWithSignature("Error(string)", "revert message"),
+                partialMatch: false,
+                reverter: address(0)
+            })
+        );
+        reverter.revertWithMessageIf2(x);
+    }
+
+    /// @dev Test that `assumeNoRevert` anticipates a bare string reason for a standard `revert(string)`
+    function testAssumeErrorStringBareReason(uint256 x) public view {
+        vm.assumeNoRevert(
+            Vm.PotentialRevert({revertData: bytes("revert message"), partialMatch: false, reverter: address(0)})
+        );
+        reverter.revertWithMessageIf2(x);
     }
 
     /// @dev Test that `assumeNoRevert` correctly interacts with itself when partially matching on the error selector
