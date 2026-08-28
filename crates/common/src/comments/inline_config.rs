@@ -184,6 +184,16 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         Self { disabled_ranges: HashMap::new() }
     }
 
+    /// Merges the disabled ranges of another config into this one.
+    ///
+    /// Ranges are absolute positions in the shared source map and never cross a file boundary,
+    /// so configs built from different files stay unambiguous once merged.
+    pub fn extend(&mut self, other: Self) {
+        for (id, ranges) in other.disabled_ranges {
+            self.disabled_ranges.entry(id).or_default().extend(ranges);
+        }
+    }
+
     fn disable_many(&mut self, ids: I, range: DisabledRange) {
         for id in ids.into_iter() {
             self.disable(id, range);

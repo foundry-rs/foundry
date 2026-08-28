@@ -18,7 +18,7 @@ use solar::{
         ColorChoice, Session,
         diagnostics::{HumanEmitter, JsonEmitter, Level, SilentEmitter},
     },
-    sema::Compiler,
+    sema::{Compiler, Gcx},
 };
 use solar_lint::{LintRegistry, LintRunContext, LintRunError, LintSource, LintSuite, run_lints};
 use std::{
@@ -54,8 +54,11 @@ static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 static DEFAULT_LINT_SPECIFIC_CONFIG: LazyLock<LintSpecificConfig> =
     LazyLock::new(LintSpecificConfig::default);
 
+/// Prefix of an inline lint directive comment.
+const INLINE_CONFIG_PREFIX: &str = "forge-lint:";
+
 struct OwnedLintPolicy {
-    inline: Option<InlineConfig<Vec<String>>>,
+    inline: Option<Arc<InlineConfig<Vec<String>>>>,
     active: Vec<&'static str>,
 }
 
@@ -73,6 +76,7 @@ impl LintPolicy for OwnedLintPolicy {
 #[derive(Clone)]
 pub struct ForgeLintSuite {
     path_config: ProjectPathsConfig,
+    inline: Arc<InlineConfig<Vec<String>>>,
     severity: Option<Vec<Severity>>,
     lints_included: Option<Vec<SolLint>>,
     lints_excluded: Option<Vec<SolLint>>,
@@ -126,9 +130,11 @@ impl LintSuite for ForgeLintSuite {
     }
 
     fn source_policy(&self, source: LintSource<'_, '_>) -> Arc<dyn LintPolicy> {
-        let comments = Comments::new(source.file, source.session.source_map(), false, false, None);
+        // The directives of every source are shared by every policy: a late pass visiting this
+        // source can report a span that belongs to another file, and only that file's directives
+        // can suppress it.
         Arc::new(OwnedLintPolicy {
-            inline: Some(parse_inline_config(source.session, &comments, source.ast)),
+            inline: Some(self.inline.clone()),
             active: self.active_lints(Some(source.path)),
         })
     }
@@ -203,7 +209,7 @@ impl<'a> SolidityLinter<'a> {
     }
 
     /// Returns an owned lint suite suitable for CLI or LSP execution.
-    pub fn to_suite(&self) -> ForgeLintSuite {
+    pub fn to_suite(&self, inline: InlineConfig<Vec<String>>) -> ForgeLintSuite {
         let lint_specific = Arc::new(self.lint_specific.clone());
         let mut registry = LintRegistry::new();
         high::register_lints(&mut registry, &lint_specific);
@@ -215,6 +221,7 @@ impl<'a> SolidityLinter<'a> {
 
         ForgeLintSuite {
             path_config: self.path_config.clone(),
+            inline: Arc::new(inline),
             severity: self.severity.clone(),
             lints_included: self.lints_included.clone(),
             lints_excluded: self.lints_excluded.clone(),
@@ -292,7 +299,7 @@ impl<'a> Linter for SolidityLinter<'a> {
                 }
             }
 
-            let suite = self.to_suite();
+            let suite = self.to_suite(collect_inline_config(gcx, &targets));
             run_lints(
                 &suite,
                 LintRunContext {
@@ -361,10 +368,35 @@ impl<'a> Linter for SolidityLinter<'a> {
     }
 }
 
+/// Collects the inline `forge-lint:` directives of every parsed source into a single config.
+///
+/// A late pass walks the HIR reachable from the source it visits, so it can report a span that
+/// lives in an inherited base contract or in a dependency. Disabled ranges are absolute positions
+/// in the shared source map and never cross a file boundary, so merging the directives of every
+/// source lets a directive suppress a finding wherever it is reported, without widening its reach
+/// beyond its own file.
+fn collect_inline_config(gcx: Gcx<'_>, targets: &[PathBuf]) -> InlineConfig<Vec<String>> {
+    let sess = gcx.sess;
+    let mut config = InlineConfig::default();
+    for source in gcx.sources.iter() {
+        // Lexing the comments of every dependency is wasted work when it holds no directive.
+        let Some(ast) = source.ast.as_ref() else { continue };
+        if !source.file.src.contains(INLINE_CONFIG_PREFIX) {
+            continue;
+        }
+        // A malformed directive is only actionable in a file the user asked to lint.
+        let report_errors = targets.iter().any(|target| source.file.name == **target);
+        let comments = Comments::new(&source.file, sess.source_map(), false, false, None);
+        config.extend(parse_inline_config(sess, &comments, ast, report_errors));
+    }
+    config
+}
+
 fn parse_inline_config<'ast>(
     sess: &Session,
     comments: &Comments,
     ast: &'ast ast::SourceUnit<'ast>,
+    report_errors: bool,
 ) -> InlineConfig<Vec<String>> {
     let items = comments.iter().filter_map(|comment| {
         let mut item = comment.lines.first()?.as_str();
@@ -374,12 +406,14 @@ fn parse_inline_config<'ast>(
         if let Some(suffix) = comment.suffix() {
             item = item.strip_suffix(suffix).unwrap_or(item);
         }
-        let item = item.trim_start().strip_prefix("forge-lint:")?.trim();
+        let item = item.trim_start().strip_prefix(INLINE_CONFIG_PREFIX)?.trim();
         let span = comment.span;
         match InlineConfigItem::parse(item, &ALL_REGISTERED_LINTS) {
             Ok(item) => Some((span, item)),
             Err(e) => {
-                sess.dcx.warn(e.to_string()).span(span).emit();
+                if report_errors {
+                    sess.dcx.warn(e.to_string()).span(span).emit();
+                }
                 None
             }
         }

@@ -1,0 +1,8 @@
+warning[uninitialized-state]: state variable is read but never written
+   ╭▸ ROOT/testdata/auxiliary/InlineConfigInheritedBase.sol:LL:CC
+   │
+LL │     uint256 internal reported;
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
+
