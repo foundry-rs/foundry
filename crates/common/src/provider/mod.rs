@@ -17,7 +17,7 @@ use alloy_provider::{
     fillers::{FillProvider, JoinFill, RecommendedFillers, WalletFiller},
     network::{AnyNetwork, EthereumWallet},
 };
-use alloy_rpc_client::{ClientBuilder, NoParams};
+use alloy_rpc_client::ClientBuilder;
 use alloy_transport::{
     TransportError, TransportFut, layers::RetryBackoffLayer, utils::guess_local_url,
 };
@@ -550,12 +550,6 @@ pub fn is_rpc_method_not_found(error: &TransportError) -> bool {
     rpc_error_code(error) == Some(-32601)
 }
 
-/// Empty JSON-RPC parameters, serialized as `[]`.
-///
-/// Passing `()` to a raw request serializes to `"params": null`, but JSON-RPC parameters must be
-/// an array or object when present.
-pub const NO_PARAMS: NoParams = [];
-
 /// Returns an RPC URL safe for display by retaining only its scheme, host, and port.
 pub fn redact_url(raw: &str) -> String {
     let Ok(mut redacted) = Url::parse(raw) else {
@@ -694,11 +688,6 @@ mod tests {
         assert!(!is_rpc_method_not_found(&internal_error));
         assert!(!is_rpc_method_not_found(&http_internal_error));
         assert!(!is_rpc_method_not_found(&transport_error));
-    }
-
-    #[test]
-    fn no_params_serializes_as_empty_array() {
-        assert_eq!(serde_json::to_value(NO_PARAMS).unwrap(), serde_json::json!([]));
     }
 
     #[test]

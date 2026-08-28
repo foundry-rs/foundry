@@ -18,7 +18,7 @@ use alloy_rpc_types::{
 use eyre::{OptionExt, WrapErr};
 use foundry_common::{
     ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING,
-    provider::{NO_PARAMS, ProviderBuilder, is_rpc_method_not_found},
+    provider::{ProviderBuilder, is_rpc_method_not_found},
 };
 use foundry_config::{Chain, Config, ExecutionSpec, FoundryHardfork, GasLimit};
 use foundry_evm_hardforks::TempoHardfork;
@@ -207,7 +207,7 @@ impl AnvilNodeInfoProbe {
         &mut self,
         provider: &P,
     ) -> eyre::Result<Option<NodeInfo>> {
-        match provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), NO_PARAMS).await {
+        match provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await {
             Ok(node_info) => {
                 self.identified = true;
                 Ok(Some(node_info))
@@ -785,10 +785,7 @@ impl EvmOpts {
                     instance_id,
                     source_fork_block_number,
                     source_fork_block_hash,
-                ) = match provider
-                    .raw_request::<_, Metadata>("anvil_metadata".into(), NO_PARAMS)
-                    .await
-                {
+                ) = match provider.raw_request::<_, Metadata>("anvil_metadata".into(), ()).await {
                     Ok(metadata) => {
                         let forked_network = metadata.forked_network;
                         (
