@@ -1,12 +1,13 @@
 //! Tests for pinning remote traces to one canonical block context.
 
+use alloy_hardforks::EthereumHardfork;
 use alloy_network::{BlockResponse, TransactionBuilder, primitives::HeaderResponse};
 use alloy_primitives::{B256, address, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use anvil::{NodeConfig, NodeHandle};
 use axum::{Json, Router, routing::post};
-use foundry_test_utils::util::OutputExt;
+use foundry_test_utils::{str, util::OutputExt};
 use serde_json::{Value, json};
 use std::{
     slice,
@@ -19,6 +20,8 @@ use std::{
 #[derive(Clone)]
 enum ResponseMutation {
     None,
+    /// Rejects the `anvil_` namespace so the endpoint looks like a plain non-Anvil node.
+    HideAnvilNamespace,
     ReceiptBlockHash {
         tx_hash: String,
         replacement: String,
@@ -97,6 +100,16 @@ fn mutate_rpc_response(request: &Value, response: &mut Value, mutation: &Respons
 fn mutate_rpc_result(request: &Value, response: &mut Value, mutation: &ResponseMutation) {
     let Some(method) = request.get("method").and_then(Value::as_str) else { return };
     let requested_target = request.pointer("/params/0").and_then(Value::as_str);
+
+    if matches!(mutation, ResponseMutation::HideAnvilNamespace) && method.starts_with("anvil_") {
+        let id = response.get("id").cloned().unwrap_or(Value::Null);
+        *response = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": -32601, "message": "Method not found" }
+        });
+        return;
+    }
 
     if let ResponseMutation::MissingTransactionBlock { block_hash } = mutation
         && method == "eth_getBlockByHash"
@@ -372,4 +385,42 @@ casttest!(cast_run_remote_trace_rejects_canonical_block_mismatch, async |_prj, c
         .stderr_lossy();
     assert!(output.contains("canonical block lookup reported block"), "{output}");
     assert!(output.contains("changed inclusion"), "{output}");
+});
+
+casttest!(cast_call_fork_trace_uses_header_hardfork_for_unknown_chain, async |_prj, cmd| {
+    // Chain 999 has no activation schedule Foundry knows about, and hiding the `anvil_`
+    // namespace makes the endpoint look like a plain node, so the fork block header is the only
+    // evidence for the chain's hardfork.
+    let (api, handle) = anvil::spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(999u64))
+            .with_hardfork(Some(EthereumHardfork::Cancun.into())),
+    )
+    .await;
+    api.mine_one().await.unwrap();
+    let (endpoint, _) =
+        spawn_recording_rpc_proxy(handle.http_endpoint(), ResponseMutation::HideAnvilNamespace)
+            .await;
+
+    // At Cancun `0x0b` is an empty account and the call succeeds without consuming gas;
+    // resolving ahead of the chain would activate the BLS12-381 G1 add precompile there, which
+    // rejects empty input with a `PrecompileError`.
+    cmd.args([
+        "call",
+        "0x000000000000000000000000000000000000000B",
+        "--trace",
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Traces:
+  [0] PRECOMPILES::bls12G1Add(0x, 0x)
+    └─ ← [Stop] 0x
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
 });
