@@ -52,14 +52,14 @@ jobs:
           BASE_SEPOLIA_RPC_URL: ${{ secrets.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org' }}
           MONAD_TESTNET_RPC_URL: ${{ secrets.MONAD_TESTNET_RPC_URL || 'https://testnet-rpc.monad.xyz' }}
           ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL || 'https://rpc.testnet.chain.robinhood.com' }}
-          TEST_PRIVATE_KEY: ${{ secrets.TEST_PRIVATE_KEY }}
+          TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.FUNDED_TESTNET_PKEY }}
         shell: bash
         run: |
-          if [[ -z "$TEST_PRIVATE_KEY" ]]; then
-            echo "::error::TEST_PRIVATE_KEY is not set; every deploy+verify test would silently no-op."
+          if [[ -z "$TESTNET_DEPLOYER_PRIVATE_KEY" ]]; then
+            echo "::error::FUNDED_TESTNET_PKEY is not set; every deploy+verify test would silently no-op."
             exit 1
           fi
-          cargo run --locked --bin cast -- wallet address "$TEST_PRIVATE_KEY" > deployer.txt
+          cargo run --locked --bin cast -- wallet address "$TESTNET_DEPLOYER_PRIVATE_KEY" > deployer.txt
           addr=$(cat deployer.txt)
           echo "Deployer: $addr"
           for net in HOODI SEPOLIA BASE_SEPOLIA MONAD_TESTNET ROBINHOOD_TESTNET; do
@@ -84,9 +84,9 @@ jobs:
           BASE_SEPOLIA_RPC_URL: ${{ secrets.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org' }}
           MONAD_TESTNET_RPC_URL: ${{ secrets.MONAD_TESTNET_RPC_URL || 'https://testnet-rpc.monad.xyz' }}
           ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL || 'https://rpc.testnet.chain.robinhood.com' }}
-          # Funded deployer, shared by every network. A per-network override is possible via
-          # <NETWORK>_PRIVATE_KEY.
-          TEST_PRIVATE_KEY: ${{ secrets.TEST_PRIVATE_KEY }}
+          # Funded throwaway deployer, shared by every network. Holds testnet funds only, and is
+          # topped up by hand; a per-network override is possible via <NETWORK>_PRIVATE_KEY.
+          TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.FUNDED_TESTNET_PKEY }}
           # `etherscan_key` reads ETHERSCAN_API_KEY, which is a different variable from the
           # ETHERSCAN_KEY that the regular test workflow exports for `foundry_test_utils::rpc`.
           ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}

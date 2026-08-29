@@ -41,7 +41,7 @@ retries = { backoff = "exponential", count = 5, delay = "10s", jitter = true }
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 # Profile for the on-chain deploy+verify tests (used by the nightly test-deploy-verify workflow).
-# Requires <NETWORK>_RPC_URL plus TEST_PRIVATE_KEY (or <NETWORK>_PRIVATE_KEY) to do anything.
+# Requires <NETWORK>_RPC_URL plus TESTNET_DEPLOYER_PRIVATE_KEY to do anything.
 # Run with: cargo nextest run --profile deploy-verify
 [profile.deploy-verify]
 default-filter = "test(/deploy_verify_/)"

@@ -30,9 +30,20 @@ pub fn network_rpc_key(chain: &str) -> Option<String> {
     std::env::var(key).ok()
 }
 
+/// Resolves the deployer key for `chain`, most specific first:
+///
+/// 1. `<NETWORK>_PRIVATE_KEY`, to point one network at its own account.
+/// 2. `TESTNET_DEPLOYER_PRIVATE_KEY`, the shared throwaway deployer these tests fund.
+/// 3. `TEST_PRIVATE_KEY`, kept for existing local setups.
+///
+/// Prefer the dedicated name over `TEST_PRIVATE_KEY`: it is generic enough that an unrelated value
+/// left in the environment would otherwise deploy from an account the caller did not intend.
 pub fn network_private_key(chain: &str) -> Option<String> {
     let key = format!("{}_PRIVATE_KEY", chain.to_uppercase().replace('-', "_"));
-    std::env::var(key).or_else(|_| std::env::var("TEST_PRIVATE_KEY")).ok()
+    std::env::var(key)
+        .or_else(|_| std::env::var("TESTNET_DEPLOYER_PRIVATE_KEY"))
+        .or_else(|_| std::env::var("TEST_PRIVATE_KEY"))
+        .ok()
 }
 
 /// Represents external input required for executing verification requests

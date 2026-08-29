@@ -387,7 +387,7 @@ forgetest!(can_verify_contract_sepolia_etherscan_also_runs_sourcify, |prj, cmd| 
 
 // tests `create --verify on Sepolia testnet if correct env vars are set
 // SEPOLIA_RPC_URL=https://rpc.sepolia.org
-// TEST_PRIVATE_KEY=0x...
+// TESTNET_DEPLOYER_PRIVATE_KEY=0x...
 // ETHERSCAN_API_KEY=<API_KEY>
 forgetest!(can_create_verify_random_contract_sepolia_etherscan, |prj, cmd| {
     // Implicitly tests `--verifier etherscan` on Sepolia testnet
@@ -477,9 +477,9 @@ const ROBINHOOD_TESTNET_BLOCKSCOUT_URL: &str = "https://explorer.testnet.chain.r
 
 /// End-to-end `create` + `verify-contract` coverage across the testnets we support.
 ///
-/// Each test is inert unless `<NETWORK>_RPC_URL` and a deployer key are configured, and they are
-/// wired up by the nightly `test-deploy-verify` workflow rather than by PR CI: they spend testnet
-/// funds and depend on three external verifier services.
+/// Each test is inert unless `<NETWORK>_RPC_URL` and `TESTNET_DEPLOYER_PRIVATE_KEY` are set, and
+/// they are wired up by the nightly `test-deploy-verify` workflow rather than by PR CI: they spend
+/// testnet funds and depend on three external verifier services.
 ///
 /// Etherscan v2 covers Hoodi, Sepolia, Base Sepolia and Monad testnet. Robinhood testnet is not on
 /// the v2 chainlist, so it is covered by Sourcify and its own Blockscout instance instead.
