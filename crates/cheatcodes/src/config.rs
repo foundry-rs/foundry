@@ -54,6 +54,9 @@ pub struct CheatsConfig {
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
     pub available_artifacts: Option<ContractsByArtifact>,
+    /// Artifacts used to resolve cheatcode artifact references.
+    /// Unlike `available_artifacts`, this is retained when artifact safety checks are disabled.
+    pub artifact_lookup: Option<ContractsByArtifact>,
     /// Currently running artifact.
     pub running_artifact: Option<ArtifactId>,
     /// Whether to enable legacy (non-reverting) assertions.
@@ -76,7 +79,8 @@ impl CheatsConfig {
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
         trace!(?rpc_endpoints, "using resolved rpc endpoints");
 
-        // If user explicitly disabled safety checks, do not set available_artifacts
+        let artifact_lookup = available_artifacts.clone();
+        // If user explicitly disabled safety checks, do not set available_artifacts.
         let available_artifacts =
             if config.unchecked_cheatcode_artifacts { None } else { available_artifacts };
         let mut labels = config.labels.clone();
@@ -100,6 +104,7 @@ impl CheatsConfig {
             evm_opts,
             labels,
             available_artifacts,
+            artifact_lookup,
             running_artifact,
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
@@ -112,7 +117,7 @@ impl CheatsConfig {
         let mut cloned = Self::new(
             config,
             evm_opts,
-            self.available_artifacts.clone(),
+            self.artifact_lookup.clone(),
             self.running_artifact.clone(),
             self.batch_rewrite_creates,
         );
@@ -244,6 +249,7 @@ impl Default for CheatsConfig {
             evm_opts: Default::default(),
             labels: Default::default(),
             available_artifacts: Default::default(),
+            artifact_lookup: Default::default(),
             running_artifact: Default::default(),
             assertions_revert: true,
             seed: None,
@@ -311,6 +317,25 @@ mod tests {
 
         let cloned = on.clone_with(&Config::default(), Default::default());
         assert!(cloned.batch_rewrite_creates);
+    }
+
+    #[test]
+    fn unchecked_artifacts_retain_lookup_without_validation() {
+        let config = Config { unchecked_cheatcode_artifacts: true, ..Default::default() };
+        let cheats = CheatsConfig::new(
+            &config,
+            Default::default(),
+            Some(ContractsByArtifact::default()),
+            None,
+            false,
+        );
+
+        assert!(cheats.available_artifacts.is_none());
+        assert!(cheats.artifact_lookup.is_some());
+
+        let cloned = cheats.clone_with(&config, Default::default());
+        assert!(cloned.available_artifacts.is_none());
+        assert!(cloned.artifact_lookup.is_some());
     }
 
     #[test]
