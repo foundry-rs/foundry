@@ -86,7 +86,7 @@ async fn fork_and_assert(chain: NamedChain) -> Option<()> {
     let genesis_balance = config.genesis_balance;
     let (api, handle) = fork_ok(chain, "fork setup", try_spawn(config).await)?;
 
-    assert_eq!(api.chain_id(), chain as u64, "{chain} fork adopted the wrong chain id");
+    assert_eq!(api.chain_id(), chain as u64, "{chain:?} fork adopted the wrong chain id");
 
     let fork_block = api.block_number().unwrap().to::<u64>();
     if fork_block == 0 {
@@ -96,19 +96,19 @@ async fn fork_and_assert(chain: NamedChain) -> Option<()> {
 
     for wallet in handle.dev_wallets() {
         let balance = api.balance(wallet.address(), None).await.unwrap();
-        assert_eq!(balance, genesis_balance, "{chain} fork did not fund the dev accounts");
+        assert_eq!(balance, genesis_balance, "{chain:?} fork did not fund the dev accounts");
     }
 
     let (block_number, tx_hash) = standard_transaction(chain, &api, fork_block).await?;
 
     let tx = fork_ok(chain, "eth_getTransactionByHash", api.transaction_by_hash(tx_hash).await)?
-        .unwrap_or_else(|| panic!("{chain} fork lost transaction {tx_hash}"));
+        .unwrap_or_else(|| panic!("{chain:?} fork lost transaction {tx_hash}"));
     assert_eq!(tx.tx_hash(), tx_hash);
     assert_eq!(tx.block_number, Some(block_number));
 
     let receipt =
         fork_ok(chain, "eth_getTransactionReceipt", api.transaction_receipt(tx_hash).await)?
-            .unwrap_or_else(|| panic!("{chain} fork lost the receipt for {tx_hash}"));
+            .unwrap_or_else(|| panic!("{chain:?} fork lost the receipt for {tx_hash}"));
     assert_eq!(receipt.transaction_hash(), tx_hash);
     assert_eq!(receipt.block_number(), Some(block_number));
 
@@ -133,7 +133,7 @@ async fn standard_transaction(
             api.block_by_number_full(BlockNumberOrTag::Number(number)).await,
         )?;
         let Some(block) = block else { continue };
-        assert_eq!(block.header.number, number, "{chain} fork returned the wrong block");
+        assert_eq!(block.header.number, number, "{chain:?} fork returned the wrong block");
 
         if let Some(transactions) = block.transactions.as_transactions()
             && let Some(tx) = transactions.iter().find(|tx| tx.inner.ty() <= MAX_STANDARD_TX_TYPE)
@@ -154,14 +154,18 @@ fn fork_ok<T, E: ForkError + Debug>(
     match result {
         Ok(value) => Some(value),
         Err(err) if is_endpoint_unavailable(&err) => skip(chain, request, err.render()),
-        Err(err) => panic!("{chain} fork: {request} failed: {err:?}"),
+        Err(err) => panic!("{chain:?} fork: {request} failed: {err:?}"),
     }
 }
 
 /// Reports why a chain's fork test stopped early, so skipped runs stay visible in CI logs.
+///
+/// The flaky nextest profile keeps the output of these tests on success so the report is not
+/// swallowed. Chains are named by their variant rather than their canonical name, which does not
+/// always match, so the line points at the test that produced it.
 #[expect(clippy::disallowed_macros)]
 fn skip<T>(chain: NamedChain, request: &str, reason: impl Display) -> Option<T> {
-    eprintln!("skipping {chain} fork test: {request}: {reason}");
+    eprintln!("skipping {chain:?} fork test: {request}: {reason}");
     None
 }
 
