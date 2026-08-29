@@ -187,9 +187,19 @@ contract AssertStateChangeUsingFor {
 
     uint256[] public items;
 
+    function getItems() internal view returns (uint256[] storage) {
+        return items;
+    }
+
     // Bad: bump() writes to storage via a using-for library extension, must be flagged.
     function badLibraryExtension() external returns (bool) {
         assert(items.bump()); //~WARN: assert() argument contains a state-modifying expression
+        return true;
+    }
+
+    // Bad: the function call returns the same storage array and must remain storage-backed.
+    function badLibraryExtensionOnStorageReturn() external returns (bool) {
+        assert(getItems().bump()); //~WARN: assert() argument contains a state-modifying expression
         return true;
     }
 

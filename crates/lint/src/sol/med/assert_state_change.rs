@@ -166,8 +166,8 @@ fn find_state_change<'hir>(
 
             if candidates.is_empty()
                 && let ExprKind::Member(base, method) = &callee.kind
-                && lvalue_is_state_var(hir, base)
                 && let Some(recv_ty) = expr_ty(gcx, base)
+                && (lvalue_is_state_var(hir, base) || recv_ty.loc() == Some(DataLocation::Storage))
             {
                 let lib_candidates =
                     resolve_library_extension(gcx, hir, method.name, args.len(), recv_ty);
