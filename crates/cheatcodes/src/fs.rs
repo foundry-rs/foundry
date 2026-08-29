@@ -628,8 +628,10 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
         }
     });
 
-    // Use available artifacts list if present
-    if let Some(artifacts) = &state.config.available_artifacts {
+    // Use the artifact lookup if present.
+    if let Some(artifacts) =
+        state.config.available_artifacts.as_ref().or(state.config.artifact_lookup.as_ref())
+    {
         let ambiguous_file_profile =
             file.is_some() && version.is_none() && profile.is_none() && contract_name.is_some();
         let filter_artifacts = |treat_ambiguous_as_profile: bool| -> Vec<_> {
