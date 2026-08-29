@@ -1422,7 +1422,7 @@ impl NodeConfig {
             .unwrap_or_else(|| self.get_hardfork());
         let mut decoder_builder = CallTraceDecoderBuilder::new()
             .with_networks(self.networks)
-            .with_hardfork(Some(active_hardfork));
+            .with_hardfork(Some(self.networks.executed_hardfork(active_hardfork)));
         if self.print_traces {
             // if traces should get printed we configure the decoder with the signatures cache
             if let Ok(identifier) = SignaturesIdentifier::new(false) {
