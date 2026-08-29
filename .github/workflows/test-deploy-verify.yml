@@ -45,7 +45,23 @@ jobs:
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      # Fatal and cheap: without the key every test below would quietly pass as a no-op, which
+      # is the exact failure mode this workflow exists to avoid.
+      - name: Check deployer key is configured
+        env:
+          TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.FUNDED_TESTNET_PKEY }}
+        shell: bash
+        run: |
+          if [[ -z "$TESTNET_DEPLOYER_PRIVATE_KEY" ]]; then
+            echo "::error::FUNDED_TESTNET_PKEY is not set; every deploy+verify test would silently no-op."
+            exit 1
+          fi
+          echo "Deployer key is configured."
+
+      # Purely diagnostic: running dry is the most likely failure, so the balances are worth having
+      # at the top of the log. Never fail the run over it - the tests themselves are the signal.
       - name: Report deployer balances
+        continue-on-error: true
         env:
           HOODI_RPC_URL: ${{ secrets.HOODI_RPC_URL || 'https://ethereum-hoodi-rpc.publicnode.com' }}
           SEPOLIA_RPC_URL: ${{ secrets.ETH_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com' }}
@@ -55,22 +71,18 @@ jobs:
           TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.FUNDED_TESTNET_PKEY }}
         shell: bash
         run: |
-          if [[ -z "$TESTNET_DEPLOYER_PRIVATE_KEY" ]]; then
-            echo "::error::FUNDED_TESTNET_PKEY is not set; every deploy+verify test would silently no-op."
-            exit 1
-          fi
-          cargo run --locked --bin cast -- wallet address "$TESTNET_DEPLOYER_PRIVATE_KEY" > deployer.txt
-          addr=$(cat deployer.txt)
+          cargo build --locked --bin cast
+          cast=./target/debug/cast
+          addr=$("$cast" wallet address "$TESTNET_DEPLOYER_PRIVATE_KEY")
           echo "Deployer: $addr"
           for net in HOODI SEPOLIA BASE_SEPOLIA MONAD_TESTNET ROBINHOOD_TESTNET; do
             url_var="${net}_RPC_URL"
-            bal=$(cargo run --quiet --locked --bin cast -- balance "$addr" --rpc-url "${!url_var}" 2>/dev/null || echo "")
-            if [[ -z "$bal" ]]; then
+            if ! bal=$("$cast" balance "$addr" --rpc-url "${!url_var}" 2>/dev/null); then
               echo "::warning::$net: could not read balance"
             elif [[ "$bal" == "0" ]]; then
-              echo "::error::$net: deployer is out of funds"
+              echo "::warning::$net: deployer is out of funds"
             else
-              echo "$net: $(cargo run --quiet --locked --bin cast -- from-wei "$bal")"
+              echo "$net: $("$cast" from-wei "$bal")"
             fi
           done
 
