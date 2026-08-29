@@ -1,6 +1,16 @@
 //! # foundry-evm-networks
 //!
-//! Foundry EVM network configuration.
+//! Runtime selection and shared configuration for Foundry's EVM network families.
+//!
+//! [`NetworkConfigs`] describes the active execution profile selected by configuration, CLI flags,
+//! hardforks, or fork endpoint discovery. Cargo features only determine which optional
+//! [`NetworkVariant`] values are compiled into a binary; they do not select a network at runtime.
+//!
+//! Concrete Alloy network and EVM factory types are associated by `FoundryEvmNetwork` in
+//! `foundry-evm-core`. See the [custom EVM integration guide] for the cross-crate ownership and
+//! state-lifecycle contract.
+//!
+//! [custom EVM integration guide]: https://github.com/foundry-rs/foundry/blob/master/docs/dev/networks.md
 
 use crate::celo::transfer::{
     CELO_TRANSFER_ADDRESS, CELO_TRANSFER_LABEL, PRECOMPILE_ID_CELO_TRANSFER,
