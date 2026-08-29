@@ -34,7 +34,7 @@ use foundry_evm::{
         },
     },
     executors::TracingExecutor,
-    opts::{EvmOpts, ForkHardforks},
+    opts::{EvmOpts, ExecutionSpecContext},
     traces::TraceRequirements,
     utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
@@ -334,15 +334,19 @@ where
     fork_config.fork_block_number = Some(fork_blk_num);
 
     let create2_deployer = evm_opts.create2_deployer;
-    let (mut evm_env, tx_env, fork, chain, networks, hardforks) =
+    let (mut evm_env, tx_env, fork, chain, networks, fork_context) =
         TracingExecutor::<FEN>::get_fork_material(fork_config, evm_opts).await?;
 
     evm_env.block_env.set_number(U256::from(execution_blk_num));
     if let Some(block) = execution_block {
         configure_env_block::<FEN>(&mut evm_env, block, chain.id(), networks);
     }
-    let resolved_hardfork =
-        resolve_runtime_spec::<FEN>(fork_config, networks, chain.id(), hardforks, &mut evm_env);
+    let resolved_hardfork = resolve_runtime_spec::<FEN>(
+        fork_config,
+        networks,
+        ExecutionSpecContext::historical_from_fork(fork_context),
+        &mut evm_env,
+    );
     TracingExecutor::<FEN>::extend_precompile_labels(fork_config, networks, resolved_hardfork);
 
     let executor = TracingExecutor::<FEN>::new(
@@ -361,21 +365,13 @@ where
 fn resolve_runtime_spec<FEN>(
     config: &Config,
     networks: NetworkConfigs,
-    source_chain_id: ChainId,
-    hardforks: ForkHardforks,
+    spec_context: ExecutionSpecContext,
     evm_env: &mut EvmEnvFor<FEN>,
 ) -> Option<FoundryHardfork>
 where
     FEN: FoundryEvmNetwork,
 {
-    TracingExecutor::<FEN>::resolve_spec_for_chain(
-        config,
-        networks,
-        source_chain_id,
-        hardforks,
-        evm_env,
-        None,
-    )
+    TracingExecutor::<FEN>::resolve_spec(config, networks, spec_context, evm_env, None)
 }
 
 pub fn configure_env_block<FEN>(
@@ -663,8 +659,7 @@ contract Broken {
         let before = resolve_runtime_spec::<foundry_evm::core::evm::MonadEvmNetwork>(
             &before_config,
             NetworkConfigs::with_monad(),
-            NamedChain::Monad as u64,
-            ForkHardforks::default(),
+            ExecutionSpecContext::historical(NamedChain::Monad as u64, None, None),
             &mut before_env,
         );
 
@@ -683,8 +678,7 @@ contract Broken {
         let after = resolve_runtime_spec::<foundry_evm::core::evm::MonadEvmNetwork>(
             &after_config,
             NetworkConfigs::with_monad(),
-            NamedChain::Monad as u64,
-            ForkHardforks::default(),
+            ExecutionSpecContext::historical(NamedChain::Monad as u64, None, None),
             &mut after_env,
         );
 
@@ -712,10 +706,11 @@ contract Broken {
         let resolved = resolve_runtime_spec::<foundry_evm::core::evm::MonadEvmNetwork>(
             &config,
             networks,
-            NamedChain::Monad as u64,
-            ForkHardforks::from_endpoint(Some(
-                foundry_evm::hardforks::MonadHardfork::MonadNine.into(),
-            )),
+            ExecutionSpecContext::historical(
+                NamedChain::Monad as u64,
+                Some(foundry_evm::hardforks::MonadHardfork::MonadNine.into()),
+                None,
+            ),
             &mut env,
         );
         TracingExecutor::<foundry_evm::core::evm::MonadEvmNetwork>::extend_precompile_labels(

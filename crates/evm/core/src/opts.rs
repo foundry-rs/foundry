@@ -273,30 +273,7 @@ pub struct ForkContext {
     pub source_fork_block_hash: Option<B256>,
 }
 
-/// The hardfork evidence a fork endpoint and its fork block provide.
-///
-/// Kept together so callers cannot mix up two same-typed hardfork options.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ForkHardforks {
-    /// Exact hardfork reported by the fork endpoint, when available.
-    pub endpoint: Option<FoundryHardfork>,
-    /// Hardfork implied by the fork block header, when its mandatory fields identify one.
-    pub header: Option<FoundryHardfork>,
-}
-
-impl ForkHardforks {
-    /// Returns the evidence for an endpoint that reported an exact hardfork.
-    pub const fn from_endpoint(endpoint: Option<FoundryHardfork>) -> Self {
-        Self { endpoint, header: None }
-    }
-}
-
 impl ForkContext {
-    /// Returns the hardfork evidence this fork provides.
-    pub const fn hardforks(self) -> ForkHardforks {
-        ForkHardforks { endpoint: self.hardfork, header: self.header_hardfork }
-    }
-
     /// Returns whether this block context belongs to `identity`.
     pub fn matches_identity(self, identity: &ForkEndpointIdentity) -> bool {
         self.execution_chain_id == identity.execution_chain_id
@@ -1495,6 +1472,16 @@ impl ExecutionSpecContext {
         header_hardfork: Option<FoundryHardfork>,
     ) -> Self {
         Self::Historical { source_chain_id, endpoint_hardfork, header_hardfork }
+    }
+
+    /// Returns the historical execution context for a block fetched from a resolved fork,
+    /// carrying the fork's endpoint and header hardfork evidence.
+    pub const fn historical_from_fork(context: ForkContext) -> Self {
+        Self::Historical {
+            source_chain_id: context.source_chain_id,
+            endpoint_hardfork: context.hardfork,
+            header_hardfork: context.header_hardfork,
+        }
     }
 
     fn endpoint_hardfork(self, networks: NetworkConfigs) -> Option<FoundryHardfork> {

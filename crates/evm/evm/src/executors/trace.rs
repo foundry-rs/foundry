@@ -1,5 +1,5 @@
 use crate::executors::{Executor, ExecutorBuilder};
-use alloy_primitives::{Address, ChainId, U256, map::HashMap};
+use alloy_primitives::{Address, U256, map::HashMap};
 use alloy_rpc_types::state::StateOverride;
 use eyre::{Context, ContextCompat};
 use foundry_compilers::artifacts::EvmVersion;
@@ -8,7 +8,7 @@ use foundry_evm_core::{
     backend::Backend,
     evm::{BlockEnvFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     fork::CreateFork,
-    opts::{EvmOpts, ExecutionSpecContext, ForkHardforks, resolve_execution_spec},
+    opts::{EvmOpts, ExecutionSpecContext, ForkContext, resolve_execution_spec},
 };
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
@@ -78,29 +78,11 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         self.executor.spec_id()
     }
 
-    /// Resolves and applies the execution spec for the effective block environment.
+    /// Resolves and applies the execution spec for the given execution context.
     pub fn resolve_spec(
         config: &Config,
         networks: NetworkConfigs,
-        evm_env: &mut EvmEnvFor<FEN>,
-        evm_version: Option<EvmVersion>,
-    ) -> Option<FoundryHardfork> {
-        Self::resolve_spec_for_chain(
-            config,
-            networks,
-            evm_env.cfg_env.chain_id,
-            ForkHardforks::default(),
-            evm_env,
-            evm_version,
-        )
-    }
-
-    /// Resolves and applies the execution spec using the source chain's hardfork schedule.
-    pub fn resolve_spec_for_chain(
-        config: &Config,
-        networks: NetworkConfigs,
-        source_chain_id: ChainId,
-        hardforks: ForkHardforks,
+        spec_context: ExecutionSpecContext,
         evm_env: &mut EvmEnvFor<FEN>,
         evm_version: Option<EvmVersion>,
     ) -> Option<FoundryHardfork> {
@@ -110,7 +92,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
             config,
             networks,
             evm_env,
-            ExecutionSpecContext::historical(source_chain_id, hardforks.endpoint, hardforks.header),
+            spec_context,
             evm_version.map(evm_spec_id::<SpecFor<FEN>>),
             explicit_hardfork,
         )
@@ -129,14 +111,8 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
     pub async fn get_fork_material(
         config: &mut Config,
         mut evm_opts: EvmOpts,
-    ) -> eyre::Result<(
-        EvmEnvFor<FEN>,
-        TxEnvFor<FEN>,
-        CreateFork,
-        Chain,
-        NetworkConfigs,
-        ForkHardforks,
-    )> {
+    ) -> eyre::Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>, CreateFork, Chain, NetworkConfigs, ForkContext)>
+    {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         evm_opts.fork_block_number = config.fork_block_number;
         evm_opts.infer_network_from_fork().await?;
@@ -150,7 +126,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         let fork_context = resolved.context();
 
         let chain = fork_context.source_chain_id.into();
-        Ok((evm_env, tx_env, fork, chain, networks, fork_context.hardforks()))
+        Ok((evm_env, tx_env, fork, chain, networks, fork_context))
     }
 }
 

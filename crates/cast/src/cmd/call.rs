@@ -55,7 +55,7 @@ use foundry_evm::{
         evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, context_for_child_transaction},
     },
     executors::TracingExecutor,
-    opts::EvmOpts,
+    opts::{EvmOpts, ExecutionSpecContext},
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -623,7 +623,7 @@ impl CallArgs {
 
             let create2_deployer = evm_opts.create2_deployer;
             let verbosity = tracing.verbosity;
-            let (mut evm_env, tx_env, fork, chain, networks, hardforks) =
+            let (mut evm_env, tx_env, fork, chain, networks, fork_context) =
                 TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
             let context_block_number = evm_env.block_env.number().saturating_to();
             // Modify settings usually set in eth_call while keeping execution gas bounded.
@@ -639,11 +639,10 @@ impl CallArgs {
                     evm_env.block_env.set_timestamp(U256::from(time));
                 }
             }
-            let resolved_hardfork = TracingExecutor::<FEN>::resolve_spec_for_chain(
+            let resolved_hardfork = TracingExecutor::<FEN>::resolve_spec(
                 &config,
                 networks,
-                chain.id(),
-                hardforks,
+                ExecutionSpecContext::historical_from_fork(fork_context),
                 &mut evm_env,
                 evm_version,
             );

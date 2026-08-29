@@ -53,7 +53,7 @@ use foundry_evm::{
     },
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
-    opts::EvmOpts,
+    opts::{EvmOpts, ExecutionSpecContext},
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements, Traces},
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -386,7 +386,7 @@ impl RunArgs {
 
         let create2_deployer = evm_opts.create2_deployer;
         let verbosity = tracing.verbosity;
-        let (block, (mut evm_env, tx_env, fork, chain, networks, hardforks)) = tokio::try_join!(
+        let (block, (mut evm_env, tx_env, fork, chain, networks, fork_context)) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
             TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts)
@@ -416,11 +416,10 @@ impl RunArgs {
                 config.networks,
             );
         }
-        let resolved_hardfork = TracingExecutor::<FEN>::resolve_spec_for_chain(
+        let resolved_hardfork = TracingExecutor::<FEN>::resolve_spec(
             &config,
             networks,
-            chain.id(),
-            hardforks,
+            ExecutionSpecContext::historical_from_fork(fork_context),
             &mut evm_env,
             evm_version,
         );
