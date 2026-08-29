@@ -434,6 +434,32 @@ mod tests {
         for tx_type in [FoundryTxType::PostExec, FoundryTxType::Deposit] {
             assert_roundtrip(receipt_for(tx_type));
         }
+
+        // Varied payload so encodings differ beyond the type byte.
+        let logs = vec![Log {
+            address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
+            data: LogData::new_unchecked(
+                vec![B256::repeat_byte(0x22)],
+                Bytes::from_static(&[0x01, 0x02, 0x03]),
+            ),
+        }];
+        let logs_bloom = logs_bloom(&logs);
+        let receipt = Receipt { status: false.into(), cumulative_gas_used: 0x2a, logs };
+        assert_roundtrip(FoundryReceiptEnvelope::Eip1559(ReceiptWithBloom {
+            receipt: receipt.clone(),
+            logs_bloom,
+        }));
+        // A deposit receipt with set deposit fields; op-alloy encodes them only when `Some`, so
+        // this catches decode paths that drop them.
+        #[cfg(feature = "optimism")]
+        assert_roundtrip(FoundryReceiptEnvelope::Deposit(OpDepositReceiptWithBloom {
+            receipt: OpDepositReceipt {
+                inner: receipt,
+                deposit_nonce: Some(7),
+                deposit_receipt_version: Some(1),
+            },
+            logs_bloom,
+        }));
     }
 
     #[test]
@@ -534,9 +560,6 @@ mod tests {
 
     #[test]
     fn encode_tempo_receipt() {
-        use alloy_network::eip2718::Encodable2718;
-        use tempo_primitives::TEMPO_TX_TYPE_ID;
-
         let receipt = FoundryReceiptEnvelope::Tempo(ReceiptWithBloom {
             receipt: Receipt {
                 status: true.into(),
@@ -574,34 +597,30 @@ mod tests {
         assert_eq!(receipt.cumulative_gas_used(), 157716);
         assert_eq!(receipt.logs().len(), 1);
 
-        // Encode and decode round-trip
+        // The EIP-2718 encoding starts with the Tempo type byte.
+        let mut encoded_2718 = Vec::new();
+        receipt.encode_2718(&mut encoded_2718);
+        assert_eq!(encoded_2718[0], TEMPO_TX_TYPE_ID);
+
+        // `Decodable` expects the network format, which wraps the typed payload in an RLP string.
         let mut encoded = Vec::new();
-        receipt.encode_2718(&mut encoded);
-
-        // First byte should be the Tempo type ID
-        assert_eq!(encoded[0], TEMPO_TX_TYPE_ID);
-
-        // Decode it back
+        receipt.encode(&mut encoded);
         let decoded = FoundryReceiptEnvelope::decode(&mut &encoded[..]).unwrap();
         assert_eq!(receipt, decoded);
     }
 
     #[test]
     fn decode_tempo_receipt() {
-        use alloy_network::eip2718::Encodable2718;
-        use tempo_primitives::TEMPO_TX_TYPE_ID;
-
         let receipt = FoundryReceiptEnvelope::Tempo(ReceiptWithBloom {
             receipt: Receipt { status: true.into(), cumulative_gas_used: 21000, logs: vec![] },
             logs_bloom: [0; 256].into(),
         });
 
-        // Encode and decode via 2718
+        // Encode and decode via 2718.
         let mut encoded = Vec::new();
         receipt.encode_2718(&mut encoded);
         assert_eq!(encoded[0], TEMPO_TX_TYPE_ID);
 
-        use alloy_network::eip2718::Decodable2718;
         let decoded = FoundryReceiptEnvelope::decode_2718(&mut &encoded[..]).unwrap();
         assert_eq!(receipt, decoded);
     }
