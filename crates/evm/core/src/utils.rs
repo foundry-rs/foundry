@@ -30,6 +30,17 @@ pub fn block_env_from_header<BLOCK: FoundryBlock + Default>(header: &impl BlockH
     block
 }
 
+/// Returns the Ethereum hardfork a block header pins its chain to, when the mandatory header
+/// fields identify one.
+///
+/// Cancun made `excessBlobGas` mandatory and Prague made `requestsHash` mandatory, so a header
+/// that carries blob gas without a requests hash proves the chain runs Cancun. Every other header
+/// shape is ambiguous, so this returns `None` and leaves the caller on its own default.
+pub fn ethereum_hardfork_from_header(header: &impl BlockHeader) -> Option<EthereumHardfork> {
+    (header.excess_blob_gas().is_some() && header.requests_hash().is_none())
+        .then_some(EthereumHardfork::Cancun)
+}
+
 /// Applies chain-specific changes required to replay transactions accepted on-chain.
 pub fn apply_chain_specific_tx_replay_env_changes<SPEC, BLOCK>(evm_env: &mut EvmEnv<SPEC, BLOCK>) {
     let chain_id = evm_env.cfg_env.chain_id;
@@ -323,6 +334,24 @@ mod tests {
             get_blob_base_fee_update_fraction_by_spec_id(SpecId::AMSTERDAM),
             BlobParams::bpo2().update_fraction as u64
         );
+    }
+
+    #[test]
+    fn ethereum_hardfork_from_header_identifies_cancun_only_chains() {
+        // Blob fields without a requests hash pin the chain to Cancun.
+        let cancun = AnyHeader { excess_blob_gas: Some(0), ..Default::default() };
+        assert_eq!(ethereum_hardfork_from_header(&cancun), Some(EthereumHardfork::Cancun));
+
+        // A requests hash means Prague or later, which the header cannot narrow down.
+        let prague = AnyHeader {
+            excess_blob_gas: Some(0),
+            requests_hash: Some(B256::ZERO),
+            ..Default::default()
+        };
+        assert_eq!(ethereum_hardfork_from_header(&prague), None);
+
+        // Pre-Cancun headers carry no blob fields and stay ambiguous.
+        assert_eq!(ethereum_hardfork_from_header(&AnyHeader::default()), None);
     }
 
     #[test]

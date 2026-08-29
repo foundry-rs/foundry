@@ -791,6 +791,7 @@ mod tests {
             network_profile: NetworkConfigs::default(),
             block_number,
             hardfork: None,
+            header_hardfork: None,
             instance_id: None,
             source_fork_block_number: None,
             source_fork_block_hash: None,
