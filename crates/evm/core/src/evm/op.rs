@@ -7,21 +7,21 @@ use op_revm::{
 };
 use revm::{
     context::{
-        BlockEnv, ContextTr, Journal, LocalContextTr,
+        BlockEnv, Journal,
         result::{EVMError, HaltReason, ResultAndState},
     },
-    handler::{EthFrame, EvmTr, FrameResult, Handler, instructions::EthInstructions},
+    handler::{EthFrame, EvmTr, FrameResult, instructions::EthInstructions},
     inspector::InspectorHandler,
-    interpreter::{
-        FrameInput, GasTracker, InstructionResult, SharedMemory, interpreter::EthInterpreter,
-        interpreter_action::FrameInit,
-    },
+    interpreter::{FrameInput, InstructionResult, interpreter::EthInterpreter},
 };
 
 use crate::{
     FoundryChain, FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
-    evm::{FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor},
+    evm::{
+        FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm, NestedEvmFor,
+        run_inspected_frame,
+    },
 };
 
 impl FoundryChain<OpTx> for L1BlockInfo {}
@@ -135,24 +135,7 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
-        let mut handler = OpEvmHandler::<I>::new();
-        let memory =
-            SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
-        let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
-
-        let mut frame_result =
-            handler.inspect_run_exec_loop(self, first_frame_input).map_err(map_op_error)?;
-
-        let mut parent_gas = GasTracker::new(
-            frame_result.gas().limit(),
-            frame_result.gas().remaining(),
-            frame_result.gas().reservoir(),
-        );
-        handler
-            .last_frame_result(self, &mut frame_result, &mut parent_gas)
-            .map_err(map_op_error)?;
-
-        Ok(frame_result)
+        run_inspected_frame(self, OpEvmHandler::<I>::new(), frame).map_err(map_op_error)
     }
 
     fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>> {

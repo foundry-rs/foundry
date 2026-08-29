@@ -4,12 +4,12 @@ use foundry_evm_hardforks::TempoHardfork;
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
-        ContextTr, Journal, LocalContextTr,
+        Journal,
         result::{EVMError, HaltReason, ResultAndState},
     },
-    handler::{EvmTr, FrameResult, Handler},
+    handler::{EvmTr, FrameResult},
     inspector::InspectorHandler,
-    interpreter::{FrameInput, GasTracker, SharedMemory, interpreter_action::FrameInit},
+    interpreter::FrameInput,
     state::Bytecode,
 };
 use tempo_evm::{TempoBlockEnv, TempoEvmFactory, TempoHaltReason, evm::TempoEvm};
@@ -26,7 +26,7 @@ use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
     constants::{CALLER, SYSTEM_PRECOMPILE_STUB, TEST_CONTRACT_ADDRESS},
-    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor},
+    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor, run_inspected_frame},
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
 };
 
@@ -140,24 +140,7 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
-        let mut handler = TempoEvmHandler::new();
-        let memory =
-            SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
-        let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
-
-        let mut frame_result =
-            handler.inspect_run_exec_loop(self, first_frame_input).map_err(map_tempo_error)?;
-
-        let mut parent_gas = GasTracker::new(
-            frame_result.gas().limit(),
-            frame_result.gas().remaining(),
-            frame_result.gas().reservoir(),
-        );
-        handler
-            .last_frame_result(self, &mut frame_result, &mut parent_gas)
-            .map_err(map_tempo_error)?;
-
-        Ok(frame_result)
+        run_inspected_frame(self, TempoEvmHandler::new(), frame).map_err(map_tempo_error)
     }
 
     fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
