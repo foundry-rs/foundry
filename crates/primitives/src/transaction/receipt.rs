@@ -6,7 +6,7 @@ use alloy_network::eip2718::{
     Eip2718Error, Encodable2718, LEGACY_TX_TYPE_ID,
 };
 use alloy_primitives::{Bloom, Log, TxHash, logs_bloom};
-use alloy_rlp::{BufMut, Decodable, Encodable, Header, bytes};
+use alloy_rlp::{BufMut, Decodable, Encodable, bytes};
 use alloy_rpc_types::{BlockNumHash, trace::otterscan::OtsReceipt};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{
@@ -293,129 +293,17 @@ where
 
 impl Encodable for FoundryReceiptEnvelope {
     fn encode(&self, out: &mut dyn bytes::BufMut) {
-        match self {
-            Self::Legacy(r) => r.encode(out),
-            receipt => {
-                let payload_len = match receipt {
-                    Self::Eip2930(r) => r.length() + 1,
-                    Self::Eip1559(r) => r.length() + 1,
-                    Self::Eip4844(r) => r.length() + 1,
-                    Self::Eip7702(r) => r.length() + 1,
-                    #[cfg(feature = "optimism")]
-                    Self::PostExec(r) => r.length() + 1,
-                    #[cfg(feature = "optimism")]
-                    Self::Deposit(r) => r.length() + 1,
-                    Self::Tempo(r) => r.length() + 1,
-                    _ => unreachable!("receipt already matched"),
-                };
+        self.network_encode(out);
+    }
 
-                match receipt {
-                    Self::Eip2930(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        EIP2930_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    Self::Eip1559(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        EIP1559_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    Self::Eip4844(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        EIP4844_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    Self::Eip7702(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        EIP7702_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    #[cfg(feature = "optimism")]
-                    Self::PostExec(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        POST_EXEC_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    #[cfg(feature = "optimism")]
-                    Self::Deposit(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        DEPOSIT_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    Self::Tempo(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        TEMPO_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    _ => unreachable!("receipt already matched"),
-                }
-            }
-        }
+    fn length(&self) -> usize {
+        self.network_len()
     }
 }
 
 impl Decodable for FoundryReceiptEnvelope {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        use bytes::Buf;
-        use std::cmp::Ordering;
-
-        // a receipt is either encoded as a string (non legacy) or a list (legacy).
-        // We should not consume the buffer if we are decoding a legacy receipt, so let's
-        // check if the first byte is between 0x80 and 0xbf.
-        let rlp_type = *buf
-            .first()
-            .ok_or(alloy_rlp::Error::Custom("cannot decode a receipt from empty bytes"))?;
-
-        match rlp_type.cmp(&alloy_rlp::EMPTY_LIST_CODE) {
-            Ordering::Less => {
-                // strip out the string header
-                let _header = Header::decode(buf)?;
-                let receipt_type = *buf.first().ok_or(alloy_rlp::Error::Custom(
-                    "typed receipt cannot be decoded from an empty slice",
-                ))?;
-                if receipt_type == EIP2930_TX_TYPE_ID {
-                    buf.advance(1);
-                    <ReceiptWithBloom as Decodable>::decode(buf)
-                        .map(FoundryReceiptEnvelope::Eip2930)
-                } else if receipt_type == EIP1559_TX_TYPE_ID {
-                    buf.advance(1);
-                    <ReceiptWithBloom as Decodable>::decode(buf)
-                        .map(FoundryReceiptEnvelope::Eip1559)
-                } else if receipt_type == EIP4844_TX_TYPE_ID {
-                    buf.advance(1);
-                    <ReceiptWithBloom as Decodable>::decode(buf)
-                        .map(FoundryReceiptEnvelope::Eip4844)
-                } else if receipt_type == EIP7702_TX_TYPE_ID {
-                    buf.advance(1);
-                    <ReceiptWithBloom as Decodable>::decode(buf)
-                        .map(FoundryReceiptEnvelope::Eip7702)
-                } else if receipt_type == TEMPO_TX_TYPE_ID {
-                    buf.advance(1);
-                    <ReceiptWithBloom as Decodable>::decode(buf).map(FoundryReceiptEnvelope::Tempo)
-                } else {
-                    #[cfg(feature = "optimism")]
-                    {
-                        if receipt_type == POST_EXEC_TX_TYPE_ID {
-                            buf.advance(1);
-                            return <ReceiptWithBloom as Decodable>::decode(buf)
-                                .map(FoundryReceiptEnvelope::PostExec);
-                        }
-                        if receipt_type == DEPOSIT_TX_TYPE_ID {
-                            buf.advance(1);
-                            return <OpDepositReceiptWithBloom as Decodable>::decode(buf)
-                                .map(FoundryReceiptEnvelope::Deposit);
-                        }
-                    }
-                    Err(alloy_rlp::Error::Custom("invalid receipt type"))
-                }
-            }
-            Ordering::Equal => {
-                Err(alloy_rlp::Error::Custom("an empty list is not a valid receipt encoding"))
-            }
-            Ordering::Greater => {
-                <ReceiptWithBloom as Decodable>::decode(buf).map(FoundryReceiptEnvelope::Legacy)
-            }
-        }
+        Self::network_decode(buf).map_err(Into::into)
     }
 }
 
@@ -530,6 +418,45 @@ mod tests {
             None,
         )
         .map_logs(|log| log.inner)
+    }
+
+    #[test]
+    fn rlp_roundtrip() {
+        fn assert_roundtrip(receipt: FoundryReceiptEnvelope) {
+            let mut encoded = Vec::new();
+            receipt.encode(&mut encoded);
+            assert_eq!(encoded.len(), receipt.length());
+
+            let mut encoded = encoded.as_slice();
+            let decoded = FoundryReceiptEnvelope::decode(&mut encoded).unwrap();
+            assert_eq!(decoded, receipt);
+            assert!(encoded.is_empty());
+        }
+
+        for tx_type in [
+            FoundryTxType::Legacy,
+            FoundryTxType::Eip2930,
+            FoundryTxType::Eip1559,
+            FoundryTxType::Eip4844,
+            FoundryTxType::Eip7702,
+            FoundryTxType::Tempo,
+        ] {
+            assert_roundtrip(receipt_for(tx_type));
+        }
+        #[cfg(feature = "optimism")]
+        for tx_type in [FoundryTxType::PostExec, FoundryTxType::Deposit] {
+            assert_roundtrip(receipt_for(tx_type));
+        }
+    }
+
+    #[test]
+    fn encode_typed_receipt_uses_rlp_string() {
+        let receipt = receipt_for(FoundryTxType::Eip2930);
+        let mut encoded = Vec::new();
+        receipt.encode(&mut encoded);
+
+        // Long string containing a 266-byte EIP-2718 envelope, beginning with type 0x01.
+        assert_eq!(&encoded[..4], &[0xb9, 0x01, 0x0a, EIP2930_TX_TYPE_ID]);
     }
 
     #[test]
