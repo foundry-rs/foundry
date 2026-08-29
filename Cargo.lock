@@ -5509,8 +5509,8 @@ version = "1.8.1"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
- "alloy-evm",
  "alloy-json-abi",
+ "alloy-network",
  "alloy-primitives",
  "alloy-provider",
  "alloy-rpc-types",
