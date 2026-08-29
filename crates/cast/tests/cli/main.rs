@@ -5160,7 +5160,7 @@ casttest!(block_number_hash, |_prj, cmd| {
 // <https://github.com/foundry-rs/foundry/pull/9996>
 // Equivalent transaction on Binance Smart Chain Testnet:
 // <https://testnet.bscscan.com/tx/0x0db4f279fc4d47dca1e6ace180f45f50c5bf12e2b968f210c217f57031e02744>
-casttest!(run_disable_block_gas_limit_check, |_prj, cmd| {
+casttest!(run_replays_transaction_over_block_gas_limit, |_prj, cmd| {
     let bsc_testnet_rpc_url = next_rpc_endpoint(NamedChain::BinanceSmartChainTestnet);
 
     let latest_block_json: serde_json::Value = serde_json::from_str(
@@ -5182,18 +5182,19 @@ casttest!(run_disable_block_gas_limit_check, |_prj, cmd| {
             let tx_hash =
                 tx.get("hash").and_then(|h| h.as_str()).expect("Transaction missing hash");
 
-            // If --disable-block-gas-limit is not provided, the transaction should fail as the gas
-            // limit exceeds the block gas limit.
+            // The chain accepted this transaction even though its gas limit exceeds the block
+            // gas limit, so replay must not re-apply the check.
             cmd.cast_fuse()
                 .args(["run", "-v", tx_hash, "--quick", "--rpc-url", bsc_testnet_rpc_url.as_str()])
-                .assert_failure()
-                .stderr_eq(str![[r#"
-Error: EVM error; transaction validation error: caller gas limit exceeds the block gas limit
+                .assert_success()
+                .stdout_eq(str![[r#"
+...
+Transaction successfully executed.
+[GAS]
 
 "#]]);
 
-            // If --disable-block-gas-limit is provided, the transaction should succeed
-            // despite the gas limit exceeding the block gas limit.
+            // `--disable-block-gas-limit` is now implied and must not change the outcome.
             cmd.cast_fuse()
                 .args([
                     "run",

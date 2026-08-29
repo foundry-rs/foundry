@@ -471,7 +471,7 @@ impl RunArgs {
         let spec_id = (*evm_env.cfg_env.spec()).into();
 
         if let Some(parent_beacon_block_root) =
-            parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root)?
+            parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root)
         {
             executor.apply_beacon_root(parent_beacon_block_root)?;
         }
@@ -730,19 +730,19 @@ fn ensure_remote_transaction_inclusion(
     Ok(())
 }
 
-fn parent_beacon_block_root_for_network(
+const fn parent_beacon_block_root_for_network(
     networks: NetworkConfigs,
     spec_id: SpecId,
     parent_beacon_block_root: Option<B256>,
-) -> Result<Option<B256>> {
+) -> Option<B256> {
     if networks.is_monad() || !spec_id.is_enabled_in(SpecId::CANCUN) {
-        return Ok(None);
+        return None;
     }
 
     // Chains that run a Cancun or later EVM without Ethereum's beacon chain, such as Polygon and
     // Scroll, never populate this header field and never deploy the EIP-4788 contract, so there
     // is no root to apply. Requiring one makes their blocks unreplayable.
-    Ok(parent_beacon_block_root)
+    parent_beacon_block_root
 }
 
 pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
@@ -977,24 +977,18 @@ mod tests {
     fn parent_beacon_block_root_is_applied_only_when_the_header_has_one() {
         let networks = NetworkConfigs::default();
         // Polygon and Scroll run a Cancun or later EVM without populating the header field.
-        assert_eq!(
-            parent_beacon_block_root_for_network(networks, SpecId::CANCUN, None).unwrap(),
-            None
-        );
+        assert_eq!(parent_beacon_block_root_for_network(networks, SpecId::CANCUN, None), None);
 
         let root = B256::repeat_byte(0x42);
         assert_eq!(
-            parent_beacon_block_root_for_network(networks, SpecId::CANCUN, Some(root)).unwrap(),
+            parent_beacon_block_root_for_network(networks, SpecId::CANCUN, Some(root)),
             Some(root),
         );
         assert_eq!(
-            parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, Some(root)).unwrap(),
+            parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, Some(root)),
             None,
         );
-        assert_eq!(
-            parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, None).unwrap(),
-            None,
-        );
+        assert_eq!(parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, None), None,);
     }
 
     #[cfg(feature = "monad")]
@@ -1002,17 +996,13 @@ mod tests {
     fn parent_beacon_block_root_is_not_used_by_monad() {
         let networks = NetworkConfigs::with_monad();
         for spec_id in [SpecId::PRAGUE, SpecId::OSAKA] {
-            assert_eq!(
-                parent_beacon_block_root_for_network(networks, spec_id, None).unwrap(),
-                None,
-            );
+            assert_eq!(parent_beacon_block_root_for_network(networks, spec_id, None), None,);
             assert_eq!(
                 parent_beacon_block_root_for_network(
                     networks,
                     spec_id,
                     Some(B256::repeat_byte(0x42)),
-                )
-                .unwrap(),
+                ),
                 None,
             );
         }
