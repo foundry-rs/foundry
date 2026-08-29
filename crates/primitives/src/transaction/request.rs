@@ -156,6 +156,21 @@ impl FoundryTransactionRequest {
         }
     }
 
+    fn check_type(&self, ty: FoundryTxType) -> Result<(), Vec<&'static str>> {
+        match ty {
+            FoundryTxType::Legacy => self.as_ref().complete_legacy(),
+            FoundryTxType::Eip2930 => self.as_ref().complete_2930(),
+            FoundryTxType::Eip1559 => self.as_ref().complete_1559(),
+            FoundryTxType::Eip4844 => self.as_ref().complete_4844(),
+            FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
+            #[cfg(feature = "optimism")]
+            FoundryTxType::Deposit => self.complete_deposit(),
+            #[cfg(feature = "optimism")]
+            FoundryTxType::PostExec => Err(vec!["not implemented for post-exec tx"]),
+            FoundryTxType::Tempo => self.complete_tempo(),
+        }
+    }
+
     /// Check if all necessary keys are present to build a transaction.
     ///
     /// # Returns
@@ -164,22 +179,12 @@ impl FoundryTransactionRequest {
     /// - Err((type, missing)) if some keys are missing to build the preferred type.
     pub fn missing_keys(&self) -> Result<FoundryTxType, (FoundryTxType, Vec<&'static str>)> {
         let pref = self.preferred_type();
-        if let Err(missing) = match pref {
-            FoundryTxType::Legacy => self.as_ref().complete_legacy(),
-            FoundryTxType::Eip2930 => self.as_ref().complete_2930(),
-            FoundryTxType::Eip1559 => self.as_ref().complete_1559(),
-            FoundryTxType::Eip4844 => self.complete_4844(),
-            FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::Deposit => self.complete_deposit(),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::PostExec => Err(vec!["not implemented for post-exec tx"]),
-            FoundryTxType::Tempo => self.complete_tempo(),
-        } {
-            Err((pref, missing))
+        let result = if pref == FoundryTxType::Eip4844 {
+            self.complete_4844()
         } else {
-            Ok(pref)
-        }
+            self.check_type(pref)
+        };
+        if let Err(missing) = result { Err((pref, missing)) } else { Ok(pref) }
     }
 
     /// Build a typed transaction from this request.
@@ -528,18 +533,7 @@ impl TransactionBuilder for FoundryTransactionRequest {
 
 impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
     fn complete_type(&self, ty: FoundryTxType) -> Result<(), Vec<&'static str>> {
-        match ty {
-            FoundryTxType::Legacy => self.as_ref().complete_legacy(),
-            FoundryTxType::Eip2930 => self.as_ref().complete_2930(),
-            FoundryTxType::Eip1559 => self.as_ref().complete_1559(),
-            FoundryTxType::Eip4844 => self.as_ref().complete_4844(),
-            FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::Deposit => self.complete_deposit(),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::PostExec => Err(vec!["not implemented for post-exec tx"]),
-            FoundryTxType::Tempo => self.complete_tempo(),
-        }
+        self.check_type(ty)
     }
 
     fn can_submit(&self) -> bool {
@@ -563,18 +557,7 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
 
     fn output_tx_type_checked(&self) -> Option<FoundryTxType> {
         let pref = self.preferred_type();
-        match pref {
-            FoundryTxType::Legacy => self.as_ref().complete_legacy().ok(),
-            FoundryTxType::Eip2930 => self.as_ref().complete_2930().ok(),
-            FoundryTxType::Eip1559 => self.as_ref().complete_1559().ok(),
-            FoundryTxType::Eip4844 => self.as_ref().complete_4844().ok(),
-            FoundryTxType::Eip7702 => self.as_ref().complete_7702().ok(),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::Deposit => self.complete_deposit().ok(),
-            #[cfg(feature = "optimism")]
-            FoundryTxType::PostExec => self.complete_type(pref).ok(),
-            FoundryTxType::Tempo => self.complete_tempo().ok(),
-        }?;
+        self.check_type(pref).ok()?;
         Some(pref)
     }
 
