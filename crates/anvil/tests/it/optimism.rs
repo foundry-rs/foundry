@@ -3,7 +3,7 @@
 use crate::utils::{http_provider, http_provider_with_signer};
 use alloy_consensus::{Eip658Value, Receipt, proofs::calculate_receipt_root};
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::{EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
+use alloy_network::{AnyNetwork, EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::{Address, Bloom, TxHash, TxKind, U256, b256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest, anvil::Forking};
@@ -250,7 +250,7 @@ async fn test_send_value_raw_deposit_transaction() {
     };
     let other = serde_json::to_value(op_fields).unwrap().try_into().unwrap();
     let tx = WithOtherFields { inner: tx, other };
-    let tx_envelope: alloy_network::AnyTxEnvelope = tx.build(&signer).await.unwrap();
+    let tx_envelope = NetworkTransactionBuilder::<AnyNetwork>::build(tx, &signer).await.unwrap();
     let mut tx_buffer = Vec::with_capacity(tx_envelope.encode_2718_len());
     tx_envelope.encode_2718(&mut tx_buffer);
     let tx_encoded = tx_buffer.as_slice();

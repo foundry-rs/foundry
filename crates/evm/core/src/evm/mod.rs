@@ -33,6 +33,7 @@ use tempo_alloy::TempoNetwork;
 use tempo_evm::evm::TempoEvmFactory;
 use tempo_revm::TempoHaltReason;
 
+pub mod any;
 pub mod eth;
 #[cfg(feature = "monad")]
 pub mod monad;
@@ -43,6 +44,7 @@ pub mod tempo;
 mod block_context;
 pub use block_context::*;
 
+pub use any::*;
 pub use eth::*;
 #[cfg(feature = "monad")]
 pub use monad::*;
@@ -72,6 +74,13 @@ pub trait FoundryEvmNetwork: Copy + Debug + Default + 'static {
 pub struct EthEvmNetwork;
 impl FoundryEvmNetwork for EthEvmNetwork {
     type Network = Ethereum;
+    type EvmFactory = EthEvmFactory;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AnyEvmNetwork;
+impl FoundryEvmNetwork for AnyEvmNetwork {
+    type Network = FoundryAnyNetwork;
     type EvmFactory = EthEvmFactory;
 }
 

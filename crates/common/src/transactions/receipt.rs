@@ -24,6 +24,12 @@ impl FoundryReceiptResponse for TransactionReceipt {
     }
 }
 
+impl FoundryReceiptResponse for AnyTransactionReceipt {
+    fn set_contract_address(&mut self, contract_address: Address) {
+        self.inner.contract_address = Some(contract_address);
+    }
+}
+
 #[cfg(feature = "optimism")]
 impl FoundryReceiptResponse for OpTransactionReceipt {
     fn set_contract_address(&mut self, contract_address: Address) {
