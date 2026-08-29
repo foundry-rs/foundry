@@ -71,6 +71,7 @@ jobs:
           HOODI_RPC_URL: ${{ secrets.HOODI_RPC_URL || 'https://ethereum-hoodi-rpc.publicnode.com' }}
           SEPOLIA_RPC_URL: ${{ secrets.ETH_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com' }}
           BASE_SEPOLIA_RPC_URL: ${{ secrets.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org' }}
+          ARBITRUM_SEPOLIA_RPC_URL: ${{ secrets.ARBITRUM_SEPOLIA_RPC_URL || 'https://sepolia-rollup.arbitrum.io/rpc' }}
           MONAD_TESTNET_RPC_URL: ${{ secrets.MONAD_TESTNET_RPC_URL || 'https://testnet-rpc.monad.xyz' }}
           ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL || 'https://rpc.testnet.chain.robinhood.com' }}
           TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.FUNDED_TESTNET_PKEY }}
@@ -85,7 +86,7 @@ jobs:
           # Thresholds are roughly 20 more runs at the measured per-run burn. Monad testnet is the
           # expensive one at ~0.08 MON per run; the L2s are effectively free.
           low=""
-          for spec in HOODI:0.05 SEPOLIA:0.05 BASE_SEPOLIA:0.01 MONAD_TESTNET:2.0 ROBINHOOD_TESTNET:0.01; do
+          for spec in HOODI:0.05 SEPOLIA:0.05 BASE_SEPOLIA:0.01 ARBITRUM_SEPOLIA:0.01 MONAD_TESTNET:2.0 ROBINHOOD_TESTNET:0.01; do
             net="${spec%%:*}"
             min="${spec##*:}"
             url_var="${net}_RPC_URL"
@@ -111,6 +112,7 @@ jobs:
           HOODI_RPC_URL: ${{ secrets.HOODI_RPC_URL || 'https://ethereum-hoodi-rpc.publicnode.com' }}
           SEPOLIA_RPC_URL: ${{ secrets.ETH_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com' }}
           BASE_SEPOLIA_RPC_URL: ${{ secrets.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org' }}
+          ARBITRUM_SEPOLIA_RPC_URL: ${{ secrets.ARBITRUM_SEPOLIA_RPC_URL || 'https://sepolia-rollup.arbitrum.io/rpc' }}
           MONAD_TESTNET_RPC_URL: ${{ secrets.MONAD_TESTNET_RPC_URL || 'https://testnet-rpc.monad.xyz' }}
           ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL || 'https://rpc.testnet.chain.robinhood.com' }}
           # Funded throwaway deployer, shared by every network. Holds testnet funds only, and is

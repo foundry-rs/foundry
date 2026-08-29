@@ -481,8 +481,9 @@ const ROBINHOOD_TESTNET_BLOCKSCOUT_URL: &str = "https://explorer.testnet.chain.r
 /// they are wired up by the nightly `test-deploy-verify` workflow rather than by PR CI: they spend
 /// testnet funds and depend on three external verifier services.
 ///
-/// Etherscan v2 covers Hoodi, Sepolia, Base Sepolia and Monad testnet. Robinhood testnet is not on
-/// the v2 chainlist, so it is covered by Sourcify and its own Blockscout instance instead.
+/// Etherscan v2 covers Hoodi, Sepolia, Base Sepolia, Arbitrum Sepolia and Monad testnet. Robinhood
+/// testnet is not on the v2 chainlist, so it is covered by Sourcify and its own Blockscout instance
+/// instead.
 macro_rules! deploy_verify_tests {
     ($($name:ident: $chain:expr, $network:literal, $verifier:literal, $url:expr;)*) => {$(
         forgetest!($name, |prj, cmd| {
@@ -508,6 +509,11 @@ deploy_verify_tests! {
         NamedChain::BaseSepolia, "base-sepolia", "etherscan", None;
     deploy_verify_base_sepolia_sourcify:
         NamedChain::BaseSepolia, "base-sepolia", "sourcify", None;
+
+    deploy_verify_arbitrum_sepolia_etherscan:
+        NamedChain::ArbitrumSepolia, "arbitrum-sepolia", "etherscan", None;
+    deploy_verify_arbitrum_sepolia_sourcify:
+        NamedChain::ArbitrumSepolia, "arbitrum-sepolia", "sourcify", None;
 
     deploy_verify_monad_testnet_etherscan:
         NamedChain::MonadTestnet, "monad-testnet", "etherscan", None;
