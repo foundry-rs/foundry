@@ -31,6 +31,9 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs:
+      deployer: ${{ steps.balances.outputs.deployer }}
+      low: ${{ steps.balances.outputs.low }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -58,9 +61,11 @@ jobs:
           fi
           echo "Deployer key is configured."
 
-      # Purely diagnostic: running dry is the most likely failure, so the balances are worth having
-      # at the top of the log. Never fail the run over it - the tests themselves are the signal.
+      # Running dry is the most likely failure, so balances go at the top of the log and anything
+      # under its threshold is reported to the refund job below. Never fail the run over this - the
+      # tests themselves are the signal, and one dry network should not stop the others.
       - name: Report deployer balances
+        id: balances
         continue-on-error: true
         env:
           HOODI_RPC_URL: ${{ secrets.HOODI_RPC_URL || 'https://ethereum-hoodi-rpc.publicnode.com' }}
@@ -75,16 +80,28 @@ jobs:
           cast=./target/debug/cast
           addr=$("$cast" wallet address "$TESTNET_DEPLOYER_PRIVATE_KEY")
           echo "Deployer: $addr"
-          for net in HOODI SEPOLIA BASE_SEPOLIA MONAD_TESTNET ROBINHOOD_TESTNET; do
+          echo "deployer=$addr" >> "$GITHUB_OUTPUT"
+
+          # Thresholds are roughly 20 more runs at the measured per-run burn. Monad testnet is the
+          # expensive one at ~0.08 MON per run; the L2s are effectively free.
+          low=""
+          for spec in HOODI:0.05 SEPOLIA:0.05 BASE_SEPOLIA:0.01 MONAD_TESTNET:2.0 ROBINHOOD_TESTNET:0.01; do
+            net="${spec%%:*}"
+            min="${spec##*:}"
             url_var="${net}_RPC_URL"
             if ! bal=$("$cast" balance "$addr" --rpc-url "${!url_var}" 2>/dev/null); then
               echo "::warning::$net: could not read balance"
-            elif [[ "$bal" == "0" ]]; then
-              echo "::warning::$net: deployer is out of funds"
+              continue
+            fi
+            human=$("$cast" from-wei "$bal")
+            if awk -v b="$human" -v m="$min" 'BEGIN { exit !(b + 0 < m + 0) }'; then
+              echo "::warning::$net: $human is below the $min top-up threshold"
+              low="$low $net=$human(min $min)"
             else
-              echo "$net: $("$cast" from-wei "$bal")"
+              echo "$net: $human"
             fi
           done
+          echo "low=${low# }" >> "$GITHUB_OUTPUT"
 
       - name: Deploy and verify on testnets
         env:
@@ -103,6 +120,31 @@ jobs:
           # ETHERSCAN_KEY that the regular test workflow exports for `foundry_test_utils::rpc`.
           ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
         run: cargo nextest run --locked --profile deploy-verify --no-fail-fast
+
+  # Raised before the account actually runs dry, so the tests keep passing while someone tops it
+  # up. Independent of whether the tests passed - a low balance is worth reporting either way.
+  refund:
+    name: Open a refund issue
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: always() && github.event_name == 'schedule' && needs.test.outputs.low != ''
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2.9.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOYER: ${{ needs.test.outputs.deployer }}
+          LOW_NETWORKS: ${{ needs.test.outputs.low }}
+          WORKFLOW_URL: |
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          update_existing: true
+          filename: .github/DEPLOY_VERIFY_REFUND_TEMPLATE.md
 
   # If the nightly run fails, this will create a normal-priority issue to signal so.
   issue:
