@@ -133,6 +133,8 @@ pub struct RunArgs {
     pub with_local_artifacts: bool,
 
     /// Disable block gas limit check.
+    ///
+    /// Always implied: a mined transaction already passed its chain's own check.
     #[arg(long)]
     pub disable_block_gas_limit: bool,
 
@@ -393,7 +395,11 @@ impl RunArgs {
         )?;
 
         let mut evm_version = self.evm_version;
-        evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
+        // Mined transactions already passed the block gas limit check their chain applies, and
+        // some chains admit transactions whose gas limit exceeds it: BSC validator transactions
+        // carry a gas limit of `i64::MAX`. Re-applying the check can only reject a transaction
+        // the chain accepted.
+        evm_env.cfg_env.disable_block_gas_limit = true;
 
         // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
         // Users can opt-in to enable these limits by setting `enable_tx_gas_limit` to true.
@@ -733,11 +739,10 @@ fn parent_beacon_block_root_for_network(
         return Ok(None);
     }
 
-    parent_beacon_block_root.map(Some).ok_or_else(|| {
-        eyre::eyre!(
-            "MissingParentBeaconBlockRoot: missing parent beacon block root for Cancun block"
-        )
-    })
+    // Chains that run a Cancun or later EVM without Ethereum's beacon chain, such as Polygon and
+    // Scroll, never populate this header field and never deploy the EIP-4788 contract, so there
+    // is no root to apply. Requiring one makes their blocks unreplayable.
+    Ok(parent_beacon_block_root)
 }
 
 pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
@@ -969,10 +974,13 @@ mod tests {
     }
 
     #[test]
-    fn parent_beacon_block_root_is_required_for_cancun() {
+    fn parent_beacon_block_root_is_applied_only_when_the_header_has_one() {
         let networks = NetworkConfigs::default();
-        let err = parent_beacon_block_root_for_network(networks, SpecId::CANCUN, None).unwrap_err();
-        assert!(err.to_string().contains("MissingParentBeaconBlockRoot"));
+        // Polygon and Scroll run a Cancun or later EVM without populating the header field.
+        assert_eq!(
+            parent_beacon_block_root_for_network(networks, SpecId::CANCUN, None).unwrap(),
+            None
+        );
 
         let root = B256::repeat_byte(0x42);
         assert_eq!(
