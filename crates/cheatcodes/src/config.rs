@@ -117,7 +117,7 @@ impl CheatsConfig {
         let mut cloned = Self::new(
             config,
             evm_opts,
-            self.artifact_lookup.clone(),
+            self.artifact_lookup.clone().or_else(|| self.available_artifacts.clone()),
             self.running_artifact.clone(),
             self.batch_rewrite_creates,
         );
@@ -335,6 +335,18 @@ mod tests {
 
         let cloned = cheats.clone_with(&config, Default::default());
         assert!(cloned.available_artifacts.is_none());
+        assert!(cloned.artifact_lookup.is_some());
+    }
+
+    #[test]
+    fn clone_with_preserves_available_artifacts_without_lookup() {
+        let cheats = CheatsConfig {
+            available_artifacts: Some(ContractsByArtifact::default()),
+            ..Default::default()
+        };
+
+        let cloned = cheats.clone_with(&Config::default(), Default::default());
+        assert!(cloned.available_artifacts.is_some());
         assert!(cloned.artifact_lookup.is_some());
     }
 
