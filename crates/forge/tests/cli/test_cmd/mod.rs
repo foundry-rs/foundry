@@ -174,6 +174,63 @@ forgetest!(flaky_testdata, |_prj, cmd| {
     cmd.args(["test", &mc]).assert_success();
 });
 
+// Ensures `vm.deployCode` works with the optimism network family active, covering the OP EVM's
+// nested frame execution path which is only reachable through this cheatcode.
+forgetest_init!(deploy_code_cheatcode_on_optimism_network, |prj, cmd| {
+    prj.update_config(|config| {
+        config.networks = foundry_evm_networks::NetworkConfigs::with_optimism();
+    });
+
+    prj.add_source(
+        "OpCounter.sol",
+        r#"
+contract OpCounter {
+    uint256 public number;
+
+    constructor(uint256 initial) {
+        number = initial;
+    }
+
+    function increment() external {
+        number++;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "OpDeployCode.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {OpCounter} from "../src/OpCounter.sol";
+
+contract OpDeployCodeTest is Test {
+    function testDeployCodeOnOptimism() public {
+        address deployed = vm.deployCode("src/OpCounter.sol:OpCounter", abi.encode(41));
+        assertGt(deployed.code.length, 0);
+
+        OpCounter counter = OpCounter(deployed);
+        assertEq(counter.number(), 41);
+        counter.increment();
+        assertEq(counter.number(), 42);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "OpDeployCodeTest"]).assert_success().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for test/OpDeployCode.t.sol:OpDeployCodeTest
+[PASS] testDeployCodeOnOptimism() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#
+    ]]);
+});
+
 // tests that test filters are handled correctly
 forgetest!(can_set_filter_values, |prj, cmd| {
     let patt = regex::Regex::new("test*").unwrap();
