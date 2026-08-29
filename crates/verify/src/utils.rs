@@ -34,7 +34,7 @@ use foundry_evm::{
         },
     },
     executors::TracingExecutor,
-    opts::EvmOpts,
+    opts::{EvmOpts, ForkHardforks},
     traces::TraceRequirements,
     utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
 };
@@ -334,20 +334,15 @@ where
     fork_config.fork_block_number = Some(fork_blk_num);
 
     let create2_deployer = evm_opts.create2_deployer;
-    let (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork) =
+    let (mut evm_env, tx_env, fork, chain, networks, hardforks) =
         TracingExecutor::<FEN>::get_fork_material(fork_config, evm_opts).await?;
 
     evm_env.block_env.set_number(U256::from(execution_blk_num));
     if let Some(block) = execution_block {
         configure_env_block::<FEN>(&mut evm_env, block, chain.id(), networks);
     }
-    let resolved_hardfork = resolve_runtime_spec::<FEN>(
-        fork_config,
-        networks,
-        chain.id(),
-        endpoint_hardfork,
-        &mut evm_env,
-    );
+    let resolved_hardfork =
+        resolve_runtime_spec::<FEN>(fork_config, networks, chain.id(), hardforks, &mut evm_env);
     TracingExecutor::<FEN>::extend_precompile_labels(fork_config, networks, resolved_hardfork);
 
     let executor = TracingExecutor::<FEN>::new(
@@ -367,7 +362,7 @@ fn resolve_runtime_spec<FEN>(
     config: &Config,
     networks: NetworkConfigs,
     source_chain_id: ChainId,
-    endpoint_hardfork: Option<FoundryHardfork>,
+    hardforks: ForkHardforks,
     evm_env: &mut EvmEnvFor<FEN>,
 ) -> Option<FoundryHardfork>
 where
@@ -377,7 +372,7 @@ where
         config,
         networks,
         source_chain_id,
-        endpoint_hardfork,
+        hardforks,
         evm_env,
         None,
     )
@@ -669,7 +664,7 @@ contract Broken {
             &before_config,
             NetworkConfigs::with_monad(),
             NamedChain::Monad as u64,
-            None,
+            ForkHardforks::default(),
             &mut before_env,
         );
 
@@ -689,7 +684,7 @@ contract Broken {
             &after_config,
             NetworkConfigs::with_monad(),
             NamedChain::Monad as u64,
-            None,
+            ForkHardforks::default(),
             &mut after_env,
         );
 
@@ -718,7 +713,9 @@ contract Broken {
             &config,
             networks,
             NamedChain::Monad as u64,
-            Some(foundry_evm::hardforks::MonadHardfork::MonadNine.into()),
+            ForkHardforks::from_endpoint(Some(
+                foundry_evm::hardforks::MonadHardfork::MonadNine.into(),
+            )),
             &mut env,
         );
         TracingExecutor::<foundry_evm::core::evm::MonadEvmNetwork>::extend_precompile_labels(

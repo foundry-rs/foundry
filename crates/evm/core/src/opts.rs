@@ -2,7 +2,10 @@ use crate::{
     EvmEnv, FoundryBlock, FoundryTransaction,
     constants::DEFAULT_CREATE2_DEPLOYER,
     fork::{CreateFork, ResolvedFork},
-    utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
+    utils::{
+        apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header,
+        ethereum_hardfork_from_header,
+    },
 };
 #[cfg(test)]
 use alloy_chains::NamedChain;
@@ -257,6 +260,11 @@ pub struct ForkContext {
     pub block_number: BlockNumber,
     /// Exact hardfork reported by the fork endpoint, when available.
     pub hardfork: Option<FoundryHardfork>,
+    /// Hardfork implied by the fork block header, when its mandatory fields identify one.
+    ///
+    /// This is a fallback for chains Foundry has no activation schedule for, so it is only
+    /// derived for the Ethereum network family.
+    pub header_hardfork: Option<FoundryHardfork>,
     /// Anvil instance identifier, when exposed by the endpoint.
     pub instance_id: Option<B256>,
     /// Block number from which the endpoint itself was forked.
@@ -265,7 +273,30 @@ pub struct ForkContext {
     pub source_fork_block_hash: Option<B256>,
 }
 
+/// The hardfork evidence a fork endpoint and its fork block provide.
+///
+/// Kept together so callers cannot mix up two same-typed hardfork options.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ForkHardforks {
+    /// Exact hardfork reported by the fork endpoint, when available.
+    pub endpoint: Option<FoundryHardfork>,
+    /// Hardfork implied by the fork block header, when its mandatory fields identify one.
+    pub header: Option<FoundryHardfork>,
+}
+
+impl ForkHardforks {
+    /// Returns the evidence for an endpoint that reported an exact hardfork.
+    pub const fn from_endpoint(endpoint: Option<FoundryHardfork>) -> Self {
+        Self { endpoint, header: None }
+    }
+}
+
 impl ForkContext {
+    /// Returns the hardfork evidence this fork provides.
+    pub const fn hardforks(self) -> ForkHardforks {
+        ForkHardforks { endpoint: self.hardfork, header: self.header_hardfork }
+    }
+
     /// Returns whether this block context belongs to `identity`.
     pub fn matches_identity(self, identity: &ForkEndpointIdentity) -> bool {
         self.execution_chain_id == identity.execution_chain_id
@@ -1167,6 +1198,10 @@ impl EvmOpts {
             network_profile: identity.network_profile,
             block_number: actual.number,
             hardfork: identity.hardfork,
+            header_hardfork: (identity.network == NetworkVariant::Ethereum)
+                .then(|| ethereum_hardfork_from_header(block.header()))
+                .flatten()
+                .map(FoundryHardfork::Ethereum),
             instance_id: identity.instance_id,
             source_fork_block_number: identity.source_fork_block_number,
             source_fork_block_hash: identity.source_fork_block_hash,
@@ -1427,6 +1462,8 @@ pub enum ExecutionSpecContext {
         source_chain_id: ChainId,
         /// Exact hardfork reported by the endpoint.
         endpoint_hardfork: Option<FoundryHardfork>,
+        /// Hardfork implied by the source block header, when its mandatory fields identify one.
+        header_hardfork: Option<FoundryHardfork>,
     },
 }
 
@@ -1455,8 +1492,9 @@ impl ExecutionSpecContext {
     pub const fn historical(
         source_chain_id: ChainId,
         endpoint_hardfork: Option<FoundryHardfork>,
+        header_hardfork: Option<FoundryHardfork>,
     ) -> Self {
-        Self::Historical { source_chain_id, endpoint_hardfork }
+        Self::Historical { source_chain_id, endpoint_hardfork, header_hardfork }
     }
 
     fn endpoint_hardfork(self, networks: NetworkConfigs) -> Option<FoundryHardfork> {
@@ -1465,6 +1503,18 @@ impl ExecutionSpecContext {
             Self::Fork { endpoint_hardfork, .. } if networks.active_network_name().is_some() => {
                 endpoint_hardfork
             }
+            Self::Local | Self::Fork { .. } => None,
+        }
+    }
+
+    /// Returns the hardfork implied by the source block header.
+    ///
+    /// Only historical execution uses it: it must reproduce the source block, while a local fork
+    /// deliberately keeps Foundry's configured EVM version so tests run at the version their
+    /// contracts were compiled for.
+    const fn header_hardfork(self) -> Option<FoundryHardfork> {
+        match self {
+            Self::Historical { header_hardfork, .. } => header_hardfork,
             Self::Local | Self::Fork { .. } => None,
         }
     }
@@ -1485,7 +1535,10 @@ impl ExecutionSpecContext {
 /// A direct caller override takes precedence over a configured namespaced hardfork, followed by
 /// exact endpoint metadata and the hardfork selected from the source schedule. Local Ethereum
 /// forks retain Foundry's configured EVM version, namespaced local networks follow their source
-/// identity, and historical execution always follows the source block's identity.
+/// identity, and historical execution always follows the source block's identity. When no
+/// schedule covers the source chain, historical execution falls back to the hardfork implied by
+/// the source block header instead of Foundry's own default, which would otherwise run a chain
+/// ahead of the fork it is actually on.
 ///
 /// Returns the exact namespaced hardfork, when applicable, so execution and trace decoding can use
 /// the same hardfork.
@@ -1514,6 +1567,7 @@ where
             )
         })
         .filter(|&hardfork| supports(hardfork));
+    let header_hardfork = context.header_hardfork().filter(|&hardfork| supports(hardfork));
     let fallback_hardfork = if networks.is_tempo() {
         Some(FoundryHardfork::Tempo(config.evm_spec_id::<TempoHardfork>()))
     } else {
@@ -1529,7 +1583,11 @@ where
     let resolved_hardfork = if explicit_spec.is_some() {
         explicit_hardfork
     } else {
-        configured_hardfork.or(endpoint_hardfork).or(timestamp_hardfork).or(fallback_hardfork)
+        configured_hardfork
+            .or(endpoint_hardfork)
+            .or(timestamp_hardfork)
+            .or(fallback_hardfork)
+            .or(header_hardfork)
     };
     let spec = explicit_spec
         .or_else(|| resolved_hardfork.and_then(SPEC::from_foundry_hardfork))
@@ -1608,6 +1666,7 @@ async fn option_try_or_else<T, E>(
 
 #[cfg(test)]
 mod tests {
+    use alloy_hardforks::EthereumHardfork;
     use alloy_network::TransactionBuilder;
     use alloy_primitives::bytes;
     use alloy_rpc_types::TransactionRequest;
@@ -1630,6 +1689,7 @@ mod tests {
             network_profile: NetworkConfigs::default(),
             block_number,
             hardfork: None,
+            header_hardfork: None,
             instance_id: None,
             source_fork_block_number: None,
             source_fork_block_hash: None,
@@ -1666,6 +1726,7 @@ mod tests {
             network_profile: NetworkConfigs::default(),
             block_number: 10,
             hardfork: None,
+            header_hardfork: None,
             instance_id: None,
             source_fork_block_number: None,
             source_fork_block_hash: None,
@@ -1841,6 +1902,7 @@ mod tests {
             network_profile: identity.network_profile,
             block_number: 123,
             hardfork: identity.hardfork,
+            header_hardfork: None,
             instance_id: identity.instance_id,
             source_fork_block_number: identity.source_fork_block_number,
             source_fork_block_hash: identity.source_fork_block_hash,
@@ -2077,13 +2139,100 @@ mod tests {
                 &config,
                 NetworkConfigs::default(),
                 &mut env,
-                ExecutionSpecContext::historical(NamedChain::Mainnet as u64, None),
+                ExecutionSpecContext::historical(NamedChain::Mainnet as u64, None, None),
                 None,
                 None,
             ),
             Some(expected)
         );
         assert_eq!(env.cfg_env.spec, SpecId::from(expected));
+    }
+
+    #[test]
+    fn resolve_execution_spec_falls_back_to_header_hardfork_for_unknown_chains() {
+        // Hyperliquid is not covered by any activation schedule Foundry knows about.
+        let unknown_chain_id = 999;
+        let config = Config::default();
+        let header_hardfork = Some(FoundryHardfork::Ethereum(EthereumHardfork::Cancun));
+        let mut env = EvmEnv::new(CfgEnv::new_with_spec(SpecId::LONDON), BlockEnv::default());
+
+        assert_eq!(
+            resolve_execution_spec(
+                &config,
+                NetworkConfigs::default(),
+                &mut env,
+                ExecutionSpecContext::historical(unknown_chain_id, None, header_hardfork),
+                None,
+                None,
+            ),
+            header_hardfork
+        );
+        assert_eq!(env.cfg_env.spec, SpecId::CANCUN);
+
+        // Without header evidence the configured EVM version still applies.
+        let mut env = EvmEnv::new(CfgEnv::new_with_spec(SpecId::LONDON), BlockEnv::default());
+        assert_eq!(
+            resolve_execution_spec(
+                &config,
+                NetworkConfigs::default(),
+                &mut env,
+                ExecutionSpecContext::historical(unknown_chain_id, None, None),
+                None,
+                None,
+            ),
+            None
+        );
+        assert_eq!(env.cfg_env.spec, config.evm_spec_id::<SpecId>());
+    }
+
+    #[test]
+    fn resolve_execution_spec_prefers_source_schedule_over_header_hardfork() {
+        let config = Config::default();
+        let timestamp = 1_500_000_000u64;
+        let expected =
+            FoundryHardfork::from_chain_and_timestamp(NamedChain::Mainnet as u64, timestamp)
+                .unwrap();
+        let mut block = BlockEnv::default();
+        block.set_timestamp(U256::from(timestamp));
+        let mut env = EvmEnv::new(CfgEnv::new_with_spec(SpecId::LONDON), block);
+
+        assert_eq!(
+            resolve_execution_spec(
+                &config,
+                NetworkConfigs::default(),
+                &mut env,
+                ExecutionSpecContext::historical(
+                    NamedChain::Mainnet as u64,
+                    None,
+                    Some(FoundryHardfork::Ethereum(EthereumHardfork::Cancun)),
+                ),
+                None,
+                None,
+            ),
+            Some(expected)
+        );
+        assert_eq!(env.cfg_env.spec, SpecId::from(expected));
+    }
+
+    #[test]
+    fn resolve_execution_spec_ignores_header_hardfork_for_local_forks() {
+        // Local forks deliberately keep the configured EVM version so tests run at the version
+        // their contracts were compiled for.
+        let config = Config::default();
+        let mut env = EvmEnv::new(CfgEnv::new_with_spec(SpecId::LONDON), BlockEnv::default());
+
+        assert_eq!(
+            resolve_execution_spec(
+                &config,
+                NetworkConfigs::default(),
+                &mut env,
+                ExecutionSpecContext::fork(999, None),
+                None,
+                None,
+            ),
+            None
+        );
+        assert_eq!(env.cfg_env.spec, config.evm_spec_id::<SpecId>());
     }
 
     #[test]

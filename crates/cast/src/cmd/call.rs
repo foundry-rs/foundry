@@ -623,7 +623,7 @@ impl CallArgs {
 
             let create2_deployer = evm_opts.create2_deployer;
             let verbosity = tracing.verbosity;
-            let (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork) =
+            let (mut evm_env, tx_env, fork, chain, networks, hardforks) =
                 TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
             let context_block_number = evm_env.block_env.number().saturating_to();
             // Modify settings usually set in eth_call while keeping execution gas bounded.
@@ -643,7 +643,7 @@ impl CallArgs {
                 &config,
                 networks,
                 chain.id(),
-                endpoint_hardfork,
+                hardforks,
                 &mut evm_env,
                 evm_version,
             );

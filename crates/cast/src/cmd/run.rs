@@ -386,13 +386,13 @@ impl RunArgs {
 
         let create2_deployer = evm_opts.create2_deployer;
         let verbosity = tracing.verbosity;
-        let (block, (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork)) = tokio::try_join!(
+        let (block, (mut evm_env, tx_env, fork, chain, networks, hardforks)) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
             TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts)
         )?;
 
-        let mut evm_version = self.evm_version;
+        let evm_version = self.evm_version;
         evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
 
         // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
@@ -409,18 +409,6 @@ impl RunArgs {
             evm_env.block_env = block_env_from_header(block.header());
             parent_beacon_block_root = block.header().parent_beacon_block_root();
 
-            // Unless explicitly configured, resolve the correct spec for the block using the same
-            // approach as reth: walk known chain activation conditions to find the latest active
-            // fork. Falls back to a blob-gas heuristic for unknown chains.
-            if evm_version.is_none()
-                && config.hardfork.is_none()
-                && FoundryHardfork::from_chain_and_timestamp(chain.id(), block.header().timestamp())
-                    .is_none()
-                && block.header().excess_blob_gas().is_some()
-            {
-                // TODO: add glamsterdam header field checks in the future
-                evm_version = Some(EvmVersion::Cancun);
-            }
             apply_chain_and_block_specific_env_changes_for_chain::<FEN::Network, _, _>(
                 &mut evm_env,
                 block,
@@ -432,7 +420,7 @@ impl RunArgs {
             &config,
             networks,
             chain.id(),
-            endpoint_hardfork,
+            hardforks,
             &mut evm_env,
             evm_version,
         );

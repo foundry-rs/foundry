@@ -73,7 +73,7 @@ use yansi::Paint;
 pub use foundry_common::version::SHORT_VERSION as VERSION_MESSAGE;
 use foundry_evm::{
     traces::{CallTraceDecoderBuilder, identifier::SignaturesIdentifier},
-    utils::{get_blob_params, get_blob_params_by_hardfork},
+    utils::{ethereum_hardfork_from_header, get_blob_params, get_blob_params_by_hardfork},
 };
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
 use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
@@ -1971,6 +1971,14 @@ latest block number: {latest_block}"
                     .filter(|hardfork| {
                         hardfork.namespace() == effective_network.hardfork_namespace()
                     })
+                })
+                // Chains without an activation schedule would otherwise fall back to Anvil's own
+                // default, which is the latest hardfork and can run ahead of the forked chain.
+                .or_else(|| {
+                    (effective_network == NetworkVariant::Ethereum)
+                        .then(|| ethereum_hardfork_from_header(&block.header))
+                        .flatten()
+                        .map(FoundryHardfork::Ethereum)
                 })
         } else {
             None

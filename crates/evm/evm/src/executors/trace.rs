@@ -8,7 +8,7 @@ use foundry_evm_core::{
     backend::Backend,
     evm::{BlockEnvFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     fork::CreateFork,
-    opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
+    opts::{EvmOpts, ExecutionSpecContext, ForkHardforks, resolve_execution_spec},
 };
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
@@ -89,7 +89,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
             config,
             networks,
             evm_env.cfg_env.chain_id,
-            None,
+            ForkHardforks::default(),
             evm_env,
             evm_version,
         )
@@ -100,7 +100,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         config: &Config,
         networks: NetworkConfigs,
         source_chain_id: ChainId,
-        endpoint_hardfork: Option<FoundryHardfork>,
+        hardforks: ForkHardforks,
         evm_env: &mut EvmEnvFor<FEN>,
         evm_version: Option<EvmVersion>,
     ) -> Option<FoundryHardfork> {
@@ -110,7 +110,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
             config,
             networks,
             evm_env,
-            ExecutionSpecContext::historical(source_chain_id, endpoint_hardfork),
+            ExecutionSpecContext::historical(source_chain_id, hardforks.endpoint, hardforks.header),
             evm_version.map(evm_spec_id::<SpecFor<FEN>>),
             explicit_hardfork,
         )
@@ -135,7 +135,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         CreateFork,
         Chain,
         NetworkConfigs,
-        Option<FoundryHardfork>,
+        ForkHardforks,
     )> {
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
         evm_opts.fork_block_number = config.fork_block_number;
@@ -150,7 +150,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         let fork_context = resolved.context();
 
         let chain = fork_context.source_chain_id.into();
-        Ok((evm_env, tx_env, fork, chain, networks, fork_context.hardfork))
+        Ok((evm_env, tx_env, fork, chain, networks, fork_context.hardforks()))
     }
 }
 
