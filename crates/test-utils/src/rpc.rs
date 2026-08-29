@@ -73,6 +73,21 @@ shuffled_list!(
     ],
 );
 
+// Public Arbitrum endpoints, rotated so that a retry reaches a different provider.
+//
+// Every entry must serve archive state: `fork::flaky_test_arb_fork_mining` forks at a pinned block
+// far behind the head, which non-archive endpoints such as `arb1.arbitrum.io` reject with
+// `missing trie node`. The DRPC keys used for the other chains do not qualify: their Arbitrum quota
+// is exhausted and every fork of it fails.
+shuffled_list!(
+    ARBITRUM_URLS,
+    vec![
+        //
+        "https://arb-pokt.nodies.app",
+        "https://arbitrum.gateway.tenderly.co",
+    ],
+);
+
 // List of general purpose DRPC keys to rotate through
 shuffled_list!(
     DRPC_KEYS,
@@ -215,10 +230,8 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         return "https://ethereum-sepolia-rpc.publicnode.com".to_string();
     }
 
-    if matches!(chain, Arbitrum)
-        && let Some(rpc_url) = env_rpc_url("ARBITRUM_RPC")
-    {
-        return rpc_url;
+    if matches!(chain, Arbitrum) {
+        return env_rpc_url("ARBITRUM_RPC").unwrap_or_else(|| (*ARBITRUM_URLS.next()).to_string());
     }
 
     let reth_works = true;
@@ -230,7 +243,6 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         let network = match chain {
             Mainnet => "ethereum",
             Polygon => "polygon",
-            Arbitrum => "arbitrum",
             Sepolia => "sepolia",
             _ => "",
         };
