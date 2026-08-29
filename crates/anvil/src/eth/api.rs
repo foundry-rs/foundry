@@ -36,7 +36,7 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt,
+    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt, Typed2718,
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_dyn_abi::TypedData;
@@ -46,7 +46,7 @@ use alloy_eips::{
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
-    AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, BlockResponse, Network,
+    AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, BlockResponse, Network,
     NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder, TransactionBuilder4844,
     TransactionResponse, eip2718::Decodable2718,
 };
@@ -2399,7 +2399,7 @@ impl EthApi<FoundryNetwork> {
         match self.pool.get_transaction(hash) {
             Some(tx) => Ok(Some(tx.transaction.encoded_2718().into())),
             None => match self.backend.transaction_by_hash(hash).await? {
-                Some(tx) => Ok(Some(tx.as_ref().encoded_2718().into())),
+                Some(tx) => encode_rpc_transaction_2718(&tx).map(Some),
                 None => Ok(None),
             },
         }
@@ -3787,7 +3787,7 @@ impl EthApi<FoundryNetwork> {
                 "fork provider returned a non-full block for a full block request".to_string(),
             ));
         };
-        Ok(txs.iter().map(|tx| tx.as_ref().encoded_2718().into()).collect())
+        txs.iter().map(encode_rpc_transaction_2718).collect()
     }
 
     /// Returns RLP encoded raw block header.
@@ -5077,6 +5077,23 @@ fn normalize_fee_payer_service_encoding(raw: &[u8]) -> Option<Vec<u8>> {
     Header { list: true, payload_length: payload.len() }.encode(&mut normalized);
     normalized.extend_from_slice(&payload);
     Some(normalized)
+}
+
+/// EIP-2718 encodes a transaction held in its JSON-RPC form.
+///
+/// [`AnyTxEnvelope`] panics rather than encode a type alloy does not model, so anything that is
+/// not plain Ethereum is routed through [`FoundryTxEnvelope`], which knows the types anvil
+/// supports. Chains anvil can fork but not execute, such as Arbitrum and its Orbit rollups, mint
+/// types with no Foundry envelope; anvil only ever holds their RPC representation, which is not
+/// enough to reconstruct their consensus encoding.
+fn encode_rpc_transaction_2718(transaction: &AnyRpcTransaction) -> Result<Bytes> {
+    if let AnyTxEnvelope::Ethereum(envelope) = &*transaction.inner.inner {
+        return Ok(envelope.encoded_2718().into());
+    }
+
+    FoundryTxEnvelope::try_from(transaction.clone())
+        .map(|envelope| envelope.encoded_2718().into())
+        .map_err(|_| BlockchainError::UnsupportedTransactionEncoding(transaction.inner.inner.ty()))
 }
 
 fn txpool_transaction_key(pending_transaction: &PendingTransaction<FoundryTxEnvelope>) -> String {

@@ -43,6 +43,8 @@ pub enum BlockchainError {
     FailedToDecodeTransaction,
     #[error("Failed to decode receipt")]
     FailedToDecodeReceipt,
+    #[error("Cannot EIP-2718 encode transaction type 0x{0:x}")]
+    UnsupportedTransactionEncoding(u8),
     #[error("Failed to decode state")]
     FailedToDecodeStateDump,
     #[error("Prevrandao not in the EVM's environment after merge")]
@@ -506,6 +508,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 }
                 BlockchainError::FailedToDecodeReceipt => {
                     RpcError::invalid_params("Failed to decode receipt")
+                }
+                BlockchainError::UnsupportedTransactionEncoding(_) => {
+                    RpcError::internal_error_with(err.to_string())
                 }
                 BlockchainError::FailedToDecodeStateDump => {
                     RpcError::invalid_params("Failed to decode state dump")

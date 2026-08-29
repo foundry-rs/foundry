@@ -16,7 +16,7 @@ use alloy_rpc_types::ConversionError;
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit, TxPostExec};
 use revm::context::TxEnv;
-use tempo_primitives::{AASigned, TempoSignature, TempoTransaction};
+use tempo_primitives::{AASigned, TEMPO_TX_TYPE_ID, TempoSignature, TempoTransaction};
 use tempo_revm::TempoTxEnv;
 
 //
@@ -327,6 +327,15 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                 TxEnvelope::Eip7702(tx) => Ok(Self::Eip7702(tx)),
             },
             AnyTxEnvelope::Unknown(tx) => {
+                // Anvil rebuilds its own mined Tempo transactions into this shape, and Tempo
+                // endpoints report them the same way.
+                if tx.ty() == TEMPO_TX_TYPE_ID {
+                    let tempo_tx = tx.inner.fields.deserialize_into::<AASigned>().map_err(|e| {
+                        ConversionError::Custom(format!("Failed to deserialize tempo tx: {e}"))
+                    })?;
+                    return Ok(Self::Tempo(tempo_tx));
+                }
+
                 #[cfg(feature = "optimism")]
                 {
                     let mut tx = tx;
