@@ -2625,9 +2625,14 @@ impl EthApi<FoundryNetwork> {
         block_hash: B256,
     ) -> Result<Option<serde_json::Value>> {
         node_info!("eth_getBlockAccessListByBlockHash");
-        if let Some(fork) = self.get_fork() {
+        let Some(block) = self.backend.block_by_hash(block_hash).await? else { return Ok(None) };
+
+        if let Some(fork) = self.get_fork()
+            && fork.predates_fork_inclusive(block.header.number)
+        {
             return Ok(fork.block_access_list_by_hash(block_hash).await?);
         }
+
         Ok(None)
     }
 
