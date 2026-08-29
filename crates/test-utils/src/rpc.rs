@@ -4,7 +4,8 @@ use alloy_primitives::B256;
 use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::post};
 use foundry_config::{
     NamedChain::{
-        self, Arbitrum, Base, BinanceSmartChainTestnet, Celo, Mainnet, Optimism, Polygon, Sepolia,
+        self, Arbitrum, Base, BinanceSmartChainTestnet, Celo, Gnosis, Hyperliquid, Mainnet,
+        Optimism, Polygon, Robinhood, Sepolia,
     },
     RpcEndpointUrl, RpcEndpoints,
 };
@@ -192,19 +193,32 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
         return "https://celo.drpc.org".to_string();
     }
 
+    if matches!(chain, Gnosis) {
+        return env_rpc_url("GNOSIS_RPC")
+            .unwrap_or_else(|| "https://rpc.gnosischain.com".to_string());
+    }
+
+    if matches!(chain, Hyperliquid) {
+        return env_rpc_url("HYPERLIQUID_RPC")
+            .unwrap_or_else(|| "https://rpc.hyperliquid.xyz/evm".to_string());
+    }
+
+    if matches!(chain, Robinhood) {
+        return env_rpc_url("ROBINHOOD_RPC")
+            .unwrap_or_else(|| "https://rpc.mainnet.chain.robinhood.com".to_string());
+    }
+
     if matches!(chain, Sepolia) {
-        let rpc_url = env::var("ETH_SEPOLIA_RPC").unwrap_or_default();
-        if !rpc_url.is_empty() {
+        if let Some(rpc_url) = env_rpc_url("ETH_SEPOLIA_RPC") {
             return rpc_url;
         }
         return "https://ethereum-sepolia-rpc.publicnode.com".to_string();
     }
 
-    if matches!(chain, Arbitrum) {
-        let rpc_url = env::var("ARBITRUM_RPC").unwrap_or_default();
-        if !rpc_url.is_empty() {
-            return rpc_url;
-        }
+    if matches!(chain, Arbitrum)
+        && let Some(rpc_url) = env_rpc_url("ARBITRUM_RPC")
+    {
+        return rpc_url;
     }
 
     let reth_works = true;
@@ -224,6 +238,11 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
     };
 
     if is_ws { format!("wss://{domain}") } else { format!("https://{domain}") }
+}
+
+/// Returns the RPC URL configured in the `var` environment variable, if it is set and non-empty.
+fn env_rpc_url(var: &str) -> Option<String> {
+    env::var(var).ok().filter(|url| !url.is_empty())
 }
 
 /// Basic redaction for debugging RPC URLs.

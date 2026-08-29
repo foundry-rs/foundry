@@ -8,6 +8,7 @@ mod eip4844;
 mod eip7702;
 mod eip7928;
 mod fork;
+mod fork_chains;
 mod gas;
 mod genesis;
 mod ipc;
