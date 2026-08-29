@@ -103,12 +103,10 @@ impl FoundryReceiptEnvelope<Log> {
         transaction_index: u64,
         next_log_index: usize,
     ) -> FoundryReceiptEnvelope<alloy_rpc_types::Log> {
-        let logs = self
-            .logs()
-            .iter()
-            .enumerate()
-            .map(|(index, log)| alloy_rpc_types::Log {
-                inner: log.clone(),
+        let mut index = 0;
+        self.map_logs(|inner| {
+            let log = alloy_rpc_types::Log {
+                inner,
                 block_hash: Some(block_numhash.hash),
                 block_number: Some(block_numhash.number),
                 block_timestamp: Some(block_timestamp),
@@ -116,21 +114,10 @@ impl FoundryReceiptEnvelope<Log> {
                 transaction_index: Some(transaction_index),
                 log_index: Some((next_log_index + index) as u64),
                 removed: false,
-            })
-            .collect::<Vec<_>>();
-        #[cfg(feature = "optimism")]
-        let (deposit_nonce, deposit_receipt_version) =
-            (self.deposit_nonce(), self.deposit_receipt_version());
-        #[cfg(not(feature = "optimism"))]
-        let (deposit_nonce, deposit_receipt_version) = (None, None);
-        FoundryReceiptEnvelope::<alloy_rpc_types::Log>::from_parts(
-            self.status(),
-            self.cumulative_gas_used(),
-            logs,
-            self.tx_type(),
-            deposit_nonce,
-            deposit_receipt_version,
-        )
+            };
+            index += 1;
+            log
+        })
     }
 }
 
