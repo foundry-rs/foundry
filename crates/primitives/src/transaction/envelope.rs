@@ -10,7 +10,9 @@ use alloy_consensus::{
     },
 };
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
-use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
+use alloy_network::{
+    AnyRpcTransaction, AnyTxEnvelope, TransactionResponse, eip2718::Encodable2718,
+};
 use alloy_primitives::{Address, B256, Bytes, Signature, TxHash};
 use alloy_rpc_types::ConversionError;
 #[cfg(feature = "optimism")]
@@ -184,6 +186,21 @@ impl FoundryTxEnvelope {
             Self::PostExec(tx) => tx.inner().signer_address(),
             Self::Tempo(tx) => tx.signature().recover_signer(&tx.signature_hash())?,
         })
+    }
+
+    /// EIP-2718 encodes a transaction held in its JSON-RPC form.
+    ///
+    /// [`AnyTxEnvelope`] panics rather than encode a transaction type alloy does not model, so
+    /// anything that is not plain Ethereum is routed through [`Self`], which knows the types
+    /// Foundry supports. Chains that can be forked but not executed, such as Arbitrum and its
+    /// Orbit rollups, mint types with no Foundry envelope; only their RPC representation is ever
+    /// available, which is not enough to reconstruct their consensus encoding.
+    pub fn encode_rpc_2718(transaction: &AnyRpcTransaction) -> Result<Bytes, ConversionError> {
+        if let AnyTxEnvelope::Ethereum(envelope) = &*transaction.inner.inner {
+            return Ok(envelope.encoded_2718().into());
+        }
+
+        Ok(Self::try_from(transaction.clone())?.encoded_2718().into())
     }
 }
 
