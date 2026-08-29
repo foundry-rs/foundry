@@ -1490,7 +1490,7 @@ impl<N: Network> Backend<N> {
 
     /// Returns a trace decoder configured for the currently resolved hardfork.
     fn call_trace_decoder(&self) -> Arc<CallTraceDecoder> {
-        let hardfork = Some(self.hardfork());
+        let hardfork = Some(self.networks.executed_hardfork(self.hardfork()));
         let decoder = self.call_trace_decoder.read();
         if decoder.hardfork() == hardfork {
             return Arc::clone(&decoder);
@@ -9881,6 +9881,20 @@ mod tests {
 
         let outcome = target_api.backend.mine_block(vec![]).await.unwrap();
         assert_eq!(outcome.block_number, original_best_number + 1);
+    }
+
+    #[tokio::test]
+    async fn trace_decoder_follows_executed_hardfork_for_cross_namespace_override() {
+        let (api, _) = spawn(
+            NodeConfig::test_tempo()
+                .with_hardfork(Some(FoundryHardfork::Ethereum(EthereumHardfork::Prague))),
+        )
+        .await;
+
+        let decoder = api.backend.call_trace_decoder();
+        assert_eq!(decoder.hardfork(), Some(FoundryHardfork::Tempo(api.backend.tempo_hardfork())));
+        // The refresh compares the same coerced value, so repeated calls stay stable.
+        assert!(Arc::ptr_eq(&decoder, &api.backend.call_trace_decoder()));
     }
 
     #[cfg(feature = "monad")]
