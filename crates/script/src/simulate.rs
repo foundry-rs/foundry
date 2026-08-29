@@ -7,11 +7,12 @@ use crate::{
     broadcast::{BundledState, estimate_gas},
     build::LinkedBuildData,
     execute::{ExecutionArtifacts, ExecutionData, build_trace_decoder_for_context},
+    providers::ProviderInfo,
     sequence::get_commit_hash,
 };
 use alloy_chains::{Chain, NamedChain};
 use alloy_evm::revm::context::Block;
-use alloy_network::TransactionBuilder;
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, U256, map::HashMap, utils::format_units};
 use alloy_provider::Provider;
 use dialoguer::Confirm;
@@ -20,8 +21,8 @@ use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{
-    ContractData, ContractsByArtifact, provider::fee::resolve_broadcast_eip1559_fees, shell,
-    tempo::known_fee_token_symbol,
+    ContractData, ContractsByArtifact, provider::fee::resolve_broadcast_eip1559_fees, sh_warn,
+    shell, tempo::known_fee_token_symbol,
 };
 use foundry_evm::{
     core::{FoundryBlock, evm::FoundryEvmNetwork},
@@ -610,6 +611,38 @@ mod tests {
     }
 }
 
+/// Warns about every sender whose balance does not cover the transactions it is about to send.
+///
+/// The check is best effort: it runs on the estimate the simulation just printed, and a balance
+/// that cannot be fetched is not worth failing the run over.
+async fn warn_on_insufficient_balance<N: Network>(
+    provider_info: &ProviderInfo<N>,
+    costs: Option<&HashMap<Address, (u128, U256)>>,
+    per_gas: u128,
+    token_symbol: &str,
+) {
+    let Some(costs) = costs else { return };
+
+    for (sender, (gas, value)) in costs {
+        let required = U256::from(*gas).saturating_mul(U256::from(per_gas)).saturating_add(*value);
+        let Ok(balance) = provider_info.provider.get_balance(*sender).await else { continue };
+        if balance >= required {
+            continue;
+        }
+
+        let fmt = |amount: U256| {
+            format_units(amount, 18).unwrap_or_else(|_| "[Could not calculate]".to_string())
+        };
+        let _ = sh_warn!(
+            "{sender} needs {} {token_symbol} on chain {} but holds {} {token_symbol}; \
+             the script may run out of funds before it finishes",
+            fmt(required),
+            provider_info.chain,
+            fmt(balance),
+        );
+    }
+}
+
 /// At this point we have converted transactions collected during script execution to
 /// [TransactionWithMetadata] objects which contain additional metadata needed for broadcasting and
 /// verification.
@@ -637,6 +670,10 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
         }
 
         let mut total_gas_per_rpc: HashMap<String, u128> = HashMap::default();
+        // What each sender is expected to spend on each rpc, so its balance can be checked before
+        // any transaction goes out.
+        let mut cost_per_sender: HashMap<String, HashMap<Address, (u128, U256)>> =
+            HashMap::default();
 
         // Batches sequence of transactions from different rpcs.
         let mut new_sequence = VecDeque::new();
@@ -699,8 +736,19 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                     }
                 }
 
+                let gas = tx.gas().expect("gas is set");
                 let total_gas = total_gas_per_rpc.entry(tx_rpc.clone()).or_insert(0);
-                *total_gas += tx.gas().expect("gas is set");
+                *total_gas += gas;
+
+                if let Some(sender) = tx.from() {
+                    let (sender_gas, sender_value) = cost_per_sender
+                        .entry(tx_rpc.clone())
+                        .or_default()
+                        .entry(sender)
+                        .or_insert((0, U256::ZERO));
+                    *sender_gas += gas;
+                    *sender_value += tx.value().unwrap_or_default();
+                }
             }
 
             new_sequence.push_back(tx);
@@ -831,6 +879,22 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                     sh_println!("\nEstimated total gas used for script: {total_gas}")?;
                     sh_println!("\nEstimated amount required: {estimated_amount} {token_symbol}")?;
                     sh_println!("\n==========================")?;
+                }
+
+                // A sender that cannot cover its share of the run stops it halfway through and
+                // leaves a partial deployment behind, so say so while the estimate is still on
+                // screen and nothing has been broadcast yet. Only when broadcasting: a plain
+                // simulation is routinely run with a placeholder sender that holds nothing, and
+                // warning there would be noise. Tempo pays fees in a TIP-20 token rather than the
+                // native balance, so the comparison does not apply to it.
+                if self.args.broadcast && !self.script_config.evm_opts.networks.is_tempo() {
+                    warn_on_insufficient_balance(
+                        provider_info,
+                        cost_per_sender.get(&rpc),
+                        per_gas,
+                        &token_symbol,
+                    )
+                    .await;
                 }
             }
         }

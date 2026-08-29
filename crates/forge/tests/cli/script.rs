@@ -4917,6 +4917,63 @@ contract DeployTempoAA is Script {
     }
 });
 
+// https://github.com/foundry-rs/foundry/issues/12234
+// The warning has to land while the estimate is on screen, before the first transaction goes out,
+// so a sender that cannot pay for the whole run is known upfront rather than after a partial
+// deployment.
+forgetest_async!(script_warns_when_sender_cannot_cover_the_run, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_script(
+        "DeployBroke.s.sol",
+        r#"
+import "forge-std/Script.sol";
+
+contract Deployed {}
+
+contract DeployBroke is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Deployed();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let sender = handle.dev_wallets().next().unwrap().address();
+    // Enough to pay for a transaction or two, nowhere near enough for the deployment.
+    api.anvil_set_balance(sender, U256::from(1_000)).await.unwrap();
+    let sender = format!("{sender:?}");
+
+    let assert = cmd
+        .arg("script")
+        .arg(&script)
+        .args(["--rpc-url", &rpc, "--sender", &sender, "--unlocked", "--broadcast"])
+        .assert_failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+    assert!(stderr.contains("the script may run out of funds"), "{stderr}");
+    // The warning prints the checksummed form, the flag took the lowercase one.
+    assert!(stderr.to_lowercase().contains(&sender.to_lowercase()), "{stderr}");
+
+    // A funded sender must not warn.
+    api.anvil_set_balance(
+        handle.dev_wallets().next().unwrap().address(),
+        U256::from(10).pow(U256::from(20)),
+    )
+    .await
+    .unwrap();
+    cmd.forge_fuse();
+    let assert = cmd
+        .arg("script")
+        .arg(&script)
+        .args(["--rpc-url", &rpc, "--sender", &sender, "--unlocked", "--broadcast"])
+        .assert_success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+    assert!(!stderr.contains("the script may run out of funds"), "{stderr}");
+});
+
 forgetest_async!(tempo_aa_script_broadcasts_with_local_sponsor, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_script(
