@@ -723,6 +723,7 @@ impl FromAnyRpcTransaction for TempoTxEnv {
 #[cfg(feature = "optimism")]
 mod optimism {
     use super::*;
+    use alloy_eips::eip2718::Encodable2718;
     use alloy_op_evm::OpTx;
     use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
     use op_revm::{OpTransaction, transaction::OpTxTr};
@@ -914,7 +915,9 @@ mod optimism {
             if let Some(envelope) = tx.as_envelope() {
                 return Ok(Self(OpTransaction::<TxEnv> {
                     base: TxEnv::from_recovered_tx(envelope, tx.from()),
-                    enveloped_tx: None,
+                    // The L1 data fee is charged off these bytes, and op-revm rejects a
+                    // non-deposit transaction that arrives without them.
+                    enveloped_tx: Some(envelope.encoded_2718().into()),
                     deposit: Default::default(),
                 }));
             }
@@ -1209,6 +1212,7 @@ mod tests {
     mod optimism {
         use super::*;
         use alloy_consensus::Sealed;
+        use alloy_eips::eip2718::Encodable2718;
         use alloy_op_evm::{OpEvmFactory, OpTx};
         use op_alloy_consensus::{OpTxEnvelope, TxDeposit, transaction::OpTransactionInfo};
         use op_alloy_rpc_types::Transaction as OpRpcTransaction;
@@ -1253,6 +1257,12 @@ mod tests {
 
             let op_tx_env = OpTx::from_any_rpc_transaction(&any_tx).unwrap();
             assert_eq!(op_tx_env.base, expected_base);
+            // op-revm charges the L1 data fee off these bytes and rejects a non-deposit
+            // transaction that arrives without them.
+            assert_eq!(
+                op_tx_env.enveloped_tx,
+                Some(any_tx.as_envelope().unwrap().encoded_2718().into())
+            );
         }
 
         #[test]
