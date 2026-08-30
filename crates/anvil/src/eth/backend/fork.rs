@@ -638,7 +638,10 @@ impl<N: Network> ClientFork<N> {
             return Ok(Some(block));
         }
 
-        self.fetch_hash_only_block(hash).await
+        Ok(self.fetch_full_block(hash).await?.map(|mut b| {
+            b.transactions_mut().convert_to_hashes();
+            b
+        }))
     }
 
     pub async fn block_by_hash_full(
@@ -667,7 +670,11 @@ impl<N: Network> ClientFork<N> {
             return Ok(Some(block));
         }
 
-        self.fetch_hash_only_block(block_number).await
+        let mut block = self.fetch_full_block(block_number).await?;
+        if let Some(block) = &mut block {
+            block.transactions_mut().convert_to_hashes();
+        }
+        Ok(block)
     }
 
     pub async fn block_by_number_full(
@@ -694,22 +701,6 @@ impl<N: Network> ClientFork<N> {
         block_id: BlockId,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
         self.fetch_full_block(block_id).await
-    }
-
-    async fn fetch_hash_only_block(
-        &self,
-        block_id: impl Into<BlockId>,
-    ) -> Result<Option<N::BlockResponse>, TransportError> {
-        if let Some(block) = self.provider().get_block(block_id.into()).hashes().await? {
-            let hash = block.header().hash();
-            let block_number = block.header().number();
-            let mut storage = self.storage_write();
-            storage.hashes.insert(block_number, hash);
-            storage.blocks.insert(hash, block.clone());
-            return Ok(Some(block));
-        }
-
-        Ok(None)
     }
 
     async fn fetch_full_block(
