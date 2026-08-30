@@ -318,6 +318,7 @@ impl DocBuilder {
                 let mut manifest_lines: Vec<String> =
                     all_rel.iter().map(|p| p.to_string_lossy().into_owned()).collect();
                 manifest_lines.sort();
+                fs::create_dir_all(&pages_dir)?;
                 fs::write(&manifest_path, manifest_lines.join("\n") + "\n")?;
             }
 

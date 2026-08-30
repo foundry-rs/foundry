@@ -185,10 +185,9 @@ impl FromStr for SkipBuildFilter {
 
 /// Expand globs with a root path.
 ///
-/// A pattern ending in `**`, like `src/**`, only matches directories: the glob crate yields the
-/// matched directories themselves but never the files they contain, and yields nothing at all
-/// when the directory has no subdirectories. Such patterns are additionally expanded with a
-/// trailing `/*` so the files inside the matched directories are included.
+/// A trailing recursive component, like `src/**`, only matches subdirectories. Such patterns also
+/// expand their parent so directory-aware consumers cover direct files and every descendant
+/// without enumerating the entire tree.
 pub fn expand_globs(
     root: &Path,
     patterns: impl IntoIterator<Item = impl AsRef<str>>,
@@ -196,16 +195,15 @@ pub fn expand_globs(
     let mut expanded = Vec::new();
     for pattern in patterns {
         let pattern = pattern.as_ref();
-        let mut globs = vec![root.join(pattern)];
-        if pattern.ends_with("**") {
-            globs.push(root.join(format!("{pattern}/*")));
-        }
+        let path = Path::new(pattern);
+        let recursive_parent = path
+            .file_name()
+            .is_some_and(|component| component == "**")
+            .then(|| root.join(path.parent().unwrap_or_else(|| Path::new(""))));
+        let globs = recursive_parent.into_iter().chain([root.join(path)]);
         for glob in globs {
             for path in glob::glob(&glob.display().to_string())? {
-                let path = path?;
-                if !expanded.contains(&path) {
-                    expanded.push(path);
-                }
+                expanded.push(path?);
             }
         }
     }
@@ -226,6 +224,24 @@ pub fn is_ignored_path(file: &Path, paths: &[PathBuf], base: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_expand_trailing_recursive_glob() {
+        let root = tempdir().unwrap();
+        let src = root.path().join("src");
+        let sub = src.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(src.join("A.sol"), []).unwrap();
+        fs::write(sub.join("B.sol"), []).unwrap();
+
+        let expanded = expand_globs(root.path(), ["src/**"]).unwrap();
+
+        assert_eq!(expanded.first(), Some(&src));
+        assert!(expanded.contains(&sub));
+        assert!(!expanded.iter().any(|path| path.is_file()));
+    }
 
     #[test]
     fn test_is_ignored_path() {
