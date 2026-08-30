@@ -164,10 +164,22 @@ fn find_state_change<'hir>(
                 return Some(expr.span);
             }
 
-            if candidates.is_empty()
+            // Prefer Solar's selected `using for` extension. In particular, a resolved
+            // non-mutating extension must prevent the fallback from matching an unrelated
+            // mutating library function with the same name and receiver type.
+            let resolved_extension = gcx.resolved_call(expr).filter(|resolved| resolved.attached);
+            if resolved_extension
+                .and_then(|resolved| resolved.res.as_function())
+                .is_some_and(|fid| hir.function(fid).mutates_state())
+            {
+                return Some(expr.span);
+            }
+
+            if resolved_extension.is_none()
+                && candidates.is_empty()
                 && let ExprKind::Member(base, method) = &callee.kind
-                && lvalue_is_state_var(hir, base)
                 && let Some(recv_ty) = expr_ty(gcx, base)
+                && (lvalue_is_state_var(hir, base) || recv_ty.loc() == Some(DataLocation::Storage))
             {
                 let lib_candidates =
                     resolve_library_extension(gcx, hir, method.name, args.len(), recv_ty);

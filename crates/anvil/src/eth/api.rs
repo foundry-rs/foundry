@@ -2625,10 +2625,17 @@ impl EthApi<FoundryNetwork> {
         block_hash: B256,
     ) -> Result<Option<serde_json::Value>> {
         node_info!("eth_getBlockAccessListByBlockHash");
-        if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_access_list_by_hash(block_hash).await?);
+        let Some(fork) = self.get_fork() else { return Ok(None) };
+
+        // Only blocks we know to be mined after the fork point are guaranteed to be unknown
+        // upstream. Anything else, including hashes we cannot resolve locally, is left to the fork.
+        if let Some(block) = self.backend.get_block_by_hash(block_hash)
+            && !fork.predates_fork_inclusive(block.header.number)
+        {
+            return Ok(None);
         }
-        Ok(None)
+
+        Ok(fork.block_access_list_by_hash(block_hash).await?)
     }
 
     /// Returns the EIP-7928 block access list for a block number.

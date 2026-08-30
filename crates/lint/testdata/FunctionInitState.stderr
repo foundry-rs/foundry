@@ -142,3 +142,27 @@ LL │     uint256 public immutable fromNonPureImmutable = set();
    │
    ╰ help: https://getfoundry.sh/forge/linting/function-init-state
 
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     address public owner = config.owner;
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public idCount = ids.length;
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+   ╭▸ ROOT/testdata/FunctionInitState.sol:LL:CC
+   │
+LL │     uint256 public payloadSize = payload.length;
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+

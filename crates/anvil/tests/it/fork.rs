@@ -2576,11 +2576,13 @@ async fn flaky_test_arbitrum_fork_raw_transaction_rejects_arbitrum_types() {
 // <https://github.com/foundry-rs/foundry/issues/6749>
 #[tokio::test(flavor = "multi_thread")]
 async fn flaky_test_arbitrum_fork_block_number() {
+    // Every fork below must observe the same chain head, so reuse one endpoint: providers are a few
+    // blocks apart and refetching would otherwise fork at a block the next provider has not seen.
+    let fork_rpc = next_rpc_endpoint(NamedChain::Arbitrum);
+
     // fork to get initial block for test
     let (_, handle) = spawn(
-        fork_config()
-            .with_fork_block_number(None::<u64>)
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
+        fork_config().with_fork_block_number(None::<u64>).with_eth_rpc_url(Some(fork_rpc.clone())),
     )
     .await;
     let provider = handle.http_provider();
@@ -2592,7 +2594,7 @@ async fn flaky_test_arbitrum_fork_block_number() {
     let (api, _) = spawn(
         fork_config()
             .with_fork_block_number(Some(initial_block_number))
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
+            .with_eth_rpc_url(Some(fork_rpc.clone())),
     )
     .await;
     let block_number = api.block_number().unwrap().to::<u64>();
@@ -2618,7 +2620,7 @@ async fn flaky_test_arbitrum_fork_block_number() {
 
     // reset fork to different block number and compare with block returned by `eth_blockNumber`
     api.anvil_reset(Some(Forking {
-        json_rpc_url: Some(next_rpc_endpoint(NamedChain::Arbitrum)),
+        json_rpc_url: Some(fork_rpc),
         block_number: Some(initial_block_number - 2),
     }))
     .await
