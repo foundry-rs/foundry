@@ -168,8 +168,8 @@ contract AssertStateChangePushPop {
 }
 
 // ---- using-for library extension calls ----
-// Solar does not yet embed Res on Member expressions for extension methods, so a dedicated
-// library-scan fallback is required (fix for false negatives on using-for mutations).
+// Solar's resolved call is preferred; a library scan remains as a fallback when resolution is
+// unavailable.
 
 library StorageLib {
     function bump(uint256[] storage arr) internal returns (bool) {
