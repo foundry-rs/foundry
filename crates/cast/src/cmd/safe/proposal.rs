@@ -8,7 +8,7 @@ use alloy_network::Ethereum;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
-use eyre::{Result, ensure};
+use eyre::Result;
 use foundry_cli::{json::print_scalar, opts::RpcOpts, utils::LoadConfig};
 use foundry_common::{
     abi::{encode_function_args, get_func},
@@ -57,7 +57,7 @@ pub(super) async fn propose(
         to,
         value: value.to_string(),
         data,
-        operation: operation.as_u8(),
+        operation: operation as u8,
         safe_tx_gas: safe_tx_gas.to_string(),
         base_gas: base_gas.to_string(),
         gas_price: gas_price.to_string(),
@@ -93,12 +93,7 @@ pub(super) async fn sign(
     let config = rpc.load_config()?;
     let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
     let chain_id = provider.get_chain_id().await?;
-    let url = service.endpoint(chain_id, &format!("v1/multisig-transactions/{safe_tx_hash}/"))?;
-    let transaction: SafeTransaction = service.response(service.request(Method::GET, url)).await?;
-    ensure!(
-        transaction.safe_tx_hash == safe_tx_hash,
-        "Transaction Service returned a different Safe transaction hash"
-    );
+    let transaction = service.get_transaction(chain_id, "v1", safe_tx_hash).await?;
     transaction.verify_hash(safe, &provider).await?;
     transaction.show_transaction_summary()?;
     let signer = wallet.signer().await?;

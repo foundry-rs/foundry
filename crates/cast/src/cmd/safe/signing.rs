@@ -6,14 +6,21 @@ use foundry_wallets::WalletSigner;
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const DELEGATE_TOTP_PERIOD_SECS: u64 = 60 * 60;
+
 pub(super) async fn sign_delegate(
     signer: &WalletSigner,
     delegate: Address,
     chain_id: u64,
 ) -> Result<String> {
-    let totp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() / 3600;
+    let totp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() / DELEGATE_TOTP_PERIOD_SECS;
     let typed_data = delegate_typed_data(delegate, chain_id, totp)?;
     sign_delegate_typed_data(signer, &typed_data, matches!(signer, WalletSigner::Trezor(_))).await
+}
+
+pub(super) async fn sign_safe_hash(signer: &WalletSigner, safe_tx_hash: B256) -> Result<String> {
+    let signature = signer.sign_message(safe_tx_hash.as_slice()).await?;
+    Ok(normalize_signature(&signature.as_bytes(), true))
 }
 
 fn delegate_typed_data(delegate: Address, chain_id: u64, totp: u64) -> Result<TypedData> {
@@ -53,11 +60,6 @@ async fn sign_delegate_typed_data(
         signer.sign_dynamic_typed_data(typed_data).await?
     };
     Ok(normalize_signature(&signature.as_bytes(), safe_eth_sign))
-}
-
-pub(super) async fn sign_safe_hash(signer: &WalletSigner, safe_tx_hash: B256) -> Result<String> {
-    let signature = signer.sign_message(safe_tx_hash.as_slice()).await?;
-    Ok(normalize_signature(&signature.as_bytes(), true))
 }
 
 fn normalize_signature(signature: &[u8], safe_eth_sign: bool) -> String {

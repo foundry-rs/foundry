@@ -280,19 +280,11 @@ pub enum SafeSubcommand {
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
+#[repr(u8)]
 pub enum SafeOperation {
     #[default]
-    Call,
-    DelegateCall,
-}
-
-impl SafeOperation {
-    const fn as_u8(self) -> u8 {
-        match self {
-            Self::Call => 0,
-            Self::DelegateCall => 1,
-        }
-    }
+    Call = 0,
+    DelegateCall = 1,
 }
 
 impl SafeSubcommand {

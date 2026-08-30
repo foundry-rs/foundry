@@ -16,7 +16,6 @@ use foundry_cli::{
 };
 use foundry_common::{provider::ProviderBuilder, sh_status};
 use foundry_wallets::WalletOpts;
-use reqwest::Method;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
@@ -33,12 +32,7 @@ pub(super) async fn run(
     let config = rpc.load_config()?;
     let read_provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
     let chain_id = read_provider.get_chain_id().await?;
-    let url = service.endpoint(chain_id, &format!("v2/multisig-transactions/{safe_tx_hash}/"))?;
-    let transaction: SafeTransaction = service.response(service.request(Method::GET, url)).await?;
-    ensure!(
-        transaction.safe_tx_hash == safe_tx_hash,
-        "Transaction Service returned a different Safe transaction hash"
-    );
+    let transaction = service.get_transaction(chain_id, "v2", safe_tx_hash).await?;
     ensure!(
         !transaction.is_executed && transaction.transaction_hash.is_none(),
         "Safe transaction has already been executed{}",

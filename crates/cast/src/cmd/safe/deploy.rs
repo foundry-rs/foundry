@@ -6,7 +6,7 @@ use super::{
     transaction::send_safe_call,
 };
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, Bytes, U256, keccak256};
+use alloy_primitives::{Address, Bytes, U256, keccak256, map::AddressHashSet};
 use alloy_provider::Provider;
 use alloy_sol_types::{SolCall, SolEvent};
 use eyre::{Context, Result, ensure};
@@ -17,7 +17,6 @@ use foundry_cli::{
 };
 use foundry_common::{provider::ProviderBuilder, sh_status};
 use foundry_wallets::WalletOpts;
-use std::collections::HashSet;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
@@ -99,7 +98,7 @@ fn validate_owners(owners: &[Address], threshold: Option<usize>) -> Result<usize
         "Safe threshold ({threshold}) exceeds owner count ({})",
         owners.len()
     );
-    let mut unique = HashSet::with_capacity(owners.len());
+    let mut unique = AddressHashSet::default();
     for owner in owners {
         ensure!(*owner != Address::ZERO, "Safe owner cannot be the zero address");
         ensure!(*owner != SENTINEL_OWNER, "Safe owner cannot be the sentinel address");

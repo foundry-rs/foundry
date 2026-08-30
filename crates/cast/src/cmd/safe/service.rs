@@ -9,6 +9,9 @@ use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use std::str::FromStr;
 
+const SAFE_SIGNATURE_LENGTH: usize = 65;
+const CONTRACT_SIGNATURE_HEADER_LENGTH: usize = SAFE_SIGNATURE_LENGTH + U256::BYTES;
+
 #[derive(Args, Clone, Debug)]
 pub struct SafeServiceOpts {
     /// Safe Transaction Service URL. Inferred from the RPC chain ID when omitted.
@@ -28,7 +31,7 @@ pub(super) struct SafeTransaction {
     pub(super) to: Address,
     #[serde(deserialize_with = "deserialize_number_string")]
     pub(super) value: String,
-    #[serde(default, deserialize_with = "deserialize_bytes")]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub(super) data: Bytes,
     pub(super) operation: u8,
     #[serde(deserialize_with = "deserialize_number_string")]
@@ -37,15 +40,15 @@ pub(super) struct SafeTransaction {
     pub(super) base_gas: String,
     #[serde(deserialize_with = "deserialize_number_string")]
     pub(super) gas_price: String,
-    #[serde(default, deserialize_with = "deserialize_nullable_address")]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub(super) gas_token: Address,
-    #[serde(default, deserialize_with = "deserialize_nullable_address")]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub(super) refund_receiver: Address,
     #[serde(deserialize_with = "deserialize_number_string")]
     pub(super) nonce: String,
     #[serde(alias = "contractTransactionHash")]
     pub(super) safe_tx_hash: B256,
-    #[serde(default, deserialize_with = "deserialize_confirmations")]
+    #[serde(default, deserialize_with = "deserialize_null_default")]
     pub(super) confirmations: Vec<SafeConfirmation>,
     #[serde(default)]
     pub(super) is_executed: bool,
@@ -73,38 +76,6 @@ pub(super) struct SafeDelegate {
 #[derive(Debug, Deserialize)]
 pub(super) struct SafeDelegatesResponse {
     pub(super) results: Vec<SafeDelegate>,
-}
-
-fn deserialize_number_string<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    match Value::deserialize(deserializer)? {
-        Value::String(value) => Ok(value),
-        Value::Number(value) => Ok(value.to_string()),
-        value => Err(serde::de::Error::custom(format!("expected number or string, got {value}"))),
-    }
-}
-
-fn deserialize_bytes<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Ok(Option::<Bytes>::deserialize(deserializer)?.unwrap_or_default())
-}
-
-fn deserialize_nullable_address<'de, D>(deserializer: D) -> Result<Address, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Ok(Option::<Address>::deserialize(deserializer)?.unwrap_or_default())
-}
-
-fn deserialize_confirmations<'de, D>(deserializer: D) -> Result<Vec<SafeConfirmation>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    Ok(Option::<Vec<SafeConfirmation>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 impl SafeTransaction {
@@ -183,7 +154,7 @@ impl SafeTransaction {
     pub(super) fn packed_signatures(&self) -> Result<Bytes> {
         let mut confirmations = self.confirmations.iter().collect::<Vec<_>>();
         confirmations.sort_unstable_by_key(|confirmation| confirmation.owner);
-        let static_len = confirmations.len() * 65;
+        let static_len = confirmations.len() * SAFE_SIGNATURE_LENGTH;
         let mut signatures = Vec::with_capacity(static_len);
         let mut dynamic = Vec::new();
         for confirmation in confirmations {
@@ -191,15 +162,15 @@ impl SafeTransaction {
                 eyre::eyre!("confirmation from {} does not contain a signature", confirmation.owner)
             })?;
             ensure!(
-                signature.len() >= 65,
-                "invalid signature from {}: expected at least 65 bytes, got {}",
+                signature.len() >= SAFE_SIGNATURE_LENGTH,
+                "invalid signature from {}: expected at least {SAFE_SIGNATURE_LENGTH} bytes, got {}",
                 confirmation.owner,
                 signature.len()
             );
-            if signature[64] != 0 {
+            if signature[SAFE_SIGNATURE_LENGTH - 1] != 0 {
                 ensure!(
-                    signature.len() == 65,
-                    "invalid signature from {}: expected 65 bytes, got {}",
+                    signature.len() == SAFE_SIGNATURE_LENGTH,
+                    "invalid signature from {}: expected {SAFE_SIGNATURE_LENGTH} bytes, got {}",
                     confirmation.owner,
                     signature.len()
                 );
@@ -208,29 +179,32 @@ impl SafeTransaction {
             }
 
             ensure!(
-                signature.len() >= 97,
+                signature.len() >= CONTRACT_SIGNATURE_HEADER_LENGTH,
                 "contract signature from {} does not contain a length",
                 confirmation.owner
             );
-            let offset = U256::from_be_slice(&signature[32..64]);
+            let offset = U256::from_be_slice(&signature[U256::BYTES..SAFE_SIGNATURE_LENGTH - 1]);
             ensure!(
-                offset == U256::from(65),
-                "invalid contract signature offset from {}: expected 65, got {offset}",
+                offset == U256::from(SAFE_SIGNATURE_LENGTH),
+                "invalid contract signature offset from {}: expected {SAFE_SIGNATURE_LENGTH}, got {offset}",
                 confirmation.owner
             );
-            let data_len = U256::from_be_slice(&signature[65..97]);
+            let data_len = U256::from_be_slice(
+                &signature[SAFE_SIGNATURE_LENGTH..CONTRACT_SIGNATURE_HEADER_LENGTH],
+            );
             ensure!(
-                data_len == U256::from(signature.len() - 97),
+                data_len == U256::from(signature.len() - CONTRACT_SIGNATURE_HEADER_LENGTH),
                 "invalid contract signature length from {}: expected {}, got {data_len}",
                 confirmation.owner,
-                signature.len() - 97
+                signature.len() - CONTRACT_SIGNATURE_HEADER_LENGTH
             );
 
-            signatures.extend_from_slice(&signature[..32]);
-            signatures
-                .extend_from_slice(&U256::from(static_len + dynamic.len()).to_be_bytes::<32>());
+            signatures.extend_from_slice(&signature[..U256::BYTES]);
+            signatures.extend_from_slice(
+                &U256::from(static_len + dynamic.len()).to_be_bytes::<{ U256::BYTES }>(),
+            );
             signatures.push(0);
-            dynamic.extend_from_slice(&signature[65..]);
+            dynamic.extend_from_slice(&signature[SAFE_SIGNATURE_LENGTH..]);
         }
         ensure!(!signatures.is_empty(), "Safe transaction has no confirmations");
         signatures.extend_from_slice(&dynamic);
@@ -299,6 +273,22 @@ impl SafeServiceOpts {
         ensure_success(status, &text)
     }
 
+    pub(super) async fn get_transaction(
+        &self,
+        chain_id: u64,
+        api_version: &str,
+        safe_tx_hash: B256,
+    ) -> Result<SafeTransaction> {
+        let url = self
+            .endpoint(chain_id, &format!("{api_version}/multisig-transactions/{safe_tx_hash}/"))?;
+        let transaction: SafeTransaction = self.response(self.request(Method::GET, url)).await?;
+        ensure!(
+            transaction.safe_tx_hash == safe_tx_hash,
+            "Transaction Service returned a different Safe transaction hash"
+        );
+        Ok(transaction)
+    }
+
     pub(super) async fn next_nonce(
         &self,
         chain_id: u64,
@@ -336,6 +326,25 @@ impl SafeServiceOpts {
             .append_pair("limit", "1");
         Ok(url)
     }
+}
+
+fn deserialize_number_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match Value::deserialize(deserializer)? {
+        Value::String(value) => Ok(value),
+        Value::Number(value) => Ok(value.to_string()),
+        value => Err(serde::de::Error::custom(format!("expected number or string, got {value}"))),
+    }
+}
+
+fn deserialize_null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 fn ensure_success(status: StatusCode, body: &str) -> Result<()> {

@@ -11,7 +11,6 @@ use alloy_sol_types::{SolCall, SolValue};
 use eyre::{Context, Result, ensure};
 use foundry_cli::{json::print_json_object, opts::RpcOpts, utils::LoadConfig};
 use foundry_common::provider::ProviderBuilder;
-use reqwest::Method;
 use serde_json::json;
 
 pub(super) async fn run(
@@ -25,12 +24,7 @@ pub(super) async fn run(
     let config = rpc.load_config()?;
     let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
     let chain_id = provider.get_chain_id().await?;
-    let url = service.endpoint(chain_id, &format!("v2/multisig-transactions/{safe_tx_hash}/"))?;
-    let transaction: SafeTransaction = service.response(service.request(Method::GET, url)).await?;
-    ensure!(
-        transaction.safe_tx_hash == safe_tx_hash,
-        "Transaction Service returned a different Safe transaction hash"
-    );
+    let transaction = service.get_transaction(chain_id, "v2", safe_tx_hash).await?;
     transaction.verify_hash(safe, &provider).await?;
     transaction.show_transaction_summary()?;
     let from = match from {
@@ -78,15 +72,16 @@ pub(super) async fn run(
 }
 
 fn decode_result(revert_data: &[u8]) -> Result<(U256, bool, Bytes)> {
-    ensure!(revert_data.len() >= 64, "invalid Safe simulateAndRevert response");
-    let accessor_success = !U256::from_be_slice(&revert_data[..32]).is_zero();
-    let response_len = U256::from_be_slice(&revert_data[32..64]);
-    let available = revert_data.len() - 64;
+    let header_length = 2 * U256::BYTES;
+    ensure!(revert_data.len() >= header_length, "invalid Safe simulateAndRevert response");
+    let accessor_success = !U256::from_be_slice(&revert_data[..U256::BYTES]).is_zero();
+    let response_len = U256::from_be_slice(&revert_data[U256::BYTES..header_length]);
+    let available = revert_data.len() - header_length;
     ensure!(
         response_len <= U256::from(available),
         "invalid Safe simulateAndRevert response length"
     );
-    let response = &revert_data[64..64 + response_len.to::<usize>()];
+    let response = &revert_data[header_length..header_length + response_len.to::<usize>()];
     ensure!(
         accessor_success,
         "SimulateTxAccessor delegatecall failed; return data: {}",
@@ -104,9 +99,11 @@ mod tests {
     fn decodes_signature_independent_simulation_result() {
         let return_data = Bytes::from_static(b"result");
         let accessor_response = (U256::from(42), true, return_data.clone()).abi_encode_params();
-        let mut revert_data = Vec::with_capacity(64 + accessor_response.len());
-        revert_data.extend_from_slice(&U256::from(1).to_be_bytes::<32>());
-        revert_data.extend_from_slice(&U256::from(accessor_response.len()).to_be_bytes::<32>());
+        let mut revert_data = Vec::with_capacity(2 * U256::BYTES + accessor_response.len());
+        revert_data.extend_from_slice(&U256::from(1).to_be_bytes::<{ U256::BYTES }>());
+        revert_data.extend_from_slice(
+            &U256::from(accessor_response.len()).to_be_bytes::<{ U256::BYTES }>(),
+        );
         revert_data.extend_from_slice(&accessor_response);
 
         let decoded = decode_result(&revert_data).unwrap();
