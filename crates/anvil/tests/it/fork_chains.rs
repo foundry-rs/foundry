@@ -87,7 +87,10 @@ async fn assert_can_fork(chain: NamedChain) {
 
 /// Runs the fork assertions for `chain`, returning `None` once the endpoint stopped serving.
 async fn fork_and_assert(chain: NamedChain) -> Option<()> {
-    let config = NodeConfig::test().with_eth_rpc_url(Some(next_rpc_endpoint(chain)));
+    // Both forks below must reach the same provider: the Arbitrum endpoints rotate and their heads
+    // are a few blocks apart.
+    let fork_rpc = next_rpc_endpoint(chain);
+    let config = NodeConfig::test().with_eth_rpc_url(Some(fork_rpc.clone()));
     let genesis_balance = config.genesis_balance;
     let (api, handle) = fork_ok(chain, "fork setup", try_spawn(config).await)?;
 
@@ -106,13 +109,22 @@ async fn fork_and_assert(chain: NamedChain) -> Option<()> {
 
     let (block_number, tx_hash) = standard_transaction(chain, &api, fork_block).await?;
 
-    let tx = fork_ok(chain, "eth_getTransactionByHash", api.transaction_by_hash(tx_hash).await)?
-        .unwrap_or_else(|| panic!("{chain:?} fork lost transaction {tx_hash}"));
+    // Selecting the transaction cached the whole block on `api`, which would serve the lookups
+    // below without ever calling the endpoint. Use a fork that has not read that block instead,
+    // so both responses are decoded as the endpoint returns them.
+    let lookup_config = NodeConfig::test()
+        .with_eth_rpc_url(Some(fork_rpc))
+        .with_fork_block_number(Some(fork_block));
+    let (lookup_api, _) = fork_ok(chain, "transaction fork setup", try_spawn(lookup_config).await)?;
+
+    let tx =
+        fork_ok(chain, "eth_getTransactionByHash", lookup_api.transaction_by_hash(tx_hash).await)?
+            .unwrap_or_else(|| panic!("{chain:?} fork lost transaction {tx_hash}"));
     assert_eq!(tx.tx_hash(), tx_hash);
     assert_eq!(tx.block_number, Some(block_number));
 
     let receipt =
-        fork_ok(chain, "eth_getTransactionReceipt", api.transaction_receipt(tx_hash).await)?
+        fork_ok(chain, "eth_getTransactionReceipt", lookup_api.transaction_receipt(tx_hash).await)?
             .unwrap_or_else(|| panic!("{chain:?} fork lost the receipt for {tx_hash}"));
     assert_eq!(receipt.transaction_hash(), tx_hash);
     assert_eq!(receipt.block_number(), Some(block_number));
