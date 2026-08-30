@@ -1,4 +1,4 @@
-use alloy_eips::Encodable2718;
+use crate::EncodeRpc2718;
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::hex;
 use alloy_provider::ext::TraceApi;
@@ -54,7 +54,7 @@ impl TraceArgs {
                 hex::decode(trimmed.strip_prefix("0x").unwrap_or(trimmed))?
             } else if is_json {
                 let tx: AnyRpcTransaction = serde_json::from_str(trimmed)?;
-                tx.as_ref().encoded_2718().clone()
+                tx.encode_rpc_2718()?.to_vec()
             } else {
                 hex::decode(trimmed)?
             };
