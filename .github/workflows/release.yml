@@ -372,6 +372,10 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
 
+      - name: Install LLVM profiling tools
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: rustup component add llvm-tools-preview
+
       - name: Apple Silicon setup
         if: matrix.target == 'aarch64-apple-darwin'
         run: |
@@ -406,7 +410,7 @@ jobs:
           fi
 
           echo "Building $TARGET with features: $features"
-          flags=(--locked --target "$TARGET" --profile "$RUST_PROFILE" --bins
+          flags=(--locked --target "$TARGET" --profile "$RUST_PROFILE"
             --no-default-features --features "$features")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
@@ -417,9 +421,92 @@ jobs:
           [[ "$TARGET" == *windows* ]] && ext=".exe"
 
           if [[ "$TARGET" == *-musl ]]; then
-            cross build "${flags[@]}"
+            cross build "${flags[@]}" --bins
           else
-            cargo build "${flags[@]}"
+            cargo build "${flags[@]}" --bins
+          fi
+
+          if [[ "$TARGET" == "x86_64-unknown-linux-gnu" ]]; then
+            pgo_root="$(mktemp -d "$RUNNER_TEMP/foundry-pgo.XXXXXX")"
+            trap 'rm -rf "$pgo_root"' EXIT
+            corpus="$pgo_root/corpus"
+            profiles_dir="$pgo_root/profiles"
+            pgo_target="$pgo_root/target"
+            pgo_home="$pgo_root/home"
+            mkdir -p "$corpus/default" "$profiles_dir"
+            cp -R testdata/default/{core,inline,cheats} "$corpus/default/"
+            cp -R testdata/utils "$corpus/"
+
+            cat > "$corpus/foundry.toml" <<'EOF'
+          [profile.default]
+          test = "."
+          optimizer = true
+          solc = "0.8.36"
+          offline = true
+
+          [profile.default.invariant]
+          depth = 32
+
+          [fmt]
+          ignore = ["utils/Vm.sol"]
+          EOF
+
+            build_paths=(
+              default/{core,inline}
+              default/cheats/{Assert,Broadcast,Ec,ExpectEmit,Json,MappingStorageHooks,MockCalls}.t.sol
+              default/cheats/{MonadReserveBalance,MonadStaking,Parse,Prank,Rlp,Sign,Wallet}.t.sol
+            )
+
+            solc="$pgo_home/.svm/0.8.36/solc-0.8.36"
+            mkdir -p "$(dirname "$solc")"
+            curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$solc" \
+              https://binaries.soliditylang.org/linux-amd64/solc-linux-amd64-v0.8.36+commit.8a079791
+            printf '%s  %s\n' c8d35afdddc3cd2743ee88b8f25e0fecd16e2bdd5f2120f37e52cd9cc45ae0e6 \
+              "$solc" | sha256sum --check
+            chmod +x "$solc"
+
+            export CFLAGS="${CFLAGS:+$CFLAGS }-fno-profile-generate -fno-profile-use"
+            export CXXFLAGS="${CXXFLAGS:+$CXXFLAGS }-fno-profile-generate -fno-profile-use"
+            # Forge trains concurrently, so update LLVM profile counters atomically.
+            CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$pgo_target" \
+              RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Cprofile-generate=$profiles_dir \
+                -Cllvm-args=-instrprof-atomic-counter-update-all" \
+              cargo build "${flags[@]}" --workspace --bin forge
+
+            instrumented_forge="$pgo_target/$TARGET/$RUST_PROFILE/forge"
+            export LLVM_PROFILE_FILE="$profiles_dir/forge-%m-%p.profraw"
+            seed=0x00000000000000000000000000000000000000000000000000000000feedface
+
+            # Train cold and warm builds.
+            HOME="$pgo_home" "$instrumented_forge" build --root "$corpus" --no-lint -q \
+              "${build_paths[@]}"
+            HOME="$pgo_home" "$instrumented_forge" build --root "$corpus" --no-lint -q \
+              "${build_paths[@]}"
+            HOME="$pgo_home" "$instrumented_forge" test --root "$corpus" \
+              default/cheats/ExpectEmit.t.sol --fuzz-seed "$seed" --threads 4 -q
+            HOME="$pgo_home" "$instrumented_forge" test --root "$corpus" \
+              default/cheats/Parse.t.sol --fuzz-seed "$seed" --fuzz-runs 4096 \
+              --threads 4 -q
+            HOME="$pgo_home" "$instrumented_forge" test --root "$corpus" \
+              default/inline/InvariantInlineConf.t.sol --fuzz-seed "$seed" --threads 4 -q
+            HOME="$pgo_home" "$instrumented_forge" fmt --root "$corpus" --check
+
+            shopt -s nullglob
+            profiles=("$profiles_dir"/forge-*.profraw)
+            if ((${#profiles[@]} != 6)); then
+              echo "Expected 6 Forge profiles, found ${#profiles[@]}"
+              exit 1
+            fi
+
+            llvm_profdata="$(dirname "$(rustc --print target-libdir)")/bin/llvm-profdata"
+            "$llvm_profdata" merge -o "$profiles_dir/forge.profdata" "${profiles[@]}"
+
+            CARGO_INCREMENTAL=0 CARGO_TARGET_DIR="$pgo_target" \
+              RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Cprofile-use=$profiles_dir/forge.profdata" \
+              cargo build "${flags[@]}" --workspace --bin forge
+            cp "$pgo_target/$TARGET/$RUST_PROFILE/forge" "$OUT_DIR/forge"
+            HOME="$pgo_home" "$OUT_DIR/forge" test --root "$corpus" \
+              default/cheats/ExpectEmit.t.sol --fuzz-seed "$seed" --threads 4 -q
           fi
 
           bins=(anvil cast chisel forge solar)
