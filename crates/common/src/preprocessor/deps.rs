@@ -213,7 +213,8 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
             .ctor
             .is_some_and(|ctor_id| !self.gcx.hir.function(ctor_id).parameters.is_empty());
         // Solidity only permits a custom layout on the most-derived contract, so the generated
-        // constructor helper cannot inherit a target that declares one; keep this dependency native.
+        // constructor helper cannot inherit a target that declares one; keep this dependency
+        // native.
         if contract.layout.is_some() && has_constructor_args {
             trace!("skip dependency on custom-layout contract");
             return;
