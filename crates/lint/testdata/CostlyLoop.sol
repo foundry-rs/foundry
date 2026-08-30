@@ -56,6 +56,13 @@ contract CostlyLoop {
         }
     }
 
+    // bad: assignment through the storage lvalue returned by array push
+    function badPushReturnWrite(uint256 n) public {
+        for (uint256 i = 0; i < n; i++) {
+            values.push() = i; //~NOTE: storage write inside a loop
+        }
+    }
+
     // bad: delete state variable in loop
     function badDelete(uint256 n) public {
         for (uint256 i = 0; i < n; i++) {

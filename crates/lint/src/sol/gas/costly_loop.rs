@@ -7,6 +7,7 @@ use solar::{
     ast::DataLocation,
     sema::{
         Gcx, Hir,
+        builtins::Builtin,
         hir::{Block, Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind},
     },
 };
@@ -176,9 +177,12 @@ fn lvalue_is_state_var(gcx: Gcx<'_>, hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
         ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
             hir.variable(*id).is_state_variable()
         }
-        ExprKind::Call(..) => gcx
-            .type_of_expr(expr.peel_parens().id)
-            .is_some_and(|ty| ty.loc() == Some(DataLocation::Storage)),
+        ExprKind::Call(callee, ..) => {
+            gcx.resolved_builtin(callee) == Some(Builtin::ArrayPush0)
+                || gcx
+                    .type_of_expr(expr.peel_parens().id)
+                    .is_some_and(|ty| ty.loc() == Some(DataLocation::Storage))
+        }
         ExprKind::Index(base, _)
         | ExprKind::Slice(base, _, _)
         | ExprKind::Member(base, _)
