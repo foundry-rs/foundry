@@ -185,26 +185,20 @@ impl FromStr for SkipBuildFilter {
 
 /// Expand globs with a root path.
 ///
-/// A trailing recursive component, like `src/**`, only matches subdirectories. Such patterns also
-/// expand their parent so directory-aware consumers cover direct files and every descendant
-/// without enumerating the entire tree.
+/// A trailing recursive component, like `src/**`, only matches subdirectories. Replace it with its
+/// parent so directory-aware consumers cover every descendant without enumerating the tree.
 pub fn expand_globs(
     root: &Path,
     patterns: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> eyre::Result<Vec<PathBuf>> {
     let mut expanded = Vec::new();
     for pattern in patterns {
-        let pattern = pattern.as_ref();
-        let path = Path::new(pattern);
-        let recursive_parent = path
-            .file_name()
-            .is_some_and(|component| component == "**")
-            .then(|| root.join(path.parent().unwrap_or_else(|| Path::new(""))));
-        let globs = recursive_parent.into_iter().chain([root.join(path)]);
-        for glob in globs {
-            for path in glob::glob(&glob.display().to_string())? {
-                expanded.push(path?);
-            }
+        let mut pattern = Path::new(pattern.as_ref());
+        if pattern.ends_with("**") {
+            pattern = pattern.parent().unwrap_or_else(|| Path::new(""));
+        }
+        for path in glob::glob(&root.join(pattern).display().to_string())? {
+            expanded.push(path?);
         }
     }
     Ok(expanded)
@@ -231,16 +225,9 @@ mod tests {
     fn test_expand_trailing_recursive_glob() {
         let root = tempdir().unwrap();
         let src = root.path().join("src");
-        let sub = src.join("sub");
-        fs::create_dir_all(&sub).unwrap();
-        fs::write(src.join("A.sol"), []).unwrap();
-        fs::write(sub.join("B.sol"), []).unwrap();
+        fs::create_dir(&src).unwrap();
 
-        let expanded = expand_globs(root.path(), ["src/**"]).unwrap();
-
-        assert_eq!(expanded.first(), Some(&src));
-        assert!(expanded.contains(&sub));
-        assert!(!expanded.iter().any(|path| path.is_file()));
+        assert_eq!(expand_globs(root.path(), ["src/**"]).unwrap(), vec![src]);
     }
 
     #[test]
