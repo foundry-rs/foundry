@@ -10,7 +10,7 @@ extern crate foundry_common;
 extern crate tracing;
 
 use alloy_consensus::{
-    BlockHeader,
+    BlockHeader, Typed2718,
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, Specifier};
@@ -18,9 +18,11 @@ use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_json_rpc::RpcError;
-use alloy_network::{AnyNetwork, BlockResponse, Network, TransactionBuilder};
+use alloy_network::{
+    AnyNetwork, AnyRpcTransaction, AnyTxEnvelope, BlockResponse, Network, TransactionBuilder,
+};
 use alloy_primitives::{
-    Address, B256, I256, Keccak256, LogData, Selector, TxHash, U64, U256, hex,
+    Address, B256, Bytes, I256, Keccak256, LogData, Selector, TxHash, U64, U256, hex,
     utils::{ParseUnits, Unit, keccak256},
 };
 use alloy_provider::{PendingTransactionBuilder, Provider, network::eip2718::Decodable2718};
@@ -1227,7 +1229,10 @@ where
         raw: bool,
         to_request: bool,
         lane: bool,
-    ) -> Result<String> {
+    ) -> Result<String>
+    where
+        N::TransactionResponse: EncodeRpc2718,
+    {
         let tx = if let Some(tx_hash) = tx_hash {
             let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
             self.provider
@@ -1253,11 +1258,10 @@ where
         };
 
         Ok(if raw {
-            let encoded = tx.as_ref().encoded_2718();
-            format!("0x{}", hex::encode(encoded))
+            format!("0x{}", hex::encode(tx.encode_rpc_2718()?))
         } else if lane {
-            let encoded = tx.as_ref().encoded_2718();
-            FoundryTxEnvelope::decode_2718(&mut encoded.as_slice())
+            let encoded = tx.encode_rpc_2718()?;
+            FoundryTxEnvelope::decode_2718(&mut encoded.as_ref())
                 .wrap_err("failed to decode transaction for lane classification")?;
             crate::args::format_lane_classification(&classify_payment_lane(&encoded))?
         } else if let Some(ref field) = field {
@@ -1282,6 +1286,44 @@ where
         } else {
             tx.pretty()
         })
+    }
+}
+
+/// EIP-2718 encodes a transaction held in its JSON-RPC form.
+///
+/// [`AnyTxEnvelope`] panics rather than encode a transaction type alloy does not model, which is
+/// every type minted by a chain Foundry can talk to but not execute, such as Arbitrum and its
+/// Orbit rollups. The [`AnyNetwork`] response is therefore routed through [`FoundryTxEnvelope`],
+/// which knows the types Foundry supports and reports the rest as an error. Networks whose own
+/// envelope covers everything they serve encode straight from it.
+pub trait EncodeRpc2718 {
+    /// Returns the EIP-2718 encoding of this transaction.
+    fn encode_rpc_2718(&self) -> Result<Bytes>;
+}
+
+impl EncodeRpc2718 for AnyRpcTransaction {
+    fn encode_rpc_2718(&self) -> Result<Bytes> {
+        if let AnyTxEnvelope::Ethereum(envelope) = self.as_ref() {
+            return Ok(envelope.encoded_2718().into());
+        }
+
+        let envelope = FoundryTxEnvelope::try_from(self.clone()).wrap_err_with(|| {
+            format!("Cannot EIP-2718 encode transaction type 0x{:x}", self.ty())
+        })?;
+        Ok(envelope.encoded_2718().into())
+    }
+}
+
+impl<T: Encodable2718> EncodeRpc2718 for alloy_rpc_types::Transaction<T> {
+    fn encode_rpc_2718(&self) -> Result<Bytes> {
+        Ok(self.as_ref().encoded_2718().into())
+    }
+}
+
+#[cfg(feature = "optimism")]
+impl EncodeRpc2718 for op_alloy_rpc_types::Transaction {
+    fn encode_rpc_2718(&self) -> Result<Bytes> {
+        Ok(self.as_ref().encoded_2718().into())
     }
 }
 

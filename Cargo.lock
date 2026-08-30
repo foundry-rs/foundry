@@ -3003,6 +3003,7 @@ dependencies = [
  "op-alloy-consensus",
  "op-alloy-flz",
  "op-alloy-network",
+ "op-alloy-rpc-types",
  "path-slash",
  "rand 0.8.7",
  "rand 0.9.5",

@@ -66,6 +66,7 @@ tempo-primitives.workspace = true
 op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
 op-alloy-flz = { workspace = true, optional = true }
 op-alloy-network = { workspace = true, optional = true }
+op-alloy-rpc-types = { workspace = true, optional = true }
 
 chrono.workspace = true
 eyre.workspace = true
@@ -143,6 +144,7 @@ optimism = [
     "dep:op-alloy-flz",
     "dep:op-alloy-consensus",
     "dep:op-alloy-network",
+    "dep:op-alloy-rpc-types",
     "foundry-common/optimism",
     "foundry-evm-networks/optimism",
     "foundry-evm/optimism",
