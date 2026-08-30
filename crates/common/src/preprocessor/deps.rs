@@ -209,6 +209,16 @@ impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
         }
 
         let contract = self.gcx.hir.contract(dependency.referenced_contract);
+        let has_constructor_args = contract
+            .ctor
+            .is_some_and(|ctor_id| !self.gcx.hir.function(ctor_id).parameters.is_empty());
+        // Solidity forbids inheriting contracts with custom storage layouts, so the generated
+        // constructor helper cannot be used and this dependency must retain native semantics.
+        if contract.layout.is_some() && has_constructor_args {
+            trace!("skip dependency on custom-layout contract");
+            return;
+        }
+
         let source = self.gcx.hir.source(contract.source);
         let FileName::Real(path) = &source.file.name else {
             return;
