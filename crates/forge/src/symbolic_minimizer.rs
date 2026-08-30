@@ -1401,7 +1401,7 @@ fn accept_candidate(
 mod tests {
     use super::*;
     use alloy_json_abi::JsonAbi;
-    use alloy_primitives::map::HashSet;
+    use std::collections::HashSet;
 
     const TEST_MAX_MINIMIZATION_ATTEMPTS: usize = 5000;
 
@@ -1590,7 +1590,7 @@ mod tests {
             function,
             vec![DynSolValue::Uint(U256::from(1), 256), DynSolValue::Uint(U256::from(1), 256)],
         );
-        let mut replayed = HashSet::<_>::default();
+        let mut replayed = HashSet::new();
 
         let minimized = minimize_single_call_counterexample(
             function,

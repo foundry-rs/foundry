@@ -3,7 +3,6 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::map::HashSet;
 use solar::{
     ast::{ContractKind, ElementaryType, LitKind, StateMutability, Visibility},
     interface::{Symbol, kw, sym},
@@ -17,7 +16,7 @@ use solar::{
         ty::TyKind,
     },
 };
-use std::{fmt::Write as _, ops::ControlFlow};
+use std::{collections::HashSet, fmt::Write as _, ops::ControlFlow};
 
 declare_forge_lint!(
     LOCKED_ETHER,
@@ -71,7 +70,7 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
 
         // Seed runtime entries only; internal helpers are reached transitively by
         // `SendChecker`. Constructor bodies are excluded so their exits don't count.
-        let mut visited: HashSet<FunctionId> = HashSet::default();
+        let mut visited: HashSet<FunctionId> = HashSet::new();
         let mut worklist: Vec<FunctionId> = runtime_entries;
 
         while let Some(fid) = worklist.pop() {
@@ -220,7 +219,7 @@ fn effective_runtime_dispatch_surface<'hir>(
     hir: &'hir hir::Hir<'hir>,
     bases: &[hir::ContractId],
 ) -> Vec<FunctionId> {
-    let mut seen_funcs: HashSet<(Symbol, String)> = HashSet::default();
+    let mut seen_funcs: HashSet<(Symbol, String)> = HashSet::new();
     let mut seen_receive = false;
     let mut seen_fallback = false;
     let mut out: Vec<FunctionId> = Vec::new();

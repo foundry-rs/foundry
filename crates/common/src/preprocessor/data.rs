@@ -1,5 +1,4 @@
 use super::span_to_range;
-use alloy_primitives::map::HashSet;
 use foundry_compilers::artifacts::{Source, Sources};
 use path_slash::PathExt;
 use solar::sema::{
@@ -8,7 +7,7 @@ use solar::sema::{
     interface::source_map::FileName,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
 };
 

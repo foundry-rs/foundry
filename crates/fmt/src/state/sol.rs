@@ -8,7 +8,6 @@ use crate::{
     pp::SIZE_INFINITY,
     state::{CallContext, common::LitExt},
 };
-use alloy_primitives::map::HashMap;
 use foundry_common::{comments::Comment, iter::IterDelimited};
 use foundry_config::fmt::{self as config, MultilineFuncHeaderStyle};
 use solar::{
@@ -19,7 +18,7 @@ use solar::{
         interface::BytePos,
     },
 };
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug};
 
 #[rustfmt::skip]
 macro_rules! get_span {
@@ -3061,7 +3060,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
     }
 
     fn map(&mut self) -> AttributeCommentMap {
-        let mut map = HashMap::default();
+        let mut map = HashMap::new();
         for a in 0..self.attributes.len() {
             let is_last = a == self.attributes.len() - 1;
             let (mut before, mut inner, mut after) = (Vec::new(), Vec::new(), Vec::new());

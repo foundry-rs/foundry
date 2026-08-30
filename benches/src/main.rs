@@ -206,7 +206,7 @@ fn main() -> Result<()> {
     sh_println!("Running benchmarks: {}", benchmarks.join(", "));
 
     let mut results = BenchmarkResults::new();
-    let mut version_commits = alloy_primitives::map::HashMap::<_, _>::default();
+    let mut version_commits = std::collections::HashMap::new();
     let write_common_json = cli.common_json_output.is_some();
     // Set the first version as baseline
     if let Some(first_version) = versions.first() {

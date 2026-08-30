@@ -43,7 +43,7 @@ use crate::{
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, I256, U256, map::HashSet};
+use alloy_primitives::{Address, Bytes, I256, U256};
 use eyre::{Result, eyre};
 use foundry_common::{ContractsByAddress, ContractsByArtifact, TestFunctionExt, sh_warn};
 use foundry_config::FuzzCorpusConfig;
@@ -64,6 +64,7 @@ use proptest::prelude::Strategy;
 use proptest::test_runner::TestRunner;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     fmt,
     path::{Path, PathBuf},
     sync::{
@@ -1450,7 +1451,7 @@ impl WorkerCorpus {
 
         let mut exported = 0;
         let corpus_dir = worker_dir.join(CORPUS_DIR);
-        let mut delivered = HashSet::<_>::default();
+        let mut delivered = HashSet::new();
 
         for &index in &self.new_entry_indices {
             let Some(corpus) = self.in_memory_corpus.get(index) else {
@@ -1490,7 +1491,7 @@ impl WorkerCorpus {
         let worker_dir = self.worker_dir.as_ref().unwrap();
         let master_corpus_dir = worker_dir.join(CORPUS_DIR);
         let startup_entries = if let Some(replay_dirs) = &self.initial_export_dirs {
-            let mut seen_entries = HashSet::<_>::default();
+            let mut seen_entries = HashSet::new();
             unique_corpus_entries(replay_dirs, &mut seen_entries)
                 .map(|entry| entry.path)
                 .collect::<Vec<_>>()
@@ -1498,7 +1499,7 @@ impl WorkerCorpus {
             Vec::new()
         };
         let mut pending_entries = Vec::new();
-        let mut delivered = HashSet::<_>::default();
+        let mut delivered = HashSet::new();
         for &index in &self.new_entry_indices {
             let Some(corpus) = self.in_memory_corpus.get(index) else {
                 delivered.insert(index);
@@ -2492,7 +2493,7 @@ mod tests {
         corpus.write_to_disk_in(&worker0_corpus, false).unwrap();
         duplicate.write_to_disk_in(&worker1_corpus, false).unwrap();
 
-        let mut seen = HashSet::<_>::default();
+        let mut seen = HashSet::new();
         let entries = unique_corpus_entries(&canonical_replay_dirs(&corpus_root), &mut seen)
             .collect::<Vec<_>>();
 

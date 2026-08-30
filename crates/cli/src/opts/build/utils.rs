@@ -1,4 +1,3 @@
-use alloy_primitives::map::HashSet;
 use eyre::Result;
 use foundry_compilers::{
     CompilerInput, Graph, Project, ProjectCompileOutput, ProjectPathsConfig,
@@ -14,7 +13,7 @@ use solar::{interface::MIN_SOLIDITY_VERSION, sema::ParsingContext};
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt as _;
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     path::{Path, PathBuf},
 };
 
@@ -197,7 +196,7 @@ pub fn get_solar_sources_from_compile_output(
     let mut source_paths: HashSet<PathBuf> = if let Some(targets) = target_paths
         && !targets.is_empty()
     {
-        let mut source_paths = HashSet::default();
+        let mut source_paths = HashSet::new();
         let mut queue: VecDeque<PathBuf> = targets
             .iter()
             .filter_map(|path| {

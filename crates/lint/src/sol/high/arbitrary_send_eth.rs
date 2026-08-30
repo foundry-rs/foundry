@@ -3,7 +3,6 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::map::{HashMap, HashSet};
 use solar::{
     ast::{self, LitKind},
     interface::{Span, Symbol, data_structures::Never, kw, sym},
@@ -17,7 +16,10 @@ use solar::{
         ty::TyKind,
     },
 };
-use std::ops::ControlFlow;
+use std::{
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+};
 
 declare_forge_lint!(
     ARBITRARY_SEND_ETH,
@@ -103,8 +105,8 @@ impl FlowState {
 
     fn intersection_all(mut states: impl Iterator<Item = Self>) -> Self {
         let mut out = states.next().unwrap_or_else(|| Self {
-            safe_vars: HashSet::default(),
-            safe_fn_ptrs: HashSet::default(),
+            safe_vars: HashSet::new(),
+            safe_fn_ptrs: HashSet::new(),
             caller_restricted: false,
         });
         for state in states {
@@ -126,8 +128,8 @@ impl<'hir> Analyzer<'hir> {
             gcx,
             hir,
             self_aliases: SelfAliasAnalysis::new(gcx, hir),
-            safe_vars: HashSet::default(),
-            safe_fn_ptrs: HashSet::default(),
+            safe_vars: HashSet::new(),
+            safe_fn_ptrs: HashSet::new(),
             caller_restricted: false,
             hits: Vec::new(),
         }
@@ -1056,7 +1058,7 @@ struct SelfAliasAnalysis<'hir> {
 
 impl<'hir> SelfAliasAnalysis<'hir> {
     fn new(gcx: Gcx<'hir>, hir: &'hir hir::Hir<'hir>) -> Self {
-        Self { gcx, hir, cache: HashMap::default(), active: HashSet::default() }
+        Self { gcx, hir, cache: HashMap::new(), active: HashSet::new() }
     }
 
     /// True when `vid` is a state variable that may alias `address(this)`.
@@ -1089,7 +1091,7 @@ impl<'hir> SelfAliasAnalysis<'hir> {
             let initializer_aliases = if var_is_address_like(var) {
                 self.expr_resolves_to_self(init, depth - 1)
             } else {
-                self.expr_may_contain_self_in(init, depth - 1, &HashSet::default())
+                self.expr_may_contain_self_in(init, depth - 1, &HashSet::new())
             };
             if initializer_aliases {
                 return true;
@@ -1256,7 +1258,7 @@ impl<'hir> SelfAliasAnalysis<'hir> {
                 depth,
                 found: &mut found,
                 helper_stack: Vec::new(),
-                local_self_aliases: HashSet::default(),
+                local_self_aliases: HashSet::new(),
             };
             for inv in f.modifiers {
                 if *scan.found {
@@ -1741,7 +1743,7 @@ fn collect_modifier_safety<'hir>(
     if arg_map.is_empty() {
         return;
     }
-    let mut assigned_params: HashSet<hir::VariableId> = HashSet::default();
+    let mut assigned_params: HashSet<hir::VariableId> = HashSet::new();
     let mut collector = AssignedParamCollector { hir, out: &mut assigned_params };
     for stmt in &prefix {
         let _ = collector.visit_stmt(stmt);

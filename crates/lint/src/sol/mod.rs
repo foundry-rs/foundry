@@ -578,7 +578,7 @@ mod tests {
             .chain(codesize::REGISTERED_LINTS)
             .collect();
 
-        let registered_ids: alloy_primitives::map::HashSet<_> =
+        let registered_ids: std::collections::HashSet<_> =
             all_lints.iter().map(|lint| lint.id()).collect();
         let mut missing = Vec::new();
         let mut invalid = Vec::new();

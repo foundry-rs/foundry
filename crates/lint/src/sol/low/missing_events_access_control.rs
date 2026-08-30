@@ -6,12 +6,12 @@ use crate::{
         analysis::primitives::{branch_always_exits, is_require_or_assert},
     },
 };
-use alloy_primitives::map::{HashMap, HashSet};
 use solar::{
     ast::{ContractKind, DataLocation, LitKind, StateMutability, Visibility},
     interface::{Span, kw, sym},
     sema::hir::{self, EventId, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId},
 };
+use std::collections::{HashMap, HashSet};
 
 declare_forge_lint!(
     MISSING_EVENTS_ACCESS_CONTROL,
@@ -46,7 +46,7 @@ impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
             let guard_vars = entry_point_access_guard_vars(hir, func_id, func);
             let mut analyzer = WriteAnalyzer::new(hir, &access_control_vars, &guard_vars);
             let writes = analyzer.analyze_entry_point(func_id);
-            let mut emitted = HashSet::<_>::default();
+            let mut emitted = HashSet::new();
 
             for write in writes {
                 if write.evented {
@@ -96,7 +96,7 @@ fn access_control_state_vars(
     hir: &hir::Hir<'_>,
     contract: &hir::Contract<'_>,
 ) -> HashSet<VariableId> {
-    let mut out = HashSet::default();
+    let mut out = HashSet::new();
 
     for func_id in contract.all_functions() {
         let func = hir.function(func_id);
@@ -105,8 +105,8 @@ fn access_control_state_vars(
                 collect_access_control_state_vars_in_function(
                     hir,
                     modifier_id,
-                    &mut HashSet::default(),
-                    &mut HashSet::default(),
+                    &mut HashSet::new(),
+                    &mut HashSet::new(),
                     &mut out,
                     true,
                 );
@@ -116,8 +116,8 @@ fn access_control_state_vars(
         collect_access_control_state_vars_in_function(
             hir,
             func_id,
-            &mut HashSet::default(),
-            &mut HashSet::default(),
+            &mut HashSet::new(),
+            &mut HashSet::new(),
             &mut out,
             false,
         );
@@ -135,15 +135,15 @@ fn entry_point_access_guard_vars(
     func_id: FunctionId,
     func: &hir::Function<'_>,
 ) -> HashSet<VariableId> {
-    let mut out = HashSet::default();
+    let mut out = HashSet::new();
 
     for modifier in func.modifiers {
         if let Some(modifier_id) = modifier.id.as_function() {
             collect_access_control_state_vars_in_function(
                 hir,
                 modifier_id,
-                &mut HashSet::default(),
-                &mut HashSet::default(),
+                &mut HashSet::new(),
+                &mut HashSet::new(),
                 &mut out,
                 true,
             );
@@ -153,8 +153,8 @@ fn entry_point_access_guard_vars(
     collect_access_control_state_vars_in_function(
         hir,
         func_id,
-        &mut HashSet::default(),
-        &mut HashSet::default(),
+        &mut HashSet::new(),
+        &mut HashSet::new(),
         &mut out,
         false,
     );
@@ -292,7 +292,7 @@ fn collect_access_control_state_vars_in_expr(
                 if callee_func
                     .name
                     .is_some_and(|name| name_looks_like_access_control(name.as_str()))
-                    || function_has_access_guard(hir, callee_id, &mut HashSet::default())
+                    || function_has_access_guard(hir, callee_id, &mut HashSet::new())
                 {
                     collect_state_vars_read_in_function(hir, callee_id, seen, out);
                 }
@@ -519,23 +519,15 @@ struct WriteSources {
 
 impl WriteSources {
     fn input(var_id: VariableId) -> Self {
-        Self {
-            inputs: HashSet::<_>::from_iter([var_id]),
-            states: HashSet::default(),
-            reads_sender: false,
-        }
+        Self { inputs: HashSet::from([var_id]), states: HashSet::new(), reads_sender: false }
     }
 
     fn state(var_id: VariableId) -> Self {
-        Self {
-            inputs: HashSet::default(),
-            states: HashSet::<_>::from_iter([var_id]),
-            reads_sender: false,
-        }
+        Self { inputs: HashSet::new(), states: HashSet::from([var_id]), reads_sender: false }
     }
 
     fn sender() -> Self {
-        Self { inputs: HashSet::default(), states: HashSet::default(), reads_sender: true }
+        Self { inputs: HashSet::new(), states: HashSet::new(), reads_sender: true }
     }
 
     fn is_empty(&self) -> bool {
@@ -591,8 +583,8 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
             hir,
             targets,
             guard_targets,
-            taint: HashMap::default(),
-            storage_aliases: HashMap::default(),
+            taint: HashMap::new(),
+            storage_aliases: HashMap::new(),
             writes: Vec::new(),
             call_stack: Vec::new(),
         }
@@ -1248,7 +1240,7 @@ fn is_protected(hir: &hir::Hir<'_>, func_id: FunctionId, func: &hir::Function<'_
         }
     }
 
-    function_has_access_guard(hir, func_id, &mut HashSet::default())
+    function_has_access_guard(hir, func_id, &mut HashSet::new())
 }
 
 fn update_sender_alias_from_decl(
@@ -1293,12 +1285,12 @@ fn update_sender_aliases_from_assignment(
 fn modifier_has_access_control(hir: &hir::Hir<'_>, modifier_id: FunctionId) -> bool {
     let modifier = hir.function(modifier_id);
     if let Some(body) = modifier.body {
-        let mut sender_aliases = HashSet::default();
+        let mut sender_aliases = HashSet::new();
         for stmt in body.stmts {
             if matches!(stmt.kind, StmtKind::Placeholder) {
                 break;
             }
-            if stmt_has_access_guard(hir, stmt, &mut HashSet::default(), &mut sender_aliases) {
+            if stmt_has_access_guard(hir, stmt, &mut HashSet::new(), &mut sender_aliases) {
                 return true;
             }
         }
@@ -1322,7 +1314,7 @@ fn function_has_access_guard(
         return func.name.is_some_and(|name| name_looks_like_access_control(name.as_str()));
     };
 
-    let mut sender_aliases = HashSet::default();
+    let mut sender_aliases = HashSet::new();
     for stmt in body.stmts {
         if stmt_has_access_guard(hir, stmt, seen, &mut sender_aliases) {
             return true;
@@ -1469,13 +1461,13 @@ fn expr_looks_like_access_check(
     expr: &hir::Expr<'_>,
     sender_aliases: &HashSet<VariableId>,
 ) -> bool {
-    expr_reads_sender(hir, expr, &mut HashSet::default(), sender_aliases)
+    expr_reads_sender(hir, expr, &mut HashSet::new(), sender_aliases)
         && expr_reads_state_variable_transitively(hir, expr)
 }
 
 fn expr_reads_state_variable_transitively(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
-    let mut vars = HashSet::default();
-    collect_state_vars_read_in_expr(hir, expr, &mut HashSet::default(), &mut vars);
+    let mut vars = HashSet::new();
+    collect_state_vars_read_in_expr(hir, expr, &mut HashSet::new(), &mut vars);
     !vars.is_empty()
 }
 
@@ -1555,7 +1547,7 @@ fn function_reads_sender(
 
     let func = hir.function(func_id);
     let Some(body) = func.body else { return false };
-    let mut sender_aliases = HashSet::default();
+    let mut sender_aliases = HashSet::new();
     body.stmts.iter().any(|stmt| stmt_reads_sender(hir, stmt, seen, &mut sender_aliases))
 }
 
@@ -1708,7 +1700,7 @@ fn normalize_event_name_part(name: &str) -> String {
 }
 
 fn called_function_ids(expr: &hir::Expr<'_>) -> HashSet<FunctionId> {
-    let mut out = HashSet::default();
+    let mut out = HashSet::new();
     collect_called_function_ids(expr, &mut out);
     out
 }

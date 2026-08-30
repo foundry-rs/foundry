@@ -162,7 +162,7 @@ impl CoverageReporter for LcovReporter {
                 }
             }
 
-            let mut recorded_lines = HashSet::<_>::default();
+            let mut recorded_lines = HashSet::new();
 
             for item in items {
                 let line = item.loc.lines.start;

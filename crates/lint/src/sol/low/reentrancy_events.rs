@@ -12,7 +12,6 @@ use crate::{
         analysis::helper_cache::{DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache},
     },
 };
-use alloy_primitives::map::{HashMap, HashSet};
 use solar::{
     ast::LitKind,
     interface::{Span, kw, sym},
@@ -23,6 +22,7 @@ use solar::{
         },
     },
 };
+use std::collections::{HashMap, HashSet};
 
 declare_forge_lint!(
     REENTRANCY_EVENTS,
@@ -161,8 +161,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             enclosing_contract,
             call_stack: Vec::new(),
             inline_cache: HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
-            external_call_reachability: HashMap::default(),
-            emitted: HashSet::default(),
+            external_call_reachability: HashMap::new(),
+            emitted: HashSet::new(),
             suppress_inline_reports: false,
             expr_aborted: false,
         }
@@ -593,7 +593,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 
     fn helper_may_reach_external_call(&mut self, func_id: FunctionId) -> bool {
-        self.helper_may_reach_external_call_inner(func_id, &mut HashSet::default()).0
+        self.helper_may_reach_external_call_inner(func_id, &mut HashSet::new()).0
     }
 
     fn helper_may_reach_external_call_inner(

@@ -6,7 +6,7 @@ use super::{
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, I256, Selector, map::HashMap};
+use alloy_primitives::{Address, B256, I256, Selector};
 use alloy_sol_types::{Panic, PanicKind, Revert, SolError, SolInterface};
 use eyre::Result;
 use foundry_config::InvariantConfig;
@@ -25,7 +25,7 @@ use foundry_evm_fuzz::{
 use proptest::test_runner::TestError;
 use revm::interpreter::InstructionResult;
 use revm_inspectors::tracing::CallTraceArena;
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::HashMap};
 
 /// The outcome of an invariant fuzz test
 #[derive(Debug)]

@@ -1,4 +1,4 @@
-use alloy_primitives::map::AddressMap;
+use std::collections::HashMap;
 
 use crate::{
     abi::{Multicall, SimpleStorage},
@@ -1733,7 +1733,7 @@ async fn test_call_tracer_debug_trace_call_pre_state_tracer() {
   }
 }
     "#;
-    let expected: AddressMap<AccountState> = serde_json::from_str(expected).unwrap();
+    let expected: HashMap<Address, AccountState> = serde_json::from_str(expected).unwrap();
 
     match result {
         GethTrace::PreStateTracer(PreStateFrame::Default(pre_state_mode)) => {
@@ -1823,7 +1823,7 @@ async fn test_debug_trace_transaction_pre_state_tracer() {
   }
 }
     "#;
-    let expected: AddressMap<AccountState> = serde_json::from_str(expected).unwrap();
+    let expected: HashMap<Address, AccountState> = serde_json::from_str(expected).unwrap();
 
     match result {
         GethTrace::PreStateTracer(PreStateFrame::Default(pre_state_mode)) => {

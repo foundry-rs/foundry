@@ -21,8 +21,7 @@ impl ExtractConfigError {
 impl fmt::Display for ExtractConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut unique_errors = Vec::with_capacity(self.error.count());
-        let mut unique =
-            HashSet::<_>::with_capacity_and_hasher(self.error.count(), Default::default());
+        let mut unique = HashSet::with_capacity(self.error.count());
         for err in self.error.clone() {
             let err = if err
                 .metadata

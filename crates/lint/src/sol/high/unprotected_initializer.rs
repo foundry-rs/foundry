@@ -3,7 +3,6 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::map::HashSet;
 use solar::{
     ast::{ContractKind, DataLocation, FunctionKind, StateMutability, Visibility},
     interface::{Symbol, kw, sym},
@@ -13,6 +12,7 @@ use solar::{
         hir::{self, ContractId, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId},
     },
 };
+use std::collections::HashSet;
 
 declare_forge_lint!(
     UNPROTECTED_INITIALIZER,
@@ -109,7 +109,7 @@ fn has_destructive_entrypoint<'hir>(
 }
 
 fn effective_runtime_dispatch_surface(hir: &hir::Hir<'_>, bases: &[ContractId]) -> Vec<FunctionId> {
-    let mut seen_functions: HashSet<(Symbol, String)> = HashSet::default();
+    let mut seen_functions: HashSet<(Symbol, String)> = HashSet::new();
     let mut seen_fallback = false;
     let mut seen_receive = false;
     let mut entries = Vec::new();

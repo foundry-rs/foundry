@@ -4,8 +4,8 @@
 //! replacements merely because they return the same value for every input: different operators can
 //! still compile to gas-distinct bytecode.
 
-use alloy_primitives::map::{HashMap, HashSet};
 use std::{
+    collections::{HashMap, HashSet},
     ops::ControlFlow,
     path::{Path, PathBuf},
 };
@@ -76,7 +76,7 @@ pub fn collect_mutation_exclusions(
         pcx.parse();
 
         let Ok(ControlFlow::Continue(())) = compiler.lower_asts() else {
-            return Ok(MutationExclusionsByPath::default());
+            return Ok(MutationExclusionsByPath::new());
         };
         Ok(analyze_and_collect(compiler))
     })
@@ -84,16 +84,16 @@ pub fn collect_mutation_exclusions(
 
 fn analyze_and_collect(compiler: &CompilerRef<'_>) -> MutationExclusionsByPath {
     let Ok(ControlFlow::Continue(())) = compiler.analysis() else {
-        return MutationExclusionsByPath::default();
+        return MutationExclusionsByPath::new();
     };
     if compiler.dcx().has_errors().is_err() {
-        return MutationExclusionsByPath::default();
+        return MutationExclusionsByPath::new();
     }
     collect_from_gcx(compiler.gcx())
 }
 
 fn collect_from_gcx<'gcx>(gcx: Gcx<'gcx>) -> MutationExclusionsByPath {
-    let mut by_path = MutationExclusionsByPath::default();
+    let mut by_path = MutationExclusionsByPath::new();
     for source_id in gcx.hir.source_ids() {
         let source = gcx.hir.source(source_id);
         let FileName::Real(path) = &source.file.name else { continue };
@@ -102,7 +102,7 @@ fn collect_from_gcx<'gcx>(gcx: Gcx<'gcx>) -> MutationExclusionsByPath {
             // HIR uses offsets in the compiler-wide source map, while the mutation visitor parses
             // each target independently and uses offsets relative to that file.
             source_start: source.file.start_pos.0,
-            mutations: MutationExclusionSet::default(),
+            mutations: MutationExclusionSet::new(),
         };
         let _ = collector.visit_nested_source(source_id);
         if !collector.mutations.is_empty() {

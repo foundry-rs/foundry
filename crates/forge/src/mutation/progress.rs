@@ -1,7 +1,7 @@
 //! Progress display for mutation testing.
 
-use alloy_primitives::map::HashMap;
 use std::{
+    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -90,7 +90,7 @@ impl MutationProgressState {
         Self {
             multi,
             overall_progress,
-            active_mutants: HashMap::with_capacity_and_hasher(num_workers, Default::default()),
+            active_mutants: HashMap::with_capacity(num_workers),
             counts: LiveCounts::default(),
             timeout_secs,
             num_workers,

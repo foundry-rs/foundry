@@ -3,7 +3,6 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::map::HashSet;
 use solar::{
     ast::ContractKind,
     interface::{data_structures::Never, sym},
@@ -15,7 +14,7 @@ use solar::{
         },
     },
 };
-use std::ops::ControlFlow;
+use std::{collections::HashSet, ops::ControlFlow};
 
 declare_forge_lint!(
     UNINITIALIZED_STATE_VARIABLES,
@@ -64,7 +63,7 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
 
         let candidate_set: HashSet<VariableId> = state_vars.iter().copied().collect();
 
-        let mut written: HashSet<VariableId> = HashSet::default();
+        let mut written: HashSet<VariableId> = HashSet::new();
 
         for &var_id in &state_vars {
             if hir.variable(var_id).initializer.is_some() {
@@ -126,7 +125,7 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
             }
         }
 
-        let mut reader = ReadVarCollector { hir, read: HashSet::default() };
+        let mut reader = ReadVarCollector { hir, read: HashSet::new() };
         for &cid in contract.linearized_bases {
             for func_id in hir.contract(cid).all_functions() {
                 let _ = reader.visit_nested_function(func_id);

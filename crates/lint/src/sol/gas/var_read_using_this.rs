@@ -3,12 +3,12 @@ use crate::{
     linter::{LateLintPass, LintContext, Suggestion},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::map::HashMap;
 use solar::{
     ast::{ContractKind, StateMutability},
     interface::{Symbol, diagnostics::Applicability, sym},
     sema::hir::{self, ExprKind, Res, StmtKind},
 };
+use std::collections::HashMap;
 
 declare_forge_lint!(
     VAR_READ_USING_THIS,
@@ -37,7 +37,7 @@ impl<'hir> LateLintPass<'hir> for VarReadUsingThis {
         // grouped by name. Includes overloads (same name, different parameter types)
         // as well as inherited overrides; `match_this_call` resolves them by arity
         // and conservatively skips mixed-mutability overload sets.
-        let mut callable: HashMap<Symbol, Vec<&'hir hir::Function<'hir>>> = HashMap::default();
+        let mut callable: HashMap<Symbol, Vec<&'hir hir::Function<'hir>>> = HashMap::new();
         for &cid in contract.linearized_bases {
             for fid in hir.contract(cid).functions() {
                 let func = hir.function(fid);

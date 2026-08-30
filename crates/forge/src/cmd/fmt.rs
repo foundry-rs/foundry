@@ -1,5 +1,4 @@
 use super::watch::WatchArgs;
-use alloy_primitives::map::{Entry, HashMap};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::{FoundryPathExt, LoadConfig};
@@ -13,6 +12,7 @@ use rayon::prelude::*;
 use similar::{ChangeTag, TextDiff};
 use solar::sema::Compiler;
 use std::{
+    collections::{HashMap, hash_map::Entry},
     fmt::{self, Write},
     io,
     io::Write as _,
@@ -154,8 +154,8 @@ impl FmtArgs {
                 eyre::bail!("`--nearest` cannot be used with stdin");
             };
             let mut root_configs: HashMap<PathBuf, (Arc<FormatterConfig>, Vec<PathBuf>)> =
-                HashMap::default();
-            let mut path_configs = HashMap::<_, _>::default();
+                HashMap::new();
+            let mut path_configs = HashMap::new();
             let mut filtered_paths = Vec::with_capacity(paths.len());
 
             for path in std::mem::take(paths) {

@@ -3,13 +3,13 @@ use crate::{
     utils::{Deployment, git_source_url, read_deployments},
     vocs,
 };
-use alloy_primitives::map::{HashMap, HashSet};
 use eyre::Result;
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};
 use foundry_config::{DocConfig, filter::expand_globs};
 use rayon::prelude::*;
 use solar::{config::CompilerStage, sema::Compiler};
 use std::{
+    collections::{HashMap, HashSet},
     fs,
     path::{Component, PathBuf},
     time::{Duration, Instant},
@@ -183,17 +183,17 @@ impl DocBuilder {
                             // All deployments belong to the contract sharing the
                             // file stem (legacy behaviour).
                             if entries.is_empty() {
-                                HashMap::default()
+                                HashMap::new()
                             } else if let Some(stem) = rel_path.file_stem().and_then(|s| s.to_str())
                             {
-                                let mut m = HashMap::default();
+                                let mut m = HashMap::new();
                                 m.insert(stem.to_string(), entries);
                                 m
                             } else {
-                                HashMap::default()
+                                HashMap::new()
                             }
                         }
-                        None => HashMap::default(),
+                        None => HashMap::new(),
                     };
 
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -289,7 +289,7 @@ impl DocBuilder {
             } else {
                 // No manifest: do not prune. The manifest is the ownership boundary for
                 // generated pages; without it, user-authored pages are indistinguishable.
-                HashSet::default()
+                HashSet::new()
             };
             let new_generated: HashSet<PathBuf> = all_rel.iter().cloned().collect();
             for stale in prev_generated.difference(&new_generated) {

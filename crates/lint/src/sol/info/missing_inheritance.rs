@@ -2,7 +2,6 @@ use crate::{
     linter::{Lint, ProjectLintEmitter, ProjectLintPass, ProjectSource},
     sol::{Severity, SolLint, info::MissingInheritance},
 };
-use alloy_primitives::map::HashMap;
 use solar::{
     interface::{Span, source_map::FileName},
     sema::{
@@ -10,7 +9,7 @@ use solar::{
         hir::{ContractId, ContractKind, FunctionKind, ItemId, SourceId},
     },
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 declare_forge_lint!(
     MISSING_INHERITANCE,
@@ -50,7 +49,7 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
         // interfaces (e.g. OpenZeppelin's `IERC20`) are still matched.
         let mut candidates: Vec<(ContractId, BTreeSet<[u8; 4]>)> = Vec::new();
         let mut targets: Vec<ContractId> = Vec::new();
-        let mut selectors_by_contract: HashMap<ContractId, BTreeSet<[u8; 4]>> = HashMap::default();
+        let mut selectors_by_contract: HashMap<ContractId, BTreeSet<[u8; 4]>> = HashMap::new();
 
         for cid in hir.contract_ids() {
             let contract = hir.contract(cid);

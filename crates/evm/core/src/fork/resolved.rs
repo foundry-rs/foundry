@@ -163,9 +163,9 @@ impl fmt::Debug for ResolvedFork {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::map::HashSet;
     use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
     use serde_json::json;
+    use std::collections::HashSet;
 
     fn context(block_number: BlockNumber) -> ForkContext {
         ForkContext {
@@ -212,7 +212,7 @@ mod tests {
             ResolvedFork::new("http://localhost:8545", None, None, None, block, changed_context);
 
         assert_ne!(first, second);
-        assert_eq!(HashSet::<_>::from_iter([first, second]).len(), 2);
+        assert_eq!(HashSet::from([first, second]).len(), 2);
     }
 
     #[test]

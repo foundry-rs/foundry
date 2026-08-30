@@ -6,11 +6,7 @@ use crate::{
         analysis::primitives::{branch_always_exits, is_require_or_assert},
     },
 };
-use alloy_primitives::{
-    U256,
-    map::{HashMap, HashSet},
-    uint,
-};
+use alloy_primitives::{U256, uint};
 use solar::{
     ast::{BinOpKind, ElementaryType, UnOpKind},
     interface::{Span, data_structures::Never},
@@ -24,7 +20,10 @@ use solar::{
         ty::TyKind,
     },
 };
-use std::ops::ControlFlow;
+use std::{
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+};
 
 declare_forge_lint!(
     ECRECOVER,
@@ -132,10 +131,10 @@ impl<'hir> Analyzer<'hir> {
             state: FlowState::default(),
             next_value: 0,
             hits: Vec::new(),
-            ignored_reads: HashSet::default(),
-            deferred_calls: HashSet::default(),
-            captured_recoveries: HashMap::default(),
-            stored_results: HashSet::default(),
+            ignored_reads: HashSet::new(),
+            deferred_calls: HashSet::new(),
+            captured_recoveries: HashMap::new(),
+            stored_results: HashSet::new(),
         }
     }
 
@@ -159,7 +158,7 @@ impl<'hir> Analyzer<'hir> {
             ..FlowState::default()
         };
         let vars: HashSet<_> = left.values.keys().chain(right.values.keys()).copied().collect();
-        let mut joined_values = HashMap::<_, _>::default();
+        let mut joined_values = HashMap::new();
 
         for var in &vars {
             let var = *var;
@@ -315,7 +314,7 @@ impl<'hir> Analyzer<'hir> {
                 }
             }
         } else {
-            let mut calls = HashSet::default();
+            let mut calls = HashSet::new();
             self.collect_result_calls(rhs, &mut calls);
             if let Some(var) = self.deferable_target(lhs) {
                 targets.extend(calls.into_iter().map(|call| (call, var)));
@@ -369,7 +368,7 @@ impl<'hir> Analyzer<'hir> {
 
     fn visit_assignment_lhs(&mut self, lhs: &'hir hir::Expr<'hir>) {
         let ignored_reads = self.ignored_reads.clone();
-        let mut vars = HashSet::default();
+        let mut vars = HashSet::new();
         collect_lhs_vars(lhs, &mut vars);
         for var in vars {
             self.ignored_reads.insert(self.state.value(var));
@@ -1078,7 +1077,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             StmtKind::DeclSingle(var) => {
                 let init = self.hir.variable(*var).initializer;
                 if let Some(init) = init {
-                    let mut calls = HashSet::default();
+                    let mut calls = HashSet::new();
                     self.collect_result_calls(init, &mut calls);
                     let targets: HashMap<_, _> =
                         calls.into_iter().map(|call| (call, *var)).collect();
@@ -1093,11 +1092,11 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 return ControlFlow::Continue(());
             }
             StmtKind::DeclMulti(vars, init) => {
-                let mut targets = HashMap::default();
+                let mut targets = HashMap::new();
                 if let ExprKind::Tuple(exprs) = &init.peel_parens().kind {
                     for (var, expr) in vars.iter().zip(exprs.iter()) {
                         if let (Some(var), Some(expr)) = (var, expr) {
-                            let mut calls = HashSet::default();
+                            let mut calls = HashSet::new();
                             self.collect_result_calls(expr, &mut calls);
                             targets.extend(calls.into_iter().map(|call| (call, *var)));
                         }
@@ -1197,8 +1196,8 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             ExprKind::Assign(lhs, op, rhs) => {
                 if op.is_none() {
                     let target = self.deferable_target(lhs);
-                    let mut targets = HashMap::default();
-                    let mut observable = HashSet::default();
+                    let mut targets = HashMap::new();
+                    let mut observable = HashSet::new();
                     self.collect_recovery_targets(lhs, rhs, &mut targets, &mut observable);
                     let result_is_stored = self.stored_results.contains(&expr.peel_parens().id);
                     self.visit_assignment_lhs(lhs);

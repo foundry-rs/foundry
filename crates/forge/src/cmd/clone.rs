@@ -29,7 +29,7 @@ use path_slash::PathExt;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use std::{
-    collections::{BTreeMap, HashMap as StdHashMap},
+    collections::{BTreeMap, HashMap},
     fs::read_dir,
     path::{Path, PathBuf},
     time::Duration,
@@ -983,7 +983,7 @@ impl ExplorerClient for SourcifyClient {
         })?;
 
         // Convert sources map to SourceCodeMetadata::Sources format
-        let sources: StdHashMap<String, SourceCodeEntry> = sources_map
+        let sources: HashMap<String, SourceCodeEntry> = sources_map
             .into_iter()
             .map(|(path, source_file)| (path, SourceCodeEntry { content: source_file.content }))
             .collect();

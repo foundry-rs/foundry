@@ -6,7 +6,6 @@
 //! * `natspec_doc`: resolves effective NatSpec for a callable item.
 //! * `replace_inline_links`: rewrites `{Ident}` to markdown links.
 
-use alloy_primitives::map::{Entry, HashMap, HashSet};
 use path_slash::PathBufExt;
 use solar::{
     ast::{
@@ -19,7 +18,10 @@ use solar::{
         ty::{Ty, TyAbiPrinter, TyAbiPrinterMode},
     },
 };
-use std::path::{Path, PathBuf};
+use std::{
+    collections::{HashMap, HashSet, hash_map::Entry},
+    path::{Path, PathBuf},
+};
 use tracing::warn;
 
 // ── name-to-page map ──────────────────────────────────────────────────────────
@@ -271,7 +273,7 @@ pub struct NatSpecDoc {
 
 /// Resolves explicit NatSpec inheritance, or Foundry's conservative implicit inheritance policy.
 pub fn natspec_doc(gcx: Gcx<'_>, item: ItemId, implicit: bool) -> Option<NatSpecDoc> {
-    let mut doc = effective_natspec_doc(gcx, item, implicit, &mut HashSet::default())?;
+    let mut doc = effective_natspec_doc(gcx, item, implicit, &mut HashSet::new())?;
     let callable = callable_function(gcx, item);
     if let Some(fid) = callable
         && matches!(item, ItemId::Variable(_))
@@ -344,7 +346,7 @@ fn effective_natspec_doc(
     }
     let Some(alias) = inheritdoc else { return Some(local) };
     let contract = gcx.natspec_contract(alias.name, hir_item.source())?;
-    let source = exact_override_item(gcx, item, contract, &mut HashSet::default())?;
+    let source = exact_override_item(gcx, item, contract, &mut HashSet::new())?;
     let inherited = effective_natspec_doc(gcx, source, true, visited)?;
 
     // Solar handles ordinary explicit inheritance, including positional remapping. The
@@ -598,7 +600,7 @@ fn exact_override_item(
 
 fn direct_base_items(gcx: Gcx<'_>, item: ItemId) -> Vec<ItemId> {
     let mut bases = Vec::new();
-    let mut visited = HashSet::default();
+    let mut visited = HashSet::new();
     for &base in gcx.base_override_items(item) {
         push_non_yul_base_items(gcx, base, &mut bases, &mut visited);
     }
@@ -791,10 +793,10 @@ impl LocalMembers {
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
-            members: HashSet::default(),
-            anchors: HashSet::default(),
-            inherited: HashMap::default(),
-            inherited_contracts: HashMap::default(),
+            members: HashSet::new(),
+            anchors: HashSet::new(),
+            inherited: HashMap::new(),
+            inherited_contracts: HashMap::new(),
         }
     }
 
@@ -809,7 +811,7 @@ impl LocalMembers {
         for &base_id in contract.linearized_bases.iter().filter(|&&id| id != contract_id) {
             let base = gcx.hir.contract(base_id);
             let page = name_to_page.get_contract(base_id).cloned();
-            let mut anchors = HashSet::default();
+            let mut anchors = HashSet::new();
 
             for &item_id in base.items {
                 let (name, is_inherited) = match item_id {

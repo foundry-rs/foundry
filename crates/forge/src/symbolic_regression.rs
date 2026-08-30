@@ -3,14 +3,12 @@ use crate::result::{
     SuiteResult, SymbolicArtifactRef, SymbolicCounterexampleArtifact,
     SymbolicCounterexampleArtifactKind, SymbolicRegressionRef, SymbolicReplayStatus,
 };
-use alloy_primitives::{
-    U256, hex,
-    map::{HashMap, HashSet},
-};
+use alloy_primitives::{U256, hex};
 use eyre::{Result, bail};
 use foundry_common::{TestFunctionExt, contracts::ContractsByArtifact, fs, sh_warn};
 use foundry_config::Config;
 use std::{
+    collections::{HashMap, HashSet},
     fmt::Write,
     path::{Component, Path, PathBuf},
 };
@@ -44,7 +42,7 @@ pub(crate) fn emit_symbolic_regressions(
     results: &[SymbolicArtifactRef],
 ) -> Result<Vec<SymbolicRegression>> {
     let mut planned = Vec::new();
-    let mut seen_tests = HashSet::<_>::default();
+    let mut seen_tests = HashSet::new();
     for artifact_ref in results {
         let artifact = load_artifact(&artifact_ref.path)?;
         let (_, contract) = artifact_source_and_contract(&artifact_ref.path, &artifact)?;
@@ -314,7 +312,7 @@ fn plan_symbolic_regression(
 }
 
 fn ensure_unique_regression_paths(planned: &[PlannedSymbolicRegression]) -> Result<()> {
-    let mut seen = HashMap::<&Path, &PlannedSymbolicRegression>::default();
+    let mut seen = HashMap::<&Path, &PlannedSymbolicRegression>::new();
     for plan in planned {
         if let Some(previous) = seen.insert(&plan.regression.path, plan) {
             bail!(

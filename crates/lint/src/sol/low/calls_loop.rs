@@ -3,7 +3,6 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::map::HashSet;
 use solar::{
     ast::{DataLocation, ElementaryType, StateMutability, Visibility},
     interface::{kw, sym},
@@ -17,6 +16,7 @@ use solar::{
         ty::{TyFn, TyKind},
     },
 };
+use std::collections::HashSet;
 
 declare_forge_lint!(CALLS_LOOP, Severity::Low, "calls-loop", "external call inside a loop");
 
@@ -53,8 +53,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             gcx,
             hir,
             call_stack: Vec::new(),
-            analyzed_loop_calls: HashSet::default(),
-            emitted: HashSet::default(),
+            analyzed_loop_calls: HashSet::new(),
+            emitted: HashSet::new(),
         }
     }
 

@@ -3,14 +3,12 @@ use super::{
     InvariantFuzzTestResult, InvariantMetrics,
 };
 use crate::executors::{EarlyExit, EvmExecutionCancellation};
-use alloy_primitives::{
-    Address, I256, Selector,
-    map::{HashMap, HashSet},
-};
+use alloy_primitives::{Address, I256, Selector};
 use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::BasicTxDetails;
 use std::{
+    collections::{HashMap, HashSet},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
@@ -364,7 +362,7 @@ fn ensure_outputs_cover_campaign(
 }
 
 fn ensure_worker_ids_are_valid(outputs: &[InvariantWorkerOutput]) -> Result<()> {
-    let mut seen = HashSet::<_>::with_capacity_and_hasher(outputs.len(), Default::default());
+    let mut seen = HashSet::with_capacity(outputs.len());
     for output in outputs {
         ensure!(
             seen.insert(output.plan.worker_id),

@@ -554,10 +554,7 @@ mod tests {
         strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
     };
     use alloy_dyn_abi::{DynSolType, DynSolValue};
-    use alloy_primitives::{
-        B256, U256,
-        map::{B256Set, HashSet},
-    };
+    use alloy_primitives::{B256, U256};
     use foundry_common::abi::get_func;
     use foundry_config::FuzzDictionaryConfig;
     use proptest::{
@@ -565,6 +562,7 @@ mod tests {
         test_runner::TestRunner,
     };
     use revm::database::{CacheDB, EmptyDB};
+    use std::collections::HashSet;
 
     #[test]
     fn payable_value_weight_controls_non_zero_msg_value() {
@@ -649,9 +647,9 @@ mod tests {
         let mut runner = proptest::test_runner::TestRunner::new(cfg);
 
         // Verify strategies generates the seeded AST literals
-        let mut generated_bytes = HashSet::<_>::default();
-        let mut generated_hashes = B256Set::default();
-        let mut generated_strings = HashSet::<_>::default();
+        let mut generated_bytes = HashSet::new();
+        let mut generated_hashes = HashSet::new();
+        let mut generated_strings = HashSet::new();
         let bytes_strategy = fuzz_param_from_state(&DynSolType::Bytes, &state);
         let string_strategy = fuzz_param_from_state(&DynSolType::String, &state);
         let bytes32_strategy = fuzz_param_from_state(&DynSolType::FixedBytes(32), &state);

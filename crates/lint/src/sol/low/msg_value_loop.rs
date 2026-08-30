@@ -6,7 +6,6 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::map::HashSet;
 use solar::{
     interface::sym,
     sema::{
@@ -14,6 +13,7 @@ use solar::{
         hir::{Expr, ExprKind, Function, Hir},
     },
 };
+use std::collections::HashSet;
 
 declare_forge_lint!(
     MSG_VALUE_LOOP,
@@ -30,7 +30,7 @@ impl<'hir> LateLintPass<'hir> for MsgValueLoop {
         hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
-        let mut emitted = HashSet::<_>::default();
+        let mut emitted = HashSet::new();
         visit_payable_loop_expressions(ctx, gcx, hir, func, |ctx, _, _, expr| {
             if is_msg_value(expr) && emitted.insert(expr.span) {
                 ctx.emit(&MSG_VALUE_LOOP, expr.span);

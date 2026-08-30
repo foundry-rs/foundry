@@ -4,10 +4,10 @@
 //! from the emitted MDX pages.
 
 use crate::utils::{git_raw_url, git_source_url};
-use alloy_primitives::map::HashMap;
 use foundry_config::DocConfig;
 use path_slash::PathExt;
 use std::{
+    collections::HashMap,
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -306,7 +306,7 @@ fn find_homepage(config: &DocConfig, root: &Path, sources: &Path) -> (String, Op
 /// file (parent dir + item name), so a README link to `path/to/Name.sol`
 /// matches the page for the item whose name equals the file stem.
 fn build_source_to_url(pages: &[PathBuf]) -> SourceToUrl {
-    let mut map = SourceToUrl::default();
+    let mut map = SourceToUrl::new();
     for page in pages {
         let stem = page.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         let Some((_kind, name)) = stem.split_once('.') else { continue };

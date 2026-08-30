@@ -15,7 +15,7 @@ use crate::{
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, FixedBytes, I256, Selector, U256, keccak256,
-    map::{AddressMap, AddressSet, HashMap, HashSet, hash_map::Entry as AddressMapEntry},
+    map::{AddressMap, AddressSet, HashMap, hash_map::Entry as AddressMapEntry},
 };
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
@@ -56,7 +56,7 @@ use revm::state::Account;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::btree_map::Entry,
+    collections::{HashMap as Map, HashSet, btree_map::Entry},
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -351,7 +351,7 @@ fn focused_targeted_contracts(
     focus_index: usize,
     focus_seed: Option<U256>,
 ) -> Option<TargetedContracts> {
-    let mut seen = HashSet::<_>::default();
+    let mut seen = HashSet::new();
     let mut candidates = Vec::new();
     for (address, contract) in targeted_contracts.iter() {
         // Build from the effective selector set so user target/exclude config stays authoritative.
@@ -770,7 +770,7 @@ struct InvariantCampaignSeed {
     sender_filters: SenderFilters,
     targeted_contracts: TargetedContracts,
     targets_are_updatable: bool,
-    initial_handler_failures: HashMap<(Address, Selector), InvariantFuzzError>,
+    initial_handler_failures: Map<(Address, Selector), InvariantFuzzError>,
 }
 
 impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
@@ -903,7 +903,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         fuzz_state: EvmFuzzState,
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
-        initial_handler_failures: HashMap<(Address, Selector), InvariantFuzzError>,
+        initial_handler_failures: std::collections::HashMap<
+            (Address, Selector),
+            InvariantFuzzError,
+        >,
     ) -> Result<InvariantFuzzTestResult> {
         let campaign_spec = InvariantCampaignSpec::new(self.config.runs);
         let worker_plans = campaign_spec.worker_plans(invariant_worker_count_with_threads(
@@ -1565,7 +1568,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.last_run_inputs,
             result.gas_report_traces,
             result.line_coverage,
-            result.metrics,
+            result.metrics.into_iter().collect(),
             if plan.worker_id == 0 { corpus_manager.failed_replays } else { 0 },
             1,
             result.optimization_best_value,
@@ -1630,7 +1633,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
     fn prepare_campaign_seed(
         &mut self,
         invariant_contract: &InvariantContract<'_>,
-        initial_handler_failures: HashMap<(Address, Selector), InvariantFuzzError>,
+        initial_handler_failures: std::collections::HashMap<
+            (Address, Selector),
+            InvariantFuzzError,
+        >,
     ) -> Result<InvariantCampaignSeed> {
         self.select_contract_artifacts(invariant_contract.address)?;
         let (sender_filters, targeted_contracts) =
@@ -2772,7 +2778,7 @@ mod tests {
             sender_filters: SenderFilters::new(vec![CALLER], Vec::new()),
             targeted_contracts,
             targets_are_updatable: false,
-            initial_handler_failures: HashMap::default(),
+            initial_handler_failures: Map::default(),
         };
 
         let config =
@@ -2907,7 +2913,7 @@ mod tests {
             sender_filters: SenderFilters::default(),
             targeted_contracts,
             targets_are_updatable: true,
-            initial_handler_failures: HashMap::default(),
+            initial_handler_failures: Map::default(),
         };
 
         let normal_worker = campaign_seed_for_worker(

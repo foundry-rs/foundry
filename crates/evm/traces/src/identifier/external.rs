@@ -651,6 +651,7 @@ impl From<SourcifyMetadata> for Metadata {
 mod tests {
     use super::*;
     use std::{
+        collections::HashSet as StdHashSet,
         future::pending,
         sync::{
             Mutex,
@@ -752,7 +753,7 @@ mod tests {
     /// Fetcher that returns a transient Cloudflare block the first time it sees an address, then
     /// succeeds. Mirrors Etherscan/Cloudflare throttling a burst of concurrent requests.
     struct FlakyCloudflareFetcher {
-        seen: Mutex<AddressSet>,
+        seen: Mutex<StdHashSet<Address>>,
         invalid: AtomicBool,
     }
 
@@ -783,14 +784,14 @@ mod tests {
     async fn cloudflare_block_retries_instead_of_abandoning_queue() {
         let addrs: Vec<Address> = (1u8..=4).map(Address::with_last_byte).collect();
         let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(FlakyCloudflareFetcher {
-            seen: Mutex::new(AddressSet::default()),
+            seen: Mutex::new(StdHashSet::new()),
             invalid: AtomicBool::new(false),
         });
 
         let collected: Vec<_> = ExternalFetcher::new(fetcher, &addrs).collect().await;
 
-        let got: AddressSet = collected.into_iter().map(|(addr, _)| addr).collect();
-        let want: AddressSet = addrs.into_iter().collect();
+        let got: StdHashSet<Address> = collected.into_iter().map(|(addr, _)| addr).collect();
+        let want: StdHashSet<Address> = addrs.into_iter().collect();
         assert_eq!(got, want, "every address must be yielded despite a transient cloudflare block");
     }
 

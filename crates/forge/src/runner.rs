@@ -5228,7 +5228,7 @@ struct InvariantPersistedFailure {
 
 type HandlerFailureKey = (Address, Selector);
 type HandlerFailureStorageKey = (Address, Selector, B256);
-type HandlerFailureMap = alloy_primitives::map::HashMap<HandlerFailureKey, InvariantFuzzError>;
+type HandlerFailureMap = std::collections::HashMap<HandlerFailureKey, InvariantFuzzError>;
 type SymbolicHandlerStorageMap = HashMap<HandlerFailureStorageKey, SymbolicHandlerReplayStorage>;
 
 struct SymbolicHandlerReplayStorage {
@@ -5694,7 +5694,7 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
     executor: Executor<FEN>,
     ctx: &ReplayContext<'_>,
 ) -> (HandlerFailureMap, SymbolicHandlerStorageMap) {
-    let mut replayed = HandlerFailureMap::default();
+    let mut replayed = HandlerFailureMap::new();
     let mut replayed_storage = HashMap::default();
     let entries = match std::fs::read_dir(handlers_dir) {
         Ok(e) => e,

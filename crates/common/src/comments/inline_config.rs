@@ -1,9 +1,12 @@
-use alloy_primitives::map::{Entry, HashMap};
 use solar::{
     interface::{BytePos, RelativeBytePos, SourceMap, Span},
     parse::ast::{self, Visit},
 };
-use std::{hash::Hash, ops::ControlFlow};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    hash::Hash,
+    ops::ControlFlow,
+};
 
 /// A disabled formatting range.
 #[derive(Debug, Clone, Copy)]
@@ -158,7 +161,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         mut find_next_item: impl FnMut(BytePos) -> Option<Span>,
     ) -> Self {
         let mut cfg = Self::new();
-        let mut disabled_blocks = HashMap::default();
+        let mut disabled_blocks = HashMap::new();
 
         let mut prev_sp = Span::DUMMY;
         for (sp, item) in items {
@@ -178,7 +181,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
     }
 
     fn new() -> Self {
-        Self { disabled_ranges: HashMap::default() }
+        Self { disabled_ranges: HashMap::new() }
     }
 
     fn disable_many(&mut self, ids: I, range: DisabledRange) {

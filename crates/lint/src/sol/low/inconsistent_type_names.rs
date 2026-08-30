@@ -2,12 +2,12 @@ use crate::{
     linter::{Lint, ProjectLintEmitter, ProjectLintPass, ProjectSource},
     sol::{Severity, SolLint, low::InconsistentTypeNames},
 };
-use alloy_primitives::map::HashMap;
 use solar::{
     ast::ElementaryType,
     interface::{SourceMap, source_map::FileName},
     sema::hir::{self, TypeKind},
 };
+use std::collections::HashMap;
 
 declare_forge_lint!(
     INCONSISTENT_TYPE_NAMES,
@@ -33,7 +33,7 @@ impl<'ast> ProjectLintPass<'ast> for InconsistentTypeNames {
             })
             .collect();
 
-        let mut contracts = HashMap::<hir::ContractId, TypeNames>::default();
+        let mut contracts = HashMap::<hir::ContractId, TypeNames>::new();
         for variable in hir.variables() {
             let Some(contract_id) = variable.contract else { continue };
             if !input_sources.contains_key(&variable.source) {

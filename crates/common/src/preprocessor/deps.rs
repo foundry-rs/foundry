@@ -2,7 +2,6 @@ use super::{
     data::{ContractData, PreprocessorData},
     span_to_range,
 };
-use alloy_primitives::map::HashSet as AlloyHashSet;
 use foundry_compilers::Updates;
 use itertools::Itertools;
 use solar::sema::{
@@ -24,21 +23,21 @@ pub(crate) struct PreprocessorDependencies {
     // Mapping contract id to preprocess -> contract bytecode dependencies.
     pub preprocessed_contracts: BTreeMap<ContractId, Vec<BytecodeDependency>>,
     // Referenced contract ids.
-    pub referenced_contracts: AlloyHashSet<ContractId>,
+    pub referenced_contracts: HashSet<ContractId>,
 }
 
 impl PreprocessorDependencies {
     pub fn new(
         gcx: Gcx<'_>,
         paths: &[PathBuf],
-        script_paths: &AlloyHashSet<PathBuf>,
+        script_paths: &HashSet<PathBuf>,
         src_dir: &Path,
         root_dir: &Path,
         mocks: &mut HashSet<PathBuf>,
     ) -> Self {
         let mut preprocessed_contracts = BTreeMap::new();
-        let mut referenced_contracts = AlloyHashSet::default();
-        let mut current_mocks: AlloyHashSet<_> = AlloyHashSet::default();
+        let mut referenced_contracts = HashSet::new();
+        let mut current_mocks = HashSet::new();
 
         // Helper closure for iterating candidate contracts to preprocess (tests and scripts).
         let candidate_contracts = || {

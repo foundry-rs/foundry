@@ -1,5 +1,4 @@
 use super::eip712::Resolver;
-use alloy_primitives::map::HashSet;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{
@@ -24,7 +23,7 @@ use solar::parse::{
     interface::Session,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fmt::Write,
     ops::ControlFlow,
     path::{Path, PathBuf},
@@ -158,7 +157,7 @@ impl BindJsonArgs {
             let mut pcx = compiler.parse();
             configure_pcx_from_solc(&mut pcx, &project.paths, &input, false);
 
-            let mut target_files = HashSet::<_>::default();
+            let mut target_files = HashSet::new();
             for (path, source) in &input.input.sources {
                 if include.is_empty() {
                     // Exclude library files by default

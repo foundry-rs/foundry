@@ -9,10 +9,7 @@ use crate::{
         },
     },
 };
-use alloy_primitives::{
-    U256,
-    map::{HashMap, HashSet},
-};
+use alloy_primitives::U256;
 use solar::{
     ast::{
         BinOpKind, DataLocation, ElementaryType, LitKind, StateMutability, StrKind, TypeSize,
@@ -27,7 +24,7 @@ use solar::{
         ty::{TyFnKind, TyKind},
     },
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 const REENTRANCY_GAS_STIPEND: u64 = 2_300;
 
@@ -290,17 +287,17 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             ctx,
             gcx,
             hir,
-            emitted: HashSet::default(),
-            emitted_balance: HashSet::default(),
+            emitted: HashSet::new(),
+            emitted_balance: HashSet::new(),
             call_stack: Vec::new(),
             inline_cache: HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
-            recursive_cut_frontiers: HashMap::default(),
-            direct_internal_calls: HashMap::default(),
+            recursive_cut_frontiers: HashMap::new(),
+            direct_internal_calls: HashMap::new(),
             reentrancy_eth_enabled: ctx.is_lint_enabled(REENTRANCY_ETH.id),
             reentrancy_no_eth_enabled: ctx.is_lint_enabled(REENTRANCY_NO_ETH.id),
             reentrancy_balance_enabled,
             balance_only_analysis: false,
-            call_balance_values: HashMap::default(),
+            call_balance_values: HashMap::new(),
             return_collectors: Vec::new(),
             active_balance_guards: Vec::new(),
             balance_reentry_lock: reentrancy_balance_enabled
@@ -959,7 +956,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         }
 
         let active_call_stack = key.active_call_stack.iter().copied().collect::<BTreeSet<_>>();
-        let mut seen = HashSet::default();
+        let mut seen = HashSet::new();
         let cut = self.first_recursive_cut_function(func_id, &active_call_stack, &mut seen);
         self.recursive_cut_frontiers.insert(key, cut.into_iter().collect::<Vec<_>>());
         cut

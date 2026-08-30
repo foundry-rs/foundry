@@ -3,7 +3,6 @@ use crate::{
     linter::{Lint, ProjectLintEmitter, ProjectLintPass, ProjectSource},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::map::{HashMap, HashSet};
 use solar::{
     interface::{data_structures::Never, source_map::FileName},
     sema::{
@@ -12,7 +11,10 @@ use solar::{
         ty::TyKind,
     },
 };
-use std::ops::ControlFlow;
+use std::{
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+};
 
 declare_forge_lint!(
     INTERNAL_FUNCTION_USED_ONCE,
@@ -100,7 +102,7 @@ impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
 /// `using {f as +} for T` entry of a file-level or contract-level directive. The HIR
 /// already resolved those entries to function ids.
 fn operator_bound_functions(hir: &hir::Hir<'_>) -> HashSet<hir::FunctionId> {
-    let mut bound = HashSet::default();
+    let mut bound = HashSet::new();
     // File-level directives, then contract-level ones: an operator entry can sit in either.
     let source_usings = hir.source_ids().flat_map(|id| hir.source(id).usings.iter());
     let contract_usings = hir.contract_ids().flat_map(|id| hir.contract(id).usings.iter());
@@ -135,7 +137,7 @@ struct RefInfo {
 /// aliases are all attributed to the right function.
 fn count_function_references(gcx: Gcx<'_>) -> HashMap<hir::FunctionId, RefInfo> {
     let hir = &gcx.hir;
-    let mut counter = ReferenceCounter { gcx, hir, current: None, refs: HashMap::default() };
+    let mut counter = ReferenceCounter { gcx, hir, current: None, refs: HashMap::new() };
     // Walk every source of the unit: functions, modifiers, and variable initializers.
     for source_id in hir.source_ids() {
         let _ = counter.visit_nested_source(source_id);

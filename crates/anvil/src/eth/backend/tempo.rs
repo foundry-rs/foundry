@@ -7,7 +7,7 @@
 //! This module provides a storage provider adapter for Anvil's `Db` trait and
 //! uses the shared initialization logic from `foundry-evm-core`.
 
-use alloy_primitives::{Address, B256, U256, address, map::HashMap};
+use alloy_primitives::{Address, B256, U256, address};
 use foundry_evm::core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
     initialize_tempo_genesis_at_hardfork,
@@ -17,6 +17,7 @@ use revm::{
     context::{BlockEnv, journaled_state::JournalCheckpoint},
     state::{AccountInfo, Bytecode},
 };
+use std::collections::HashMap;
 use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS,
@@ -74,7 +75,7 @@ impl<'a> AnvilStorageProvider<'a> {
             gas_refunded: 0,
             reservoir: 0,
             tip1060_storage_credits_enabled: hardfork.is_t7(),
-            transient: HashMap::default(),
+            transient: HashMap::new(),
             hardfork,
         }
     }

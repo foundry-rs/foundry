@@ -21,11 +21,7 @@ use alloy_genesis::GenesisAccount;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, TransactionResponse,
 };
-use alloy_primitives::{
-    Address, B256, ChainId, TxKind, U256, keccak256,
-    map::{AddressSet, HashMap},
-    uint,
-};
+use alloy_primitives::{Address, B256, ChainId, TxKind, U256, keccak256, map::AddressSet, uint};
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
@@ -42,7 +38,11 @@ use revm::{
     primitives::{AddressMap, HashMap as Map, KECCAK_EMPTY, Log, hardfork::SpecId},
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
-use std::{collections::BTreeMap, fmt::Debug, time::Instant};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::Debug,
+    time::Instant,
+};
 
 mod diagnostic;
 pub use diagnostic::RevertDiagnostic;

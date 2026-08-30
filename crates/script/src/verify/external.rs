@@ -2,10 +2,7 @@
 
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Constructor;
-use alloy_primitives::{
-    Address, Bytes, keccak256,
-    map::{HashMap, HashSet},
-};
+use alloy_primitives::{Address, Bytes, keccak256};
 use eyre::{Result, bail, eyre};
 use forge_verify::sourcify::SOURCIFY_URL;
 use foundry_compilers::{artifacts::CompilerOutput, solc::Solc};
@@ -14,7 +11,12 @@ use futures::StreamExt;
 use semver::Version;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use std::{process::Stdio, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    process::Stdio,
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     process::Command,
@@ -125,9 +127,9 @@ impl ExternalResolver {
             .build()?;
         Ok(Self {
             http,
-            fetch_cache: HashMap::default(),
-            compile_cache: HashMap::default(),
-            compiler_versions: HashSet::default(),
+            fetch_cache: HashMap::new(),
+            compile_cache: HashMap::new(),
+            compiler_versions: HashSet::new(),
             compilations: 0,
             retained_source_input: 0,
             retained_candidates: 0,

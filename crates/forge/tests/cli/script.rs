@@ -4731,7 +4731,7 @@ fn assert_create2_rewrite_dry_run(root: &std::path::Path) {
         assert_eq!(tx["transaction"]["to"].as_str().unwrap().to_lowercase(), factory);
     }
 
-    let addrs: alloy_primitives::map::HashSet<_> =
+    let addrs: std::collections::HashSet<_> =
         txs.iter().map(|t| t["contractAddress"].as_str().unwrap().to_owned()).collect();
     assert_eq!(addrs.len(), 3, "rewritten CREATE2 addresses should be unique");
 }

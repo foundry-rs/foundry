@@ -8,13 +8,15 @@ use crate::{
         },
     },
 };
-use alloy_primitives::map::{HashMap, HashSet};
 use solar::{
     ast,
     interface::data_structures::Never,
     sema::hir::{self, ExprKind, ItemId, Res, StmtKind, Visit},
 };
-use std::ops::ControlFlow;
+use std::{
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+};
 
 declare_forge_lint!(
     MISSING_ZERO_CHECK,
@@ -90,22 +92,22 @@ struct Analyzer<'hir> {
 
 impl<'hir> Analyzer<'hir> {
     fn new(hir: &'hir hir::Hir<'hir>, params: &HashSet<hir::VariableId>) -> Self {
-        let mut taint = HashMap::<_, _>::with_capacity_and_hasher(params.len(), Default::default());
+        let mut taint = HashMap::with_capacity(params.len());
         for &p in params {
-            taint.insert(p, HashSet::<_>::from_iter([p]));
+            taint.insert(p, HashSet::from([p]));
         }
         Self {
             hir,
             taint,
-            sinks: HashSet::default(),
-            guarded: HashSet::default(),
+            sinks: HashSet::new(),
+            guarded: HashSet::new(),
             guard_depth: 0,
             sink_depth: 0,
         }
     }
 
     fn taint_sources(&self, expr: &hir::Expr<'_>) -> HashSet<hir::VariableId> {
-        let mut out = HashSet::default();
+        let mut out = HashSet::new();
         collect_taint_sources(&self.taint, expr, &mut out);
         out
     }
@@ -208,7 +210,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                         self.guarded.difference(&baseline).copied().collect();
                     (added, branch_always_exits(e))
                 } else {
-                    (HashSet::default(), false)
+                    (HashSet::new(), false)
                 };
 
                 self.guarded = baseline;
@@ -364,8 +366,8 @@ fn collect_modifier_guards<'hir>(
     }
 
     let mod_params = modifier.parameters;
-    let mut mapping: HashSet<hir::VariableId> = HashSet::default();
-    let mut caller_for_modparam: HashMap<hir::VariableId, hir::VariableId> = HashMap::default();
+    let mut mapping: HashSet<hir::VariableId> = HashSet::new();
+    let mut caller_for_modparam: HashMap<hir::VariableId, hir::VariableId> = HashMap::new();
     for (i, arg_expr) in invocation.args.exprs().enumerate() {
         if let ExprKind::Ident(reses) = &arg_expr.kind {
             for res in *reses {

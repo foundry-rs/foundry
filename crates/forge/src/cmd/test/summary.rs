@@ -1,5 +1,4 @@
 use crate::cmd::test::TestOutcome;
-use alloy_primitives::map::HashMap;
 use comfy_table::{
     Cell, Color, Row, Table,
     presets::{ASCII_FULL, ASCII_MARKDOWN},
@@ -8,7 +7,7 @@ use foundry_common::shell;
 use foundry_evm::executors::invariant::InvariantMetrics;
 use itertools::Itertools;
 use serde_json::json;
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 
 /// Represents a test summary report.
 pub struct TestSummaryReport<'a> {
@@ -198,12 +197,12 @@ pub(crate) fn format_invariant_metrics_table(
 #[cfg(test)]
 mod tests {
     use crate::cmd::test::summary::format_invariant_metrics_table;
-    use alloy_primitives::map::HashMap;
     use foundry_evm::executors::invariant::InvariantMetrics;
+    use std::collections::HashMap;
 
     #[test]
     fn test_invariant_metrics_table() {
-        let mut test_metrics = HashMap::default();
+        let mut test_metrics = HashMap::new();
         test_metrics.insert(
             "SystemConfig.setGasLimit".to_string(),
             InvariantMetrics { calls: 10, reverts: 1, discards: 1 },

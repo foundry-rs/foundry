@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint, analysis::primitives::branch_always_exits},
 };
-use alloy_primitives::{U256, map::HashSet};
+use alloy_primitives::U256;
 use solar::{
     ast::{LitKind, UnOpKind},
     interface::{Span, Symbol},
@@ -16,7 +16,7 @@ use solar::{
         ty::TyKind,
     },
 };
-use std::{convert::Infallible, ops::ControlFlow};
+use std::{collections::HashSet, convert::Infallible, ops::ControlFlow};
 
 declare_forge_lint!(
     ENUMERABLE_LOOP_REMOVAL,
@@ -43,7 +43,7 @@ impl<'hir> LateLintPass<'hir> for EnumerableLoopRemoval {
     ) {
         if let Some(body) = &func.body {
             let mut finder =
-                LoopFinder { gcx, hir, ctx, bindings: Vec::new(), emitted: HashSet::default() };
+                LoopFinder { gcx, hir, ctx, bindings: Vec::new(), emitted: HashSet::new() };
             finder.walk_body(body.stmts);
         }
     }
@@ -290,7 +290,7 @@ fn body_is_straight_line(stmts: &[Stmt<'_>]) -> bool {
 /// for the simple forms.
 fn ascending_cadence<'hir>(hir: &'hir Hir<'hir>, body: &'hir [Stmt<'hir>]) -> Vec<VariableId> {
     let mut cadence = Vec::new();
-    let mut other_writes = HashSet::default();
+    let mut other_writes = HashSet::new();
     collect_cadence_writes(hir, body, &mut cadence, &mut other_writes);
     cadence.retain(|variable_id| !other_writes.contains(variable_id));
     cadence

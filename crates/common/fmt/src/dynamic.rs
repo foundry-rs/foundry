@@ -1,9 +1,12 @@
 use super::{format_int_exp, format_uint_exp};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
-use alloy_primitives::{hex, map::HashMap};
+use alloy_primitives::hex;
 use eyre::Result;
 use serde_json::{Map, Value};
-use std::{collections::BTreeMap, fmt};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt,
+};
 
 /// [`DynSolValue`] formatter.
 struct DynValueFormatter {

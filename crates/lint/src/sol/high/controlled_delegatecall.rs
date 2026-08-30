@@ -3,7 +3,6 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::map::HashSet;
 use solar::{
     ast::{self, LitKind},
     interface::{Span, Symbol, data_structures::Never, kw, sym},
@@ -17,7 +16,7 @@ use solar::{
         ty::{Ty, TyKind},
     },
 };
-use std::ops::ControlFlow;
+use std::{collections::HashSet, ops::ControlFlow};
 
 declare_forge_lint!(
     CONTROLLED_DELEGATECALL,
@@ -69,7 +68,7 @@ impl FlowState {
     }
 
     fn intersection_all(mut states: impl Iterator<Item = Self>) -> Self {
-        let mut out = states.next().unwrap_or_else(|| Self { safe_vars: HashSet::default() });
+        let mut out = states.next().unwrap_or_else(|| Self { safe_vars: HashSet::new() });
         for state in states {
             out = Self::intersection(&out, &state);
         }
@@ -81,7 +80,7 @@ const HELPER_DEPTH: u8 = 3;
 
 impl<'hir> Analyzer<'hir> {
     fn new(gcx: Gcx<'hir>, hir: &'hir hir::Hir<'hir>) -> Self {
-        Self { gcx, hir, safe_vars: HashSet::default(), hits: Vec::new() }
+        Self { gcx, hir, safe_vars: HashSet::new(), hits: Vec::new() }
     }
 
     fn snapshot(&self) -> FlowState {
@@ -649,7 +648,7 @@ fn collect_modifier_safety<'hir>(
         return;
     }
 
-    let mut assigned_params = HashSet::default();
+    let mut assigned_params = HashSet::new();
     let mut collector = AssignedParamCollector { hir, out: &mut assigned_params };
     for stmt in &prefix {
         let _ = collector.visit_stmt(stmt);

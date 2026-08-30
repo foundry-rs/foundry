@@ -9,7 +9,6 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint, analysis::primitives::branch_always_exits},
 };
-use alloy_primitives::map::{HashMap, HashSet};
 use solar::{
     ast::{BinOpKind, ContractKind, DataLocation, ElementaryType, FunctionKind, Visibility},
     interface::sym,
@@ -22,6 +21,7 @@ use solar::{
         ty::{Ty, TyAbiPrinter, TyAbiPrinterMode, TyKind},
     },
 };
+use std::collections::{HashMap, HashSet};
 
 type StorageRoots = HashSet<VariableId>;
 type RootMap = HashMap<VariableId, StorageRoots>;
@@ -120,7 +120,7 @@ fn protected_variables(
     hir: &hir::Hir<'_>,
     bases: &[ContractId],
 ) -> HashMap<VariableId, Vec<ProtectionRequirement>> {
-    let mut protected = HashMap::default();
+    let mut protected = HashMap::new();
 
     for &contract_id in bases {
         for var_id in hir.contract(contract_id).variables() {
@@ -192,7 +192,7 @@ struct ProtectionTargets {
 
 impl ProtectionTargets {
     fn new(gcx: Gcx<'_>, hir: &hir::Hir<'_>, bases: &[ContractId]) -> Self {
-        let mut this = Self { functions: HashMap::default(), modifiers: HashMap::default() };
+        let mut this = Self { functions: HashMap::new(), modifiers: HashMap::new() };
 
         // Linearization starts at the most-derived contract. Keeping the first signature excludes
         // shadowed base members, matching the effective member set used by Slither.
@@ -236,7 +236,7 @@ fn callable_signature(gcx: Gcx<'_>, hir: &hir::Hir<'_>, function_id: FunctionId)
         if function.kind == FunctionKind::Modifier {
             signature.push_str(&source_type_signature(gcx, ty));
         } else {
-            signature.push_str(&slither_function_parameter(gcx, ty, &mut HashSet::default()));
+            signature.push_str(&slither_function_parameter(gcx, ty, &mut HashSet::new()));
         }
     }
     signature.push(')');
@@ -304,7 +304,7 @@ fn effective_entry_points(
     hir: &hir::Hir<'_>,
     bases: &[ContractId],
 ) -> Vec<FunctionId> {
-    let mut seen_functions = HashSet::<_>::default();
+    let mut seen_functions = HashSet::new();
     let mut seen_fallback = false;
     let mut seen_receive = false;
     let mut entries = Vec::new();
@@ -437,13 +437,13 @@ impl<'hir> EntryAnalyzer<'hir> {
             gcx,
             hir,
             bases,
-            writes: HashMap::default(),
+            writes: HashMap::new(),
             aliases: AliasState::default(),
-            guards: HashSet::default(),
-            call_returns: HashMap::default(),
-            call_summaries: HashMap::default(),
-            seen_calls: HashSet::default(),
-            evaluated_calls: HashSet::default(),
+            guards: HashSet::new(),
+            call_returns: HashMap::new(),
+            call_summaries: HashMap::new(),
+            seen_calls: HashSet::new(),
+            evaluated_calls: HashSet::new(),
             stack: Vec::new(),
             return_stack: Vec::new(),
             return_flow: Vec::new(),
@@ -454,7 +454,7 @@ impl<'hir> EntryAnalyzer<'hir> {
     }
 
     fn analyze(&mut self, entry_id: FunctionId) -> HashMap<VariableId, HashSet<FunctionId>> {
-        let mut previous_writes = HashMap::default();
+        let mut previous_writes = HashMap::new();
         loop {
             self.reset_analysis_pass();
             let previous_summaries = self.call_summaries.clone();
@@ -485,12 +485,12 @@ impl<'hir> EntryAnalyzer<'hir> {
         let function = self.hir.function(function_id);
         let Some(body) = function.body else {
             return FunctionSummary {
-                returns: function.returns.iter().map(|_| StorageRoots::default()).collect(),
+                returns: function.returns.iter().map(|_| StorageRoots::new()).collect(),
                 completes: true,
             };
         };
         self.stack.push(function_id);
-        self.return_stack.push(function.returns.iter().map(|_| StorageRoots::default()).collect());
+        self.return_stack.push(function.returns.iter().map(|_| StorageRoots::new()).collect());
         self.return_flow.push(None);
         let completes = self.analyze_modifier_chain(function.modifiers, 0, body);
         let falls_through = completes && !body.stmts.iter().any(branch_always_exits);
@@ -1221,7 +1221,7 @@ impl<'hir> EntryAnalyzer<'hir> {
             return expressions
                 .get(index)
                 .and_then(|expression| *expression)
-                .map_or_else(StorageRoots::default, |expression| self.storage_roots(expression));
+                .map_or_else(StorageRoots::new, |expression| self.storage_roots(expression));
         }
         if let ExprKind::Call(..) = expression.peel_parens().kind {
             return self
@@ -1234,7 +1234,7 @@ impl<'hir> EntryAnalyzer<'hir> {
         if outputs == 1 && index == 0 {
             self.storage_roots(expression)
         } else {
-            StorageRoots::default()
+            StorageRoots::new()
         }
     }
 
@@ -1244,7 +1244,7 @@ impl<'hir> EntryAnalyzer<'hir> {
         }
         let stored = self.call_returns.entry(expression_id).or_default();
         if stored.len() < returns.len() {
-            stored.resize_with(returns.len(), StorageRoots::default);
+            stored.resize_with(returns.len(), StorageRoots::new);
         }
         for (stored, returned) in stored.iter_mut().zip(returns) {
             stored.extend(returned);
@@ -1352,7 +1352,7 @@ fn state_lhs_vars(
     storage_aliases: &RootMap,
     call_returns: &HashMap<ExprId, Vec<StorageRoots>>,
 ) -> StorageRoots {
-    let mut variables = StorageRoots::default();
+    let mut variables = StorageRoots::new();
     collect_state_lhs_vars(hir, expression, storage_aliases, call_returns, &mut variables);
     variables
 }
@@ -1411,7 +1411,7 @@ fn slot_roots(
     slot_aliases: &RootMap,
     call_returns: &HashMap<ExprId, Vec<StorageRoots>>,
 ) -> StorageRoots {
-    let mut variables = StorageRoots::default();
+    let mut variables = StorageRoots::new();
     collect_slot_roots(
         hir,
         expression,

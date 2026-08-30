@@ -1,6 +1,5 @@
 //! Run local Foundry scfuzzbench campaigns and collect deterministic artifacts.
 
-use alloy_primitives::map::HashSet;
 use clap::{Parser, ValueEnum};
 use eyre::{Context, Result};
 use foundry_common::sh_println;
@@ -11,6 +10,7 @@ use std::os::unix::process::CommandExt;
 #[cfg(unix)]
 use std::time::Duration;
 use std::{
+    collections::HashSet,
     env,
     ffi::{OsStr, OsString},
     fs,
@@ -32,7 +32,7 @@ type ProcessGroupId = libc::pid_t;
 type ProcessGroupId = u32;
 
 static ACTIVE_PROCESS_GROUPS: Lazy<Mutex<HashSet<ProcessGroupId>>> =
-    Lazy::new(|| Mutex::new(HashSet::default()));
+    Lazy::new(|| Mutex::new(HashSet::new()));
 
 const REQUIRED_DATA_ARTIFACTS: &[&str] = &[
     "REPORT.md",

@@ -22,7 +22,6 @@ name = "foundry-scfuzzbench"
 path = "src/scfuzzbench.rs"
 
 [dependencies]
-alloy-primitives.workspace = true
 foundry-test-utils.workspace = true
 foundry-common.workspace = true
 foundry-compilers = { workspace = true, features = ["project-util"] }

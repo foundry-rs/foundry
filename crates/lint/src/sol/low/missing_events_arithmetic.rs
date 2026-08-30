@@ -6,7 +6,6 @@ use crate::{
         analysis::primitives::{branch_always_exits, is_require_or_assert},
     },
 };
-use alloy_primitives::map::{HashMap, HashSet};
 use solar::{
     ast::{ContractKind, StateMutability, Visibility},
     interface::{Span, kw, sym},
@@ -15,6 +14,7 @@ use solar::{
         UnOpKind, VariableId,
     },
 };
+use std::collections::{HashMap, HashSet};
 
 declare_forge_lint!(
     MISSING_EVENTS_ARITHMETIC,
@@ -41,7 +41,7 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
             return;
         }
 
-        let mut protected_funcs = HashSet::default();
+        let mut protected_funcs = HashSet::new();
         let mut protected_entry_points = Vec::new();
         for func_id in contract.all_functions() {
             let func = hir.function(func_id);
@@ -67,7 +67,7 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
         for func_id in protected_entry_points {
             let mut analyzer = WriteAnalyzer::new(hir, &arithmetic_vars);
             let writes = analyzer.analyze_entry_point(func_id);
-            let mut emitted = HashSet::<_>::default();
+            let mut emitted = HashSet::new();
 
             for write in writes {
                 if !emitted.insert(write.var_id) {
@@ -113,7 +113,7 @@ fn vars_used_in_unprotected_arithmetic<'hir>(
     candidate_vars: &HashSet<VariableId>,
     protected_funcs: &HashSet<FunctionId>,
 ) -> HashSet<VariableId> {
-    let mut used = HashSet::default();
+    let mut used = HashSet::new();
 
     for func_id in contract.all_functions() {
         let func = hir.function(func_id);
@@ -178,7 +178,7 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
         let mut state = WriteState::default();
         let func = self.hir.function(func_id);
         for &param in func.parameters {
-            state.taint.insert(param, HashSet::<_>::from_iter([param]));
+            state.taint.insert(param, HashSet::from([param]));
         }
         let modifier_ids: Vec<_> =
             func.modifiers.iter().filter_map(|modifier| modifier.id.as_function()).collect();
@@ -579,13 +579,7 @@ struct ArithmeticUseAnalyzer<'a, 'hir> {
 
 impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
     fn new(hir: &'hir hir::Hir<'hir>, targets: &'a HashSet<VariableId>) -> Self {
-        Self {
-            hir,
-            targets,
-            taint: HashMap::default(),
-            used: HashSet::default(),
-            call_stack: Vec::new(),
-        }
+        Self { hir, targets, taint: HashMap::new(), used: HashSet::new(), call_stack: Vec::new() }
     }
 
     fn analyze_entry_point(&mut self, func_id: FunctionId) -> HashSet<VariableId> {
@@ -868,7 +862,7 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
         let callee = self.hir.function(callee_id);
         let Some(body) = callee.body else { return };
 
-        let mut taint = HashMap::default();
+        let mut taint = HashMap::new();
         for (param, arg) in callee.parameters.iter().copied().zip(args.exprs()) {
             let sources = collect_state_sources(self.hir, self.targets, &self.taint, arg);
             if !sources.is_empty() {
@@ -960,7 +954,7 @@ fn collect_write_taint_sources(
     taint: &HashMap<VariableId, HashSet<VariableId>>,
     expr: &hir::Expr<'_>,
 ) -> HashSet<VariableId> {
-    let mut out = HashSet::default();
+    let mut out = HashSet::new();
     collect_write_taint_sources_into(hir, taint, expr, &mut out);
     out
 }
@@ -1110,7 +1104,7 @@ fn collect_state_sources(
     taint: &HashMap<VariableId, HashSet<VariableId>>,
     expr: &hir::Expr<'_>,
 ) -> HashSet<VariableId> {
-    let mut out = HashSet::default();
+    let mut out = HashSet::new();
     collect_state_sources_into(hir, targets, taint, expr, &mut out);
     out
 }
@@ -1264,14 +1258,14 @@ fn is_protected(hir: &hir::Hir<'_>, func_id: FunctionId, func: &hir::Function<'_
         }
     }
 
-    function_has_access_guard(hir, func_id, &mut HashSet::default())
+    function_has_access_guard(hir, func_id, &mut HashSet::new())
 }
 
 fn modifier_has_access_control(hir: &hir::Hir<'_>, modifier_id: FunctionId) -> bool {
     let modifier = hir.function(modifier_id);
     if let Some(body) = modifier.body {
         for stmt in body.stmts {
-            if stmt_is_access_guard(hir, stmt, &mut HashSet::default()) {
+            if stmt_is_access_guard(hir, stmt, &mut HashSet::new()) {
                 return true;
             }
         }
@@ -1434,11 +1428,11 @@ fn expr_compares_sender_to_authority(
     lhs: &hir::Expr<'_>,
     rhs: &hir::Expr<'_>,
 ) -> bool {
-    let mut seen = HashSet::default();
+    let mut seen = HashSet::new();
     (expr_reads_sender(hir, lhs, &mut seen)
         && (expr_reads_state_variable(hir, rhs) || expr_calls_non_sender_user_function(hir, rhs)))
         || {
-            let mut seen = HashSet::default();
+            let mut seen = HashSet::new();
             expr_reads_sender(hir, rhs, &mut seen)
                 && (expr_reads_state_variable(hir, lhs)
                     || expr_calls_non_sender_user_function(hir, lhs))
@@ -1446,7 +1440,7 @@ fn expr_compares_sender_to_authority(
 }
 
 fn expr_looks_like_access_check(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
-    expr_reads_sender(hir, expr, &mut HashSet::default())
+    expr_reads_sender(hir, expr, &mut HashSet::new())
         && (expr_reads_state_variable(hir, expr) || expr_calls_non_sender_user_function(hir, expr))
 }
 

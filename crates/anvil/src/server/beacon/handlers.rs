@@ -2,7 +2,7 @@ use super::{error::BeaconError, utils::must_be_ssz};
 use crate::eth::EthApi;
 use alloy_eips::BlockId;
 use alloy_network::Network;
-use alloy_primitives::{B256, aliases::B32, map::HashMap};
+use alloy_primitives::{B256, aliases::B32};
 use alloy_rpc_types_beacon::{
     genesis::{GenesisData, GenesisResponse},
     sidecar::GetBlobsResponse,
@@ -14,7 +14,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use ssz::Encode;
-use std::str::FromStr as _;
+use std::{collections::HashMap, str::FromStr as _};
 
 /// Handles incoming Beacon API requests for blob sidecars
 ///

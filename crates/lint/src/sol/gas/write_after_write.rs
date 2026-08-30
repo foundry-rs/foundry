@@ -3,7 +3,6 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::map::HashMap;
 use solar::{
     interface::Span,
     sema::{
@@ -13,6 +12,7 @@ use solar::{
         },
     },
 };
+use std::collections::HashMap;
 
 declare_forge_lint!(
     WRITE_AFTER_WRITE,

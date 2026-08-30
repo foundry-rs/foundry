@@ -894,7 +894,7 @@ fn reorder_type(ty: DynSolType, struct_defs: &StructDefinitions) -> Result<DynSo
         DynSolType::CustomStruct { name, prop_names, tuple } => {
             if let Some(def) = struct_defs.get(&name)? {
                 // The incoming `prop_names` and `tuple` are alphabetically sorted.
-                let type_map: alloy_primitives::map::HashMap<String, DynSolType> =
+                let type_map: std::collections::HashMap<String, DynSolType> =
                     prop_names.into_iter().zip(tuple).collect();
 
                 let mut sorted_props = Vec::with_capacity(def.len());
@@ -936,9 +936,10 @@ fn reorder_type(ty: DynSolType, struct_defs: &StructDefinitions) -> Result<DynSo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{FixedBytes, map::HashSet};
+    use alloy_primitives::FixedBytes;
     use foundry_common::fmt::{TypeDefMap, serialize_value_as_json};
     use proptest::{arbitrary::any, prop_oneof, strategy::Strategy};
+    use std::collections::HashSet;
 
     #[test]
     fn test_parse_json_comments() {
@@ -1015,7 +1016,7 @@ mod tests {
         let fields_strat = proptest::collection::vec((field_name_strat, field_value_strat), 1..8)
             .prop_map(|fields| {
                 let mut unique_fields = Vec::with_capacity(fields.len());
-                let mut seen_names = HashSet::<_>::default();
+                let mut seen_names = HashSet::new();
                 for (name, value) in fields {
                     if seen_names.insert(name.clone()) {
                         unique_fields.push((name, value));

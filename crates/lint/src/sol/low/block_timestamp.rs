@@ -3,7 +3,6 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::map::HashSet;
 use solar::{
     ast,
     interface::{kw, sym},
@@ -16,6 +15,7 @@ use solar::{
         },
     },
 };
+use std::collections::HashSet;
 
 declare_forge_lint!(
     BLOCK_TIMESTAMP,
@@ -34,7 +34,7 @@ impl<'hir> LateLintPass<'hir> for BlockTimestamp {
     ) {
         if let Some(body) = func.body {
             let helpers = timestamp_helpers(hir, func.contract);
-            let mut aliases = HashSet::default();
+            let mut aliases = HashSet::new();
             check_block(ctx, hir, &helpers, body, &mut aliases);
         }
     }
@@ -96,7 +96,7 @@ fn check_stmt<'hir>(
             check_expr(ctx, hir, helpers, cond, aliases);
 
             let baseline = aliases.clone();
-            let mut merged = HashSet::default();
+            let mut merged = HashSet::new();
             let mut falls_through = false;
 
             let mut then_aliases = baseline.clone();
@@ -477,7 +477,7 @@ fn is_block_timestamp(expr: &Expr<'_>) -> bool {
 }
 
 fn timestamp_helpers(hir: &Hir<'_>, contract: Option<ContractId>) -> HashSet<FunctionId> {
-    let Some(contract) = contract else { return HashSet::default() };
+    let Some(contract) = contract else { return HashSet::new() };
     hir.contract_item_ids(contract)
         .filter_map(|item| item.as_function())
         .filter(|fid| {

@@ -6,10 +6,7 @@ use crate::{
         analysis::primitives::{branch_always_exits, is_require_or_assert},
     },
 };
-use alloy_primitives::{
-    Selector,
-    map::{HashMap, HashSet},
-};
+use alloy_primitives::Selector;
 use solar::{
     ast::{LitKind, UnOpKind},
     interface::{data_structures::Never, kw, sym},
@@ -23,7 +20,10 @@ use solar::{
         ty::{Ty, TyKind},
     },
 };
-use std::ops::ControlFlow;
+use std::{
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+};
 
 const MAX_LOOP_PATH_STATES: usize = 128;
 
@@ -57,7 +57,7 @@ impl<'hir> LateLintPass<'hir> for FunctionSelectorCollision {
             paths: vec![PathState::initial()],
             placeholder: None,
             return_controls: vec![Vec::new()],
-            continuation_cache: HashMap::default(),
+            continuation_cache: HashMap::new(),
             loop_controls: Vec::new(),
             targets: Vec::new(),
         };
@@ -399,7 +399,7 @@ impl<'hir> DelegateTargetCollector<'hir> {
     }
 
     fn dedup_paths(&mut self) {
-        let mut seen = HashSet::<_>::with_capacity_and_hasher(self.paths.len(), Default::default());
+        let mut seen = HashSet::with_capacity(self.paths.len());
         self.paths.retain(|path| seen.insert(path.clone()));
     }
 
@@ -526,7 +526,7 @@ impl<'hir> DelegateTargetCollector<'hir> {
 
     fn visit_loop(&mut self, block: &hir::Block<'hir>, source: hir::LoopSource) {
         let mut pending = std::mem::take(&mut self.paths);
-        let mut seen = HashSet::<_>::default();
+        let mut seen = HashSet::new();
         let mut exits = Vec::new();
 
         loop {

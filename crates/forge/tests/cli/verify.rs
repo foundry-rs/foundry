@@ -4,7 +4,7 @@
 use crate::utils::{self, EnvExternalities};
 use alloy_chains::NamedChain;
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, U256, hex, map::HashMap};
+use alloy_primitives::{Address, U256, hex};
 use anvil::{NodeConfig, spawn};
 use axum::{
     Router,
@@ -21,6 +21,7 @@ use foundry_test_utils::{
     util::{OutputExt, SOLC_VERSION, TestCommand, TestProject},
 };
 use std::{
+    collections::HashMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
