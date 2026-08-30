@@ -536,6 +536,30 @@ mod tests {
         Signed::new_unchecked(tx, Signature::test_signature(), B256::ZERO)
     }
 
+    /// A plain Ethereum transaction in its JSON-RPC form.
+    const ETH_RPC_TX: &str = r#"{"type":"0x0","chainId":"0x1","nonce":"0x15","gasPrice":"0x4a817c800","gas":"0xc350","to":"0xf02c1c8e6114b1dbe8937a39260b5b0a374432bb","value":"0xf3dbb76162000","input":"0x68656c6c6f21","r":"0x1b5e176d927f8e9ab405058b2d2457392da3e20f328b16ddabcebc33eaac5fea","s":"0x4ba69724e8f69de52f0125ad8b3c5c2cef33019bac3249e2c0a2192766d1721c","v":"0x25","hash":"0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b","blockHash":"0x1d59ff54b1eb26b013ce3cb5fc9dab3705b415a67127a003c3e61eb445bb8df2","blockNumber":"0x5daf3b","transactionIndex":"0x41","from":"0xa7d9ddbe1f17865597fbd27ec712455208b6b76d"}"#;
+
+    /// An `ArbitrumInternalTx`, a type alloy models only as [`AnyTxEnvelope::Unknown`].
+    const ARBITRUM_INTERNAL_RPC_TX: &str = r#"{"type":"0x6a","chainId":"0xa4b1","nonce":"0x0","gasPrice":"0x0","gas":"0x0","to":"0x00000000000000000000000000000000000a4b05","value":"0x0","input":"0x6bf6a42d","r":"0x0","s":"0x0","v":"0x0","hash":"0xe5ad4cc44e5cd67a464c038af87169fde2bd475f2c00306bd2d55ca2c5e4452e","blockHash":"0x0ce1511da42af573bac6870ef058d63bc4c8552440e97c149d4d539c482b5f7a","blockNumber":"0x1dc83ddc","transactionIndex":"0x0","from":"0x00000000000000000000000000000000000a4b05"}"#;
+
+    #[test]
+    fn encode_rpc_2718_matches_consensus_encoding() {
+        let tx: AnyRpcTransaction = serde_json::from_str(ETH_RPC_TX).unwrap();
+        let expected = hex!(
+            "f871158504a817c80082c35094f02c1c8e6114b1dbe8937a39260b5b0a374432bb870f3dbb761620008668656c6c6f2125a01b5e176d927f8e9ab405058b2d2457392da3e20f328b16ddabcebc33eaac5feaa04ba69724e8f69de52f0125ad8b3c5c2cef33019bac3249e2c0a2192766d1721c"
+        );
+
+        assert_eq!(FoundryTxEnvelope::encode_rpc_2718(&tx).unwrap(), expected[..]);
+    }
+
+    #[test]
+    fn encode_rpc_2718_rejects_unmodeled_type() {
+        let tx: AnyRpcTransaction = serde_json::from_str(ARBITRUM_INTERNAL_RPC_TX).unwrap();
+
+        // `AnyTxEnvelope::encode_2718` panics on this type, so it must not be reached.
+        assert!(FoundryTxEnvelope::encode_rpc_2718(&tx).is_err());
+    }
+
     #[test]
     fn tx_type_predicates() {
         assert!(FoundryTxType::Legacy.is_legacy());
