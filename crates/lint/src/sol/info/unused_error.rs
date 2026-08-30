@@ -2,6 +2,7 @@ use crate::{
     linter::{Lint, ProjectLintEmitter, ProjectLintPass, ProjectSource},
     sol::{Severity, SolLint, info::UnusedError},
 };
+use alloy_primitives::map::{HashMap, HashSet};
 use solar::{
     ast::ContractKind,
     interface::{Symbol, data_structures::Never, source_map::FileName},
@@ -11,10 +12,7 @@ use solar::{
         ty::{Ty, TyKind},
     },
 };
-use std::{
-    collections::{HashMap, HashSet},
-    ops::ControlFlow,
-};
+use std::ops::ControlFlow;
 
 declare_forge_lint!(UNUSED_ERROR, Severity::Info, "unused-error", "custom error is never used");
 
@@ -82,7 +80,7 @@ impl<'ast> ProjectLintPass<'ast> for UnusedError {
 /// imported files.
 fn collect_used_errors(gcx: Gcx<'_>) -> HashSet<hir::ErrorId> {
     let hir = &gcx.hir;
-    let mut used = HashSet::new();
+    let mut used = HashSet::default();
     // Walk every source of the unit: functions, modifiers, and variable initializers.
     for source_id in hir.source_ids() {
         let mut collector = UsedErrorCollector { gcx, hir, current_source: source_id, used };

@@ -3,12 +3,13 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
+use alloy_primitives::map::HashSet;
 use solar::sema::{
     Gcx, Hir,
     builtins::Builtin,
     hir::{Expr, ExprKind, Function, Res, StmtKind},
 };
-use std::{cell::RefCell, collections::HashSet};
+use std::cell::RefCell;
 
 declare_forge_lint!(
     REQUIRE_REVERT_IN_LOOP,
@@ -25,7 +26,7 @@ impl<'hir> LateLintPass<'hir> for RequireRevertInLoop {
         hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
-        let emitted = RefCell::new(HashSet::new());
+        let emitted = RefCell::new(HashSet::default());
 
         visit_loop_statements_and_expressions(
             ctx,

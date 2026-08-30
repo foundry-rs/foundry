@@ -1,4 +1,5 @@
 use crate::errors::convert_solar_errors;
+use alloy_primitives::map::HashSet as AlloyHashSet;
 use foundry_compilers::{
     Compiler, ProjectPathsConfig, SourceParser, apply_updates,
     artifacts::SolcLanguage,
@@ -54,7 +55,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             // Include all sources in the source map so as to not re-load them from disk, but only
             // parse and preprocess tests and scripts.
             let mut preprocessed_paths = vec![];
-            let mut script_paths = HashSet::new();
+            let mut script_paths: AlloyHashSet<_> = AlloyHashSet::default();
             let sources = &mut input.input.sources;
             for (path, source) in sources.iter() {
                 if let Ok(src_file) = compiler

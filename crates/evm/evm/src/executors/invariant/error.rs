@@ -4,7 +4,7 @@ use crate::{
     inspectors::{EdgeCovHit, EdgeCoverage},
 };
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, Bytes, Selector, keccak256};
+use alloy_primitives::{Address, B256, Bytes, Selector, keccak256, map::HashMap};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     decode::{ASSERTION_FAILED_PREFIX, EMPTY_REVERT_DATA, RevertDecoder},
@@ -12,7 +12,7 @@ use foundry_evm_core::{
 };
 use foundry_evm_fuzz::{BasicTxDetails, Reason, invariant::FuzzRunIdentifiedContracts};
 use proptest::test_runner::TestError;
-use std::{collections::HashMap, fmt};
+use std::fmt;
 
 /// A handler-side assertion bug: a `require`/`assert` inside a fuzzed handler that the
 /// campaign reached. Deduped by `(reverter, selector)` site (Echidna/Medusa semantics),
@@ -282,8 +282,8 @@ impl InvariantFailures {
         self,
     ) -> (HashMap<String, InvariantFuzzError>, HashMap<(Address, Selector), InvariantFuzzError>)
     {
-        let mut invariant_errors = HashMap::new();
-        let mut handler_errors = HashMap::new();
+        let mut invariant_errors = HashMap::default();
+        let mut handler_errors = HashMap::default();
         for (key, err) in self.failures {
             match key {
                 FailureKey::Invariant(name) => {

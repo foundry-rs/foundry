@@ -3,12 +3,12 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
+use alloy_primitives::map::HashSet;
 use solar::{
     ast::{self, UnOpKind},
     interface::{kw, sym},
     sema::hir::{self, ExprKind, Res, StmtKind, TypeKind},
 };
-use std::collections::HashSet;
 
 declare_forge_lint!(
     COULD_BE_IMMUTABLE,
@@ -57,10 +57,10 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
             return;
         }
 
-        let mut constructor_body_writes = HashSet::new();
-        let mut initializer_side_effect_writes = HashSet::new();
-        let mut runtime_writes = HashSet::new();
-        let mut non_constant_initializer = HashSet::new();
+        let mut constructor_body_writes = HashSet::default();
+        let mut initializer_side_effect_writes = HashSet::default();
+        let mut runtime_writes = HashSet::default();
+        let mut non_constant_initializer = HashSet::<_>::default();
 
         for &var_id in &candidates {
             let var = hir.variable(var_id);
@@ -83,7 +83,7 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
                         &candidate_set,
                         &mut constructor_body_writes,
                         &mut runtime_writes,
-                        &mut HashSet::new(),
+                        &mut HashSet::default(),
                     );
 
                     if let Some(body) = function.body {
@@ -97,14 +97,14 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
                 } else {
                     // Immutable variables can only be assigned inline or directly in constructor
                     // bodies, so writes hidden behind internal helpers are not valid candidates.
-                    let mut modifier_argument_writes = HashSet::new();
+                    let mut modifier_argument_writes = HashSet::default();
                     collect_modifier_writes(
                         hir,
                         function,
                         &candidate_set,
                         &mut modifier_argument_writes,
                         &mut runtime_writes,
-                        &mut HashSet::new(),
+                        &mut HashSet::default(),
                     );
                     runtime_writes.extend(modifier_argument_writes);
 
@@ -172,7 +172,7 @@ fn collect_modifier_writes<'hir>(
         }
 
         let modifier = hir.function(modifier_id);
-        let mut nested_argument_writes = HashSet::new();
+        let mut nested_argument_writes = HashSet::default();
         collect_modifier_writes(
             hir,
             modifier,

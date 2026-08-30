@@ -117,7 +117,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// use alloy_serde::WithOtherFields;
     /// use cast::Cast;
     /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
-    /// use std::{str::FromStr, collections::HashMap};
+    /// use std::str::FromStr;
     /// use alloy_rpc_types::state::StateOverridesBuilder;
     /// use alloy_sol_types::{sol, SolCall};
     ///

@@ -1,7 +1,5 @@
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    hash::Hash,
-};
+use alloy_primitives::map::{HashMap, HashSet};
+use std::{collections::VecDeque, hash::Hash};
 
 pub const DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT: usize = 65_536;
 
@@ -20,8 +18,8 @@ where
 {
     pub fn new(max_entries: usize) -> Self {
         Self {
-            entries: HashMap::new(),
-            in_progress: HashSet::new(),
+            entries: HashMap::default(),
+            in_progress: HashSet::default(),
             order: VecDeque::new(),
             max_entries,
         }

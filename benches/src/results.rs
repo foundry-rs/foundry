@@ -1,12 +1,8 @@
 use crate::{RepoConfig, symbolic::Sidecar};
+use alloy_primitives::map::HashMap;
 use eyre::Result;
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, HashMap},
-    path::Path,
-    process::Command,
-    thread,
-};
+use std::{collections::BTreeMap, path::Path, process::Command, thread};
 
 /// Hyperfine benchmark result
 #[derive(Debug, Deserialize, Serialize)]
@@ -153,7 +149,7 @@ impl BenchmarkResults {
     ///
     /// Consumed by the nightly regression comparison script.
     pub fn generate_json_summary(&self, versions: &[String]) -> HashMap<String, &HyperfineResult> {
-        let mut summary = HashMap::new();
+        let mut summary = HashMap::default();
         for (benchmark_name, version_data) in &self.data {
             for version in versions {
                 if let Some(repo_data) = version_data.get(version) {
@@ -279,7 +275,7 @@ impl BenchmarkResults {
         // Summary
         output.push_str("## Summary\n\n");
         // Count actual repos that have results
-        let mut repos_with_results = std::collections::HashSet::new();
+        let mut repos_with_results = alloy_primitives::map::HashSet::<_>::default();
         for version_data in self.data.values() {
             for repo_data in version_data.values() {
                 for repo_name in repo_data.keys() {

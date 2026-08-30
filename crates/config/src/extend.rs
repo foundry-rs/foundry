@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use alloy_primitives::map::HashMap;
 
 use serde::{Deserialize, Serialize};
 

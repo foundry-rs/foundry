@@ -1,5 +1,6 @@
+use alloy_primitives::map::HashSet;
 use std::{
-    collections::{BTreeMap, HashSet, hash_map::DefaultHasher},
+    collections::{BTreeMap, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::Arc,
@@ -263,7 +264,7 @@ pub struct SurvivedSpans {
 
 impl SurvivedSpans {
     pub fn new() -> Self {
-        Self { spans: HashSet::new() }
+        Self { spans: HashSet::default() }
     }
 
     /// Mark a span as having a surviving mutation
@@ -329,7 +330,7 @@ impl MutationHandler {
             report: MutationsSummary::new(),
             survived_spans: SurvivedSpans::new(),
             contract_filter: None,
-            mutation_exclusions: type_analysis::MutationExclusionSet::new(),
+            mutation_exclusions: type_analysis::MutationExclusionSet::default(),
         }
     }
 
@@ -695,7 +696,8 @@ mod tests {
             Span::new(BytePos(10), BytePos(20)),
             AssignmentReplacement::Zero,
         );
-        let with_exclusions = test_handler(config).with_mutation_exclusions([exclusion].into());
+        let with_exclusions =
+            test_handler(config).with_mutation_exclusions([exclusion].into_iter().collect());
         without_exclusions.persist_cached_mutants("build", &[mutant(10, 20, "account")]).unwrap();
 
         assert!(with_exclusions.retrieve_cached_mutants("build").is_none());

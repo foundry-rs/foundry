@@ -28,7 +28,7 @@ use foundry_evm_symbolic::{
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    collections::{BTreeMap, HashMap as Map},
+    collections::BTreeMap,
     fmt::{self, Write},
     sync::OnceLock,
     time::Duration,
@@ -454,7 +454,7 @@ mod tests {
                             calls: 0,
                             reverts: 0,
                             workers: *workers,
-                            metrics: Map::new(),
+                            metrics: HashMap::default(),
                             failed_corpus_replays: 0,
                             optimization_best_value: None,
                         },
@@ -512,7 +512,7 @@ mod tests {
             calls: 0,
             reverts: 0,
             workers: 1,
-            metrics: Map::new(),
+            metrics: HashMap::default(),
             failed_corpus_replays: 0,
             optimization_best_value: None,
         })]);
@@ -795,7 +795,7 @@ impl SuiteResult {
         mut warnings: Vec<String>,
     ) -> Self {
         // Add deprecated cheatcodes warning, if any of them used in current test suite.
-        let mut deprecated_cheatcodes = HashMap::new();
+        let mut deprecated_cheatcodes = HashMap::<_, _>::default();
         for test_result in test_results.values() {
             deprecated_cheatcodes.extend(test_result.deprecated_cheatcodes.clone());
         }
@@ -2497,7 +2497,7 @@ impl TestResult {
         runs: usize,
         calls: usize,
         reverts: usize,
-        metrics: Map<String, InvariantMetrics>,
+        metrics: HashMap<String, InvariantMetrics>,
         failed_corpus_replays: usize,
         workers: usize,
         optimization_best_value: Option<I256>,
@@ -2741,7 +2741,7 @@ pub enum TestKindReport {
         runs: usize,
         calls: usize,
         reverts: usize,
-        metrics: Map<String, InvariantMetrics>,
+        metrics: HashMap<String, InvariantMetrics>,
         failed_corpus_replays: usize,
         /// For optimization mode (int256 return): the best value achieved. None = check mode.
         optimization_best_value: Option<I256>,
@@ -2882,7 +2882,7 @@ pub enum TestKind {
         /// Actual worker count used by this invariant campaign.
         #[serde(default = "default_invariant_workers")]
         workers: usize,
-        metrics: Map<String, InvariantMetrics>,
+        metrics: HashMap<String, InvariantMetrics>,
         failed_corpus_replays: usize,
         /// For optimization mode (int256 return): the best value achieved. None = check mode.
         optimization_best_value: Option<I256>,

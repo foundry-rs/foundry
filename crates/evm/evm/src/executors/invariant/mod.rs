@@ -15,7 +15,7 @@ use crate::{
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, FixedBytes, I256, Selector, U256, keccak256,
-    map::{AddressMap, hash_map::Entry as AddressMapEntry},
+    map::{AddressMap, AddressSet, HashMap, HashSet, hash_map::Entry as AddressMapEntry},
 };
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
@@ -56,7 +56,7 @@ use revm::state::Account;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap as Map, HashSet, btree_map::Entry},
+    collections::btree_map::Entry,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -351,7 +351,7 @@ fn focused_targeted_contracts(
     focus_index: usize,
     focus_seed: Option<U256>,
 ) -> Option<TargetedContracts> {
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::<_>::default();
     let mut candidates = Vec::new();
     for (address, contract) in targeted_contracts.iter() {
         // Build from the effective selector set so user target/exclude config stays authoritative.
@@ -583,10 +583,10 @@ struct InvariantTestData {
     // Line coverage information collected from all fuzzed calls.
     line_coverage: Option<HitMaps>,
     // Metrics for each fuzzed selector.
-    metrics: Map<String, InvariantMetrics>,
+    metrics: HashMap<String, InvariantMetrics>,
     // Cache from fuzzed (target, selector) to its metric key. Only resolved keys are cached and
     // they are invalidated when targets change (see `invalidate_metric_key_cache`).
-    metric_key_cache: Map<(Address, Selector), String>,
+    metric_key_cache: HashMap<(Address, Selector), String>,
 
     // Proptest runner to query for random values.
     // The strategy only comes with the first `input`. We fill the rest of the `inputs`
@@ -625,8 +625,8 @@ impl InvariantTest {
             last_run_inputs: vec![],
             gas_report_traces: vec![],
             line_coverage: None,
-            metrics: Map::default(),
-            metric_key_cache: Map::default(),
+            metrics: HashMap::default(),
+            metric_key_cache: HashMap::default(),
             branch_runner,
             optimization_best_value: None,
             optimization_best_sequence: vec![],
@@ -770,7 +770,7 @@ struct InvariantCampaignSeed {
     sender_filters: SenderFilters,
     targeted_contracts: TargetedContracts,
     targets_are_updatable: bool,
-    initial_handler_failures: Map<(Address, Selector), InvariantFuzzError>,
+    initial_handler_failures: HashMap<(Address, Selector), InvariantFuzzError>,
 }
 
 impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
@@ -903,10 +903,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         fuzz_state: EvmFuzzState,
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
-        initial_handler_failures: std::collections::HashMap<
-            (Address, Selector),
-            InvariantFuzzError,
-        >,
+        initial_handler_failures: HashMap<(Address, Selector), InvariantFuzzError>,
     ) -> Result<InvariantFuzzTestResult> {
         let campaign_spec = InvariantCampaignSpec::new(self.config.runs);
         let worker_plans = campaign_spec.worker_plans(invariant_worker_count_with_threads(
@@ -1633,10 +1630,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
     fn prepare_campaign_seed(
         &mut self,
         invariant_contract: &InvariantContract<'_>,
-        initial_handler_failures: std::collections::HashMap<
-            (Address, Selector),
-            InvariantFuzzError,
-        >,
+        initial_handler_failures: HashMap<(Address, Selector), InvariantFuzzError>,
     ) -> Result<InvariantCampaignSeed> {
         self.select_contract_artifacts(invariant_contract.address)?;
         let (sender_filters, targeted_contracts) =
@@ -1754,7 +1748,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
             // Collect handler addresses - these are the contracts we want to inject
             // reentrancy into (simulating malicious receive() functions).
-            let handler_addresses: std::collections::HashSet<Address> =
+            let handler_addresses: AddressSet =
                 targeted_contracts.targets().keys().copied().collect();
             let override_targets = targeted_contracts
                 .targets()
@@ -2778,7 +2772,7 @@ mod tests {
             sender_filters: SenderFilters::new(vec![CALLER], Vec::new()),
             targeted_contracts,
             targets_are_updatable: false,
-            initial_handler_failures: Map::default(),
+            initial_handler_failures: HashMap::default(),
         };
 
         let config =
@@ -2913,7 +2907,7 @@ mod tests {
             sender_filters: SenderFilters::default(),
             targeted_contracts,
             targets_are_updatable: true,
-            initial_handler_failures: Map::default(),
+            initial_handler_failures: HashMap::default(),
         };
 
         let normal_worker = campaign_seed_for_worker(

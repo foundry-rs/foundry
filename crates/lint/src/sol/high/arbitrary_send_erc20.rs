@@ -3,6 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
+use alloy_primitives::map::{HashMap, HashSet};
 use solar::{
     ast,
     interface::{Span, data_structures::Never, kw, sym},
@@ -15,12 +16,7 @@ use solar::{
         ty::{Ty, TyKind},
     },
 };
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    ops::ControlFlow,
-    rc::Rc,
-};
+use std::{cell::RefCell, ops::ControlFlow, rc::Rc};
 
 declare_forge_lint!(
     ARBITRARY_SEND_ERC20,
@@ -201,12 +197,12 @@ impl ParamCallsiteFacts {
 impl FlowState {
     fn empty() -> Self {
         Self {
-            safe_vars: HashSet::new(),
-            self_vars: HashSet::new(),
-            permits: HashSet::new(),
-            repayments: HashMap::new(),
-            aliases: HashMap::new(),
-            sum_of: HashMap::new(),
+            safe_vars: HashSet::default(),
+            self_vars: HashSet::default(),
+            permits: HashSet::default(),
+            repayments: HashMap::default(),
+            aliases: HashMap::default(),
+            sum_of: HashMap::default(),
         }
     }
 
@@ -251,15 +247,15 @@ impl<'hir> Analyzer<'hir> {
         Self {
             gcx,
             hir,
-            safe_vars: HashSet::new(),
-            self_vars: HashSet::new(),
-            permits: HashSet::new(),
-            repayments: HashMap::new(),
-            aliases: HashMap::new(),
-            sum_of: HashMap::new(),
+            safe_vars: HashSet::default(),
+            self_vars: HashSet::default(),
+            permits: HashSet::default(),
+            repayments: HashMap::default(),
+            aliases: HashMap::default(),
+            sum_of: HashMap::default(),
             has_solady_lib,
             hits: Vec::new(),
-            written: HashSet::new(),
+            written: HashSet::default(),
         }
     }
 
@@ -502,11 +498,11 @@ impl<'hir> Analyzer<'hir> {
         let body = f.body?;
         // Only same-contract calls to non-view/pure user functions can mutate `self`'s state.
         if matches!(f.state_mutability, ast::StateMutability::Pure | ast::StateMutability::View) {
-            return Some(HashSet::new());
+            return Some(HashSet::default());
         }
         let mut writes = collect_state_writes(self.hir, body.stmts);
         // One nested level: pull in writes from internal callees within `body`.
-        let mut nested = NestedCallCollector { hir: self.hir, out: HashSet::new() };
+        let mut nested = NestedCallCollector { hir: self.hir, out: HashSet::default() };
         for s in body.stmts {
             let _ = nested.visit_stmt(s);
         }
@@ -1521,7 +1517,7 @@ fn collect_state_writes<'hir>(
     hir: &'hir hir::Hir<'hir>,
     stmts: &'hir [hir::Stmt<'hir>],
 ) -> HashSet<hir::VariableId> {
-    let mut c = StateWriteCollector { hir, out: HashSet::new() };
+    let mut c = StateWriteCollector { hir, out: HashSet::default() };
     for s in stmts {
         let _ = c.visit_stmt(s);
     }

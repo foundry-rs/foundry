@@ -10,7 +10,7 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{
     Address, B256, U256, hex, keccak256,
-    map::{B256Map, HashMap},
+    map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
@@ -48,7 +48,7 @@ use revm::{
     state::{Account, AccountStatus},
 };
 use std::{
-    collections::{BTreeMap, HashSet, btree_map::Entry},
+    collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
     path::Path,
     str::FromStr,
@@ -2141,7 +2141,7 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     let mut state_diffs: BTreeMap<Address, AccountStateDiffs> = BTreeMap::default();
 
     // First, collect all unique addresses we need to look up
-    let mut addresses_to_lookup = HashSet::new();
+    let mut addresses_to_lookup = AddressSet::default();
     for account_access in ccx.state.recorded_account_diffs() {
         if !account_access.storageAccesses.is_empty()
             || account_access.oldBalance != account_access.newBalance
@@ -2156,8 +2156,8 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     }
 
     // Look up contract names and storage layouts for all addresses
-    let mut contract_names = HashMap::new();
-    let mut storage_layouts = HashMap::new();
+    let mut contract_names = AddressMap::default();
+    let mut storage_layouts = AddressMap::default();
     for address in addresses_to_lookup {
         if let Some((artifact_id, contract_data)) = get_contract_data(ccx, address) {
             contract_names.insert(address, artifact_id.identifier());

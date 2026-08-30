@@ -6,6 +6,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
+use alloy_primitives::map::HashSet;
 use solar::{
     interface::kw,
     sema::{
@@ -13,7 +14,6 @@ use solar::{
         hir::{Expr, ExprKind, Function, Hir},
     },
 };
-use std::collections::HashSet;
 
 declare_forge_lint!(
     DELEGATECALL_LOOP,
@@ -30,7 +30,7 @@ impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
         hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
-        let mut emitted = HashSet::new();
+        let mut emitted = HashSet::<_>::default();
         visit_payable_loop_expressions(ctx, gcx, hir, func, |ctx, gcx, hir, expr| {
             if is_delegatecall(gcx, hir, expr) && emitted.insert(expr.span) {
                 ctx.emit(&DELEGATECALL_LOOP, expr.span);

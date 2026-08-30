@@ -1,11 +1,11 @@
 //! foundry.lock handler type.
 
-use alloy_primitives::map::HashMap;
+use alloy_primitives::map::{Entry, HashMap};
 use eyre::{Context, OptionExt, Result};
 use foundry_cli::utils::{Git, SubmoduleCheckoutStatus};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, hash_map::Entry},
+    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 

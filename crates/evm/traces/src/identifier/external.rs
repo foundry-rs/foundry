@@ -3,7 +3,7 @@ use crate::debug::ContractSources;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{
     Address,
-    map::{Entry, HashMap, HashSet},
+    map::{AddressSet, Entry, HashMap, HashSet},
 };
 use eyre::WrapErr;
 use foundry_block_explorers::{contract::Metadata, errors::EtherscanError};
@@ -298,7 +298,7 @@ impl TraceIdentifier for ExternalIdentifier {
         trace!(target: "evm::traces::external", "identify {} addresses", nodes.len());
 
         let mut identities = Vec::new();
-        let mut to_fetch = HashSet::new();
+        let mut to_fetch = AddressSet::default();
 
         // Check cache first.
         for &node in nodes {
@@ -651,7 +651,6 @@ impl From<SourcifyMetadata> for Metadata {
 mod tests {
     use super::*;
     use std::{
-        collections::HashSet as StdHashSet,
         future::pending,
         sync::{
             Mutex,
@@ -753,7 +752,7 @@ mod tests {
     /// Fetcher that returns a transient Cloudflare block the first time it sees an address, then
     /// succeeds. Mirrors Etherscan/Cloudflare throttling a burst of concurrent requests.
     struct FlakyCloudflareFetcher {
-        seen: Mutex<StdHashSet<Address>>,
+        seen: Mutex<AddressSet>,
         invalid: AtomicBool,
     }
 
@@ -784,14 +783,14 @@ mod tests {
     async fn cloudflare_block_retries_instead_of_abandoning_queue() {
         let addrs: Vec<Address> = (1u8..=4).map(Address::with_last_byte).collect();
         let fetcher: Arc<dyn ExternalFetcherT> = Arc::new(FlakyCloudflareFetcher {
-            seen: Mutex::new(StdHashSet::new()),
+            seen: Mutex::new(AddressSet::default()),
             invalid: AtomicBool::new(false),
         });
 
         let collected: Vec<_> = ExternalFetcher::new(fetcher, &addrs).collect().await;
 
-        let got: StdHashSet<Address> = collected.into_iter().map(|(addr, _)| addr).collect();
-        let want: StdHashSet<Address> = addrs.into_iter().collect();
+        let got: AddressSet = collected.into_iter().map(|(addr, _)| addr).collect();
+        let want: AddressSet = addrs.into_iter().collect();
         assert_eq!(got, want, "every address must be yielded despite a transient cloudflare block");
     }
 

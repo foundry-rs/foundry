@@ -49,7 +49,7 @@ impl<'src> MutantVisitor<'src> {
             source: None,
             contract_filter: None,
             in_allowed_contract: true,
-            mutation_exclusions: MutationExclusionSet::new(),
+            mutation_exclusions: MutationExclusionSet::default(),
         }
     }
 
@@ -64,7 +64,7 @@ impl<'src> MutantVisitor<'src> {
             source: None,
             contract_filter: None,
             in_allowed_contract: true,
-            mutation_exclusions: MutationExclusionSet::new(),
+            mutation_exclusions: MutationExclusionSet::default(),
         }
     }
 
@@ -79,7 +79,7 @@ impl<'src> MutantVisitor<'src> {
             source: None,
             contract_filter: None,
             in_allowed_contract: true,
-            mutation_exclusions: MutationExclusionSet::new(),
+            mutation_exclusions: MutationExclusionSet::default(),
         }
     }
 

@@ -3,12 +3,13 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
+use alloy_primitives::map::HashSet;
 use solar::{
     ast::ContractKind,
     interface::data_structures::Never,
     sema::hir::{self, Visit as _},
 };
-use std::{collections::HashSet, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 declare_forge_lint!(
     UNUSED_STATE_VARIABLES,
@@ -47,7 +48,7 @@ impl<'hir> LateLintPass<'hir> for UnusedStateVariables {
         // Walk the full contract — functions (including modifier call args, parameters, returns,
         // and bodies) and state variable initializers — to collect every variable referenced
         // anywhere in this contract.
-        let mut collector = UsedVarCollector { hir, used: HashSet::new() };
+        let mut collector = UsedVarCollector { hir, used: HashSet::default() };
         for func_id in contract.all_functions() {
             let _ = collector.visit_nested_function(func_id);
         }

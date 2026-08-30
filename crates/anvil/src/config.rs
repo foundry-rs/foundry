@@ -480,7 +480,7 @@ Genesis Number
     }
 
     fn as_json(&self, fork: Option<&ClientFork>) -> Value {
-        let mut wallet_description = HashMap::new();
+        let mut wallet_description = HashMap::<_, _>::default();
         let mut available_accounts = Vec::with_capacity(self.genesis_accounts.len());
         let mut private_keys = Vec::with_capacity(self.genesis_accounts.len());
 

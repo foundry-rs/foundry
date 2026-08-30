@@ -1,5 +1,5 @@
 use crate::{DebugNode, debugger::DebuggerContext};
-use alloy_primitives::map::AddressMap;
+use alloy_primitives::map::{AddressMap, HashMap};
 use foundry_common::fs::write_json_file;
 use foundry_compilers::{
     artifacts::sourcemap::{Jump, SourceElement},
@@ -8,7 +8,7 @@ use foundry_compilers::{
 use foundry_evm_core::ic::PcIcMap;
 use foundry_evm_traces::debug::{ArtifactData, ContractSources, SourceData};
 use serde::Serialize;
-use std::{collections::HashMap, path::Path};
+use std::path::Path;
 
 /// Holds info of debugger dump.
 #[derive(Serialize)]

@@ -3,6 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
+use alloy_primitives::map::{HashMap, HashSet};
 use solar::{
     ast::{ContractKind, DataLocation, UnOpKind, Visibility},
     interface::{Symbol, data_structures::Never},
@@ -10,12 +11,7 @@ use solar::{
         self, ContractId, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId, Visit as _,
     },
 };
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    ops::ControlFlow,
-    rc::Rc,
-};
+use std::{cell::RefCell, ops::ControlFlow, rc::Rc};
 
 declare_forge_lint!(
     EXTERNAL_FUNCTION,

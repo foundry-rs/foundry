@@ -4,13 +4,13 @@ use crate::{
     results::{HyperfineOutput, HyperfineResult},
     symbolic::{Fixture, Overlay, Sample, Sidecar},
 };
+use alloy_primitives::map::HashSet;
 use eyre::{Result, WrapErr};
 use foundry_common::{sh_eprintln, sh_println};
 use foundry_compilers::project_util::TempProject;
 use foundry_test_utils::util::clone_remote;
 use once_cell::sync::Lazy;
 use std::{
-    collections::HashSet,
     env, fs,
     path::{Path, PathBuf},
     process::Command,
@@ -624,7 +624,7 @@ const FOUNDRY_BINS: [&str; 4] = ["forge", "cast", "anvil", "chisel"];
 /// Parse `--versions` entries into unique display names and optional source
 /// workspaces. `name=path` builds Foundry from `path` and labels it `name`.
 pub fn parse_version_specs(specs: &[String]) -> Result<Vec<(String, Option<PathBuf>)>> {
-    let mut labels = HashSet::new();
+    let mut labels = HashSet::<_>::default();
     specs
         .iter()
         .map(|spec| {

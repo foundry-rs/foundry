@@ -2,6 +2,7 @@
 
 use alloy_chains::Chain;
 use alloy_json_rpc::{RequestPacket, ResponsePacket, RpcError};
+use alloy_primitives::map::HashMap;
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut};
 use alloy_transport_mpp::{MppHttpTransport, MppWsConnect};
 use mpp::{
@@ -19,7 +20,6 @@ use mpp::{
     },
 };
 use std::{
-    collections::HashMap,
     env, fmt, io,
     io::IsTerminal,
     process::{Command, Stdio},
@@ -149,8 +149,8 @@ impl fmt::Debug for LazyAccountsProvider {
 impl LazyAccountsProvider {
     pub(super) fn new(origin: String) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(HashMap::new())),
-            funding_by_challenge: Arc::new(Mutex::new(HashMap::new())),
+            inner: Arc::new(Mutex::new(HashMap::default())),
+            funding_by_challenge: Arc::new(Mutex::new(HashMap::default())),
             origin,
         }
     }

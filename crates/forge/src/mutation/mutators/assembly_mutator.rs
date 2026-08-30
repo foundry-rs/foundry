@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use alloy_primitives::map::HashMap;
 
 use eyre::Result;
 use solar::ast::yul;
@@ -18,7 +18,7 @@ impl Default for AssemblyMutator {
 
 impl AssemblyMutator {
     pub fn new() -> Self {
-        let mut opcode_mutations: HashMap<&'static str, Vec<&'static str>> = HashMap::new();
+        let mut opcode_mutations: HashMap<&'static str, Vec<&'static str>> = HashMap::default();
 
         // Arithmetic — stay within arithmetic family
         opcode_mutations.insert("add", vec!["sub", "mul"]);

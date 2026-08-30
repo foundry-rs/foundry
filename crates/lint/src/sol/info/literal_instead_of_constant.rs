@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, U256, map::HashMap};
 use solar::{
     ast::{BinOpKind, LitKind, StrKind, UnOpKind},
     interface::Span,
@@ -13,7 +13,7 @@ use solar::{
         ty::TyKind,
     },
 };
-use std::{collections::HashMap, convert::Infallible, ops::ControlFlow};
+use std::{convert::Infallible, ops::ControlFlow};
 
 declare_forge_lint!(
     LITERAL_INSTEAD_OF_CONSTANT,
@@ -35,7 +35,7 @@ impl<'hir> LateLintPass<'hir> for LiteralInsteadOfConstant {
         // expressions: the body statements, and the modifier and base-constructor arguments of
         // the header. Parameter and return types stay out, so a fixed array size in a signature
         // is a type annotation rather than a repeated value.
-        let mut collector = LiteralCollector { gcx, hir, groups: HashMap::new() };
+        let mut collector = LiteralCollector { gcx, hir, groups: HashMap::default() };
         for item_id in hir.contract(id).items {
             if let hir::ItemId::Function(function_id) = item_id {
                 let function = hir.function(*function_id);

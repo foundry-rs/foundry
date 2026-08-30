@@ -1,3 +1,4 @@
+use alloy_primitives::map::{HashMap, HashSet};
 use eyre::{Context, Result};
 use foundry_common::{compact_to_contract, strip_bytecode_placeholders};
 use foundry_compilers::{
@@ -13,7 +14,7 @@ use foundry_linking::Linker;
 use rayon::prelude::*;
 use solar::{ast, interface::SpannedOption};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::BTreeMap,
     fmt::Write,
     ops::Range,
     path::{Path, PathBuf},
@@ -426,7 +427,7 @@ impl ContractSources {
         // Not all source files produce artifacts, so we are populating sources by using build
         // infos.
         let mut files: BTreeMap<PathBuf, Arc<SourceData>> = BTreeMap::new();
-        let mut removed_files = HashSet::new();
+        let mut removed_files = HashSet::<_>::default();
         for (build_id, build) in output.builds() {
             for (source_id, path) in &build.source_id_to_path {
                 if !path.exists() {

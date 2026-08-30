@@ -3,8 +3,8 @@ use crate::{
     linter::{Lint, ProjectLintEmitter, ProjectLintPass, ProjectSource},
     sol::{Severity, SolLint},
 };
+use alloy_primitives::map::HashMap;
 use solar::{ast::FunctionKind, interface::source_map::FileName, sema::hir};
-use std::collections::HashMap;
 
 declare_forge_lint!(
     MODIFIER_USED_ONLY_ONCE,
@@ -67,7 +67,7 @@ impl<'ast> ProjectLintPass<'ast> for ModifierUsedOnlyOnce {
 /// each function's resolved modifier list, where base-constructor calls carry a contract id
 /// and stay out of the count.
 fn count_modifier_invocations(hir: &hir::Hir<'_>) -> HashMap<hir::FunctionId, usize> {
-    let mut counts = HashMap::new();
+    let mut counts = HashMap::default();
     // Every function of the unit, constructors included, can invoke modifiers.
     for function_id in hir.function_ids() {
         for invocation in hir.function(function_id).modifiers {

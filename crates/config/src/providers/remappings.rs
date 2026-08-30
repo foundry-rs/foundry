@@ -2,6 +2,7 @@ use crate::{
     Config, FigmentProviders, foundry_toml_dir_entries, remappings_from_env_var,
     remappings_from_newline,
 };
+use alloy_primitives::map::{Entry as HashEntry, HashMap, HashSet};
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
     value::{Dict, Map},
@@ -11,9 +12,7 @@ use rayon::prelude::*;
 use std::{
     borrow::Cow,
     cmp::Reverse,
-    collections::{
-        BTreeMap, BTreeSet, HashMap, HashSet, btree_map::Entry, hash_map::Entry as HashEntry,
-    },
+    collections::{BTreeMap, BTreeSet, btree_map::Entry},
     fs,
     path::{Component, MAIN_SEPARATOR, Path, PathBuf},
 };
@@ -71,7 +70,7 @@ impl Remappings {
 
     /// Consumes the wrapper and returns the inner remappings vector.
     pub fn into_inner(self) -> Vec<Remapping> {
-        let mut seen = HashSet::new();
+        let mut seen: HashSet<_> = HashSet::default();
         self.remappings
             .iter()
             .filter(|r| seen.insert((r.context.as_deref(), r.name.as_str())))
@@ -147,7 +146,7 @@ impl Remappings {
         generated_contextual_remappings: &[Remapping],
     ) {
         let authoritative = self.remappings.clone();
-        let mut suppressed = HashSet::new();
+        let mut suppressed: HashSet<_> = HashSet::default();
         let mut overlays = Vec::new();
         for (index, remapping) in config_remappings.iter().enumerate().filter(|(_, remapping)| {
             remapping.context.is_some() && generated_contextual_remappings.contains(remapping)
@@ -438,8 +437,8 @@ impl RemappingsProvider<'_> {
             .map(|path| if path.is_absolute() { path.clone() } else { self.root.join(path) })
             .flat_map(foundry_toml_dir_entries)
             .collect::<BTreeSet<_>>();
-        let mut seen = HashSet::from([root.clone()]);
-        let mut configs = HashMap::<PathBuf, Option<CachedNestedConfig>>::new();
+        let mut seen = HashSet::<_>::from_iter([root.clone()]);
+        let mut configs = HashMap::<PathBuf, Option<CachedNestedConfig>>::default();
         let mut remappings = Vec::new();
 
         while let Some(entry) = pending.pop_first() {

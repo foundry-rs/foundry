@@ -5396,6 +5396,7 @@ dependencies = [
 name = "forge-fmt"
 version = "1.8.1"
 dependencies = [
+ "alloy-primitives",
  "foundry-common",
  "foundry-config",
  "foundry-test-utils",
@@ -5553,6 +5554,7 @@ dependencies = [
 name = "foundry-bench"
 version = "1.8.1"
 dependencies = [
+ "alloy-primitives",
  "chrono",
  "clap",
  "color-eyre",

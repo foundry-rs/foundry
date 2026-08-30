@@ -3,6 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
+use alloy_primitives::map::HashSet;
 use solar::{
     ast::UnOpKind,
     sema::{
@@ -13,7 +14,6 @@ use solar::{
         },
     },
 };
-use std::collections::HashSet;
 
 declare_forge_lint!(
     DIVIDE_BEFORE_MULTIPLY,

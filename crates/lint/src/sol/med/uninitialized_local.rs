@@ -3,6 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
+use alloy_primitives::map::{HashMap, HashSet};
 use solar::{
     interface::{Span, data_structures::Never},
     sema::{
@@ -13,10 +14,7 @@ use solar::{
         },
     },
 };
-use std::{
-    collections::{HashMap, HashSet},
-    ops::ControlFlow,
-};
+use std::ops::ControlFlow;
 
 declare_forge_lint!(
     UNINITIALIZED_LOCAL,
@@ -35,7 +33,8 @@ impl<'hir> LateLintPass<'hir> for UninitializedLocal {
     ) {
         let Some(body) = func.body else { return };
 
-        let mut checker = Checker { hir, uninitialized: HashSet::new(), findings: HashMap::new() };
+        let mut checker =
+            Checker { hir, uninitialized: HashSet::default(), findings: HashMap::default() };
         for stmt in body.stmts {
             let _ = checker.visit_stmt(stmt);
         }
@@ -134,7 +133,7 @@ impl<'hir> Visit<'hir> for Checker<'hir> {
                 // fails to write it.
                 self.uninitialized = clause_states
                     .iter()
-                    .fold(HashSet::new(), |acc, s| acc.union(s).copied().collect());
+                    .fold(HashSet::default(), |acc, s| acc.union(s).copied().collect());
                 return ControlFlow::Continue(());
             }
 

@@ -6,8 +6,9 @@
 //! - Running mutations in parallel with caching
 //! - Aggregating results and reporting
 
+use alloy_primitives::map::HashSet;
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::{
         Arc,

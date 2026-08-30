@@ -1,11 +1,9 @@
 //! Shared helpers for reading on-disk corpus directories.
 
+use alloy_primitives::map::HashSet;
 use eyre::{Result, eyre};
 use foundry_evm_fuzz::BasicTxDetails;
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 const WORKER_DIR_PREFIX: &str = "worker";
@@ -109,8 +107,8 @@ pub fn read_corpus_tree(path: &Path) -> Result<Vec<CorpusDirEntry>> {
         return Err(eyre!("corpus path does not exist or is not readable: {}", path.display()));
     }
 
-    let mut seen_entries = HashSet::new();
-    let mut visited_dirs = HashSet::new();
+    let mut seen_entries = HashSet::<_>::default();
+    let mut visited_dirs = HashSet::<_>::default();
     let mut entries = Vec::new();
     let mut stack = vec![(path.to_path_buf(), 0usize)];
     while let Some((dir, depth)) = stack.pop() {

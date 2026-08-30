@@ -3,6 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
+use alloy_primitives::map::HashMap;
 use solar::{
     ast::{DataLocation, ElementaryType, UnOpKind},
     interface::{Span, Symbol, kw, sym},
@@ -12,7 +13,7 @@ use solar::{
         ty::TyKind,
     },
 };
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 declare_forge_lint!(
     ASSERT_STATE_CHANGE,
@@ -363,7 +364,7 @@ fn library_extensions_by_name(hir: &Hir<'_>) -> Rc<HashMap<Symbol, Vec<FunctionI
         {
             return map.clone();
         }
-        let mut map: HashMap<Symbol, Vec<FunctionId>> = HashMap::new();
+        let mut map: HashMap<Symbol, Vec<FunctionId>> = HashMap::default();
         for fid in hir.function_ids() {
             let f = hir.function(fid);
             let Some(cid) = f.contract else { continue };

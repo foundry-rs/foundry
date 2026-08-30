@@ -4,6 +4,7 @@ use crate::{
     hir_ext::{self, NameToPage, clean_block_doc_content},
     utils::Deployment,
 };
+use alloy_primitives::map::HashMap;
 use foundry_common::sh_warn;
 use markdown::{ParseOptions, mdast::Node, to_mdast};
 use solar::{
@@ -19,7 +20,6 @@ use solar::{
     sema::{Gcx, hir},
 };
 use std::{
-    collections::HashMap,
     fmt::Write as _,
     ops::Range,
     path::{Path, PathBuf},

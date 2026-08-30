@@ -4,6 +4,7 @@ use crate::{
     TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
 };
 use alloy_json_abi::JsonAbi;
+use alloy_primitives::map::{HashMap, HashSet};
 use comfy_table::{
     Cell, Color, Table,
     presets::{ASCII_FULL, ASCII_MARKDOWN},
@@ -33,7 +34,7 @@ use solar::{
     parse::Parser,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     fmt::Display,
     io::IsTerminal,
     path::{Path, PathBuf},
@@ -607,7 +608,7 @@ impl SizeReport {
 ///
 /// Files that fail to parse are skipped, so a missing entry means "unknown", not "no libraries".
 fn collect_libraries(sources: &BTreeSet<PathBuf>) -> HashMap<PathBuf, HashSet<String>> {
-    let mut result: HashMap<PathBuf, HashSet<String>> = HashMap::new();
+    let mut result: HashMap<PathBuf, HashSet<String>> = HashMap::default();
     let sess = Session::builder().with_silent_emitter(None).build();
     let _ = sess.enter(|| -> solar::interface::Result<()> {
         for path in sources {

@@ -13,6 +13,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+alloy-primitives.workspace = true
 foundry-config.workspace = true
 foundry-common.workspace = true
 
