@@ -40,6 +40,12 @@ default-filter = "test(/flaky_/)"
 retries = { backoff = "exponential", count = 5, delay = "10s", jitter = true }
 slow-timeout = { period = "60s", terminate-after = 3 }
 
+# The fork smoke tests report an unreachable endpoint by skipping instead of failing, so keep
+# their output on success to show which chains a run actually exercised.
+[[profile.flaky.overrides]]
+filter = "test(/fork_chains::/)"
+success-output = "final"
+
 # Profile for the on-chain deploy+verify tests (used by the nightly test-deploy-verify workflow).
 # Requires <NETWORK>_RPC_URL plus TESTNET_DEPLOYER_PRIVATE_KEY to do anything.
 # Run with: cargo nextest run --profile deploy-verify

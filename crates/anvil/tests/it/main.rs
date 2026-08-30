@@ -10,6 +10,7 @@ mod eip7702;
 mod eip7928;
 mod filter;
 mod fork;
+mod fork_chains;
 mod gas;
 mod genesis;
 mod ipc;
