@@ -31,6 +31,10 @@ use revm::{
 #[derive(Clone, Debug)]
 pub(crate) struct HistoricalReplayTransaction {
     pub(crate) transaction: Recovered<FoundryTxEnvelope>,
+    /// Where this transaction sat in the source block, for diagnostics only.
+    ///
+    /// The replayed block holds just the transactions anvil executed, so this is not its index
+    /// there; storage keys receipts and traces by position in that block.
     pub(crate) source_index: usize,
 }
 
@@ -208,7 +212,7 @@ where
     let mut stored_transactions = Vec::with_capacity(transactions.len());
     let mut transaction_infos = Vec::with_capacity(transactions.len());
 
-    for replay in transactions {
+    for (execution_index, replay) in transactions.iter().enumerate() {
         let transaction = replay.transaction.tx();
         let transaction_hash = *transaction.tx_hash();
         let sender = replay.transaction.signer();
@@ -251,7 +255,7 @@ where
         let contract_address = transaction.to().is_none().then(|| sender.create(nonce));
         transaction_infos.push(TransactionInfo {
             transaction_hash,
-            transaction_index: replay.source_index as u64,
+            transaction_index: execution_index as u64,
             from: sender,
             to: transaction.to(),
             contract_address,
