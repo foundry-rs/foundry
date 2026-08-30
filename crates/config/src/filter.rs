@@ -184,22 +184,66 @@ impl FromStr for SkipBuildFilter {
 }
 
 /// Expand globs with a root path.
+///
+/// A pattern ending in `**`, like `src/**`, only matches directories: the glob crate yields the
+/// matched directories themselves but never the files they contain, and yields nothing at all
+/// when the directory has no subdirectories. Such patterns are additionally expanded with a
+/// trailing `/*` so the files inside the matched directories are included.
 pub fn expand_globs(
     root: &Path,
     patterns: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> eyre::Result<Vec<PathBuf>> {
     let mut expanded = Vec::new();
     for pattern in patterns {
-        for paths in glob::glob(&root.join(pattern.as_ref()).display().to_string())? {
-            expanded.push(paths?);
+        let pattern = pattern.as_ref();
+        let mut globs = vec![root.join(pattern)];
+        if pattern.ends_with("**") {
+            globs.push(root.join(format!("{pattern}/*")));
+        }
+        for glob in globs {
+            for path in glob::glob(&glob.display().to_string())? {
+                let path = path?;
+                if !expanded.contains(&path) {
+                    expanded.push(path);
+                }
+            }
         }
     }
     Ok(expanded)
 }
 
+/// Returns whether `file` is contained in `paths`, or lies underneath a directory contained in
+/// `paths`.
+///
+/// Expanded ignore globs can contain directories, e.g. `test/**` yields the directories under
+/// `test`, so an ignore check must also match the files below every entry. `base` is used to
+/// resolve `file` when it is relative.
+pub fn is_ignored_path(file: &Path, paths: &[PathBuf], base: &Path) -> bool {
+    let joined = base.join(file);
+    paths.iter().any(|path| file.starts_with(path) || joined.starts_with(path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_ignored_path() {
+        let base = Path::new("/root");
+        let ignored = [PathBuf::from("/root/test"), PathBuf::from("/root/src/A.sol")];
+
+        // Exact file matches, absolute and relative.
+        assert!(is_ignored_path(Path::new("/root/src/A.sol"), &ignored, base));
+        assert!(is_ignored_path(Path::new("src/A.sol"), &ignored, base));
+
+        // Files under an ignored directory.
+        assert!(is_ignored_path(Path::new("/root/test/B.t.sol"), &ignored, base));
+        assert!(is_ignored_path(Path::new("test/sub/C.t.sol"), &ignored, base));
+
+        // A directory prefix only matches whole path components.
+        assert!(!is_ignored_path(Path::new("/root/testOther.sol"), &ignored, base));
+        assert!(!is_ignored_path(Path::new("/root/src/B.sol"), &ignored, base));
+    }
 
     #[test]
     fn test_build_filter() {
