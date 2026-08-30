@@ -2014,10 +2014,10 @@ impl<N: Network> Backend<N> {
     /// Takes a block as it's stored internally and returns the eth api conform block format.
     /// If `known_hash` is provided, it will be used instead of computing `hash_slow()`.
     pub fn convert_block_with_hash(&self, block: Block, known_hash: Option<B256>) -> AnyRpcBlock {
-        let size = U256::from(canonical_block(block.clone()).length() as u32);
-
-        let header = block.header.clone();
-        let transactions = block.body.transactions;
+        let transactions = block.body.transactions.iter().map(|tx| tx.hash()).collect();
+        let block = canonical_block(block);
+        let size = U256::from(block.length() as u32);
+        let header = block.header;
 
         let hash = known_hash.unwrap_or_else(|| header.hash_slow());
         let number = header.number();
@@ -2044,9 +2044,7 @@ impl<N: Network> Backend<N> {
                 total_difficulty: Some(self.total_difficulty()),
                 size: Some(size),
             },
-            transactions: alloy_rpc_types::BlockTransactions::Hashes(
-                transactions.into_iter().map(|tx| tx.hash()).collect(),
-            ),
+            transactions: alloy_rpc_types::BlockTransactions::Hashes(transactions),
             uncles: vec![],
             withdrawals: withdrawals_root.map(|_| Default::default()),
         };
