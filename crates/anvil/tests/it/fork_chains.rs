@@ -25,8 +25,8 @@ use std::fmt::{Debug, Display};
 
 /// Highest EIP-2718 transaction type every chain is expected to serve in the standard shape.
 ///
-/// Chain specific system transactions above this range, such as Arbitrum's `0x6a` or OP-stack
-/// deposits, are not part of the surface these tests assert on.
+/// Chain specific transactions above this range, such as Arbitrum's `0x6a`, Celo's CIP-64 `0x7b`,
+/// or OP-stack deposits, are not part of the surface these tests assert on.
 const MAX_STANDARD_TX_TYPE: u8 = 4;
 
 /// Number of blocks scanned back from the fork head when looking for a transaction to round-trip.
@@ -47,6 +47,11 @@ async fn flaky_test_fork_arbitrum() {
 #[tokio::test(flavor = "multi_thread")]
 async fn flaky_test_fork_base() {
     assert_can_fork(NamedChain::Base).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn flaky_test_fork_celo() {
+    assert_can_fork(NamedChain::Celo).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

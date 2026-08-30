@@ -205,7 +205,9 @@ fn next_url_inner(is_ws: bool, chain: NamedChain) -> String {
     }
 
     if matches!(chain, Celo) {
-        return "https://celo.drpc.org".to_string();
+        // Not `celo.drpc.org`: it load balances across upstreams that disagree on the chain head,
+        // so a fork of it regularly fails to fetch the block it just resolved.
+        return env_rpc_url("CELO_RPC").unwrap_or_else(|| "https://forno.celo.org".to_string());
     }
 
     if matches!(chain, Gnosis) {
