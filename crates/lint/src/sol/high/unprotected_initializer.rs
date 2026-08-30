@@ -601,7 +601,7 @@ fn expr_references_storage(gcx: Gcx<'_>, hir: &hir::Hir<'_>, expr: &hir::Expr<'_
         ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) | ExprKind::Member(base, _) => {
             expr_references_storage(gcx, hir, base)
         }
-        ExprKind::Call(..) => gcx
+        ExprKind::Call(..) | ExprKind::Ternary(..) => gcx
             .type_of_expr(expr.peel_parens().id)
             .is_some_and(|ty| ty.loc() == Some(DataLocation::Storage)),
         _ => false,
