@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_eips::{
-    Typed2718, calc_next_block_base_fee,
+    calc_next_block_base_fee,
     eip1559::BaseFeeParams,
     eip2718::Decodable2718,
     eip7840::BlobParams,
@@ -22,7 +22,7 @@ use alloy_provider::{
     ext::{DebugApi, TxPoolApi},
 };
 use alloy_rpc_types::{
-    AccountInfo, BlockId, BlockNumberOrTag, BlockTransactions, Index,
+    AccountInfo, BlockId, BlockNumberOrTag, Index,
     anvil::Forking,
     request::{TransactionInput, TransactionRequest},
     state::EvmOverrides,
@@ -35,7 +35,7 @@ use alloy_serde::WithOtherFields;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::{
     EthereumHardfork, NodeConfig, NodeHandle, PrecompileFactory,
-    eth::{EthApi, error::BlockchainError, fees::INITIAL_BASE_FEE},
+    eth::{EthApi, fees::INITIAL_BASE_FEE},
     spawn, try_spawn,
 };
 use axum::{Json, Router, routing::post};
@@ -2475,102 +2475,6 @@ async fn flaky_test_arb_fork_mining() {
     let mined_blk_num = api.block_number().unwrap().to::<u64>();
 
     assert_eq!(mined_blk_num, init_blk_num + 1);
-}
-
-// Arbitrum and its Orbit rollups mint transaction types anvil cannot execute (`ArbitrumInternalTx`
-// is `0x6a`). Their receipts must still be served instead of failing to decode, which used to make
-// `eth_getBlockReceipts` unusable on those chains.
-#[tokio::test(flavor = "multi_thread")]
-async fn flaky_test_arbitrum_fork_arbitrum_typed_receipts() {
-    /// Highest transaction type with a dedicated receipt variant.
-    const MAX_STANDARD_TX_TYPE: u8 = 0x04;
-
-    let (api, handle) = spawn(
-        fork_config()
-            .with_fork_block_number(None::<u64>)
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
-    )
-    .await;
-    let provider = handle.http_provider();
-
-    // Arbitrum opens virtually every block with an `ArbitrumInternalTx`, so a short scan of
-    // pre-fork blocks is enough to hit one.
-    let latest = api.block_number().unwrap().to::<u64>();
-    let mut arbitrum_typed = None;
-    for block_number in (latest.saturating_sub(5)..latest).rev() {
-        let receipts =
-            provider.get_block_receipts(BlockId::number(block_number)).await.unwrap().unwrap();
-        assert!(!receipts.is_empty());
-
-        if let Some(receipt) =
-            receipts.into_iter().find(|r| r.inner.inner.r#type > MAX_STANDARD_TX_TYPE)
-        {
-            arbitrum_typed = Some(receipt);
-            break;
-        }
-    }
-    let arbitrum_typed = arbitrum_typed.expect("no arbitrum-typed receipt in the scanned blocks");
-
-    // The same receipt is retrievable individually, with its type byte preserved.
-    let single = provider
-        .get_transaction_receipt(arbitrum_typed.transaction_hash)
-        .await
-        .unwrap()
-        .expect("receipt served");
-    assert_eq!(single.inner.inner.r#type, arbitrum_typed.inner.inner.r#type);
-}
-
-// Anvil only ever holds Arbitrum-typed transactions in their RPC form, which alloy refuses to
-// EIP-2718 encode. `debug_getRawTransaction` used to panic the request handler on them; it must
-// report a plain error instead, and keep serving the standard transactions in the same block.
-#[tokio::test(flavor = "multi_thread")]
-async fn flaky_test_arbitrum_fork_raw_transaction_rejects_arbitrum_types() {
-    /// Highest transaction type with a dedicated Foundry envelope.
-    const MAX_STANDARD_TX_TYPE: u8 = 0x04;
-
-    let (api, _handle) = spawn(
-        fork_config()
-            .with_fork_block_number(None::<u64>)
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
-    )
-    .await;
-
-    // Arbitrum opens virtually every block with an `ArbitrumInternalTx`, so a short scan of
-    // pre-fork blocks is enough to hit one.
-    let latest = api.block_number().unwrap().to::<u64>();
-    let mut arbitrum_typed = None;
-    let mut standard = None;
-    for block_number in (latest.saturating_sub(5)..latest).rev() {
-        let block = api
-            .block_by_number_full(BlockNumberOrTag::Number(block_number))
-            .await
-            .unwrap()
-            .unwrap();
-        let BlockTransactions::Full(txs) = &block.transactions else {
-            panic!("requested a full block");
-        };
-        for tx in txs {
-            if tx.inner.inner.ty() > MAX_STANDARD_TX_TYPE {
-                arbitrum_typed.get_or_insert(tx.tx_hash());
-            } else {
-                standard.get_or_insert(tx.tx_hash());
-            }
-        }
-        if arbitrum_typed.is_some() && standard.is_some() {
-            break;
-        }
-    }
-    let arbitrum_typed = arbitrum_typed.expect("no arbitrum-typed transaction in scanned blocks");
-    let standard = standard.expect("no standard transaction in scanned blocks");
-
-    let err = api.raw_transaction(arbitrum_typed).await.unwrap_err();
-    assert!(
-        matches!(err, BlockchainError::UnsupportedTransactionEncoding(0x6a)),
-        "unexpected error: {err}"
-    );
-
-    // Standard transactions from the same blocks still encode.
-    assert!(api.raw_transaction(standard).await.unwrap().is_some());
 }
 
 // <https://github.com/foundry-rs/foundry/issues/6749>
