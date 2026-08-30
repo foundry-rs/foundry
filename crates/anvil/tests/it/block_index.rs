@@ -156,14 +156,14 @@ async fn uncle_count_rejects_unknown_blocks() {
         .request::<_, U256>("eth_getUncleCountByBlockHash", (B256::random(),))
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("Resource not found"), "unexpected error: {err}");
+    assert_eq!(err.as_error_resp().unwrap().code, -32001);
 
     let err = provider
         .client()
         .request::<_, U256>("eth_getUncleCountByBlockNumber", (BlockNumberOrTag::Number(9999),))
         .await
         .unwrap_err();
-    assert!(err.to_string().contains("Resource not found"), "unexpected error: {err}");
+    assert_eq!(err.as_error_resp().unwrap().code, -32001);
 }
 
 #[tokio::test(flavor = "multi_thread")]
