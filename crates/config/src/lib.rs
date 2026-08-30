@@ -47,11 +47,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    fs,
-    io::{self, Write as _},
+    fs, io,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Mutex,
 };
 
 mod macros;
@@ -155,22 +153,6 @@ pub use semver;
 
 #[cfg(not(test))]
 static SELECTED_PROFILE: std::sync::OnceLock<Profile> = std::sync::OnceLock::new();
-static WARNED_LOCAL_COMPILERS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
-
-fn warn_local_compiler(path: &Path) {
-    let mut warned = WARNED_LOCAL_COMPILERS.lock().unwrap_or_else(|err| err.into_inner());
-    if warned.iter().any(|warned_path| warned_path == path) {
-        return;
-    }
-    warned.push(path.to_path_buf());
-
-    let mut stderr = io::stderr().lock();
-    let _ = writeln!(
-        stderr,
-        "Warning: this project is configured to use a local compiler executable:\n  {path:?}\n\
-         Running this executable may execute arbitrary code."
-    );
-}
 
 /// Foundry configuration
 ///
@@ -1521,7 +1503,6 @@ impl Config {
                     if !solc.is_file() {
                         return Err(SolcError::msg(format!("`solc` {solc:?} does not exist")));
                     }
-                    warn_local_compiler(solc);
                     Solc::new(solc)?
                 }
             };
@@ -1610,7 +1591,6 @@ impl Config {
             return Ok(None);
         }
         let vyper = if let Some(path) = &self.vyper.path {
-            warn_local_compiler(path);
             Some(Vyper::new(path)?)
         } else {
             Vyper::new("vyper").ok()
@@ -2123,8 +2103,13 @@ impl Config {
     }
 
     fn _with_root(root: &Path) -> Self {
-        // autodetect paths
-        let paths = ProjectPathsConfig::builder().build_with_root::<()>(root);
+        // Autodetect the source, artifact and library directories from `root`.
+        let paths = ProjectPathsConfig::builder()
+            // The builder autodetects remappings too, which is a separate and far more expensive
+            // scan: it recursively walks every directory under every library path. Only the
+            // directories are read below, so opt out of it.
+            .remappings(Vec::new())
+            .build_with_root::<()>(root);
         let artifacts: PathBuf = paths.artifacts.file_name().unwrap().into();
         let mut config = Self::default();
         if config.uses_default_src() {
@@ -3129,10 +3114,7 @@ impl SolcReq {
     pub fn try_version(&self) -> Result<Version, SolcError> {
         match self {
             Self::Version(version) => Ok(version.clone()),
-            Self::Local(path) => {
-                warn_local_compiler(path);
-                Solc::new(path).map(|solc| solc.version)
-            }
+            Self::Local(path) => Solc::new(path).map(|solc| solc.version),
         }
     }
 }

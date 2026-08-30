@@ -4,12 +4,12 @@ use foundry_evm_hardforks::TempoHardfork;
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
-        ContextTr, Journal, LocalContextTr,
+        Journal,
         result::{EVMError, HaltReason, ResultAndState},
     },
-    handler::{EvmTr, FrameResult, Handler},
+    handler::{EvmTr, FrameResult},
     inspector::InspectorHandler,
-    interpreter::{FrameInput, GasTracker, SharedMemory, interpreter_action::FrameInit},
+    interpreter::FrameInput,
     state::Bytecode,
 };
 use tempo_evm::{TempoBlockEnv, TempoEvmFactory, TempoHaltReason, evm::TempoEvm};
@@ -25,57 +25,13 @@ use tempo_revm::{
 use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
-    constants::{CALLER, TEST_CONTRACT_ADDRESS},
-    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor},
+    constants::{CALLER, SYSTEM_PRECOMPILE_STUB, TEST_CONTRACT_ADDRESS},
+    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor, run_inspected_frame},
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_test_genesis_inner},
 };
 
 // Will be removed when the next revm release includes bluealloy/revm#3518.
 pub type TempoRevmEvm<'db, I> = tempo_revm::TempoEvm<&'db mut dyn DatabaseExt<TempoEvmFactory>, I>;
-
-/// Initialize Tempo precompiles and contracts for a newly created EVM.
-///
-/// In non-fork mode, runs full genesis initialization (precompile sentinel bytecode,
-/// TIP20 fee tokens, standard contracts) via [`StorageCtx::enter_evm`].
-///
-/// In fork mode, warms up precompile and TIP20 token addresses with sentinel bytecode
-/// to prevent repeated RPC round-trips for addresses that are Rust-native precompiles
-/// on Tempo nodes (no real EVM bytecode on-chain).
-pub(crate) fn initialize_tempo_evm<
-    'db,
-    I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>,
->(
-    evm: &mut TempoEvm<&'db mut dyn DatabaseExt<TempoEvmFactory>, I>,
-    is_forked: bool,
-) {
-    let ctx = evm.ctx_mut();
-    StorageCtx::enter_evm(
-        &mut ctx.journaled_state,
-        &ctx.block,
-        &ctx.cfg,
-        &ctx.tx,
-        StorageActions::disabled(),
-        || {
-            if is_forked {
-                // In fork mode, warm up precompile accounts to avoid repeated RPC fetches.
-                let mut sctx = StorageCtx;
-                let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
-                for addr in TEMPO_PRECOMPILE_ADDRESSES
-                    .iter()
-                    .copied()
-                    .chain(TEMPO_TIP20_TOKENS.iter().copied())
-                {
-                    sctx.set_code(addr, sentinel.clone())
-                        .expect("failed to warm tempo precompile address");
-                }
-            } else {
-                // In non-fork mode, run full genesis initialization.
-                initialize_tempo_test_genesis_inner(TEST_CONTRACT_ADDRESS, CALLER)
-                    .expect("tempo genesis initialization failed");
-            }
-        },
-    );
-}
 
 impl FoundryEvmFactory for TempoEvmFactory {
     type Chain = ();
@@ -184,24 +140,7 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
-        let mut handler = TempoEvmHandler::new();
-        let memory =
-            SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
-        let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
-
-        let mut frame_result =
-            handler.inspect_run_exec_loop(self, first_frame_input).map_err(map_tempo_error)?;
-
-        let mut parent_gas = GasTracker::new(
-            frame_result.gas().limit(),
-            frame_result.gas().remaining(),
-            frame_result.gas().reservoir(),
-        );
-        handler
-            .last_frame_result(self, &mut frame_result, &mut parent_gas)
-            .map_err(map_tempo_error)?;
-
-        Ok(frame_result)
+        run_inspected_frame(self, TempoEvmHandler::new(), frame).map_err(map_tempo_error)
     }
 
     fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {
@@ -221,4 +160,48 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {
         self.ctx_ref().evm_clone()
     }
+}
+
+/// Initialize Tempo precompiles and contracts for a newly created EVM.
+///
+/// In non-fork mode, runs full genesis initialization (precompile sentinel bytecode,
+/// TIP20 fee tokens, standard contracts) via [`StorageCtx::enter_evm`].
+///
+/// In fork mode, warms up precompile and TIP20 token addresses with sentinel bytecode
+/// to prevent repeated RPC round-trips for addresses that are Rust-native precompiles
+/// on Tempo nodes (no real EVM bytecode on-chain).
+pub(crate) fn initialize_tempo_evm<
+    'db,
+    I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>,
+>(
+    evm: &mut TempoEvm<&'db mut dyn DatabaseExt<TempoEvmFactory>, I>,
+    is_forked: bool,
+) {
+    let ctx = evm.ctx_mut();
+    StorageCtx::enter_evm(
+        &mut ctx.journaled_state,
+        &ctx.block,
+        &ctx.cfg,
+        &ctx.tx,
+        StorageActions::disabled(),
+        || {
+            if is_forked {
+                // In fork mode, warm up precompile accounts to avoid repeated RPC fetches.
+                let mut sctx = StorageCtx;
+                let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
+                for addr in TEMPO_PRECOMPILE_ADDRESSES
+                    .iter()
+                    .copied()
+                    .chain(TEMPO_TIP20_TOKENS.iter().copied())
+                {
+                    sctx.set_code(addr, sentinel.clone())
+                        .expect("failed to warm tempo precompile address");
+                }
+            } else {
+                // In non-fork mode, run full genesis initialization.
+                initialize_tempo_test_genesis_inner(TEST_CONTRACT_ADDRESS, CALLER)
+                    .expect("tempo genesis initialization failed");
+            }
+        },
+    );
 }

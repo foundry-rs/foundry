@@ -241,6 +241,15 @@ impl SelectorsSubcommands {
             Self::List { contract, project_paths, no_group } => {
                 sh_status!("Listing selectors for contracts in the project...")?;
                 let (mut project, compiler) = project_from_paths(project_paths)?;
+                let target_path = contract
+                    .as_ref()
+                    .filter(|_| project.no_artifacts)
+                    .and_then(|contract| project.find_contract_path(contract).ok());
+                let compiler = if let Some(target_path) = target_path {
+                    compiler.files([target_path])
+                } else {
+                    compiler
+                };
                 let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
                 let artifacts = if let Some(contract) = contract {
                     let found_artifact = outcome.find_first(&contract);

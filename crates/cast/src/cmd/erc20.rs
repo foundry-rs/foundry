@@ -57,24 +57,6 @@ sol! {
     }
 }
 
-/// Creates a provider with a pre-resolved signer.
-pub(crate) fn build_provider_with_signer<N: Network + RecommendedFillers>(
-    tx_opts: &SendTxOpts,
-    signer: WalletSigner,
-) -> eyre::Result<RetryProviderWithSigner<N>>
-where
-    N::TxEnvelope: From<Signed<N::UnsignedTx>>,
-    N::UnsignedTx: SignableTransaction<Signature>,
-{
-    let config = tx_opts.eth.load_config()?;
-    let wallet = EthereumWallet::from(signer);
-    let provider = ProviderBuilder::<N>::from_config(&config)?.build_with_wallet(wallet)?;
-    if let Some(interval) = tx_opts.poll_interval {
-        provider.client().set_poll_interval(Duration::from_secs(interval))
-    }
-    Ok(provider)
-}
-
 /// Interact with ERC20 tokens.
 #[derive(Debug, Parser, Clone)]
 pub enum Erc20Subcommand {
@@ -775,6 +757,24 @@ impl Erc20Subcommand {
         };
         Ok(())
     }
+}
+
+/// Creates a provider with a pre-resolved signer.
+pub(crate) fn build_provider_with_signer<N: Network + RecommendedFillers>(
+    tx_opts: &SendTxOpts,
+    signer: WalletSigner,
+) -> eyre::Result<RetryProviderWithSigner<N>>
+where
+    N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+    N::UnsignedTx: SignableTransaction<Signature>,
+{
+    let config = tx_opts.eth.load_config()?;
+    let wallet = EthereumWallet::from(signer);
+    let provider = ProviderBuilder::<N>::from_config(&config)?.build_with_wallet(wallet)?;
+    if let Some(interval) = tx_opts.poll_interval {
+        provider.client().set_poll_interval(Duration::from_secs(interval))
+    }
+    Ok(provider)
 }
 
 /// Fills from, chain_id, nonce, fees, and gas limit on a transaction request for sponsor/browser

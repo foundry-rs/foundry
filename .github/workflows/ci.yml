@@ -103,12 +103,6 @@ jobs:
           cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target x86_64-apple-darwin --locked
       - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --locked
 
-  monad:
-    name: Monad
-    uses: ./.github/workflows/monad.yml
-    permissions:
-      contents: read
-
   typos:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
@@ -260,7 +254,6 @@ jobs:
       - doctest
       - no-default-features
       - touch-id-link
-      - monad
       - typos
       - github-scripts
       - clippy

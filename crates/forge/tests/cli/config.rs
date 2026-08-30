@@ -1236,6 +1236,40 @@ shared/=deps-a/a/lib/shared/src/
     cmd.forge_fuse().arg("remappings").assert_success().stdout_eq(expected);
 });
 
+forgetest!(scoped_npm_context_preserves_hoisted_sibling_fallback, |prj, cmd| {
+    let owner = prj.root().join("node_modules/@bananapus/router-terminal-v6");
+    let nested_v3 = owner.join("node_modules/@uniswap/v3-core/src");
+    let hoisted_v3 = prj.root().join("node_modules/@uniswap/v3-core/src");
+    let hoisted_v4 = prj.root().join("node_modules/@uniswap/v4-core/src");
+    for dependency in [&owner.join("src"), &nested_v3, &hoisted_v3, &hoisted_v4] {
+        pretty_err(dependency, fs::create_dir_all(dependency));
+    }
+    prj.update_config(|config| config.libs = vec!["node_modules".into()]);
+    pretty_err(
+        &owner,
+        fs::write(
+            owner.join("src/RouterTerminal.sol"),
+            "import {NestedV3} from \"@uniswap/v3-core/src/Version.sol\"; import {HoistedV4} from \"@uniswap/v4-core/src/Version.sol\"; contract RouterTerminal is NestedV3, HoistedV4 {}\n",
+        ),
+    );
+    pretty_err(&nested_v3, fs::write(nested_v3.join("Version.sol"), "contract NestedV3 {}\n"));
+    pretty_err(&hoisted_v3, fs::write(hoisted_v3.join("Version.sol"), "contract HoistedV3 {}\n"));
+    pretty_err(&hoisted_v4, fs::write(hoisted_v4.join("Version.sol"), "contract HoistedV4 {}\n"));
+    prj.add_source(
+        "UsesRouterTerminal.sol",
+        "import {RouterTerminal} from \"@bananapus/router-terminal-v6/src/RouterTerminal.sol\"; import {HoistedV3} from \"@uniswap/v3-core/src/Version.sol\"; contract UsesRouterTerminal is RouterTerminal, HoistedV3 {}\n",
+    );
+
+    cmd.arg("remappings").assert_success().stdout_eq(str![[r#"
+node_modules/@bananapus/router-terminal-v6/:@uniswap/v3-core/=node_modules/@bananapus/router-terminal-v6/node_modules/@uniswap/v3-core/
+@bananapus/=node_modules/@bananapus/
+@uniswap/=node_modules/@uniswap/
+
+"#]]);
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse().arg("lint").assert_success();
+});
+
 forgetest!(contextual_remapping_dedup_uses_context_and_name, |prj, cmd| {
     let a = prj.root().join("lib/a");
     let z = prj.root().join("lib/z");

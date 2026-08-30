@@ -175,13 +175,14 @@ impl ImpureRefFinder<'_> {
     fn judge_member(&mut self, base: &Expr<'_>, member: &solar::ast::Ident) {
         let Some(ty) = self.gcx.type_of_expr(base.peel_parens().id) else { return };
         // A contract name used as the base is a type-namespace item, so its type comes wrapped
-        // as `Type(Contract(..))`, while a contract-typed value comes bare.
-        let ty = ty.peel_refs();
-        let ty = match ty.kind {
+        // as `Type(Contract(..))`, while a contract-typed value comes bare. Peel only to
+        // discriminate: `members_of` needs reference types to keep their data location.
+        let peeled = ty.peel_refs();
+        let peeled = match peeled.kind {
             TyKind::Type(inner) => inner.peel_refs(),
-            _ => ty,
+            _ => peeled,
         };
-        if let TyKind::Contract(contract_id) = ty.kind {
+        if let TyKind::Contract(contract_id) = peeled.kind {
             // Walk the linearization: an inherited function or getter is not among the
             // contract's own items.
             for base_id in self.hir.contract(contract_id).linearized_bases {

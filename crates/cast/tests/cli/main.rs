@@ -40,6 +40,7 @@ extern crate foundry_test_utils;
 mod erc20;
 mod keychain;
 mod remote_trace;
+mod run_networks;
 mod safe;
 mod selectors;
 mod tempo;
@@ -3493,12 +3494,22 @@ forgetest_async!(events_quiet_preserves_output, |prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
     let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    cmd.set_current_dir(prj.root());
+    prj.update_config(|config| {
+        config.cbor_metadata = false;
+        config.bytecode_hash = "none".parse().unwrap();
+    });
 
     prj.add_source(
         "EventEmitter",
         r#"
 contract EventEmitter {
+    event Constructed(address indexed owner, uint256 value);
     event Transfer(address indexed from, address indexed to, uint256 value);
+
+    constructor() {
+        emit Constructed(msg.sender, 42);
+    }
 
     function emitTransfer() external {
         emit Transfer(msg.sender, address(this), 42);
@@ -3529,6 +3540,22 @@ contract EventEmitter {
         .stdout_lossy();
     let deployment: serde_json::Value = serde_json::from_str(&deployment).unwrap();
     let address = deployment["contractAddress"].as_str().unwrap();
+    let deployment_tx_hash = deployment["transactionHash"].as_str().unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "--quiet",
+            "events",
+            deployment_tx_hash,
+            "--with-local-artifacts",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[block 1, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3::Constructed(address,uint256) { owner: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, value: 42 }
+
+"#]]);
 
     let receipt = cmd
         .cast_fuse()
@@ -3552,7 +3579,48 @@ contract EventEmitter {
         .args(["--quiet", "events", tx_hash, "--rpc-url", &endpoint])
         .assert_success()
         .stdout_eq(str![[r#"
-[block 2, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3::Transfer(address,address,uint256) { from: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, to: 0x5FbDB2315678afecb367f032d93F642f64180aa3, amount: 42 }
+[block 2, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3
+  topic 0: 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+  topic 1: 0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266
+  topic 2: 0x0000000000000000000000005fbdb2315678afecb367f032d93f642f64180aa3
+  data: 0x000000000000000000000000000000000000000000000000000000000000002a
+
+"#]]);
+
+    cmd.cast_fuse()
+        .args([
+            "--quiet",
+            "events",
+            tx_hash,
+            "--with-local-artifacts",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[block 2, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3::Transfer(address,address,uint256) { from: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, to: 0x5FbDB2315678afecb367f032d93F642f64180aa3, value: 42 }
+
+"#]]);
+
+    prj.add_source(
+        "AmbiguousEventEmitter",
+        r#"
+import {EventEmitter} from "./EventEmitter.sol";
+
+contract AmbiguousEventEmitter is EventEmitter {
+    event Ambiguous(uint256 value);
+}
+"#,
+    );
+    cmd.cast_fuse()
+        .args(["--quiet", "events", tx_hash, "--with-local-artifacts", "--rpc-url", &endpoint])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[block 2, tx 0x[..], log 0] 0x5FbDB2315678afecb367f032d93F642f64180aa3
+  topic 0: 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef
+  topic 1: 0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266
+  topic 2: 0x0000000000000000000000005fbdb2315678afecb367f032d93f642f64180aa3
+  data: 0x000000000000000000000000000000000000000000000000000000000000002a
 
 "#]]);
 });
@@ -5094,7 +5162,7 @@ casttest!(block_number_hash, |_prj, cmd| {
 // <https://github.com/foundry-rs/foundry/pull/9996>
 // Equivalent transaction on Binance Smart Chain Testnet:
 // <https://testnet.bscscan.com/tx/0x0db4f279fc4d47dca1e6ace180f45f50c5bf12e2b968f210c217f57031e02744>
-casttest!(run_disable_block_gas_limit_check, |_prj, cmd| {
+casttest!(run_replays_transaction_over_block_gas_limit, |_prj, cmd| {
     let bsc_testnet_rpc_url = next_rpc_endpoint(NamedChain::BinanceSmartChainTestnet);
 
     let latest_block_json: serde_json::Value = serde_json::from_str(
@@ -5116,18 +5184,19 @@ casttest!(run_disable_block_gas_limit_check, |_prj, cmd| {
             let tx_hash =
                 tx.get("hash").and_then(|h| h.as_str()).expect("Transaction missing hash");
 
-            // If --disable-block-gas-limit is not provided, the transaction should fail as the gas
-            // limit exceeds the block gas limit.
+            // The chain accepted this transaction even though its gas limit exceeds the block
+            // gas limit, so replay must not re-apply the check.
             cmd.cast_fuse()
                 .args(["run", "-v", tx_hash, "--quick", "--rpc-url", bsc_testnet_rpc_url.as_str()])
-                .assert_failure()
-                .stderr_eq(str![[r#"
-Error: EVM error; transaction validation error: caller gas limit exceeds the block gas limit
+                .assert_success()
+                .stdout_eq(str![[r#"
+...
+Transaction successfully executed.
+[GAS]
 
 "#]]);
 
-            // If --disable-block-gas-limit is provided, the transaction should succeed
-            // despite the gas limit exceeding the block gas limit.
+            // `--disable-block-gas-limit` is now implied and must not change the outcome.
             cmd.cast_fuse()
                 .args([
                     "run",
@@ -6862,6 +6931,240 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/11521
+// `--delegate` must run the destination's code against the sender's storage. The destination's
+// runtime returns slot 0, and only the sender holds a value there, so a plain call returns zero
+// and the delegated call returns the sender's value.
+casttest!(cast_call_delegate_uses_sender_storage, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let from = "0x00000000000000000000000000000000000000d0";
+    let to = "0x00000000000000000000000000000000000000d1";
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--from",
+            from,
+            "--delegate",
+            // runtime: PUSH1 0 SLOAD PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+            "--override-code",
+            &format!("{to}:0x60005460005260206000f3"),
+            "--override-state",
+            &format!("{from}:0x0:0x1234"),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+4660
+
+"#]]);
+
+    // Without `--delegate` the same call runs against the destination's own empty storage.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--from",
+            from,
+            "--override-code",
+            &format!("{to}:0x60005460005260206000f3"),
+            "--override-state",
+            &format!("{from}:0x0:0x1234"),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0
+
+"#]]);
+});
+
+// A code override on the sender is what `--delegate` installs, so the two cannot both win.
+casttest!(cast_call_delegate_rejects_sender_code_override, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let from = "0x00000000000000000000000000000000000000d2";
+    let to = "0x00000000000000000000000000000000000000d3";
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "--from",
+            from,
+            "--delegate",
+            "--override-code",
+            &format!("{to}:0x60005460005260206000f3,{from}:0x00"),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: `--delegate` conflicts with `--override-code` for the sender 0x00000000000000000000000000000000000000D2
+
+"#]]);
+});
+
+// The primary `--delegate` path reads the destination's runtime code from the node: no override
+// flags are involved, the delegated code and the sender's storage both come from chain state.
+casttest!(cast_call_delegate_fetches_code_from_node, async |_prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let from = "0x00000000000000000000000000000000000000d4";
+    let to = "0x00000000000000000000000000000000000000d5";
+
+    // runtime: PUSH1 0 SLOAD PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+    api.anvil_set_code(to.parse().unwrap(), "0x60005460005260206000f3".parse().unwrap())
+        .await
+        .unwrap();
+    api.anvil_set_storage_at(from.parse().unwrap(), U256::ZERO, B256::from(U256::from(0x1234)))
+        .await
+        .unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--from",
+            from,
+            "--delegate",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+4660
+
+"#]]);
+
+    // A delegated call that returns no data must not trip the empty-code warning: the sender has
+    // no on-chain code, but the delegate override guarantees executable code.
+    let void = "0x00000000000000000000000000000000000000d6";
+    // runtime: STOP
+    api.anvil_set_code(void.parse().unwrap(), "0x00".parse().unwrap()).await.unwrap();
+    cmd.cast_fuse()
+        .args(["call", void, "--from", from, "--delegate", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x
+
+"#]])
+        .stderr_eq(str![""]);
+});
+
+// The motivating invocation in issue #11521 is `cast call --trace --from <safe> <to>`, so the
+// delegate override must reach the local tracing executor as well. The trace shows the call
+// executing at the sender address, which is where the delegated code runs.
+casttest!(cast_call_delegate_trace_uses_sender_storage, async |_prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let from = "0x00000000000000000000000000000000000000d7";
+    let to = "0x00000000000000000000000000000000000000d8";
+
+    // runtime: PUSH1 0 SLOAD PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+    api.anvil_set_code(to.parse().unwrap(), "0x60005460005260206000f3".parse().unwrap())
+        .await
+        .unwrap();
+    api.anvil_set_storage_at(from.parse().unwrap(), U256::ZERO, B256::from(U256::from(0x1234)))
+        .await
+        .unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "number()(uint256)",
+            "--from",
+            from,
+            "--delegate",
+            "--trace",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [..] 0x00000000000000000000000000000000000000d7::number()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+// Documents the identity semantics: the delegated code observes the sender itself as
+// `msg.sender`, not the delegating contract's caller as an on-chain `delegatecall` would.
+casttest!(cast_call_delegate_msg_sender_is_from, async |_prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let from = "0x00000000000000000000000000000000000000d9";
+    let to = "0x00000000000000000000000000000000000000da";
+
+    // runtime: CALLER PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
+    api.anvil_set_code(to.parse().unwrap(), "0x3360005260206000f3".parse().unwrap()).await.unwrap();
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            to,
+            "sender()(address)",
+            "--from",
+            from,
+            "--delegate",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+0x00000000000000000000000000000000000000D9
+
+"#]]);
+});
+
+// `--delegate` needs runtime code at the destination; a codeless address is an explicit error.
+casttest!(cast_call_delegate_no_code_destination, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x00000000000000000000000000000000000000db",
+            "number()(uint256)",
+            "--from",
+            "0x00000000000000000000000000000000000000dc",
+            "--delegate",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: `--delegate` destination 0x00000000000000000000000000000000000000db has no code to delegate to
+
+"#]]);
+});
+
+// `--curl` builds the request offline, but the delegate override needs the destination's code
+// from the node.
+casttest!(cast_call_delegate_rejects_curl, |_prj, cmd| {
+    cmd.args([
+        "call",
+        "0x00000000000000000000000000000000000000dd",
+        "--from",
+        "0x00000000000000000000000000000000000000de",
+        "--delegate",
+        "--curl",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: --delegate cannot be combined with --curl
 
 "#]]);
 });
@@ -8654,20 +8957,21 @@ casttest!(cast_call_trace_selects_tempo_network, async |_prj, cmd| {
     }
 });
 
-// tests that `cast call --trace` executes the call with the gas limit given via `--gas-limit`,
-// matching a plain `cast call` rather than running with an unbounded gas limit.
+// tests that `cast call --trace` executes the call with the configured gas limit or the limit given
+// via `--gas-limit` rather than running with an unbounded gas limit.
 // <https://github.com/foundry-rs/foundry/issues/15357>
-forgetest_async!(cast_call_trace_respects_gas_limit, |prj, cmd| {
+forgetest_async!(cast_call_trace_respects_gas_limits, |prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
+    prj.update_config(|config| config.gas_limit = 1_000_000.into());
 
     // Contract that reverts when the call is given an unrealistically large gas limit.
     prj.add_source(
         "GasDependent",
         r#"
 contract GasDependent {
-    function run() external view returns (uint256) {
-        require(gasleft() < 30_000_000, "unrealistic gas limit");
+    function run(uint256 maxGas) external view returns (uint256) {
+        require(gasleft() < maxGas, "unrealistic gas limit");
         return gasleft();
     }
 }
@@ -8700,7 +9004,20 @@ contract GasDependent {
 
     // A plain `cast call` (eth_call) uses a realistic gas limit, so it succeeds.
     cmd.cast_fuse()
-        .args(["call", &address, "run()(uint256)", "--rpc-url", &endpoint])
+        .args(["call", &address, "run(uint256)(uint256)", "30000000", "--rpc-url", &endpoint])
+        .assert_success();
+
+    // `--trace` uses the configured gas limit when no CLI limit is provided.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            &address,
+            "run(uint256)(uint256)",
+            "2000000",
+            "--trace",
+            "--rpc-url",
+            &endpoint,
+        ])
         .assert_success();
 
     // `--trace` with an explicit `--gas-limit` executes the call with that limit, so it succeeds
@@ -8710,10 +9027,11 @@ contract GasDependent {
         .args([
             "call",
             &address,
-            "run()(uint256)",
+            "run(uint256)(uint256)",
+            "750000",
             "--trace",
             "--gas-limit",
-            "1000000",
+            "500000",
             "--rpc-url",
             &endpoint,
         ])

@@ -217,8 +217,11 @@ test/ListTests.t.sol
 
 "#]]);
 
+    // Path-filtered listing should not compile unrelated sources.
+    prj.add_test("Broken.t.sol", "contract");
     cmd.forge_fuse()
         .args(["test", "--list", "--match-test", "test_alpha", "--json"])
+        .arg("test/ListTests.t.sol")
         .assert_success()
         .stdout_eq("{\"test/ListTests.t.sol\":{\"ListTests\":[\"test_alpha\"]}}\n");
 });

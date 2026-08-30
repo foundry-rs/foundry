@@ -1212,7 +1212,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1236,12 +1236,12 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
 name = "anvil"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -1320,7 +1320,7 @@ dependencies = [
 
 [[package]]
 name = "anvil-core"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -1345,7 +1345,7 @@ dependencies = [
 
 [[package]]
 name = "anvil-rpc"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1353,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "anvil-server"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "anvil-rpc",
  "axum",
@@ -1450,7 +1450,7 @@ dependencies = [
  "fnv",
  "hashbrown 0.17.1",
  "itertools 0.14.0",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
  "zeroize",
@@ -1467,7 +1467,7 @@ dependencies = [
  "ark-serialize 0.3.0",
  "ark-std 0.3.0",
  "derivative",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "paste",
  "rustc_version 0.3.3",
@@ -1487,7 +1487,7 @@ dependencies = [
  "derivative",
  "digest 0.10.7",
  "itertools 0.10.5",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "paste",
  "rustc_version 0.4.1",
@@ -1508,7 +1508,7 @@ dependencies = [
  "digest 0.10.7",
  "educe",
  "itertools 0.13.0",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "paste",
  "zeroize",
@@ -1526,7 +1526,7 @@ dependencies = [
  "ark-std 0.6.0",
  "digest 0.10.7",
  "educe",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "zeroize",
 ]
@@ -1577,7 +1577,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db2fd794a08ccb318058009eefdf15bcaaaaf6f8161eb3345f907222bac38b20"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "quote",
  "syn 1.0.109",
@@ -1589,7 +1589,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7abe79b0e4288889c4574159ab790824d0033b9fdcb2a112a3182fac2e514565"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "proc-macro2",
  "quote",
@@ -1602,7 +1602,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09be120733ee33f7693ceaa202ca41accd5653b779563608f1234f78ae07c4b3"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "proc-macro2",
  "quote",
@@ -1615,7 +1615,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a0691ed21ef00ef89c1e9bda832eba493dda3ec2f8d892fb25b705f73f06bb8"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "proc-macro2",
  "quote",
@@ -1649,7 +1649,7 @@ dependencies = [
  "ark-std 0.6.0",
  "educe",
  "itertools 0.14.0",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
  "tracing",
@@ -1689,7 +1689,7 @@ checksum = "adb7b85a02b83d2f22f89bd5cac66c9c89474240cb6207cb1efc16d098e822a5"
 dependencies = [
  "ark-std 0.4.0",
  "digest 0.10.7",
- "num-bigint",
+ "num-bigint 0.4.8",
 ]
 
 [[package]]
@@ -1701,7 +1701,7 @@ dependencies = [
  "ark-std 0.5.0",
  "arrayvec",
  "digest 0.10.7",
- "num-bigint",
+ "num-bigint 0.4.8",
 ]
 
 [[package]]
@@ -1713,7 +1713,7 @@ dependencies = [
  "ark-serialize-derive",
  "ark-std 0.6.0",
  "digest 0.10.7",
- "num-bigint",
+ "num-bigint 0.4.8",
  "serde_with",
 ]
 
@@ -2627,7 +2627,7 @@ dependencies = [
  "boa_macros",
  "boa_string",
  "indexmap 2.14.0",
- "num-bigint",
+ "num-bigint 0.4.8",
  "rustc-hash",
 ]
 
@@ -2661,7 +2661,7 @@ dependencies = [
  "indexmap 2.14.0",
  "intrusive-collections",
  "itertools 0.14.0",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
  "num_enum",
@@ -2737,7 +2737,7 @@ dependencies = [
  "boa_macros",
  "fast-float2",
  "icu_properties",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "regress",
  "rustc-hash",
@@ -2773,7 +2773,7 @@ version = "3.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dee98b0db6a962de883bf5d20362dee4d7ca0d12fe39a7c6c73c844e1cd7c1f"
 dependencies = [
- "darling 0.23.0",
+ "darling 0.20.11",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -2952,7 +2952,7 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cast"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -2960,7 +2960,6 @@ dependencies = [
  "alloy-dyn-abi",
  "alloy-eips",
  "alloy-ens",
- "alloy-evm",
  "alloy-hardforks",
  "alloy-json-abi",
  "alloy-json-rpc",
@@ -2981,7 +2980,7 @@ dependencies = [
  "chrono",
  "clap",
  "clap_complete",
- "comfy-table 8.0.0",
+ "comfy-table",
  "dirs",
  "dunce",
  "evmole",
@@ -3099,7 +3098,7 @@ dependencies = [
 
 [[package]]
 name = "chisel"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
@@ -3267,7 +3266,7 @@ dependencies = [
  "terminfo",
  "thiserror 2.0.20",
  "which",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3426,7 +3425,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3437,16 +3436,6 @@ checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
  "memchr",
-]
-
-[[package]]
-name = "comfy-table"
-version = "7.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "958c5d6ecf1f214b4c2bbbbf6ab9523a864bd136dcf71a7e8904799acfe1ad47"
-dependencies = [
- "unicode-segmentation",
- "unicode-width 0.2.2",
 ]
 
 [[package]]
@@ -3679,7 +3668,7 @@ dependencies = [
  "commonware-utils",
  "either",
  "futures",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-integer",
  "num-rational",
  "num-traits",
@@ -3839,7 +3828,7 @@ dependencies = [
  "getrandom 0.3.4",
  "getrandom 0.4.3",
  "hashbrown 0.16.1",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-integer",
  "num-rational",
  "num-traits",
@@ -4670,7 +4659,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4977,7 +4966,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5146,7 +5135,7 @@ checksum = "0ce92ff622d6dadf7349484f42c93271a0d49b7cc4d466a936405bacbe10aa78"
 dependencies = [
  "cfg-if",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5296,7 +5285,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "forge"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -5316,7 +5305,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "clearscreen",
- "comfy-table 8.0.0",
+ "comfy-table",
  "ctrlc",
  "dialoguer",
  "dunce",
@@ -5387,7 +5376,7 @@ dependencies = [
 
 [[package]]
 name = "forge-doc"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-primitives",
  "eyre",
@@ -5405,7 +5394,7 @@ dependencies = [
 
 [[package]]
 name = "forge-fmt"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "foundry-common",
  "foundry-config",
@@ -5419,7 +5408,7 @@ dependencies = [
 
 [[package]]
 name = "forge-lint"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-primitives",
  "eyre",
@@ -5434,7 +5423,7 @@ dependencies = [
 
 [[package]]
 name = "forge-script"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -5484,7 +5473,7 @@ dependencies = [
 
 [[package]]
 name = "forge-script-sequence"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-network",
  "alloy-primitives",
@@ -5500,7 +5489,7 @@ dependencies = [
 
 [[package]]
 name = "forge-sol-macro-gen"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-sol-macro-expander",
  "alloy-sol-macro-input",
@@ -5516,7 +5505,7 @@ dependencies = [
 
 [[package]]
 name = "forge-verify"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -5562,7 +5551,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-bench"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "chrono",
  "clap",
@@ -5583,7 +5572,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=c19c73749511c4c46c7db80b197ae23ec5c02f0b#c19c73749511c4c46c7db80b197ae23ec5c02f0b"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -5599,7 +5588,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-cheatcodes"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -5658,7 +5647,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-cheatcodes-spec"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-sol-types",
  "foundry-macros",
@@ -5669,7 +5658,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-cli"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-chains",
  "alloy-dyn-abi",
@@ -5721,7 +5710,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-cli-markdown"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "clap",
  "pretty_assertions",
@@ -5729,7 +5718,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-common"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -5759,7 +5748,7 @@ dependencies = [
  "chrono",
  "ciborium",
  "clap",
- "comfy-table 8.0.0",
+ "comfy-table",
  "dunce",
  "eyre",
  "flate2",
@@ -5800,7 +5789,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-common-fmt"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -5809,7 +5798,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-serde",
  "chrono",
- "comfy-table 8.0.0",
+ "comfy-table",
  "eyre",
  "foundry-macros",
  "op-alloy-consensus",
@@ -5826,7 +5815,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=c19c73749511c4c46c7db80b197ae23ec5c02f0b#c19c73749511c4c46c7db80b197ae23ec5c02f0b"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5857,7 +5846,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=c19c73749511c4c46c7db80b197ae23ec5c02f0b#c19c73749511c4c46c7db80b197ae23ec5c02f0b"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -5866,7 +5855,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=c19c73749511c4c46c7db80b197ae23ec5c02f0b#c19c73749511c4c46c7db80b197ae23ec5c02f0b"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5886,7 +5875,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=c19c73749511c4c46c7db80b197ae23ec5c02f0b#c19c73749511c4c46c7db80b197ae23ec5c02f0b"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5899,7 +5888,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=c19c73749511c4c46c7db80b197ae23ec5c02f0b#c19c73749511c4c46c7db80b197ae23ec5c02f0b"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -5919,7 +5908,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-config"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
@@ -5961,7 +5950,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-debugger"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -5982,7 +5971,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-eips",
@@ -6022,7 +6011,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm-abi"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -6034,7 +6023,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm-core"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -6093,7 +6082,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm-coverage"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-primitives",
  "eyre",
@@ -6109,7 +6098,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm-fuzz"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
@@ -6134,7 +6123,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm-hardforks"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-chains",
  "alloy-hardforks",
@@ -6150,7 +6139,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm-networks"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-chains",
  "alloy-eips",
@@ -6168,11 +6157,11 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm-sancov"
-version = "1.8.0"
+version = "1.8.1"
 
 [[package]]
 name = "foundry-evm-symbolic"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
@@ -6197,7 +6186,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-evm-traces"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-json-abi",
@@ -6237,7 +6226,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=c19c73749511c4c46c7db80b197ae23ec5c02f0b#c19c73749511c4c46c7db80b197ae23ec5c02f0b"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -6259,7 +6248,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-linking"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-primitives",
  "foundry-compilers",
@@ -6270,7 +6259,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-macros"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "proc-macro-error2",
  "proc-macro2",
@@ -6280,7 +6269,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-primitives"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -6307,7 +6296,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-test-utils"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
@@ -6336,7 +6325,7 @@ dependencies = [
 
 [[package]]
 name = "foundry-tui"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "crossterm",
  "ratatui",
@@ -6345,7 +6334,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=78e5b57f86986eabd969a5fdf238b8159f7086fd#78e5b57f86986eabd969a5fdf238b8159f7086fd"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=c19c73749511c4c46c7db80b197ae23ec5c02f0b#c19c73749511c4c46c7db80b197ae23ec5c02f0b"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -6591,8 +6580,8 @@ dependencies = [
  "libc",
  "log",
  "rustversion",
- "windows-link 0.2.1",
- "windows-result 0.4.1",
+ "windows-link 0.1.3",
+ "windows-result 0.3.4",
 ]
 
 [[package]]
@@ -7046,7 +7035,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -7406,7 +7395,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -8261,7 +8250,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -8270,7 +8259,7 @@ version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-complex",
  "num-integer",
  "num-iter",
@@ -8287,6 +8276,16 @@ dependencies = [
  "num-integer",
  "num-traits",
  "serde",
+]
+
+[[package]]
+name = "num-bigint"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93e7820bc0a80a0238e650327316f929ba18d5be054b647490a3a6a339f3e7c0"
+dependencies = [
+ "num-integer",
+ "num-traits",
 ]
 
 [[package]]
@@ -8339,7 +8338,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
 ]
@@ -8500,7 +8499,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b685c8311c9171d1bd2895222965d25616b2de2cb5819dd3504ed9250df9fecd"
 dependencies = [
  "ahash",
- "hashbrown 0.17.1",
+ "hashbrown 0.16.1",
  "parking_lot",
  "stable_deref_trait",
 ]
@@ -9536,7 +9535,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -9688,7 +9687,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -10957,7 +10956,7 @@ dependencies = [
  "bytes",
  "fastrlp 0.3.1",
  "fastrlp 0.4.0",
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-integer",
  "num-traits",
  "parity-scale-codec",
@@ -11064,7 +11063,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11123,7 +11122,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11806,7 +11805,7 @@ version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d585997b0ac10be3c5ee635f1bab02d512760d14b7c468801ac8a01d9ae5f1d"
 dependencies = [
- "num-bigint",
+ "num-bigint 0.4.8",
  "num-traits",
  "thiserror 2.0.20",
  "time",
@@ -11888,12 +11887,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
 name = "solar"
-version = "1.8.0"
+version = "1.8.1"
 dependencies = [
  "solar-cli",
 ]
@@ -11901,7 +11900,7 @@ dependencies = [
 [[package]]
 name = "solar-ast"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=a1568c0b841cf7ad7c4f397222db25843a856c67#a1568c0b841cf7ad7c4f397222db25843a856c67"
+source = "git+https://github.com/paradigmxyz/solar?rev=0b8a4f83b3831e8a82bc7008788f85bc7bb80062#0b8a4f83b3831e8a82bc7008788f85bc7bb80062"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -11917,10 +11916,12 @@ dependencies = [
 [[package]]
 name = "solar-cli"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=a1568c0b841cf7ad7c4f397222db25843a856c67#a1568c0b841cf7ad7c4f397222db25843a856c67"
+source = "git+https://github.com/paradigmxyz/solar?rev=0b8a4f83b3831e8a82bc7008788f85bc7bb80062#0b8a4f83b3831e8a82bc7008788f85bc7bb80062"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
+ "anstream",
+ "anstyle",
  "bitflags 2.13.1",
  "cfg-if",
  "clap",
@@ -11943,7 +11944,7 @@ dependencies = [
 [[package]]
 name = "solar-codegen"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=a1568c0b841cf7ad7c4f397222db25843a856c67#a1568c0b841cf7ad7c4f397222db25843a856c67"
+source = "git+https://github.com/paradigmxyz/solar?rev=0b8a4f83b3831e8a82bc7008788f85bc7bb80062#0b8a4f83b3831e8a82bc7008788f85bc7bb80062"
 dependencies = [
  "alloy-primitives",
  "arrayvec",
@@ -11962,7 +11963,7 @@ dependencies = [
 [[package]]
 name = "solar-compiler"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=a1568c0b841cf7ad7c4f397222db25843a856c67#a1568c0b841cf7ad7c4f397222db25843a856c67"
+source = "git+https://github.com/paradigmxyz/solar?rev=0b8a4f83b3831e8a82bc7008788f85bc7bb80062#0b8a4f83b3831e8a82bc7008788f85bc7bb80062"
 dependencies = [
  "alloy-primitives",
  "idna_adapter",
@@ -11980,7 +11981,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=a1568c0b841cf7ad7c4f397222db25843a856c67#a1568c0b841cf7ad7c4f397222db25843a856c67"
+source = "git+https://github.com/paradigmxyz/solar?rev=0b8a4f83b3831e8a82bc7008788f85bc7bb80062#0b8a4f83b3831e8a82bc7008788f85bc7bb80062"
 dependencies = [
  "alloy-primitives",
  "clap",
@@ -11992,7 +11993,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=a1568c0b841cf7ad7c4f397222db25843a856c67#a1568c0b841cf7ad7c4f397222db25843a856c67"
+source = "git+https://github.com/paradigmxyz/solar?rev=0b8a4f83b3831e8a82bc7008788f85bc7bb80062#0b8a4f83b3831e8a82bc7008788f85bc7bb80062"
 dependencies = [
  "bumpalo",
  "diff",
@@ -12007,7 +12008,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=a1568c0b841cf7ad7c4f397222db25843a856c67#a1568c0b841cf7ad7c4f397222db25843a856c67"
+source = "git+https://github.com/paradigmxyz/solar?rev=0b8a4f83b3831e8a82bc7008788f85bc7bb80062#0b8a4f83b3831e8a82bc7008788f85bc7bb80062"
 dependencies = [
  "annotate-snippets 0.12.16",
  "anstream",
@@ -12015,7 +12016,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "itoa",
  "normalize-path",
  "once_map",
@@ -12035,7 +12036,7 @@ dependencies = [
 [[package]]
 name = "solar-lint"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=a1568c0b841cf7ad7c4f397222db25843a856c67#a1568c0b841cf7ad7c4f397222db25843a856c67"
+source = "git+https://github.com/paradigmxyz/solar?rev=0b8a4f83b3831e8a82bc7008788f85bc7bb80062#0b8a4f83b3831e8a82bc7008788f85bc7bb80062"
 dependencies = [
  "rayon",
  "solar-ast",
@@ -12046,7 +12047,7 @@ dependencies = [
 [[package]]
 name = "solar-lsp"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=a1568c0b841cf7ad7c4f397222db25843a856c67#a1568c0b841cf7ad7c4f397222db25843a856c67"
+source = "git+https://github.com/paradigmxyz/solar?rev=0b8a4f83b3831e8a82bc7008788f85bc7bb80062#0b8a4f83b3831e8a82bc7008788f85bc7bb80062"
 dependencies = [
  "async-lsp",
  "crop",
@@ -12060,7 +12061,7 @@ dependencies = [
  "solar-interface",
  "solar-parse",
  "solar-sema",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
  "tokio",
  "tokio-util",
  "toml_edit",
@@ -12071,7 +12072,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=a1568c0b841cf7ad7c4f397222db25843a856c67#a1568c0b841cf7ad7c4f397222db25843a856c67"
+source = "git+https://github.com/paradigmxyz/solar?rev=0b8a4f83b3831e8a82bc7008788f85bc7bb80062#0b8a4f83b3831e8a82bc7008788f85bc7bb80062"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -12081,14 +12082,14 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=a1568c0b841cf7ad7c4f397222db25843a856c67#a1568c0b841cf7ad7c4f397222db25843a856c67"
+source = "git+https://github.com/paradigmxyz/solar?rev=0b8a4f83b3831e8a82bc7008788f85bc7bb80062#0b8a4f83b3831e8a82bc7008788f85bc7bb80062"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.13.1",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "memchr",
- "num-bigint",
+ "num-bigint 0.5.1",
  "num-rational",
  "num-traits",
  "ruint",
@@ -12102,17 +12103,17 @@ dependencies = [
 [[package]]
 name = "solar-sema"
 version = "0.2.0"
-source = "git+https://github.com/paradigmxyz/solar?rev=a1568c0b841cf7ad7c4f397222db25843a856c67#a1568c0b841cf7ad7c4f397222db25843a856c67"
+source = "git+https://github.com/paradigmxyz/solar?rev=0b8a4f83b3831e8a82bc7008788f85bc7bb80062#0b8a4f83b3831e8a82bc7008788f85bc7bb80062"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "bitflags 2.13.1",
  "bumpalo",
- "comfy-table 7.2.2",
+ "comfy-table",
  "derive_more",
  "either",
  "indexmap 2.14.0",
- "num-bigint",
+ "num-bigint 0.5.1",
  "num-traits",
  "once_map",
  "paste",
@@ -12560,7 +12561,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -12788,7 +12789,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -13968,7 +13969,7 @@ dependencies = [
  "watchexec-events",
  "watchexec-signals",
  "watchexec-supervisor",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -14116,7 +14117,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

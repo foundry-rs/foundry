@@ -38,22 +38,25 @@ use anvil::{
     eth::{EthApi, fees::INITIAL_BASE_FEE},
     spawn, try_spawn,
 };
+use axum::{Json, Router, routing::post};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
-    self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_erroring_method_after,
+    self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_internal_error_after,
     spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
+    spawn_rpc_proxy_rejecting_method_when_enabled,
 };
 use futures::StreamExt;
 use revm::{
     context::BlockEnv, context_interface::block::BlobExcessGasAndPrice,
-    precompile::PrecompileStatus,
+    precompile::PrecompileStatus, primitives::hardfork::SpecId,
 };
+use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
     time::Duration,
 };
 
@@ -95,19 +98,15 @@ pub fn fork_config() -> NodeConfig {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fork_rejects_anvil_node_info_rpc_error() {
+async fn test_fork_ignores_initial_anvil_node_info_rpc_error() {
     let (_api, origin) =
         spawn(NodeConfig::test().with_chain_id(Some(NamedChain::Mainnet as u64))).await;
     let fork_url =
-        spawn_rpc_proxy_erroring_method_after(origin.http_endpoint(), "anvil_nodeInfo", 0).await;
+        spawn_rpc_proxy_internal_error_after(origin.http_endpoint(), "anvil_nodeInfo", 0).await;
 
-    let result = try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
-    let Err(error) = result else { panic!("expected fork startup to fail") };
+    let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await;
 
-    assert!(
-        error.to_string().contains("failed to determine network family from fork endpoint"),
-        "{error}"
-    );
+    assert_eq!(api.chain_id(), NamedChain::Mainnet as u64);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -137,6 +136,89 @@ async fn test_fork_reset_keeps_node_info_probe_strict_after_identification_durin
 
     let error = api
         .anvil_reset(Some(Forking { json_rpc_url: Some(fork_url), block_number: None }))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains("failed to determine network family from fork endpoint"),
+        "{error}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_keeps_cached_anvil_node_info_probe_strict() {
+    let (_origin_api, origin) = spawn(NodeConfig::test()).await;
+    let (fork_url, reject_node_info) =
+        spawn_rpc_proxy_rejecting_method_when_enabled(origin.http_endpoint(), "anvil_nodeInfo")
+            .await;
+    let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url.clone()))).await;
+    api.anvil_reset(None).await.unwrap();
+    reject_node_info.store(true, Ordering::SeqCst);
+
+    let error = api
+        .anvil_reset(Some(Forking { json_rpc_url: Some(fork_url), block_number: None }))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains("failed to determine network family from fork endpoint"),
+        "{error}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_does_not_carry_anvil_identity_to_new_endpoint() {
+    let (_initial_api, initial_origin) = spawn(NodeConfig::test()).await;
+    let (api, handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(initial_origin.http_endpoint()))).await;
+    let (_target_api, target_origin) = spawn(NodeConfig::test().with_chain_id(Some(56u64))).await;
+    let target_url =
+        spawn_rpc_proxy_rejecting_method_after(target_origin.http_endpoint(), "anvil_nodeInfo", 0)
+            .await;
+
+    api.anvil_reset(Some(Forking { json_rpc_url: Some(target_url), block_number: None }))
+        .await
+        .unwrap();
+
+    assert_eq!(handle.http_provider().get_chain_id().await.unwrap(), 56);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_keeps_set_rpc_url_anvil_node_info_probe_strict() {
+    let (_initial_api, initial_origin) = spawn(NodeConfig::test()).await;
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(initial_origin.http_endpoint()))).await;
+    let (replacement_url, reject_node_info) = spawn_rpc_proxy_rejecting_method_when_enabled(
+        initial_origin.http_endpoint(),
+        "anvil_nodeInfo",
+    )
+    .await;
+    api.anvil_set_rpc_url(replacement_url).await.unwrap();
+    reject_node_info.store(true, Ordering::SeqCst);
+
+    let error = api
+        .anvil_reset(Some(Forking { json_rpc_url: None, block_number: None }))
+        .await
+        .unwrap_err();
+
+    assert!(
+        error.to_string().contains("failed to determine network family from fork endpoint"),
+        "{error}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_reset_keeps_validated_mirror_anvil_node_info_probe_strict() {
+    let (_origin_api, origin) = spawn(NodeConfig::test()).await;
+    let primary_url = origin.http_endpoint();
+    let (mirror_url, reject_node_info) =
+        spawn_rpc_proxy_rejecting_method_when_enabled(primary_url.clone(), "anvil_nodeInfo").await;
+    let (api, _handle) =
+        spawn(NodeConfig::test().with_fork_urls(vec![primary_url, mirror_url.clone()])).await;
+    reject_node_info.store(true, Ordering::SeqCst);
+
+    let error = api
+        .anvil_reset(Some(Forking { json_rpc_url: Some(mirror_url), block_number: None }))
         .await
         .unwrap_err();
 
@@ -2323,11 +2405,13 @@ async fn flaky_test_arb_fork_mining() {
 // <https://github.com/foundry-rs/foundry/issues/6749>
 #[tokio::test(flavor = "multi_thread")]
 async fn flaky_test_arbitrum_fork_block_number() {
+    // Every fork below must observe the same chain head, so reuse one endpoint: providers are a few
+    // blocks apart and refetching would otherwise fork at a block the next provider has not seen.
+    let fork_rpc = next_rpc_endpoint(NamedChain::Arbitrum);
+
     // fork to get initial block for test
     let (_, handle) = spawn(
-        fork_config()
-            .with_fork_block_number(None::<u64>)
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
+        fork_config().with_fork_block_number(None::<u64>).with_eth_rpc_url(Some(fork_rpc.clone())),
     )
     .await;
     let provider = handle.http_provider();
@@ -2339,7 +2423,7 @@ async fn flaky_test_arbitrum_fork_block_number() {
     let (api, _) = spawn(
         fork_config()
             .with_fork_block_number(Some(initial_block_number))
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
+            .with_eth_rpc_url(Some(fork_rpc.clone())),
     )
     .await;
     let block_number = api.block_number().unwrap().to::<u64>();
@@ -2365,7 +2449,7 @@ async fn flaky_test_arbitrum_fork_block_number() {
 
     // reset fork to different block number and compare with block returned by `eth_blockNumber`
     api.anvil_reset(Some(Forking {
-        json_rpc_url: Some(next_rpc_endpoint(NamedChain::Arbitrum)),
+        json_rpc_url: Some(fork_rpc),
         block_number: Some(initial_block_number - 2),
     }))
     .await
@@ -3124,6 +3208,158 @@ async fn test_fork_reset_to_new_url_updates_source_chain_id() {
     api.anvil_reset(None).await.unwrap();
     assert_eq!(provider.get_chain_id().await.unwrap(), 31337);
     assert!(send().await.unwrap().get_receipt().await.unwrap().status());
+}
+
+async fn spawn_rpc_proxy_without_blob_header_fields(endpoint: String) -> String {
+    let client = reqwest::Client::new();
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                let mut response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                if matches!(
+                    request.get("method").and_then(Value::as_str),
+                    Some("eth_getBlockByHash" | "eth_getBlockByNumber")
+                ) && let Some(block) = response.get_mut("result").and_then(Value::as_object_mut)
+                {
+                    block.remove("blobGasUsed");
+                    block.remove("excessBlobGas");
+                }
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
+    // Polygon's Bor headers omit the EIP-4844 fields even though Anvil executes the fork with a
+    // post-Cancun spec. Local origins provide deterministic state while the proxies reproduce that
+    // header shape and hide Anvil metadata, matching an external endpoint.
+    let token = address!("0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270");
+    let return_zero = bytes!("600060005260206000f3");
+    let (polygon_api, polygon_origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Polygon as u64))
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_genesis_timestamp(Some(1_750_000_000u64)),
+    )
+    .await;
+    polygon_api.anvil_set_code(token, return_zero.clone()).await.unwrap();
+    let polygon_url =
+        spawn_rpc_proxy_without_blob_header_fields(polygon_origin.http_endpoint()).await;
+    let polygon_url =
+        spawn_rpc_proxy_rejecting_method_after(polygon_url, "anvil_nodeInfo", 0).await;
+
+    let (pre_cancun_api, pre_cancun_origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Arbitrum as u64))
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_genesis_timestamp(EthereumHardfork::Shanghai.arbitrum_activation_timestamp()),
+    )
+    .await;
+    pre_cancun_api.anvil_set_code(token, return_zero.clone()).await.unwrap();
+    let pre_cancun_url =
+        spawn_rpc_proxy_without_blob_header_fields(pre_cancun_origin.http_endpoint()).await;
+    let pre_cancun_url =
+        spawn_rpc_proxy_rejecting_method_after(pre_cancun_url, "anvil_nodeInfo", 0).await;
+
+    // A canonical Ethereum endpoint that drops required post-Cancun fields must remain invalid;
+    // the Polygon compatibility fallback must not hide that upstream error.
+    let (ethereum_api, ethereum_origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Mainnet as u64))
+            .with_hardfork(Some(EthereumHardfork::Cancun.into()))
+            .with_genesis_timestamp(EthereumHardfork::Cancun.mainnet_activation_timestamp()),
+    )
+    .await;
+    ethereum_api.anvil_set_code(token, return_zero).await.unwrap();
+    let ethereum_url =
+        spawn_rpc_proxy_without_blob_header_fields(ethereum_origin.http_endpoint()).await;
+    let ethereum_url =
+        spawn_rpc_proxy_rejecting_method_after(ethereum_url, "anvil_nodeInfo", 0).await;
+
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(polygon_url.clone()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    let provider = handle.http_provider();
+    // This is the WMATIC `balanceOf` call from the Balancer failure report.
+    let call = || {
+        provider
+            .call(
+                TransactionRequest {
+                    to: Some(TxKind::Call(token)),
+                    input: TransactionInput::new(bytes!(
+                        "70a08231000000000000000000000000625ac8caddc5dfb99c98176cb6e79d55c7c14e63"
+                    )),
+                    ..Default::default()
+                }
+                .into(),
+            )
+            .block(BlockId::latest())
+    };
+
+    assert!(api.backend.spec_id() >= SpecId::CANCUN);
+    assert_eq!(call().await.unwrap(), Bytes::from(vec![0; 32]));
+    assert_eq!(
+        api.backend
+            .evm_env()
+            .read()
+            .block_env
+            .blob_excess_gas_and_price
+            .as_ref()
+            .map(|blob| blob.excess_blob_gas),
+        Some(0)
+    );
+
+    api.anvil_reset(Some(Forking { json_rpc_url: Some(pre_cancun_url), block_number: Some(0) }))
+        .await
+        .unwrap();
+    assert!(api.backend.spec_id() < SpecId::CANCUN);
+    assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
+    assert_eq!(call().await.unwrap(), Bytes::from(vec![0; 32]));
+
+    api.anvil_reset(Some(Forking { json_rpc_url: Some(ethereum_url), block_number: Some(0) }))
+        .await
+        .unwrap();
+    assert!(api.backend.spec_id() >= SpecId::CANCUN);
+    assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
+    let err = call().await.unwrap_err();
+    assert!(err.to_string().contains("Excess blob gas not set"), "{err:?}");
+
+    api.anvil_reset(Some(Forking { json_rpc_url: Some(polygon_url), block_number: Some(0) }))
+        .await
+        .unwrap();
+    assert!(api.backend.spec_id() >= SpecId::CANCUN);
+    assert_eq!(call().await.unwrap(), Bytes::from(vec![0; 32]));
+    assert_eq!(
+        api.backend
+            .evm_env()
+            .read()
+            .block_env
+            .blob_excess_gas_and_price
+            .as_ref()
+            .map(|blob| blob.excess_blob_gas),
+        Some(0)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

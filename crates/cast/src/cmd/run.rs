@@ -12,9 +12,9 @@ use crate::{
 };
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 use alloy_eips::BlockNumHash;
-use alloy_evm::FromRecoveredTx;
 use alloy_network::{
-    BlockResponse, Network, ReceiptResponse, TransactionResponse, primitives::HeaderResponse,
+    AnyNetwork, AnyTxEnvelope, BlockResponse, Network, ReceiptResponse, TransactionResponse,
+    primitives::HeaderResponse,
 };
 use alloy_primitives::{
     Address, B256, Bytes, U256,
@@ -47,6 +47,7 @@ use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock as _, FoundryChain,
+        env::FromAnyRpcTransaction as _,
         evm::{
             BlockContext, ChainFor, EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor,
         },
@@ -133,6 +134,8 @@ pub struct RunArgs {
     pub with_local_artifacts: bool,
 
     /// Disable block gas limit check.
+    ///
+    /// Always implied: a mined transaction already passed its chain's own check.
     #[arg(long)]
     pub disable_block_gas_limit: bool,
 
@@ -200,7 +203,11 @@ impl RunArgs {
             self.rpc.common.compute_units_per_second
         };
 
-        let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?
+        // `AnyNetwork` rather than `FEN::Network`: chains such as Arbitrum, Celo and the
+        // OP-stack forks Foundry does not route to a dedicated network put transaction types the
+        // strict Ethereum envelope cannot decode into every block, which would fail the full
+        // block fetch below for the whole chain. Execution still uses `FEN`.
+        let provider = ProviderBuilder::<AnyNetwork>::from_config(&config)?
             .compute_units_per_second_opt(compute_units_per_second)
             .build()?;
 
@@ -373,9 +380,17 @@ impl RunArgs {
             return Ok(());
         }
 
-        let target_tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
         let target_is_system = is_known_system_sender(tx.from())
             || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
+        // Report an unsupported system transaction before decoding it: the envelopes a chain
+        // reserves for itself, such as Arbitrum's internal transaction, are exactly the ones this
+        // build may not be able to decode.
+        if target_is_system && !self.replay_system_txes && !evm_opts.networks.is_monad() {
+            return Err(eyre::eyre!(
+                "{tx_hash:?} is a system transaction.\nReplaying system transactions is currently not supported."
+            ));
+        }
+        let target_tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&tx)?;
 
         let tx_block_number = tx
             .block_number()
@@ -393,7 +408,11 @@ impl RunArgs {
         )?;
 
         let mut evm_version = self.evm_version;
-        evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
+        // Mined transactions already passed the block gas limit check their chain applies, and
+        // some chains admit transactions whose gas limit exceeds it: BSC validator transactions
+        // carry a gas limit of `i64::MAX`. Re-applying the check can only reject a transaction
+        // the chain accepted.
+        evm_env.cfg_env.disable_block_gas_limit = true;
 
         // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
         // Users can opt-in to enable these limits by setting `enable_tx_gas_limit` to true.
@@ -421,7 +440,7 @@ impl RunArgs {
                 // TODO: add glamsterdam header field checks in the future
                 evm_version = Some(EvmVersion::Cancun);
             }
-            apply_chain_and_block_specific_env_changes_for_chain::<FEN::Network, _, _>(
+            apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
                 &mut evm_env,
                 block,
                 chain.id(),
@@ -439,12 +458,20 @@ impl RunArgs {
         TracingExecutor::<FEN>::extend_precompile_labels(&mut config, networks, resolved_hardfork);
 
         let block_context = if networks.is_monad() {
-            let block = block.as_ref().ok_or_else(|| {
-                eyre::eyre!(
-                    "block {tx_block_number} is required to reconstruct transaction context"
-                )
-            })?;
-            Some(BlockContext::<FEN>::fetch(&provider, block).await?)
+            // `BlockContext` is typed to `FEN::Network`. Monad blocks only carry standard
+            // envelopes, so a typed provider can serve this path while the rest of the command
+            // stays on `AnyNetwork`.
+            let typed_provider = ProviderBuilder::<FEN::Network>::from_config(&config)?
+                .compute_units_per_second_opt(compute_units_per_second)
+                .build()?;
+            let block = typed_provider.get_block(tx_block_number.into()).full().await?.ok_or_else(
+                || {
+                    eyre::eyre!(
+                        "block {tx_block_number} is required to reconstruct transaction context"
+                    )
+                },
+            )?;
+            Some(BlockContext::<FEN>::fetch(&typed_provider, &block).await?)
         } else {
             None
         };
@@ -465,7 +492,7 @@ impl RunArgs {
         let spec_id = (*evm_env.cfg_env.spec()).into();
 
         if let Some(parent_beacon_block_root) =
-            parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root)?
+            parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root)
         {
             executor.apply_beacon_root(parent_beacon_block_root)?;
         }
@@ -519,9 +546,15 @@ impl RunArgs {
                         break;
                     }
 
-                    let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
                     let is_system = is_known_system_sender(tx.from())
                         || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
+                    // Classify before converting: a chain's own system envelopes are exactly the
+                    // ones this build may not be able to decode, and they are skipped below.
+                    if is_system && !self.replay_system_txes && !networks.is_monad() {
+                        pb.set_position((index + 1) as u64);
+                        continue;
+                    }
+                    let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
                     let chain_context = block_context.as_ref().map_or_else(
                         || ChainFor::<FEN>::for_transaction(&tx_env),
                         |context| context.transaction(index),
@@ -635,7 +668,16 @@ impl RunArgs {
                 |context| context.transaction(target_index),
             );
 
-            if tx.as_ref().recover_signer().is_ok_and(|signer| signer != tx.from()) {
+            // A recovered signer that disagrees with the `from` the node reports marks a
+            // transaction the chain injected rather than one a key signed, such as a HyperCore
+            // credit. Envelopes this build cannot decode are in the same category.
+            let sender_is_forged = match &*tx.inner.inner {
+                AnyTxEnvelope::Ethereum(inner) => {
+                    inner.recover_signer().is_ok_and(|signer| signer != tx.from())
+                }
+                AnyTxEnvelope::Unknown(_) => true,
+            };
+            if sender_is_forged {
                 evm_env.cfg_env.disable_balance_check = true;
             }
 
@@ -724,20 +766,19 @@ fn ensure_remote_transaction_inclusion(
     Ok(())
 }
 
-fn parent_beacon_block_root_for_network(
+const fn parent_beacon_block_root_for_network(
     networks: NetworkConfigs,
     spec_id: SpecId,
     parent_beacon_block_root: Option<B256>,
-) -> Result<Option<B256>> {
+) -> Option<B256> {
     if networks.is_monad() || !spec_id.is_enabled_in(SpecId::CANCUN) {
-        return Ok(None);
+        return None;
     }
 
-    parent_beacon_block_root.map(Some).ok_or_else(|| {
-        eyre::eyre!(
-            "MissingParentBeaconBlockRoot: missing parent beacon block root for Cancun block"
-        )
-    })
+    // Chains that run a Cancun or later EVM without Ethereum's beacon chain, such as Polygon and
+    // Scroll, never populate this header field and never deploy the EIP-4788 contract, so there
+    // is no root to apply. Requiring one makes their blocks unreplayable.
+    parent_beacon_block_root
 }
 
 pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
@@ -969,24 +1010,21 @@ mod tests {
     }
 
     #[test]
-    fn parent_beacon_block_root_is_required_for_cancun() {
+    fn parent_beacon_block_root_is_applied_only_when_the_header_has_one() {
         let networks = NetworkConfigs::default();
-        let err = parent_beacon_block_root_for_network(networks, SpecId::CANCUN, None).unwrap_err();
-        assert!(err.to_string().contains("MissingParentBeaconBlockRoot"));
+        // Polygon and Scroll run a Cancun or later EVM without populating the header field.
+        assert_eq!(parent_beacon_block_root_for_network(networks, SpecId::CANCUN, None), None);
 
         let root = B256::repeat_byte(0x42);
         assert_eq!(
-            parent_beacon_block_root_for_network(networks, SpecId::CANCUN, Some(root)).unwrap(),
+            parent_beacon_block_root_for_network(networks, SpecId::CANCUN, Some(root)),
             Some(root),
         );
         assert_eq!(
-            parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, Some(root)).unwrap(),
+            parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, Some(root)),
             None,
         );
-        assert_eq!(
-            parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, None).unwrap(),
-            None,
-        );
+        assert_eq!(parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, None), None,);
     }
 
     #[cfg(feature = "monad")]
@@ -994,17 +1032,13 @@ mod tests {
     fn parent_beacon_block_root_is_not_used_by_monad() {
         let networks = NetworkConfigs::with_monad();
         for spec_id in [SpecId::PRAGUE, SpecId::OSAKA] {
-            assert_eq!(
-                parent_beacon_block_root_for_network(networks, spec_id, None).unwrap(),
-                None,
-            );
+            assert_eq!(parent_beacon_block_root_for_network(networks, spec_id, None), None,);
             assert_eq!(
                 parent_beacon_block_root_for_network(
                     networks,
                     spec_id,
                     Some(B256::repeat_byte(0x42)),
-                )
-                .unwrap(),
+                ),
                 None,
             );
         }

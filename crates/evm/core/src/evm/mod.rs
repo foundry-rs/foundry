@@ -18,13 +18,15 @@ use foundry_fork_db::{DatabaseError, ForkBlockEnv};
 use revm::{
     Database,
     context::{
-        ContextTr, JournalTr,
+        ContextTr, JournalTr, LocalContextTr,
         result::{EVMError, HaltReason, ResultAndState},
     },
-    handler::FrameResult,
-    inspector::NoOpInspector,
+    handler::{EvmTr, FrameResult},
+    inspector::{InspectorEvmTr, InspectorHandler, NoOpInspector},
     interpreter::{
-        CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, InstructionResult,
+        CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, GasTracker,
+        InstructionResult, SharedMemory, interpreter::EthInterpreter,
+        interpreter_action::FrameInit,
     },
     primitives::hardfork::SpecId,
 };
@@ -258,6 +260,29 @@ pub type NestedEvmClosure<'a, F> = &'a mut dyn for<'j> FnMut(
 
 /// Nested EVM closure for a Foundry EVM network.
 pub type NestedEvmClosureFor<'a, FEN> = NestedEvmClosure<'a, EvmFactoryFor<FEN>>;
+
+/// Runs a nested frame with inspection and settles its gas into the parent frame.
+pub(crate) fn run_inspected_frame<H>(
+    evm: &mut H::Evm,
+    mut handler: H,
+    frame_input: FrameInput,
+) -> Result<FrameResult, H::Error>
+where
+    H: InspectorHandler<IT = EthInterpreter>,
+    H::Evm: InspectorEvmTr,
+{
+    let memory =
+        SharedMemory::new_with_buffer(evm.ctx_ref().local().shared_memory_buffer().clone());
+    let first_frame_input = FrameInit { depth: 0, memory, frame_input };
+    let mut frame_result = handler.inspect_run_exec_loop(evm, first_frame_input)?;
+    let mut parent_gas = GasTracker::new(
+        frame_result.gas().limit(),
+        frame_result.gas().remaining(),
+        frame_result.gas().reservoir(),
+    );
+    handler.last_frame_result(evm, &mut frame_result, &mut parent_gas)?;
+    Ok(frame_result)
+}
 
 /// Clones the current context (env + journal), passes the database, cloned env,
 /// and cloned journal inner to the callback. The callback builds whatever EVM it

@@ -160,6 +160,7 @@ abstract contract LastCallGasFixture is Test {
         assertEq(lhs.gasTotalUsed, rhs.gasTotalUsed);
         assertEq(lhs.gasMemoryUsed, rhs.gasMemoryUsed);
         assertEq(lhs.gasRefunded, rhs.gasRefunded);
+        assertEq(lhs.gasStateUsed, 0);
     }
 
     function _assertGasRecorded(Vm.Gas memory gas) internal {
@@ -167,6 +168,7 @@ abstract contract LastCallGasFixture is Test {
         assertGt(gas.gasRemaining, 0);
         assertGt(gas.gasTotalUsed, 0);
         assertEq(gas.gasMemoryUsed, 0);
+        assertEq(gas.gasStateUsed, 0);
     }
 }
 
@@ -273,7 +275,7 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
     function testRecordGasRefund() public {
         _setup();
         _performRefund();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21380, gasMemoryUsed: 0, gasRefunded: 4800}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 26180, gasMemoryUsed: 0, gasRefunded: 4800}));
     }
 
     function testStateDiffRecordingDoesNotWarmStorageReads() public {
