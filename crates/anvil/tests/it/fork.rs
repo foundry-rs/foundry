@@ -2602,6 +2602,23 @@ async fn test_block_by_number_full_refetches_missing_cached_transactions() {
     assert!(fork.storage.read().transactions.contains_key(&missing_hash));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_hash_only_fork_block_does_not_cache_transactions() {
+    let (api, _) = spawn(fork_config()).await;
+    let block_number = BLOCK_NUMBER - 1;
+
+    let block = api.block_by_number(BlockNumberOrTag::Number(block_number)).await.unwrap().unwrap();
+    let tx_hash = block.transactions.hashes().next().unwrap();
+
+    let fork = api.backend.get_fork().unwrap();
+    assert!(!fork.storage.read().transactions.contains_key(&tx_hash));
+
+    let full_block =
+        api.block_by_number_full(BlockNumberOrTag::Number(block_number)).await.unwrap().unwrap();
+    assert!(full_block.transactions.as_transactions().is_some());
+    assert!(fork.storage.read().transactions.contains_key(&tx_hash));
+}
+
 // <https://github.com/foundry-rs/foundry/issues/4700>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_query_at_fork_block() {
