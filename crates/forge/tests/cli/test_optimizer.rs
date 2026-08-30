@@ -266,6 +266,77 @@ Compiling 21 files with [..]
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/16468>
+forgetest_init!(unchecked_artifacts_support_dynamic_linking, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.unchecked_cheatcode_artifacts = true;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+library Math {
+    function double(uint256 x) public pure returns (uint256) {
+        return x * 2;
+    }
+}
+
+contract Counter {
+    uint256 public number;
+
+    constructor(uint256 number_) {
+        number = Math.double(number_);
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "nested/Counter.sol",
+        r#"
+library Math {
+    function triple(uint256 x) public pure returns (uint256) {
+        return x * 3;
+    }
+}
+
+contract Counter {
+    uint256 public number;
+
+    constructor(uint256 number_) {
+        number = Math.triple(number_);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter as DoubleCounter} from "../src/Counter.sol";
+import {Counter as TripleCounter} from "../src/nested/Counter.sol";
+
+contract CounterTest is Test {
+    function testNew() public {
+        DoubleCounter doubleCounter = new DoubleCounter(21);
+        TripleCounter tripleCounter = new TripleCounter(21);
+        assertEq(doubleCounter.number(), 42);
+        assertEq(tripleCounter.number(), 63);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "testNew"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] testNew() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
 // Counter contract without interface instantiated in CounterTest
 //
 // ├── src

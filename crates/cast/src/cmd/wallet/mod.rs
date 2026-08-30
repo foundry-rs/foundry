@@ -379,8 +379,6 @@ pub enum WalletSubcommands {
 }
 
 impl WalletSubcommands {
-    // NOTE: wallet subcommands use custom shell::is_json() branches with local output shapes.
-    // TODO: Full JsonEnvelope migration is deferred to a follow-up pass.
     pub async fn run(self) -> Result<()> {
         match self {
             Self::New {

@@ -9,7 +9,7 @@ use alloy_chains::NamedChain;
 use alloy_consensus::{SignableTransaction, TxEip1559};
 use alloy_eips::eip2718::Decodable2718;
 use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder, TxSignerSync};
-use alloy_primitives::{Address, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, address, b256, fixed_bytes, keccak256};
 use alloy_provider::{Provider, ext::TxPoolApi};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag, TransactionRequest,
@@ -1969,4 +1969,117 @@ async fn can_get_default_base_fee_tempo_t0() {
         Some(10_000_000_000),
         "T0 base fee should be 10 billion attodollars"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_automine_state() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // Queried over RPC so the request name, parameter handling and dispatch arm are covered too,
+    // not just the handler.
+    let automine =
+        async || provider.client().request_noparams::<bool>("anvil_getAutomine").await.unwrap();
+
+    assert!(automine().await);
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+    assert!(!automine().await);
+
+    // Interval mining is a separate mode and also reports automining as disabled.
+    api.anvil_set_interval_mining(1).unwrap();
+    assert!(!automine().await);
+
+    api.anvil_set_auto_mine(true).await.unwrap();
+    assert!(automine().await);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_drop_all_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap().address();
+
+    for nonce in 0..3u64 {
+        api.send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(Address::repeat_byte(0x22))
+                .with_value(U256::from(1))
+                .with_nonce(nonce),
+        ))
+        .await
+        .unwrap();
+    }
+    assert_eq!(provider.txpool_status().await.unwrap().pending, 3);
+
+    let _: () = provider.client().request_noparams("anvil_dropAllTransactions").await.unwrap();
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.pending, 0);
+    assert_eq!(status.queued, 0);
+
+    // Dropping an empty pool is a no-op rather than an error.
+    let _: () = provider.client().request_noparams("anvil_dropAllTransactions").await.unwrap();
+
+    // The chain did not advance as a result of dropping.
+    assert_eq!(provider.get_block_number().await.unwrap(), 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_send_unsigned_transaction() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    // Any address can send, without a signer and without impersonating it first.
+    let sender = Address::repeat_byte(0x77);
+    let recipient = Address::repeat_byte(0x88);
+    api.anvil_set_balance(sender, U256::from(1e18 as u64)).await.unwrap();
+
+    // Mine explicitly: the handler returns as soon as the transaction is pooled.
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let hash: B256 = provider
+        .client()
+        .request(
+            "eth_sendUnsignedTransaction",
+            (WithOtherFields::new(
+                TransactionRequest::default()
+                    .with_from(sender)
+                    .with_to(recipient)
+                    .with_value(U256::from(1234)),
+            ),),
+        )
+        .await
+        .unwrap();
+    api.mine_one().await.unwrap();
+
+    let receipt = provider.get_transaction_receipt(hash).await.unwrap().unwrap();
+    assert!(receipt.status());
+    assert_eq!(receipt.from, sender);
+    assert_eq!(provider.get_balance(recipient).await.unwrap(), U256::from(1234));
+    assert_eq!(provider.get_transaction_count(sender).await.unwrap(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn send_unsigned_transaction_requires_a_sender() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let err = provider
+        .client()
+        .request::<_, B256>(
+            "eth_sendUnsignedTransaction",
+            (WithOtherFields::new(
+                TransactionRequest::default()
+                    .with_to(Address::repeat_byte(0x99))
+                    .with_value(U256::from(1)),
+            ),),
+        )
+        .await
+        .unwrap_err();
+    let err = err.as_error_resp().unwrap();
+    assert_eq!(err.code, -32602);
+    assert!(err.message.contains("No Signer available"), "unexpected error: {err}");
 }
