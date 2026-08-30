@@ -346,6 +346,55 @@ pub async fn spawn_rpc_proxy_internal_error_after(
     .await
 }
 
+/// Spawns an RPC proxy that answers `method` with `result` instead of forwarding it upstream.
+///
+/// All other methods are forwarded. The returned counter tracks how many `method` calls reached the
+/// proxy, which lets tests assert that a request was never sent upstream.
+pub async fn spawn_rpc_proxy_canned_method(
+    endpoint: String,
+    method: &'static str,
+    result: Value,
+) -> (String, Arc<AtomicUsize>) {
+    let client = reqwest::Client::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let proxy_calls = calls.clone();
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            let calls = proxy_calls.clone();
+            let result = result.clone();
+            async move {
+                if request.get("method").and_then(Value::as_str) == Some(method) {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                    let id = request.get("id").cloned().unwrap_or(Value::Null);
+                    return Json(json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": result,
+                    }));
+                }
+
+                let response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (format!("http://{address}"), calls)
+}
+
 #[derive(Clone)]
 enum RpcMethodRejection {
     Before(usize),
