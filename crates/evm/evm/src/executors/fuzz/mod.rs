@@ -34,6 +34,7 @@ use proptest::test_runner::{RngAlgorithm, TestCaseError, TestRng, TestRunner};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde_json::json;
 use std::{
+    path::PathBuf,
     sync::{
         Arc, OnceLock,
         atomic::{AtomicU32, Ordering},
@@ -199,6 +200,8 @@ pub struct FuzzedExecutor<FEN: FoundryEvmNetwork> {
     config: FuzzConfig,
     /// The persisted counterexample to be replayed, if any.
     persisted_failure: Option<BaseCounterExample>,
+    /// An existing corpus to replay before persisting into the configured corpus directory.
+    corpus_replay_dir: Option<PathBuf>,
     /// The number of parallel workers.
     num_workers: usize,
 }
@@ -211,6 +214,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         sender: Address,
         config: FuzzConfig,
         persisted_failure: Option<BaseCounterExample>,
+        corpus_replay_dir: Option<PathBuf>,
     ) -> Self {
         let run_limit = if config.run.is_some() { 1 } else { config.runs };
         let max_workers = if run_limit == 0 {
@@ -221,7 +225,15 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             Ord::max(1, run_limit / MIN_RUNS_PER_WORKER)
         };
         let num_workers = Ord::min(rayon::current_num_threads(), max_workers as usize);
-        Self { executor_f: executor, runner, sender, config, persisted_failure, num_workers }
+        Self {
+            executor_f: executor,
+            runner,
+            sender,
+            config,
+            persisted_failure,
+            corpus_replay_dir,
+            num_workers,
+        }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
@@ -692,6 +704,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             worker_id,
             self.config.corpus.clone(),
             generator,
+            self.corpus_replay_dir.as_deref(),
             // Master worker replays the persisted corpus using the executor
             (worker_id == 0).then_some(&self.executor_f),
             replay_target,
