@@ -191,6 +191,16 @@ async fn test_call_does_not_charge_operator_fee() {
     let err = provider.call(priced_request).await.unwrap_err();
     assert!(err.to_string().contains("Insufficient funds for gas * price + value"), "{err}");
 
+    let value_request = WithOtherFields::new(
+        TransactionRequest::default()
+            .with_from(caller)
+            .with_to(target)
+            .with_gas_limit(21_000)
+            .with_value(U256::ONE),
+    );
+    let err = provider.call(value_request).await.unwrap_err();
+    assert!(err.to_string().contains("Insufficient funds for gas * price + value"), "{err}");
+
     for validation in [false, true] {
         let err = provider
             .raw_request::<_, Value>(

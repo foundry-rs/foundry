@@ -2786,11 +2786,6 @@ impl<N: Network> Backend<N> {
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
             self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
         });
-        // Zero-fee calls on OP chains do not charge additional transaction fees.
-        #[cfg(feature = "optimism")]
-        if self.is_optimism() && gas_price == 0 && max_fee_per_blob_gas.unwrap_or_default() == 0 {
-            evm_env.cfg_env.disable_fee_charge = true;
-        }
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         let blob_hashes = blob_versioned_hashes.unwrap_or_default();
@@ -2888,7 +2883,11 @@ impl<N: Network> Backend<N> {
             self.build_call_env_with_base(request, fee_details, block_env, base_evm_env);
         #[cfg(feature = "optimism")]
         let tx_env = if self.is_optimism() {
-            CallTxEnv::Op(OpTransaction { base: tx_env, deposit: op_deposit, ..Default::default() })
+            CallTxEnv::Op(OpTransaction {
+                base: tx_env,
+                deposit: op_deposit,
+                enveloped_tx: Some(Bytes::new()),
+            })
         } else if self.is_tempo() {
             CallTxEnv::Tempo(TempoTxEnv::from(tx_env))
         } else {
@@ -3246,7 +3245,7 @@ impl<N: Network> Backend<N> {
         let mut inspector = self.build_inspector();
         let PreparedCall { mut evm_env, mut tx_env, .. } =
             self.prepare_typed_call_env(state, request, fee_details, block_env)?;
-        evm_env.cfg_env.disable_fee_charge |= overrides.disable_fee_charge;
+        evm_env.cfg_env.disable_fee_charge = overrides.disable_fee_charge;
         if let Some(gas_limit) = overrides.gas_limit {
             tx_env.base_mut().gas_limit = gas_limit;
         }
@@ -8074,7 +8073,6 @@ impl Backend<FoundryNetwork> {
                         evm_env.cfg_env.disable_nonce_check = false;
                         evm_env.cfg_env.disable_base_fee = false;
                         evm_env.cfg_env.disable_block_gas_limit = false;
-                        evm_env.cfg_env.disable_fee_charge = false;
                     }
 
                     let mut inspector = self.build_inspector();
