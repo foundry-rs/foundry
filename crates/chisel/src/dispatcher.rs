@@ -110,7 +110,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
     }
 
     /// Dispatches an input as a command via [Self::dispatch_command] or as a Solidity snippet.
-    pub async fn dispatch(&mut self, mut input: &str) -> Result<ControlFlow<()>> {
+    pub async fn dispatch(&mut self, input: &str) -> Result<ControlFlow<()>> {
         if let Some(command) = input.strip_prefix(COMMAND_LEADER) {
             return match ChiselCommand::parse(command) {
                 Ok(cmd) => self.dispatch_command(cmd).await,
@@ -120,6 +120,11 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             };
         }
 
+        self.dispatch_solidity(input).await
+    }
+
+    /// Dispatches an input as Solidity without interpreting Chisel commands.
+    pub(crate) async fn dispatch_solidity(&mut self, mut input: &str) -> Result<ControlFlow<()>> {
         input = input.trim();
         let (only_trivia, new_input) = preprocess(input, self.last_result.as_deref())?;
         input = &*new_input;
