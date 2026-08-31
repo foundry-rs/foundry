@@ -384,10 +384,16 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     }
 
     /// Sets the nonce of an account and the transaction environment.
-    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
+    pub fn set_account_and_tx_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
         self.set_account_nonce(address, nonce)?;
         self.tx_env_mut().set_nonce(nonce);
         Ok(())
+    }
+
+    /// Sets the nonce of an account and the transaction environment.
+    #[deprecated(note = "use `set_account_nonce` or `set_account_and_tx_nonce` explicitly")]
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
+        self.set_account_and_tx_nonce(address, nonce)
     }
 
     /// Returns the nonce of an account.

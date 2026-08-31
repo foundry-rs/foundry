@@ -624,7 +624,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         self.executor.set_balance(CALLER, U256::MAX)?;
 
         // We set the nonce of the deployer accounts to 1 to get the same addresses as DappTools.
-        self.executor.set_nonce(self.sender, 1)?;
+        self.executor.set_account_and_tx_nonce(self.sender, 1)?;
 
         // Deploy libraries.
         self.executor.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
