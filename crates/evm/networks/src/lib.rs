@@ -469,6 +469,23 @@ impl NetworkConfigs {
         false
     }
 
+    /// Coerces `hardfork` into this network's family.
+    ///
+    /// Execution and fee rules apply the same lossy `From` conversions, so a cross-namespace
+    /// override such as `--hardfork prague` on a Tempo node runs as a Tempo hardfork. Callers that
+    /// need to describe what actually executed, like trace decoding, go through here rather than
+    /// carrying the configured value.
+    pub fn executed_hardfork(&self, hardfork: FoundryHardfork) -> FoundryHardfork {
+        if self.is_tempo() {
+            return TempoHardfork::from(hardfork).into();
+        }
+        #[cfg(feature = "monad")]
+        if self.is_monad() {
+            return MonadHardfork::from(hardfork).into();
+        }
+        hardfork
+    }
+
     /// Returns additional cheatcode contract addresses for the active network.
     pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
         #[cfg(feature = "monad")]
@@ -1791,5 +1808,17 @@ mod tests {
             let cfg_optimism: NetworkConfigs = serde_json::from_str(json_optimism).unwrap();
             assert!(cfg_optimism.is_optimism());
         }
+    }
+
+    #[test]
+    fn executed_hardfork_follows_the_network_family() {
+        // A cross-namespace override runs as the configured network's hardfork, so the value used
+        // to describe execution has to be coerced the same way.
+        let prague = FoundryHardfork::Ethereum(EthereumHardfork::Prague);
+        assert_eq!(NetworkConfigs::default().executed_hardfork(prague), prague);
+        assert_eq!(
+            NetworkConfigs::with_tempo().executed_hardfork(prague),
+            FoundryHardfork::Tempo(TempoHardfork::from(prague))
+        );
     }
 }

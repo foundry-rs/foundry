@@ -1483,23 +1483,16 @@ impl<N: Network> Backend<N> {
 
     /// Returns a trace decoder configured for the currently resolved hardfork.
     fn call_trace_decoder(&self) -> Arc<CallTraceDecoder> {
-        let tempo_hardfork = self.is_tempo().then(|| self.tempo_hardfork());
-        #[cfg(feature = "monad")]
-        let monad_hardfork = self.is_monad().then(|| self.monad_hardfork());
+        let hardfork = Some(self.networks.executed_hardfork(self.hardfork()));
         let decoder = self.call_trace_decoder.read();
-        let is_current = decoder.tempo_hardfork() == tempo_hardfork;
-        #[cfg(feature = "monad")]
-        let is_current = is_current && decoder.monad_hardfork() == monad_hardfork;
-        if is_current {
+        if decoder.hardfork() == hardfork {
             return Arc::clone(&decoder);
         }
         drop(decoder);
 
         let mut decoder = self.call_trace_decoder.write();
         let mut updated = decoder.as_ref().clone();
-        updated.set_tempo_hardfork(tempo_hardfork);
-        #[cfg(feature = "monad")]
-        updated.set_monad_hardfork(monad_hardfork);
+        updated.set_hardfork(hardfork);
         *decoder = Arc::new(updated);
         Arc::clone(&decoder)
     }
@@ -9881,6 +9874,20 @@ mod tests {
         assert_eq!(outcome.block_number, original_best_number + 1);
     }
 
+    #[tokio::test]
+    async fn trace_decoder_follows_executed_hardfork_for_cross_namespace_override() {
+        let (api, _) = spawn(
+            NodeConfig::test_tempo()
+                .with_hardfork(Some(FoundryHardfork::Ethereum(EthereumHardfork::Prague))),
+        )
+        .await;
+
+        let decoder = api.backend.call_trace_decoder();
+        assert_eq!(decoder.hardfork(), Some(FoundryHardfork::Tempo(api.backend.tempo_hardfork())));
+        // The refresh compares the same coerced value, so repeated calls stay stable.
+        assert!(Arc::ptr_eq(&decoder, &api.backend.call_trace_decoder()));
+    }
+
     #[cfg(feature = "monad")]
     #[tokio::test]
     async fn monad_trace_decoder_follows_resolved_hardfork() {
@@ -9890,14 +9897,14 @@ mod tests {
         )
         .await;
         let stale_monad_nine = foundry_evm::traces::CallTraceDecoderBuilder::new()
-            .with_monad_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine))
+            .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()))
             .build();
         *monad_eight.backend.call_trace_decoder.write() = Arc::new(stale_monad_nine);
 
         let decoder = monad_eight.backend.call_trace_decoder();
         assert_eq!(
-            decoder.monad_hardfork(),
-            Some(foundry_evm::hardfork::MonadHardfork::MonadEight)
+            decoder.hardfork(),
+            Some(foundry_evm::hardfork::MonadHardfork::MonadEight.into())
         );
         assert!(
             !decoder
@@ -9911,12 +9918,15 @@ mod tests {
         )
         .await;
         let stale_monad_eight = foundry_evm::traces::CallTraceDecoderBuilder::new()
-            .with_monad_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadEight))
+            .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadEight.into()))
             .build();
         *monad_nine.backend.call_trace_decoder.write() = Arc::new(stale_monad_eight);
 
         let decoder = monad_nine.backend.call_trace_decoder();
-        assert_eq!(decoder.monad_hardfork(), Some(foundry_evm::hardfork::MonadHardfork::MonadNine));
+        assert_eq!(
+            decoder.hardfork(),
+            Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into())
+        );
         assert_eq!(
             decoder
                 .labels
