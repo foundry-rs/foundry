@@ -47,13 +47,12 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, context_for_child_transaction},
+        evm::{FoundryEvmNetwork, context_for_child_transaction},
     },
+    dispatch_evm_network,
     executors::TracingExecutor,
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
@@ -272,31 +271,9 @@ impl CallArgs {
             config.chain = Some(chain);
         }
 
-        if evm_opts.networks.is_tempo() {
-            return self
-                .run_with_network_and_opts::<TempoEvmNetwork>(config, evm_opts, auth_preflight)
-                .await;
-        }
-
-        #[cfg(feature = "monad")]
-        if evm_opts.networks.is_monad() {
-            return self
-                .run_with_network_and_opts::<foundry_evm::core::evm::MonadEvmNetwork>(
-                    config,
-                    evm_opts,
-                    auth_preflight,
-                )
-                .await;
-        }
-
-        #[cfg(feature = "optimism")]
-        if evm_opts.networks.is_optimism() {
-            return self
-                .run_with_network_and_opts::<OpEvmNetwork>(config, evm_opts, auth_preflight)
-                .await;
-        }
-
-        self.run_with_network_and_opts::<EthEvmNetwork>(config, evm_opts, auth_preflight).await
+        dispatch_evm_network!(evm_opts.networks, |Network| self
+            .run_with_network_and_opts::<Network>(config, evm_opts, auth_preflight)
+            .await)
     }
 
     /// Returns whether resolving this call can disclose an authorization before the transaction
