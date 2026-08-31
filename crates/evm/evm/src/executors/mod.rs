@@ -375,11 +375,17 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         Ok(self.backend().basic_ref(address)?.map(|acc| acc.balance).unwrap_or_default())
     }
 
-    /// Set the nonce of an account.
-    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
+    /// Sets the nonce of an account without modifying the transaction environment.
+    pub fn set_account_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
         let mut account = self.backend().basic_ref(address)?.unwrap_or_default();
         account.nonce = nonce;
         self.backend_mut().insert_account_info(address, account);
+        Ok(())
+    }
+
+    /// Sets the nonce of an account and the transaction environment.
+    pub fn set_nonce(&mut self, address: Address, nonce: u64) -> BackendResult<()> {
+        self.set_account_nonce(address, nonce)?;
         self.tx_env_mut().set_nonce(nonce);
         Ok(())
     }
