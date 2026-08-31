@@ -208,11 +208,18 @@ impl RemappingsProvider<'_> {
     /// - `remappings.txt`
     /// - Environment variables
     /// - CLI parameters
-    fn get_remappings(
-        &self,
-        remappings: Vec<Remapping>,
-        use_fallbacks: bool,
-    ) -> Result<RemappingsOutput, Error> {
+    fn get_remappings(&self) -> Result<RemappingsOutput, Error> {
+        let (remappings, explicitly_empty) = match &self.remappings {
+            Ok(remappings) => (remappings.clone(), remappings.is_empty()),
+            Err(err) => {
+                if let figment::error::Kind::MissingField(_) = err.kind {
+                    (Vec::new(), false)
+                } else {
+                    return Err(err.clone());
+                }
+            }
+        };
+
         trace!("get all remappings from {:?}", self.root);
         /// Prioritizes remappings by shortest path, then a `src` target, then lexical path.
         ///   - ("a", "1/2") over ("a", "1/2/3")
@@ -255,7 +262,7 @@ impl RemappingsProvider<'_> {
 
         // check remappings.txt file
         let remappings_file = self.root.join("remappings.txt");
-        if use_fallbacks && remappings_file.is_file() {
+        if !explicitly_empty && remappings_file.is_file() {
             let content = fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
             let remappings_from_file: Result<Vec<_>, _> =
                 remappings_from_newline(&content).collect();
@@ -275,7 +282,7 @@ impl RemappingsProvider<'_> {
         let mut all_remappings = Remappings::new_with_remappings(user_remappings);
 
         // scan all library dirs and autodetect remappings
-        if use_fallbacks && self.auto_detect_remappings {
+        if !explicitly_empty && self.auto_detect_remappings {
             let (nested_foundry_remappings, auto_detected_remappings) = rayon::join(
                 || self.find_nested_foundry_remappings(),
                 || self.auto_detect_remappings(),
@@ -738,16 +745,7 @@ impl Provider for RemappingsProvider<'_> {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
-        let output = match &self.remappings {
-            Ok(remappings) => self.get_remappings(remappings.clone(), !remappings.is_empty()),
-            Err(err) => {
-                if let figment::error::Kind::MissingField(_) = err.kind {
-                    self.get_remappings(vec![], true)
-                } else {
-                    return Err(err.clone());
-                }
-            }
-        }?;
+        let output = self.get_remappings()?;
 
         // turn the absolute remapping into a relative one by stripping the `root`
         let remappings = output

@@ -3670,35 +3670,29 @@ mod tests {
             jail.create_dir("lib/dependency/src")?;
             jail.create_file("lib/dependency/src/Dependency.sol", "contract Dependency {}")?;
             jail.create_file("remappings.txt", "from-file/=lib/from-file/\n")?;
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                [profile.default]
-                libs = ["lib"]
-            "#,
-            )?;
 
-            let config = Config::load().unwrap();
-            assert!(config.remappings.iter().any(|remapping| remapping.name == "from-file/"));
-            assert!(config.remappings.iter().any(|remapping| remapping.name == "dependency/"));
-
-            jail.create_file(
-                "foundry.toml",
-                r#"
-                [profile.default]
-                libs = ["lib"]
-                remappings = []
-            "#,
-            )?;
-
-            let config = Config::load().unwrap();
-            assert!(
-                config
-                    .remappings
-                    .iter()
-                    .all(|remapping| remapping.name != "from-file/"
-                        && remapping.name != "dependency/"),
-            );
+            let cases: [(&str, &[&str]); 3] = [
+                ("", &["from-file/", "dependency/"]),
+                (
+                    r#"remappings = ["from-config/=lib/from-config/"]"#,
+                    &["from-file/", "dependency/", "from-config/"],
+                ),
+                ("remappings = []", &[]),
+            ];
+            for (remappings, expected) in cases {
+                jail.create_file(
+                    "foundry.toml",
+                    &format!("[profile.default]\nlibs = [\"lib\"]\n{remappings}"),
+                )?;
+                let config = Config::load().unwrap();
+                for name in ["from-file/", "dependency/", "from-config/"] {
+                    assert_eq!(
+                        config.remappings.iter().any(|remapping| remapping.name == name),
+                        expected.contains(&name),
+                        "unexpected `{name}` with `{remappings}`",
+                    );
+                }
+            }
             Ok(())
         });
     }
