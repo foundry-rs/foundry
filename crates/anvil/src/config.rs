@@ -1435,18 +1435,9 @@ impl NodeConfig {
             .as_ref()
             .and_then(|fork| fork.config.read().hardfork)
             .unwrap_or_else(|| self.get_hardfork());
-        let mut decoder_builder =
-            CallTraceDecoderBuilder::new().with_networks(self.networks).with_tempo_hardfork(
-                self.networks.is_tempo().then(|| TempoHardfork::from(active_hardfork)),
-            );
-        #[cfg(feature = "monad")]
-        {
-            decoder_builder = decoder_builder.with_monad_hardfork(
-                self.networks
-                    .is_monad()
-                    .then(|| foundry_evm::hardfork::MonadHardfork::from(active_hardfork)),
-            );
-        }
+        let mut decoder_builder = CallTraceDecoderBuilder::new()
+            .with_networks(self.networks)
+            .with_hardfork(Some(self.networks.executed_hardfork(active_hardfork)));
         if self.print_traces {
             // if traces should get printed we configure the decoder with the signatures cache
             if let Ok(identifier) = SignaturesIdentifier::new(false) {
