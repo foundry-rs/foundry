@@ -9,6 +9,7 @@
 //! It contains methods to read the json abi, generate rust bindings from the abi and ultimately
 //! write the bindings to a crate or modules.
 
+use alloy_json_abi::ToSolConfig;
 use alloy_sol_macro_expander::expand::expand;
 use alloy_sol_macro_input::{SolInput, SolInputKind};
 use eyre::{Context, OptionExt, Result};
@@ -81,17 +82,9 @@ impl MultiSolMacroGen {
         Ok(())
     }
 
-    pub fn generate_bindings(
-        &mut self,
-        all_derives: bool,
-        normalize: impl Fn(SolInput) -> syn::Result<SolInput> + Sync,
-    ) -> Result<()> {
+    pub fn generate_bindings(&mut self, all_derives: bool, sol_config: &ToSolConfig) -> Result<()> {
         self.instances.par_iter_mut().try_for_each(|instance| {
-            let result = instance
-                .get_sol_input()
-                .and_then(|input| normalize(input).map_err(Into::into))
-                .and_then(|input| Self::generate_binding(instance, input, all_derives));
-            result.wrap_err_with(|| {
+            Self::generate_binding(instance, all_derives, sol_config).wrap_err_with(|| {
                 format!(
                     "failed to generate bindings for {}:{}",
                     instance.path.display(),
@@ -103,9 +96,10 @@ impl MultiSolMacroGen {
 
     fn generate_binding(
         instance: &mut SolMacroGen,
-        input: SolInput,
         all_derives: bool,
+        sol_config: &ToSolConfig,
     ) -> Result<()> {
+        let input = instance.get_sol_input()?.normalize_json_with_config(sol_config.clone())?;
         let SolInput { attrs: _, path: _, kind } = input;
 
         let tokens = match kind {
@@ -148,9 +142,9 @@ impl MultiSolMacroGen {
         alloy_version: Option<String>,
         alloy_rev: Option<String>,
         all_derives: bool,
-        normalize: impl Fn(SolInput) -> syn::Result<SolInput> + Sync,
+        sol_config: &ToSolConfig,
     ) -> Result<()> {
-        self.generate_bindings(all_derives, normalize)?;
+        self.generate_bindings(all_derives, sol_config)?;
 
         let src = bindings_path.join("src");
         fs::create_dir_all(&src)?;
@@ -238,9 +232,9 @@ edition = "2021"
         bindings_path: &Path,
         single_file: bool,
         all_derives: bool,
-        normalize: impl Fn(SolInput) -> syn::Result<SolInput> + Sync,
+        sol_config: &ToSolConfig,
     ) -> Result<()> {
-        self.generate_bindings(all_derives, normalize)?;
+        self.generate_bindings(all_derives, sol_config)?;
 
         fs::create_dir_all(bindings_path)?;
 

@@ -9,7 +9,7 @@ use foundry_common::{
     fs::json_files,
 };
 use foundry_compilers::{
-    Graph, Project,
+    Graph, ProjectPathsConfig,
     cache::CompilerCache,
     multi::{MultiCompilerParser, MultiCompilerSettings},
 };
@@ -128,19 +128,17 @@ impl BindArgs {
             eyre::bail!("`--ethers` bindings have been removed. Use `--alloy` (default) instead.");
         }
 
-        let mut project = self.build.project()?;
+        let config = self.load_config()?;
+        let artifacts = config.out.clone();
         let enum_definitions = if self.skip_build {
-            cached_enum_definitions(
-                &project,
-                self.get_json_files(&project.paths.artifacts)?.map(|(_, path)| path),
-            )
+            let paths = config.project_paths();
+            cached_enum_definitions(&paths, self.get_json_files(&artifacts)?.map(|(_, path)| path))
         } else {
+            let mut project = config.project()?;
             let output = compile_abi_project(&mut project, ProjectCompiler::new())?;
             enum_definitions(output.parser())
         };
 
-        let config = self.load_config()?;
-        let artifacts = config.out;
         let bindings_root = self.bindings.clone().unwrap_or_else(|| artifacts.join("bindings"));
         let sol_config = ToSolConfig::new().enum_definitions(enum_definitions);
 
@@ -148,9 +146,7 @@ impl BindArgs {
             if !self.overwrite {
                 sh_status!("Bindings found. Checking for consistency.")?;
                 let mut bindings = self.get_solmacrogen(&artifacts)?;
-                bindings.generate_bindings(!self.skip_extra_derives, |input| {
-                    input.normalize_json_with_config(sol_config.clone())
-                })?;
+                bindings.generate_bindings(!self.skip_extra_derives, &sol_config)?;
                 return self.check_existing_bindings(&bindings, &bindings_root);
             }
 
@@ -270,7 +266,7 @@ impl BindArgs {
                 bindings_root,
                 self.single_file,
                 !self.skip_extra_derives,
-                |input| input.normalize_json_with_config(sol_config.clone()),
+                sol_config,
             )?;
         } else {
             trace!(single_file = self.single_file, "generating crate");
@@ -284,7 +280,7 @@ impl BindArgs {
                 self.alloy_version.clone(),
                 self.alloy_rev.clone(),
                 !self.skip_extra_derives,
-                |input| input.normalize_json_with_config(sol_config.clone()),
+                sol_config,
             )?;
         }
 
@@ -293,13 +289,13 @@ impl BindArgs {
 }
 
 fn cached_enum_definitions(
-    project: &Project,
+    paths: &ProjectPathsConfig,
     artifacts: impl Iterator<Item = PathBuf>,
 ) -> BTreeMap<String, Vec<String>> {
-    let Ok(graph) = Graph::<MultiCompilerParser>::resolve(&project.paths) else {
+    let Ok(graph) = Graph::<MultiCompilerParser>::resolve(paths) else {
         return BTreeMap::default();
     };
-    let Ok(cache) = CompilerCache::<MultiCompilerSettings>::read_joined(&project.paths) else {
+    let Ok(cache) = CompilerCache::<MultiCompilerSettings>::read_joined(paths) else {
         return BTreeMap::default();
     };
     let sources_are_fresh = graph.nodes.iter().all(|node| {

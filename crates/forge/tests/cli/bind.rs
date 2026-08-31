@@ -1,4 +1,5 @@
 use foundry_compilers::utils::read_json_file;
+use foundry_config::SolcReq;
 use foundry_test_utils::TestProject;
 use std::{fs, path::Path, process::Command};
 
@@ -225,6 +226,26 @@ contract EnumUser {
     let binding = fs::read_to_string(bindings_path.join("src/enum_user.rs")).unwrap();
     assert!(binding.contains("pub struct Status"), "{binding}");
     assert!(!binding.contains("pub enum Status"), "{binding}");
+});
+
+forgetest!(bind_skip_build_does_not_require_compiler, |prj, cmd| {
+    prj.add_source(
+        "EnumUser.sol",
+        r#"
+contract EnumUser {
+    enum Status { Pending, Active }
+    function echo(Status status) external pure returns (Status) { return status; }
+}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    let missing_solc = prj.root().join("missing-solc");
+    prj.update_config(|config| config.solc = Some(SolcReq::Local(missing_solc)));
+    cmd.forge_fuse().args(["bind", "--skip-build", "--select", "^EnumUser$"]).assert_success();
+
+    let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
+    assert!(binding.contains("pub enum Status"), "{binding}");
 });
 
 forgetest!(bind_stale_untracked_enum_artifacts_fall_back_to_udvt, |prj, cmd| {

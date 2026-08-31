@@ -15,6 +15,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+alloy-json-abi.workspace = true
 alloy-sol-macro-input.workspace = true
 alloy-sol-macro-expander = { workspace = true, features = ["json"] }
 foundry-common.workspace = true
