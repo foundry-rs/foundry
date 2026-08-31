@@ -1499,12 +1499,7 @@ impl Config {
                         Solc::blocking_install(version)?
                     }
                 }
-                SolcReq::Local(solc) => {
-                    if !solc.is_file() {
-                        return Err(SolcError::msg(format!("`solc` {solc:?} does not exist")));
-                    }
-                    Solc::new(solc)?
-                }
+                SolcReq::Local(solc) => Solc::new(resolve_solc_path(solc)?)?,
             };
             return Ok(Some(solc));
         }
@@ -3102,8 +3097,16 @@ pub enum SolcReq {
     /// Requires a specific solc version, that's either already installed (via `svm`) or will be
     /// auto installed (via `svm`)
     Version(Version),
-    /// Path to an existing local solc installation
+    /// Path to an existing local solc installation, or an executable name on `PATH`.
     Local(PathBuf),
+}
+
+fn resolve_solc_path(solc: &Path) -> Result<PathBuf, SolcError> {
+    if solc.is_file() {
+        Ok(solc.to_path_buf())
+    } else {
+        which::which(solc).map_err(|_| SolcError::msg(format!("`solc` {solc:?} does not exist")))
+    }
 }
 
 impl SolcReq {
@@ -3114,7 +3117,7 @@ impl SolcReq {
     pub fn try_version(&self) -> Result<Version, SolcError> {
         match self {
             Self::Version(version) => Ok(version.clone()),
-            Self::Local(path) => Solc::new(path).map(|solc| solc.version),
+            Self::Local(path) => Solc::new(resolve_solc_path(path)?).map(|solc| solc.version),
         }
     }
 }
