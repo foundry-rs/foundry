@@ -1147,6 +1147,7 @@ mod tests {
     };
     use foundry_config::UnresolvedEnvVarError;
     use foundry_evm::{
+        core::evm::EthEvmNetwork,
         revm::context::Block as _,
         traces::{
             CallKind, CallTrace, CallTraceArena, CallTraceNode, SparsedTraceArena, TraceKind,
