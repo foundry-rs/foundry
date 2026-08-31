@@ -41,33 +41,8 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
             .spec_id_opt(version.map(evm_spec_id::<SpecFor<FEN>>))
             .build(env.0, env.1, db, networks);
 
-        // Apply the state overrides.
         if let Some(state_overrides) = state_overrides {
-            for (address, overrides) in state_overrides {
-                if let Some(balance) = overrides.balance {
-                    executor.set_balance(address, balance)?;
-                }
-                if let Some(nonce) = overrides.nonce {
-                    executor.set_nonce(address, nonce)?;
-                }
-                if let Some(code) = overrides.code {
-                    let bytecode = Bytecode::new_raw_checked(code)
-                        .wrap_err("invalid bytecode in state override")?;
-                    executor.set_code(address, bytecode)?;
-                }
-                if let Some(state) = overrides.state {
-                    let state: HashMap<U256, U256> = state
-                        .into_iter()
-                        .map(|(slot, value)| (slot.into(), value.into()))
-                        .collect();
-                    executor.set_storage(address, state)?;
-                }
-                if let Some(state_diff) = overrides.state_diff {
-                    for (slot, value) in state_diff {
-                        executor.set_storage_slot(address, slot.into(), value.into())?;
-                    }
-                }
-            }
+            apply_state_overrides(&mut executor, state_overrides)?;
         }
 
         Ok(Self { executor })
@@ -154,6 +129,36 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
     }
 }
 
+fn apply_state_overrides<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    state_overrides: StateOverride,
+) -> eyre::Result<()> {
+    for (address, overrides) in state_overrides {
+        if let Some(balance) = overrides.balance {
+            executor.set_balance(address, balance)?;
+        }
+        if let Some(nonce) = overrides.nonce {
+            executor.set_account_nonce(address, nonce)?;
+        }
+        if let Some(code) = overrides.code {
+            let bytecode =
+                Bytecode::new_raw_checked(code).wrap_err("invalid bytecode in state override")?;
+            executor.set_code(address, bytecode)?;
+        }
+        if let Some(state) = overrides.state {
+            let state: HashMap<U256, U256> =
+                state.into_iter().map(|(slot, value)| (slot.into(), value.into())).collect();
+            executor.set_storage(address, state)?;
+        }
+        if let Some(state_diff) = overrides.state_diff {
+            for (slot, value) in state_diff {
+                executor.set_storage_slot(address, slot.into(), value.into())?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn network_hardfork_from_evm_version(
     networks: NetworkConfigs,
     evm_version: EvmVersion,
@@ -181,5 +186,41 @@ impl<FEN: FoundryEvmNetwork> Deref for TracingExecutor<FEN> {
 impl<FEN: FoundryEvmNetwork> DerefMut for TracingExecutor<FEN> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.executor
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_rpc_types::state::AccountOverride;
+    use foundry_evm_core::{FoundryTransaction, evm::EthEvmNetwork};
+    use revm::context::Transaction;
+
+    #[test]
+    fn state_override_nonce_does_not_modify_transaction_nonce() {
+        let sender = Address::repeat_byte(0x11);
+        let mut tx_env = TxEnvFor::<EthEvmNetwork>::default();
+        tx_env.set_caller(sender);
+        tx_env.set_nonce(7);
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            tx_env,
+            backend,
+            NetworkConfigs::default(),
+        );
+        executor.set_account_nonce(sender, 7).unwrap();
+
+        let overridden = Address::repeat_byte(0x42);
+        let mut state_overrides = StateOverride::default();
+        state_overrides
+            .insert(overridden, AccountOverride { nonce: Some(100), ..Default::default() });
+
+        apply_state_overrides(&mut executor, state_overrides).unwrap();
+
+        assert_eq!(executor.get_nonce(overridden).unwrap(), 100);
+        assert_eq!(executor.get_nonce(sender).unwrap(), 7);
+        assert_eq!(executor.tx_env().caller(), sender);
+        assert_eq!(executor.tx_env().nonce(), 7);
     }
 }
