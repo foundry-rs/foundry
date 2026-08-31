@@ -4,7 +4,7 @@ use super::{
     transaction::send_safe_call,
 };
 use alloy_network::Ethereum;
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use alloy_provider::Provider;
 use alloy_rpc_types::Log;
 use alloy_sol_types::{SolCall, SolEvent};
@@ -40,6 +40,12 @@ pub(super) async fn run(
     );
 
     transaction.verify_hash(safe, &read_provider).await?;
+    ensure_current_nonce(
+        safe,
+        SafeTransaction::number(&transaction.nonce, "nonce")?,
+        &read_provider,
+    )
+    .await?;
     transaction.show_transaction_summary()?;
 
     let signatures = transaction.packed_signatures()?;
@@ -71,6 +77,19 @@ pub(super) async fn run(
     Ok(())
 }
 
+async fn ensure_current_nonce<P>(safe: Address, transaction_nonce: U256, provider: &P) -> Result<()>
+where
+    P: Provider<Ethereum>,
+{
+    let current_nonce =
+        ISafe::new(safe, provider).nonce().call().await.wrap_err("failed to read Safe nonce")?;
+    ensure!(
+        transaction_nonce == current_nonce,
+        "Safe transaction nonce {transaction_nonce} does not match current Safe nonce {current_nonce}"
+    );
+    Ok(())
+}
+
 fn execution_succeeded(logs: &[Log], safe: Address, safe_tx_hash: B256) -> Result<bool> {
     logs.iter()
         .rev()
@@ -94,7 +113,7 @@ fn execution_succeeded(logs: &[Log], safe: Address, safe_tx_hash: B256) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::U256;
+    use alloy_provider::{ProviderBuilder, mock::Asserter};
 
     fn success(safe: Address, hash: B256) -> Log {
         Log {
@@ -128,6 +147,25 @@ mod tests {
         );
         assert!(
             !execution_succeeded(&[success(safe, hash), failure(safe, hash)], safe, hash).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn requires_transaction_nonce_to_be_current() {
+        let safe = Address::repeat_byte(1);
+        let asserter = Asserter::new();
+        asserter.push_success(&B256::from(U256::from(7).to_be_bytes::<32>()));
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+
+        ensure_current_nonce(safe, U256::from(7), &provider).await.unwrap();
+
+        let asserter = Asserter::new();
+        asserter.push_success(&B256::from(U256::from(8).to_be_bytes::<32>()));
+        let provider = ProviderBuilder::new().connect_mocked_client(asserter);
+        let error = ensure_current_nonce(safe, U256::from(7), &provider).await.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Safe transaction nonce 7 does not match current Safe nonce 8"
         );
     }
 }

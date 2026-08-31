@@ -221,7 +221,8 @@ pub enum SafeSubcommand {
     /// Simulate a proposed Safe transaction without requiring owner signatures.
     ///
     /// This simulates the inner CALL or DELEGATECALL in the Safe's context. It does not validate
-    /// the Safe nonce, owner signatures, threshold, guard hooks, or gas reimbursement.
+    /// the Safe nonce, owner signatures, threshold, or guard hooks. Reimbursed transactions
+    /// (`gasPrice > 0`) are rejected because SimulateTxAccessor does not enforce `safeTxGas`.
     #[command(verbatim_doc_comment)]
     Simulate {
         /// Safe account address.
@@ -230,9 +231,9 @@ pub enum SafeSubcommand {
         /// Safe transaction hash from the Transaction Service.
         safe_tx_hash: B256,
 
-        /// Executor address. Required for DELEGATECALL simulation.
+        /// Address that will execute the Safe transaction. Used as the simulation's tx.origin.
         #[arg(long, env = "ETH_FROM", value_name = "ADDRESS")]
-        from: Option<Address>,
+        from: Address,
 
         /// SimulateTxAccessor address.
         #[arg(long, default_value_t = SIMULATE_TX_ACCESSOR_V1_4_1)]

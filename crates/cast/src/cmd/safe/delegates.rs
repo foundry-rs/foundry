@@ -6,7 +6,7 @@ use alloy_network::Ethereum;
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_signer::Signer;
-use eyre::{Result, ensure};
+use eyre::{Context, Result, ensure};
 use foundry_cli::{
     json::{print_json_object, print_scalar},
     opts::RpcOpts,
@@ -16,6 +16,7 @@ use foundry_common::provider::ProviderBuilder;
 use foundry_wallets::WalletOpts;
 use reqwest::Method;
 use serde_json::json;
+use std::collections::HashSet;
 
 pub(super) async fn add(
     safe: Address,
@@ -53,9 +54,24 @@ pub(super) async fn list(safe: Address, service: SafeServiceOpts, rpc: RpcOpts) 
     };
     let mut url = service.endpoint(chain_id, "v2/delegates/")?;
     url.query_pairs_mut().append_pair("safe", &safe.to_checksum(None));
-    let response: SafeDelegatesResponse =
-        service.response(service.request(Method::GET, url)).await?;
-    print_json_object(response.results)?;
+    let origin = url.origin();
+    let path = url.path().to_string();
+    let mut visited = HashSet::new();
+    let mut delegates = Vec::new();
+    loop {
+        ensure!(visited.insert(url.clone()), "delegate pagination contains a cycle at {url}");
+        let mut response: SafeDelegatesResponse =
+            service.response(service.request(Method::GET, url.clone())).await?;
+        delegates.append(&mut response.results);
+        let Some(next) = response.next else { break };
+        let next = url.join(&next).wrap_err("invalid delegate pagination URL")?;
+        ensure!(
+            next.origin() == origin && next.path() == path,
+            "delegate pagination URL points outside the Transaction Service endpoint: {next}"
+        );
+        url = next;
+    }
+    print_json_object(delegates)?;
     Ok(())
 }
 

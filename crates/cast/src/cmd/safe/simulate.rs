@@ -16,7 +16,7 @@ use serde_json::json;
 pub(super) async fn run(
     safe: Address,
     safe_tx_hash: B256,
-    from: Option<Address>,
+    from: Address,
     accessor: Address,
     service: SafeServiceOpts,
     rpc: RpcOpts,
@@ -27,13 +27,10 @@ pub(super) async fn run(
     let transaction = service.get_transaction(chain_id, "v2", safe_tx_hash).await?;
     transaction.verify_hash(safe, &provider).await?;
     transaction.show_transaction_summary()?;
-    let from = match from {
-        Some(executor) => executor,
-        None if transaction.operation == 1 => {
-            eyre::bail!("--from is required to simulate a Safe DELEGATECALL")
-        }
-        None => safe,
-    };
+    ensure!(
+        SafeTransaction::number(&transaction.gas_price, "gasPrice")?.is_zero(),
+        "cannot simulate reimbursed Safe transactions (gasPrice > 0): SimulateTxAccessor does not enforce safeTxGas"
+    );
     ensure_contract(&provider, accessor, "SimulateTxAccessor", "--accessor").await?;
 
     let accessor_call: Bytes = ISimulateTxAccessor::simulateCall {

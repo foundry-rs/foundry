@@ -6,12 +6,13 @@ use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::NodeConfig;
-use axum::{Json, Router};
+use axum::{Json, Router, extract::RawQuery};
 use foundry_cli::json::JsonEnvelope;
 use foundry_test_utils::util::OutputExt;
 use serde_json::{Value, json};
 
 const ANVIL_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+const SIMULATION_SAFE_CODE: &str = "0x63d8d11f785f3560e01c146051577333333333333333333333333333333333333333333214602b575f80fd5b60015f5260a0602052602a60405260016060526060608052602060a0523260c05260e05ffd5b5f805260205ff3";
 
 fn safe_transaction(safe: Address, operation: u8) -> Value {
     json!({
@@ -196,6 +197,72 @@ casttest!(safe_service_mutations_emit_json_envelopes, async |_prj, cmd| {
         .assert_json_stdout(json_envelope(json!(signature)));
 });
 
+casttest!(safe_list_delegates_follows_pagination, async |_prj, cmd| {
+    let safe = address!("1111111111111111111111111111111111111111");
+    let first = json!({
+        "safe": safe,
+        "delegate": address!("2222222222222222222222222222222222222222"),
+        "delegator": address!("3333333333333333333333333333333333333333"),
+        "label": "first",
+    });
+    let second = json!({
+        "safe": safe,
+        "delegate": address!("4444444444444444444444444444444444444444"),
+        "delegator": address!("5555555555555555555555555555555555555555"),
+        "label": "second",
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let service = format!("http://{}", listener.local_addr().unwrap());
+    let next = format!("{service}/api/v2/delegates/?page=2");
+    let first_response = first.clone();
+    let second_response = second.clone();
+    let router = Router::new().fallback(move |RawQuery(query): RawQuery| {
+        let first = first_response.clone();
+        let second = second_response.clone();
+        let next = next.clone();
+        async move {
+            let is_second_page =
+                query.as_deref().is_some_and(|query| query.split('&').any(|pair| pair == "page=2"));
+            Json(if is_second_page {
+                json!({ "count": 2, "next": null, "previous": null, "results": [second] })
+            } else {
+                json!({ "count": 2, "next": next, "previous": null, "results": [first] })
+            })
+        }
+    });
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+
+    cmd.cast_fuse()
+        .args(["--json", "safe", "list-delegates", &safe.to_string(), "--service-url", &service])
+        .assert_json_stdout(json_envelope(json!([first, second])));
+});
+
+casttest!(safe_list_delegates_rejects_external_next_page, async |_prj, cmd| {
+    let service = spawn_safe_service(json!({
+        "count": 1,
+        "next": "http://127.0.0.1:1/collect-api-key",
+        "previous": null,
+        "results": [],
+    }))
+    .await;
+    let stderr = cmd
+        .cast_fuse()
+        .args([
+            "safe",
+            "list-delegates",
+            "0x1111111111111111111111111111111111111111",
+            "--service-url",
+            &service,
+        ])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(
+        stderr.contains("delegate pagination URL points outside the Transaction Service endpoint"),
+        "unexpected error: {stderr}"
+    );
+});
+
 casttest!(safe_sign_rejects_service_selected_safe, async |_prj, cmd| {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
@@ -231,57 +298,99 @@ casttest!(safe_sign_rejects_service_selected_safe, async |_prj, cmd| {
     );
 });
 
-casttest!(safe_delegatecall_simulation_uses_executor, async |_prj, cmd| {
+casttest!(safe_simulation_requires_executor, |_prj, cmd| {
+    let safe = address!("1111111111111111111111111111111111111111").to_string();
+    let safe_tx_hash = B256::ZERO.to_string();
+
+    cmd.cast_fuse();
+    cmd.unset_env("ETH_FROM");
+    let stderr = cmd
+        .args(["safe", "simulate", &safe, &safe_tx_hash, "--rpc-url", "http://127.0.0.1:1"])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+    assert!(
+        stderr.contains("the following required arguments were not provided")
+            && stderr.contains("--from <ADDRESS>"),
+        "unexpected error: {stderr}"
+    );
+});
+
+casttest!(safe_simulation_uses_executor_context, async |_prj, cmd| {
     let (api, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
     let safe = address!("1111111111111111111111111111111111111111");
     let executor = address!("3333333333333333333333333333333333333333");
     let accessor = address!("4444444444444444444444444444444444444444");
-    // Return a zero transaction hash, then require the simulation caller to be `executor` and
-    // return it as the simulated call result.
-    api.anvil_set_code(
-        safe,
-        "0x63d8d11f785f3560e01c146051577333333333333333333333333333333333333333333314602b575f80fd5b60015f5260a0602052602a60405260016060526060608052602060a0523360c05260e05ffd5b5f805260205ff3"
-            .parse()
-            .unwrap(),
-    )
-    .await
-    .unwrap();
+    // Return a zero transaction hash, then require `tx.origin` to be `executor` and return it as
+    // the simulated call result.
+    api.anvil_set_code(safe, SIMULATION_SAFE_CODE.parse().unwrap()).await.unwrap();
     api.anvil_set_code(accessor, "0x00".parse().unwrap()).await.unwrap();
-    let service = spawn_safe_service(safe_transaction(safe, 1)).await;
-    let safe = safe.to_string();
-    let executor = executor.to_string();
-    let accessor = accessor.to_string();
+    let safe_arg = safe.to_string();
+    let executor_arg = executor.to_string();
+    let accessor_arg = accessor.to_string();
     let safe_tx_hash = B256::ZERO.to_string();
-    let simulation_args = [
-        "--accessor",
-        accessor.as_str(),
-        "--service-url",
-        service.as_str(),
-        "--rpc-url",
-        rpc.as_str(),
-    ];
 
-    cmd.cast_fuse();
-    cmd.unset_env("ETH_FROM");
+    for operation in [0, 1] {
+        let service = spawn_safe_service(safe_transaction(safe, operation)).await;
+        cmd.cast_fuse()
+            .args([
+                "--json",
+                "safe",
+                "simulate",
+                &safe_arg,
+                &safe_tx_hash,
+                "--from",
+                &executor_arg,
+                "--accessor",
+                &accessor_arg,
+                "--service-url",
+                &service,
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_json_stdout(json_envelope(json!({
+                "safeTxHash": B256::ZERO,
+                "success": true,
+                "gasUsed": "42",
+                "returnData": "0x0000000000000000000000003333333333333333333333333333333333333333",
+            })));
+    }
+});
+
+casttest!(safe_simulation_rejects_reimbursed_transaction, async |_prj, cmd| {
+    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let safe = address!("1111111111111111111111111111111111111111");
+    let executor = address!("3333333333333333333333333333333333333333");
+    let accessor = address!("4444444444444444444444444444444444444444");
+    api.anvil_set_code(safe, SIMULATION_SAFE_CODE.parse().unwrap()).await.unwrap();
+    api.anvil_set_code(accessor, "0x00".parse().unwrap()).await.unwrap();
+    let mut transaction = safe_transaction(safe, 0);
+    transaction["gasPrice"] = json!("1");
+    let service = spawn_safe_service(transaction).await;
+
     let stderr = cmd
-        .args(["safe", "simulate", &safe, &safe_tx_hash])
-        .args(simulation_args)
+        .cast_fuse()
+        .args([
+            "safe",
+            "simulate",
+            &safe.to_string(),
+            &B256::ZERO.to_string(),
+            "--from",
+            &executor.to_string(),
+            "--accessor",
+            &accessor.to_string(),
+            "--service-url",
+            &service,
+            "--rpc-url",
+            &rpc,
+        ])
         .assert_failure()
         .get_output()
         .stderr_lossy();
     assert!(
-        stderr.contains("--from is required to simulate a Safe DELEGATECALL"),
+        stderr.contains("cannot simulate reimbursed Safe transactions (gasPrice > 0)"),
         "unexpected error: {stderr}"
     );
-
-    cmd.cast_fuse()
-        .args(["--json", "safe", "simulate", &safe, &safe_tx_hash, "--from", &executor])
-        .args(simulation_args)
-        .assert_json_stdout(json_envelope(json!({
-            "safeTxHash": B256::ZERO,
-            "success": true,
-            "gasUsed": "42",
-            "returnData": "0x0000000000000000000000003333333333333333333333333333333333333333",
-        })));
 });

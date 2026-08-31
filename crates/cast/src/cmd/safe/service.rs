@@ -11,6 +11,8 @@ use std::str::FromStr;
 
 const SAFE_SIGNATURE_LENGTH: usize = 65;
 const CONTRACT_SIGNATURE_HEADER_LENGTH: usize = SAFE_SIGNATURE_LENGTH + U256::BYTES;
+const P256_SIGNATURE_DATA_LENGTH: usize = 128;
+const P256_SIGNATURE_LENGTH: usize = SAFE_SIGNATURE_LENGTH + P256_SIGNATURE_DATA_LENGTH;
 
 #[derive(Args, Clone, Debug)]
 pub struct SafeServiceOpts {
@@ -75,6 +77,8 @@ pub(super) struct SafeDelegate {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct SafeDelegatesResponse {
+    #[serde(default)]
+    pub(super) next: Option<String>,
     pub(super) results: Vec<SafeDelegate>,
 }
 
@@ -131,15 +135,15 @@ impl SafeTransaction {
         origin: Option<String>,
     ) -> Value {
         let mut body = json!({
-            "to": self.to,
+            "to": self.to.to_checksum(None),
             "value": self.value,
             "data": self.data,
             "operation": self.operation,
             "safeTxGas": self.safe_tx_gas,
             "baseGas": self.base_gas,
             "gasPrice": self.gas_price,
-            "gasToken": self.gas_token,
-            "refundReceiver": self.refund_receiver,
+            "gasToken": self.gas_token.to_checksum(None),
+            "refundReceiver": self.refund_receiver.to_checksum(None),
             "nonce": self.nonce,
             "contractTransactionHash": self.safe_tx_hash,
             "sender": sender.to_checksum(None),
@@ -167,44 +171,74 @@ impl SafeTransaction {
                 confirmation.owner,
                 signature.len()
             );
-            if signature[SAFE_SIGNATURE_LENGTH - 1] != 0 {
-                ensure!(
-                    signature.len() == SAFE_SIGNATURE_LENGTH,
-                    "invalid signature from {}: expected {SAFE_SIGNATURE_LENGTH} bytes, got {}",
-                    confirmation.owner,
-                    signature.len()
-                );
-                signatures.extend_from_slice(signature);
-                continue;
+            match signature[SAFE_SIGNATURE_LENGTH - 1] {
+                0 => {
+                    ensure!(
+                        signature.len() >= CONTRACT_SIGNATURE_HEADER_LENGTH,
+                        "contract signature from {} does not contain a length",
+                        confirmation.owner
+                    );
+                    let offset =
+                        U256::from_be_slice(&signature[U256::BYTES..SAFE_SIGNATURE_LENGTH - 1]);
+                    ensure!(
+                        offset == U256::from(SAFE_SIGNATURE_LENGTH),
+                        "invalid contract signature offset from {}: expected {SAFE_SIGNATURE_LENGTH}, got {offset}",
+                        confirmation.owner
+                    );
+                    let data_len = U256::from_be_slice(
+                        &signature[SAFE_SIGNATURE_LENGTH..CONTRACT_SIGNATURE_HEADER_LENGTH],
+                    );
+                    ensure!(
+                        data_len == U256::from(signature.len() - CONTRACT_SIGNATURE_HEADER_LENGTH),
+                        "invalid contract signature length from {}: expected {}, got {data_len}",
+                        confirmation.owner,
+                        signature.len() - CONTRACT_SIGNATURE_HEADER_LENGTH
+                    );
+
+                    signatures.extend_from_slice(&signature[..U256::BYTES]);
+                    signatures.extend_from_slice(
+                        &U256::from(static_len + dynamic.len()).to_be_bytes::<{ U256::BYTES }>(),
+                    );
+                    signatures.push(0);
+                    dynamic.extend_from_slice(&signature[SAFE_SIGNATURE_LENGTH..]);
+                }
+                1 => {
+                    eyre::bail!(
+                        "approved-hash signatures (v = 1) are not supported by `cast safe execute`"
+                    );
+                }
+                2 => {
+                    ensure!(
+                        signature.len() == P256_SIGNATURE_LENGTH,
+                        "invalid P-256 signature from {}: expected {P256_SIGNATURE_LENGTH} bytes, got {}",
+                        confirmation.owner,
+                        signature.len()
+                    );
+                    let offset =
+                        U256::from_be_slice(&signature[U256::BYTES..SAFE_SIGNATURE_LENGTH - 1]);
+                    ensure!(
+                        offset == U256::from(SAFE_SIGNATURE_LENGTH),
+                        "invalid P-256 signature offset from {}: expected {SAFE_SIGNATURE_LENGTH}, got {offset}",
+                        confirmation.owner
+                    );
+
+                    signatures.extend_from_slice(&signature[..U256::BYTES]);
+                    signatures.extend_from_slice(
+                        &U256::from(static_len + dynamic.len()).to_be_bytes::<{ U256::BYTES }>(),
+                    );
+                    signatures.push(2);
+                    dynamic.extend_from_slice(&signature[SAFE_SIGNATURE_LENGTH..]);
+                }
+                _ => {
+                    ensure!(
+                        signature.len() == SAFE_SIGNATURE_LENGTH,
+                        "invalid signature from {}: expected {SAFE_SIGNATURE_LENGTH} bytes, got {}",
+                        confirmation.owner,
+                        signature.len()
+                    );
+                    signatures.extend_from_slice(signature);
+                }
             }
-
-            ensure!(
-                signature.len() >= CONTRACT_SIGNATURE_HEADER_LENGTH,
-                "contract signature from {} does not contain a length",
-                confirmation.owner
-            );
-            let offset = U256::from_be_slice(&signature[U256::BYTES..SAFE_SIGNATURE_LENGTH - 1]);
-            ensure!(
-                offset == U256::from(SAFE_SIGNATURE_LENGTH),
-                "invalid contract signature offset from {}: expected {SAFE_SIGNATURE_LENGTH}, got {offset}",
-                confirmation.owner
-            );
-            let data_len = U256::from_be_slice(
-                &signature[SAFE_SIGNATURE_LENGTH..CONTRACT_SIGNATURE_HEADER_LENGTH],
-            );
-            ensure!(
-                data_len == U256::from(signature.len() - CONTRACT_SIGNATURE_HEADER_LENGTH),
-                "invalid contract signature length from {}: expected {}, got {data_len}",
-                confirmation.owner,
-                signature.len() - CONTRACT_SIGNATURE_HEADER_LENGTH
-            );
-
-            signatures.extend_from_slice(&signature[..U256::BYTES]);
-            signatures.extend_from_slice(
-                &U256::from(static_len + dynamic.len()).to_be_bytes::<{ U256::BYTES }>(),
-            );
-            signatures.push(0);
-            dynamic.extend_from_slice(&signature[SAFE_SIGNATURE_LENGTH..]);
         }
         ensure!(!signatures.is_empty(), "Safe transaction has no confirmations");
         signatures.extend_from_slice(&dynamic);
@@ -395,6 +429,7 @@ fn default_service_url(chain_id: u64) -> Result<Url> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::address;
     use alloy_provider::{ProviderBuilder, mock::Asserter};
 
     fn transaction() -> SafeTransaction {
@@ -415,6 +450,31 @@ mod tests {
             is_executed: false,
             transaction_hash: None,
         }
+    }
+
+    fn eoa_signature(byte: u8) -> Bytes {
+        let mut signature = vec![byte; SAFE_SIGNATURE_LENGTH];
+        signature[SAFE_SIGNATURE_LENGTH - 1] = 27;
+        signature.into()
+    }
+
+    fn contract_signature(owner: Address, payload: &[u8]) -> Bytes {
+        let mut signature = Vec::with_capacity(CONTRACT_SIGNATURE_HEADER_LENGTH + payload.len());
+        signature.extend_from_slice(owner.into_word().as_slice());
+        signature.extend_from_slice(&U256::from(SAFE_SIGNATURE_LENGTH).to_be_bytes::<32>());
+        signature.push(0);
+        signature.extend_from_slice(&U256::from(payload.len()).to_be_bytes::<32>());
+        signature.extend_from_slice(payload);
+        signature.into()
+    }
+
+    fn p256_signature(owner: Address, payload: &[u8; 128]) -> Bytes {
+        let mut signature = Vec::with_capacity(SAFE_SIGNATURE_LENGTH + payload.len());
+        signature.extend_from_slice(owner.into_word().as_slice());
+        signature.extend_from_slice(&U256::from(SAFE_SIGNATURE_LENGTH).to_be_bytes::<32>());
+        signature.push(2);
+        signature.extend_from_slice(payload);
+        signature.into()
     }
 
     #[test]
@@ -481,35 +541,54 @@ mod tests {
     }
 
     #[test]
+    fn serializes_proposal_addresses_as_checksums() {
+        let mut transaction = transaction();
+        transaction.to = address!("5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
+        transaction.gas_token = address!("fB6916095ca1df60bB79Ce92cE3Ea74c37c5d359");
+        transaction.refund_receiver = address!("52908400098527886E0F7030069857D2E4169EE7");
+
+        assert_eq!(
+            transaction.proposal_body(
+                address!("8617E340B3D01FA5F11F306F4090FD50E238070D"),
+                "0x1234".to_string(),
+                Some("cast".to_string()),
+            ),
+            json!({
+                "to": "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+                "value": "1",
+                "data": "0x",
+                "operation": 0,
+                "safeTxGas": "0",
+                "baseGas": "0",
+                "gasPrice": "0",
+                "gasToken": "0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359",
+                "refundReceiver": "0x52908400098527886E0F7030069857D2E4169EE7",
+                "nonce": "7",
+                "contractTransactionHash": B256::ZERO,
+                "sender": "0x8617E340B3D01FA5F11F306F4090FD50E238070D",
+                "signature": "0x1234",
+                "origin": "cast",
+            })
+        );
+    }
+
+    #[test]
     fn packs_confirmations_in_owner_order() {
         let mut transaction = transaction();
         transaction.confirmations = vec![
-            SafeConfirmation {
-                owner: Address::repeat_byte(2),
-                signature: Some(Bytes::from(vec![2; 65])),
-            },
-            SafeConfirmation {
-                owner: Address::repeat_byte(1),
-                signature: Some(Bytes::from(vec![1; 65])),
-            },
+            SafeConfirmation { owner: Address::repeat_byte(2), signature: Some(eoa_signature(2)) },
+            SafeConfirmation { owner: Address::repeat_byte(1), signature: Some(eoa_signature(1)) },
         ];
 
         let signatures = transaction.packed_signatures().unwrap();
-        assert_eq!(&signatures[..65], &[1; 65]);
-        assert_eq!(&signatures[65..], &[2; 65]);
+        assert_eq!(&signatures[..64], &[1; 64]);
+        assert_eq!(signatures[64], 27);
+        assert_eq!(&signatures[65..129], &[2; 64]);
+        assert_eq!(signatures[129], 27);
     }
 
     #[test]
     fn packs_contract_signatures_after_static_signatures() {
-        let contract_signature = |owner: Address, payload: &[u8]| {
-            let mut signature = Vec::with_capacity(65 + 32 + payload.len());
-            signature.extend_from_slice(owner.into_word().as_slice());
-            signature.extend_from_slice(&U256::from(65).to_be_bytes::<32>());
-            signature.push(0);
-            signature.extend_from_slice(&U256::from(payload.len()).to_be_bytes::<32>());
-            signature.extend_from_slice(payload);
-            Bytes::from(signature)
-        };
         let first_owner = Address::repeat_byte(1);
         let third_owner = Address::repeat_byte(3);
         let first_payload = [4, 5, 6];
@@ -521,10 +600,7 @@ mod tests {
                 owner: third_owner,
                 signature: Some(contract_signature(third_owner, &third_payload)),
             },
-            SafeConfirmation {
-                owner: Address::repeat_byte(2),
-                signature: Some(Bytes::from(vec![2; 65])),
-            },
+            SafeConfirmation { owner: Address::repeat_byte(2), signature: Some(eoa_signature(2)) },
             SafeConfirmation {
                 owner: first_owner,
                 signature: Some(contract_signature(first_owner, &first_payload)),
@@ -535,7 +611,7 @@ mod tests {
         assert_eq!(&signatures[..32], first_owner.into_word().as_slice());
         assert_eq!(U256::from_be_slice(&signatures[32..64]), U256::from(195));
         assert_eq!(signatures[64], 0);
-        assert_eq!(&signatures[65..130], &[2; 65]);
+        assert_eq!(&signatures[65..130], &eoa_signature(2));
         assert_eq!(&signatures[130..162], third_owner.into_word().as_slice());
         assert_eq!(U256::from_be_slice(&signatures[162..194]), U256::from(230));
         assert_eq!(signatures[194], 0);
@@ -543,6 +619,38 @@ mod tests {
         assert_eq!(&signatures[227..230], &first_payload);
         assert_eq!(U256::from_be_slice(&signatures[230..262]), U256::from(4));
         assert_eq!(&signatures[262..], &third_payload);
+    }
+
+    #[test]
+    fn packs_p256_and_contract_signatures_after_static_signatures() {
+        let p256_owner = Address::repeat_byte(1);
+        let contract_owner = Address::repeat_byte(3);
+        let p256_payload = [4; 128];
+        let contract_payload = [5, 6, 7];
+        let mut transaction = transaction();
+        transaction.confirmations = vec![
+            SafeConfirmation {
+                owner: contract_owner,
+                signature: Some(contract_signature(contract_owner, &contract_payload)),
+            },
+            SafeConfirmation { owner: Address::repeat_byte(2), signature: Some(eoa_signature(2)) },
+            SafeConfirmation {
+                owner: p256_owner,
+                signature: Some(p256_signature(p256_owner, &p256_payload)),
+            },
+        ];
+
+        let signatures = transaction.packed_signatures().unwrap();
+        assert_eq!(&signatures[..32], p256_owner.into_word().as_slice());
+        assert_eq!(U256::from_be_slice(&signatures[32..64]), U256::from(195));
+        assert_eq!(signatures[64], 2);
+        assert_eq!(&signatures[65..130], &eoa_signature(2));
+        assert_eq!(&signatures[130..162], contract_owner.into_word().as_slice());
+        assert_eq!(U256::from_be_slice(&signatures[162..194]), U256::from(323));
+        assert_eq!(signatures[194], 0);
+        assert_eq!(&signatures[195..323], &p256_payload);
+        assert_eq!(U256::from_be_slice(&signatures[323..355]), U256::from(3));
+        assert_eq!(&signatures[355..], &contract_payload);
     }
 
     #[test]
@@ -560,6 +668,48 @@ mod tests {
                 vec![SafeConfirmation { owner, signature: Some(signature.into()) }];
             assert!(transaction.packed_signatures().is_err());
         }
+    }
+
+    #[test]
+    fn rejects_malformed_p256_signatures() {
+        let owner = Address::repeat_byte(1);
+        let signature = |len: usize, offset: usize| {
+            let mut signature = vec![0; len];
+            signature[..U256::BYTES].copy_from_slice(owner.into_word().as_slice());
+            signature[U256::BYTES..SAFE_SIGNATURE_LENGTH - 1]
+                .copy_from_slice(&U256::from(offset).to_be_bytes::<32>());
+            signature[SAFE_SIGNATURE_LENGTH - 1] = 2;
+            signature
+        };
+
+        for signature in [
+            signature(SAFE_SIGNATURE_LENGTH, SAFE_SIGNATURE_LENGTH),
+            signature(P256_SIGNATURE_LENGTH - 1, SAFE_SIGNATURE_LENGTH),
+            signature(P256_SIGNATURE_LENGTH + 1, SAFE_SIGNATURE_LENGTH),
+            signature(P256_SIGNATURE_LENGTH, SAFE_SIGNATURE_LENGTH + 1),
+        ] {
+            let mut transaction = transaction();
+            transaction.confirmations =
+                vec![SafeConfirmation { owner, signature: Some(signature.into()) }];
+            assert!(transaction.packed_signatures().is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_approved_hash_signatures() {
+        let mut signature = vec![1; SAFE_SIGNATURE_LENGTH];
+        signature[SAFE_SIGNATURE_LENGTH - 1] = 1;
+        let mut transaction = transaction();
+        transaction.confirmations = vec![SafeConfirmation {
+            owner: Address::repeat_byte(1),
+            signature: Some(signature.into()),
+        }];
+
+        let error = transaction.packed_signatures().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "approved-hash signatures (v = 1) are not supported by `cast safe execute`"
+        );
     }
 
     #[tokio::test]
