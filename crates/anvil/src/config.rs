@@ -1966,6 +1966,8 @@ latest block number: {latest_block}"
         } else {
             None
         };
+        let source_is_pre_cancun =
+            inferred_hardfork.is_some_and(|hardfork| SpecId::from(hardfork) < SpecId::CANCUN);
         let fork_hardfork = self.hardfork.or(inferred_hardfork);
         let effective_hardfork = fork_hardfork.unwrap_or_else(|| self.get_hardfork());
         let effective_spec = SpecId::from(effective_hardfork);
@@ -1997,9 +1999,6 @@ latest block number: {latest_block}"
         let blob_params = get_blob_params(source_chain_id, block.header.timestamp());
         fees.set_blob_params(blob_params);
         let blob_update_fraction = blob_params.update_fraction as u64;
-        let source_is_pre_cancun =
-            FoundryHardfork::from_chain_and_timestamp(source_chain_id, block.header.timestamp())
-                .is_some_and(|hardfork| SpecId::from(hardfork) < SpecId::CANCUN);
         let blob_excess_gas = block.header.excess_blob_gas().or_else(|| {
             // Pre-Cancun headers and Polygon Bor headers omit the blob fields. REVM still requires
             // a valid blob environment when executing with the Cancun spec; zero is the neutral

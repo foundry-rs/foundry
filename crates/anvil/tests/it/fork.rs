@@ -3217,17 +3217,18 @@ async fn test_pre_cancun_fork_with_post_cancun_hardfork() {
         NodeConfig::test()
             .with_chain_id(Some(NamedChain::Mainnet as u64))
             .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
-            .with_genesis_timestamp(EthereumHardfork::Shanghai.mainnet_activation_timestamp()),
+            .with_genesis_timestamp(EthereumHardfork::Cancun.mainnet_activation_timestamp()),
     )
     .await;
     origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
+    origin_api.mine_one().await.unwrap();
     let origin_url = origin_handle.http_endpoint();
 
     for hardfork in [EthereumHardfork::Cancun, EthereumHardfork::Prague] {
         let (api, handle) = spawn(
             NodeConfig::test()
                 .with_eth_rpc_url(Some(origin_url.clone()))
-                .with_fork_block_number(Some(0u64))
+                .with_fork_block_number(Some(1u64))
                 .with_hardfork(Some(hardfork.into())),
         )
         .await;
@@ -3249,7 +3250,7 @@ async fn test_pre_cancun_fork_with_post_cancun_hardfork() {
 
         api.anvil_reset(Some(Forking {
             json_rpc_url: Some(origin_url.clone()),
-            block_number: Some(0),
+            block_number: Some(1),
         }))
         .await
         .unwrap();
@@ -3263,7 +3264,7 @@ async fn test_pre_cancun_fork_with_post_cancun_hardfork() {
     let (api, _) = spawn(
         NodeConfig::test()
             .with_eth_rpc_url(Some(partial_header_url))
-            .with_fork_block_number(Some(0u64))
+            .with_fork_block_number(Some(1u64))
             .with_hardfork(Some(EthereumHardfork::Prague.into())),
     )
     .await;
