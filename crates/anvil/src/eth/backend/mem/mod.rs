@@ -2783,15 +2783,14 @@ impl<N: Network> Backend<N> {
         // Disable nonce check in revm
         evm_env.cfg_env.disable_nonce_check = true;
 
-        // Calls on OP chains do not charge transaction fees.
-        #[cfg(feature = "optimism")]
-        if self.is_optimism() {
-            evm_env.cfg_env.disable_fee_charge = true;
-        }
-
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
             self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
         });
+        // Zero-fee calls on OP chains do not charge additional transaction fees.
+        #[cfg(feature = "optimism")]
+        if self.is_optimism() && gas_price == 0 && max_fee_per_blob_gas.unwrap_or_default() == 0 {
+            evm_env.cfg_env.disable_fee_charge = true;
+        }
         let caller = from.unwrap_or_default();
         let to = to.as_ref().and_then(TxKind::to);
         let blob_hashes = blob_versioned_hashes.unwrap_or_default();

@@ -184,27 +184,34 @@ async fn test_call_does_not_charge_operator_fee() {
     let request = WithOtherFields::new(
         TransactionRequest::default().with_from(caller).with_to(target).with_gas_limit(21_000),
     );
-    provider.call(request).await.unwrap();
+    provider.call(request.clone()).await.unwrap();
+    provider.call(WithOtherFields::new(request.inner.clone().with_gas_price(0))).await.unwrap();
 
-    let err = provider
-        .raw_request::<_, Value>(
-            "eth_simulateV1".into(),
-            (json!({
-                "blockStateCalls": [{
-                    "calls": [{
-                        "from": caller,
-                        "to": target,
-                        "gas": "0x5208",
-                        "maxFeePerGas": "0x3b9aca00",
-                        "maxPriorityFeePerGas": "0x0"
-                    }]
-                }],
-                "validation": true,
-            }),),
-        )
-        .await
-        .unwrap_err();
+    let priced_request = WithOtherFields::new(request.inner.with_gas_price(1_000_000_000));
+    let err = provider.call(priced_request).await.unwrap_err();
     assert!(err.to_string().contains("Insufficient funds for gas * price + value"), "{err}");
+
+    for validation in [false, true] {
+        let err = provider
+            .raw_request::<_, Value>(
+                "eth_simulateV1".into(),
+                (json!({
+                    "blockStateCalls": [{
+                        "calls": [{
+                            "from": caller,
+                            "to": target,
+                            "gas": "0x5208",
+                            "maxFeePerGas": "0x3b9aca00",
+                            "maxPriorityFeePerGas": "0x0"
+                        }]
+                    }],
+                    "validation": validation,
+                }),),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("Insufficient funds for gas * price + value"), "{err}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
