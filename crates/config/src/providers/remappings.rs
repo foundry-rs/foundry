@@ -179,6 +179,9 @@ struct CachedNestedConfig {
 ///   - `DAPP_REMAPPINGS` || `FOUNDRY_REMAPPINGS` env var
 ///   - `<root>/remappings.txt` file
 ///   - `Remapping::find_many`.
+///
+/// An explicitly empty remappings list disables the filesystem fallbacks. Environment remappings
+/// remain authoritative.
 pub struct RemappingsProvider<'a> {
     /// Whether to auto detect remappings from the `lib_paths`
     pub auto_detect_remappings: bool,
@@ -205,7 +208,11 @@ impl RemappingsProvider<'_> {
     /// - `remappings.txt`
     /// - Environment variables
     /// - CLI parameters
-    fn get_remappings(&self, remappings: Vec<Remapping>) -> Result<RemappingsOutput, Error> {
+    fn get_remappings(
+        &self,
+        remappings: Vec<Remapping>,
+        use_fallbacks: bool,
+    ) -> Result<RemappingsOutput, Error> {
         trace!("get all remappings from {:?}", self.root);
         /// Prioritizes remappings by shortest path, then a `src` target, then lexical path.
         ///   - ("a", "1/2") over ("a", "1/2/3")
@@ -248,7 +255,7 @@ impl RemappingsProvider<'_> {
 
         // check remappings.txt file
         let remappings_file = self.root.join("remappings.txt");
-        if remappings_file.is_file() {
+        if use_fallbacks && remappings_file.is_file() {
             let content = fs::read_to_string(remappings_file).map_err(|err| err.to_string())?;
             let remappings_from_file: Result<Vec<_>, _> =
                 remappings_from_newline(&content).collect();
@@ -268,7 +275,7 @@ impl RemappingsProvider<'_> {
         let mut all_remappings = Remappings::new_with_remappings(user_remappings);
 
         // scan all library dirs and autodetect remappings
-        if self.auto_detect_remappings {
+        if use_fallbacks && self.auto_detect_remappings {
             let (nested_foundry_remappings, auto_detected_remappings) = rayon::join(
                 || self.find_nested_foundry_remappings(),
                 || self.auto_detect_remappings(),
@@ -732,10 +739,10 @@ impl Provider for RemappingsProvider<'_> {
 
     fn data(&self) -> Result<Map<Profile, Dict>, Error> {
         let output = match &self.remappings {
-            Ok(remappings) => self.get_remappings(remappings.clone()),
+            Ok(remappings) => self.get_remappings(remappings.clone(), !remappings.is_empty()),
             Err(err) => {
                 if let figment::error::Kind::MissingField(_) = err.kind {
-                    self.get_remappings(vec![])
+                    self.get_remappings(vec![], true)
                 } else {
                     return Err(err.clone());
                 }

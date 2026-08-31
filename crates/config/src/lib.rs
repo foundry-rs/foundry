@@ -3663,6 +3663,47 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_toml_remappings_disable_fallbacks() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_dir("lib")?;
+            jail.create_dir("lib/dependency")?;
+            jail.create_dir("lib/dependency/src")?;
+            jail.create_file("lib/dependency/src/Dependency.sol", "contract Dependency {}")?;
+            jail.create_file("remappings.txt", "from-file/=lib/from-file/\n")?;
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                libs = ["lib"]
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert!(config.remappings.iter().any(|remapping| remapping.name == "from-file/"));
+            assert!(config.remappings.iter().any(|remapping| remapping.name == "dependency/"));
+
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                libs = ["lib"]
+                remappings = []
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert!(
+                config
+                    .remappings
+                    .iter()
+                    .all(|remapping| remapping.name != "from-file/"
+                        && remapping.name != "dependency/"),
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_remappings_override() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
