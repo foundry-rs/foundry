@@ -2883,7 +2883,11 @@ impl<N: Network> Backend<N> {
             self.build_call_env_with_base(request, fee_details, block_env, base_evm_env);
         #[cfg(feature = "optimism")]
         let tx_env = if self.is_optimism() {
-            CallTxEnv::Op(OpTransaction { base: tx_env, deposit: op_deposit, ..Default::default() })
+            CallTxEnv::Op(OpTransaction {
+                base: tx_env,
+                deposit: op_deposit,
+                enveloped_tx: Some(Bytes::new()),
+            })
         } else if self.is_tempo() {
             CallTxEnv::Tempo(TempoTxEnv::from(tx_env))
         } else {
