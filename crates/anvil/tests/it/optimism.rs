@@ -4,7 +4,7 @@ use crate::utils::{http_provider, http_provider_with_signer};
 use alloy_consensus::{Eip658Value, Receipt, proofs::calculate_receipt_root};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
-use alloy_primitives::{Address, Bloom, TxHash, TxKind, U256, b256};
+use alloy_primitives::{Address, B256, Bloom, Bytes, TxHash, TxKind, U256, address, b256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest, anvil::Forking};
 use alloy_serde::{OtherFields, WithOtherFields};
@@ -159,6 +159,52 @@ async fn test_tempo_fields_do_not_override_op_deposit_classification() {
     };
 
     provider.call(tx).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_call_does_not_charge_operator_fee() {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_hardfork(Some(OpHardfork::Isthmus.into())),
+    )
+    .await;
+    let provider = handle.http_provider();
+    let caller = Address::random();
+    let target = Address::random();
+    let l1_block = address!("0x4200000000000000000000000000000000000015");
+    let mut operator_fee_params = [0u8; 32];
+    operator_fee_params[24..].copy_from_slice(&1_351_351_351_351u64.to_be_bytes());
+
+    api.anvil_set_storage_at(l1_block, U256::from(8), B256::from(operator_fee_params))
+        .await
+        .unwrap();
+    api.anvil_set_code(target, Bytes::from_static(&[0x00])).await.unwrap();
+
+    let request = WithOtherFields::new(
+        TransactionRequest::default().with_from(caller).with_to(target).with_gas_limit(21_000),
+    );
+    provider.call(request).await.unwrap();
+
+    let err = provider
+        .raw_request::<_, Value>(
+            "eth_simulateV1".into(),
+            (json!({
+                "blockStateCalls": [{
+                    "calls": [{
+                        "from": caller,
+                        "to": target,
+                        "gas": "0x5208",
+                        "maxFeePerGas": "0x3b9aca00",
+                        "maxPriorityFeePerGas": "0x0"
+                    }]
+                }],
+                "validation": true,
+            }),),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("Insufficient funds for gas * price + value"), "{err}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

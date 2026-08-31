@@ -2783,6 +2783,12 @@ impl<N: Network> Backend<N> {
         // Disable nonce check in revm
         evm_env.cfg_env.disable_nonce_check = true;
 
+        // Calls on OP chains do not charge transaction fees.
+        #[cfg(feature = "optimism")]
+        if self.is_optimism() {
+            evm_env.cfg_env.disable_fee_charge = true;
+        }
+
         let gas_price = gas_price.or(max_fee_per_gas).unwrap_or_else(|| {
             self.fees().raw_gas_price().saturating_add(MIN_SUGGESTED_PRIORITY_FEE)
         });
@@ -3241,7 +3247,7 @@ impl<N: Network> Backend<N> {
         let mut inspector = self.build_inspector();
         let PreparedCall { mut evm_env, mut tx_env, .. } =
             self.prepare_typed_call_env(state, request, fee_details, block_env)?;
-        evm_env.cfg_env.disable_fee_charge = overrides.disable_fee_charge;
+        evm_env.cfg_env.disable_fee_charge |= overrides.disable_fee_charge;
         if let Some(gas_limit) = overrides.gas_limit {
             tx_env.base_mut().gas_limit = gas_limit;
         }
@@ -8069,6 +8075,7 @@ impl Backend<FoundryNetwork> {
                         evm_env.cfg_env.disable_nonce_check = false;
                         evm_env.cfg_env.disable_base_fee = false;
                         evm_env.cfg_env.disable_block_gas_limit = false;
+                        evm_env.cfg_env.disable_fee_charge = false;
                     }
 
                     let mut inspector = self.build_inspector();
