@@ -5491,6 +5491,7 @@ dependencies = [
 name = "forge-sol-macro-gen"
 version = "1.8.1"
 dependencies = [
+ "alloy-json-abi",
  "alloy-sol-macro-expander",
  "alloy-sol-macro-input",
  "eyre",
