@@ -39,6 +39,7 @@ extern crate foundry_test_utils;
 
 mod erc20;
 mod keychain;
+mod read_networks;
 mod remote_trace;
 mod run_networks;
 mod safe;

@@ -203,7 +203,7 @@ mod tests {
         CallTraceDecoderBuilder::new()
             .with_networks(NetworkConfigs::with_monad())
             .with_chain_id(Some(143))
-            .with_monad_hardfork(Some(hardfork))
+            .with_hardfork(Some(hardfork.into()))
             .build()
     }
 

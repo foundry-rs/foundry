@@ -807,7 +807,7 @@ Error: `solc` "this/solc/does/not/exist" does not exist
     let local_solc = Solc::find_or_install(&OTHER_SOLC_VERSION.parse().unwrap()).unwrap();
     cmd.forge_fuse()
         .args(["build", "--force", "--use"])
-        .arg(local_solc.solc)
+        .arg(&local_solc.solc)
         .root_arg()
         .assert_success()
         .stdout_eq(str![[r#"
@@ -816,6 +816,20 @@ Error: `solc` "this/solc/does/not/exist" does not exist
 Compiler run successful!
 
 "#]]);
+
+    let bin_dir = prj.root().join("bin");
+    fs::create_dir(&bin_dir).unwrap();
+    let path_solc = bin_dir.join(format!("custom-solc{}", std::env::consts::EXE_SUFFIX));
+    fs::copy(local_solc.solc, path_solc).unwrap();
+
+    cmd.forge_fuse();
+    cmd.env("PATH", &bin_dir);
+    cmd.args(["build", "--force", "--use", "custom-solc"]).root_arg().assert_success();
+
+    prj.update_config(|config| config.solc = Some(SolcReq::Local("custom-solc".into())));
+    cmd.forge_fuse();
+    cmd.env("PATH", bin_dir);
+    cmd.args(["build", "--force"]).root_arg().assert_success();
 });
 
 // test to ensure yul optimizer can be set as intended

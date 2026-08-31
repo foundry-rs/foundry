@@ -8,7 +8,7 @@ use crate::executors::{
     },
 };
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, Bytes, I256, Selector, U256};
+use alloy_primitives::{Address, B256, Bytes, I256, Selector, U256, map::HashSet};
 use alloy_sol_types::SolCall;
 use foundry_common::ContractsByAddress;
 use foundry_config::InvariantConfig;
@@ -19,7 +19,7 @@ use foundry_evm_fuzz::{BaseCounterExample, BasicTxDetails, invariant::InvariantC
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
 use revm::context::Block;
-use std::{cell::Cell, collections::HashSet, fmt::Write, hash::Hash};
+use std::{cell::Cell, fmt::Write, hash::Hash};
 
 const LIVE_SHRINK_SEQUENCE_EDGE_CALLS: usize = 16;
 
@@ -171,7 +171,7 @@ pub struct ShrinkCandidateKeys<K> {
 
 impl<K: Eq + Hash> ShrinkCandidateKeys<K> {
     pub fn new(initial: K) -> Self {
-        Self { seen: HashSet::from([initial]) }
+        Self { seen: HashSet::<_>::from_iter([initial]) }
     }
 
     pub fn insert(&mut self, key: K) -> bool {

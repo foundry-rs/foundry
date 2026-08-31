@@ -3,7 +3,7 @@ use crate::debug::ContractSources;
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{
     Address,
-    map::{Entry, HashMap, HashSet},
+    map::{AddressSet, Entry, HashMap, HashSet},
 };
 use eyre::WrapErr;
 use foundry_block_explorers::{contract::Metadata, errors::EtherscanError};
@@ -298,7 +298,7 @@ impl TraceIdentifier for ExternalIdentifier {
         trace!(target: "evm::traces::external", "identify {} addresses", nodes.len());
 
         let mut identities = Vec::new();
-        let mut to_fetch = HashSet::new();
+        let mut to_fetch = AddressSet::default();
 
         // Check cache first.
         for &node in nodes {

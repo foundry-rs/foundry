@@ -1120,6 +1120,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let transaction_gas = res.result.gas();
         let state_gas_used = transaction_gas.block_state_gas_used();
+        if state_gas_used == 0 {
+            let mut snapshot_gas = Gas::new(gas_limit);
+            let _ = snapshot_gas.record_regular_cost(transaction_gas.tx_gas_used());
+            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+                cheats.gas_metering.set_isolated_snapshot_gas_used(snapshot_gas.total_gas_spent());
+            }
+        }
         gas.set_state_gas_spent(
             i64::try_from(state_gas_used)
                 .expect("transaction state gas originates from a signed gas tracker"),
