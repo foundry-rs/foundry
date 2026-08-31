@@ -52,7 +52,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, TxHash, TxKind, U64, U256,
-    map::{HashMap, HashSet},
+    map::{AddressSet, B256Set, HashMap, HashSet},
 };
 use alloy_rlp::{Encodable, Header, PayloadView};
 use alloy_rpc_types::{
@@ -968,7 +968,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for ETH RPC call: `eth_accounts`
     pub fn accounts(&self) -> Result<Vec<Address>> {
         node_info!("eth_accounts");
-        let mut unique = HashSet::new();
+        let mut unique = AddressSet::default();
         let mut accounts: Vec<Address> = Vec::new();
         for signer in self.signers.iter() {
             accounts.extend(signer.accounts().into_iter().filter(|acc| unique.insert(*acc)));
@@ -4681,7 +4681,7 @@ impl EthApi<FoundryNetwork> {
             let hash_filter = filter
                 .transaction_hashes
                 .filter(|hashes| !hashes.is_empty())
-                .map(|hashes| hashes.into_iter().collect::<std::collections::HashSet<_>>());
+                .map(|hashes| hashes.into_iter().collect::<B256Set>());
 
             loop {
                 let notification = tokio::select! {
