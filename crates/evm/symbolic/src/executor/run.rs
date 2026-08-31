@@ -1,24 +1,6 @@
 use super::*;
 use std::cmp::Reverse;
 
-fn order_roots_by_corpus_seed_count(roots: &mut [PathState], order: SymbolicExplorationOrder) {
-    let Some((first, rest)) = roots.split_first() else {
-        return;
-    };
-    if rest.iter().all(|root| root.corpus_seed_model_count() == first.corpus_seed_model_count()) {
-        return;
-    }
-
-    match order {
-        SymbolicExplorationOrder::Bfs => {
-            roots.sort_by_key(|root| Reverse(root.corpus_seed_model_count()));
-        }
-        SymbolicExplorationOrder::Dfs => {
-            roots.sort_by_key(PathState::corpus_seed_model_count);
-        }
-    }
-}
-
 impl SymbolicExecutor {
     /// Creates a symbolic executor from Foundry's symbolic configuration.
     ///
@@ -778,6 +760,24 @@ impl SymbolicExecutor {
     /// Returns the incomplete reason used when heuristic witnesses cannot certify safety.
     fn hard_arith_heuristic_incomplete_reason() -> String {
         "hard arithmetic heuristic witness used; no replayed counterexample found".to_string()
+    }
+}
+
+fn order_roots_by_corpus_seed_count(roots: &mut [PathState], order: SymbolicExplorationOrder) {
+    let Some((first, rest)) = roots.split_first() else {
+        return;
+    };
+    if rest.iter().all(|root| root.corpus_seed_model_count() == first.corpus_seed_model_count()) {
+        return;
+    }
+
+    match order {
+        SymbolicExplorationOrder::Bfs => {
+            roots.sort_by_key(|root| Reverse(root.corpus_seed_model_count()));
+        }
+        SymbolicExplorationOrder::Dfs => {
+            roots.sort_by_key(PathState::corpus_seed_model_count);
+        }
     }
 }
 

@@ -1,10 +1,15 @@
 [test-groups]
+# The on-chain deploy+verify tests share one funded deployer per network and one Etherscan key.
+# Running them concurrently collides on the account nonce and trips Etherscan's 3 calls/sec limit.
+deploy-verify = { max-threads = 1 }
 
 [profile.default]
 retries = { backoff = "exponential", count = 2, delay = "5s", jitter = true }
 slow-timeout = { period = "30s", terminate-after = 3 }
-# Exclude flaky tests from regular CI runs - they run in nightly test-flaky workflow
-default-filter = "not test(/flaky_/)"
+# Exclude flaky tests from regular CI runs - they run in nightly test-flaky workflow.
+# Exclude the on-chain deploy+verify tests too - they spend testnet funds and depend on external
+# verifier services, so they run in the nightly test-deploy-verify workflow.
+default-filter = "not test(/flaky_/) and not test(/deploy_verify_/)"
 
 [[profile.default.overrides]]
 filter = "test(/ext_integration/)"
@@ -34,3 +39,28 @@ retries = 0
 default-filter = "test(/flaky_/)"
 retries = { backoff = "exponential", count = 5, delay = "10s", jitter = true }
 slow-timeout = { period = "60s", terminate-after = 3 }
+
+# The fork smoke tests report an unreachable endpoint by skipping instead of failing, so keep
+# their output on success to show which chains a run actually exercised.
+[[profile.flaky.overrides]]
+filter = "test(/fork_chains::/)"
+success-output = "final"
+
+# The network read tests report an unreachable endpoint or an unusable block by skipping instead
+# of failing, so keep their output on success to show which networks a run actually exercised.
+[[profile.flaky.overrides]]
+filter = "test(/read_networks::/)"
+success-output = "final"
+
+# Profile for the on-chain deploy+verify tests (used by the nightly test-deploy-verify workflow).
+# Requires <NETWORK>_RPC_URL plus TESTNET_DEPLOYER_PRIVATE_KEY to do anything.
+# Run with: cargo nextest run --profile deploy-verify
+[profile.deploy-verify]
+default-filter = "test(/deploy_verify_/)"
+retries = 1
+# A deploy plus verifier round trip is minutes, not seconds.
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[[profile.deploy-verify.overrides]]
+filter = "test(/deploy_verify_/)"
+test-group = "deploy-verify"

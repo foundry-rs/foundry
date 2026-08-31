@@ -41,7 +41,7 @@ use alloy_consensus::{
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
-    eip2718::Encodable2718,
+    eip2718::{EIP4844_TX_TYPE_ID, Encodable2718},
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
@@ -52,7 +52,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, TxHash, TxKind, U64, U256,
-    map::{HashMap, HashSet},
+    map::{AddressSet, B256Set, HashMap, HashSet},
 };
 use alloy_rlp::{Encodable, Header, PayloadView};
 use alloy_rpc_types::{
@@ -634,6 +634,7 @@ impl<N: Network> EthApi<N> {
             config.fork_urls = vec![url.clone()];
             config.fork_chain_id = None;
             config.endpoint_identity = endpoint_identity;
+            node_config.fork_endpoint_is_anvil = endpoint_identity.is_authoritative();
         }
         // Keep node_config in sync so a subsequent URL-less fork reset uses the updated endpoint.
         node_config.fork_urls = vec![url];
@@ -967,7 +968,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for ETH RPC call: `eth_accounts`
     pub fn accounts(&self) -> Result<Vec<Address>> {
         node_info!("eth_accounts");
-        let mut unique = HashSet::new();
+        let mut unique = AddressSet::default();
         let mut accounts: Vec<Address> = Vec::new();
         for signer in self.signers.iter() {
             accounts.extend(signer.accounts().into_iter().filter(|acc| unique.insert(*acc)));
@@ -2624,10 +2625,17 @@ impl EthApi<FoundryNetwork> {
         block_hash: B256,
     ) -> Result<Option<serde_json::Value>> {
         node_info!("eth_getBlockAccessListByBlockHash");
-        if let Some(fork) = self.get_fork() {
-            return Ok(fork.block_access_list_by_hash(block_hash).await?);
+        let Some(fork) = self.get_fork() else { return Ok(None) };
+
+        // Only blocks we know to be mined after the fork point are guaranteed to be unknown
+        // upstream. Anything else, including hashes we cannot resolve locally, is left to the fork.
+        if let Some(block) = self.backend.get_block_by_hash(block_hash)
+            && !fork.predates_fork_inclusive(block.header.number)
+        {
+            return Ok(None);
         }
-        Ok(None)
+
+        Ok(fork.block_access_list_by_hash(block_hash).await?)
     }
 
     /// Returns the EIP-7928 block access list for a block number.
@@ -2936,11 +2944,21 @@ impl EthApi<FoundryNetwork> {
         } else {
             None
         };
-        let raw = service_encoded.as_deref().unwrap_or(tx.as_ref());
+        let raw = service_encoded.map(Bytes::from).unwrap_or(tx);
 
-        let mut data = raw;
-        let transaction = FoundryTxEnvelope::decode_2718(&mut data)
-            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+        let transaction = if raw.first() == Some(&EIP4844_TX_TYPE_ID) {
+            // Pooled EIP-4844 decoding uses large stack frames for inline blobs. Isolate it from
+            // the already-large RPC dispatcher without increasing every worker's stack.
+            let raw = raw.clone();
+            tokio::task::spawn_blocking(move || FoundryTxEnvelope::decode_2718(&mut raw.as_ref()))
+                .await
+                .map_err(|_| {
+                    BlockchainError::Internal("transaction decoding task panicked".into())
+                })?
+        } else {
+            FoundryTxEnvelope::decode_2718(&mut raw.as_ref())
+        }
+        .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
 
         self.ensure_typed_transaction_supported(&transaction)?;
 
@@ -2955,7 +2973,7 @@ impl EthApi<FoundryNetwork> {
         };
 
         if self.backend.is_tempo() && TempoHardfork::from(self.backend.hardfork()).is_t5() {
-            let classification = classify_payment_lane(raw);
+            let classification = classify_payment_lane(raw.as_ref());
             trace!(target: "node", tx = ?transaction.hash(), ?classification, "classified transaction lane");
         }
 
@@ -4663,7 +4681,7 @@ impl EthApi<FoundryNetwork> {
             let hash_filter = filter
                 .transaction_hashes
                 .filter(|hashes| !hashes.is_empty())
-                .map(|hashes| hashes.into_iter().collect::<std::collections::HashSet<_>>());
+                .map(|hashes| hashes.into_iter().collect::<B256Set>());
 
             loop {
                 let notification = tokio::select! {

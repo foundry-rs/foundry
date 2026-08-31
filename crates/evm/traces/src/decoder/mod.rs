@@ -3,7 +3,9 @@ use crate::{
     debug::DebugTraceIdentifier,
     identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
 };
-use alloy_dyn_abi::{DecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt};
+use alloy_dyn_abi::{
+    DecodedEvent as AlloyDecodedEvent, DynSolValue, EventExt, FunctionExt, JsonAbiExt,
+};
 use alloy_json_abi::{Constructor, Error, Event, Function, JsonAbi};
 use alloy_primitives::{
     Address, B256, LogData, Selector, U256,
@@ -27,7 +29,7 @@ use foundry_evm_core::{
 };
 #[cfg(feature = "monad")]
 type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
-use foundry_evm_hardforks::TempoHardfork;
+use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant, celo::transfer::CELO_TRANSFER_LABEL};
 use itertools::Itertools;
 use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
@@ -51,9 +53,28 @@ use tempo_precompiles::{
 mod monad;
 pub(crate) mod precompiles;
 
-#[cfg(not(feature = "monad"))]
-type MonadHardfork = ();
 type AddressEvents = HashMap<Address, BTreeMap<(B256, usize), Vec<Event>>>;
+type AddressAnonymousEvents = HashMap<Address, BTreeMap<usize, Vec<Event>>>;
+
+/// A decoded event with both display-formatted parameters and their underlying ABI values.
+#[derive(Debug, Default)]
+pub struct DecodedEvent {
+    /// The event name or canonical signature.
+    pub name: Option<String>,
+    /// Event parameter names, display-formatted values, and decoded ABI values.
+    pub params: Option<Vec<(String, String, DynSolValue)>>,
+}
+
+impl DecodedEvent {
+    fn into_call_log(self) -> DecodedCallLog {
+        DecodedCallLog {
+            name: self.name,
+            params: self.params.map(|params| {
+                params.into_iter().map(|(name, display, _)| (name, display)).collect()
+            }),
+        }
+    }
+}
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
@@ -80,6 +101,15 @@ impl CallTraceDecoderBuilder {
     #[inline]
     pub fn with_abi(mut self, abi: &JsonAbi) -> Self {
         self.decoder.collect_abi(abi, None, true);
+        self
+    }
+
+    /// Add events from an ABI for a specific contract address.
+    #[inline]
+    pub fn with_address_events(mut self, address: Address, abi: &JsonAbi) -> Self {
+        for event in abi.events() {
+            self.decoder.push_address_event(address, event.clone());
+        }
         self
     }
 
@@ -150,18 +180,10 @@ impl CallTraceDecoderBuilder {
         self
     }
 
-    /// Sets the Tempo hardfork for hardfork-specific precompile detection.
+    /// Sets the hardfork used for network-specific metadata and precompile detection.
     #[inline]
-    pub const fn with_tempo_hardfork(mut self, hardfork: Option<TempoHardfork>) -> Self {
-        self.decoder.tempo_hardfork = hardfork;
-        self
-    }
-
-    /// Sets the Monad hardfork used to register address-scoped metadata when built.
-    #[cfg(feature = "monad")]
-    #[inline]
-    pub const fn with_monad_hardfork(mut self, hardfork: Option<MonadHardfork>) -> Self {
-        self.decoder.monad_hardfork = hardfork;
+    pub const fn with_hardfork(mut self, hardfork: Option<FoundryHardfork>) -> Self {
+        self.decoder.hardfork = hardfork;
         self
     }
 
@@ -231,6 +253,8 @@ pub struct CallTraceDecoder {
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
     /// Events identified for a specific contract address.
     events_by_address: Option<Box<AddressEvents>>,
+    /// Anonymous events identified for a specific contract address, keyed by topic count.
+    anonymous_events_by_address: Option<Box<AddressAnonymousEvents>>,
     /// Revert decoder. Contains all known custom errors.
     pub revert_decoder: RevertDecoder,
 
@@ -254,11 +278,8 @@ pub struct CallTraceDecoder {
     /// Detailed opcodes for analysis.
     pub opcodes: Vec<OpCode>,
 
-    /// The Tempo hardfork, used to determine hardfork-specific precompiles.
-    pub tempo_hardfork: Option<TempoHardfork>,
-
-    /// The Monad hardfork, used to determine network- and hardfork-specific metadata.
-    monad_hardfork: Option<MonadHardfork>,
+    /// The hardfork used to determine network-specific metadata and precompiles.
+    hardfork: Option<FoundryHardfork>,
 
     /// Hide addresses when a label is available, showing only the label.
     pub compact_labels: bool,
@@ -270,8 +291,7 @@ impl CallTraceDecoder {
             CELO_TRANSFER,
             self.networks,
             self.chain_id,
-            self.tempo_hardfork,
-            self.monad_hardfork,
+            self.hardfork,
         ) {
             self.labels.entry(CELO_TRANSFER).or_insert_with(|| CELO_TRANSFER_LABEL.to_string());
         }
@@ -281,12 +301,13 @@ impl CallTraceDecoder {
         if self.networks.is_some_and(|networks| !networks.is_tempo()) {
             return;
         }
-        if self.tempo_hardfork.is_some_and(|hardfork| hardfork.is_t5()) {
+        let hardfork = self.hardfork.and_then(TempoHardfork::from_foundry_hardfork);
+        if hardfork.is_some_and(|hardfork| hardfork.is_t5()) {
             self.labels
                 .entry(TIP20_CHANNEL_RESERVE_ADDRESS)
                 .or_insert_with(|| "TIP20ChannelReserve".to_string());
         }
-        if self.tempo_hardfork.is_some_and(|hardfork| hardfork.is_t6()) {
+        if hardfork.is_some_and(|hardfork| hardfork.is_t6()) {
             self.labels
                 .entry(RECEIVE_POLICY_GUARD_ADDRESS)
                 .or_insert_with(|| "ReceivePolicyGuard".to_string());
@@ -304,36 +325,20 @@ impl CallTraceDecoder {
         INIT.get_or_init(Self::init)
     }
 
-    /// Returns the Monad hardfork used for address-scoped metadata.
-    #[cfg(feature = "monad")]
-    pub const fn monad_hardfork(&self) -> Option<MonadHardfork> {
-        self.monad_hardfork
+    /// Returns the hardfork used for network-specific metadata.
+    pub const fn hardfork(&self) -> Option<FoundryHardfork> {
+        self.hardfork
     }
 
-    /// Returns the Tempo hardfork used for address-scoped metadata.
-    pub const fn tempo_hardfork(&self) -> Option<TempoHardfork> {
-        self.tempo_hardfork
-    }
-
-    /// Rebuilds address-scoped metadata for a new Tempo hardfork.
-    pub fn set_tempo_hardfork(&mut self, hardfork: Option<TempoHardfork>) {
-        if self.tempo_hardfork == hardfork {
-            return;
-        }
-        self.tempo_hardfork = hardfork;
-        self.clear_addresses();
-    }
-
-    /// Rebuilds address-scoped metadata for a new Monad hardfork.
+    /// Rebuilds address-scoped metadata for a new hardfork.
     ///
     /// Hardfork changes invalidate previously identified addresses because the set of active
     /// precompiles can change. Global ABI and signature metadata is preserved.
-    #[cfg(feature = "monad")]
-    pub fn set_monad_hardfork(&mut self, hardfork: Option<MonadHardfork>) {
-        if self.monad_hardfork == hardfork {
+    pub fn set_hardfork(&mut self, hardfork: Option<FoundryHardfork>) {
+        if self.hardfork == hardfork {
             return;
         }
-        self.monad_hardfork = hardfork;
+        self.hardfork = hardfork;
         self.clear_addresses();
     }
 
@@ -452,6 +457,7 @@ impl CallTraceDecoder {
             constructor_args_offsets: Default::default(),
             events,
             events_by_address: None,
+            anonymous_events_by_address: None,
             // Decode Tempo precompile custom errors by name in traces.
             revert_decoder: RevertDecoder::new().with_abis(tempo_abis.iter()),
 
@@ -467,9 +473,7 @@ impl CallTraceDecoder {
 
             opcodes: Vec::new(),
 
-            tempo_hardfork: None,
-
-            monad_hardfork: None,
+            hardfork: None,
             compact_labels: false,
         }
     }
@@ -489,6 +493,7 @@ impl CallTraceDecoder {
         self.non_fallback_contracts.clear();
         self.functions_by_address.clear();
         self.events_by_address = None;
+        self.anonymous_events_by_address = None;
         self.constructors_by_address.clear();
         self.constructor_args_offsets.clear();
 
@@ -507,8 +512,7 @@ impl CallTraceDecoder {
                     **address,
                     self.networks,
                     self.chain_id,
-                    self.tempo_hardfork,
-                    self.monad_hardfork,
+                    self.hardfork,
                 )
             })
             .map(|(address, label)| (*address, label.clone()))
@@ -548,8 +552,7 @@ impl CallTraceDecoder {
                     &node.trace,
                     self.networks,
                     self.chain_id,
-                    self.tempo_hardfork,
-                    self.monad_hardfork,
+                    self.hardfork,
                 )
             {
                 return false;
@@ -567,6 +570,19 @@ impl CallTraceDecoder {
 
     /// Adds a single event to the decoder for a specific contract address.
     pub fn push_address_event(&mut self, address: Address, event: Event) {
+        if event.anonymous {
+            let events = self
+                .anonymous_events_by_address
+                .get_or_insert_with(Default::default)
+                .entry(address)
+                .or_default()
+                .entry(indexed_inputs(&event))
+                .or_default();
+            if !events.contains(&event) {
+                events.push(event);
+            }
+            return;
+        }
         let events = self
             .events_by_address
             .get_or_insert_with(Default::default)
@@ -646,7 +662,9 @@ impl CallTraceDecoder {
         if self.networks.is_some_and(|networks| !networks.is_monad()) {
             return;
         }
-        let Some(hardfork) = self.monad_hardfork else { return };
+        let Some(hardfork) = self.hardfork.and_then(MonadHardfork::from_foundry_hardfork) else {
+            return;
+        };
 
         self.labels
             .entry(foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS)
@@ -689,13 +707,15 @@ impl CallTraceDecoder {
 
     fn is_current_committee_active(&self, address: Address) -> bool {
         address == CURRENT_COMMITTEE_ADDRESS
-            && self.tempo_hardfork.is_some_and(|hardfork| hardfork.is_t8())
+            && self
+                .hardfork
+                .and_then(TempoHardfork::from_foundry_hardfork)
+                .is_some_and(|hardfork| hardfork.is_t8())
             && precompiles::is_known_precompile(
                 address,
                 self.networks,
                 self.chain_id,
-                self.tempo_hardfork,
-                self.monad_hardfork,
+                self.hardfork,
             )
     }
 
@@ -894,13 +914,8 @@ impl CallTraceDecoder {
             };
         }
 
-        if let Some(trace) = precompiles::decode(
-            trace,
-            self.networks,
-            self.chain_id,
-            self.tempo_hardfork,
-            self.monad_hardfork,
-        ) {
+        if let Some(trace) = precompiles::decode(trace, self.networks, self.chain_id, self.hardfork)
+        {
             return trace;
         }
 
@@ -1353,7 +1368,7 @@ impl CallTraceDecoder {
 
     /// Decodes an event.
     pub async fn decode_event(&self, log: &LogData) -> DecodedCallLog {
-        self.decode_event_inner(None, log).await
+        self.decode_event_inner(None, log, false).await.into_call_log()
     }
 
     /// Decodes an event emitted by a known address.
@@ -1362,58 +1377,139 @@ impl CallTraceDecoder {
         address: Address,
         log: &LogData,
     ) -> DecodedCallLog {
-        self.decode_event_inner(Some(address), log).await
+        self.decode_event_inner(Some(address), log, false).await.into_call_log()
     }
 
-    async fn decode_event_inner(&self, address: Option<Address>, log: &LogData) -> DecodedCallLog {
-        let &[t0, ..] = log.topics() else { return DecodedCallLog { name: None, params: None } };
+    /// Decodes an event emitted by a known address, using its canonical signature as the name.
+    pub async fn decode_event_with_address_signature(
+        &self,
+        address: Address,
+        log: &LogData,
+    ) -> DecodedEvent {
+        self.decode_event_inner(Some(address), log, true).await
+    }
 
-        let mut events = Vec::new();
-        let key = (t0, log.topics().len() - 1);
-        let address_events = address
-            .and_then(|address| self.events_by_address.as_deref()?.get(&address))
-            .and_then(|events| events.get(&key));
-        let events = match address_events.or_else(|| self.events.get(&key)) {
-            Some(es) => es,
-            None => {
-                if let Some(identifier) = &self.signature_identifier
-                    && let Some(event) = identifier.identify_event(t0).await
-                {
-                    events.push(get_indexed_event(event, log));
-                }
-                &events
-            }
+    async fn decode_event_inner(
+        &self,
+        address: Option<Address>,
+        log: &LogData,
+        canonical_signature: bool,
+    ) -> DecodedEvent {
+        let key = log.topics().first().map(|&topic| (topic, log.topics().len() - 1));
+        let address_events = key.and_then(|key| {
+            address
+                .and_then(|address| self.events_by_address.as_deref()?.get(&address))
+                .and_then(|events| events.get(&key))
+        });
+        let global_events = key.and_then(|key| self.events.get(&key));
+        let regular_events = address_events.or(global_events);
+        let anonymous_events = address
+            .and_then(|address| self.anonymous_events_by_address.as_deref()?.get(&address))
+            .and_then(|events| events.get(&log.topics().len()));
+
+        let decoded = if canonical_signature && address_events.is_none() {
+            // Topic zero does not encode indexed parameter placement, so global metadata is only
+            // a hint. Try every compatible layout and reject ambiguity.
+            let mut events = global_events
+                .into_iter()
+                .flatten()
+                .flat_map(|event| indexed_event_candidates(event.clone(), log))
+                .collect::<Vec<_>>();
+            events.extend(anonymous_events.into_iter().flatten().cloned());
+            self.decode_unique_event_candidates(address, log, &events, true)
+        } else if canonical_signature || anonymous_events.is_some() {
+            self.decode_unique_event_candidates(
+                address,
+                log,
+                regular_events.into_iter().flatten().chain(anonymous_events.into_iter().flatten()),
+                canonical_signature,
+            )
+        } else {
+            self.decode_event_candidates(address, log, regular_events.into_iter().flatten(), false)
         };
-        for event in events {
-            if let Ok(decoded) = event.decode_log(log) {
-                let params = reconstruct_params(event, &decoded);
-                return DecodedCallLog {
-                    name: Some(event.name.clone()),
-                    params: Some(
-                        params
-                            .into_iter()
-                            .zip(event.inputs.iter())
-                            .map(|(param, input)| {
-                                // undo patched names
-                                let name = input.name.clone();
-                                (
-                                    name,
-                                    self.format_param_value(
-                                        address,
-                                        &event.name,
-                                        &input.name,
-                                        &input.ty,
-                                        &param,
-                                    ),
-                                )
-                            })
-                            .collect(),
-                    ),
-                };
+        if let Some(decoded) = decoded {
+            return decoded;
+        }
+
+        if regular_events.is_some() || anonymous_events.is_some() {
+            return DecodedEvent::default();
+        }
+
+        if let Some(&topic) = log.topics().first()
+            && let Some(identifier) = &self.signature_identifier
+            && let Some(event) = identifier.identify_event(topic).await
+        {
+            if !canonical_signature {
+                let event = get_indexed_event(event, log);
+                return self
+                    .decode_event_candidates(address, log, [&event], false)
+                    .unwrap_or_default();
+            }
+            let mut decoded = indexed_event_candidates(event, log)
+                .filter_map(|event| self.decode_event_candidates(address, log, [&event], true));
+            let event = decoded.next();
+            if event.is_some() && decoded.next().is_some() {
+                return DecodedEvent::default();
+            }
+            if let Some(decoded) = event {
+                return decoded;
             }
         }
 
-        DecodedCallLog { name: None, params: None }
+        DecodedEvent::default()
+    }
+
+    fn decode_event_candidates<'a>(
+        &self,
+        address: Option<Address>,
+        log: &LogData,
+        events: impl IntoIterator<Item = &'a Event>,
+        canonical_signature: bool,
+    ) -> Option<DecodedEvent> {
+        for event in events {
+            if let Ok(decoded) = event.decode_log(log) {
+                let params = reconstruct_params(event, &decoded);
+                let params = params
+                    .into_iter()
+                    .zip(event.inputs.iter())
+                    .map(|(param, input)| {
+                        // Undo patched names.
+                        let name = input.name.clone();
+                        let display = self.format_param_value(
+                            address,
+                            &event.name,
+                            &input.name,
+                            &input.ty,
+                            &param,
+                        );
+                        (name, display, param)
+                    })
+                    .collect();
+                return Some(DecodedEvent {
+                    name: Some(if canonical_signature {
+                        event.signature()
+                    } else {
+                        event.name.clone()
+                    }),
+                    params: Some(params),
+                });
+            }
+        }
+        None
+    }
+
+    fn decode_unique_event_candidates<'a>(
+        &self,
+        address: Option<Address>,
+        log: &LogData,
+        events: impl IntoIterator<Item = &'a Event>,
+        canonical_signature: bool,
+    ) -> Option<DecodedEvent> {
+        let mut decoded = events.into_iter().filter_map(|event| {
+            self.decode_event_candidates(address, log, [event], canonical_signature)
+        });
+        let event = decoded.next()?;
+        decoded.next().is_none().then_some(event)
     }
 
     /// Prefetches function and event signatures into the identifier cache
@@ -1446,8 +1542,7 @@ impl CallTraceDecoder {
                         &n.trace,
                         self.networks,
                         self.chain_id,
-                        self.tempo_hardfork,
-                        self.monad_hardfork,
+                        self.hardfork,
                     )
                 {
                     return false;
@@ -1581,7 +1676,7 @@ fn is_abi_data(data: &[u8]) -> bool {
 
 /// Restore the order of the params of a decoded event,
 /// as Alloy returns the indexed and unindexed params separately.
-fn reconstruct_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue> {
+fn reconstruct_params(event: &Event, decoded: &AlloyDecodedEvent) -> Vec<DynSolValue> {
     let mut indexed = 0;
     let mut unindexed = 0;
     let mut inputs = vec![];
@@ -1603,6 +1698,22 @@ fn reconstruct_params(event: &Event, decoded: &DecodedEvent) -> Vec<DynSolValue>
 
 fn indexed_inputs(event: &Event) -> usize {
     event.inputs.iter().filter(|param| param.indexed).count()
+}
+
+fn indexed_event_candidates(mut event: Event, log: &LogData) -> impl Iterator<Item = Event> {
+    for (index, input) in event.inputs.iter_mut().enumerate() {
+        if input.name.is_empty() {
+            input.name = format!("param{index}");
+        }
+        input.indexed = false;
+    }
+    (0..event.inputs.len()).combinations(log.topics().len() - 1).map(move |indexed| {
+        let mut event = event.clone();
+        for index in indexed {
+            event.inputs[index].indexed = true;
+        }
+        event
+    })
 }
 
 fn constructor_signature(constructor: &Constructor) -> String {
@@ -1657,7 +1768,7 @@ mod tests {
         CallTraceDecoderBuilder::new()
             .with_execution_network(NetworkVariant::Monad)
             .with_chain_id(Some(143))
-            .with_monad_hardfork(Some(hardfork))
+            .with_hardfork(Some(hardfork.into()))
             .build()
     }
 
@@ -1807,6 +1918,158 @@ mod tests {
 
         assert_eq!(decoded.name.as_deref(), Some("log_string"));
         assert_eq!(decoded.params.unwrap()[0].0, "val");
+    }
+
+    #[tokio::test]
+    async fn address_scoped_abis_decode_all_registered_events() {
+        let address = Address::from([0x12; 20]);
+        let proxy = JsonAbi::parse(["event ProxyEvent()"]).unwrap();
+        let implementation = JsonAbi::parse(["event ImplementationEvent()"]).unwrap();
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_address_events(address, &implementation)
+            .with_address_events(address, &proxy)
+            .build();
+
+        for event in proxy.events().chain(implementation.events()) {
+            let log = LogData::new_unchecked(vec![event.selector()], Default::default());
+            let decoded = decoder.decode_event_with_address(address, &log).await;
+            assert_eq!(decoded.name.as_deref(), Some(event.name.as_str()));
+            assert!(decoder.decode_event_with_address(Address::ZERO, &log).await.name.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn canonical_address_events_require_a_unique_match() {
+        let address = Address::from([0x12; 20]);
+        let implementation =
+            JsonAbi::parse(["event Value(address indexed who, uint256 amount)"]).unwrap();
+        let proxy = JsonAbi::parse(["event Value(address who, uint256 indexed amount)"]).unwrap();
+        let event = proxy.events().next().unwrap();
+        let log = LogData::new_unchecked(
+            vec![event.selector(), U256::from(42).into()],
+            (Address::from([0x34; 20]),).abi_encode().into(),
+        );
+        let decoder = CallTraceDecoderBuilder::new()
+            .with_address_events(address, &implementation)
+            .with_address_events(address, &proxy)
+            .build();
+
+        let decoded = decoder.decode_event_with_address_signature(address, &log).await;
+        assert!(decoded.name.is_none());
+        assert!(decoded.params.is_none());
+    }
+
+    #[tokio::test]
+    async fn canonical_global_events_require_a_unique_indexed_placement() {
+        let known = Event::parse(
+            "event AmbiguousLayout(address indexed from, address indexed to, uint256 amount)",
+        )
+        .unwrap();
+        let emitted = Event::parse(
+            "event AmbiguousLayout(address from, address indexed to, uint256 indexed amount)",
+        )
+        .unwrap();
+        assert_eq!(known.selector(), emitted.selector());
+
+        let address = Address::from([0x12; 20]);
+        let from = Address::from([0x34; 20]);
+        let to = Address::from([0x56; 20]);
+        let amount = U256::from(42);
+        let log = LogData::new_unchecked(
+            vec![emitted.selector(), to.into_word(), amount.into()],
+            (from,).abi_encode().into(),
+        );
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.push_event(known);
+
+        let decoded = decoder.decode_event_with_address_signature(address, &log).await;
+        assert!(decoded.name.is_none());
+        assert!(decoded.params.is_none());
+
+        decoder.push_address_event(address, emitted);
+        let decoded = decoder.decode_event_with_address_signature(address, &log).await;
+        assert_eq!(decoded.name.as_deref(), Some("AmbiguousLayout(address,address,uint256)"));
+        let params = decoded.params.unwrap();
+        assert_eq!(params[0].2, DynSolValue::Address(from));
+        assert_eq!(params[1].2, DynSolValue::Address(to));
+        assert_eq!(params[2].2, DynSolValue::Uint(amount, 256));
+    }
+
+    #[tokio::test]
+    async fn identified_events_preserve_legacy_indexed_placement_for_traces() {
+        let event = Event::parse(
+            "event DecoderAmbiguousIndexedPlacement(address indexed owner, uint256 id)",
+        )
+        .unwrap();
+        let mut abi = JsonAbi::default();
+        abi.events.insert(event.name.clone(), vec![event.clone()]);
+        let log = LogData::new_unchecked(
+            vec![event.selector(), U256::from(42).into()],
+            (Address::from([0x34; 20]),).abi_encode().into(),
+        );
+        let identifier = SignaturesIdentifier::new_offline_with_abis([&abi]).unwrap();
+        let decoder = CallTraceDecoderBuilder::new().with_signature_identifier(identifier).build();
+
+        let decoded = decoder.decode_event(&log).await;
+        assert_eq!(decoded.name.as_deref(), Some("DecoderAmbiguousIndexedPlacement"));
+
+        let decoded = decoder.decode_event_with_address_signature(Address::ZERO, &log).await;
+        assert!(decoded.name.is_none());
+        assert!(decoded.params.is_none());
+    }
+
+    #[tokio::test]
+    async fn address_scoped_anonymous_events_require_a_unique_match() {
+        let address = Address::from([0x12; 20]);
+        let abi = JsonAbi::parse(["event AnonymousValue(uint256 value) anonymous"]).unwrap();
+        let log = LogData::new_unchecked(Vec::new(), (U256::from(7),).abi_encode().into());
+        let decoded = CallTraceDecoderBuilder::new()
+            .with_address_events(address, &abi)
+            .build()
+            .decode_event_with_address(address, &log)
+            .await;
+        assert_eq!(decoded.name.as_deref(), Some("AnonymousValue"));
+
+        let abi = JsonAbi::parse([
+            "event AnonymousValue(uint256 value) anonymous",
+            "event AnonymousAmount(uint256 amount) anonymous",
+        ])
+        .unwrap();
+        let decoder = CallTraceDecoderBuilder::new().with_address_events(address, &abi).build();
+
+        let decoded = decoder.decode_event_with_address(address, &log).await;
+
+        assert!(decoded.name.is_none());
+        assert!(decoded.params.is_none());
+
+        let abi = JsonAbi::parse([
+            "event RegularValue(uint256 value)",
+            "event AnonymousValue(uint256 indexed value) anonymous",
+        ])
+        .unwrap();
+        let regular = abi.events().find(|event| !event.anonymous).unwrap();
+        let log = LogData::new_unchecked(vec![regular.selector()], Default::default());
+        let decoded = CallTraceDecoderBuilder::new()
+            .with_address_events(address, &abi)
+            .build()
+            .decode_event_with_address_signature(address, &log)
+            .await;
+        assert_eq!(decoded.name.as_deref(), Some("AnonymousValue(uint256)"));
+
+        let abi = JsonAbi::parse([
+            "event RegularValue()",
+            "event AnonymousValue(bytes32 indexed value) anonymous",
+        ])
+        .unwrap();
+        let regular = abi.events().find(|event| !event.anonymous).unwrap();
+        let log = LogData::new_unchecked(vec![regular.selector()], Default::default());
+        let decoder = CallTraceDecoderBuilder::new().with_address_events(address, &abi).build();
+        let decoded = decoder.decode_event_with_address_signature(address, &log).await;
+        assert!(decoded.name.is_none());
+        assert!(decoded.params.is_none());
+        let decoded = decoder.decode_event_with_address(address, &log).await;
+        assert!(decoded.name.is_none());
+        assert!(decoded.params.is_none());
     }
 
     #[test]
@@ -2982,8 +3245,8 @@ mod tests {
         };
         let mut decoder = monad_decoder(MonadHardfork::MonadEight);
 
-        decoder.set_monad_hardfork(Some(MonadHardfork::MonadNine));
-        assert_eq!(decoder.monad_hardfork(), Some(MonadHardfork::MonadNine));
+        decoder.set_hardfork(Some(MonadHardfork::MonadNine.into()));
+        assert_eq!(decoder.hardfork(), Some(MonadHardfork::MonadNine.into()));
         assert_eq!(
             decoder
                 .labels
@@ -2997,8 +3260,8 @@ mod tests {
             Some("dippedIntoReserve()")
         );
 
-        decoder.set_monad_hardfork(Some(MonadHardfork::MonadEight));
-        assert_eq!(decoder.monad_hardfork(), Some(MonadHardfork::MonadEight));
+        decoder.set_hardfork(Some(MonadHardfork::MonadEight.into()));
+        assert_eq!(decoder.hardfork(), Some(MonadHardfork::MonadEight.into()));
         assert!(
             !decoder
                 .labels
@@ -3196,7 +3459,7 @@ mod tests {
         // Decoder with Tempo chain ID (4217).
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T5))
+            .with_hardfork(Some(TempoHardfork::T5.into()))
             .build();
 
         assert_eq!(
@@ -3231,9 +3494,9 @@ mod tests {
 
     #[test]
     fn test_precompile_labels_follow_tempo_hardfork_activation_boundaries() {
-        let labels_for_hardfork = |hardfork| {
+        let labels_for_hardfork = |hardfork: TempoHardfork| {
             CallTraceDecoderBuilder::new()
-                .with_tempo_hardfork(Some(hardfork))
+                .with_hardfork(Some(hardfork.into()))
                 .build()
                 .precompile_labels()
         };
@@ -3274,7 +3537,7 @@ mod tests {
         let ethereum_labels = CallTraceDecoderBuilder::new()
             .with_execution_network(NetworkVariant::Ethereum)
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T7))
+            .with_hardfork(Some(TempoHardfork::T7.into()))
             .build()
             .precompile_labels();
         assert!(!ethereum_labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
@@ -3331,7 +3594,7 @@ mod tests {
 
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T8))
+            .with_hardfork(Some(TempoHardfork::T8.into()))
             .build();
         decoder.clear_addresses();
         let decoded = decoder.decode_function(&trace).await;
@@ -3345,11 +3608,11 @@ mod tests {
         for decoder in [
             CallTraceDecoderBuilder::new()
                 .with_chain_id(Some(4217))
-                .with_tempo_hardfork(Some(TempoHardfork::T7))
+                .with_hardfork(Some(TempoHardfork::T7.into()))
                 .build(),
             CallTraceDecoderBuilder::new()
                 .with_chain_id(Some(1))
-                .with_tempo_hardfork(Some(TempoHardfork::T8))
+                .with_hardfork(Some(TempoHardfork::T8.into()))
                 .build(),
         ] {
             let decoded = decoder.decode_function(&trace).await;
@@ -3370,7 +3633,7 @@ mod tests {
         };
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T8))
+            .with_hardfork(Some(TempoHardfork::T8.into()))
             .build();
         assert_eq!(
             decoder.decode_function(&trace).await.return_data.as_deref(),
@@ -3386,7 +3649,7 @@ mod tests {
     fn test_precompile_labels_skip_tempo_precompiles_on_other_chains() {
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(1))
-            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .with_hardfork(Some(TempoHardfork::T6.into()))
             .build();
 
         let labels = decoder.precompile_labels();
@@ -3404,7 +3667,7 @@ mod tests {
                 (TIP20_CHANNEL_RESERVE_ADDRESS, reserve_label.clone()),
                 (RECEIVE_POLICY_GUARD_ADDRESS, guard_label.clone()),
             ])
-            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .with_hardfork(Some(TempoHardfork::T6.into()))
             .build();
 
         assert_eq!(decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS), Some(&reserve_label));
@@ -3418,7 +3681,7 @@ mod tests {
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_execution_network(NetworkVariant::Tempo)
             .with_labels([(user_address, user_label.clone())])
-            .with_tempo_hardfork(Some(TempoHardfork::T4))
+            .with_hardfork(Some(TempoHardfork::T4.into()))
             .build();
 
         let labels = decoder.precompile_labels();
@@ -3426,21 +3689,21 @@ mod tests {
         assert!(!labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
         assert!(!labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
 
-        decoder.set_tempo_hardfork(Some(TempoHardfork::T6));
+        decoder.set_hardfork(Some(TempoHardfork::T6.into()));
         let labels = decoder.precompile_labels();
         assert!(labels.contains_key(&TIP_FEE_MANAGER_ADDRESS));
         assert!(labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
         assert!(labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
         assert_eq!(decoder.labels.get(&user_address), Some(&user_label));
 
-        decoder.set_tempo_hardfork(Some(TempoHardfork::T4));
+        decoder.set_hardfork(Some(TempoHardfork::T4.into()));
         let labels = decoder.precompile_labels();
         assert!(labels.contains_key(&TIP_FEE_MANAGER_ADDRESS));
         assert!(!labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
         assert!(!labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
         assert_eq!(decoder.labels.get(&user_address), Some(&user_label));
 
-        decoder.set_tempo_hardfork(None);
+        decoder.set_hardfork(None);
         assert_eq!(decoder.labels.get(&user_address), Some(&user_label));
     }
 
@@ -3451,7 +3714,7 @@ mod tests {
         let reserve_label = "UserReserve".to_string();
         let decoder = CallTraceDecoderBuilder::new()
             .with_labels([(TIP20_CHANNEL_RESERVE_ADDRESS, reserve_label.clone())])
-            .with_tempo_hardfork(None)
+            .with_hardfork(None)
             .build();
 
         assert_eq!(decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS), Some(&reserve_label));
@@ -3475,7 +3738,7 @@ mod tests {
 
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .with_hardfork(Some(TempoHardfork::T6.into()))
             .build();
         let decoded = decoder.decode_function(&trace).await;
 
@@ -3487,7 +3750,7 @@ mod tests {
     async fn test_t6_receive_policy_calls_decode() {
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .with_hardfork(Some(TempoHardfork::T6.into()))
             .build();
 
         let set_policy = ITIP403Registry::setReceivePolicyCall {
@@ -3531,7 +3794,7 @@ mod tests {
     async fn test_t6_admin_key_calls_decode() {
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .with_hardfork(Some(TempoHardfork::T6.into()))
             .build();
         let account = address!("0x0000000000000000000000000000000000000abc");
         let key = address!("0x0000000000000000000000000000000000000def");
@@ -3733,7 +3996,7 @@ mod tests {
 
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T4))
+            .with_hardfork(Some(TempoHardfork::T4.into()))
             .build();
 
         let mut arena = CallTraceArena::default();
@@ -3874,8 +4137,7 @@ mod tests {
             monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
             Some(NetworkVariant::Ethereum.into()),
             Some(143),
-            None,
-            Some(MonadHardfork::MonadNine),
+            Some(MonadHardfork::MonadNine.into()),
         ));
     }
 }

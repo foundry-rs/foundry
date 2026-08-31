@@ -1,8 +1,9 @@
 use super::{IdentifiedAddress, TraceIdentifier};
 use crate::debug::ContractSources;
+use alloy_json_abi::JsonAbi;
 use alloy_primitives::{
     Address,
-    map::{Entry, HashMap, HashSet},
+    map::{AddressSet, Entry, HashMap, HashSet},
 };
 use eyre::WrapErr;
 use foundry_block_explorers::{contract::Metadata, errors::EtherscanError};
@@ -208,6 +209,84 @@ impl ExternalIdentifier {
             warn!(target: "evm::traces::external", "external identification timed out; disabling it for the remainder of this session");
         }
     }
+
+    /// Fetches all verified ABIs and whether each proxy chain was fully resolved.
+    pub async fn get_abis(
+        &mut self,
+        addresses: &[Address],
+    ) -> Vec<(Address, eyre::Result<(Vec<JsonAbi>, bool)>)> {
+        const MAX_PROXY_DEPTH: usize = 16;
+
+        struct Chain {
+            current: Option<Address>,
+            visited: HashSet<Address>,
+            abis: Vec<JsonAbi>,
+            complete: bool,
+        }
+
+        let mut chains = addresses
+            .iter()
+            .map(|&address| Chain {
+                current: Some(address),
+                visited: HashSet::default(),
+                abis: Vec::new(),
+                complete: true,
+            })
+            .collect::<Vec<_>>();
+
+        for _ in 0..MAX_PROXY_DEPTH {
+            let to_fetch = chains
+                .iter()
+                .filter_map(|chain| chain.current)
+                .filter(|address| !self.contracts.contains_key(address))
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            self.fetch_addresses_async(&to_fetch).await;
+
+            let mut has_next = false;
+            for chain in &mut chains {
+                let Some(current) = chain.current else { continue };
+                if !chain.visited.insert(current) {
+                    chain.current = None;
+                    chain.complete = false;
+                    continue;
+                }
+                let Some((_, Some(metadata))) = self.contracts.get(&current) else {
+                    chain.current = None;
+                    chain.complete = false;
+                    continue;
+                };
+                if let Ok(abi) = metadata.abi() {
+                    chain.abis.push(abi);
+                } else {
+                    chain.complete = false;
+                }
+                chain.current = (metadata.proxy != 0).then_some(metadata.implementation).flatten();
+                if metadata.proxy != 0 && chain.current.is_none() {
+                    chain.complete = false;
+                }
+                has_next |= chain.current.is_some();
+            }
+            if !has_next {
+                break;
+            }
+        }
+
+        chains
+            .into_iter()
+            .zip(addresses.iter().copied())
+            .map(|(mut chain, address)| {
+                chain.complete &= chain.current.is_none();
+                let result = if chain.abis.is_empty() {
+                    Err(eyre::eyre!("external ABI lookup failed"))
+                } else {
+                    Ok((chain.abis.into_iter().rev().collect(), chain.complete))
+                };
+                (address, result)
+            })
+            .collect()
+    }
 }
 
 impl TraceIdentifier for ExternalIdentifier {
@@ -219,7 +298,7 @@ impl TraceIdentifier for ExternalIdentifier {
         trace!(target: "evm::traces::external", "identify {} addresses", nodes.len());
 
         let mut identities = Vec::new();
-        let mut to_fetch = HashSet::new();
+        let mut to_fetch = AddressSet::default();
 
         // Check cache first.
         for &node in nodes {
@@ -840,5 +919,42 @@ mod tests {
             identifier.contracts[&address].1.as_ref().unwrap().contract_name,
             "EtherscanResult"
         );
+    }
+
+    #[tokio::test]
+    async fn proxy_metadata_preserves_address_identity_and_all_abis() {
+        let proxy = Address::with_last_byte(1);
+        let implementation_address = Address::with_last_byte(2);
+        let mut proxy_metadata = metadata("Proxy");
+        proxy_metadata.abi =
+            r#"[{"anonymous":false,"inputs":[],"name":"ProxyEvent","type":"event"}]"#.to_string();
+        proxy_metadata.proxy = 1;
+        proxy_metadata.implementation = Some(implementation_address);
+        let mut implementation = metadata("Implementation");
+        implementation.abi =
+            r#"[{"anonymous":false,"inputs":[],"name":"ImplementationEvent","type":"event"}]"#
+                .to_string();
+        let mut identifier = test_identifier(Vec::new(), Duration::from_secs(1));
+        let identity = identifier.identify_from_metadata(proxy, &proxy_metadata);
+        assert_eq!(identity.contract.as_deref(), Some("Proxy"));
+        identifier.cache_fetched(proxy, (FetcherKind::Etherscan, Some(proxy_metadata)));
+        identifier
+            .cache_fetched(implementation_address, (FetcherKind::Etherscan, Some(implementation)));
+
+        let mut results = identifier.get_abis(&[proxy]).await;
+        let (result_address, result) = results.pop().unwrap();
+        let (abis, complete) = result.unwrap();
+        let event_names =
+            abis.into_iter().map(|abi| abi.events.into_keys().next().unwrap()).collect::<Vec<_>>();
+
+        assert_eq!(result_address, proxy);
+        assert!(complete);
+        assert_eq!(event_names, ["ImplementationEvent", "ProxyEvent"]);
+
+        identifier.contracts.remove(&implementation_address);
+        let (_, result) = identifier.get_abis(&[proxy]).await.pop().unwrap();
+        let (abis, complete) = result.unwrap();
+        assert_eq!(abis.len(), 1);
+        assert!(!complete);
     }
 }

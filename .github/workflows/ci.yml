@@ -103,12 +103,6 @@ jobs:
           cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target x86_64-apple-darwin --locked
       - run: cargo build --manifest-path crates/forge/Cargo.toml --features touch-id --target aarch64-apple-darwin --locked
 
-  monad:
-    name: Monad
-    uses: ./.github/workflows/monad.yml
-    permissions:
-      contents: read
-
   typos:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
@@ -232,12 +226,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        uses: github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
         with:
           category: "/language:${{matrix.language}}"
 
@@ -260,7 +254,6 @@ jobs:
       - doctest
       - no-default-features
       - touch-id-link
-      - monad
       - typos
       - github-scripts
       - clippy
@@ -272,7 +265,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Decide whether the needed jobs succeeded or failed
-        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
+        uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
         with:
           allowed-skips: touch-id-link
           jobs: ${{ toJSON(needs) }}

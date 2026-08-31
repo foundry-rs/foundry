@@ -285,3 +285,33 @@ contract StorageAliasInitializer is Initializable {
         require(ok);
     }
 }
+
+contract StorageReturnInitializer is Initializable {
+    struct Layout {
+        address owner;
+    }
+
+    Layout private layout;
+    Layout private alternateLayout;
+
+    function getLayout() internal view returns (Layout storage) {
+        return layout;
+    }
+
+    function getAlternateLayout() internal view returns (Layout storage) {
+        return alternateLayout;
+    }
+
+    function initialize(address owner_) public initializer { //~WARN: upgradeable initializer is not protected against direct implementation calls
+        getLayout().owner = owner_;
+    }
+
+    function initializeConditional(bool useAlternate, address owner_) public initializer { //~WARN: upgradeable initializer is not protected against direct implementation calls
+        (useAlternate ? getAlternateLayout() : getLayout()).owner = owner_;
+    }
+
+    function execute(address target, bytes calldata data) external {
+        (bool ok,) = target.delegatecall(data);
+        require(ok);
+    }
+}

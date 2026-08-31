@@ -1,4 +1,5 @@
 use foundry_compilers::utils::read_json_file;
+use foundry_config::SolcReq;
 use foundry_test_utils::TestProject;
 use std::{fs, path::Path, process::Command};
 
@@ -170,6 +171,140 @@ contract BindTarget {
     assert!(!abi.is_empty());
     assert!(artifact["bytecode"]["object"].as_str().is_none());
     assert!(artifact["deployedBytecode"]["object"].as_str().is_none());
+});
+
+// <https://github.com/foundry-rs/foundry/issues/10441>
+forgetest!(bind_generates_enum_variants, |prj, cmd| {
+    prj.add_source(
+        "EnumUser.sol",
+        r#"
+contract EnumUser {
+    enum Status { Pending, Active }
+
+    function echo(Status status) external pure returns (Status) {
+        return status;
+    }
+}
+"#,
+    );
+
+    cmd.args(["bind", "--select", "^EnumUser$"]).assert_success();
+
+    let bindings_path = prj.root().join("out/bindings");
+    let tests_path = bindings_path.join("tests");
+    let enum_test = r#"
+use foundry_contracts::enum_user::EnumUser::{Status, echoCall};
+
+#[test]
+fn enum_variants_are_typed() {
+    let call = echoCall { status: Status::Active };
+    assert_eq!(call.status, Status::Active);
+}
+"#;
+    fs::create_dir_all(&tests_path).unwrap();
+    fs::write(tests_path.join("enums.rs"), enum_test).unwrap();
+    assert_bindings_compile(&bindings_path);
+
+    cmd.forge_fuse().args(["bind", "--skip-build", "--select", "^EnumUser$"]).assert_success();
+
+    prj.add_source(
+        "EnumUser.sol",
+        r#"
+contract EnumUser {
+    enum Status { Active, Pending }
+
+    function echo(Status status) external pure returns (Status) {
+        return status;
+    }
+}
+"#,
+    );
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--overwrite", "--select", "^EnumUser$"])
+        .assert_success();
+
+    let binding = fs::read_to_string(bindings_path.join("src/enum_user.rs")).unwrap();
+    assert!(binding.contains("pub struct Status"), "{binding}");
+    assert!(!binding.contains("pub enum Status"), "{binding}");
+});
+
+forgetest!(bind_skip_build_does_not_require_compiler, |prj, cmd| {
+    prj.add_source(
+        "EnumUser.sol",
+        r#"
+contract EnumUser {
+    enum Status { Pending, Active }
+    function echo(Status status) external pure returns (Status) { return status; }
+}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    let missing_solc = prj.root().join("missing-solc");
+    prj.update_config(|config| config.solc = Some(SolcReq::Local(missing_solc)));
+    cmd.forge_fuse().args(["bind", "--skip-build", "--select", "^EnumUser$"]).assert_success();
+
+    let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
+    assert!(binding.contains("pub enum Status"), "{binding}");
+});
+
+forgetest!(bind_stale_untracked_enum_artifacts_fall_back_to_udvt, |prj, cmd| {
+    prj.add_source(
+        "A.sol",
+        r#"
+contract EnumUser {
+    enum Status { Pending, Active }
+    function echo(Status status) external pure returns (Status) { return status; }
+}
+"#,
+    );
+    cmd.arg("build").assert_success();
+
+    fs::remove_file(prj.paths().sources.join("A.sol")).unwrap();
+    prj.add_source(
+        "Z.sol",
+        r#"
+contract EnumUser {
+    enum Status { Active, Pending }
+    function echo(Status status) external pure returns (Status) { return status; }
+}
+"#,
+    );
+    cmd.forge_fuse().arg("build").assert_success();
+    cmd.forge_fuse()
+        .args(["bind", "--skip-build", "--overwrite", "--select", "^EnumUser$"])
+        .assert_success();
+
+    let binding = fs::read_to_string(prj.root().join("out/bindings/src/enum_user.rs")).unwrap();
+    assert!(binding.contains("pub struct Status"), "{binding}");
+    assert!(!binding.contains("pub enum Status"), "{binding}");
+});
+
+forgetest!(bind_ambiguous_enum_definitions_fall_back_to_udvt, |prj, cmd| {
+    prj.add_source(
+        "A.sol",
+        r#"
+contract Duplicate {
+    enum Status { A }
+    function status(Status value) external pure returns (Status) { return value; }
+}
+"#,
+    );
+    prj.add_source(
+        "B.sol",
+        r#"
+contract Duplicate {
+    enum Status { B }
+    function status(Status value) external pure returns (Status) { return value; }
+}
+"#,
+    );
+
+    cmd.args(["bind", "--select", "^Duplicate$"]).assert_success();
+
+    let binding = fs::read_to_string(prj.root().join("out/bindings/src/duplicate.rs")).unwrap();
+    assert!(binding.contains("pub struct Status"), "{binding}");
+    assert!(!binding.contains("pub enum Status"), "{binding}");
 });
 
 // <https://github.com/foundry-rs/foundry/issues/11177>

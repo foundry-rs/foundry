@@ -5,11 +5,6 @@ use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
 
-/// Returns the `Utc` datetime for the given seconds since unix epoch
-pub fn utc_from_secs(secs: u64) -> DateTime<Utc> {
-    DateTime::from_timestamp(secs as i64, 0).unwrap_or(DateTime::<Utc>::MAX_UTC)
-}
-
 /// Manages block time
 #[derive(Clone, Debug)]
 pub struct TimeManager {
@@ -234,6 +229,11 @@ impl TimeManager {
     pub fn current_call_timestamp(&self) -> u64 {
         self.prepare_next_timestamp().timestamp
     }
+}
+
+/// Returns the `Utc` datetime for the given seconds since unix epoch
+pub fn utc_from_secs(secs: u64) -> DateTime<Utc> {
+    DateTime::from_timestamp(secs as i64, 0).unwrap_or(DateTime::<Utc>::MAX_UTC)
 }
 
 /// Returns the current duration since unix epoch.

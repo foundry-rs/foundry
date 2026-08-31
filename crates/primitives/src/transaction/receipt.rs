@@ -6,7 +6,7 @@ use alloy_network::eip2718::{
     Eip2718Error, Encodable2718, LEGACY_TX_TYPE_ID,
 };
 use alloy_primitives::{Bloom, Log, TxHash, logs_bloom};
-use alloy_rlp::{BufMut, Decodable, Encodable, Header, bytes};
+use alloy_rlp::{BufMut, Decodable, Encodable, bytes};
 use alloy_rpc_types::{BlockNumHash, trace::otterscan::OtsReceipt};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{
@@ -103,12 +103,10 @@ impl FoundryReceiptEnvelope<Log> {
         transaction_index: u64,
         next_log_index: usize,
     ) -> FoundryReceiptEnvelope<alloy_rpc_types::Log> {
-        let logs = self
-            .logs()
-            .iter()
-            .enumerate()
-            .map(|(index, log)| alloy_rpc_types::Log {
-                inner: log.clone(),
+        let mut index = 0;
+        self.map_logs(|inner| {
+            let log = alloy_rpc_types::Log {
+                inner,
                 block_hash: Some(block_numhash.hash),
                 block_number: Some(block_numhash.number),
                 block_timestamp: Some(block_timestamp),
@@ -116,21 +114,10 @@ impl FoundryReceiptEnvelope<Log> {
                 transaction_index: Some(transaction_index),
                 log_index: Some((next_log_index + index) as u64),
                 removed: false,
-            })
-            .collect::<Vec<_>>();
-        #[cfg(feature = "optimism")]
-        let (deposit_nonce, deposit_receipt_version) =
-            (self.deposit_nonce(), self.deposit_receipt_version());
-        #[cfg(not(feature = "optimism"))]
-        let (deposit_nonce, deposit_receipt_version) = (None, None);
-        FoundryReceiptEnvelope::<alloy_rpc_types::Log>::from_parts(
-            self.status(),
-            self.cumulative_gas_used(),
-            logs,
-            self.tx_type(),
-            deposit_nonce,
-            deposit_receipt_version,
-        )
+            };
+            index += 1;
+            log
+        })
     }
 }
 
@@ -293,129 +280,17 @@ where
 
 impl Encodable for FoundryReceiptEnvelope {
     fn encode(&self, out: &mut dyn bytes::BufMut) {
-        match self {
-            Self::Legacy(r) => r.encode(out),
-            receipt => {
-                let payload_len = match receipt {
-                    Self::Eip2930(r) => r.length() + 1,
-                    Self::Eip1559(r) => r.length() + 1,
-                    Self::Eip4844(r) => r.length() + 1,
-                    Self::Eip7702(r) => r.length() + 1,
-                    #[cfg(feature = "optimism")]
-                    Self::PostExec(r) => r.length() + 1,
-                    #[cfg(feature = "optimism")]
-                    Self::Deposit(r) => r.length() + 1,
-                    Self::Tempo(r) => r.length() + 1,
-                    _ => unreachable!("receipt already matched"),
-                };
+        self.network_encode(out);
+    }
 
-                match receipt {
-                    Self::Eip2930(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        EIP2930_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    Self::Eip1559(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        EIP1559_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    Self::Eip4844(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        EIP4844_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    Self::Eip7702(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        EIP7702_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    #[cfg(feature = "optimism")]
-                    Self::PostExec(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        POST_EXEC_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    #[cfg(feature = "optimism")]
-                    Self::Deposit(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        DEPOSIT_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    Self::Tempo(r) => {
-                        Header { list: true, payload_length: payload_len }.encode(out);
-                        TEMPO_TX_TYPE_ID.encode(out);
-                        r.encode(out);
-                    }
-                    _ => unreachable!("receipt already matched"),
-                }
-            }
-        }
+    fn length(&self) -> usize {
+        self.network_len()
     }
 }
 
 impl Decodable for FoundryReceiptEnvelope {
     fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
-        use bytes::Buf;
-        use std::cmp::Ordering;
-
-        // a receipt is either encoded as a string (non legacy) or a list (legacy).
-        // We should not consume the buffer if we are decoding a legacy receipt, so let's
-        // check if the first byte is between 0x80 and 0xbf.
-        let rlp_type = *buf
-            .first()
-            .ok_or(alloy_rlp::Error::Custom("cannot decode a receipt from empty bytes"))?;
-
-        match rlp_type.cmp(&alloy_rlp::EMPTY_LIST_CODE) {
-            Ordering::Less => {
-                // strip out the string header
-                let _header = Header::decode(buf)?;
-                let receipt_type = *buf.first().ok_or(alloy_rlp::Error::Custom(
-                    "typed receipt cannot be decoded from an empty slice",
-                ))?;
-                if receipt_type == EIP2930_TX_TYPE_ID {
-                    buf.advance(1);
-                    <ReceiptWithBloom as Decodable>::decode(buf)
-                        .map(FoundryReceiptEnvelope::Eip2930)
-                } else if receipt_type == EIP1559_TX_TYPE_ID {
-                    buf.advance(1);
-                    <ReceiptWithBloom as Decodable>::decode(buf)
-                        .map(FoundryReceiptEnvelope::Eip1559)
-                } else if receipt_type == EIP4844_TX_TYPE_ID {
-                    buf.advance(1);
-                    <ReceiptWithBloom as Decodable>::decode(buf)
-                        .map(FoundryReceiptEnvelope::Eip4844)
-                } else if receipt_type == EIP7702_TX_TYPE_ID {
-                    buf.advance(1);
-                    <ReceiptWithBloom as Decodable>::decode(buf)
-                        .map(FoundryReceiptEnvelope::Eip7702)
-                } else if receipt_type == TEMPO_TX_TYPE_ID {
-                    buf.advance(1);
-                    <ReceiptWithBloom as Decodable>::decode(buf).map(FoundryReceiptEnvelope::Tempo)
-                } else {
-                    #[cfg(feature = "optimism")]
-                    {
-                        if receipt_type == POST_EXEC_TX_TYPE_ID {
-                            buf.advance(1);
-                            return <ReceiptWithBloom as Decodable>::decode(buf)
-                                .map(FoundryReceiptEnvelope::PostExec);
-                        }
-                        if receipt_type == DEPOSIT_TX_TYPE_ID {
-                            buf.advance(1);
-                            return <OpDepositReceiptWithBloom as Decodable>::decode(buf)
-                                .map(FoundryReceiptEnvelope::Deposit);
-                        }
-                    }
-                    Err(alloy_rlp::Error::Custom("invalid receipt type"))
-                }
-            }
-            Ordering::Equal => {
-                Err(alloy_rlp::Error::Custom("an empty list is not a valid receipt encoding"))
-            }
-            Ordering::Greater => {
-                <ReceiptWithBloom as Decodable>::decode(buf).map(FoundryReceiptEnvelope::Legacy)
-            }
-        }
+        Self::network_decode(buf).map_err(Into::into)
     }
 }
 
@@ -533,6 +408,71 @@ mod tests {
     }
 
     #[test]
+    fn rlp_roundtrip() {
+        fn assert_roundtrip(receipt: FoundryReceiptEnvelope) {
+            let mut encoded = Vec::new();
+            receipt.encode(&mut encoded);
+            assert_eq!(encoded.len(), receipt.length());
+
+            let mut encoded = encoded.as_slice();
+            let decoded = FoundryReceiptEnvelope::decode(&mut encoded).unwrap();
+            assert_eq!(decoded, receipt);
+            assert!(encoded.is_empty());
+        }
+
+        for tx_type in [
+            FoundryTxType::Legacy,
+            FoundryTxType::Eip2930,
+            FoundryTxType::Eip1559,
+            FoundryTxType::Eip4844,
+            FoundryTxType::Eip7702,
+            FoundryTxType::Tempo,
+        ] {
+            assert_roundtrip(receipt_for(tx_type));
+        }
+        #[cfg(feature = "optimism")]
+        for tx_type in [FoundryTxType::PostExec, FoundryTxType::Deposit] {
+            assert_roundtrip(receipt_for(tx_type));
+        }
+
+        // Varied payload so encodings differ beyond the type byte.
+        let logs = vec![Log {
+            address: Address::from_str("0000000000000000000000000000000000000011").unwrap(),
+            data: LogData::new_unchecked(
+                vec![B256::repeat_byte(0x22)],
+                Bytes::from_static(&[0x01, 0x02, 0x03]),
+            ),
+        }];
+        let logs_bloom = logs_bloom(&logs);
+        let receipt = Receipt { status: false.into(), cumulative_gas_used: 0x2a, logs };
+        assert_roundtrip(FoundryReceiptEnvelope::Eip1559(ReceiptWithBloom {
+            receipt: receipt.clone(),
+            logs_bloom,
+        }));
+        // A deposit receipt with set deposit fields; op-alloy encodes them only when `Some`, so
+        // this catches decode paths that drop them.
+        #[cfg(feature = "optimism")]
+        assert_roundtrip(FoundryReceiptEnvelope::Deposit(OpDepositReceiptWithBloom {
+            receipt: OpDepositReceipt {
+                inner: receipt,
+                deposit_nonce: Some(7),
+                deposit_receipt_version: Some(1),
+            },
+            logs_bloom,
+        }));
+    }
+
+    #[test]
+    fn encode_typed_receipt_uses_rlp_string() {
+        let receipt = receipt_for(FoundryTxType::Eip2930);
+        let mut encoded = Vec::new();
+        receipt.encode(&mut encoded);
+
+        // Long string containing a 266-byte EIP-2718 envelope, beginning with type 0x01.
+        assert_eq!(&encoded[..4], &[0xb9, 0x01, 0x0a, EIP2930_TX_TYPE_ID]);
+    }
+
+    #[test]
     fn receipt_predicates() {
         assert!(receipt_for(FoundryTxType::Legacy).is_legacy());
         assert!(receipt_for(FoundryTxType::Eip2930).is_eip2930());
@@ -620,9 +560,6 @@ mod tests {
 
     #[test]
     fn encode_tempo_receipt() {
-        use alloy_network::eip2718::Encodable2718;
-        use tempo_primitives::TEMPO_TX_TYPE_ID;
-
         let receipt = FoundryReceiptEnvelope::Tempo(ReceiptWithBloom {
             receipt: Receipt {
                 status: true.into(),
@@ -660,34 +597,30 @@ mod tests {
         assert_eq!(receipt.cumulative_gas_used(), 157716);
         assert_eq!(receipt.logs().len(), 1);
 
-        // Encode and decode round-trip
+        // The EIP-2718 encoding starts with the Tempo type byte.
+        let mut encoded_2718 = Vec::new();
+        receipt.encode_2718(&mut encoded_2718);
+        assert_eq!(encoded_2718[0], TEMPO_TX_TYPE_ID);
+
+        // `Decodable` expects the network format, which wraps the typed payload in an RLP string.
         let mut encoded = Vec::new();
-        receipt.encode_2718(&mut encoded);
-
-        // First byte should be the Tempo type ID
-        assert_eq!(encoded[0], TEMPO_TX_TYPE_ID);
-
-        // Decode it back
+        receipt.encode(&mut encoded);
         let decoded = FoundryReceiptEnvelope::decode(&mut &encoded[..]).unwrap();
         assert_eq!(receipt, decoded);
     }
 
     #[test]
     fn decode_tempo_receipt() {
-        use alloy_network::eip2718::Encodable2718;
-        use tempo_primitives::TEMPO_TX_TYPE_ID;
-
         let receipt = FoundryReceiptEnvelope::Tempo(ReceiptWithBloom {
             receipt: Receipt { status: true.into(), cumulative_gas_used: 21000, logs: vec![] },
             logs_bloom: [0; 256].into(),
         });
 
-        // Encode and decode via 2718
+        // Encode and decode via 2718.
         let mut encoded = Vec::new();
         receipt.encode_2718(&mut encoded);
         assert_eq!(encoded[0], TEMPO_TX_TYPE_ID);
 
-        use alloy_network::eip2718::Decodable2718;
         let decoded = FoundryReceiptEnvelope::decode_2718(&mut &encoded[..]).unwrap();
         assert_eq!(receipt, decoded);
     }

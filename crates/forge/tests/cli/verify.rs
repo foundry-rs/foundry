@@ -2,6 +2,7 @@
 //! and Sourcify.
 
 use crate::utils::{self, EnvExternalities};
+use alloy_chains::NamedChain;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, U256, hex};
 use anvil::{NodeConfig, spawn};
@@ -94,7 +95,10 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         test_debug!("stdout: {stdout}\nstderr: {stderr}");
-        if stderr.contains("Contract successfully verified") {
+        // A retried attempt can land on a submission that already succeeded, which reports the
+        // contract as verified rather than verifying it again.
+        if stderr.contains("Contract successfully verified") || stderr.contains("already verified")
+        {
             return Ok(());
         }
         eyre::bail!("Failed to get verification, stdout: {stdout}, stderr: {stderr}");
@@ -257,6 +261,64 @@ fn create_verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut 
     }
 }
 
+/// Deploys a freshly stamped contract and verifies it, as two separate commands.
+///
+/// Deploy and verify are kept apart on purpose: Sourcify indexes from its own node, and submitting
+/// straight after the broadcast fails the job outright with `contract_not_deployed` rather than
+/// leaving it pending, so the retry has to re-run the whole `verify-contract` command.
+fn deploy_and_verify_on_chain(
+    info: Option<EnvExternalities>,
+    prj: TestProject,
+    mut cmd: TestCommand,
+) {
+    // only execute if the network is configured
+    let Some(info) = info else { return };
+
+    test_debug!("deploying on {} for verification via {}", info.chain, info.verifier);
+    add_single_verify_target_file(&prj);
+
+    let contract_path = "src/Verify.sol:Verify";
+    let output = cmd
+        .forge_fuse()
+        .arg("create")
+        .args(info.create_args())
+        .args([contract_path, "--broadcast"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let address = utils::parse_deployed_address(output.as_str())
+        .unwrap_or_else(|| panic!("Failed to parse deployer {output}"));
+
+    let mut args = vec![
+        "--chain-id".to_string(),
+        (info.chain as u64).to_string(),
+        address,
+        contract_path.to_string(),
+        "--watch".to_string(),
+    ];
+
+    if !info.etherscan.is_empty() {
+        args.push("--etherscan-api-key".to_string());
+        args.push(info.etherscan.clone());
+    }
+
+    if !info.verifier.is_empty() {
+        args.push("--verifier".to_string());
+        args.push(info.verifier.clone());
+    }
+
+    // Blockscout instances share no registry, so the URL has to be passed explicitly.
+    if let Some(verifier_url) = &info.verifier_url {
+        args.push("--verifier-url".to_string());
+        args.push(verifier_url.clone());
+    }
+
+    cmd.forge_fuse().arg("verify-contract").root_arg().args(args);
+
+    parse_verification_result(&mut cmd, 6)
+        .unwrap_or_else(|err| panic!("Failed to verify on {}: {err}", info.chain));
+}
+
 // tests `create && contract-verify && verify-check` on Fantom testnet if correct env vars are set
 forgetest!(can_verify_random_contract_fantom_testnet, |prj, cmd| {
     verify_on_chain(EnvExternalities::ftm_testnet(), prj, cmd);
@@ -325,7 +387,7 @@ forgetest!(can_verify_contract_sepolia_etherscan_also_runs_sourcify, |prj, cmd| 
 
 // tests `create --verify on Sepolia testnet if correct env vars are set
 // SEPOLIA_RPC_URL=https://rpc.sepolia.org
-// TEST_PRIVATE_KEY=0x...
+// TESTNET_DEPLOYER_PRIVATE_KEY=0x...
 // ETHERSCAN_API_KEY=<API_KEY>
 forgetest!(can_create_verify_random_contract_sepolia_etherscan, |prj, cmd| {
     // Implicitly tests `--verifier etherscan` on Sepolia testnet
@@ -407,6 +469,63 @@ forgetest!(can_guess_constructor_args, |prj, cmd| {
 forgetest!(can_verify_random_contract_sepolia_default_sourcify, |prj, cmd| {
     verify_on_chain(EnvExternalities::sepolia_empty_verifier(), prj, cmd);
 });
+
+// Blockscout instances are per-chain deployments with no shared registry, so `--verifier
+// blockscout` has to be given the URL explicitly.
+const SEPOLIA_BLOCKSCOUT_URL: &str = "https://eth-sepolia.blockscout.com/api";
+const ROBINHOOD_TESTNET_BLOCKSCOUT_URL: &str = "https://explorer.testnet.chain.robinhood.com/api";
+
+/// End-to-end `create` + `verify-contract` coverage across the testnets we support.
+///
+/// Each test is inert unless `<NETWORK>_RPC_URL` and `TESTNET_DEPLOYER_PRIVATE_KEY` are set, and
+/// they are wired up by the nightly `test-deploy-verify` workflow rather than by PR CI: they spend
+/// testnet funds and depend on three external verifier services.
+///
+/// Etherscan v2 covers Hoodi, Sepolia, Base Sepolia, Arbitrum Sepolia and Monad testnet. Robinhood
+/// testnet is not on the v2 chainlist, so it is covered by Sourcify and its own Blockscout instance
+/// instead.
+macro_rules! deploy_verify_tests {
+    ($($name:ident: $chain:expr, $network:literal, $verifier:literal, $url:expr;)*) => {$(
+        forgetest!($name, |prj, cmd| {
+            deploy_and_verify_on_chain(
+                EnvExternalities::deploy_verify($chain, $network, $verifier, $url),
+                prj,
+                cmd,
+            );
+        });
+    )*};
+}
+
+deploy_verify_tests! {
+    deploy_verify_hoodi_etherscan: NamedChain::Hoodi, "hoodi", "etherscan", None;
+    deploy_verify_hoodi_sourcify: NamedChain::Hoodi, "hoodi", "sourcify", None;
+
+    deploy_verify_sepolia_etherscan: NamedChain::Sepolia, "sepolia", "etherscan", None;
+    deploy_verify_sepolia_sourcify: NamedChain::Sepolia, "sepolia", "sourcify", None;
+    deploy_verify_sepolia_blockscout:
+        NamedChain::Sepolia, "sepolia", "blockscout", Some(SEPOLIA_BLOCKSCOUT_URL);
+
+    deploy_verify_base_sepolia_etherscan:
+        NamedChain::BaseSepolia, "base-sepolia", "etherscan", None;
+    deploy_verify_base_sepolia_sourcify:
+        NamedChain::BaseSepolia, "base-sepolia", "sourcify", None;
+
+    deploy_verify_arbitrum_sepolia_etherscan:
+        NamedChain::ArbitrumSepolia, "arbitrum-sepolia", "etherscan", None;
+    deploy_verify_arbitrum_sepolia_sourcify:
+        NamedChain::ArbitrumSepolia, "arbitrum-sepolia", "sourcify", None;
+
+    deploy_verify_monad_testnet_etherscan:
+        NamedChain::MonadTestnet, "monad-testnet", "etherscan", None;
+    deploy_verify_monad_testnet_sourcify:
+        NamedChain::MonadTestnet, "monad-testnet", "sourcify", None;
+
+    deploy_verify_robinhood_testnet_sourcify:
+        NamedChain::RobinhoodTestnet, "robinhood-testnet", "sourcify", None;
+    deploy_verify_robinhood_testnet_blockscout:
+        NamedChain::RobinhoodTestnet, "robinhood-testnet", "blockscout",
+        Some(ROBINHOOD_TESTNET_BLOCKSCOUT_URL);
+}
 
 // Tests that verify properly validates verifier arguments.
 // <https://github.com/foundry-rs/foundry/issues/11430>

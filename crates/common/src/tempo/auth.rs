@@ -27,11 +27,6 @@ use tokio::sync::Mutex;
 /// Default device-code service URL (production wallet.tempo.xyz).
 const DEFAULT_CLI_AUTH_URL: &str = "https://wallet.tempo.xyz/cli-auth";
 
-/// Returns `true` if `url`'s host is `tempo.xyz` or a subdomain of it.
-pub(crate) fn is_known_tempo_endpoint(url: &url::Url) -> bool {
-    url.host_str().is_some_and(|host| host == "tempo.xyz" || host.ends_with(".tempo.xyz"))
-}
-
 /// Env var to override the device-code service URL (for tests / staging).
 const TEMPO_CLI_AUTH_URL_ENV: &str = "TEMPO_CLI_AUTH_URL";
 
@@ -337,6 +332,11 @@ impl PollKeyAuthorization {
             Self::Legacy(encoded) => decode_key_authorization(&encoded),
         }
     }
+}
+
+/// Returns `true` if `url`'s host is `tempo.xyz` or a subdomain of it.
+pub(crate) fn is_known_tempo_endpoint(url: &url::Url) -> bool {
+    url.host_str().is_some_and(|host| host == "tempo.xyz" || host.ends_with(".tempo.xyz"))
 }
 
 #[cfg(test)]

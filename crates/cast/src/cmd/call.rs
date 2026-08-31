@@ -84,6 +84,9 @@ use std::str::FromStr;
 ///   --override-state 0x123:0x1:0x1234
 ///   --override-state-diff 0x123:0x1:0x1234
 /// ```
+///
+/// `--delegate` builds on the same mechanism: it overrides the code of the `--from` address with
+/// the destination's code so the call runs as a `delegatecall`.
 #[derive(Debug, Parser)]
 pub struct CallArgs {
     /// The destination of the transaction.
@@ -107,6 +110,18 @@ pub struct CallArgs {
     /// Forks the remote rpc, executes the transaction locally and prints a trace
     #[arg(long, default_value_t = false)]
     trace: bool,
+
+    /// Simulate the call as a `delegatecall` from the `--from` address.
+    ///
+    /// The destination's runtime code is applied as a code override on the `--from` address and
+    /// the call is then made to that address, so the destination's code runs in the caller's
+    /// storage context, like an on-chain `delegatecall`.
+    ///
+    /// Note that the executed code observes `msg.sender` (and `tx.origin`) equal to the `--from`
+    /// address itself, whereas in an on-chain `delegatecall` `msg.sender` is preserved from the
+    /// delegating contract's own caller.
+    #[arg(long, requires = "from", conflicts_with = "browser")]
+    delegate: bool,
 
     /// Fetch the call trace from the node via `debug_traceCall` (callTracer) and render it,
     /// instead of re-executing the call locally like `--trace`.
@@ -229,6 +244,11 @@ impl CallArgs {
             if self.browser.browser {
                 eyre::bail!("--browser cannot be combined with --curl; use --from <ADDRESS>");
             }
+            if self.delegate {
+                // The code override that makes the call a `delegatecall` is read from the node,
+                // which `--curl` deliberately never contacts.
+                eyre::bail!("--delegate cannot be combined with --curl");
+            }
             return self.run_curl().await;
         }
 
@@ -336,13 +356,13 @@ impl CallArgs {
         <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
     {
         config.networks = evm_opts.networks;
-        let state_overrides = self.get_state_overrides()?;
+        let mut state_overrides = self.get_state_overrides()?;
         let block_overrides = self.get_block_overrides()?;
         config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
         let tracing = config.tracing.clone();
 
         let Self {
-            to,
+            mut to,
             mut sig,
             mut args,
             mut tx,
@@ -357,6 +377,7 @@ impl CallArgs {
             wallet,
             browser,
             force,
+            delegate,
             ..
         } = self;
 
@@ -375,6 +396,36 @@ impl CallArgs {
             SenderKind::from_wallet_opts(wallet).await?
         };
         let from = sender.address();
+
+        // A `delegatecall` runs the destination's code against the caller's storage, which
+        // `eth_call` cannot express. Overriding the caller's code with the destination's and
+        // then calling the caller reproduces that context. The retarget to the caller happens
+        // after the transaction is built, so calldata encoding and function resolution still
+        // see the destination.
+        if delegate {
+            if command.is_some() {
+                eyre::bail!("`--delegate` cannot be combined with `--create`");
+            }
+            let Some(target) = to else {
+                eyre::bail!("`--delegate` requires a destination address");
+            };
+            let target = target.resolve(&provider).await?;
+            let overrides = state_overrides.get_or_insert_with(Default::default);
+            if overrides.get(&from).is_some_and(|account| account.code.is_some()) {
+                eyre::bail!("`--delegate` conflicts with `--override-code` for the sender {from}");
+            }
+            // A code override for the destination is the state this call runs against, so it
+            // takes precedence over the deployed code.
+            let code = match overrides.get(&target).and_then(|account| account.code.clone()) {
+                Some(code) => code,
+                None => provider.get_code_at(target).block_id(block.unwrap_or_default()).await?,
+            };
+            if code.is_empty() {
+                eyre::bail!("`--delegate` destination {target} has no code to delegate to");
+            }
+            overrides.entry(from).or_default().code = Some(code);
+            to = Some(NameOrAddress::Address(target));
+        }
 
         let code = if let Some(CallSubcommands::Create {
             code,
@@ -408,7 +459,13 @@ impl CallArgs {
         {
             return Ok(());
         }
-        let (tx, func) = builder.build(sender).await?;
+        let (mut tx, func) = builder.build(sender).await?;
+
+        // The delegate override put the destination's code on the sender, so the built call is
+        // aimed at the sender; the calldata above was still encoded against the destination.
+        if delegate {
+            tx.set_to(from);
+        }
 
         if debug_trace_call {
             let endpoint_identity = endpoint_identity
@@ -569,10 +626,9 @@ impl CallArgs {
             let (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork) =
                 TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
             let context_block_number = evm_env.block_env.number().saturating_to();
-            // modify settings that usually set in eth_call
+            // Modify settings usually set in eth_call while keeping execution gas bounded.
             evm_env.cfg_env.disable_block_gas_limit = true;
             evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
-            evm_env.block_env.set_gas_limit(u64::MAX);
 
             // Apply the block overrides.
             if let Some(block_overrides) = block_overrides {
@@ -622,8 +678,7 @@ impl CallArgs {
 
             // Apply a user-provided `--gas-limit` to the executor. `build_test_env` propagates the
             // executor's gas limit to the executed call/deploy, so setting it here is what takes
-            // effect; writing it onto the tx env directly would be overwritten. When no limit is
-            // given, the executor keeps the block gas limit (`u64::MAX`) set above.
+            // effect; writing it onto the tx env directly would be overwritten.
             if let Some(gas_limit) = tx.gas_limit() {
                 executor.set_gas_limit(gas_limit);
             }
@@ -707,7 +762,10 @@ impl CallArgs {
             .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
             .await?;
 
+        // With `--delegate` the call targets the sender, whose code comes from the override and
+        // was already checked to be non-empty, so the on-chain code lookup would be misleading.
         if response == "0x"
+            && !delegate
             && let Some(contract_address) = tx.to()
         {
             let code = provider.get_code_at(contract_address).await?;

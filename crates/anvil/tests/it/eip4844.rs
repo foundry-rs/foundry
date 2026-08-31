@@ -4,7 +4,7 @@ use alloy_consensus::{
     TxEip4844, proofs::calculate_transaction_root,
 };
 use alloy_eips::{
-    Decodable2718, Typed2718,
+    eip2718::{Decodable2718, EIP4844_TX_TYPE_ID, Typed2718},
     eip4844::{
         BLOB_TX_MIN_BLOB_GASPRICE, DATA_GAS_PER_BLOB, MAX_DATA_GAS_PER_BLOCK_DENCUN,
         TARGET_DATA_GAS_PER_BLOCK_DENCUN,
@@ -416,6 +416,16 @@ async fn can_correctly_estimate_blob_gas_with_recommended_fillers_with_signer() 
         receipt.blob_gas_used.expect("Expected to be EIP-4844 transaction"),
         DATA_GAS_PER_BLOB
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rejects_malformed_eip4844_transaction() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Cancun.into()));
+    let (_api, handle) = spawn(node_config).await;
+
+    let err = handle.http_provider().send_raw_transaction(&[EIP4844_TX_TYPE_ID]).await.unwrap_err();
+
+    assert!(err.to_string().contains("Failed to decode transaction"));
 }
 
 // <https://github.com/foundry-rs/foundry/issues/9924>

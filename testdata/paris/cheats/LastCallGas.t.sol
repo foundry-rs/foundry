@@ -24,6 +24,12 @@ contract Target {
         slot0 = 0;
     }
 
+    function failWithInvalid() public pure {
+        assembly {
+            invalid()
+        }
+    }
+
     fallback() external {}
 }
 
@@ -160,6 +166,7 @@ abstract contract LastCallGasFixture is Test {
         assertEq(lhs.gasTotalUsed, rhs.gasTotalUsed);
         assertEq(lhs.gasMemoryUsed, rhs.gasMemoryUsed);
         assertEq(lhs.gasRefunded, rhs.gasRefunded);
+        assertEq(lhs.gasStateUsed, 0);
     }
 
     function _assertGasRecorded(Vm.Gas memory gas) internal {
@@ -167,6 +174,7 @@ abstract contract LastCallGasFixture is Test {
         assertGt(gas.gasRemaining, 0);
         assertGt(gas.gasTotalUsed, 0);
         assertEq(gas.gasMemoryUsed, 0);
+        assertEq(gas.gasStateUsed, 0);
     }
 }
 
@@ -273,7 +281,17 @@ contract LastCallGasIsolatedTest is LastCallGasFixture {
     function testRecordGasRefund() public {
         _setup();
         _performRefund();
-        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 21380, gasMemoryUsed: 0, gasRefunded: 4800}));
+        _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 26180, gasMemoryUsed: 0, gasRefunded: 4800}));
+        assertEq(vm.snapshotGasLastCall("isolated refund call"), 21380);
+        assertEq(vm.snapshotGasLastFrame("isolated refund frame"), 21380);
+    }
+
+    function testSnapshotGasForFailedCharge() public {
+        _setup();
+        (bool success,) = address(target).call{gas: 100_000}(abi.encodeCall(target.failWithInvalid, ()));
+        assertEq(success, false);
+        assertEq(vm.snapshotGasLastCall("isolated failed charge call"), 0);
+        assertEq(vm.snapshotGasLastFrame("isolated failed charge frame"), 0);
     }
 
     function testStateDiffRecordingDoesNotWarmStorageReads() public {
@@ -395,5 +413,7 @@ contract LastCallGasDefaultTest is LastCallGasFixture {
         _setup();
         _performRefund();
         _assertGas(vm.lastCallGas(), Gas({gasTotalUsed: 216, gasMemoryUsed: 0, gasRefunded: 19900}));
+        assertEq(vm.snapshotGasLastCall("refund call"), 216);
+        assertEq(vm.snapshotGasLastFrame("refund frame"), 216);
     }
 }

@@ -90,103 +90,6 @@ use std::{
 use tokio::signal;
 use tracing::Span;
 
-fn should_symbolically_import_fuzz_corpus(config: &Config, func: &Function) -> bool {
-    config.symbolic.use_fuzz_corpus && func.test_function_kind().is_fuzz_test()
-}
-
-pub(crate) fn effective_test_function_kind(
-    kind: TestFunctionKind,
-    config: &Config,
-    func: &Function,
-) -> TestFunctionKind {
-    if should_symbolically_import_fuzz_corpus(config, func) {
-        TestFunctionKind::SymbolicTest
-    } else {
-        kind
-    }
-}
-
-fn symbolic_invariant_unsupported_domain_reason(
-    invariant_config: &InvariantConfig,
-    sender_filters: &SenderFilters,
-    targets: &FuzzRunIdentifiedContracts,
-    symbolic_targets: &[SymbolicInvariantTarget],
-) -> Option<String> {
-    if sender_filters.targeted.is_empty() {
-        return Some("symbolic invariant execution requires explicit target senders".to_string());
-    }
-    if invariant_config.has_delay() {
-        return Some("symbolic invariant execution does not model warp/roll delays".to_string());
-    }
-    if invariant_config.call_override {
-        return Some(
-            "symbolic invariant execution does not model call override targets".to_string(),
-        );
-    }
-    if targets.is_updatable {
-        return Some(
-            "symbolic invariant execution does not model dynamically updatable targets".to_string(),
-        );
-    }
-    if invariant_config.corpus.payable_value_weight > 0
-        && symbolic_targets
-            .iter()
-            .any(|target| target.function.state_mutability == StateMutability::Payable)
-    {
-        return Some("symbolic invariant execution does not model payable call values".to_string());
-    }
-    None
-}
-
-fn symbolic_artifact_handler_failure_matches(
-    failure: Option<&SymbolicInvariantArtifactFailure>,
-    site: Option<CheckSequenceFailureSite>,
-) -> bool {
-    matches!(
-        (failure, site),
-        (
-            Some(SymbolicInvariantArtifactFailure::Handler {
-                reverter,
-                selector,
-                fingerprint,
-                ..
-            }),
-            Some(CheckSequenceFailureSite::SequenceCall {
-                target,
-                selector: actual_selector,
-                fingerprint: actual_fingerprint,
-            })
-        ) if *reverter == target && *selector == actual_selector && *fingerprint == actual_fingerprint
-    )
-}
-
-const fn symbolic_invariant_failure_site(
-    site: CheckSequenceFailureSite,
-) -> SymbolicInvariantFailureSite {
-    match site {
-        CheckSequenceFailureSite::SequenceCall { target, selector, fingerprint } => {
-            SymbolicInvariantFailureSite::SequenceCall { target, selector, fingerprint }
-        }
-        CheckSequenceFailureSite::Invariant { target, selector, fingerprint } => {
-            SymbolicInvariantFailureSite::Invariant { target, selector, fingerprint }
-        }
-        CheckSequenceFailureSite::AfterInvariant { target, selector, fingerprint } => {
-            SymbolicInvariantFailureSite::AfterInvariant { target, selector, fingerprint }
-        }
-    }
-}
-
-fn symbolic_artifact_predicate_failure_matches(
-    failure: Option<&SymbolicInvariantArtifactFailure>,
-    outcome: &CheckSequenceOutcome,
-) -> bool {
-    let Some(SymbolicInvariantArtifactFailure::Predicate { site: Some(expected), .. }) = failure
-    else {
-        return false;
-    };
-    outcome.failure_site.is_some_and(|actual| symbolic_invariant_failure_site(actual) == *expected)
-}
-
 const FUZZ_BRANCH_FRONTIER_SCHEMA: &str = "foundry:fuzz.branch-frontiers@v1";
 const FUZZ_BRANCH_FRONTIER_FILE: &str = "branch-frontiers.json";
 
@@ -5984,4 +5887,101 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
         }
     }
     (replayed, replayed_storage)
+}
+
+fn should_symbolically_import_fuzz_corpus(config: &Config, func: &Function) -> bool {
+    config.symbolic.use_fuzz_corpus && func.test_function_kind().is_fuzz_test()
+}
+
+pub(crate) fn effective_test_function_kind(
+    kind: TestFunctionKind,
+    config: &Config,
+    func: &Function,
+) -> TestFunctionKind {
+    if should_symbolically_import_fuzz_corpus(config, func) {
+        TestFunctionKind::SymbolicTest
+    } else {
+        kind
+    }
+}
+
+fn symbolic_invariant_unsupported_domain_reason(
+    invariant_config: &InvariantConfig,
+    sender_filters: &SenderFilters,
+    targets: &FuzzRunIdentifiedContracts,
+    symbolic_targets: &[SymbolicInvariantTarget],
+) -> Option<String> {
+    if sender_filters.targeted.is_empty() {
+        return Some("symbolic invariant execution requires explicit target senders".to_string());
+    }
+    if invariant_config.has_delay() {
+        return Some("symbolic invariant execution does not model warp/roll delays".to_string());
+    }
+    if invariant_config.call_override {
+        return Some(
+            "symbolic invariant execution does not model call override targets".to_string(),
+        );
+    }
+    if targets.is_updatable {
+        return Some(
+            "symbolic invariant execution does not model dynamically updatable targets".to_string(),
+        );
+    }
+    if invariant_config.corpus.payable_value_weight > 0
+        && symbolic_targets
+            .iter()
+            .any(|target| target.function.state_mutability == StateMutability::Payable)
+    {
+        return Some("symbolic invariant execution does not model payable call values".to_string());
+    }
+    None
+}
+
+fn symbolic_artifact_handler_failure_matches(
+    failure: Option<&SymbolicInvariantArtifactFailure>,
+    site: Option<CheckSequenceFailureSite>,
+) -> bool {
+    matches!(
+        (failure, site),
+        (
+            Some(SymbolicInvariantArtifactFailure::Handler {
+                reverter,
+                selector,
+                fingerprint,
+                ..
+            }),
+            Some(CheckSequenceFailureSite::SequenceCall {
+                target,
+                selector: actual_selector,
+                fingerprint: actual_fingerprint,
+            })
+        ) if *reverter == target && *selector == actual_selector && *fingerprint == actual_fingerprint
+    )
+}
+
+const fn symbolic_invariant_failure_site(
+    site: CheckSequenceFailureSite,
+) -> SymbolicInvariantFailureSite {
+    match site {
+        CheckSequenceFailureSite::SequenceCall { target, selector, fingerprint } => {
+            SymbolicInvariantFailureSite::SequenceCall { target, selector, fingerprint }
+        }
+        CheckSequenceFailureSite::Invariant { target, selector, fingerprint } => {
+            SymbolicInvariantFailureSite::Invariant { target, selector, fingerprint }
+        }
+        CheckSequenceFailureSite::AfterInvariant { target, selector, fingerprint } => {
+            SymbolicInvariantFailureSite::AfterInvariant { target, selector, fingerprint }
+        }
+    }
+}
+
+fn symbolic_artifact_predicate_failure_matches(
+    failure: Option<&SymbolicInvariantArtifactFailure>,
+    outcome: &CheckSequenceOutcome,
+) -> bool {
+    let Some(SymbolicInvariantArtifactFailure::Predicate { site: Some(expected), .. }) = failure
+    else {
+        return false;
+    };
+    outcome.failure_site.is_some_and(|actual| symbolic_invariant_failure_site(actual) == *expected)
 }

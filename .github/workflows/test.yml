@@ -108,7 +108,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           cache-bin: false
-      - uses: taiki-e/install-action@b6b84cf49ebfe0176417bdce007c624f0db37f20 # v2.86.2
+      - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: nextest
       - name: Setup Git config
@@ -131,4 +131,4 @@ jobs:
             args+=(--partition "$NEXTEST_PARTITION")
           fi
           args+=(--no-fail-fast)
-          cargo nextest run --locked "${args[@]}"
+          cargo nextest run --locked --features monad "${args[@]}"

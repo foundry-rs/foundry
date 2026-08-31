@@ -6,12 +6,6 @@ use solar::{
     sema::hir::{self, ElementaryType, Expr, ExprKind, Res, Stmt, StmtKind, TypeKind, VariableId},
 };
 
-/// True if `expr` references the named global builtin (`msg`, `tx`, `this`, ...).
-fn is_builtin(expr: &Expr<'_>, name: Symbol) -> bool {
-    matches!(&expr.peel_parens().kind, ExprKind::Ident(reses)
-        if reses.iter().any(|r| matches!(r, Res::Builtin(b) if b.name() == name)))
-}
-
 /// True if `vid` is typed as `address`/`address payable`.
 pub fn is_address_type(hir: &hir::Hir<'_>, vid: VariableId) -> bool {
     matches!(hir.variable(vid).ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
@@ -54,6 +48,12 @@ pub fn branch_always_exits(stmt: &Stmt<'_>) -> bool {
         StmtKind::If(_, t, Some(e)) => branch_always_exits(t) && branch_always_exits(e),
         _ => false,
     }
+}
+
+/// True if `expr` references the named global builtin (`msg`, `tx`, `this`, ...).
+fn is_builtin(expr: &Expr<'_>, name: Symbol) -> bool {
+    matches!(&expr.peel_parens().kind, ExprKind::Ident(reses)
+        if reses.iter().any(|r| matches!(r, Res::Builtin(b) if b.name() == name)))
 }
 
 fn is_exit_call(expr: &Expr<'_>) -> bool {

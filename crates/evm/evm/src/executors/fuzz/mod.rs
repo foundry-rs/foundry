@@ -417,7 +417,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let campaign = FuzzCampaign::new(FuzzCampaignMode::Stateless);
         let mut state = (executor, tx);
         let mut cmp_values = Vec::new();
-        let mut new_coverage = false;
         let mut checked = None;
         campaign
             .run_sequence(
@@ -430,7 +429,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     match event {
                         CampaignEvent::Feedback(call) => {
                             cmp_values = call.evm_cmp_values.take().unwrap_or_default();
-                            new_coverage = coverage_metrics.merge_edge_coverage(call);
                         }
                         CampaignEvent::Check { result, kind, .. } => {
                             checked = Some((
@@ -450,21 +448,35 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
         let (mut call, kind) = checked.expect("depth-one campaign emits a check event");
         let tx = state.1.clone();
-        // `new_coverage` is only meaningful when edge coverage is collected; otherwise
-        // `merge_edge_coverage` always returns `false`, so record it as unknown for frontiers.
-        let frontier_new_coverage =
-            self.config.corpus.collect_edge_coverage().then_some(new_coverage);
-        frontier_recorder.capture_stateless_call(fuzz_run, &tx, &cmp_values, frontier_new_coverage);
-        coverage_metrics.process_inputs(
-            std::slice::from_ref(&tx),
-            &[cmp_values],
-            new_coverage,
-            None,
-        );
 
-        // Handle `vm.assume`.
+        // Handle `vm.assume` before recording coverage or persisting the input.
         if kind == CampaignCallKind::AssumptionRejected {
+            // Account for the attempted corpus mutation without retaining or crediting the input.
+            coverage_metrics.process_inputs(&[], &[], false, None);
             return Err(TestCaseError::reject(FuzzError::AssumeReject));
+        }
+
+        if call.skip_reason().is_some() {
+            // Account for the attempted corpus mutation without retaining or crediting the input.
+            coverage_metrics.process_inputs(&[], &[], false, None);
+        } else {
+            let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
+            // `new_coverage` is only meaningful when edge coverage is collected; otherwise
+            // `merge_edge_coverage` always returns `false`, so record it as unknown for frontiers.
+            let frontier_new_coverage =
+                self.config.corpus.collect_edge_coverage().then_some(new_coverage);
+            frontier_recorder.capture_stateless_call(
+                fuzz_run,
+                &tx,
+                &cmp_values,
+                frontier_new_coverage,
+            );
+            coverage_metrics.process_inputs(
+                std::slice::from_ref(&tx),
+                &[cmp_values],
+                new_coverage,
+                None,
+            );
         }
 
         let (breakpoints, deprecated_cheatcodes) =

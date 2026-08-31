@@ -157,18 +157,7 @@ impl FoundryTxEnvelope {
     /// If this transaction has the Impersonated signature then this returns a modified unique
     /// hash. This allows us to treat impersonated transactions as unique.
     pub fn hash(&self) -> B256 {
-        match self {
-            Self::Legacy(t) => *t.hash(),
-            Self::Eip2930(t) => *t.hash(),
-            Self::Eip1559(t) => *t.hash(),
-            Self::Eip4844(t) => *t.hash(),
-            Self::Eip7702(t) => *t.hash(),
-            #[cfg(feature = "optimism")]
-            Self::Deposit(t) => t.tx_hash(),
-            #[cfg(feature = "optimism")]
-            Self::PostExec(t) => t.tx_hash(),
-            Self::Tempo(t) => *t.hash(),
-        }
+        *self.tx_hash()
     }
 
     /// Returns `true` if this is a Tempo transaction.

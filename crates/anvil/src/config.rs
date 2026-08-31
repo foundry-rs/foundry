@@ -15,7 +15,7 @@ use crate::{
     },
     mem::{self, in_memory_db::StateRootDb},
 };
-use alloy_chains::NamedChain;
+use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::BlockHeader;
 use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
@@ -104,7 +104,12 @@ struct StableForkSnapshot {
     gas_price: u128,
 }
 
-/// Tracks whether `anvil_nodeInfo` has positively identified the endpoint as Anvil.
+/// Best-effort Anvil detection that becomes strict after positive identification.
+///
+/// Before the first successful `anvil_nodeInfo` response, any probe failure means that the
+/// optional capability is unavailable. Mandatory standard RPC reads still expose endpoint-wide
+/// failures. Once a response or cached endpoint identity identifies Anvil, every later probe
+/// failure is returned so it cannot hide an endpoint reset or execution-profile change.
 #[derive(Clone, Copy, Debug, Default)]
 struct AnvilNodeInfoProbe {
     identified: bool,
@@ -121,7 +126,7 @@ impl AnvilNodeInfoProbe {
                 self.identified = true;
                 Ok(Some(node_info))
             }
-            Err(error) if !self.identified && is_rpc_method_not_found(&error) => Ok(None),
+            Err(_) if !self.identified => Ok(None),
             Err(error) => {
                 Err(error).wrap_err("failed to determine network family from fork endpoint")
             }
@@ -216,6 +221,8 @@ pub struct NodeConfig {
     pub fork_source_chain_id: Option<u64>,
     /// Chain ID exposed by the active fork endpoint.
     pub fork_execution_chain_id: Option<u64>,
+    /// Whether the active fork endpoint has positively identified itself as Anvil.
+    pub(crate) fork_endpoint_is_anvil: bool,
     /// Network family most recently inferred from a fork endpoint.
     inferred_fork_network: Option<NetworkVariant>,
     /// Network configuration replaced by chain-ID inference, if any.
@@ -606,6 +613,7 @@ impl Default for NodeConfig {
             fork_chain_id: None,
             fork_source_chain_id: None,
             fork_execution_chain_id: None,
+            fork_endpoint_is_anvil: false,
             inferred_fork_network: None,
             chain_id_network_base: None,
             fork_overrides: None,
@@ -1010,7 +1018,11 @@ impl NodeConfig {
     #[must_use]
     pub fn with_eth_rpc_url<U: Into<String>>(mut self, eth_rpc_url: Option<U>) -> Self {
         if let Some(url) = eth_rpc_url {
-            self.fork_urls = vec![url.into()];
+            let fork_urls = vec![url.into()];
+            if self.fork_urls != fork_urls {
+                self.fork_endpoint_is_anvil = false;
+            }
+            self.fork_urls = fork_urls;
         }
         self
     }
@@ -1018,6 +1030,9 @@ impl NodeConfig {
     /// Sets the fork URLs for load-balanced multi-endpoint forking.
     #[must_use]
     pub fn with_fork_urls(mut self, fork_urls: Vec<String>) -> Self {
+        if self.fork_urls != fork_urls {
+            self.fork_endpoint_is_anvil = false;
+        }
         self.fork_urls = fork_urls;
         self
     }
@@ -1420,18 +1435,9 @@ impl NodeConfig {
             .as_ref()
             .and_then(|fork| fork.config.read().hardfork)
             .unwrap_or_else(|| self.get_hardfork());
-        let mut decoder_builder =
-            CallTraceDecoderBuilder::new().with_networks(self.networks).with_tempo_hardfork(
-                self.networks.is_tempo().then(|| TempoHardfork::from(active_hardfork)),
-            );
-        #[cfg(feature = "monad")]
-        {
-            decoder_builder = decoder_builder.with_monad_hardfork(
-                self.networks
-                    .is_monad()
-                    .then(|| foundry_evm::hardfork::MonadHardfork::from(active_hardfork)),
-            );
-        }
+        let mut decoder_builder = CallTraceDecoderBuilder::new()
+            .with_networks(self.networks)
+            .with_hardfork(Some(self.networks.executed_hardfork(active_hardfork)));
         if self.print_traces {
             // if traces should get printed we configure the decoder with the signatures cache
             if let Ok(identifier) = SignaturesIdentifier::new(false) {
@@ -1681,7 +1687,7 @@ impl NodeConfig {
         provider: &Arc<RetryProvider>,
         fork_overrides: ForkOverrides,
     ) -> Result<StableForkSnapshot> {
-        let mut node_info_probe = AnvilNodeInfoProbe::default();
+        let mut node_info_probe = AnvilNodeInfoProbe::new(self.fork_endpoint_is_anvil);
         for _ in 0..3 {
             let before =
                 self.resolved_fork_endpoint_identity(provider, &mut node_info_probe).await?;
@@ -1847,6 +1853,7 @@ impl NodeConfig {
             block,
             gas_price,
         } = self.stable_fork_snapshot(&provider, fork_overrides).await?;
+        self.fork_endpoint_is_anvil = fork_identity.is_authoritative();
 
         let target_network = fork_identity.network.unwrap_or(NetworkVariant::Ethereum);
         let target_profile = fork_identity.network_profile.unwrap_or_default();
@@ -1961,9 +1968,10 @@ latest block number: {latest_block}"
         };
         let fork_hardfork = self.hardfork.or(inferred_hardfork);
         let effective_hardfork = fork_hardfork.unwrap_or_else(|| self.get_hardfork());
-        evm_env.cfg_env.set_spec_and_mainnet_gas_params(SpecId::from(effective_hardfork));
+        let effective_spec = SpecId::from(effective_hardfork);
+        evm_env.cfg_env.set_spec_and_mainnet_gas_params(effective_spec);
         fees.set_execution_rules(
-            SpecId::from(effective_hardfork),
+            effective_spec,
             self.networks.base_fee_params(block.header.timestamp()),
             self.networks.is_tempo().then(|| TempoHardfork::from(effective_hardfork)),
         );
@@ -1989,7 +1997,13 @@ latest block number: {latest_block}"
         let blob_params = get_blob_params(source_chain_id, block.header.timestamp());
         fees.set_blob_params(blob_params);
         let blob_update_fraction = blob_params.update_fraction as u64;
-        let blob_excess_gas = block.header.excess_blob_gas();
+        let blob_excess_gas = block.header.excess_blob_gas().or_else(|| {
+            // Polygon enables Cancun EVM features without EIP-4844, so Bor headers omit the blob
+            // fields. REVM still requires a valid blob environment for the Cancun spec; zero is
+            // the neutral excess-gas value.
+            (effective_spec >= SpecId::CANCUN && Chain::from_id(source_chain_id).is_polygon())
+                .then_some(0)
+        });
         evm_env.block_env.blob_excess_gas_and_price =
             blob_excess_gas.map(|excess| BlobExcessGasAndPrice::new(excess, blob_update_fraction));
         let next_block_blob_excess_gas = blob_excess_gas.map_or(0, |excess| {

@@ -68,7 +68,6 @@ use foundry_evm::{
     executors::ShowmapDomain,
     fork::ResolvedFork,
     fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
-    hardforks::{ExecutionSpec, TempoHardfork},
     opts::EvmOpts,
     traces::{
         backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth,
@@ -1811,10 +1810,23 @@ impl TestArgs {
         let quiet = shell::is_json() || self.junit;
 
         if self.list {
-            let output = compile_abi_project(
-                &mut project,
-                ProjectCompiler::new().dynamic_test_linking(dynamic_test_linking).quiet(quiet),
-            )?;
+            let compiler =
+                ProjectCompiler::new().dynamic_test_linking(dynamic_test_linking).quiet(quiet);
+            let compiler = if filter.args().path_pattern.is_some()
+                && config.extra_output.is_empty()
+                && config.extra_output_files.is_empty()
+                && !config.build_info
+            {
+                let files = project
+                    .paths
+                    .input_files_iter()
+                    .filter(|path| filter.matches_path(path))
+                    .collect::<Vec<_>>();
+                if files.is_empty() { compiler } else { compiler.files(files) }
+            } else {
+                compiler
+            };
+            let output = compile_abi_project(&mut project, compiler)?;
             let inline_config = Arc::new(InlineConfig::new_parsed(&output, &config)?);
             return Ok(CompiledTestProject {
                 project_root,
@@ -2984,14 +2996,7 @@ impl TestArgs {
             .with_known_contracts(&known_contracts)
             .with_networks(networks)
             .with_chain_id(remote_chain.map(|c| c.id()))
-            .with_tempo_hardfork(resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork));
-        #[cfg(feature = "monad")]
-        {
-            builder = builder.with_monad_hardfork(
-                resolved_hardfork
-                    .and_then(foundry_evm::hardforks::MonadHardfork::from_foundry_hardfork),
-            );
-        }
+            .with_hardfork(resolved_hardfork);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
             builder =

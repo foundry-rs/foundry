@@ -14,6 +14,7 @@ use crate::cmd::{
     creation_code::CreationCodeArgs,
     erc20::Erc20Subcommand,
     estimate::EstimateArgs,
+    events::EventsArgs,
     find_block::FindBlockArgs,
     interface::InterfaceArgs,
     keychain::{KeyAuthorizationSubcommand, KeychainSubcommand},
@@ -22,6 +23,7 @@ use crate::cmd::{
     receive_policy::ReceivePolicySubcommand,
     rpc::RpcArgs,
     run::RunArgs,
+    safe::SafeSubcommand,
     send::SendTxArgs,
     storage::StorageArgs,
     storage_credits::StorageCreditsSubcommand,
@@ -415,6 +417,18 @@ pub enum CastSubcommand {
     /// - cast logs --address $TOKEN --from-block 21000000 --to-block latest $TOPIC_0
     #[command(verbatim_doc_comment, visible_alias = "l")]
     Logs(LogsArgs),
+    /// Fetch and decode events from a transaction receipt or log filter.
+    ///
+    /// Examples:
+    /// - cast events $TX_HASH
+    /// - cast events --tx-hash $TX_HASH
+    /// - cast events --address $TOKEN --from-block 21000000 --to-block latest
+    /// - cast events --address $TOKEN "Transfer(address indexed,address indexed,uint256)"
+    ///
+    /// A lone 32-byte positional value is treated as a transaction hash. Qualify a raw topic with
+    /// an address, block range, additional topic, or query size.
+    #[command(verbatim_doc_comment, visible_alias = "ev")]
+    Events(EventsArgs),
     /// Get information about a block
     ///
     /// Examples:
@@ -1212,6 +1226,12 @@ pub enum CastSubcommand {
     Wallet {
         #[command(subcommand)]
         command: WalletSubcommands,
+    },
+
+    /// Create, propose, and sign Safe transactions.
+    Safe {
+        #[command(subcommand)]
+        command: SafeSubcommand,
     },
 
     /// Download a contract creation code from Etherscan and RPC.

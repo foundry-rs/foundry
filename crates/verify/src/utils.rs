@@ -1,5 +1,6 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
+use alloy_network::{AnyNetwork, AnyRpcBlock};
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_provider::{Provider, network::BlockResponse};
 use alloy_rpc_types::BlockId;
@@ -28,10 +29,7 @@ use foundry_evm::{
     core::{
         FoundryBlock as _, FoundryChain,
         decode::RevertDecoder,
-        evm::{
-            BlockContext, BlockEnvFor, BlockResponseFor, ChainFor, EvmEnvFor, FoundryEvmNetwork,
-            TxEnvFor,
-        },
+        evm::{BlockContext, BlockEnvFor, ChainFor, EvmEnvFor, FoundryEvmNetwork, TxEnvFor},
     },
     executors::TracingExecutor,
     opts::EvmOpts,
@@ -325,7 +323,7 @@ pub async fn get_tracing_executor<FEN>(
     fork_config: &mut Config,
     fork_blk_num: u64,
     execution_blk_num: u64,
-    execution_block: Option<&BlockResponseFor<FEN>>,
+    execution_block: Option<&AnyRpcBlock>,
     evm_opts: EvmOpts,
 ) -> Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>, TracingExecutor<FEN>)>
 where
@@ -385,7 +383,7 @@ where
 
 pub fn configure_env_block<FEN>(
     evm_env: &mut EvmEnvFor<FEN>,
-    block: &BlockResponseFor<FEN>,
+    block: &AnyRpcBlock,
     source_chain_id: ChainId,
     config: NetworkConfigs,
 ) where
@@ -394,7 +392,7 @@ pub fn configure_env_block<FEN>(
     let number = evm_env.block_env.number();
     evm_env.block_env = block_env_from_header::<BlockEnvFor<FEN>>(block.header());
     evm_env.block_env.set_number(number);
-    apply_chain_and_block_specific_env_changes_for_chain::<FEN::Network, _, _>(
+    apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
         evm_env,
         block,
         source_chain_id,
@@ -478,7 +476,7 @@ where
 
 pub async fn get_runtime_codes<FEN>(
     executor: &mut TracingExecutor<FEN>,
-    provider: &impl Provider<FEN::Network>,
+    provider: &impl Provider<AnyNetwork>,
     address: Address,
     fork_address: Address,
     block: Option<u64>,

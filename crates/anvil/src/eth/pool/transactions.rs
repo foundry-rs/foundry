@@ -21,14 +21,6 @@ pub type TxMarker = Vec<u8>;
 /// unlock.
 type ReplacedTransactions<T> = (Vec<Arc<PoolTransaction<T>>>, Vec<TxHash>);
 
-/// creates an unique identifier for aan (`nonce` + `Address`) combo
-pub fn to_marker(nonce: u64, from: Address) -> TxMarker {
-    let mut data = [0u8; 28];
-    data[..8].copy_from_slice(&nonce.to_le_bytes()[..]);
-    data[8..].copy_from_slice(&from.0[..]);
-    data.to_vec()
-}
-
 /// Modes that determine the transaction ordering of the mempool
 ///
 /// This type controls the transaction order via the priority metric of a transaction
@@ -784,6 +776,14 @@ impl<T: Transaction> ReadyTransaction<T> {
     pub fn max_fee_per_gas(&self) -> u128 {
         self.transaction.transaction.max_fee_per_gas()
     }
+}
+
+/// creates an unique identifier for aan (`nonce` + `Address`) combo
+pub fn to_marker(nonce: u64, from: Address) -> TxMarker {
+    let mut data = [0u8; 28];
+    data[..8].copy_from_slice(&nonce.to_le_bytes()[..]);
+    data[8..].copy_from_slice(&from.0[..]);
+    data.to_vec()
 }
 
 #[cfg(test)]

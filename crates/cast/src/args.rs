@@ -943,10 +943,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             cmd.execute()?;
         }
         CastSubcommand::Wallet { command } => command.run().await?,
+        CastSubcommand::Safe { command } => command.run().await?,
         CastSubcommand::Completions { shell } => {
             generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
         }
         CastSubcommand::Logs(cmd) => cmd.run().await?,
+        CastSubcommand::Events(cmd) => cmd.run().await?,
         CastSubcommand::DecodeTransaction { tx, network } => {
             let tx = stdin::unwrap_line(tx)?;
             let decoded_tx = match network {

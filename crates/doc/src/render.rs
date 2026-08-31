@@ -26,141 +26,6 @@ use std::{
     sync::Arc,
 };
 
-// ── public entry point ───────────────────────────────────────────────────────
-
-/// Render a single Solidity source file as a list of `(relative_output_path, mdx_content)` pairs.
-#[allow(clippy::too_many_arguments)]
-pub fn source<'ast, 'gcx>(
-    ast: &'ast SourceUnit<'ast>,
-    file: &Arc<SourceFile>,
-    _sm: &SourceMap,
-    rel_sol_path: &Path,
-    abs_sol_path: &Path,
-    _root: &Path,
-    gcx: Gcx<'gcx>,
-    name_to_page: &NameToPage,
-    git_url: Option<&str>,
-    deployments: &HashMap<String, Vec<Deployment>>,
-) -> Vec<(PathBuf, String)> {
-    let out_dir = rel_sol_path.parent().unwrap_or(Path::new(""));
-    let stem = rel_sol_path.file_stem().and_then(|s| s.to_str()).unwrap_or("constants");
-
-    let src_text = file.src.as_str();
-    let src_start = file.start_pos.to_usize();
-    let ctx = Ctx { src_text, src_start };
-
-    let mut pages: Vec<(PathBuf, String)> = Vec::new();
-    let mut const_vars: Vec<(Span, &VariableDefinition<'_>, &DocComments<'_>)> = Vec::new();
-    let mut free_fns: std::collections::BTreeMap<
-        String,
-        Vec<(Span, &ItemFunction<'_>, &DocComments<'_>)>,
-    > = Default::default();
-
-    for item in ast.items.iter() {
-        let span = item.span;
-        match &item.kind {
-            ItemKind::Pragma(_) | ItemKind::Import(_) | ItemKind::Using(_) => (),
-            ItemKind::Contract(c) => {
-                let kind_str = contract_kind_str(c.kind);
-                let fname = format!("{kind_str}.{}.mdx", c.name.as_str());
-                let page_path = out_dir.join(&fname);
-                // Look up HIR contract id for inheritance/inheritdoc.
-                let hir_id = find_contract_id(gcx, c.name.as_str(), abs_sol_path);
-                // Deployments only apply to non-abstract, non-interface, non-library contracts.
-                let contract_deployments = if matches!(c.kind, ContractKind::Contract) {
-                    deployments.get(c.name.as_str()).map(Vec::as_slice).unwrap_or(&[])
-                } else {
-                    &[]
-                };
-                let content = render_contract(
-                    span,
-                    c,
-                    &item.docs,
-                    &ctx,
-                    gcx,
-                    hir_id,
-                    name_to_page,
-                    &page_path,
-                    git_url,
-                    contract_deployments,
-                );
-                pages.push((page_path, content));
-            }
-
-            ItemKind::Function(f) => {
-                let name = f.header.name.map(|n| n.as_str().to_string()).unwrap_or_default();
-                free_fns.entry(name).or_default().push((span, f, &item.docs));
-            }
-
-            ItemKind::Variable(v) => {
-                const_vars.push((span, v, &item.docs));
-            }
-
-            ItemKind::Struct(s) => {
-                let fname = format!("struct.{}.mdx", s.name.as_str());
-                let page_path = out_dir.join(&fname);
-                pages.push((
-                    page_path.clone(),
-                    render_struct(span, s, &item.docs, &ctx, name_to_page, &page_path, git_url),
-                ));
-            }
-
-            ItemKind::Enum(e) => {
-                let fname = format!("enum.{}.mdx", e.name.as_str());
-                let page_path = out_dir.join(&fname);
-                pages.push((
-                    page_path.clone(),
-                    render_enum(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
-                ));
-            }
-
-            ItemKind::Udvt(u) => {
-                let fname = format!("type.{}.mdx", u.name.as_str());
-                let page_path = out_dir.join(&fname);
-                pages.push((
-                    page_path.clone(),
-                    render_udvt(span, u, &item.docs, &ctx, name_to_page, &page_path, git_url),
-                ));
-            }
-
-            ItemKind::Error(e) => {
-                let fname = format!("error.{}.mdx", e.name.as_str());
-                let page_path = out_dir.join(&fname);
-                pages.push((
-                    page_path.clone(),
-                    render_error(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
-                ));
-            }
-
-            ItemKind::Event(e) => {
-                let fname = format!("event.{}.mdx", e.name.as_str());
-                let page_path = out_dir.join(&fname);
-                pages.push((
-                    page_path.clone(),
-                    render_event(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
-                ));
-            }
-        }
-    }
-
-    for (name, overloads) in &free_fns {
-        let fname = format!("function.{name}.mdx");
-        let page_path = out_dir.join(&fname);
-        let content =
-            render_free_functions(name, overloads, &ctx, name_to_page, &page_path, git_url);
-        pages.push((page_path, content));
-    }
-
-    if !const_vars.is_empty() {
-        let fname = format!("constants.{stem}.mdx");
-        let page_path = out_dir.join(&fname);
-        let content = render_constants(stem, &const_vars, &ctx, name_to_page, &page_path, git_url);
-        pages.push((page_path, content));
-    }
-
-    pages
-}
-
 // ── rendering context ────────────────────────────────────────────────────────
 
 struct Ctx<'a> {
@@ -1370,6 +1235,141 @@ fn dedent(s: &str) -> String {
         .map(|l| if l.len() >= indent { &l[indent..] } else { l.trim() })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+// ── public entry point ───────────────────────────────────────────────────────
+
+/// Render a single Solidity source file as a list of `(relative_output_path, mdx_content)` pairs.
+#[allow(clippy::too_many_arguments)]
+pub fn source<'ast, 'gcx>(
+    ast: &'ast SourceUnit<'ast>,
+    file: &Arc<SourceFile>,
+    _sm: &SourceMap,
+    rel_sol_path: &Path,
+    abs_sol_path: &Path,
+    _root: &Path,
+    gcx: Gcx<'gcx>,
+    name_to_page: &NameToPage,
+    git_url: Option<&str>,
+    deployments: &HashMap<String, Vec<Deployment>>,
+) -> Vec<(PathBuf, String)> {
+    let out_dir = rel_sol_path.parent().unwrap_or(Path::new(""));
+    let stem = rel_sol_path.file_stem().and_then(|s| s.to_str()).unwrap_or("constants");
+
+    let src_text = file.src.as_str();
+    let src_start = file.start_pos.to_usize();
+    let ctx = Ctx { src_text, src_start };
+
+    let mut pages: Vec<(PathBuf, String)> = Vec::new();
+    let mut const_vars: Vec<(Span, &VariableDefinition<'_>, &DocComments<'_>)> = Vec::new();
+    let mut free_fns: std::collections::BTreeMap<
+        String,
+        Vec<(Span, &ItemFunction<'_>, &DocComments<'_>)>,
+    > = Default::default();
+
+    for item in ast.items.iter() {
+        let span = item.span;
+        match &item.kind {
+            ItemKind::Pragma(_) | ItemKind::Import(_) | ItemKind::Using(_) => (),
+            ItemKind::Contract(c) => {
+                let kind_str = contract_kind_str(c.kind);
+                let fname = format!("{kind_str}.{}.mdx", c.name.as_str());
+                let page_path = out_dir.join(&fname);
+                // Look up HIR contract id for inheritance/inheritdoc.
+                let hir_id = find_contract_id(gcx, c.name.as_str(), abs_sol_path);
+                // Deployments only apply to non-abstract, non-interface, non-library contracts.
+                let contract_deployments = if matches!(c.kind, ContractKind::Contract) {
+                    deployments.get(c.name.as_str()).map(Vec::as_slice).unwrap_or(&[])
+                } else {
+                    &[]
+                };
+                let content = render_contract(
+                    span,
+                    c,
+                    &item.docs,
+                    &ctx,
+                    gcx,
+                    hir_id,
+                    name_to_page,
+                    &page_path,
+                    git_url,
+                    contract_deployments,
+                );
+                pages.push((page_path, content));
+            }
+
+            ItemKind::Function(f) => {
+                let name = f.header.name.map(|n| n.as_str().to_string()).unwrap_or_default();
+                free_fns.entry(name).or_default().push((span, f, &item.docs));
+            }
+
+            ItemKind::Variable(v) => {
+                const_vars.push((span, v, &item.docs));
+            }
+
+            ItemKind::Struct(s) => {
+                let fname = format!("struct.{}.mdx", s.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_struct(span, s, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+
+            ItemKind::Enum(e) => {
+                let fname = format!("enum.{}.mdx", e.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_enum(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+
+            ItemKind::Udvt(u) => {
+                let fname = format!("type.{}.mdx", u.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_udvt(span, u, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+
+            ItemKind::Error(e) => {
+                let fname = format!("error.{}.mdx", e.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_error(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+
+            ItemKind::Event(e) => {
+                let fname = format!("event.{}.mdx", e.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_event(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+        }
+    }
+
+    for (name, overloads) in &free_fns {
+        let fname = format!("function.{name}.mdx");
+        let page_path = out_dir.join(&fname);
+        let content =
+            render_free_functions(name, overloads, &ctx, name_to_page, &page_path, git_url);
+        pages.push((page_path, content));
+    }
+
+    if !const_vars.is_empty() {
+        let fname = format!("constants.{stem}.mdx");
+        let page_path = out_dir.join(&fname);
+        let content = render_constants(stem, &const_vars, &ctx, name_to_page, &page_path, git_url);
+        pages.push((page_path, content));
+    }
+
+    pages
 }
 
 #[cfg(test)]

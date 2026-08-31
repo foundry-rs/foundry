@@ -100,6 +100,8 @@ pub struct SpinnerReporter {
     sender: mpsc::Sender<SpinnerMsg>,
     /// The project root path for trimming file paths in verbose output.
     project_root: Option<PathBuf>,
+    /// Whether to print the resolved settings for each compiler invocation.
+    print_compiler_settings: bool,
 }
 
 impl SpinnerReporter {
@@ -146,7 +148,13 @@ impl SpinnerReporter {
             })
             .expect("failed to spawn thread");
 
-        Self { sender, project_root }
+        Self { sender, project_root, print_compiler_settings: false }
+    }
+
+    /// Sets whether resolved compiler settings are included in progress output.
+    pub const fn with_compiler_settings(mut self, yes: bool) -> Self {
+        self.print_compiler_settings = yes;
+        self
     }
 
     fn send_msg(&self, msg: impl Into<String>) {
@@ -198,6 +206,21 @@ impl Reporter for SpinnerReporter {
             version.minor,
             version.patch
         ));
+    }
+
+    fn on_compiler_settings(
+        &self,
+        compiler_name: &str,
+        version: &Version,
+        profile: &str,
+        settings: &str,
+    ) {
+        if self.print_compiler_settings {
+            self.send_msg(format!(
+                "Compiler settings for {compiler_name} {}.{}.{} (profile: {profile}): {settings}",
+                version.major, version.minor, version.patch
+            ));
+        }
     }
 
     fn on_compiler_success(&self, compiler_name: &str, version: &Version, duration: &Duration) {
