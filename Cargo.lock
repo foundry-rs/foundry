@@ -5945,6 +5945,7 @@ dependencies = [
  "tracing",
  "unit-prefix",
  "walkdir",
+ "which",
  "yansi",
 ]
 
