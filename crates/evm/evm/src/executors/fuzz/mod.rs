@@ -444,18 +444,28 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
-        let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
-        // `new_coverage` is only meaningful when edge coverage is collected; otherwise
-        // `merge_edge_coverage` always returns `false`, so record it as unknown for frontiers.
-        let frontier_new_coverage =
-            self.config.corpus.collect_edge_coverage().then_some(new_coverage);
-        frontier_recorder.capture_stateless_call(fuzz_run, &tx, &cmp_values, frontier_new_coverage);
-        coverage_metrics.process_inputs(
-            std::slice::from_ref(&tx),
-            &[cmp_values],
-            new_coverage,
-            None,
-        );
+        if call.skip_reason().is_some() {
+            // Account for the attempted corpus mutation without retaining or crediting the input.
+            coverage_metrics.process_inputs(&[], &[], false, None);
+        } else {
+            let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
+            // `new_coverage` is only meaningful when edge coverage is collected; otherwise
+            // `merge_edge_coverage` always returns `false`, so record it as unknown for frontiers.
+            let frontier_new_coverage =
+                self.config.corpus.collect_edge_coverage().then_some(new_coverage);
+            frontier_recorder.capture_stateless_call(
+                fuzz_run,
+                &tx,
+                &cmp_values,
+                frontier_new_coverage,
+            );
+            coverage_metrics.process_inputs(
+                std::slice::from_ref(&tx),
+                &[cmp_values],
+                new_coverage,
+                None,
+            );
+        }
 
         let (breakpoints, deprecated_cheatcodes) =
             call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| {
