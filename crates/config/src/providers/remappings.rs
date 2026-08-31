@@ -4,6 +4,7 @@ use crate::{
 };
 use figment::{
     Error, Figment, Metadata, Profile, Provider,
+    error::Kind,
     value::{Dict, Map},
 };
 use foundry_compilers::artifacts::remappings::{RelativeRemapping, Remapping, RemappingDiscovery};
@@ -212,7 +213,7 @@ impl RemappingsProvider<'_> {
         let (remappings, explicitly_empty) = match &self.remappings {
             Ok(remappings) => (remappings.clone(), remappings.is_empty()),
             Err(err) => {
-                if let figment::error::Kind::MissingField(_) = err.kind {
+                if let Kind::MissingField(_) = err.kind {
                     (Vec::new(), false)
                 } else {
                     return Err(err.clone());
