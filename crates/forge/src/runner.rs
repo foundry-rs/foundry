@@ -4931,7 +4931,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 .corpus_dir
                 .clone()
                 .map(|corpus_dir| {
-                    narrow_generated_fuzz_corpus_root(corpus_dir, self.cr.name, &test_name)
+                    legacy_fuzz_corpus_dir(Some(&corpus_dir), self.cr.name, func, &test_name)
+                        .unwrap_or_else(|| {
+                            narrow_generated_fuzz_corpus_root(corpus_dir, self.cr.name, &test_name)
+                        })
                 })
                 .or(legacy_corpus_dir)
                 .or_else(|| fuzz_config.corpus.corpus_dir.clone());

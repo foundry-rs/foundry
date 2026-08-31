@@ -381,6 +381,33 @@ contract OverloadedFuzzTest {
         legacy_showmap_root.join(format!("{showmap_prefix}{address_name}/legacy.txt")).exists()
     );
 
+    let override_corpus = prj.root().join("override-corpus/OverloadedFuzzTest/testFuzz_collision");
+    std::fs::create_dir_all(override_corpus.parent().unwrap()).unwrap();
+    std::fs::rename(&legacy_corpus, &override_corpus).unwrap();
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+            "--showmap-out",
+            "override-showmap",
+            "--showmap-corpus-dir",
+            "override-corpus",
+            "--showmap-trial",
+            "override",
+            "-j1",
+        ])
+        .assert_success();
+    assert!(
+        prj.root()
+            .join("override-showmap")
+            .join(format!("{showmap_prefix}{address_name}/override.txt"))
+            .exists()
+    );
+    std::fs::rename(&override_corpus, &legacy_corpus).unwrap();
+
     cmd.forge_fuse()
         .args([
             "test",
