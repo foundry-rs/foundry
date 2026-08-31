@@ -67,7 +67,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         let balance = self.executor.get_balance(LIBRARY_DEPLOYER)?;
         let nonce = self.executor.get_nonce(LIBRARY_DEPLOYER)?;
         self.executor.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
-        self.executor.set_account_and_tx_nonce(LIBRARY_DEPLOYER, 0)?;
+        self.executor.set_nonce(LIBRARY_DEPLOYER, 0)?;
         for library in libraries {
             let DeployResult { address, raw } = self
                 .executor
@@ -80,7 +80,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             self.extend_debug_bytecodes(debug_bytecodes, raw.debug_bytecodes);
         }
         self.executor.set_balance(LIBRARY_DEPLOYER, balance)?;
-        self.executor.set_account_and_tx_nonce(LIBRARY_DEPLOYER, nonce)?;
+        self.executor.set_nonce(LIBRARY_DEPLOYER, nonce)?;
         Ok(())
     }
 
@@ -109,7 +109,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         }
 
         let sender_nonce = script_config.sender_nonce;
-        self.executor.set_account_and_tx_nonce(self.evm_opts.sender, sender_nonce)?;
+        self.executor.set_nonce(self.evm_opts.sender, sender_nonce)?;
 
         // We max out their balance so that they can deploy and make calls.
         self.executor.set_balance(CALLER, U256::MAX)?;
@@ -200,7 +200,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
 
                 // Sender nonce is not incremented when performing CALLs. We need to manually
                 // increase it.
-                self.executor.set_account_and_tx_nonce(
+                self.executor.set_nonce(
                     self.evm_opts.sender,
                     sender_nonce + library_transactions.len() as u64,
                 )?;
@@ -221,7 +221,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         // resulting in weird errors like <https://github.com/foundry-rs/foundry/issues/8960>.
         let prev_sender_nonce = self.executor.get_nonce(self.evm_opts.sender)?;
         if self.evm_opts.sender == CALLER {
-            self.executor.set_account_and_tx_nonce(self.evm_opts.sender, u64::MAX / 2)?;
+            self.executor.set_nonce(self.evm_opts.sender, u64::MAX / 2)?;
         }
 
         // Deploy an instance of the contract
@@ -240,7 +240,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             .map_err(|err| eyre::eyre!("Failed to deploy script:\n{}", err))?;
 
         if self.evm_opts.sender == CALLER {
-            self.executor.set_account_and_tx_nonce(self.evm_opts.sender, prev_sender_nonce)?;
+            self.executor.set_nonce(self.evm_opts.sender, prev_sender_nonce)?;
         }
 
         // set script address to be used by execution inspector

@@ -203,24 +203,28 @@ mod tests {
         tx_env.set_caller(sender);
         tx_env.set_nonce(7);
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
-        let mut executor = ExecutorBuilder::default().build(
-            EvmEnvFor::<EthEvmNetwork>::default(),
-            tx_env,
-            backend,
-            NetworkConfigs::default(),
-        );
+        let mut evm_env = EvmEnvFor::<EthEvmNetwork>::default();
+        evm_env.cfg_env.disable_nonce_check = true;
+        let mut executor =
+            ExecutorBuilder::default().build(evm_env, tx_env, backend, NetworkConfigs::default());
+        executor.set_gas_limit(1_000_000);
         executor.set_account_nonce(sender, 7).unwrap();
 
         let overridden = Address::repeat_byte(0x42);
         let mut state_overrides = StateOverride::default();
+        state_overrides.insert(sender, AccountOverride { nonce: Some(100), ..Default::default() });
         state_overrides
-            .insert(overridden, AccountOverride { nonce: Some(100), ..Default::default() });
+            .insert(overridden, AccountOverride { nonce: Some(200), ..Default::default() });
 
         apply_state_overrides(&mut executor, state_overrides).unwrap();
 
-        assert_eq!(executor.get_nonce(overridden).unwrap(), 100);
-        assert_eq!(executor.get_nonce(sender).unwrap(), 7);
+        assert_eq!(executor.get_nonce(sender).unwrap(), 100);
+        assert_eq!(executor.get_nonce(overridden).unwrap(), 200);
         assert_eq!(executor.tx_env().caller(), sender);
         assert_eq!(executor.tx_env().nonce(), 7);
+
+        let result =
+            executor.transact_raw(sender, overridden, Default::default(), U256::ZERO).unwrap();
+        assert_eq!(result.tx_env.nonce(), 7);
     }
 }

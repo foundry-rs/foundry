@@ -1101,7 +1101,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         .with_debug_bytecodes(debug);
 
         if self.sender_nonce_override.is_some() {
-            runner.executor.set_account_and_tx_nonce(self.evm_opts.sender, self.sender_nonce)?;
+            runner.executor.set_nonce(self.evm_opts.sender, self.sender_nonce)?;
         }
 
         Ok(runner)
