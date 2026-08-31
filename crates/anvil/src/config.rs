@@ -1966,6 +1966,8 @@ latest block number: {latest_block}"
         } else {
             None
         };
+        let source_is_pre_cancun =
+            inferred_hardfork.is_some_and(|hardfork| SpecId::from(hardfork) < SpecId::CANCUN);
         let fork_hardfork = self.hardfork.or(inferred_hardfork);
         let effective_hardfork = fork_hardfork.unwrap_or_else(|| self.get_hardfork());
         let effective_spec = SpecId::from(effective_hardfork);
@@ -1998,11 +2000,13 @@ latest block number: {latest_block}"
         fees.set_blob_params(blob_params);
         let blob_update_fraction = blob_params.update_fraction as u64;
         let blob_excess_gas = block.header.excess_blob_gas().or_else(|| {
-            // Polygon enables Cancun EVM features without EIP-4844, so Bor headers omit the blob
-            // fields. REVM still requires a valid blob environment for the Cancun spec; zero is
-            // the neutral excess-gas value.
-            (effective_spec >= SpecId::CANCUN && Chain::from_id(source_chain_id).is_polygon())
-                .then_some(0)
+            // Pre-Cancun headers and Polygon Bor headers omit the blob fields. REVM still requires
+            // a valid blob environment when executing with the Cancun spec; zero is the neutral
+            // excess-gas value.
+            (effective_spec >= SpecId::CANCUN
+                && ((source_is_pre_cancun && block.header.blob_gas_used().is_none())
+                    || Chain::from_id(source_chain_id).is_polygon()))
+            .then_some(0)
         });
         evm_env.block_env.blob_excess_gas_and_price =
             blob_excess_gas.map(|excess| BlobExcessGasAndPrice::new(excess, blob_update_fraction));
