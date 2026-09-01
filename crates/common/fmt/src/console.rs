@@ -3,6 +3,16 @@ use alloy_primitives::{Address, Bytes, FixedBytes, I256, U256};
 use comfy_table::{ContentLineStyle, LineStyle, Table, TableStyle};
 use std::fmt::{self, Write};
 
+/// Upper bound on the `%<n>e` precision that [`U256`]/[`I256`] will format exactly.
+///
+/// A precision this far past a 256-bit value's ~78 significant digits is already almost
+/// entirely leading zeros, and every one of those zeros is numerically significant (it can't be
+/// trimmed or clamped without changing the represented value). Rather than either allocate an
+/// unbounded string for a pathologically large requested precision (e.g. `%999999999999e`) or
+/// silently truncate it to something shorter but wrong, values past this bound fall back to an
+/// explicit placeholder instead of a number.
+const MAX_EXPONENTIAL_PRECISION: usize = 1024;
+
 /// A piece is a portion of the format string which represents the next part to emit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Piece<'a> {
@@ -230,15 +240,34 @@ impl ConsoleFmt for U256 {
                 }
             }
             FormatSpec::Exponential(Some(precision)) => {
-                let exp10 = Self::from(10).pow(Self::from(precision));
                 let amount = *self;
-                let integer = amount / exp10;
-                let decimal = (amount % exp10).to_string();
-                let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
-                if decimal.is_empty() {
-                    format!("{integer}")
-                } else {
-                    format!("{integer}.{decimal}")
+                match Self::from(10).checked_pow(Self::from(precision)) {
+                    Some(exp10) => {
+                        let integer = amount / exp10;
+                        let decimal = (amount % exp10).to_string();
+                        let decimal =
+                            format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
+                        if decimal.is_empty() {
+                            format!("{integer}")
+                        } else {
+                            format!("{integer}.{decimal}")
+                        }
+                    }
+                    // `10^precision` overflows U256, and since `amount <= U256::MAX <
+                    // 10^precision`, the integer part is always 0 and the fractional part is
+                    // `amount` itself, left-padded to `precision` digits. Refuse to synthesize
+                    // that string past a sane bound instead of silently truncating it, which
+                    // would misrepresent the value (dropping leading zeros makes it look larger
+                    // than it is) rather than just look ugly.
+                    None if precision > MAX_EXPONENTIAL_PRECISION => {
+                        format!("<precision {precision} too large to format exactly>")
+                    }
+                    None => {
+                        let decimal = amount.to_string();
+                        let decimal =
+                            format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
+                        if decimal.is_empty() { "0".to_string() } else { format!("0.{decimal}") }
+                    }
                 }
             }
         }
@@ -276,14 +305,42 @@ impl ConsoleFmt for I256 {
             FormatSpec::Exponential(Some(precision)) => {
                 let amount = *self;
                 let sign = if amount.is_negative() { "-" } else { "" };
-                let exp10 = Self::exp10(precision);
-                let integer = (amount / exp10).twos_complement();
-                let decimal = (amount % exp10).twos_complement().to_string();
-                let decimal = format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
-                if decimal.is_empty() {
-                    format!("{sign}{integer}")
-                } else {
-                    format!("{sign}{integer}.{decimal}")
+                // Mirrors `Self::exp10`, but checked: `10^precision` as an unsigned value,
+                // converted to `Self` (fails to convert exactly when it would overflow).
+                let checked_exp10: Option<Self> = U256::from(10)
+                    .checked_pow(U256::from(precision))
+                    .and_then(|v| v.try_into().ok());
+                match checked_exp10 {
+                    Some(exp10) => {
+                        let integer = (amount / exp10).twos_complement();
+                        let decimal = (amount % exp10).twos_complement().to_string();
+                        let decimal =
+                            format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
+                        if decimal.is_empty() {
+                            format!("{sign}{integer}")
+                        } else {
+                            format!("{sign}{integer}.{decimal}")
+                        }
+                    }
+                    // `10^precision` overflows I256, and since `|amount| <= 2^255 < 10^77 <=
+                    // 10^precision` (I256::MIN's magnitude is one bit past I256::MAX, but still
+                    // well under any overflowing power of ten here), the integer part is always
+                    // 0 and the fractional part is `|amount|` itself, left-padded to `precision`
+                    // digits. Refuse to synthesize that string past a sane bound instead of
+                    // silently truncating it, which would misrepresent the value.
+                    None if precision > MAX_EXPONENTIAL_PRECISION => {
+                        format!("<precision {precision} too large to format exactly>")
+                    }
+                    None => {
+                        let decimal = amount.unsigned_abs().to_string();
+                        let decimal =
+                            format!("{decimal:0>precision$}").trim_end_matches('0').to_string();
+                        if decimal.is_empty() {
+                            format!("{sign}0")
+                        } else {
+                            format!("{sign}0.{decimal}")
+                        }
+                    }
                 }
             }
         }
@@ -590,6 +647,73 @@ mod tests {
         assert_eq!(
             "%5d123456.789%2f%3f%e1",
             console_format("%5d%3e%2f%3f%e1", &[&U256::from(123456789)])
+        );
+    }
+
+    // Regression test: `%<n>e` with a large explicit precision used to panic (`U256`: "attempt
+    // to divide by zero" once `10^n` wraps to exactly 0 mod 2^256 at n >= 256; `I256`: an
+    // overflow panic inside `Self::exp10` once `10^n` exceeds `I256::MAX` at n >= 77), and for
+    // 78 <= n <= 255 it silently produced wrong digits (a wrapped, not overflowed, `10^n`).
+    #[test]
+    fn test_console_log_exponential_precision_overflow() {
+        let fmt_1 = |spec: &str, arg: &dyn ConsoleFmt| console_format(spec, &[arg]);
+
+        // U256: used to panic ("attempt to divide by zero") on unfixed code. Value is
+        // `amount` (1) left-padded with zeros to 256 digits, trailing zeros trimmed - i.e.
+        // 255 zeros then a `1`.
+        assert_eq!(format!("0.{}1", "0".repeat(255)), fmt_1("%256e", &U256::from(1)));
+
+        // U256: 10^77 is the largest power of ten that fits in 256 bits; 10^78 is the first to
+        // overflow. This is the "wrong digits" band on unfixed code (silently wraps instead of
+        // panicking) - the correct value is exactly 0.1.
+        let ten_pow_77 = U256::from(10).pow(U256::from(77u64));
+        assert_eq!("0.1", fmt_1("%78e", &ten_pow_77));
+
+        // U256: precision == 77 is still the exact boundary that *doesn't* overflow, and must
+        // keep behaving exactly as before (integer division through `checked_pow`'s `Some` arm).
+        assert_eq!("1", fmt_1("%77e", &ten_pow_77));
+
+        // I256: `Self::exp10` used to panic ("overflow") once 10^n exceeds `I256::MAX` (n >= 77,
+        // since I256's positive range is one bit narrower than U256's). 76 zeros then a `1`.
+        assert_eq!(format!("0.{}1", "0".repeat(76)), fmt_1("%77e", &I256::try_from(1).unwrap()));
+        assert_eq!(format!("-0.{}1", "0".repeat(76)), fmt_1("%77e", &I256::try_from(-1).unwrap()));
+
+        // Exact at the MAX_EXPONENTIAL_PRECISION boundary: still the real value (1023 zeros then
+        // a `1`), never silently truncated to something numerically wrong.
+        assert_eq!(format!("0.{}1", "0".repeat(1023)), fmt_1("%1024e", &U256::from(1)));
+
+        // One past the boundary: refuses to synthesize a (correct but unbounded) string, rather
+        // than either allocating without limit or silently returning a truncated - and therefore
+        // wrong - value (e.g. 1023 zeros instead of the requested 1024 would understate the
+        // precision by 10x).
+        let huge = fmt_1("%1025e", &U256::from(1));
+        assert_eq!("<precision 1025 too large to format exactly>", huge);
+        assert!(huge.len() < 100, "the refusal message itself must stay bounded");
+
+        // Ordinary precision is unaffected by the overflow handling.
+        assert_eq!("1", fmt_1("%18e", &U256::from(1_000_000_000_000_000_000u64)));
+
+        // Boundary values and precision == 0 are handled correctly by both branches.
+        assert_eq!("0", fmt_1("%0e", &U256::from(0)));
+        assert_eq!("0", fmt_1("%256e", &U256::from(0)));
+
+        // U256::MAX and I256::{MIN,MAX} at the exact overflow boundary (precision 78 for
+        // U256, 77 for I256) - the fallback's "amount's own digits, left-padded to `precision`,
+        // trailing zeros trimmed" independently re-derived here, not just re-asserting the
+        // implementation's own output.
+        let expect_fallback = |digits: String, precision: usize, sign: &str| {
+            let padded = format!("{digits:0>precision$}");
+            let trimmed = padded.trim_end_matches('0');
+            if trimmed.is_empty() { format!("{sign}0") } else { format!("{sign}0.{trimmed}") }
+        };
+        assert_eq!(expect_fallback(U256::MAX.to_string(), 78, ""), fmt_1("%78e", &U256::MAX));
+        assert_eq!(
+            expect_fallback(I256::MIN.unsigned_abs().to_string(), 77, "-"),
+            fmt_1("%77e", &I256::MIN)
+        );
+        assert_eq!(
+            expect_fallback(I256::MAX.unsigned_abs().to_string(), 77, ""),
+            fmt_1("%77e", &I256::MAX)
         );
     }
 
