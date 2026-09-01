@@ -4,6 +4,7 @@ use crate::{
     utils::{
         BytecodeType, JsonResult, check_and_encode_args, check_explorer_args,
         load_fork_config_and_evm_opts, maybe_predeploy_contract, synthetic_deployment_context,
+        validate_encoded_constructor_args,
     },
     verify::VerifierArgs,
 };
@@ -444,15 +445,18 @@ impl VerifyBytecodeArgs {
             .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
 
         // Get and encode user provided constructor args
-        let provided_constructor_args = if let Some(path) = self.constructor_args_path.clone() {
-            // Read from file
-            Some(read_constructor_args_file(path)?)
+        let provided_constructor_args = if let Some(encoded) = &self.encoded_constructor_args {
+            Some(validate_encoded_constructor_args(&artifact, hex::decode(encoded)?)?)
         } else {
-            self.constructor_args.clone()
-        }
-        .map(|args| check_and_encode_args(&artifact, args))
-        .transpose()?
-        .or(self.encoded_constructor_args.clone().map(hex::decode).transpose()?);
+            if let Some(path) = self.constructor_args_path.clone() {
+                // Read from file.
+                Some(read_constructor_args_file(path)?)
+            } else {
+                self.constructor_args.clone()
+            }
+            .map(|args| check_and_encode_args(&artifact, args))
+            .transpose()?
+        };
 
         let args_from_user = provided_constructor_args.is_some();
         let mut constructor_args = if let Some(provided) = provided_constructor_args {
@@ -664,16 +668,53 @@ impl VerifyBytecodeArgs {
 
         // In some cases, Etherscan will return incorrect constructor arguments. If this
         // happens, try extracting arguments ourselves.
+        let user_args_mismatch =
+            args_from_user && !maybe_creation_code.ends_with(&constructor_args);
+        if user_args_mismatch {
+            let message = "Provided constructor args do not match the ones used at deployment";
+            if shell::is_json() {
+                if self.ignore.is_none_or(|b| !b.is_creation()) {
+                    json_results.push(JsonResult {
+                        bytecode_type: BytecodeType::Creation,
+                        match_type: None,
+                        message: Some(message.to_string()),
+                    });
+                }
+                if self.ignore.is_none_or(|b| !b.is_runtime()) {
+                    json_results.push(JsonResult {
+                        bytecode_type: BytecodeType::Runtime,
+                        match_type: None,
+                        message: Some(message.to_string()),
+                    });
+                }
+                sh_println!("{}", serde_json::to_string(&json_results)?)?;
+            } else {
+                sh_warn!("{message}")?;
+                if self.ignore.is_none_or(|b| !b.is_creation()) {
+                    crate::utils::print_result(
+                        None,
+                        BytecodeType::Creation,
+                        &mut json_results,
+                        etherscan_metadata,
+                        &config,
+                    );
+                }
+                if self.ignore.is_none_or(|b| !b.is_runtime()) {
+                    crate::utils::print_result(
+                        None,
+                        BytecodeType::Runtime,
+                        &mut json_results,
+                        etherscan_metadata,
+                        &config,
+                    );
+                }
+            }
+            return Ok(());
+        }
+
         if !maybe_creation_code.ends_with(&constructor_args) {
             trace!("mismatch of constructor args with etherscan");
-            if args_from_user {
-                // Keep user-supplied args: substituting them with the onchain tail would make
-                // the creation comparison vacuous and let a deployment with different
-                // constructor args (and immutables) verify clean.
-                if !shell::is_json() {
-                    sh_warn!("Provided constructor args do not match the ones used at deployment")?;
-                }
-            } else if maybe_creation_code.len() >= local_bytecode.len() {
+            if maybe_creation_code.len() >= local_bytecode.len() {
                 // If local bytecode is longer than on-chain one, this is probably not a match.
                 constructor_args =
                     Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);

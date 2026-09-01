@@ -309,6 +309,35 @@ forgetest_async!(flaky_verify_bytecode_warns_on_wrong_constructor_args, |prj, cm
         !stdout.contains("Creation code matched"),
         "wrong constructor args must not produce a creation match, got:\n{stdout}"
     );
+
+    // Ignoring creation verification must not allow runtime verification to continue with
+    // constructor arguments already known not to match the deployment. JSON must retain the
+    // specific mismatch reason because warnings are suppressed in JSON mode.
+    let etherscan_key = next_etherscan_api_key();
+    cmd.forge_fuse()
+        .args([
+            "verify-bytecode",
+            addr,
+            "StrategyManager",
+            "--etherscan-api-key",
+            &etherscan_key,
+            "--verifier",
+            "etherscan",
+            "--verifier-url",
+            "https://api.etherscan.io/v2/api?chainid=1",
+            "--rpc-url",
+            &rpc_url,
+            "--constructor-args",
+            "0x0000000000000000000000000000000000000000",
+            "0x0000000000000000000000000000000000000000",
+            "0x0000000000000000000000000000000000000000",
+            "--ignore",
+            "creation",
+            "--json",
+        ])
+        .assert_json_stdout(
+            r#"[{"bytecode_type":"runtime","match_type":null,"message":"Provided constructor args do not match the ones used at deployment"}]"#,
+        );
 });
 
 // `--ignore` tests

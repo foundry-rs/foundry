@@ -1,5 +1,5 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
-use alloy_dyn_abi::DynSolValue;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_network::{AnyNetwork, AnyRpcBlock};
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_provider::{Provider, network::BlockResponse};
@@ -286,6 +286,28 @@ pub fn check_and_encode_args(
     } else {
         Ok(Vec::new())
     }
+}
+
+pub fn validate_encoded_constructor_args(
+    artifact: &CompactContractBytecode,
+    args: Vec<u8>,
+) -> Result<Vec<u8>, eyre::ErrReport> {
+    let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) else {
+        if args.is_empty() {
+            return Ok(args);
+        }
+        eyre::bail!("Contract has no constructor arguments, but encoded arguments were provided");
+    };
+    let values = constructor
+        .abi_decode_input(&args)
+        .map_err(|err| eyre::eyre!("Invalid ABI-encoded constructor arguments: {err}"))?;
+    let encoded = constructor
+        .abi_encode_input(&values)
+        .map_err(|err| eyre::eyre!("Invalid ABI-encoded constructor arguments: {err}"))?;
+    if encoded != args {
+        eyre::bail!("Constructor arguments are not canonically ABI-encoded");
+    }
+    Ok(args)
 }
 
 pub fn check_explorer_args(source_code: &ContractMetadata) -> Result<Bytes, eyre::ErrReport> {
@@ -598,6 +620,30 @@ mod tests {
         let mut tx = TxEnvFor::<foundry_evm::core::evm::MonadEvmNetwork>::default();
         tx.set_caller(caller);
         tx
+    }
+
+    #[test]
+    fn encoded_constructor_args_must_be_canonical() {
+        let artifact = CompactContractBytecode {
+            abi: Some(alloy_json_abi::JsonAbi::parse(["constructor(uint256 value)"]).unwrap()),
+            bytecode: None,
+            deployed_bytecode: None,
+        };
+        let args = artifact
+            .abi
+            .as_ref()
+            .unwrap()
+            .constructor()
+            .unwrap()
+            .abi_encode_input(&[DynSolValue::Uint(U256::from(1), 256)])
+            .unwrap();
+
+        assert_eq!(validate_encoded_constructor_args(&artifact, args.clone()).unwrap(), args);
+
+        // Arbitrary bytes prepended to valid arguments can overlap the creation bytecode's
+        // metadata and must not be accepted as part of the constructor arguments.
+        let overlapping = [alloy_primitives::hex!("a1616101").as_slice(), &args].concat();
+        assert!(validate_encoded_constructor_args(&artifact, overlapping).is_err());
     }
 
     #[test]
