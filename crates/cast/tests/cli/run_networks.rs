@@ -9,6 +9,7 @@
 //! `flaky` profile runs it with retries. These endpoints are free, unauthenticated, and rate
 //! limited, so an outage must not fail a normal CI run.
 
+use foundry_evm_networks::celo::CELO_DYNAMIC_FEE_TX_TYPE;
 use foundry_test_utils::{TestCommand, util::OutputExt};
 
 /// How closely a replay is expected to reproduce the receipt's `gasUsed`.
@@ -42,6 +43,7 @@ struct Network {
     name: &'static str,
     rpc_url: &'static str,
     gas: GasExpectation,
+    transaction_type: Option<u8>,
 }
 
 /// Replays a recent transaction from `network` and checks it against its receipt.
@@ -140,7 +142,7 @@ fn find_replayable_transaction(
 
     for number in (latest.saturating_sub(BLOCK_SCAN_DEPTH)..=latest).rev() {
         let Some(block) = full_block(cmd, network, number) else { continue };
-        let mut candidates = replayable_transactions(&block);
+        let mut candidates = replayable_transactions(&block, network.transaction_type);
         match candidates.len() {
             1 => single_candidate = single_candidate.or_else(|| candidates.pop()),
             len if len > 1 => {
@@ -158,11 +160,11 @@ fn find_replayable_transaction(
 ///
 /// System transactions are excluded: chains inject them outside normal execution, and `cast run`
 /// deliberately refuses to replay them.
-fn replayable_transactions(block: &serde_json::Value) -> Vec<String> {
-    const SYSTEM_TX_TYPES: [&str; 2] = [
+fn replayable_transactions(block: &serde_json::Value, transaction_type: Option<u8>) -> Vec<String> {
+    const SYSTEM_TX_TYPES: [u8; 2] = [
         // OP-stack deposit.
-        "0x7e", // Arbitrum internal.
-        "0x6a",
+        0x7e, // Arbitrum internal.
+        0x6a,
     ];
 
     let Some(transactions) = block.get("transactions").and_then(|txs| txs.as_array()) else {
@@ -171,13 +173,18 @@ fn replayable_transactions(block: &serde_json::Value) -> Vec<String> {
 
     transactions
         .iter()
+        .filter(|tx| rpc_transaction_type(tx).is_none_or(|ty| !SYSTEM_TX_TYPES.contains(&ty)))
         .filter(|tx| {
-            tx.get("type")
-                .and_then(|ty| ty.as_str())
-                .is_none_or(|ty| !SYSTEM_TX_TYPES.contains(&ty))
+            transaction_type.is_none_or(|expected| rpc_transaction_type(tx) == Some(expected))
         })
         .filter_map(|tx| Some(tx.get("hash")?.as_str()?.to_string()))
         .collect()
+}
+
+/// Reads a transaction type quantity from a JSON-RPC transaction.
+fn rpc_transaction_type(tx: &serde_json::Value) -> Option<u8> {
+    let raw = tx.get("type")?.as_str()?;
+    u8::from_str_radix(raw.strip_prefix("0x").unwrap_or(raw), 16).ok()
 }
 
 /// Runs a `cast` subcommand with `--json` and parses its output, returning `None` on any failure.
@@ -216,6 +223,7 @@ macro_rules! network_replay_tests {
                         name: $name,
                         rpc_url: $rpc_url,
                         gas: GasExpectation::$gas,
+                        transaction_type: None,
                     },
                 );
             });
@@ -255,3 +263,15 @@ network_replay_tests! {
     // the official one ignores the block tag and answers every state read at latest.
     flaky_run_hyperevm => ("hyperevm", "https://rpc.purroofgroup.com", ReplaysOnly),
 }
+
+casttest!(flaky_run_celo_cip64, |_prj, cmd| {
+    assert_replays_recent_transaction(
+        &mut cmd,
+        &Network {
+            name: "celo",
+            rpc_url: "https://forno.celo.org",
+            gas: GasExpectation::ReplaysOnly,
+            transaction_type: Some(CELO_DYNAMIC_FEE_TX_TYPE),
+        },
+    );
+});

@@ -2,8 +2,8 @@ use crate::cmd::{
     bind::BindArgs, bind_json, build::BuildArgs, cache::CacheArgs, clone::CloneArgs,
     compiler::CompilerArgs, config, coverage, create::CreateArgs, doc::DocArgs, eip712, flatten,
     fmt::FmtArgs, fuzz::FuzzArgs, geiger, init::InitArgs, inspect, install::InstallArgs,
-    lint::LintArgs, lsp::LspArgs, remappings::RemappingArgs, remove::RemoveArgs,
-    selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
+    lint::LintArgs, lsp::LspArgs, reinit::ReinitArgs, remappings::RemappingArgs,
+    remove::RemoveArgs, selectors::SelectorsSubcommands, snapshot, soldeer, test, tree, update,
 };
 use clap::{Parser, Subcommand, ValueHint};
 use forge_script::ScriptArgs;
@@ -105,6 +105,9 @@ pub enum ForgeSubcommand {
     /// - forge install openzeppelin/openzeppelin-contracts@v5.0.2 (pin a version)
     #[command(verbatim_doc_comment, visible_aliases = ["i", "add"])]
     Install(InstallArgs),
+
+    /// Reinitialize the project's Git submodules, discarding local changes.
+    Reinit(ReinitArgs),
 
     /// Remove one or multiple dependencies.
     #[command(visible_alias = "rm")]
