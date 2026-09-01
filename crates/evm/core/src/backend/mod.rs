@@ -39,7 +39,7 @@ use revm::{
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     fmt::Debug,
     time::Instant,
 };
@@ -683,7 +683,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> eyre::Result<Self> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
-        let persistent_accounts = HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS);
+        let persistent_accounts = AddressSet::from_iter(DEFAULT_PERSISTENT_ACCOUNTS);
         let inner = BackendInner { persistent_accounts, ..Default::default() };
 
         let mut backend = Self {
@@ -1355,7 +1355,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Populates a rolled active fork and the outer journal at the new block state.
     fn populate_rolled_active_fork(
         fork: &mut Fork<AnyNetwork, BlockEnvFor<FEN>>,
-        persistent_accounts: &HashSet<Address>,
+        persistent_accounts: &AddressSet,
         caller: Option<Address>,
         journaled_state: &mut JournaledState,
     ) {
@@ -1383,7 +1383,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     fn reset_rolled_active_fork(
         fork: &mut Fork<AnyNetwork, BlockEnvFor<FEN>>,
         fork_init_journaled_state: &JournaledState,
-        persistent_accounts: &HashSet<Address>,
+        persistent_accounts: &AddressSet,
         caller: Option<Address>,
         journaled_state: &mut JournaledState,
     ) {
@@ -1688,7 +1688,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         block_context: Option<&BlockContext<FEN>>,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
-        persistent_accounts: &HashSet<Address>,
+        persistent_accounts: &AddressSet,
     ) -> eyre::Result<Option<AnyRpcTransaction>> {
         let ReplayInputs { evm_env, networks } = replay;
         trace!(?tx_hash, "replay until transaction");
@@ -2678,7 +2678,7 @@ impl<N: Network, B: ForkBlockEnv> Fork<N, B> {
     fn refresh_journaled_states(
         &mut self,
         journaled_state: &mut JournaledState,
-        persistent_accounts: &HashSet<Address>,
+        persistent_accounts: &AddressSet,
     ) -> Result<(), BackendError> {
         update_state(&mut journaled_state.state, &mut self.db, Some(persistent_accounts))?;
         update_state(&mut self.journaled_state.state, &mut self.db, Some(persistent_accounts))?;
@@ -2737,11 +2737,11 @@ pub struct BackendInner<FEN: FoundryEvmNetwork> {
     /// All accounts that should be kept persistent when switching forks.
     /// This means all accounts stored here _don't_ use a separate storage section on each fork
     /// instead the use only one that's persistent across fork swaps.
-    pub persistent_accounts: HashSet<Address>,
+    pub persistent_accounts: AddressSet,
     /// The configured spec id
     pub spec_id: SpecFor<FEN>,
     /// All accounts that are allowed to execute cheatcodes
-    pub cheatcode_access_accounts: HashSet<Address>,
+    pub cheatcode_access_accounts: AddressSet,
 }
 
 impl<FEN: FoundryEvmNetwork> Clone for BackendInner<FEN> {
@@ -3051,7 +3051,7 @@ impl<FEN: FoundryEvmNetwork> Default for BackendInner<FEN> {
             spec_id: SpecFor::<FEN>::default(),
             // grant the cheatcode,default test and caller address access to execute cheatcodes
             // itself
-            cheatcode_access_accounts: HashSet::from([
+            cheatcode_access_accounts: AddressSet::from_iter([
                 CHEATCODE_ADDRESS,
                 TEST_CONTRACT_ADDRESS,
                 CALLER,
@@ -3174,7 +3174,7 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
     fork: &mut Fork<AnyNetwork, BlockEnvFor<FEN>>,
     fork_id: &ForkId,
     networks: NetworkConfigs,
-    persistent_accounts: &HashSet<Address>,
+    persistent_accounts: &AddressSet,
     inspector: &mut dyn for<'db> FoundryInspectorExt<
         <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
     >,
@@ -3209,7 +3209,7 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
 pub fn update_state<DB: Database>(
     state: &mut EvmState,
     db: &mut DB,
-    persistent_accounts: Option<&HashSet<Address>>,
+    persistent_accounts: Option<&AddressSet>,
 ) -> Result<(), DB::Error> {
     for (addr, acc) in state.iter_mut() {
         if persistent_accounts.is_none_or(|accounts| !accounts.contains(addr)) {
@@ -3229,7 +3229,7 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
     state: EvmState,
     journaled_state: &mut JournaledState,
     fork: &mut Fork<N, B>,
-    persistent_accounts: &HashSet<Address>,
+    persistent_accounts: &AddressSet,
 ) -> Result<(), BackendError> {
     // Refresh cloned journals against a cloned database so a failed read cannot publish only part
     // of the transaction state.
@@ -3267,7 +3267,7 @@ mod tests {
         AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope,
         AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction,
     };
-    use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
+    use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256, map::AddressSet};
     use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
     use alloy_rpc_types::{Block, BlockTransactions, Transaction as RpcTransaction};
     use alloy_serde::WithOtherFields;
@@ -3285,7 +3285,6 @@ mod tests {
         primitives::{KECCAK_EMPTY, hardfork::SpecId},
         state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
     };
-    use std::collections::HashSet;
 
     fn fork_with_closed_backend() -> Fork<AnyNetwork, BlockEnv> {
         let provider =
@@ -3362,7 +3361,8 @@ mod tests {
         let mut state = EvmState::default();
         state.insert(committed, committed_account);
 
-        let result = apply_state_changeset(state, &mut journaled_state, &mut fork, &HashSet::new());
+        let result =
+            apply_state_changeset(state, &mut journaled_state, &mut fork, &AddressSet::default());
         assert!(result.is_err());
         assert!(!fork.db.cache.accounts.contains_key(&committed));
         assert_eq!(journaled_state.state[&externally_loaded].info.balance, U256::from(1));
@@ -3390,7 +3390,8 @@ mod tests {
         let mut state = EvmState::default();
         state.insert(address, touched_account);
 
-        let result = apply_state_changeset(state, &mut journaled_state, &mut fork, &HashSet::new());
+        let result =
+            apply_state_changeset(state, &mut journaled_state, &mut fork, &AddressSet::default());
         assert!(result.is_err());
         assert_eq!(fork.db.cache.accounts[&address].account_state, AccountState::NotExisting);
         assert_eq!(journaled_state.state[&address].info.balance, U256::from(1));

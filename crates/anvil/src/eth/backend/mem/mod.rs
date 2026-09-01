@@ -79,7 +79,7 @@ use alloy_primitives::{
     Address, B256, Bloom, Bytes, Signature, TxKind, U64, U256, address, hex, keccak256,
     map::{AddressMap, B256Set, HashMap, HashSet},
 };
-use alloy_rlp::Decodable;
+use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
     AccessList, Block as AlloyBlock, BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides,
     BlockTransactions, EIP1186AccountProofResponse as AccountProof,
@@ -1483,23 +1483,16 @@ impl<N: Network> Backend<N> {
 
     /// Returns a trace decoder configured for the currently resolved hardfork.
     fn call_trace_decoder(&self) -> Arc<CallTraceDecoder> {
-        let tempo_hardfork = self.is_tempo().then(|| self.tempo_hardfork());
-        #[cfg(feature = "monad")]
-        let monad_hardfork = self.is_monad().then(|| self.monad_hardfork());
+        let hardfork = Some(self.networks.executed_hardfork(self.hardfork()));
         let decoder = self.call_trace_decoder.read();
-        let is_current = decoder.tempo_hardfork() == tempo_hardfork;
-        #[cfg(feature = "monad")]
-        let is_current = is_current && decoder.monad_hardfork() == monad_hardfork;
-        if is_current {
+        if decoder.hardfork() == hardfork {
             return Arc::clone(&decoder);
         }
         drop(decoder);
 
         let mut decoder = self.call_trace_decoder.write();
         let mut updated = decoder.as_ref().clone();
-        updated.set_tempo_hardfork(tempo_hardfork);
-        #[cfg(feature = "monad")]
-        updated.set_monad_hardfork(monad_hardfork);
+        updated.set_hardfork(hardfork);
         *decoder = Arc::new(updated);
         Arc::clone(&decoder)
     }
@@ -2014,10 +2007,10 @@ impl<N: Network> Backend<N> {
     /// Takes a block as it's stored internally and returns the eth api conform block format.
     /// If `known_hash` is provided, it will be used instead of computing `hash_slow()`.
     pub fn convert_block_with_hash(&self, block: Block, known_hash: Option<B256>) -> AnyRpcBlock {
-        let size = U256::from(alloy_rlp::encode(canonical_block(block.clone())).len() as u32);
-
-        let header = block.header.clone();
-        let transactions = block.body.transactions;
+        let transactions = block.body.transactions.iter().map(|tx| tx.hash()).collect();
+        let block = canonical_block(block);
+        let size = U256::from(block.length() as u32);
+        let header = block.header;
 
         let hash = known_hash.unwrap_or_else(|| header.hash_slow());
         let number = header.number();
@@ -2044,9 +2037,7 @@ impl<N: Network> Backend<N> {
                 total_difficulty: Some(self.total_difficulty()),
                 size: Some(size),
             },
-            transactions: alloy_rpc_types::BlockTransactions::Hashes(
-                transactions.into_iter().map(|tx| tx.hash()).collect(),
-            ),
+            transactions: alloy_rpc_types::BlockTransactions::Hashes(transactions),
             uncles: vec![],
             withdrawals: withdrawals_root.map(|_| Default::default()),
         };
@@ -2892,7 +2883,11 @@ impl<N: Network> Backend<N> {
             self.build_call_env_with_base(request, fee_details, block_env, base_evm_env);
         #[cfg(feature = "optimism")]
         let tx_env = if self.is_optimism() {
-            CallTxEnv::Op(OpTransaction { base: tx_env, deposit: op_deposit, ..Default::default() })
+            CallTxEnv::Op(OpTransaction {
+                base: tx_env,
+                deposit: op_deposit,
+                enveloped_tx: Some(Bytes::new()),
+            })
         } else if self.is_tempo() {
             CallTxEnv::Tempo(TempoTxEnv::from(tx_env))
         } else {
@@ -7824,9 +7819,10 @@ impl Backend<FoundryNetwork> {
             let mut parent_hash = base_hash;
             let mut next_base_fee = base_fee;
             let mut inherited_block_env = base_block_env;
-            let (is_cancun, is_amsterdam, tx_gas_limit_cap) = {
+            let (is_merge, is_cancun, is_amsterdam, tx_gas_limit_cap) = {
                 let cfg_env = &self.evm_env.read().cfg_env;
                 (
+                    cfg_env.spec >= SpecId::MERGE,
                     cfg_env.spec >= SpecId::CANCUN,
                     cfg_env.spec >= SpecId::AMSTERDAM,
                     cfg_env.tx_gas_limit_cap(),
@@ -7863,6 +7859,9 @@ impl Backend<FoundryNetwork> {
                 }
                 block_env.basefee = if validation { next_base_fee } else { 0 };
                 block_env.prevrandao = Some(B256::ZERO);
+                if is_merge && !is_arbitrum(self.protocol_chain_id()) {
+                    block_env.difficulty = U256::ZERO;
+                }
                 let mut call_res = Vec::with_capacity(calls.len());
                 let mut log_index = 0;
                 let mut cumulative_gas_used = 0;
@@ -9883,6 +9882,20 @@ mod tests {
         assert_eq!(outcome.block_number, original_best_number + 1);
     }
 
+    #[tokio::test]
+    async fn trace_decoder_follows_executed_hardfork_for_cross_namespace_override() {
+        let (api, _) = spawn(
+            NodeConfig::test_tempo()
+                .with_hardfork(Some(FoundryHardfork::Ethereum(EthereumHardfork::Prague))),
+        )
+        .await;
+
+        let decoder = api.backend.call_trace_decoder();
+        assert_eq!(decoder.hardfork(), Some(FoundryHardfork::Tempo(api.backend.tempo_hardfork())));
+        // The refresh compares the same coerced value, so repeated calls stay stable.
+        assert!(Arc::ptr_eq(&decoder, &api.backend.call_trace_decoder()));
+    }
+
     #[cfg(feature = "monad")]
     #[tokio::test]
     async fn monad_trace_decoder_follows_resolved_hardfork() {
@@ -9892,14 +9905,14 @@ mod tests {
         )
         .await;
         let stale_monad_nine = foundry_evm::traces::CallTraceDecoderBuilder::new()
-            .with_monad_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine))
+            .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into()))
             .build();
         *monad_eight.backend.call_trace_decoder.write() = Arc::new(stale_monad_nine);
 
         let decoder = monad_eight.backend.call_trace_decoder();
         assert_eq!(
-            decoder.monad_hardfork(),
-            Some(foundry_evm::hardfork::MonadHardfork::MonadEight)
+            decoder.hardfork(),
+            Some(foundry_evm::hardfork::MonadHardfork::MonadEight.into())
         );
         assert!(
             !decoder
@@ -9913,12 +9926,15 @@ mod tests {
         )
         .await;
         let stale_monad_eight = foundry_evm::traces::CallTraceDecoderBuilder::new()
-            .with_monad_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadEight))
+            .with_hardfork(Some(foundry_evm::hardfork::MonadHardfork::MonadEight.into()))
             .build();
         *monad_nine.backend.call_trace_decoder.write() = Arc::new(stale_monad_eight);
 
         let decoder = monad_nine.backend.call_trace_decoder();
-        assert_eq!(decoder.monad_hardfork(), Some(foundry_evm::hardfork::MonadHardfork::MonadNine));
+        assert_eq!(
+            decoder.hardfork(),
+            Some(foundry_evm::hardfork::MonadHardfork::MonadNine.into())
+        );
         assert_eq!(
             decoder
                 .labels

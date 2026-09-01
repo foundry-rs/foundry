@@ -68,7 +68,6 @@ use foundry_evm::{
     executors::ShowmapDomain,
     fork::ResolvedFork,
     fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
-    hardforks::{ExecutionSpec, TempoHardfork},
     opts::EvmOpts,
     traces::{
         backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth,
@@ -2997,14 +2996,7 @@ impl TestArgs {
             .with_known_contracts(&known_contracts)
             .with_networks(networks)
             .with_chain_id(remote_chain.map(|c| c.id()))
-            .with_tempo_hardfork(resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork));
-        #[cfg(feature = "monad")]
-        {
-            builder = builder.with_monad_hardfork(
-                resolved_hardfork
-                    .and_then(foundry_evm::hardforks::MonadHardfork::from_foundry_hardfork),
-            );
-        }
+            .with_hardfork(resolved_hardfork);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
             builder =

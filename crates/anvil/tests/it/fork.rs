@@ -3285,7 +3285,123 @@ async fn test_fork_reset_to_new_url_updates_source_chain_id() {
     assert!(send().await.unwrap().get_receipt().await.unwrap().status());
 }
 
-async fn spawn_rpc_proxy_without_blob_header_fields(endpoint: String) -> String {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_pre_cancun_fork_with_post_cancun_hardfork() {
+    let target = Address::random();
+    let (origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Mainnet as u64))
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_genesis_timestamp(EthereumHardfork::Cancun.mainnet_activation_timestamp()),
+    )
+    .await;
+    origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
+    origin_api.mine_one().await.unwrap();
+    let origin_url = origin_handle.http_endpoint();
+
+    for hardfork in [EthereumHardfork::Cancun, EthereumHardfork::Prague] {
+        let (api, handle) = spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(origin_url.clone()))
+                .with_fork_block_number(Some(1u64))
+                .with_hardfork(Some(hardfork.into())),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let request =
+            || TransactionRequest { to: Some(TxKind::Call(target)), ..Default::default() };
+
+        assert_eq!(provider.call(request().into()).await.unwrap(), Bytes::from(vec![0; 32]));
+        assert_eq!(
+            api.backend
+                .evm_env()
+                .read()
+                .block_env
+                .blob_excess_gas_and_price
+                .as_ref()
+                .map(|blob| blob.excess_blob_gas),
+            Some(0)
+        );
+
+        api.anvil_reset(Some(Forking {
+            json_rpc_url: Some(origin_url.clone()),
+            block_number: Some(1),
+        }))
+        .await
+        .unwrap();
+        assert_eq!(provider.call(request().into()).await.unwrap(), Bytes::from(vec![0; 32]));
+    }
+
+    let partial_header_url =
+        spawn_rpc_proxy_with_blob_header_fields(origin_url, Some(0), None).await;
+    let partial_header_url =
+        spawn_rpc_proxy_rejecting_method_after(partial_header_url, "anvil_nodeInfo", 0).await;
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(partial_header_url))
+            .with_fork_block_number(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Prague.into())),
+    )
+    .await;
+    assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_unknown_schedule_fork_with_post_cancun_hardfork() {
+    let target = Address::random();
+    let (origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::BinanceSmartChain as u64))
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_genesis_timestamp(EthereumHardfork::Cancun.mainnet_activation_timestamp()),
+    )
+    .await;
+    origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
+    origin_api.mine_one().await.unwrap();
+    let origin_url =
+        spawn_rpc_proxy_with_blob_header_fields(origin_handle.http_endpoint(), None, None).await;
+    let origin_url = spawn_rpc_proxy_rejecting_method_after(origin_url, "anvil_nodeInfo", 0).await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_url.clone()))
+            .with_fork_block_number(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Prague.into())),
+    )
+    .await;
+
+    assert_eq!(
+        api.backend
+            .evm_env()
+            .read()
+            .block_env
+            .blob_excess_gas_and_price
+            .as_ref()
+            .map(|blob| blob.excess_blob_gas),
+        Some(0)
+    );
+    assert_eq!(
+        handle
+            .http_provider()
+            .call(
+                TransactionRequest { to: Some(TxKind::Call(target)), ..Default::default() }.into()
+            )
+            .await
+            .unwrap(),
+        Bytes::from(vec![0; 32])
+    );
+
+    let (api, _) = spawn(
+        NodeConfig::test().with_eth_rpc_url(Some(origin_url)).with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
+}
+
+async fn spawn_rpc_proxy_with_blob_header_fields(
+    endpoint: String,
+    blob_gas_used: Option<u64>,
+    excess_blob_gas: Option<u64>,
+) -> String {
     let client = reqwest::Client::new();
     let router = Router::new().route(
         "/",
@@ -3307,8 +3423,15 @@ async fn spawn_rpc_proxy_without_blob_header_fields(endpoint: String) -> String 
                     Some("eth_getBlockByHash" | "eth_getBlockByNumber")
                 ) && let Some(block) = response.get_mut("result").and_then(Value::as_object_mut)
                 {
-                    block.remove("blobGasUsed");
-                    block.remove("excessBlobGas");
+                    for (field, value) in
+                        [("blobGasUsed", blob_gas_used), ("excessBlobGas", excess_blob_gas)]
+                    {
+                        if let Some(value) = value {
+                            block.insert(field.to_string(), Value::String(format!("0x{value:x}")));
+                        } else {
+                            block.remove(field);
+                        }
+                    }
                 }
                 Json(response)
             }
@@ -3318,6 +3441,53 @@ async fn spawn_rpc_proxy_without_blob_header_fields(endpoint: String) -> String 
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     format!("http://{address}")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_arbitrum_forks_accept_nitro_headers_without_blob_fields() {
+    // Nitro omits Ethereum's EIP-4844 header fields, including on post-Cancun chains. Hide Anvil
+    // metadata so these deterministic local origins have the same observable shape as public RPCs.
+    for chain in [NamedChain::Arbitrum, NamedChain::Robinhood] {
+        let target = Address::random();
+        let (origin_api, origin) = spawn(
+            NodeConfig::test()
+                .with_chain_id(Some(chain as u64))
+                .with_hardfork(Some(EthereumHardfork::Prague.into()))
+                .with_genesis_timestamp(EthereumHardfork::Prague.arbitrum_activation_timestamp()),
+        )
+        .await;
+        origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
+        let fork_url =
+            spawn_rpc_proxy_with_blob_header_fields(origin.http_endpoint(), None, None).await;
+        let fork_url = spawn_rpc_proxy_rejecting_method_after(fork_url, "anvil_nodeInfo", 0).await;
+
+        let (api, handle) = spawn(
+            NodeConfig::test()
+                .with_no_storage_caching(true)
+                .with_eth_rpc_url(Some(fork_url))
+                .with_fork_block_number(Some(0u64)),
+        )
+        .await;
+
+        assert!(api.backend.spec_id() >= SpecId::CANCUN);
+        assert_eq!(
+            api.backend
+                .evm_env()
+                .read()
+                .block_env
+                .blob_excess_gas_and_price
+                .as_ref()
+                .map(|blob| blob.excess_blob_gas),
+            Some(0),
+            "{chain}"
+        );
+        let request = TransactionRequest { to: Some(TxKind::Call(target)), ..Default::default() };
+        assert_eq!(
+            handle.http_provider().call(request.into()).await.unwrap(),
+            Bytes::from(vec![0; 32]),
+            "{chain}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -3336,7 +3506,7 @@ async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
     .await;
     polygon_api.anvil_set_code(token, return_zero.clone()).await.unwrap();
     let polygon_url =
-        spawn_rpc_proxy_without_blob_header_fields(polygon_origin.http_endpoint()).await;
+        spawn_rpc_proxy_with_blob_header_fields(polygon_origin.http_endpoint(), None, None).await;
     let polygon_url =
         spawn_rpc_proxy_rejecting_method_after(polygon_url, "anvil_nodeInfo", 0).await;
 
@@ -3349,7 +3519,8 @@ async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
     .await;
     pre_cancun_api.anvil_set_code(token, return_zero.clone()).await.unwrap();
     let pre_cancun_url =
-        spawn_rpc_proxy_without_blob_header_fields(pre_cancun_origin.http_endpoint()).await;
+        spawn_rpc_proxy_with_blob_header_fields(pre_cancun_origin.http_endpoint(), None, None)
+            .await;
     let pre_cancun_url =
         spawn_rpc_proxy_rejecting_method_after(pre_cancun_url, "anvil_nodeInfo", 0).await;
 
@@ -3364,7 +3535,7 @@ async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
     .await;
     ethereum_api.anvil_set_code(token, return_zero).await.unwrap();
     let ethereum_url =
-        spawn_rpc_proxy_without_blob_header_fields(ethereum_origin.http_endpoint()).await;
+        spawn_rpc_proxy_with_blob_header_fields(ethereum_origin.http_endpoint(), None, None).await;
     let ethereum_url =
         spawn_rpc_proxy_rejecting_method_after(ethereum_url, "anvil_nodeInfo", 0).await;
 

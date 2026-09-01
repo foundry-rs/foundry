@@ -46,6 +46,12 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 filter = "test(/fork_chains::/)"
 success-output = "final"
 
+# The network read tests report an unreachable endpoint or an unusable block by skipping instead
+# of failing, so keep their output on success to show which networks a run actually exercised.
+[[profile.flaky.overrides]]
+filter = "test(/read_networks::/)"
+success-output = "final"
+
 # Profile for the on-chain deploy+verify tests (used by the nightly test-deploy-verify workflow).
 # Requires <NETWORK>_RPC_URL plus TESTNET_DEPLOYER_PRIVATE_KEY to do anything.
 # Run with: cargo nextest run --profile deploy-verify

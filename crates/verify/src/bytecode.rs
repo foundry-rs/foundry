@@ -8,10 +8,8 @@ use crate::{
     verify::VerifierArgs,
 };
 use alloy_consensus::Transaction as ConsensusTransaction;
-use alloy_evm::FromRecoveredTx;
-#[cfg(test)]
-use alloy_primitives::B256;
-use alloy_primitives::{Address, Bytes, TxKind, U256, hex};
+use alloy_network::{AnyNetwork, AnyRpcBlock};
+use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex};
 use alloy_provider::{
     Provider,
     ext::TraceApi,
@@ -32,23 +30,27 @@ use foundry_common::{
 };
 use foundry_compilers::info::ContractInfo;
 use foundry_config::{Chain, Config, figment, impl_figment_convert};
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
         FoundryChain, FoundryTransaction as _,
+        env::FromAnyRpcTransaction as _,
         evm::{
-            BlockContext, ChainFor, EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor,
+            BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork,
+            TxEnvFor,
         },
     },
-    executors::EvmError,
+    executors::{EvmError, TracingExecutor},
     opts::{EvmOpts, ForkEndpointIdentity},
     utils::apply_chain_specific_tx_replay_env_changes_for_chain,
 };
 use foundry_evm_networks::NetworkVariant;
 use revm::{context::Block as _, state::AccountInfo};
-use std::path::PathBuf;
+use std::{path::PathBuf, pin::Pin};
 
 impl_figment_convert!(VerifyBytecodeArgs);
 
@@ -252,6 +254,7 @@ impl VerifyBytecodeArgs {
                     config,
                     endpoint_identity,
                     network_was_inferred,
+                    replay_block_transactions::<EthEvmNetwork>,
                 )
                 .await
             }
@@ -261,6 +264,7 @@ impl VerifyBytecodeArgs {
                     config,
                     endpoint_identity,
                     network_was_inferred,
+                    replay_block_transactions::<OpEvmNetwork>,
                 )
                 .await
             }
@@ -269,15 +273,17 @@ impl VerifyBytecodeArgs {
                     config,
                     endpoint_identity,
                     network_was_inferred,
+                    replay_block_transactions::<TempoEvmNetwork>,
                 )
                 .await
             }
             #[cfg(feature = "monad")]
             NetworkVariant::Monad => {
-                self.run_with_network_and_config::<foundry_evm::core::evm::MonadEvmNetwork>(
+                self.run_with_network_and_config::<MonadEvmNetwork>(
                     config,
                     endpoint_identity,
                     network_was_inferred,
+                    replay_monad_block_transactions,
                 )
                 .await
             }
@@ -289,12 +295,16 @@ impl VerifyBytecodeArgs {
         config: Config,
         endpoint_identity: Option<ForkEndpointIdentity>,
         network_was_inferred: bool,
+        replay_block: ReplayBlockFn<FEN>,
     ) -> Result<()>
     where
         FEN: FoundryEvmNetwork,
     {
         // Setup
-        let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
+        // `AnyNetwork` rather than `FEN::Network`: chains such as Arbitrum and Celo put
+        // transaction types the strict Ethereum envelope cannot decode into every block, which
+        // would fail the full block fetches below for the whole chain. Execution still uses `FEN`.
+        let provider = ProviderBuilder::<AnyNetwork>::from_config(&config)?.build()?;
 
         // If chain is not set, we try to get it from the RPC.
         // If RPC is not set, the default chain is used.
@@ -303,7 +313,7 @@ impl VerifyBytecodeArgs {
             config.get_rpc_url(),
         ) {
             (Some(chain), _) => chain,
-            (None, Some(_)) => utils::get_chain::<FEN::Network, _>(None, &provider).await?,
+            (None, Some(_)) => utils::get_chain::<AnyNetwork, _>(None, &provider).await?,
             (None, None) => Default::default(),
         };
 
@@ -529,12 +539,7 @@ impl VerifyBytecodeArgs {
             let kind = TxKind::Create;
             let block_context =
                 if !maybe_predeploy && deploy_block != 0 && config.networks.is_monad() {
-                    let block = deploy_block_info.as_ref().ok_or_else(|| {
-                        eyre::eyre!(
-                            "block {deploy_block} is required to reconstruct deployment context"
-                        )
-                    })?;
-                    Some(BlockContext::<FEN>::fetch(&provider, block).await?)
+                    Some(monad_block_context::<FEN>(&config, deploy_block).await?)
                 } else {
                     None
                 };
@@ -781,106 +786,18 @@ impl VerifyBytecodeArgs {
                 provider.get_transaction_count(transaction.from()).block_id(prev_block_id).await?;
 
             apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain.id());
-            let mut target_context = None::<ChainFor<FEN>>;
-            if let Some(ref block) = block {
-                let BlockTransactions::Full(txs) = block.transactions() else {
-                    return Err(eyre::eyre!("Could not get block txs"));
-                };
-                let block_context = if config.networks.is_monad() {
-                    Some(BlockContext::<FEN>::fetch(&provider, block).await?)
-                } else {
-                    None
-                };
-                let target_index =
-                    txs.iter().position(|tx| tx.tx_hash() == tx_hash).ok_or_else(|| {
-                        eyre::eyre!("transaction {tx_hash:?} is missing from its block")
-                    })?;
-                let target_tx_env = TxEnvFor::<FEN>::from_recovered_tx(
-                    txs[target_index].as_ref(),
-                    txs[target_index].from(),
-                );
-                target_context = Some(block_context.as_ref().map_or_else(
-                    || ChainFor::<FEN>::for_transaction(&target_tx_env),
-                    |context| context.transaction(target_index),
-                ));
-
-                // Replay txes in block until the contract creation one.
-                for (index, tx) in txs.iter().enumerate() {
-                    trace!("replay tx::: {}", tx.tx_hash());
-                    if tx.tx_hash() == tx_hash {
-                        break;
-                    }
-
-                    let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
-                    let is_system = is_known_system_sender(tx.from())
-                        || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
-                    let chain_context = block_context.as_ref().map_or_else(
-                        || ChainFor::<FEN>::for_transaction(&tx_env),
-                        |context| context.transaction(index),
-                    );
-
-                    if is_system {
-                        #[cfg(feature = "monad")]
-                        let _ = executor
-                            .try_transact_system_replay_with_env_and_context(
-                                evm_env.clone(),
-                                tx_env.clone(),
-                                chain_context,
-                            )
-                            .wrap_err_with(|| {
-                                format!(
-                                    "Failed to replay system transaction: {:?} in block {}",
-                                    tx.tx_hash(),
-                                    evm_env.block_env.number()
-                                )
-                            })?;
-                        continue;
-                    }
-
-                    if ConsensusTransaction::to(tx).is_some() {
-                        executor
-                            .transact_with_env_and_context(
-                                evm_env.clone(),
-                                tx_env.clone(),
-                                chain_context,
-                            )
-                            .wrap_err_with(|| {
-                                format!(
-                                    "Failed to execute transaction: {:?} in block {}",
-                                    tx.tx_hash(),
-                                    evm_env.block_env.number()
-                                )
-                            })?;
-                    } else if let Err(error) = executor.deploy_with_env_and_context(
-                        evm_env.clone(),
-                        tx_env.clone(),
-                        chain_context,
-                        None,
-                    ) {
-                        match error {
-                            // Reverted transactions should be skipped
-                            EvmError::Execution(_) => (),
-                            error => {
-                                return Err(error).wrap_err_with(|| {
-                                    format!(
-                                        "Failed to deploy transaction: {:?} in block {}",
-                                        tx.tx_hash(),
-                                        evm_env.block_env.number()
-                                    )
-                                });
-                            }
-                        }
-                    }
-                }
-            } else if config.networks.is_monad() {
-                eyre::bail!(
-                    "block {simulation_block} is required to reconstruct transaction context"
-                );
-            }
+            let target_context = replay_block(
+                &config,
+                block.as_ref(),
+                simulation_block,
+                tx_hash,
+                &mut executor,
+                &evm_env,
+            )
+            .await?;
 
             let kind = ConsensusTransaction::kind(&transaction);
-            let mut tx_env =
-                TxEnvFor::<FEN>::from_recovered_tx(transaction.as_ref(), transaction.from());
+            let mut tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&transaction)?;
             tx_env.set_nonce(prev_block_nonce);
             let target_context =
                 target_context.unwrap_or_else(|| ChainFor::<FEN>::for_transaction(&tx_env));
@@ -941,6 +858,162 @@ impl VerifyBytecodeArgs {
         }
         Ok(())
     }
+}
+
+type ReplayBlockFuture<'a, FEN> = Pin<Box<dyn Future<Output = Result<Option<ChainFor<FEN>>>> + 'a>>;
+type ReplayBlockFn<FEN> = for<'a> fn(
+    &'a Config,
+    Option<&'a AnyRpcBlock>,
+    u64,
+    B256,
+    &'a mut TracingExecutor<FEN>,
+    &'a EvmEnvFor<FEN>,
+) -> ReplayBlockFuture<'a, FEN>;
+
+/// Replays ordinary transactions preceding `target_hash` and returns its execution context.
+fn replay_block_transactions<'a, FEN: FoundryEvmNetwork>(
+    _config: &'a Config,
+    block: Option<&'a AnyRpcBlock>,
+    _block_number: u64,
+    target_hash: B256,
+    executor: &'a mut TracingExecutor<FEN>,
+    evm_env: &'a EvmEnvFor<FEN>,
+) -> ReplayBlockFuture<'a, FEN> {
+    Box::pin(async move {
+        let Some(block) = block else { return Ok(None) };
+        let BlockTransactions::Full(txs) = block.transactions() else {
+            return Err(eyre::eyre!("Could not get block txs"));
+        };
+        let target_tx = txs
+            .iter()
+            .find(|tx| tx.tx_hash() == target_hash)
+            .ok_or_else(|| eyre::eyre!("transaction {target_hash:?} is missing from its block"))?;
+        let target_tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(target_tx)?;
+
+        for tx in txs {
+            trace!("replay tx::: {}", tx.tx_hash());
+            if tx.tx_hash() == target_hash {
+                break;
+            }
+            if is_known_system_sender(tx.from())
+                || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+            {
+                continue;
+            }
+
+            let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
+            let chain_context = ChainFor::<FEN>::for_transaction(&tx_env);
+            execute_replay_transaction(executor, evm_env, tx, tx_env, chain_context)?;
+        }
+
+        Ok(Some(ChainFor::<FEN>::for_transaction(&target_tx_env)))
+    })
+}
+
+/// Replays Monad transactions preceding `target_hash` with their ancestry context.
+#[cfg(feature = "monad")]
+fn replay_monad_block_transactions<'a>(
+    config: &'a Config,
+    block: Option<&'a AnyRpcBlock>,
+    block_number: u64,
+    target_hash: B256,
+    executor: &'a mut TracingExecutor<MonadEvmNetwork>,
+    evm_env: &'a EvmEnvFor<MonadEvmNetwork>,
+) -> ReplayBlockFuture<'a, MonadEvmNetwork> {
+    Box::pin(async move {
+        let block = block.ok_or_else(|| {
+            eyre::eyre!("block {block_number} is required to reconstruct transaction context")
+        })?;
+        let BlockTransactions::Full(txs) = block.transactions() else {
+            return Err(eyre::eyre!("Could not get block txs"));
+        };
+        let block_context = monad_block_context::<MonadEvmNetwork>(config, block_number).await?;
+        let target_index = txs
+            .iter()
+            .position(|tx| tx.tx_hash() == target_hash)
+            .ok_or_else(|| eyre::eyre!("transaction {target_hash:?} is missing from its block"))?;
+
+        for (index, tx) in txs.iter().enumerate() {
+            trace!("replay tx::: {}", tx.tx_hash());
+            if tx.tx_hash() == target_hash {
+                break;
+            }
+
+            let tx_env = TxEnvFor::<MonadEvmNetwork>::from_any_rpc_transaction(tx)?;
+            let chain_context = block_context.transaction(index);
+            if is_known_system_sender(tx.from())
+                || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+            {
+                let _ = executor
+                    .try_transact_system_replay_with_env_and_context(
+                        evm_env.clone(),
+                        tx_env,
+                        chain_context,
+                    )
+                    .wrap_err_with(|| {
+                        format!(
+                            "Failed to replay system transaction: {:?} in block {}",
+                            tx.tx_hash(),
+                            evm_env.block_env.number()
+                        )
+                    })?;
+                continue;
+            }
+
+            execute_replay_transaction(executor, evm_env, tx, tx_env, chain_context)?;
+        }
+
+        Ok(Some(block_context.transaction(target_index)))
+    })
+}
+
+fn execute_replay_transaction<FEN: FoundryEvmNetwork>(
+    executor: &mut TracingExecutor<FEN>,
+    evm_env: &EvmEnvFor<FEN>,
+    tx: &alloy_network::AnyRpcTransaction,
+    tx_env: TxEnvFor<FEN>,
+    chain_context: ChainFor<FEN>,
+) -> Result<()> {
+    if ConsensusTransaction::to(tx).is_some() {
+        executor
+            .transact_with_env_and_context(evm_env.clone(), tx_env, chain_context)
+            .wrap_err_with(|| {
+                format!(
+                    "Failed to execute transaction: {:?} in block {}",
+                    tx.tx_hash(),
+                    evm_env.block_env.number()
+                )
+            })?;
+    } else if let Err(error) =
+        executor.deploy_with_env_and_context(evm_env.clone(), tx_env, chain_context, None)
+    {
+        match error {
+            // Reverted transactions should be skipped.
+            EvmError::Execution(_) => (),
+            error => {
+                return Err(error).wrap_err_with(|| {
+                    format!(
+                        "Failed to deploy transaction: {:?} in block {}",
+                        tx.tx_hash(),
+                        evm_env.block_env.number()
+                    )
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Fetches the block context Monad needs to reconstruct replay ordering.
+async fn monad_block_context<FEN: FoundryEvmNetwork>(
+    config: &Config,
+    block_number: u64,
+) -> Result<BlockContext<FEN>> {
+    let provider = ProviderBuilder::<FEN::Network>::from_config(config)?.build()?;
+    let block = provider.get_block(block_number.into()).full().await?.ok_or_else(|| {
+        eyre::eyre!("block {block_number} is required to reconstruct transaction context")
+    })?;
+    BlockContext::<FEN>::fetch(&provider, &block).await
 }
 
 #[cfg(test)]

@@ -2070,6 +2070,48 @@ contract TargetTest is Test {
     cmd.args(["build"]).assert_success();
 });
 
+// <https://github.com/foundry-rs/foundry/issues/16487>
+forgetest_init!(preprocess_custom_layout_contract, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 35)));
+    });
+
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Target layout at erc7201("test.Target") {
+    uint256 public value;
+
+    constructor(uint256 value_) {
+        value = value_;
+    }
+}
+        "#,
+    );
+
+    prj.add_test(
+        "Target.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Target} from "../src/Target.sol";
+
+contract TargetTest is Test {
+    function testDirectNew() public {
+        Target target = new Target(42);
+        assertEq(target.value(), 42);
+    }
+
+    function targetCreationCode() public view returns (bytes memory) {
+        return type(Target).creationCode;
+    }
+}
+        "#,
+    );
+
+    cmd.args(["test"]).assert_success();
+});
+
 // Test that `type(Contract).creationCode` keeps native pure semantics when dynamic linking is
 // enabled.
 forgetest_init!(preprocess_creation_code_in_pure_function, |prj, cmd| {

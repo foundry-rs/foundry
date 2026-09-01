@@ -414,9 +414,9 @@ pub struct VerifyArgs {
     #[arg(long, help_heading = "Compiler options")]
     pub no_auto_detect: bool,
 
-    /// Specify the solc version, or a path to a local solc, to build with.
+    /// Specify the solc version, path, or executable name on `PATH` to build with.
     ///
-    /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
+    /// Valid values are in the format `x.y.z`, `solc:x.y.z`, `path/to/solc`, or `solc`.
     #[arg(long = "use", help_heading = "Compiler options", value_name = "SOLC_VERSION")]
     pub use_solc: Option<String>,
 

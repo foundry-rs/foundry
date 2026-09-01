@@ -11,9 +11,9 @@
 
 use alloy_chains::NamedChain;
 use alloy_eips::Typed2718;
-use alloy_network::{ReceiptResponse, TransactionResponse};
-use alloy_primitives::B256;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag};
+use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
+use alloy_primitives::{Address, B256};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, state::EvmOverrides};
 use alloy_transport::{RpcError, TransportError};
 use anvil::{
     NodeConfig,
@@ -100,6 +100,17 @@ async fn fork_and_assert(chain: NamedChain) -> Option<()> {
     let (api, handle) = fork_ok(chain, "fork setup", try_spawn(config).await)?;
 
     assert_eq!(api.chain_id(), chain as u64, "{chain:?} fork adopted the wrong chain id");
+
+    fork_ok(
+        chain,
+        "eth_call",
+        api.call(
+            TransactionRequest::default().with_to(Address::ZERO).into(),
+            None,
+            EvmOverrides::default(),
+        )
+        .await,
+    )?;
 
     let fork_block = api.block_number().unwrap().to::<u64>();
     if fork_block == 0 {

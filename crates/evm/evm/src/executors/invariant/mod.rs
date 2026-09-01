@@ -15,7 +15,7 @@ use crate::{
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, FixedBytes, I256, Selector, U256, keccak256,
-    map::{AddressMap, hash_map::Entry as AddressMapEntry},
+    map::{AddressMap, AddressSet, HashMap, hash_map::Entry as AddressMapEntry},
 };
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
@@ -583,10 +583,10 @@ struct InvariantTestData {
     // Line coverage information collected from all fuzzed calls.
     line_coverage: Option<HitMaps>,
     // Metrics for each fuzzed selector.
-    metrics: Map<String, InvariantMetrics>,
+    metrics: HashMap<String, InvariantMetrics>,
     // Cache from fuzzed (target, selector) to its metric key. Only resolved keys are cached and
     // they are invalidated when targets change (see `invalidate_metric_key_cache`).
-    metric_key_cache: Map<(Address, Selector), String>,
+    metric_key_cache: HashMap<(Address, Selector), String>,
 
     // Proptest runner to query for random values.
     // The strategy only comes with the first `input`. We fill the rest of the `inputs`
@@ -625,8 +625,8 @@ impl InvariantTest {
             last_run_inputs: vec![],
             gas_report_traces: vec![],
             line_coverage: None,
-            metrics: Map::default(),
-            metric_key_cache: Map::default(),
+            metrics: HashMap::default(),
+            metric_key_cache: HashMap::default(),
             branch_runner,
             optimization_best_value: None,
             optimization_best_sequence: vec![],
@@ -928,6 +928,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let dynamic = self.dynamic_target_ctx();
         let corpus_seed = WorkerCorpusSeed::load_from_disk(
             &self.config.corpus,
+            None,
             Some(&corpus_replay_executor),
             ReplayTarget {
                 stateless: None,
@@ -1568,7 +1569,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.last_run_inputs,
             result.gas_report_traces,
             result.line_coverage,
-            result.metrics,
+            result.metrics.into_iter().collect(),
             if plan.worker_id == 0 { corpus_manager.failed_replays } else { 0 },
             1,
             result.optimization_best_value,
@@ -1754,7 +1755,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
             // Collect handler addresses - these are the contracts we want to inject
             // reentrancy into (simulating malicious receive() functions).
-            let handler_addresses: std::collections::HashSet<Address> =
+            let handler_addresses: AddressSet =
                 targeted_contracts.targets().keys().copied().collect();
             let override_targets = targeted_contracts
                 .targets()
