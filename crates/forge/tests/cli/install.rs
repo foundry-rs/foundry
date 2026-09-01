@@ -614,7 +614,10 @@ forgetest!(can_reinit_submodules, |prj, cmd| {
     cmd.env("GIT_ALLOW_PROTOCOL", "file");
     cmd.arg("reinit").assert_success();
     assert_eq!(dependency_git.head().unwrap(), second_rev);
-    assert_eq!(read_string(dependency.join("source.txt")), "second revision\n");
+    assert_eq!(
+        read_string(dependency.join("source.txt")).replace("\r\n", "\n"),
+        "second revision\n"
+    );
 });
 
 // test that we can repeatedly install the same dependency without changes
