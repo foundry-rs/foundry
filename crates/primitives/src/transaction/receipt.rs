@@ -122,6 +122,31 @@ impl FoundryReceiptEnvelope<Log> {
 }
 
 impl<T> FoundryReceiptEnvelope<T> {
+    /// Returns `true` if this is a legacy receipt.
+    pub const fn is_legacy(&self) -> bool {
+        matches!(self, Self::Legacy(_))
+    }
+
+    /// Returns `true` if this is an EIP-2930 receipt.
+    pub const fn is_eip2930(&self) -> bool {
+        matches!(self, Self::Eip2930(_))
+    }
+
+    /// Returns `true` if this is an EIP-1559 receipt.
+    pub const fn is_eip1559(&self) -> bool {
+        matches!(self, Self::Eip1559(_))
+    }
+
+    /// Returns `true` if this is an EIP-4844 receipt.
+    pub const fn is_eip4844(&self) -> bool {
+        matches!(self, Self::Eip4844(_))
+    }
+
+    /// Returns `true` if this is an EIP-7702 receipt.
+    pub const fn is_eip7702(&self) -> bool {
+        matches!(self, Self::Eip7702(_))
+    }
+
     /// Returns `true` if this is an OP stack deposit receipt.
     #[cfg(feature = "optimism")]
     pub const fn is_deposit(&self) -> bool {

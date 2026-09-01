@@ -18,6 +18,48 @@ impl FoundryTxReceipt {
         Self(WithOtherFields::new(inner))
     }
 
+    /// Returns `true` if this wraps a legacy receipt.
+    pub const fn is_legacy(&self) -> bool {
+        self.0.inner.inner.is_legacy()
+    }
+
+    /// Returns `true` if this wraps an EIP-2930 receipt.
+    pub const fn is_eip2930(&self) -> bool {
+        self.0.inner.inner.is_eip2930()
+    }
+
+    /// Returns `true` if this wraps an EIP-1559 receipt.
+    pub const fn is_eip1559(&self) -> bool {
+        self.0.inner.inner.is_eip1559()
+    }
+
+    /// Returns `true` if this wraps an EIP-4844 receipt.
+    pub const fn is_eip4844(&self) -> bool {
+        self.0.inner.inner.is_eip4844()
+    }
+
+    /// Returns `true` if this wraps an EIP-7702 receipt.
+    pub const fn is_eip7702(&self) -> bool {
+        self.0.inner.inner.is_eip7702()
+    }
+
+    /// Returns `true` if this wraps an OP stack deposit receipt.
+    #[cfg(feature = "optimism")]
+    pub const fn is_deposit(&self) -> bool {
+        self.0.inner.inner.is_deposit()
+    }
+
+    /// Returns `true` if this wraps an OP stack post-execution synthetic receipt.
+    #[cfg(feature = "optimism")]
+    pub const fn is_post_exec(&self) -> bool {
+        self.0.inner.inner.is_post_exec()
+    }
+
+    /// Returns `true` if this wraps a Tempo receipt.
+    pub const fn is_tempo(&self) -> bool {
+        self.0.inner.inner.is_tempo()
+    }
+
     /// Creates a new receipt with a timestamp in the other fields.
     /// This avoids extra block lookups when timestamp is needed later.
     pub fn with_timestamp(
@@ -168,6 +210,40 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn receipt(tx_type: crate::FoundryTxType) -> FoundryTxReceipt {
+        FoundryTxReceipt::new(TransactionReceipt {
+            inner: FoundryReceiptEnvelope::from_parts(true, 0, [], tx_type, None, None),
+            transaction_hash: B256::ZERO,
+            transaction_index: None,
+            block_hash: None,
+            block_number: None,
+            gas_used: 0,
+            effective_gas_price: 0,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: None,
+            contract_address: None,
+        })
+    }
+
+    #[test]
+    fn receipt_predicates() {
+        assert!(receipt(crate::FoundryTxType::Legacy).is_legacy());
+        assert!(receipt(crate::FoundryTxType::Eip2930).is_eip2930());
+        assert!(receipt(crate::FoundryTxType::Eip1559).is_eip1559());
+        assert!(receipt(crate::FoundryTxType::Eip4844).is_eip4844());
+        assert!(receipt(crate::FoundryTxType::Eip7702).is_eip7702());
+        assert!(receipt(crate::FoundryTxType::Tempo).is_tempo());
+        assert!(!receipt(crate::FoundryTxType::Tempo).is_legacy());
+
+        #[cfg(feature = "optimism")]
+        {
+            assert!(receipt(crate::FoundryTxType::Deposit).is_deposit());
+            assert!(receipt(crate::FoundryTxType::PostExec).is_post_exec());
+        }
+    }
 
     // <https://github.com/foundry-rs/foundry/issues/10852>
     #[test]

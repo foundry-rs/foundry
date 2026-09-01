@@ -37,6 +37,16 @@ impl FoundryHeader {
         })
     }
 
+    /// Returns `true` if this is a Tempo header.
+    pub const fn is_tempo(&self) -> bool {
+        matches!(self, Self::Tempo(_))
+    }
+
+    /// Returns `true` if this is an Ethereum header.
+    pub const fn is_ethereum(&self) -> bool {
+        matches!(self, Self::Ethereum(_))
+    }
+
     /// Returns the Tempo header when this is a Tempo block.
     pub const fn as_tempo(&self) -> Option<&TempoHeader> {
         match self {
@@ -193,6 +203,17 @@ impl BlockHeader for FoundryHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn header_predicates() {
+        let ethereum = FoundryHeader::Ethereum(Header::default());
+        assert!(ethereum.is_ethereum());
+        assert!(!ethereum.is_tempo());
+
+        let tempo = FoundryHeader::tempo(Header::default());
+        assert!(tempo.is_tempo());
+        assert!(!tempo.is_ethereum());
+    }
 
     #[test]
     fn rlp_roundtrip_preserves_network_header() {

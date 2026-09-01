@@ -8177,7 +8177,7 @@ impl Backend<FoundryNetwork> {
                     };
                     let tx_hash = tx.as_ref().hash();
                     #[cfg(feature = "optimism")]
-                    let receipt = if matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
+                    let receipt = if tx.as_ref().is_deposit() {
                         crate::eth::backend::executor::optimism::build_simulated_deposit_receipt(
                             self.hardfork(),
                             caller_nonce,
