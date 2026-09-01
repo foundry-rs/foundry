@@ -9,6 +9,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest, anvil::Forking};
 use alloy_serde::{OtherFields, WithOtherFields};
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
+use axum::{Json, Router, routing::post};
 use foundry_evm::hardfork::OpHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
@@ -455,6 +456,113 @@ fn preserves_op_fields_in_convert_to_anvil_receipt() {
 }
 
 const GAS_TRANSFER: u64 = 21_000;
+
+async fn spawn_rpc_proxy_with_extra_data(endpoint: String, extra_data: &'static str) -> String {
+    let client = reqwest::Client::new();
+    let router = Router::new().route(
+        "/",
+        post(move |Json(request): Json<Value>| {
+            let client = client.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                let mut response = client
+                    .post(endpoint)
+                    .json(&request)
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<Value>()
+                    .await
+                    .unwrap();
+                if matches!(
+                    request.get("method").and_then(Value::as_str),
+                    Some("eth_getBlockByHash" | "eth_getBlockByNumber")
+                ) && let Some(block) = response.get_mut("result").and_then(Value::as_object_mut)
+                {
+                    block.insert("extraData".to_string(), Value::String(extra_data.to_string()));
+                }
+                Json(response)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{address}")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn jovian_mining_and_simulation_use_da_footprint() {
+    const DA_FOOTPRINT_SCALAR: u16 = 6_000;
+    const EXPECTED_DA_FOOTPRINT: u64 = 100 * DA_FOOTPRINT_SCALAR as u64;
+    const JOVIAN_EXTRA_DATA: &str = "0x01000000fa000000020000000000000000";
+
+    let (origin_api, origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(8453u64))
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_hardfork(Some(OpHardfork::Jovian.into()))
+            .with_gas_limit(Some(1_000_000)),
+    )
+    .await;
+    let l1_block = address!("0x4200000000000000000000000000000000000015");
+    let mut scalar_slot = [0u8; 32];
+    scalar_slot[18..20].copy_from_slice(&DA_FOOTPRINT_SCALAR.to_be_bytes());
+    origin_api
+        .anvil_set_storage_at(l1_block, U256::from(8), B256::from(scalar_slot))
+        .await
+        .unwrap();
+
+    let fork_url = spawn_rpc_proxy_with_extra_data(origin.http_endpoint(), JOVIAN_EXTRA_DATA).await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_no_storage_caching(true)
+            .with_eth_rpc_url(Some(fork_url))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let to = Address::random();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), wallet.clone().into());
+
+    let simulated = provider
+        .raw_request::<_, Value>(
+            "eth_simulateV1".into(),
+            (json!({
+                "blockStateCalls": [{
+                    "calls": [{
+                        "from": wallet.address(),
+                        "to": to,
+                        "gas": "0x5208",
+                    }]
+                }]
+            }),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(simulated[0]["blobGasUsed"], json!(format!("0x{EXPECTED_DA_FOOTPRINT:x}")));
+    assert_eq!(simulated[0]["excessBlobGas"], "0x0");
+
+    provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().with_to(to).with_value(U256::ONE),
+        ))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let transaction_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(transaction_block.header.blob_gas_used, Some(EXPECTED_DA_FOOTPRINT));
+    assert_eq!(transaction_block.header.excess_blob_gas, Some(0));
+
+    api.mine_one().await.unwrap();
+    let next_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert!(
+        next_block.header.base_fee_per_gas > transaction_block.header.base_fee_per_gas,
+        "Jovian should price the next block from its DA footprint"
+    );
+}
 
 /// Test that Optimism uses Canyon base fee params instead of Ethereum params.
 ///

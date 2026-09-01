@@ -47,6 +47,10 @@ impl OptimismBaseFeeRules {
         }
     }
 
+    pub(super) const fn is_jovian(self) -> bool {
+        matches!(self, Self::Jovian { .. })
+    }
+
     pub(super) fn next_block_base_fee<H: BlockHeader>(self, header: &H) -> u64 {
         let gas_used = match self {
             Self::Holocene { .. } => header.gas_used(),
@@ -154,5 +158,35 @@ mod tests {
             BaseFeeParams::new(250, 2),
         );
         assert_eq!(rules.next_block_base_fee(&header), expected);
+    }
+
+    #[test]
+    fn supplied_header_overrides_cached_optimism_rules() {
+        let holocene = [0, 0, 0, 0, 50, 0, 0, 0, 2];
+        let jovian = [1, 0, 0, 0, 250, 0, 0, 0, 2, 0, 0, 0, 0, 0, 76, 75, 64];
+        let fallback = BaseFeeParams::ethereum();
+
+        for (cached, supplied) in
+            [(jovian.as_slice(), holocene.as_slice()), (holocene.as_slice(), jovian.as_slice())]
+        {
+            let supplied_rules = OptimismBaseFeeRules::decode(supplied).unwrap();
+            let header = Header {
+                gas_limit: 10_000_000_000,
+                gas_used: 1_000_000_000,
+                blob_gas_used: Some(5_000_000_000),
+                base_fee_per_gas: Some(super::super::INITIAL_BASE_FEE),
+                extra_data: Bytes::copy_from_slice(supplied),
+                ..Default::default()
+            };
+            let rules = super::super::BaseFeeRules::Optimism {
+                inherited: Some(OptimismBaseFeeRules::decode(cached).unwrap()),
+                fallback,
+            };
+
+            assert_eq!(
+                rules.next_block_base_fee(&header),
+                supplied_rules.next_block_base_fee(&header)
+            );
+        }
     }
 }

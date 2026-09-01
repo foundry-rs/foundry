@@ -2,4 +2,5 @@
 anvil: patch
 ---
 
-Fixed locally mined OP-family blocks using stale EIP-1559 parameters after Holocene and Jovian.
+Fixed OP-family mining and simulation using stale header fee parameters, and populated Jovian's
+DA footprint in `blobGasUsed`.

@@ -120,6 +120,8 @@ use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
 use foundry_evm::{
     backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
@@ -1424,6 +1426,23 @@ impl<N: Network> Backend<N> {
         get_blob_params_by_hardfork(configured_hardfork)
     }
 
+    #[cfg(feature = "optimism")]
+    fn is_optimism_jovian_at_header<H: BlockHeader>(&self, header: &H) -> bool {
+        if !self.is_optimism() {
+            return false;
+        }
+        if !header.extra_data().is_empty() {
+            return self.fees.is_optimism_jovian_header(header);
+        }
+        let hardfork = if self.get_fork().is_some() {
+            FoundryHardfork::from_chain_and_timestamp(self.protocol_chain_id(), header.timestamp())
+                .unwrap_or_else(|| self.hardfork())
+        } else {
+            self.hardfork()
+        };
+        OpHardfork::from(hardfork) >= OpHardfork::Jovian
+    }
+
     /// Returns an error if EIP1559 is not active (pre Berlin)
     pub fn ensure_eip1559_active(&self) -> Result<(), BlockchainError> {
         if self.is_eip1559() {
@@ -2628,6 +2647,10 @@ impl<N: Network> Backend<N> {
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 let mut executor =
                     AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions);
+                #[cfg(feature = "optimism")]
+                if self.is_optimism() {
+                    executor.set_optimism_hardfork(hardfork);
+                }
                 executor
                     .apply_pre_execution_changes()
                     .map_err(|err| BlockchainError::Internal(err.to_string()))?;
@@ -5152,6 +5175,10 @@ where
         self.time.reset(timestamp);
         self.time.set_next_block_timestamp(next_timestamp)?;
 
+        #[cfg(feature = "optimism")]
+        if self.is_optimism() {
+            self.fees.set_optimism_base_fee_rules(header.extra_data());
+        }
         let next_block_base_fee = self.fees.get_next_block_base_fee_from_header(&header);
         let next_block_excess_blob_gas = self.networks.next_block_blob_excess_gas(
             self.fees.blob_params(),
@@ -5227,6 +5254,10 @@ where
                     ethereum_transitions,
                 )
                 .with_state_changes();
+                #[cfg(feature = "optimism")]
+                if self.is_optimism() {
+                    executor.set_optimism_hardfork(hardfork);
+                }
                 executor
                     .apply_pre_execution_changes()
                     .wrap_err("failed to apply replay block-start transitions")?;
@@ -7479,7 +7510,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                     header.timestamp,
                 ),
             );
-            (next_block_base_fee, blob_excess_gas_and_price)
+            let base_fee_extra_data = self.fees.base_fee_extra_data_from_header(header);
+            (next_block_base_fee, blob_excess_gas_and_price, base_fee_extra_data)
         });
 
         let historical_states = state.historical_states.take();
@@ -7511,7 +7543,15 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         if let Some(block_env) = block_env {
             self.evm_env.write().block_env = block_env;
         }
-        if let Some((next_block_base_fee, blob_excess_gas_and_price)) = next_fees {
+        if let Some((next_block_base_fee, blob_excess_gas_and_price, base_fee_extra_data)) =
+            next_fees
+        {
+            #[cfg(not(feature = "optimism"))]
+            let _ = base_fee_extra_data;
+            #[cfg(feature = "optimism")]
+            if self.is_optimism() {
+                self.fees.set_optimism_base_fee_rules(&base_fee_extra_data);
+            }
             self.fees.set_base_fee(next_block_base_fee);
             self.fees.set_blob_excess_gas_and_price(blob_excess_gas_and_price);
         }
@@ -7792,7 +7832,9 @@ impl Backend<FoundryNetwork> {
                            mut monad_context: Option<MonadReplayContext>,
                            base_base_fee_per_gas,
                            base_excess_blob_gas,
-                           base_blob_gas_used| {
+                           base_blob_gas_used,
+                           base_fee_extra_data: Bytes,
+                           optimism_jovian: bool| {
             let SimulatePayload {
                 block_state_calls,
                 trace_transfers,
@@ -7935,7 +7977,7 @@ impl Backend<FoundryNetwork> {
                         request.trim_conflicting_keys();
                         request.populate_blob_hashes();
                     }
-                    let request_blob_gas_used = if is_ethereum_request {
+                    let request_blob_gas_used = if is_ethereum_request && !optimism_jovian {
                         u64::try_from(request.blob_versioned_hashes.as_ref().map_or(0, Vec::len))
                             .unwrap_or(u64::MAX)
                             .saturating_mul(DATA_GAS_PER_BLOB)
@@ -7943,7 +7985,9 @@ impl Backend<FoundryNetwork> {
                         0
                     };
                     let max_blob_gas = blob_params.max_blob_gas_per_block();
-                    if block_blob_gas_used.saturating_add(request_blob_gas_used) > max_blob_gas {
+                    if !optimism_jovian
+                        && block_blob_gas_used.saturating_add(request_blob_gas_used) > max_blob_gas
+                    {
                         return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
                             "blob gas usage exceeds the limit of {max_blob_gas} gas per block."
                         ))));
@@ -8135,9 +8179,6 @@ impl Backend<FoundryNetwork> {
                         state.keys().copied(),
                     );
 
-                    // commit the transaction
-                    cache_db.commit(state);
-                    preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
                     rpc_gas_budget = rpc_gas_budget.saturating_sub(result.tx_gas_used());
                     cumulative_gas_used = cumulative_gas_used.saturating_add(result.tx_gas_used());
                     block_regular_gas_used = block_regular_gas_used
@@ -8165,6 +8206,21 @@ impl Backend<FoundryNetwork> {
                         )
                     };
                     let tx_hash = tx.as_ref().hash();
+                    #[cfg(feature = "optimism")]
+                    if optimism_jovian && !matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
+                        let da_footprint =
+                            crate::eth::backend::executor::optimism::jovian_da_footprint(
+                                &mut cache_db,
+                                tx.as_ref(),
+                            )
+                            .map_err(|err| BlockchainError::Internal(err.to_string()))?;
+                        block_blob_gas_used = block_blob_gas_used.saturating_add(da_footprint);
+                    }
+
+                    // Commit after calculating the footprint so the scalar comes from pre-tx
+                    // state, matching the upstream OP block executor.
+                    cache_db.commit(state);
+                    preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
                     #[cfg(feature = "optimism")]
                     let receipt = if matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
                         crate::eth::backend::executor::optimism::build_simulated_deposit_receipt(
@@ -8293,7 +8349,7 @@ impl Backend<FoundryNetwork> {
                     gas_limit: block_env.gas_limit,
                     gas_used,
                     timestamp: block_env.timestamp.saturating_to(),
-                    extra_data: self.fees.base_fee_extra_data(),
+                    extra_data: base_fee_extra_data.clone(),
                     mix_hash: block_env.prevrandao.unwrap_or_default(),
                     nonce: Default::default(),
                     base_fee_per_gas: (spec_id >= SpecId::LONDON).then_some(block_env.basefee),
@@ -8369,6 +8425,11 @@ impl Backend<FoundryNetwork> {
                 self.with_pending_block(pool_transactions, |state, block| {
                     let header = &block.block.header;
                     let base_fee = self.fees.calculate_next_block_base_fee_from_header(header);
+                    let base_fee_extra_data = self.fees.base_fee_extra_data_from_header(header);
+                    #[cfg(feature = "optimism")]
+                    let optimism_jovian = self.is_optimism_jovian_at_header(header);
+                    #[cfg(not(feature = "optimism"))]
+                    let optimism_jovian = false;
                     let monad_context = self.active_monad_context_before_mined_transaction(
                         &block.block,
                         block.block.body.transactions.len(),
@@ -8390,6 +8451,8 @@ impl Backend<FoundryNetwork> {
                         header.base_fee_per_gas().unwrap_or_default(),
                         header.excess_blob_gas().unwrap_or_default(),
                         header.blob_gas_used().unwrap_or_default(),
+                        base_fee_extra_data,
+                        optimism_jovian,
                     )
                 })
                 .await
@@ -8409,6 +8472,12 @@ impl Backend<FoundryNetwork> {
                 let base_hash = base_block.header.hash;
                 let base_fee =
                     self.fees.calculate_next_block_base_fee_from_header(&base_block.header.inner);
+                let base_fee_extra_data =
+                    self.fees.base_fee_extra_data_from_header(&base_block.header.inner);
+                #[cfg(feature = "optimism")]
+                let optimism_jovian = self.is_optimism_jovian_at_header(&base_block.header.inner);
+                #[cfg(not(feature = "optimism"))]
+                let optimism_jovian = false;
 
                 #[cfg(feature = "monad")]
                 let monad_context = if self.is_monad() {
@@ -8431,6 +8500,8 @@ impl Backend<FoundryNetwork> {
                         base_block.header.base_fee_per_gas().unwrap_or_default(),
                         base_block.header.excess_blob_gas().unwrap_or_default(),
                         base_block.header.blob_gas_used().unwrap_or_default(),
+                        base_fee_extra_data,
+                        optimism_jovian,
                     )
                 })
                 .await?

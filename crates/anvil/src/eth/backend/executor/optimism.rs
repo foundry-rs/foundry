@@ -1,11 +1,34 @@
 //! OP-stack receipt construction for the Anvil block executor.
 
 use alloy_consensus::{Eip658Value, Receipt, ReceiptWithBloom};
+use alloy_eips::Encodable2718;
 use alloy_primitives::{Address, Log};
 use foundry_evm::hardfork::{FoundryHardfork, OpHardfork};
-use foundry_primitives::FoundryReceiptEnvelope;
+use foundry_primitives::{FoundryReceiptEnvelope, FoundryTxEnvelope};
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
-use revm::{context_interface::result::ExecutionResult, state::EvmState};
+use op_revm::{L1BlockInfo, constants::L1_BLOCK_CONTRACT, estimate_tx_compressed_size};
+use revm::{Database, context_interface::result::ExecutionResult, state::EvmState};
+
+use super::AnvilBlockExecutor;
+
+impl<E> AnvilBlockExecutor<E> {
+    /// Configures OP-specific block accounting without changing the shared constructor.
+    pub(crate) fn set_optimism_hardfork(&mut self, hardfork: FoundryHardfork) {
+        self.optimism_jovian = OpHardfork::from(hardfork) >= OpHardfork::Jovian;
+    }
+}
+
+/// Calculates the Jovian DA footprint exactly as the upstream OP block executor does.
+pub(crate) fn jovian_da_footprint<DB: Database>(
+    db: &mut DB,
+    tx: &FoundryTxEnvelope,
+) -> Result<u64, alloy_evm::block::BlockExecutionError> {
+    let encoded = estimate_tx_compressed_size(tx.encoded_2718().as_ref()).saturating_div(1_000_000);
+    db.basic(L1_BLOCK_CONTRACT).map_err(alloy_evm::block::BlockExecutionError::other)?;
+    let scalar = L1BlockInfo::fetch_da_footprint_gas_scalar(db)
+        .map_err(alloy_evm::block::BlockExecutionError::other)?;
+    Ok(encoded.saturating_mul(u64::from(scalar)))
+}
 
 /// Builds a mined OP deposit receipt and derives its fork-specific metadata.
 pub(crate) fn build_mined_deposit_receipt<H>(

@@ -59,7 +59,10 @@ struct FeeRules {
 enum BaseFeeRules {
     Standard(BaseFeeParams),
     #[cfg(feature = "optimism")]
-    Optimism(optimism::OptimismBaseFeeRules),
+    Optimism {
+        inherited: Option<optimism::OptimismBaseFeeRules>,
+        fallback: BaseFeeParams,
+    },
 }
 
 impl BaseFeeRules {
@@ -67,7 +70,13 @@ impl BaseFeeRules {
         match self {
             Self::Standard(params) => params,
             #[cfg(feature = "optimism")]
-            Self::Optimism(rules) => rules.params(),
+            Self::Optimism { inherited, fallback } => {
+                if let Some(rules) = inherited {
+                    rules.params()
+                } else {
+                    fallback
+                }
+            }
         }
     }
 
@@ -75,7 +84,21 @@ impl BaseFeeRules {
         match self {
             Self::Standard(_) => Bytes::new(),
             #[cfg(feature = "optimism")]
-            Self::Optimism(rules) => rules.extra_data(),
+            Self::Optimism { inherited, .. } => {
+                inherited.map_or_else(Bytes::new, optimism::OptimismBaseFeeRules::extra_data)
+            }
+        }
+    }
+
+    fn extra_data_from_header<H: BlockHeader>(
+        self,
+        #[cfg_attr(not(feature = "optimism"), allow(unused_variables))] header: &H,
+    ) -> Bytes {
+        match self {
+            Self::Standard(_) => Bytes::new(),
+            #[cfg(feature = "optimism")]
+            Self::Optimism { .. } => optimism::OptimismBaseFeeRules::decode(header.extra_data())
+                .map_or_else(Bytes::new, optimism::OptimismBaseFeeRules::extra_data),
         }
     }
 
@@ -88,7 +111,18 @@ impl BaseFeeRules {
                 params,
             ),
             #[cfg(feature = "optimism")]
-            Self::Optimism(rules) => rules.next_block_base_fee(header),
+            Self::Optimism { fallback, .. } => {
+                if let Some(rules) = optimism::OptimismBaseFeeRules::decode(header.extra_data()) {
+                    rules.next_block_base_fee(header)
+                } else {
+                    calc_next_block_base_fee(
+                        header.gas_used(),
+                        header.gas_limit(),
+                        header.base_fee_per_gas().unwrap_or_default(),
+                        fallback,
+                    )
+                }
+            }
         }
     }
 }
@@ -188,15 +222,34 @@ impl FeeManager {
     /// Applies the dynamic EIP-1559 parameters encoded in an Optimism-family parent header.
     #[cfg(feature = "optimism")]
     pub(crate) fn set_optimism_base_fee_rules(&self, extra_data: &[u8]) {
-        let Some(rules) = optimism::OptimismBaseFeeRules::decode(extra_data) else {
-            return;
+        let mut state = self.state.write();
+        let fallback = match state.rules.base_fee {
+            BaseFeeRules::Standard(params) | BaseFeeRules::Optimism { fallback: params, .. } => {
+                params
+            }
         };
-        self.state.write().rules.base_fee = BaseFeeRules::Optimism(rules);
+        state.rules.base_fee = BaseFeeRules::Optimism {
+            inherited: optimism::OptimismBaseFeeRules::decode(extra_data),
+            fallback,
+        };
     }
 
     /// Returns the Optimism-family EIP-1559 parameters inherited by locally built blocks.
     pub(crate) fn base_fee_extra_data(&self) -> Bytes {
         self.state.read().rules.base_fee.extra_data()
+    }
+
+    /// Returns the dynamic Optimism-family fee parameters encoded by `header`, if any.
+    pub(crate) fn base_fee_extra_data_from_header<H: BlockHeader>(&self, header: &H) -> Bytes {
+        self.state.read().rules.base_fee.extra_data_from_header(header)
+    }
+
+    /// Returns whether `header` activates Jovian's DA-footprint base fee accounting.
+    #[cfg(feature = "optimism")]
+    pub(crate) fn is_optimism_jovian_header<H: BlockHeader>(&self, header: &H) -> bool {
+        matches!(self.state.read().rules.base_fee, BaseFeeRules::Optimism { .. })
+            && optimism::OptimismBaseFeeRules::decode(header.extra_data())
+                .is_some_and(optimism::OptimismBaseFeeRules::is_jovian)
     }
 
     pub fn elasticity(&self) -> f64 {
