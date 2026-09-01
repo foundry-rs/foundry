@@ -114,10 +114,18 @@ pub enum BlockchainError {
         "EIP-7702 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork prague' or later."
     )]
     EIP7702TransactionUnsupportedAtHardfork,
+    // Only suggest flags this build actually has: `--optimism` needs the optimism feature and
+    // `--network base` needs the base one.
     #[cfg_attr(
-        feature = "base",
+        all(feature = "base", feature = "optimism"),
         error(
             "deposit transaction received but is not supported.\n\nYou can use it by running anvil with '--optimism' or '--network base'."
+        )
+    )]
+    #[cfg_attr(
+        all(feature = "base", not(feature = "optimism")),
+        error(
+            "deposit transaction received but is not supported.\n\nYou can use it by running anvil with '--network base'."
         )
     )]
     #[cfg_attr(
@@ -651,5 +659,31 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
             }
             .into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BlockchainError;
+
+    /// The hint has to name flags this build actually exposes: `--optimism` only exists with the
+    /// optimism feature and `--network base` only with the base one.
+    ///
+    /// Only meaningful where the variant is reachable; with neither feature nothing constructs it.
+    #[test]
+    #[cfg(any(feature = "base", feature = "optimism"))]
+    fn deposit_unsupported_hint_only_names_available_flags() {
+        let message = BlockchainError::DepositTransactionUnsupported.to_string();
+
+        assert_eq!(
+            message.contains("'--optimism'"),
+            cfg!(feature = "optimism"),
+            "optimism hint does not match this build: {message}"
+        );
+        assert_eq!(
+            message.contains("'--network base'"),
+            cfg!(feature = "base"),
+            "base hint does not match this build: {message}"
+        );
     }
 }
