@@ -21,9 +21,12 @@ use eyre::Result;
 use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::{Config, InlineConfig};
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
-    core::evm::{BlockEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
-    dispatch_evm_network,
+    core::evm::{
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
+    },
     fork::ResolvedFork,
     opts::EvmOpts,
 };
@@ -621,14 +624,47 @@ fn compile_and_test(
     selected_sources_relative: &[PathBuf],
     isolate: bool,
 ) -> Result<bool> {
-    dispatch_evm_network!(evm.opts.networks, |Network| compile_and_test_inner::<Network>(
-        config,
-        evm,
-        filter_args,
-        rerun_failures,
-        selected_sources_relative,
-        isolate,
-    ))
+    if evm.opts.networks.is_tempo() {
+        compile_and_test_inner::<TempoEvmNetwork>(
+            config,
+            evm,
+            filter_args,
+            rerun_failures,
+            selected_sources_relative,
+            isolate,
+        )
+    } else {
+        #[cfg(feature = "monad")]
+        if evm.opts.networks.is_monad() {
+            return compile_and_test_inner::<foundry_evm::core::evm::MonadEvmNetwork>(
+                config,
+                evm,
+                filter_args,
+                rerun_failures,
+                selected_sources_relative,
+                isolate,
+            );
+        }
+        #[cfg(feature = "optimism")]
+        if evm.opts.networks.is_optimism() {
+            return compile_and_test_inner::<OpEvmNetwork>(
+                config,
+                evm,
+                filter_args,
+                rerun_failures,
+                selected_sources_relative,
+                isolate,
+            );
+        }
+        compile_and_test_inner::<EthEvmNetwork>(
+            config,
+            evm,
+            filter_args,
+            rerun_failures,
+            selected_sources_relative,
+            isolate,
+        )
+    }
 }
 
 fn compile_and_test_inner<FEN: FoundryEvmNetwork>(

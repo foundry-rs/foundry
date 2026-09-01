@@ -46,14 +46,15 @@ use foundry_config::{
     },
 };
 use foundry_debugger::DebuggerLayout;
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints, FoundryTransaction,
-        evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
         fork::ResolvedFork,
     },
-    dispatch_evm_network,
     executors::ExecutorBuilder,
     inspectors::{
         CheatsConfig,
@@ -408,10 +409,22 @@ impl ScriptArgs {
             .await;
         }
 
-        dispatch_evm_network!(evm_opts.networks, |Network| Box::pin(
-            self.run_generic_script::<Network>(config, evm_opts)
-        )
-        .await)
+        #[cfg(feature = "monad")]
+        if evm_opts.networks.is_monad() {
+            return Box::pin(
+                self.run_generic_script::<foundry_evm::core::evm::MonadEvmNetwork>(
+                    config, evm_opts,
+                ),
+            )
+            .await;
+        }
+
+        #[cfg(feature = "optimism")]
+        if evm_opts.networks.is_optimism() {
+            return Box::pin(self.run_generic_script::<OpEvmNetwork>(config, evm_opts)).await;
+        }
+
+        Box::pin(self.run_generic_script::<EthEvmNetwork>(config, evm_opts)).await
     }
 
     /// Prepares the bundled state (compile, simulate, bundle) and returns it
@@ -1147,7 +1160,6 @@ mod tests {
     };
     use foundry_config::UnresolvedEnvVarError;
     use foundry_evm::{
-        core::evm::EthEvmNetwork,
         revm::context::Block as _,
         traces::{
             CallKind, CallTrace, CallTraceArena, CallTraceNode, SparsedTraceArena, TraceKind,
