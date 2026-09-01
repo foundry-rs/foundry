@@ -42,16 +42,13 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock as _, FoundryChain,
         env::FromAnyRpcTransaction as _,
-        evm::{
-            BlockContext, ChainFor, EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor,
-        },
+        evm::{BlockContext, ChainFor, FoundryEvmNetwork, TxEnvFor},
     },
+    dispatch_evm_network,
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
     opts::EvmOpts,
@@ -166,23 +163,9 @@ impl RunArgs {
         // Auto-detect network from fork chain ID when not explicitly configured.
         evm_opts.infer_network_from_fork().await?;
 
-        if evm_opts.networks.is_tempo() {
-            return self.run_with_evm::<TempoEvmNetwork>(config, evm_opts).await;
-        }
-
-        #[cfg(feature = "monad")]
-        if evm_opts.networks.is_monad() {
-            return self
-                .run_with_evm::<foundry_evm::core::evm::MonadEvmNetwork>(config, evm_opts)
-                .await;
-        }
-
-        #[cfg(feature = "optimism")]
-        if evm_opts.networks.is_optimism() {
-            return self.run_with_evm::<OpEvmNetwork>(config, evm_opts).await;
-        }
-
-        self.run_with_evm::<EthEvmNetwork>(config, evm_opts).await
+        dispatch_evm_network!(evm_opts.networks, |Network| self
+            .run_with_evm::<Network>(config, evm_opts)
+            .await)
     }
 
     async fn run_with_evm<FEN: FoundryEvmNetwork>(

@@ -59,12 +59,9 @@ use foundry_config::{
     fs_permissions::FsAccessPermission,
 };
 use foundry_debugger::{Debugger, DebuggerLayout};
-#[cfg(feature = "optimism")]
-use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
-    core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
-    },
+    core::evm::{BlockEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    dispatch_evm_network,
     executors::ShowmapDomain,
     fork::ResolvedFork,
     fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
@@ -267,34 +264,6 @@ fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
             fuzz_targets + invariant_targets
         })
         .sum()
-}
-
-#[derive(Clone, Copy)]
-enum NetworkDispatchKind {
-    Tempo,
-    #[cfg(feature = "monad")]
-    Monad,
-    #[cfg(feature = "optimism")]
-    Optimism,
-    Eth,
-}
-
-const fn network_dispatch_kind(evm_opts: &EvmOpts) -> NetworkDispatchKind {
-    if evm_opts.networks.is_tempo() {
-        return NetworkDispatchKind::Tempo;
-    }
-
-    #[cfg(feature = "monad")]
-    if evm_opts.networks.is_monad() {
-        return NetworkDispatchKind::Monad;
-    }
-
-    #[cfg(feature = "optimism")]
-    if evm_opts.networks.is_optimism() {
-        return NetworkDispatchKind::Optimism;
-    }
-
-    NetworkDispatchKind::Eth
 }
 
 /// Output format for EVM execution profiles.
@@ -2694,54 +2663,16 @@ impl TestArgs {
         execution: TestExecutionOptions,
         resolved_fork: Option<&ResolvedFork>,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
-        match network_dispatch_kind(dispatch_opts) {
-            NetworkDispatchKind::Tempo => {
-                self.build_and_run_tests::<TempoEvmNetwork>(
-                    config,
-                    evm_opts,
-                    output,
-                    filter,
-                    execution,
-                    resolved_fork,
-                )
-                .await
-            }
-            #[cfg(feature = "monad")]
-            NetworkDispatchKind::Monad => {
-                self.build_and_run_tests::<foundry_evm::core::evm::MonadEvmNetwork>(
-                    config,
-                    evm_opts,
-                    output,
-                    filter,
-                    execution,
-                    resolved_fork,
-                )
-                .await
-            }
-            #[cfg(feature = "optimism")]
-            NetworkDispatchKind::Optimism => {
-                self.build_and_run_tests::<OpEvmNetwork>(
-                    config,
-                    evm_opts,
-                    output,
-                    filter,
-                    execution,
-                    resolved_fork,
-                )
-                .await
-            }
-            NetworkDispatchKind::Eth => {
-                self.build_and_run_tests::<EthEvmNetwork>(
-                    config,
-                    evm_opts,
-                    output,
-                    filter,
-                    execution,
-                    resolved_fork,
-                )
-                .await
-            }
-        }
+        dispatch_evm_network!(dispatch_opts.networks, |Network| self
+            .build_and_run_tests::<Network>(
+                config,
+                evm_opts,
+                output,
+                filter,
+                execution,
+                resolved_fork,
+            )
+            .await)
     }
 
     async fn dispatch_fuzz_minimize_network(
@@ -2753,28 +2684,10 @@ impl TestArgs {
         options: FuzzMinimizeNetworkPassOptions,
         filter: &ProjectPathsAwareFilter,
     ) -> eyre::Result<FuzzMinimizeReplayPass> {
-        match network_dispatch_kind(dispatch_opts) {
-            NetworkDispatchKind::Tempo => self
-                .build_fuzz_minimize_runner::<TempoEvmNetwork>(config, evm_opts, output, options)
-                .await
-                .map(|runner| fuzz_minimize_replay(runner, filter)),
-            #[cfg(feature = "monad")]
-            NetworkDispatchKind::Monad => self
-                .build_fuzz_minimize_runner::<foundry_evm::core::evm::MonadEvmNetwork>(
-                    config, evm_opts, output, options,
-                )
-                .await
-                .map(|runner| fuzz_minimize_replay(runner, filter)),
-            #[cfg(feature = "optimism")]
-            NetworkDispatchKind::Optimism => self
-                .build_fuzz_minimize_runner::<OpEvmNetwork>(config, evm_opts, output, options)
-                .await
-                .map(|runner| fuzz_minimize_replay(runner, filter)),
-            NetworkDispatchKind::Eth => self
-                .build_fuzz_minimize_runner::<EthEvmNetwork>(config, evm_opts, output, options)
-                .await
-                .map(|runner| fuzz_minimize_replay(runner, filter)),
-        }
+        dispatch_evm_network!(dispatch_opts.networks, |Network| self
+            .build_fuzz_minimize_runner::<Network>(config, evm_opts, output, options)
+            .await
+            .map(|runner| fuzz_minimize_replay(runner, filter)))
     }
 
     fn symbolic_regression_config(&self, config: &Config) -> Option<SymbolicRegressionConfig> {
