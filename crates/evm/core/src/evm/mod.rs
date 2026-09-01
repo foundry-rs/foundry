@@ -1,4 +1,7 @@
-use std::{fmt::Debug, ops::Deref};
+use std::{
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+};
 
 use crate::{
     FoundryBlock, FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
@@ -157,6 +160,7 @@ pub trait FoundryEvmFactory:
             Spec = Self::Spec,
             HaltReason = Self::HaltReason,
         > + Deref<Target = Self::FoundryContext<'db>>
+        + DerefMut<Target = Self::FoundryContext<'db>>
     where
         Self: 'db;
 
@@ -168,6 +172,23 @@ pub trait FoundryEvmFactory:
         chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I>;
+
+    /// Tries to execute a canonical system transaction on a Foundry-wrapped EVM during replay.
+    ///
+    /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
+    /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
+    /// fall back to ordinary execution using the same EVM instance.
+    #[cfg(feature = "monad")]
+    fn try_transact_foundry_system_replay<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
+        &self,
+        _evm: &mut Self::FoundryEvm<'db, I>,
+        _tx: &Self::Tx,
+    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>>
+    where
+        Self: 'db,
+    {
+        Ok(None)
+    }
 
     /// Tries to execute a canonical system transaction on a regular Alloy EVM during replay.
     ///
