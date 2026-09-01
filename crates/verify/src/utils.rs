@@ -274,18 +274,20 @@ pub fn check_and_encode_args(
     artifact: &CompactContractBytecode,
     args: Vec<String>,
 ) -> Result<Vec<u8>, eyre::ErrReport> {
-    if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-        if constructor.inputs.len() != args.len() {
-            eyre::bail!(
-                "Mismatch of constructor arguments length. Expected {}, got {}",
-                constructor.inputs.len(),
-                args.len()
-            );
+    let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) else {
+        if args.is_empty() {
+            return Ok(Vec::new());
         }
-        encode_args(&constructor.inputs, &args).map(|args| DynSolValue::Tuple(args).abi_encode())
-    } else {
-        Ok(Vec::new())
+        eyre::bail!("Contract has no constructor arguments, but arguments were provided");
+    };
+    if constructor.inputs.len() != args.len() {
+        eyre::bail!(
+            "Mismatch of constructor arguments length. Expected {}, got {}",
+            constructor.inputs.len(),
+            args.len()
+        );
     }
+    encode_args(&constructor.inputs, &args).map(|args| DynSolValue::Tuple(args).abi_encode())
 }
 
 pub fn validate_encoded_constructor_args(
@@ -644,6 +646,18 @@ mod tests {
         // metadata and must not be accepted as part of the constructor arguments.
         let overlapping = [alloy_primitives::hex!("a1616101").as_slice(), &args].concat();
         assert!(validate_encoded_constructor_args(&artifact, overlapping).is_err());
+    }
+
+    #[test]
+    fn typed_constructor_args_require_a_constructor() {
+        let artifact = CompactContractBytecode {
+            abi: Some(alloy_json_abi::JsonAbi::default()),
+            bytecode: None,
+            deployed_bytecode: None,
+        };
+
+        assert!(check_and_encode_args(&artifact, vec!["1".to_string()]).is_err());
+        assert_eq!(check_and_encode_args(&artifact, Vec::new()).unwrap(), Vec::<u8>::new());
     }
 
     #[test]
