@@ -1,8 +1,7 @@
 use super::auth::confirm_auth_rpc_disclosure;
-use crate::{
-    cmd::resolve_network,
-    tx::{CastTxBuilder, SenderKind},
-};
+#[cfg(feature = "base")]
+use crate::cmd::resolve_network;
+use crate::tx::{CastTxBuilder, SenderKind};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::U256;
@@ -100,13 +99,8 @@ impl EstimateArgs {
             return self.run_with_network::<TempoNetwork>().await;
         }
 
-        let config = self.rpc.load_config()?;
-        let network = resolve_network(&config).await?;
-        if network.is_tempo() {
-            return self.run_with_network::<TempoNetwork>().await;
-        }
         #[cfg(feature = "base")]
-        if network.is_base() {
+        if resolve_network(&self.rpc.load_config()?).await?.is_base() {
             return self.run_with_network::<BaseNetwork>().await;
         }
 

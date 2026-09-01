@@ -114,16 +114,18 @@ pub enum BlockchainError {
         "EIP-7702 fields received but is not supported by the current hardfork.\n\nYou can use it by running anvil with '--hardfork prague' or later."
     )]
     EIP7702TransactionUnsupportedAtHardfork,
+    // Base is an OP-stack chain and uses the same deposit envelope, so only the hint that names
+    // the flags able to enable it varies with the compiled-in families.
     #[cfg_attr(
         all(feature = "base", feature = "optimism"),
         error(
-            "deposit transaction received but is not supported.\n\nYou can use it by running anvil with '--optimism' or '--network base'."
+            "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--optimism' or '--network base'."
         )
     )]
     #[cfg_attr(
         all(feature = "base", not(feature = "optimism")),
         error(
-            "deposit transaction received but is not supported.\n\nYou can use it by running anvil with '--network base'."
+            "op-stack deposit tx received but is not supported.\n\nYou can use it by running anvil with '--network base'."
         )
     )]
     #[cfg_attr(

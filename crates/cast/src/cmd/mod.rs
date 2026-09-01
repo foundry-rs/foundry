@@ -5,13 +5,17 @@
 //! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
 //! [`foundry_config::Config`].
 
+#[cfg(feature = "base")]
 use alloy_network::AnyNetwork;
+#[cfg(feature = "base")]
 use alloy_provider::Provider;
 use eyre::Result;
 use foundry_cli::utils::load_config_from_provider;
+#[cfg(feature = "base")]
 use foundry_common::provider::ProviderBuilder;
 use foundry_config::{Config, figment::Figment};
 use foundry_evm::opts::EvmOpts;
+#[cfg(feature = "base")]
 use foundry_evm_networks::NetworkVariant;
 
 /// Loads Cast's config and applies its normalized network to the EVM options.
@@ -63,6 +67,11 @@ pub mod vaddr;
 pub mod wallet;
 
 /// Resolves the configured network, falling back to the RPC chain ID.
+///
+/// Only Base-capable builds resolve a network here: every other family keeps picking its provider
+/// from the flags it already reads, and paying for an extra `eth_chainId` on their behalf would
+/// change behavior no other network asked for.
+#[cfg(feature = "base")]
 pub(crate) async fn resolve_network(config: &Config) -> eyre::Result<NetworkVariant> {
     if let Some(network) = config.networks.resolved_network() {
         return Ok(network);
@@ -80,6 +89,7 @@ pub(crate) async fn resolve_network(config: &Config) -> eyre::Result<NetworkVari
 /// The infallible `From<ChainId>` conversion swallows that error and degrades to Ethereum, which
 /// would make `cast tx` and `cast block --raw` disagree with `cast call` on the same input. Unknown
 /// chain IDs still fall back to Ethereum, as before.
+#[cfg(feature = "base")]
 fn network_for_chain_id(chain_id: u64) -> eyre::Result<NetworkVariant> {
     NetworkVariant::from_known_chain_id(chain_id)
         .map_err(eyre::Report::msg)

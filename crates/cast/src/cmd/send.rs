@@ -26,11 +26,10 @@ use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use tempo_alloy::TempoNetwork;
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 
+#[cfg(feature = "base")]
+use crate::cmd::resolve_network;
 use crate::{
-    cmd::{
-        auth::confirm_auth_rpc_disclosure_during_build, resolve_network,
-        tip20::iso4217_warning_message,
-    },
+    cmd::{auth::confirm_auth_rpc_disclosure_during_build, tip20::iso4217_warning_message},
     tempo,
     tx::{self, CastTxBuilder, CastTxSender, SendTxOpts, TxParams},
 };
@@ -144,13 +143,8 @@ impl SendTxArgs {
             return self.run_generic::<TempoNetwork>(signer, tempo_access_key).await;
         }
 
-        let config = self.send_tx.eth.load_config()?;
-        let network = resolve_network(&config).await?;
-        if network.is_tempo() {
-            return self.run_generic::<TempoNetwork>(signer, tempo_access_key).await;
-        }
         #[cfg(feature = "base")]
-        if network.is_base() {
+        if resolve_network(&self.send_tx.eth.load_config()?).await?.is_base() {
             return self.run_generic::<BaseNetwork>(signer, None).await;
         }
 

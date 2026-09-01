@@ -1,7 +1,8 @@
 use super::auth::confirm_auth_rpc_disclosure;
+#[cfg(feature = "base")]
+use crate::cmd::resolve_network;
 use crate::{
     Cast,
-    cmd::resolve_network,
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
@@ -74,13 +75,8 @@ impl AccessListArgs {
             return self.run_with_network::<TempoNetwork>().await;
         }
 
-        let config = self.rpc.load_config()?;
-        let network = resolve_network(&config).await?;
-        if network.is_tempo() {
-            return self.run_with_network::<TempoNetwork>().await;
-        }
         #[cfg(feature = "base")]
-        if network.is_base() {
+        if resolve_network(&self.rpc.load_config()?).await?.is_base() {
             return self.run_with_network::<BaseNetwork>().await;
         }
 

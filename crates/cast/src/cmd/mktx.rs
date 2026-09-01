@@ -1,6 +1,7 @@
 use super::auth::{confirm_auth_rpc_disclosure, confirm_auth_rpc_disclosure_during_build};
+#[cfg(feature = "base")]
+use crate::cmd::resolve_network;
 use crate::{
-    cmd::resolve_network,
     tempo,
     tx::{self, CastTxBuilder},
 };
@@ -126,13 +127,8 @@ impl MakeTxArgs {
             return self.run_generic::<TempoNetwork>(signer, access_key).await;
         }
 
-        let config = self.eth.load_config()?;
-        let network = resolve_network(&config).await?;
-        if network.is_tempo() {
-            return self.run_generic::<TempoNetwork>(signer, access_key).await;
-        }
         #[cfg(feature = "base")]
-        if network.is_base() {
+        if resolve_network(&self.eth.load_config()?).await?.is_base() {
             return self.run_generic::<BaseNetwork>(signer, None).await;
         }
 

@@ -6,7 +6,7 @@
 //! the same approach `super::monad` takes for its staking interfaces.
 //!
 //! The `abi_matches_canonical_selectors` tests below pin every selector against the canonical
-//! types, so an interface change in Base fails here instead of silently mis-decoding traces.
+//! types, so an interface change in Base fails here instead of silently decoding traces wrong.
 
 use alloy_sol_types::sol;
 

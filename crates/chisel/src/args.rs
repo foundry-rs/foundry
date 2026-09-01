@@ -293,15 +293,16 @@ mod tests {
         Chisel::command().debug_assert();
     }
 
+    /// Base chain IDs resolved to Optimism before Base support existed, so a build without the
+    /// `base` feature — which is what release binaries ship — must keep resolving them that way.
     #[test]
-    #[cfg(not(feature = "base"))]
-    fn chain_id_rejects_disabled_base_network() {
-        let error = infer_network_from_chain_id(NetworkConfigs::default(), Some(8453)).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "cannot infer execution network from chain ID 8453: network family `base` is not \
-             enabled in this build"
-        );
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn chain_id_without_base_still_resolves_to_optimism() {
+        for chain_id in [8453, 84532] {
+            let networks = infer_network_from_chain_id(NetworkConfigs::default(), Some(chain_id))
+                .unwrap_or_else(|error| panic!("chain ID {chain_id} must still resolve: {error}"));
+            assert!(networks.is_optimism(), "chain ID {chain_id} must resolve to Optimism");
+        }
     }
 
     #[test]

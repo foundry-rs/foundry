@@ -246,7 +246,7 @@ use tempo_revm::{
 };
 use tokio::{sync::RwLock as AsyncRwLock, task::JoinSet};
 
-/// Network-specific transaction data produced by [`Backend::build_call_env`].
+/// Network-specific transaction data produced by [`Backend::build_call_env_with_base`].
 #[derive(Default, Clone, Debug)]
 struct CallTransactionInfo {
     /// OP-compatible deposit fields shared by Base and Optimism RPC requests.
@@ -746,7 +746,7 @@ pub trait BackendInspector<DB: Database>:
     + Inspector<BaseContext<DB>>
     + Inspector<OpEvmContext<DB>>
     + Inspector<TempoContext<DB>>
-    + Inspector<MonadContext<DB>>
+    + Inspector<alloy_monad_evm::MonadContext<DB>>
 {
 }
 #[cfg(all(feature = "base", feature = "optimism", feature = "monad"))]
@@ -755,7 +755,7 @@ impl<DB: Database, T> BackendInspector<DB> for T where
         + Inspector<BaseContext<DB>>
         + Inspector<OpEvmContext<DB>>
         + Inspector<TempoContext<DB>>
-        + Inspector<MonadContext<DB>>
+        + Inspector<alloy_monad_evm::MonadContext<DB>>
 {
 }
 #[cfg(all(feature = "base", feature = "optimism", not(feature = "monad")))]
@@ -779,7 +779,7 @@ pub trait BackendInspector<DB: Database>:
     Inspector<EthEvmContext<DB>>
     + Inspector<BaseContext<DB>>
     + Inspector<TempoContext<DB>>
-    + Inspector<MonadContext<DB>>
+    + Inspector<alloy_monad_evm::MonadContext<DB>>
 {
 }
 #[cfg(all(feature = "base", not(feature = "optimism"), feature = "monad"))]
@@ -787,7 +787,7 @@ impl<DB: Database, T> BackendInspector<DB> for T where
     T: Inspector<EthEvmContext<DB>>
         + Inspector<BaseContext<DB>>
         + Inspector<TempoContext<DB>>
-        + Inspector<MonadContext<DB>>
+        + Inspector<alloy_monad_evm::MonadContext<DB>>
 {
 }
 #[cfg(all(feature = "base", not(feature = "optimism"), not(feature = "monad")))]
@@ -9592,19 +9592,13 @@ where
         evm_env: &EvmEnv,
     ) -> Result<(), InvalidTransactionError> {
         self.validate_pool_transaction_for(tx, account, evm_env)?;
-        #[cfg(any(feature = "base", feature = "optimism"))]
-        let is_deposit = tx.transaction.as_ref().is_deposit();
-        #[cfg(not(any(feature = "base", feature = "optimism")))]
-        let is_deposit = false;
+        // EIP-8130 counts nonces per channel in the nonce manager, so `tx.nonce()` is not
+        // comparable to the account's protocol nonce. Admission already validated the channel.
         #[cfg(feature = "base")]
-        let is_eip8130 = tx.transaction.as_ref().is_eip8130();
-        #[cfg(not(feature = "base"))]
-        let is_eip8130 = false;
-        if tx.nonce() > account.nonce
-            && !is_deposit
-            && !is_eip8130
-            && !tx.transaction.as_ref().is_tempo()
-        {
+        if tx.transaction.as_ref().is_eip8130() {
+            return Ok(());
+        }
+        if tx.nonce() > account.nonce {
             return Err(InvalidTransactionError::NonceTooHigh);
         }
         Ok(())

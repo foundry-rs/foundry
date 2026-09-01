@@ -78,15 +78,7 @@ pub(crate) fn build_simulated_deposit_receipt<H>(
 /// Resolves the deposit nonce and receipt version active at `hardfork`.
 ///
 /// Base is an OP-stack chain, so it gates the same two fields on its own upgrade names.
-fn deposit_metadata(
-    #[cfg_attr(
-        not(any(feature = "base", feature = "optimism")),
-        allow(unused_variables)
-    )]
-    hardfork: FoundryHardfork,
-    #[cfg_attr(not(any(feature = "base", feature = "optimism")), allow(unused_variables))]
-    caller_nonce: u64,
-) -> (Option<u64>, Option<u64>) {
+fn deposit_metadata(hardfork: FoundryHardfork, caller_nonce: u64) -> (Option<u64>, Option<u64>) {
     #[cfg(feature = "base")]
     if matches!(hardfork, FoundryHardfork::Base(_)) {
         let upgrade = BaseUpgrade::from(hardfork);
@@ -98,10 +90,10 @@ fn deposit_metadata(
     #[cfg(feature = "optimism")]
     {
         let hardfork = OpHardfork::from(hardfork);
-        return (
+        (
             (hardfork >= OpHardfork::Regolith).then_some(caller_nonce),
             (hardfork >= OpHardfork::Canyon).then_some(1),
-        );
+        )
     }
     #[cfg(not(feature = "optimism"))]
     (None, None)

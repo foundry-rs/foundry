@@ -546,6 +546,7 @@ impl ExecutionSpec for MonadHardfork {
     // Converts only Monad namespaced hardforks to a Monad spec.
     fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
         match hardfork {
+            #[cfg(feature = "monad")]
             FoundryHardfork::Monad(hardfork) => Some(hardfork),
             _ => None,
         }
