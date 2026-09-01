@@ -172,25 +172,56 @@ ACCESS_KEY="$(wallet_json_field "$access_wallet_json" private_key)"
 ACCESS_KEY_ADDR="$(wallet_json_field "$access_wallet_json" address)"
 printf "Access key address: %s\n" "$ACCESS_KEY_ADDR"
 
-# Authorize the access key on-chain first (required for gas estimation)
-# Account Keychain precompile: 0xAAAAAAAA00000000000000000000000000000000
-# SignatureType: 0 = Secp256k1, Expiry: 1893456000 (year 2030), enforceLimits: false, limits: [], allowAnyCalls: true
+# Authorize the access key on-chain first (required for gas estimation). TIP-1099 removes
+# direct AccountKeychain authorization, so fall back to transaction-embedded authorization when
+# the selector is unavailable. Keep probing the selector instead of trusting TEMPO_HARDFORK: the
+# workflow label may name an older lane while a newer fork is active in the generated genesis.
+DIRECT_KEYCHAIN_AUTH=true
 if [[ "$HARDFORK" == "T2" ]]; then
-  # Legacy: authorizeKey with flat params (pre-T3)
-  cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
+  # Legacy: authorizeKey with flat params (pre-T3).
+  if ! DIRECT_AUTH_OUTPUT=$(cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
     'authorizeKey(address,uint8,uint64,bool,(address,uint256)[])' \
     "$ACCESS_KEY_ADDR" 0 1893456000 false "[]" \
-    --private-key "$PK"
+    --private-key "$PK" 2>&1); then
+    echo "$DIRECT_AUTH_OUTPUT"
+    [[ "$DIRECT_AUTH_OUTPUT" == *"UnknownFunctionSelector"* ]] || exit 1
+    DIRECT_KEYCHAIN_AUTH=false
+  else
+    echo "$DIRECT_AUTH_OUTPUT"
+  fi
 else
-  # TIP-1011 (T3+): authorizeKey takes a KeyRestrictions struct
+  # TIP-1011 (T3+): authorizeKey takes a KeyRestrictions struct.
   # KeyRestrictions = (uint64 expiry, bool enforceLimits, TokenLimit[] limits, bool allowAnyCalls, CallScope[] allowedCalls)
   # TokenLimit = (address token, uint256 amount, uint64 period)
   # CallScope = (address target, SelectorRule[] selectorRules)
   # SelectorRule = (bytes4 selector, address[] recipients)
-  cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
+  if ! DIRECT_AUTH_OUTPUT=$(cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
     'authorizeKey(address,uint8,(uint64,bool,(address,uint256,uint64)[],bool,(address,(bytes4,address[])[])[])) ' \
     "$ACCESS_KEY_ADDR" 0 "(1893456000,false,[],true,[])" \
-    --private-key "$PK"
+    --private-key "$PK" 2>&1); then
+    echo "$DIRECT_AUTH_OUTPUT"
+    [[ "$DIRECT_AUTH_OUTPUT" == *"UnknownFunctionSelector"* ]] || exit 1
+    DIRECT_KEYCHAIN_AUTH=false
+  else
+    echo "$DIRECT_AUTH_OUTPUT"
+  fi
+fi
+
+if [[ "$DIRECT_KEYCHAIN_AUTH" == "false" ]]; then
+  echo "Direct key authorization unavailable; provisioning with transaction key_authorization"
+  export TEMPO_HOME="$tmp_dir/tempo-home"
+  CHAIN_ID=$(cast chain-id --rpc-url "$ETH_RPC_URL")
+  AUTHORIZATION=$(cast key-authorization sign "$ACCESS_KEY_ADDR" \
+    --chain-id "$CHAIN_ID" \
+    --expiry 1893456000 \
+    --private-key "$PK")
+  cast tempo import-access-key \
+    --account "$ADDR" \
+    --access-key "$ACCESS_KEY" \
+    --authorization "$AUTHORIZATION"
+  cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+    --from "$ADDR"
 fi
 
 # Fund the access key address (needed for gas)
@@ -205,6 +236,8 @@ echo -e "\n=== CAST SEND WITH ACCESS-KEY ==="
 cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --tempo.access-key "$ACCESS_KEY" --tempo.root-account "$ADDR"
 
 # --- cast keychain subcommand tests ---
+
+if [[ "$DIRECT_KEYCHAIN_AUTH" == "true" ]]; then
 
 echo -e "\n=== CAST KEYCHAIN: AUTHORIZE ==="
 kc_wallet_json="$(cast wallet new --json)"
@@ -277,6 +310,31 @@ if cast keychain auth "$KC_LIMITED_ADDR" secp256k1 1893456000 \
   exit 1
 fi
 echo "OK: duplicate authorize correctly rejected"
+else
+  echo -e "\n=== SKIPPING DIRECT KEYCHAIN AUTHORIZATION TESTS (TIP-1099 ACTIVE) ==="
+
+  echo -e "\n=== CAST KEYCHAIN: KEY-INFO ==="
+  KC_INFO=$(cast keychain info "$ADDR" "$ACCESS_KEY_ADDR" --rpc-url "$ETH_RPC_URL")
+  echo "$KC_INFO"
+  echo "$KC_INFO" | grep -q "secp256k1"
+
+  echo -e "\n=== CAST KEYCHAIN: REVOKE ==="
+  cast keychain rev "$ACCESS_KEY_ADDR" \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+
+  KC_INFO_REV=$(cast keychain info "$ADDR" "$ACCESS_KEY_ADDR" --rpc-url "$ETH_RPC_URL")
+  echo "$KC_INFO_REV"
+  echo "$KC_INFO_REV" | grep -q "revoked"
+
+  echo -e "\n=== CAST KEYCHAIN: REVOKED KEY REJECTION ==="
+  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+    --tempo.access-key "$ACCESS_KEY" --tempo.root-account "$ADDR" 2>&1; then
+    echo "ERROR: revoked key should have been rejected"
+    exit 1
+  fi
+  echo "OK: revoked key correctly rejected"
+fi
 
 if [[ "$HARDFORK_UPPER" == "T6" ]]; then
   echo -e "\n=== CAST KEYCHAIN: T6 AUTHORIZE ADMIN ==="
