@@ -188,9 +188,16 @@ fn is_partial_match(
         return try_extract_and_compare_bytecode(local_bytecode, bytecode);
     }
 
-    // If not runtime, extract constructor args from the end of the bytecode
-    bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
-    local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
+    // If not runtime, extract constructor args from the end of the bytecode.
+    // The args come from the caller, so neither buffer is known to be that long.
+    let (Some(bytecode_head), Some(local_head)) = (
+        bytecode.len().checked_sub(constructor_args.len()).map(|n| &bytecode[..n]),
+        local_bytecode.len().checked_sub(constructor_args.len()).map(|n| &local_bytecode[..n]),
+    ) else {
+        return false;
+    };
+    bytecode = bytecode_head;
+    local_bytecode = local_head;
 
     try_extract_and_compare_bytecode(local_bytecode, bytecode)
 }
@@ -831,5 +838,15 @@ contract Broken {
         assert!(!msg.contains("user"));
         assert!(!msg.contains("secret"));
         assert!(!msg.contains("api_key"));
+    }
+
+    /// Args longer than the code at the address leave nothing to strip them from,
+    /// which is a mismatch rather than a crash.
+    #[test]
+    fn match_bytecodes_survives_constructor_args_longer_than_bytecode() {
+        let local = [0x60u8, 0x80, 0x60, 0x40];
+        let onchain = [0x60u8, 0x80];
+        let args = [0x11u8; 32];
+        assert_eq!(match_bytecodes(&local, &onchain, &args, false, BytecodeHash::Ipfs), None);
     }
 }
