@@ -283,9 +283,15 @@ impl NetworkVariant {
     }
 
     /// Returns `true` if this is the Optimism network variant.
-    #[cfg(feature = "optimism")]
     pub const fn is_optimism(&self) -> bool {
-        matches!(self, Self::Optimism)
+        #[cfg(feature = "optimism")]
+        {
+            matches!(self, Self::Optimism)
+        }
+        #[cfg(not(feature = "optimism"))]
+        {
+            false
+        }
     }
 
     /// Returns `true` if this is the Tempo network variant.
@@ -457,6 +463,13 @@ impl NetworkConfigs {
 
     pub const fn is_tempo(&self) -> bool {
         if let Some(network) = self.resolved_network() { network.is_tempo() } else { false }
+    }
+
+    /// Returns whether Optimism network features are enabled.
+    ///
+    /// Always returns `false` when built without the `optimism` feature.
+    pub const fn is_optimism(&self) -> bool {
+        if let Some(network) = self.resolved_network() { network.is_optimism() } else { false }
     }
 
     #[cfg(feature = "monad")]
@@ -970,9 +983,11 @@ mod tests {
     #[test]
     fn network_variant_predicates() {
         assert!(NetworkVariant::Ethereum.is_ethereum());
+        assert!(!NetworkVariant::Ethereum.is_optimism());
         assert!(!NetworkVariant::Ethereum.is_tempo());
         assert!(NetworkVariant::Tempo.is_tempo());
         assert!(!NetworkVariant::Tempo.is_ethereum());
+        assert!(!NetworkVariant::Tempo.is_optimism());
 
         #[cfg(feature = "monad")]
         {
@@ -980,6 +995,7 @@ mod tests {
             assert!(!NetworkVariant::Tempo.is_monad());
             assert!(NetworkVariant::Monad.is_monad());
             assert!(!NetworkVariant::Monad.is_ethereum());
+            assert!(!NetworkVariant::Monad.is_optimism());
             assert!(!NetworkVariant::Monad.is_tempo());
         }
 
@@ -992,9 +1008,6 @@ mod tests {
             #[cfg(feature = "monad")]
             assert!(!NetworkVariant::Optimism.is_monad());
         }
-
-        #[cfg(all(feature = "optimism", feature = "monad"))]
-        assert!(!NetworkVariant::Monad.is_optimism());
     }
 
     #[test]
@@ -1618,6 +1631,7 @@ mod tests {
     fn active_network_name_default_is_none() {
         let cfg = NetworkConfigs::default();
         assert_eq!(cfg.active_network_name(), None);
+        assert!(!cfg.is_optimism());
         assert!(cfg.extra_cheatcode_addresses().is_empty());
     }
 

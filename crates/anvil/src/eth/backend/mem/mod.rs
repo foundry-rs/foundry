@@ -1226,18 +1226,11 @@ impl<N: Network> Backend<N> {
         (self.spec_id() as u8) >= (SpecId::PRAGUE as u8)
     }
 
-    /// Returns true if op-stack deposits are active
-    #[cfg(feature = "optimism")]
-    pub const fn is_optimism(&self) -> bool {
-        self.networks.is_optimism()
-    }
-
     /// Returns true if op-stack deposits are active.
     ///
     /// Always `false` when built without the `optimism` feature.
-    #[cfg(not(feature = "optimism"))]
     pub const fn is_optimism(&self) -> bool {
-        false
+        self.networks.is_optimism()
     }
 
     /// Returns true if Tempo network mode is active
