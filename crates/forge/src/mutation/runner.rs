@@ -638,6 +638,17 @@ fn compile_and_test(
             ExecutorBuilder::<TempoEvmNetwork>::new(),
         )
     } else {
+        #[cfg(feature = "base")]
+        if evm.opts.networks.is_base() {
+            return compile_and_test_inner::<foundry_evm::core::evm::BaseEvmNetwork>(
+                config,
+                evm,
+                filter_args,
+                rerun_failures,
+                selected_sources_relative,
+                isolate,
+            );
+        }
         #[cfg(feature = "monad")]
         if evm.opts.networks.is_monad() {
             return compile_and_test_inner::<MonadEvmNetwork>(

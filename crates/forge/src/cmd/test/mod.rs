@@ -274,6 +274,8 @@ fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
 #[derive(Clone, Copy)]
 enum NetworkDispatchKind {
     Tempo,
+    #[cfg(feature = "base")]
+    Base,
     #[cfg(feature = "monad")]
     Monad,
     #[cfg(feature = "optimism")]
@@ -284,6 +286,11 @@ enum NetworkDispatchKind {
 const fn network_dispatch_kind(evm_opts: &EvmOpts) -> NetworkDispatchKind {
     if evm_opts.networks.is_tempo() {
         return NetworkDispatchKind::Tempo;
+    }
+
+    #[cfg(feature = "base")]
+    if evm_opts.networks.is_base() {
+        return NetworkDispatchKind::Base;
     }
 
     #[cfg(feature = "monad")]
@@ -2722,6 +2729,18 @@ impl TestArgs {
                 )
                 .await
             }
+            #[cfg(feature = "base")]
+            NetworkDispatchKind::Base => {
+                self.build_and_run_tests::<foundry_evm::core::evm::BaseEvmNetwork>(
+                    config,
+                    evm_opts,
+                    output,
+                    filter,
+                    execution,
+                    resolved_fork,
+                )
+                .await
+            }
             #[cfg(feature = "monad")]
             NetworkDispatchKind::Monad => {
                 self.build_and_run_tests::<MonadEvmNetwork>(
@@ -2780,6 +2799,13 @@ impl TestArgs {
                     output,
                     options,
                     ExecutorBuilder::<TempoEvmNetwork>::new(),
+                )
+                .await
+                .map(|runner| fuzz_minimize_replay(runner, filter)),
+            #[cfg(feature = "base")]
+            NetworkDispatchKind::Base => self
+                .build_fuzz_minimize_runner::<foundry_evm::core::evm::BaseEvmNetwork>(
+                    config, evm_opts, output, options,
                 )
                 .await
                 .map(|runner| fuzz_minimize_replay(runner, filter)),

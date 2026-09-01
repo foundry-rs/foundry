@@ -284,6 +284,17 @@ impl CallArgs {
                 .await;
         }
 
+        #[cfg(feature = "base")]
+        if evm_opts.networks.is_base() {
+            return self
+                .run_with_network_and_opts::<foundry_evm::core::evm::BaseEvmNetwork>(
+                    config,
+                    evm_opts,
+                    auth_preflight,
+                )
+                .await;
+        }
+
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
             return self
@@ -1053,6 +1064,17 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "base"))]
+    fn chain_id_rejects_disabled_base_network() {
+        let error = infer_network_from_chain_id(NetworkConfigs::default(), 8453).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "cannot infer execution network from chain ID 8453: network family `base` is not \
+             enabled in this build"
+        );
+    }
+
+    #[test]
     #[cfg(not(feature = "monad"))]
     fn chain_id_rejects_disabled_monad_network() {
         let error = infer_network_from_chain_id(NetworkConfigs::default(), 143).unwrap_err();
@@ -1067,9 +1089,9 @@ mod tests {
     #[test]
     fn explicit_ethereum_overrides_chain_id_inference() {
         let ethereum = NetworkConfigs::with_ethereum();
-        let inferred = infer_network_from_chain_id(ethereum, 143).unwrap();
-
-        assert_eq!(inferred, ethereum);
+        for chain_id in [8453, 143] {
+            assert_eq!(infer_network_from_chain_id(ethereum, chain_id).unwrap(), ethereum);
+        }
     }
 
     #[test]

@@ -12,6 +12,11 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap, HashSet},
 };
 use alloy_sol_types::SolValue;
+#[cfg(feature = "base")]
+use base_common_precompiles::{
+    ActivationRegistryStorage, B20FactoryStorage, NonceManagerStorage, PolicyRegistryStorage,
+    TxContextStorage,
+};
 use foundry_common::{
     ContractsByArtifact, SELECTOR_LEN, abi::get_indexed_event, fmt::format_token,
     get_contract_name, selectors::SelectorKind,
@@ -27,10 +32,14 @@ use foundry_evm_core::{
         EC_RECOVER, IDENTITY, MOD_EXP, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
 };
+#[cfg(feature = "base")]
+use foundry_evm_hardforks::BaseSpecId;
 #[cfg(feature = "monad")]
 type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
 use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant, celo::transfer::CELO_TRANSFER_LABEL};
+#[cfg(feature = "base")]
+use foundry_evm_networks::{active_base_precompiles, is_base_precompile_active_at};
 use itertools::Itertools;
 use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
@@ -49,6 +58,8 @@ use tempo_precompiles::{
     tip20::ITIP20,
 };
 
+#[cfg(feature = "base")]
+mod base;
 #[cfg(feature = "monad")]
 mod monad;
 pub(crate) mod precompiles;
@@ -209,6 +220,8 @@ impl CallTraceDecoderBuilder {
         self.decoder.register_tempo_metadata();
         #[cfg(feature = "monad")]
         self.decoder.register_monad_metadata();
+        #[cfg(feature = "base")]
+        self.decoder.register_base_metadata();
         self.decoder
     }
 }
@@ -314,6 +327,55 @@ impl CallTraceDecoder {
         }
     }
 
+    #[cfg(feature = "base")]
+    fn register_base_metadata(&mut self) {
+        if self.networks.is_some_and(|networks| !networks.is_base()) {
+            return;
+        }
+        let Some(upgrade) =
+            self.hardfork.and_then(BaseSpecId::from_foundry_hardfork).map(|spec| spec.upgrade())
+        else {
+            return;
+        };
+
+        for (label, address) in active_base_precompiles(upgrade) {
+            self.labels.entry(address).or_insert_with(|| label.to_string());
+        }
+
+        // Labels alone leave calls showing a raw selector, so register the ABIs too. Each is
+        // scoped to its address and gated on the upgrade that installs it.
+        if is_base_precompile_active_at(ActivationRegistryStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                ActivationRegistryStorage::ADDRESS,
+                &base::IActivationRegistry::abi::contract(),
+            );
+        }
+        if is_base_precompile_active_at(PolicyRegistryStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                PolicyRegistryStorage::ADDRESS,
+                &base::IPolicyRegistry::abi::contract(),
+            );
+        }
+        if is_base_precompile_active_at(B20FactoryStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                B20FactoryStorage::ADDRESS,
+                &base::IB20Factory::abi::contract(),
+            );
+        }
+        if is_base_precompile_active_at(NonceManagerStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                NonceManagerStorage::ADDRESS,
+                &base::INonceManager::abi::contract(),
+            );
+        }
+        if is_base_precompile_active_at(TxContextStorage::ADDRESS, upgrade) {
+            self.register_address_abi(
+                TxContextStorage::ADDRESS,
+                &base::ITransactionContext::abi::contract(),
+            );
+        }
+    }
+
     /// Creates a new call trace decoder.
     ///
     /// The call trace decoder always knows how to decode calls to the cheatcode address, as well
@@ -398,7 +460,8 @@ impl CallTraceDecoder {
             (PATH_USD_ADDRESS, "PathUSD".to_string()),
         ]);
 
-        let function_groups: Vec<_> = console::hh::abi::functions()
+        #[allow(unused_mut)]
+        let mut function_groups: Vec<_> = console::hh::abi::functions()
             .into_values()
             .chain(Vm::abi::functions().into_values())
             .chain(IFeeManager::abi::functions().into_values())
@@ -417,13 +480,18 @@ impl CallTraceDecoder {
             .chain(ISignatureVerifier::abi::functions().into_values())
             .chain(IReceivePolicyGuard::abi::functions().into_values())
             .collect();
+        // B-20 tokens live at factory-derived addresses, so their Base-specific members are
+        // registered globally by selector, as Tempo does for TIP20.
+        #[cfg(feature = "base")]
+        function_groups.extend(base::IB20Extensions::abi::functions().into_values());
         let functions = function_groups
             .into_iter()
             .flatten()
             .map(|func| (func.selector(), vec![func]))
             .collect();
 
-        let event_groups: Vec<_> = console::ds::abi::events()
+        #[allow(unused_mut)]
+        let mut event_groups: Vec<_> = console::ds::abi::events()
             .into_values()
             .chain(IFeeManager::abi::events().into_values())
             .chain(ITIP20::abi::events().into_values())
@@ -438,6 +506,8 @@ impl CallTraceDecoder {
             .chain(ISignatureVerifier::abi::events().into_values())
             .chain(IReceivePolicyGuard::abi::events().into_values())
             .collect();
+        #[cfg(feature = "base")]
+        event_groups.extend(base::IB20Extensions::abi::events().into_values());
         let events = event_groups
             .into_iter()
             .flatten()
@@ -501,6 +571,8 @@ impl CallTraceDecoder {
         self.register_tempo_metadata();
         #[cfg(feature = "monad")]
         self.register_monad_metadata();
+        #[cfg(feature = "base")]
+        self.register_base_metadata();
     }
 
     /// Returns labels for precompiles active in this decoder's chain context.
@@ -695,7 +767,7 @@ impl CallTraceDecoder {
         }
     }
 
-    #[cfg(feature = "monad")]
+    #[cfg(any(feature = "base", feature = "monad"))]
     fn register_address_abi(&mut self, address: Address, abi: &JsonAbi) {
         for function in abi.functions() {
             self.push_address_function(address, function.clone());
@@ -3572,6 +3644,28 @@ mod tests {
             inferred_celo.precompile_labels().get(&CELO_TRANSFER),
             Some(&CELO_TRANSFER_LABEL.to_string())
         );
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn test_precompile_labels_follow_base_upgrade_boundaries() {
+        use foundry_evm_hardforks::BaseUpgrade;
+        use foundry_evm_networks::BASE_PRECOMPILE_ADDRESSES;
+
+        let labels_for_upgrade = |upgrade| {
+            CallTraceDecoderBuilder::new()
+                .with_chain_id(Some(8453))
+                .with_hardfork(Some(FoundryHardfork::Base(upgrade)))
+                .build()
+                .precompile_labels()
+        };
+        let base_label_count = |labels: &AddressHashMap<String>| {
+            BASE_PRECOMPILE_ADDRESSES.iter().filter(|address| labels.contains_key(*address)).count()
+        };
+
+        assert_eq!(base_label_count(&labels_for_upgrade(BaseUpgrade::Azul)), 0);
+        assert_eq!(base_label_count(&labels_for_upgrade(BaseUpgrade::Beryl)), 3);
+        assert_eq!(base_label_count(&labels_for_upgrade(BaseUpgrade::Cobalt)), 5);
     }
 
     #[tokio::test]

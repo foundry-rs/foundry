@@ -218,6 +218,13 @@ impl RunArgs {
                 .await;
         }
 
+        #[cfg(feature = "base")]
+        if evm_opts.networks.is_base() {
+            return self
+                .run_with_evm::<foundry_evm::core::evm::BaseEvmNetwork>(config, evm_opts)
+                .await;
+        }
+
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
             return self.run_with_monad(config, evm_opts).await;

@@ -823,6 +823,17 @@ mod tests {
         ensure_loaded_session_network_matches(&current, &loaded, "42").unwrap();
     }
 
+    #[cfg(feature = "base")]
+    #[test]
+    fn ensure_loaded_session_network_matches_preserves_base() {
+        let base = config_with_network(Some("base"));
+        ensure_loaded_session_network_matches(&base, &base, "42").unwrap();
+
+        let err =
+            ensure_loaded_session_network_matches(&Config::default(), &base, "42").unwrap_err();
+        assert!(err.to_string().contains("Rerun with `--network base`"), "{err}");
+    }
+
     #[test]
     fn test_trivia() {
         fn only_trivia(s: &str) -> bool {

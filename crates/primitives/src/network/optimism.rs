@@ -10,6 +10,7 @@ use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
 use crate::FoundryReceiptEnvelope;
 
 /// JSON-RPC transaction response type used by [`super::FoundryNetwork`].
+#[cfg(feature = "optimism")]
 pub type FoundryTransactionResponse = op_alloy_rpc_types::Transaction<crate::FoundryTxEnvelope>;
 
 /// Build a [`FoundryReceiptEnvelope::Deposit`] from a `ReceiptWithBloom<Log>` plus the OP

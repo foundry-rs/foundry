@@ -1,5 +1,6 @@
 use super::auth::{confirm_auth_rpc_disclosure, confirm_auth_rpc_disclosure_during_build};
 use crate::{
+    cmd::resolve_network,
     tempo,
     tx::{self, CastTxBuilder},
 };
@@ -12,6 +13,8 @@ use alloy_network::{
 use alloy_primitives::{Address, hex};
 use alloy_provider::Provider;
 use alloy_signer::{Signature, Signer};
+#[cfg(feature = "base")]
+use base_common_network::Base as BaseNetwork;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -120,10 +123,20 @@ impl MakeTxArgs {
         let (is_tempo, signer, access_key) =
             tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.eth).await?;
         if is_tempo {
-            self.run_generic::<TempoNetwork>(signer, access_key).await
-        } else {
-            self.run_generic::<Ethereum>(signer, None).await
+            return self.run_generic::<TempoNetwork>(signer, access_key).await;
         }
+
+        let config = self.eth.load_config()?;
+        let network = resolve_network(&config).await?;
+        if network.is_tempo() {
+            return self.run_generic::<TempoNetwork>(signer, access_key).await;
+        }
+        #[cfg(feature = "base")]
+        if network.is_base() {
+            return self.run_generic::<BaseNetwork>(signer, None).await;
+        }
+
+        self.run_generic::<Ethereum>(signer, None).await
     }
 
     pub async fn run_generic<N: Network>(
