@@ -52,12 +52,15 @@ use foundry_evm::{
             BlockContext, ChainFor, EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor,
         },
     },
-    executors::{EvmError, Executor, TracingExecutor},
+    executors::{Executor, ReplayTarget, TracingExecutor},
     hardforks::FoundryHardfork,
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements, Traces},
 };
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{
+    NetworkConfigs,
+    hyperevm::{HyperEvmBlockPrecompileData, is_hyperevm_chain},
+};
 use futures::{StreamExt, TryFutureExt};
 use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
 
@@ -487,6 +490,28 @@ impl RunArgs {
             None,
         )?;
 
+        let hyperevm_precompile_data = if is_hyperevm_chain(chain.id()) {
+            let block_id = block.as_ref().map_or_else(
+                || BlockId::Number(tx_block_number.into()),
+                |block| BlockId::hash(block.header().hash()),
+            );
+            match provider
+                .raw_request::<_, HyperEvmBlockPrecompileData>(
+                    "eth_blockPrecompileData".into(),
+                    (block_id,),
+                )
+                .await
+            {
+                Ok(data) => Some(data),
+                Err(error) => {
+                    trace!(?error, "HyperEVM block precompile data is unavailable");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
 
         let spec_id = (*evm_env.cfg_env.spec()).into();
@@ -529,200 +554,155 @@ impl RunArgs {
             }
         }
 
-        // Fall back to replaying previous transactions if prestate trace wasn't applied.
-        if !self.quick && !prestate_applied {
-            sh_status!("Executing previous transactions from the block.")?;
+        // Configure the one inspector before creating the replay EVM. The executor disables it
+        // while applying the block prefix and enables it for the target transaction only.
+        let target_trace_requirements = TraceRequirements::none()
+            .with_calls(true)
+            .with_debug(self.debug)
+            .with_decode_internal(if tracing.decode_internal {
+                InternalTraceMode::Full
+            } else {
+                InternalTraceMode::None
+            })
+            .with_state_changes(verbosity > 4);
+        executor.set_trace_requirements(target_trace_requirements);
+        executor.set_trace_printer(self.trace_printer);
 
-            if let Some(block) = &block {
-                let pb = init_progress(block.transactions().len() as u64, "tx");
-                pb.set_position(0);
+        let target_index = if let Some(block) = &block {
+            let BlockTransactions::Full(transactions) = block.transactions() else {
+                return Err(eyre::eyre!("Could not get block txs"));
+            };
+            transactions
+                .iter()
+                .position(|candidate| candidate.tx_hash() == tx_hash)
+                .ok_or_else(|| eyre::eyre!("transaction {tx_hash:?} is missing from its block"))?
+        } else {
+            0
+        };
+        let target_chain_context = block_context.as_ref().map_or_else(
+            || ChainFor::<FEN>::for_transaction(&target_tx_env),
+            |context| context.transaction(target_index),
+        );
 
-                let BlockTransactions::Full(ref txs) = *block.transactions() else {
-                    return Err(eyre::eyre!("Could not get block txs"));
-                };
-
-                for (index, tx) in txs.iter().enumerate() {
-                    if tx.tx_hash() == tx_hash {
-                        break;
-                    }
-
-                    let is_system = is_known_system_sender(tx.from())
-                        || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
-                    // Classify before converting: a chain's own system envelopes are exactly the
-                    // ones this build may not be able to decode, and they are skipped below.
-                    if is_system && !self.replay_system_txes && !networks.is_monad() {
-                        pb.set_position((index + 1) as u64);
-                        continue;
-                    }
-                    let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
-                    let chain_context = block_context.as_ref().map_or_else(
-                        || ChainFor::<FEN>::for_transaction(&tx_env),
-                        |context| context.transaction(index),
-                    );
-
-                    evm_env.cfg_env.disable_balance_check = true;
-
-                    if is_system {
-                        #[cfg(feature = "monad")]
-                        if executor
-                            .try_transact_system_replay_with_env_and_context(
-                                evm_env.clone(),
-                                tx_env.clone(),
-                                chain_context.clone(),
-                            )
-                            .wrap_err_with(|| {
-                                format!(
-                                    "Failed to replay system transaction: {:?} in block {}",
-                                    tx.tx_hash(),
-                                    evm_env.block_env.number()
-                                )
-                            })?
-                            .is_some()
-                        {
-                            trace!(tx=?tx.tx_hash(), "executed previous canonical system transaction");
-                            pb.set_position((index + 1) as u64);
-                            continue;
-                        }
-                        if !self.replay_system_txes {
-                            pb.set_position((index + 1) as u64);
-                            continue;
-                        }
-                    }
-
-                    if let Some(to) = Transaction::to(tx) {
-                        trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
-                        executor
-                            .transact_with_env_and_context(
-                                evm_env.clone(),
-                                tx_env.clone(),
-                                chain_context,
-                            )
-                            .wrap_err_with(|| {
-                                format!(
-                                    "Failed to execute transaction: {:?} in block {}",
-                                    tx.tx_hash(),
-                                    evm_env.block_env.number()
-                                )
-                            })?;
-                    } else {
-                        trace!(tx=?tx.tx_hash(), "executing previous create transaction");
-                        if let Err(error) = executor.deploy_with_env_and_context(
-                            evm_env.clone(),
-                            tx_env.clone(),
-                            chain_context,
-                            None,
-                        ) {
-                            match error {
-                                // Reverted transactions should be skipped
-                                EvmError::Execution(_) => (),
-                                error => {
-                                    return Err(error).wrap_err_with(|| {
-                                        format!(
-                                            "Failed to deploy transaction: {:?} in block {}",
-                                            tx.tx_hash(),
-                                            evm_env.block_env.number()
-                                        )
-                                    });
-                                }
-                            }
-                        }
-                    }
-
-                    pb.set_position((index + 1) as u64);
-                }
+        // A recovered signer that disagrees with the `from` the node reports marks a transaction
+        // the chain injected rather than one a key signed. Unknown envelopes are in the same
+        // category.
+        let sender_is_forged = match &*tx.inner.inner {
+            AnyTxEnvelope::Ethereum(inner) => {
+                inner.recover_signer().is_ok_and(|signer| signer != tx.from())
             }
+            AnyTxEnvelope::Unknown(_) => true,
+        };
+        if sender_is_forged {
+            evm_env.cfg_env.disable_balance_check = true;
         }
 
-        // Execute our transaction
-        let result = {
-            // Enable tracing only for the target transaction; the prefix replay above ran with
-            // tracing disabled.
-            let target_trace_requirements = TraceRequirements::none()
-                .with_calls(true)
-                .with_debug(self.debug)
-                .with_decode_internal(if tracing.decode_internal {
-                    InternalTraceMode::Full
-                } else {
-                    InternalTraceMode::None
-                })
-                .with_state_changes(verbosity > 4);
-            executor.set_trace_requirements(target_trace_requirements);
-            executor.set_trace_printer(self.trace_printer);
-
-            let tx_env = target_tx_env;
-            let target_index = if let Some(block) = &block {
-                let BlockTransactions::Full(transactions) = block.transactions() else {
-                    return Err(eyre::eyre!("Could not get block txs"));
-                };
-                transactions
-                    .iter()
-                    .position(|candidate| candidate.tx_hash() == tx_hash)
-                    .ok_or_else(|| {
-                        eyre::eyre!("transaction {tx_hash:?} is missing from its block")
-                    })?
-            } else {
-                0
-            };
-            let chain_context = block_context.as_ref().map_or_else(
-                || ChainFor::<FEN>::for_transaction(&tx_env),
-                |context| context.transaction(target_index),
-            );
-
-            // A recovered signer that disagrees with the `from` the node reports marks a
-            // transaction the chain injected rather than one a key signed, such as a HyperCore
-            // credit. Envelopes this build cannot decode are in the same category.
-            let sender_is_forged = match &*tx.inner.inner {
-                AnyTxEnvelope::Ethereum(inner) => {
-                    inner.recover_signer().is_ok_and(|signer| signer != tx.from())
-                }
-                AnyTxEnvelope::Unknown(_) => true,
-            };
-            if sender_is_forged {
-                evm_env.cfg_env.disable_balance_check = true;
-            }
-
-            #[cfg(feature = "monad")]
-            let replay_result = if target_is_system {
-                executor.try_transact_system_replay_with_env_and_context(
-                    evm_env.clone(),
-                    tx_env.clone(),
-                    chain_context.clone(),
-                )?
-            } else {
-                None
-            };
-            #[cfg(not(feature = "monad"))]
-            let replay_result: Option<foundry_evm::executors::RawCallResult<FEN>> = None;
-
-            if let Some(result) = replay_result {
-                trace!(tx=?tx.tx_hash(), "executed canonical system transaction");
-                TraceResult::from(result)
-            } else {
-                if target_is_system && !self.replay_system_txes {
-                    return Err(eyre::eyre!(
-                        "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
-                        tx.tx_hash()
-                    ));
-                }
-
-                if let Some(to) = Transaction::to(&tx) {
-                    trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
-                    TraceResult::from(executor.transact_with_env_and_context(
-                        evm_env,
-                        tx_env,
-                        chain_context,
-                    )?)
-                } else {
-                    trace!(tx=?tx.tx_hash(), "executing create transaction");
-                    TraceResult::try_from(executor.deploy_with_env_and_context(
-                        evm_env,
-                        tx_env,
-                        chain_context,
-                        None,
-                    ))?
-                }
-            }
+        let replay_block_prefix = !self.quick && !prestate_applied;
+        let block_number = evm_env.block_env.number();
+        let replay_target = match (target_is_system, self.replay_system_txes) {
+            (false, _) => ReplayTarget::Transaction,
+            (true, false) => ReplayTarget::System,
+            (true, true) => ReplayTarget::SystemWithFallback,
         };
+        let result = executor
+            .transact_with_block_replay(
+                evm_env,
+                target_tx_env,
+                target_chain_context,
+                replay_target,
+                |replay_evm| {
+                    if let Some(data) = &hyperevm_precompile_data {
+                        data.inject(replay_evm.precompiles_mut(), tx_block_number);
+                    }
+                    if !replay_block_prefix {
+                        return Ok(());
+                    }
+
+                    sh_status!("Executing previous transactions from the block.")?;
+                    let Some(block) = &block else { return Ok(()) };
+                    let pb = init_progress(block.transactions().len() as u64, "tx");
+                    pb.set_position(0);
+
+                    let BlockTransactions::Full(ref txs) = *block.transactions() else {
+                        return Err(eyre::eyre!("Could not get block txs"));
+                    };
+                    for (index, tx) in txs.iter().enumerate() {
+                        if tx.tx_hash() == tx_hash {
+                            break;
+                        }
+
+                        let is_system = is_known_system_sender(tx.from())
+                            || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
+                        // Classify before converting: a chain's own system envelopes are exactly
+                        // the ones this build may not be able to decode, and they are skipped.
+                        if is_system && !self.replay_system_txes && !networks.is_monad() {
+                            pb.set_position((index + 1) as u64);
+                            continue;
+                        }
+                        let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx)?;
+                        let chain_context = block_context.as_ref().map_or_else(
+                            || ChainFor::<FEN>::for_transaction(&tx_env),
+                            |context| context.transaction(index),
+                        );
+
+                        if is_system {
+                            if replay_evm
+                                .try_transact_system_replay(
+                                    tx_env.clone(),
+                                    chain_context.clone(),
+                                )
+                                .wrap_err_with(|| {
+                                    format!(
+                                        "Failed to replay system transaction: {:?} in block {}",
+                                        tx.tx_hash(), block_number
+                                    )
+                                })?
+                            {
+                                trace!(tx=?tx.tx_hash(), "executed previous canonical system transaction");
+                                pb.set_position((index + 1) as u64);
+                                continue;
+                            }
+                            if !self.replay_system_txes {
+                                pb.set_position((index + 1) as u64);
+                                continue;
+                            }
+                        }
+
+                        if let Some(to) = Transaction::to(tx) {
+                            trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
+                        } else {
+                            trace!(tx=?tx.tx_hash(), "executing previous create transaction");
+                        }
+                        replay_evm.transact(tx_env, chain_context).wrap_err_with(|| {
+                            format!(
+                                "Failed to execute transaction: {:?} in block {}",
+                                tx.tx_hash(), block_number
+                            )
+                        })?;
+                        pb.set_position((index + 1) as u64);
+                    }
+                    Ok(())
+                },
+            )
+            .wrap_err_with(|| format!("Failed to replay transaction {tx_hash:?}"))?;
+        let Some((result, used_system_replay)) = result else {
+            return Err(eyre::eyre!(
+                "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
+                tx.tx_hash()
+            ));
+        };
+
+        if used_system_replay {
+            trace!(tx=?tx.tx_hash(), "executed canonical system transaction");
+        }
+        let trace_kind = if let Some(to) = Transaction::to(&tx) {
+            trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
+            TraceKind::Execution
+        } else {
+            trace!(tx=?tx.tx_hash(), "executing create transaction");
+            TraceKind::Deployment
+        };
+        let result = TraceResult::from_raw(result, trace_kind);
 
         let contracts_bytecode = fetch_contracts_bytecode_from_trace(&executor, &result)?;
         handle_traces(

@@ -403,6 +403,17 @@ impl FoundryEvmFactory for MonadEvmFactory {
         try_transact_monad_system_replay(evm, tx)
     }
 
+    fn try_transact_foundry_system_replay<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
+        &self,
+        evm: &mut Self::FoundryEvm<'db, I>,
+        tx: &Self::Tx,
+    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>>
+    where
+        Self: 'db,
+    {
+        try_transact_monad_system_replay(evm, tx)
+    }
+
     fn create_foundry_nested_evm<'db>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,

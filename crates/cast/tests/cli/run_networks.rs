@@ -258,11 +258,50 @@ network_replay_tests! {
     flaky_run_berachain => ("berachain", "https://rpc.berachain.com", Exact),
     flaky_run_mantle => ("mantle", "https://rpc.mantle.xyz", ReplaysOnly),
 
-    // HyperCore credits are injected by the chain and read precompiles have no local
-    // implementation, so only some transactions reproduce exactly. Needs an archive endpoint:
-    // the official one ignores the block tag and answers every state read at latest.
+    // HyperCore credits are injected by the chain and can still affect prefix replay, so recent
+    // transactions are only required to replay. Needs an archive endpoint: the official one
+    // ignores the block tag and answers every state read at latest.
     flaky_run_hyperevm => ("hyperevm", "https://rpc.purroofgroup.com", ReplaysOnly),
 }
+
+/// Replays a pinned HyperEVM transaction that calls the BBO read precompile four times.
+#[expect(clippy::disallowed_macros, reason = "skips have to be visible in the nightly test log")]
+fn assert_replays_hyperevm_read_precompile(cmd: &mut TestCommand) {
+    let network = Network {
+        name: "hyperevm-read-precompile",
+        rpc_url: "https://rpc.purroofgroup.com",
+        gas: GasExpectation::Exact,
+        transaction_type: None,
+    };
+    let tx_hash = "0x0ef26f3e00d84d6a5d47271d0f7bbde713f4067e78d61b458727bfc7205017e4";
+    let Some(receipt) = json_output(cmd, &["receipt", tx_hash, "--rpc-url", network.rpc_url])
+    else {
+        eprintln!("skipping {}: endpoint unreachable", network.name);
+        return;
+    };
+
+    let output = cmd
+        .cast_fuse()
+        .args(["run", tx_hash, "--rpc-url", network.rpc_url])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let replayed_gas = gas_used(&output).unwrap_or_else(|| {
+        panic!("{}: `cast run` reported no gas for {tx_hash}:\n{output}", network.name)
+    });
+    let receipt_gas = hex_field(&receipt, "gasUsed")
+        .unwrap_or_else(|| panic!("{}: receipt for {tx_hash} has no gasUsed", network.name));
+    assert_eq!(
+        replayed_gas, receipt_gas,
+        "{}: replayed gas does not match the receipt",
+        network.name
+    );
+}
+
+// The block-scoped archive data makes the precompile output and gas exactly reproducible.
+casttest!(flaky_run_hyperevm_read_precompile, |_prj, cmd| {
+    assert_replays_hyperevm_read_precompile(&mut cmd);
+});
 
 casttest!(flaky_run_celo_cip64, |_prj, cmd| {
     assert_replays_recent_transaction(

@@ -12,15 +12,16 @@ use crate::inspectors::{
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, SYSTEM_ADDRESS};
-use alloy_evm::Evm;
+use alloy_evm::{Evm, precompiles::PrecompilesMap};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
+use eyre::WrapErr;
 use foundry_evm_core::{
-    EvmEnv, FoundryBlock, FoundryChain, FoundryTransaction,
+    EvmEnv, FoundryBlock, FoundryChain, FoundryContextExt, FoundryTransaction,
     backend::{
         Backend, BackendError, BackendResult, CowBackend, DatabaseError, DatabaseExt,
         GLOBAL_FAIL_SLOT,
@@ -36,8 +37,9 @@ use foundry_evm_core::{
     },
     evm::{
         BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork,
-        IntoInstructionResult, SpecFor, TxEnvFor,
+        HaltReasonFor, IntoInstructionResult, SpecFor, TxEnvFor,
     },
+    refresh_chain_journal,
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
@@ -46,7 +48,7 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::{SparsedTraceArena, TraceRequirements};
 use revm::{
     bytecode::Bytecode,
-    context::{Block, Cfg, Transaction},
+    context::{Block, Cfg, ContextTr, Transaction},
     context_interface::{
         cfg::gas_params::Eip2780TxInfo,
         result::{ExecutionResult, Output, ResultAndState},
@@ -140,6 +142,78 @@ pub struct Executor<FEN: FoundryEvmNetwork> {
     legacy_assertions: bool,
     /// Opt-in cursor for transactions simulated sequentially against one fork.
     block_context: Option<BlockContext<FEN>>,
+}
+
+/// A single EVM used to replay transactions before a target transaction.
+pub struct ReplayEvm<'a, FEN: FoundryEvmNetwork> {
+    evm: <FEN::EvmFactory as FoundryEvmFactory>::FoundryEvm<'a, &'a mut InspectorStack<FEN>>,
+}
+
+impl<FEN: FoundryEvmNetwork> ReplayEvm<'_, FEN> {
+    fn prepare(&mut self, chain_context: ChainFor<FEN>, disable_balance_check: bool) {
+        let context = std::ops::DerefMut::deref_mut(&mut self.evm);
+        *context.chain_mut() = chain_context;
+        refresh_chain_journal(context);
+        if disable_balance_check {
+            context.cfg_env_mut().disable_balance_check = true;
+        }
+    }
+
+    #[cfg(feature = "monad")]
+    fn try_transact_system(
+        &mut self,
+        tx_env: &TxEnvFor<FEN>,
+    ) -> eyre::Result<Option<ResultAndState<HaltReasonFor<FEN>>>> {
+        FEN::EvmFactory::default().try_transact_foundry_system_replay(&mut self.evm, tx_env)
+    }
+
+    #[cfg(not(feature = "monad"))]
+    fn try_transact_system(
+        &mut self,
+        _tx_env: &TxEnvFor<FEN>,
+    ) -> eyre::Result<Option<ResultAndState<HaltReasonFor<FEN>>>> {
+        Ok(None)
+    }
+
+    /// Executes and commits an ordinary replay transaction.
+    pub fn transact(
+        &mut self,
+        tx_env: TxEnvFor<FEN>,
+        chain_context: ChainFor<FEN>,
+    ) -> eyre::Result<()> {
+        self.prepare(chain_context, true);
+        let result = self.evm.transact(tx_env).wrap_err("EVM error")?;
+        self.evm.db_mut().commit(result.state);
+        Ok(())
+    }
+
+    /// Tries to execute and commit a canonical system replay transaction.
+    pub fn try_transact_system_replay(
+        &mut self,
+        tx_env: TxEnvFor<FEN>,
+        chain_context: ChainFor<FEN>,
+    ) -> eyre::Result<bool> {
+        self.prepare(chain_context, true);
+        let Some(result) = self.try_transact_system(&tx_env)? else { return Ok(false) };
+        self.evm.db_mut().commit(result.state);
+        Ok(true)
+    }
+
+    /// Returns the precompiles used by this replay EVM.
+    pub fn precompiles_mut(&mut self) -> &mut PrecompilesMap {
+        self.evm.precompiles_mut()
+    }
+}
+
+/// How the target transaction of a block replay should be executed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplayTarget {
+    /// Execute the target as an ordinary transaction.
+    Transaction,
+    /// Require the target to be recognized as a canonical system transaction.
+    System,
+    /// Prefer canonical system execution and fall back to an ordinary transaction.
+    SystemWithFallback,
 }
 
 impl<FEN: FoundryEvmNetwork> Executor<FEN> {
@@ -840,6 +914,90 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         self.commit(&mut result);
         self.record_block_transaction(committed_tx);
         Ok(result)
+    }
+
+    /// Replays transactions and executes the target transaction against one EVM instance.
+    ///
+    /// The replay callback runs with inspection disabled and commits preceding transactions
+    /// through [`ReplayEvm`]. Inspection is enabled for the target transaction only. Returns
+    /// `None` when a required system target is not recognized by the active network.
+    #[instrument(name = "transact_block_replay", level = "debug", skip_all)]
+    pub fn transact_with_block_replay(
+        &mut self,
+        evm_env: EvmEnvFor<FEN>,
+        target_tx_env: TxEnvFor<FEN>,
+        target_chain_context: ChainFor<FEN>,
+        target: ReplayTarget,
+        replay: impl for<'a> FnOnce(&mut ReplayEvm<'a, FEN>) -> eyre::Result<()>,
+    ) -> eyre::Result<Option<(RawCallResult<FEN>, bool)>> {
+        let mut stack = self.inspector().clone();
+        let sancov_edges = stack.inner.sancov_edges;
+        let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
+        let sancov_active = sancov_edges || sancov_trace_cmp;
+        let backend = self.backend_mut();
+
+        let (result, evm_env, tx_env, used_system_replay) = {
+            let caller = target_tx_env.caller();
+            backend.set_caller(caller).set_spec_id(evm_env.cfg_env.spec);
+            let target_contract = match target_tx_env.kind() {
+                TxKind::Call(to) => to,
+                // The prefix has not run yet, so use the canonical target nonce rather than the
+                // current database nonce.
+                TxKind::Create => caller.create(target_tx_env.nonce()),
+            };
+            backend.set_test_contract(target_contract);
+            let evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
+                backend,
+                evm_env,
+                target_chain_context.clone(),
+                &mut stack,
+            );
+            let mut replay_evm: ReplayEvm<'_, FEN> = ReplayEvm { evm };
+            replay_evm.evm.disable_inspector();
+            replay(&mut replay_evm)?;
+
+            replay_evm.evm.enable_inspector();
+            replay_evm.prepare(target_chain_context, false);
+            let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
+            let (result, used_system_replay) = if target == ReplayTarget::Transaction {
+                (replay_evm.evm.transact(target_tx_env.clone()).wrap_err("EVM error")?, false)
+            } else {
+                match replay_evm.try_transact_system(&target_tx_env)? {
+                    Some(result) => (result, true),
+                    None if target == ReplayTarget::System => return Ok(None),
+                    None => (
+                        replay_evm.evm.transact(target_tx_env.clone()).wrap_err("EVM error")?,
+                        false,
+                    ),
+                }
+            };
+            let tx_env =
+                if used_system_replay { target_tx_env } else { replay_evm.evm.tx().clone() };
+            let evm_env = replay_evm.evm.finish().1;
+            (result, evm_env, tx_env, used_system_replay)
+        };
+
+        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
+        let fork_block_number = backend.active_fork_block_number();
+        let mut result = convert_executed_result(
+            evm_env,
+            tx_env,
+            stack,
+            result,
+            &*backend,
+            has_state_snapshot_failure,
+            fork_block_number,
+        )?;
+        if sancov_edges {
+            SancovGuard::append_edges_into(&mut result);
+        }
+        if sancov_trace_cmp {
+            SancovGuard::drain_cmp_into(&mut result);
+        }
+        let committed_tx = result.tx_env.clone();
+        self.commit(&mut result);
+        self.record_block_transaction(committed_tx);
+        Ok(Some((result, used_system_replay)))
     }
 
     /// Tries to execute and commit a canonical system transaction during replay.
@@ -1952,6 +2110,163 @@ mod tests {
 
         let err = raw.into_evm_error(None);
         assert!(matches!(err, EvmError::Execution(_)));
+    }
+
+    #[test]
+    fn block_replay_commits_prefix_and_traces_only_target() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().gas_limit(1 << 20).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+            NetworkConfigs::default(),
+        );
+        executor.set_balance(CALLER, U256::MAX).unwrap();
+        executor.set_trace_requirements(TraceRequirements::none().with_calls(true));
+
+        let address = Address::repeat_byte(0x11);
+        // Increment slot zero and return its new value.
+        executor
+            .set_code(
+                address,
+                Bytecode::new_raw(Bytes::from_static(&[
+                    0x60, 0x00, 0x54, 0x60, 0x01, 0x01, 0x80, 0x60, 0x00, 0x55, 0x60, 0x00, 0x52,
+                    0x60, 0x20, 0x60, 0x00, 0xf3,
+                ])),
+            )
+            .unwrap();
+        let prefix = TxEnv {
+            caller: CALLER,
+            gas_limit: 100_000,
+            kind: TxKind::Call(address),
+            ..Default::default()
+        };
+        let reverted_create = TxEnv {
+            nonce: 1,
+            kind: TxKind::Create,
+            data: Bytes::from_static(&[0x5f, 0x5f, 0xfd]),
+            ..prefix.clone()
+        };
+        let target = TxEnv { nonce: 2, ..prefix.clone() };
+
+        let (result, used_system_replay) = executor
+            .transact_with_block_replay(
+                EvmEnv::default(),
+                target,
+                (),
+                ReplayTarget::Transaction,
+                |evm| {
+                    evm.transact(prefix, ())?;
+                    evm.transact(reverted_create, ())
+                },
+            )
+            .unwrap()
+            .unwrap();
+
+        assert!(!used_system_replay);
+        assert_eq!(result.result, Bytes::from(U256::from(2).to_be_bytes::<32>()));
+        assert_eq!(result.tx_env.nonce, 2);
+        assert_eq!(executor.get_nonce(CALLER).unwrap(), 3);
+        assert_eq!(executor.backend().storage_ref(address, U256::ZERO).unwrap(), U256::from(2));
+        assert_eq!(result.traces.unwrap().arena.nodes().len(), 1);
+    }
+
+    #[test]
+    fn block_replay_initializes_create_target_from_canonical_nonce() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().gas_limit(1 << 20).build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+            NetworkConfigs::default(),
+        );
+        executor.set_balance(CALLER, U256::MAX).unwrap();
+
+        let prefix = TxEnv {
+            caller: CALLER,
+            gas_limit: 100_000,
+            kind: TxKind::Call(Address::repeat_byte(0x11)),
+            ..Default::default()
+        };
+        let target = TxEnv {
+            nonce: 1,
+            kind: TxKind::Create,
+            data: Bytes::from_static(&[0x00]),
+            ..prefix.clone()
+        };
+        let expected = CALLER.create(1);
+
+        let (result, used_system_replay) = executor
+            .transact_with_block_replay(
+                EvmEnv::default(),
+                target,
+                (),
+                ReplayTarget::Transaction,
+                |evm| evm.transact(prefix, ()),
+            )
+            .unwrap()
+            .unwrap();
+
+        assert!(!used_system_replay);
+        assert!(
+            matches!(result.out, Some(Output::Create(_, Some(address))) if address == expected)
+        );
+        assert!(executor.backend().is_persistent(&expected));
+        assert!(executor.backend().has_cheatcode_access(&expected));
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn block_replay_executes_monad_system_prefix() {
+        use foundry_evm_core::evm::MonadEvmNetwork;
+
+        let backend = Backend::<MonadEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::<MonadEvmNetwork>::default().gas_limit(1 << 20).build(
+            EvmEnvFor::<MonadEvmNetwork>::default(),
+            TxEnvFor::<MonadEvmNetwork>::default(),
+            backend,
+            NetworkConfigs::with_monad(),
+        );
+        executor.set_balance(CALLER, U256::MAX).unwrap();
+
+        let system_address = alloy_primitives::address!("6f49a8f621353f12378d0046e7d7e4b9b249dc9e");
+        let staking_address =
+            alloy_primitives::address!("0000000000000000000000000000000000001000");
+        let selector = keccak256("syscallSnapshot()");
+        let system = TxEnv {
+            caller: system_address,
+            gas_limit: 0,
+            kind: TxKind::Call(staking_address),
+            data: Bytes::copy_from_slice(&selector[..4]),
+            chain_id: None,
+            ..Default::default()
+        };
+        let target = TxEnv {
+            caller: CALLER,
+            gas_limit: 100_000,
+            kind: TxKind::Call(Address::repeat_byte(0x11)),
+            ..Default::default()
+        };
+        let system_chain = ChainFor::<MonadEvmNetwork>::for_transaction(&system);
+        let target_chain = ChainFor::<MonadEvmNetwork>::for_transaction(&target);
+
+        let (result, used_system_replay) = executor
+            .transact_with_block_replay(
+                EvmEnvFor::<MonadEvmNetwork>::default(),
+                target,
+                target_chain,
+                ReplayTarget::Transaction,
+                |evm| {
+                    assert!(evm.try_transact_system_replay(system, system_chain)?);
+                    Ok(())
+                },
+            )
+            .unwrap()
+            .unwrap();
+
+        assert!(!used_system_replay);
+        assert!(!result.reverted);
+        assert_eq!(executor.get_nonce(system_address).unwrap(), 1);
     }
 
     #[test]
