@@ -697,17 +697,18 @@ impl VerifyBytecodeArgs {
             false,
             config.bytecode_hash,
         );
-        if args_from_user && creation_match_type.is_none() {
+        if args_from_user
+            && creation_match_type.is_none()
+            && self.ignore.is_none_or(|b| !b.is_creation())
+        {
             let message =
                 "Provided constructor args could not be validated against deployment creation code";
             if shell::is_json() {
-                if self.ignore.is_none_or(|b| !b.is_creation()) {
-                    json_results.push(JsonResult {
-                        bytecode_type: BytecodeType::Creation,
-                        match_type: None,
-                        message: Some(message.to_string()),
-                    });
-                }
+                json_results.push(JsonResult {
+                    bytecode_type: BytecodeType::Creation,
+                    match_type: None,
+                    message: Some(message.to_string()),
+                });
                 if self.ignore.is_none_or(|b| !b.is_runtime()) {
                     json_results.push(JsonResult {
                         bytecode_type: BytecodeType::Runtime,
@@ -718,15 +719,13 @@ impl VerifyBytecodeArgs {
                 sh_println!("{}", serde_json::to_string(&json_results)?)?;
             } else {
                 sh_warn!("{message}")?;
-                if self.ignore.is_none_or(|b| !b.is_creation()) {
-                    crate::utils::print_result(
-                        None,
-                        BytecodeType::Creation,
-                        &mut json_results,
-                        etherscan_metadata,
-                        &config,
-                    );
-                }
+                crate::utils::print_result(
+                    None,
+                    BytecodeType::Creation,
+                    &mut json_results,
+                    etherscan_metadata,
+                    &config,
+                );
                 if self.ignore.is_none_or(|b| !b.is_runtime()) {
                     crate::utils::print_result(
                         None,

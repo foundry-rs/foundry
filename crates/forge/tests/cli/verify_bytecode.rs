@@ -312,9 +312,9 @@ forgetest_async!(flaky_verify_bytecode_warns_on_wrong_constructor_args, |prj, cm
         "wrong constructor args must not produce a creation match, got:\n{stdout}"
     );
 
-    // Ignoring creation verification must not allow runtime verification to continue with
-    // constructor arguments already known not to match the deployment. JSON must retain the
-    // specific mismatch reason because warnings are suppressed in JSON mode.
+    // Ignoring creation verification must still compare the runtime produced by the supplied
+    // arguments. StrategyManager embeds its constructor arguments as immutables, so they produce
+    // a runtime mismatch.
     let etherscan_key = next_etherscan_api_key();
     cmd.forge_fuse()
         .args([
@@ -338,7 +338,7 @@ forgetest_async!(flaky_verify_bytecode_warns_on_wrong_constructor_args, |prj, cm
             "--json",
         ])
         .assert_json_stdout(
-            r#"[{"bytecode_type":"runtime","match_type":null,"message":"Provided constructor args could not be validated against deployment creation code"}]"#,
+            r#"[{"bytecode_type":"runtime","match_type":null,"message":"Runtime code did not match - this may be due to varying compiler settings"}]"#,
         );
 });
 
