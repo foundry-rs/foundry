@@ -1,12 +1,13 @@
 use alloy_consensus::Transaction;
 use alloy_dyn_abi::TypedData;
 use alloy_eips::Typed2718;
+use alloy_network::ReceiptResponse;
 use alloy_primitives::{Address, B256, Bytes, Signature, U256, address, b256, hex};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolEvent};
 use anvil::NodeConfig;
 use axum::{
     Json, Router,
@@ -27,6 +28,7 @@ use tokio::task::JoinHandle;
 
 const ANVIL_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const ANVIL_KEY_2: &str = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+const ANVIL_KEY_3: &str = "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a";
 const ANVIL_OWNER: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 const ANVIL_OWNER_2: Address = address!("70997970C51812dc3A010C7d01b50e0d17dc79C8");
 const ANVIL_OWNER_3: Address = address!("3C44CdDdB6a900fa2b585dd299e03d12FA4293BC");
@@ -72,6 +74,8 @@ mod test_safe_contract {
                 address payable refundReceiver,
                 bytes calldata signatures
             ) external payable returns (bool success);
+
+            event ExecutionSuccess(bytes32 indexed txHash, uint256 payment);
         }
     }
 }
@@ -93,15 +97,17 @@ fn safe_transaction(safe: Address, operation: u8) -> Value {
     })
 }
 
-async fn spawn_safe_service(response: Value) -> String {
+async fn spawn_safe_service(response: Value) -> TestServerHandle {
     let router = Router::new().fallback(move || {
         let response = response.clone();
         async move { Json(response) }
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    endpoint
+    let task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    TestServerHandle { endpoint, task }
 }
 
 fn json_envelope(data: Value) -> String {
@@ -132,8 +138,28 @@ struct StrictTransaction {
     refund_receiver: Address,
     nonce: u64,
     hash: B256,
+    proposal_sender: Address,
+    proposal_signature: String,
     confirmations: Vec<StrictConfirmation>,
-    executed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ExpectedTransaction {
+    safe: Address,
+    target: Address,
+    nonce: u64,
+    hash: B256,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RequestEvent {
+    AddDelegate { safe: Address, delegate: Address, delegator: Address },
+    ListDelegates { safe: Address },
+    NonceLookup { safe: Address },
+    Propose { safe: Address, sender: Address, hash: B256 },
+    GetTransaction { version: u8, hash: B256 },
+    Confirm { hash: B256, owner: Address },
+    RemoveDelegate { safe: Address, delegate: Address, delegator: Address },
 }
 
 #[derive(Debug, Default)]
@@ -141,13 +167,27 @@ struct StrictServiceState {
     chain_id: u64,
     api_key: String,
     owners: Vec<Address>,
-    safe: Option<Address>,
-    expected_target: Option<Address>,
-    expected_hash: Option<B256>,
-    expected_nonce: Option<u64>,
+    expected: Option<ExpectedTransaction>,
     delegates: Vec<(Address, Address, String)>,
     transaction: Option<StrictTransaction>,
-    requests: Vec<String>,
+    requests: Vec<RequestEvent>,
+}
+
+struct TestServerHandle {
+    endpoint: String,
+    task: JoinHandle<()>,
+}
+
+impl TestServerHandle {
+    fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+}
+
+impl Drop for TestServerHandle {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 /// A small, stateful Transaction Service double used by the lifecycle test.
@@ -155,93 +195,66 @@ struct StrictServiceState {
 /// It deliberately accepts only the routes used by Cast and checks the wire-level
 /// representation, so a test cannot pass by talking to a permissive catch-all.
 struct SafeServiceHandle {
-    endpoint: String,
     state: Arc<Mutex<StrictServiceState>>,
-    task: JoinHandle<()>,
+    server: TestServerHandle,
 }
 
 impl SafeServiceHandle {
     fn endpoint(&self) -> &str {
-        &self.endpoint
+        self.server.endpoint()
     }
 
-    fn set_safe(&self, safe: Address) {
+    fn configure_transaction(&self, expected: ExpectedTransaction) {
         let mut state = self.state.lock().unwrap();
-        assert!(state.safe.replace(safe).is_none(), "Safe address was configured twice");
-    }
-
-    fn expect_transaction_shape(&self, target: Address, nonce: u64) {
-        let mut state = self.state.lock().unwrap();
-        state.expected_target = Some(target);
-        state.expected_nonce = Some(nonce);
+        assert!(state.expected.replace(expected).is_none(), "transaction was configured twice");
     }
 
     fn transaction_hash(&self) -> B256 {
         self.state.lock().unwrap().transaction.as_ref().expect("transaction was not proposed").hash
     }
 
-    fn mark_executed(&self) {
-        let mut state = self.state.lock().unwrap();
-        state.transaction.as_mut().expect("proposal was not submitted").executed = true;
+    fn assert_delegate_proposal(&self, delegate: Address, hash: B256) {
+        let state = self.state.lock().unwrap();
+        assert!(
+            state.delegates.iter().any(|(current, _, _)| *current == delegate),
+            "delegate proposal was accepted without a registered delegate"
+        );
+        let transaction = state.transaction.as_ref().expect("transaction was not proposed");
+        assert_eq!(transaction.hash, hash);
+        assert_eq!(transaction.proposal_sender, delegate);
+        assert!(!transaction.proposal_signature.is_empty());
+        ensure_safe_signature(&transaction.proposal_signature, hash, delegate)
+            .expect("delegate proposal signature did not recover the delegate");
+        assert!(
+            transaction.confirmations.is_empty(),
+            "delegate proposal must not count as an owner confirmation"
+        );
     }
 
-    fn assert_lifecycle_complete(&self) {
+    fn assert_lifecycle_complete(&self, expected_requests: &[RequestEvent], delegate: Address) {
         let state = self.state.lock().unwrap();
         assert!(state.delegates.is_empty(), "delegate was not removed: {:?}", state.delegates);
         let transaction = state.transaction.as_ref().expect("transaction was not proposed");
-        assert!(transaction.executed, "transaction was not marked executed");
+        let expected = state.expected.expect("transaction expectation was not configured");
+        assert_eq!(transaction.safe, expected.safe);
+        assert_eq!(transaction.to, expected.target);
+        assert_eq!(transaction.nonce, expected.nonce);
+        assert_eq!(transaction.hash, expected.hash);
+        assert_eq!(transaction.proposal_sender, delegate);
         assert_eq!(transaction.confirmations.len(), state.owners.len());
-        assert_eq!(transaction.nonce, state.expected_nonce.unwrap());
         assert!(
-            state.requests.iter().any(|request| request == "POST /api/v2/delegates/"),
-            "missing delegate registration request: {:?}",
-            state.requests
+            !transaction.confirmations.iter().any(|confirmation| confirmation.owner == delegate)
         );
-        assert!(
-            state.requests.iter().any(|request| request == "GET /api/v2/delegates/"),
-            "missing delegate list request: {:?}",
-            state.requests
-        );
-        assert!(
-            state.requests.iter().any(|request| request.starts_with("POST /api/v2/safes/")),
-            "missing proposal request: {:?}",
-            state.requests
-        );
-        assert!(
-            state
-                .requests
-                .iter()
-                .any(|request| request.starts_with("GET /api/v1/multisig-transactions/")),
-            "missing v1 transaction request: {:?}",
-            state.requests
-        );
-        assert!(
-            state
-                .requests
-                .iter()
-                .any(|request| request.starts_with("POST /api/v1/multisig-transactions/")),
-            "missing confirmation request: {:?}",
-            state.requests
-        );
-        assert!(
-            state
-                .requests
-                .iter()
-                .any(|request| request.starts_with("GET /api/v2/multisig-transactions/")),
-            "missing v2 transaction request: {:?}",
-            state.requests
-        );
-        assert!(
-            state.requests.iter().any(|request| request == "DELETE /api/v2/delegates/"),
-            "missing delegate removal request: {:?}",
-            state.requests
-        );
-    }
-}
-
-impl Drop for SafeServiceHandle {
-    fn drop(&mut self) {
-        self.task.abort();
+        let mut actual_owners = transaction
+            .confirmations
+            .iter()
+            .map(|confirmation| confirmation.owner)
+            .collect::<Vec<_>>();
+        actual_owners.sort_unstable();
+        let mut expected_owners = state.owners.clone();
+        expected_owners.sort_unstable();
+        assert_eq!(actual_owners, expected_owners);
+        assert_eq!(state.requests, expected_requests);
     }
 }
 
@@ -258,7 +271,8 @@ async fn spawn_strict_safe_service(owners: Vec<Address>, chain_id: u64) -> SafeS
     let task = tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
-    SafeServiceHandle { endpoint, state, task }
+    let server = TestServerHandle { endpoint, task };
+    SafeServiceHandle { state, server }
 }
 
 async fn strict_service_handler(
@@ -309,13 +323,12 @@ fn strict_service_request(
 ) -> Result<ServiceResponse, String> {
     let path = uri.path();
     let method_name = method.as_str();
-    let route = format!("{method_name} {path}");
     if path == "/api/v2/delegates/" {
         match method {
             Method::GET => {
                 handle_list_delegates(state, uri)?;
-                state.requests.push(route);
-                let safe = state.safe.ok_or("Safe address is not configured")?;
+                let safe = expected_transaction(state)?.safe;
+                state.requests.push(RequestEvent::ListDelegates { safe });
                 return Ok(ServiceResponse::Json(json!({
                     "count": state.delegates.len(),
                     "next": null,
@@ -330,8 +343,9 @@ fn strict_service_request(
             }
             Method::POST => {
                 ensure_no_query(uri)?;
-                handle_add_delegate(state, body)?;
-                state.requests.push(route);
+                let (delegate, delegator) = handle_add_delegate(state, body)?;
+                let safe = expected_transaction(state)?.safe;
+                state.requests.push(RequestEvent::AddDelegate { safe, delegate, delegator });
                 return Ok(ServiceResponse::Empty);
             }
             _ => return Err(format!("unexpected method {method_name} for {path}")),
@@ -345,8 +359,9 @@ fn strict_service_request(
     {
         ensure_method(&method, Method::POST, path)?;
         ensure_no_query(uri)?;
-        handle_proposal(state, suffix, body)?;
-        state.requests.push(route);
+        let (sender, hash) = handle_proposal(state, suffix, body)?;
+        let safe = expected_transaction(state)?.safe;
+        state.requests.push(RequestEvent::Propose { safe, sender, hash });
         return Ok(ServiceResponse::Empty);
     }
     if let Some(safe_path) = path.strip_prefix("/api/v1/safes/")
@@ -354,7 +369,8 @@ fn strict_service_request(
     {
         ensure_method(&method, Method::GET, path)?;
         handle_nonce_lookup(state, suffix, uri)?;
-        state.requests.push(route);
+        let safe = expected_transaction(state)?.safe;
+        state.requests.push(RequestEvent::NonceLookup { safe });
         return Ok(ServiceResponse::Json(json!({
             "count": 0,
             "next": null,
@@ -366,15 +382,21 @@ fn strict_service_request(
         if let Some(hash) = tx_path.strip_suffix("/confirmations/") {
             ensure_method(&method, Method::POST, path)?;
             ensure_no_query(uri)?;
-            handle_confirmation(state, hash, body)?;
-            state.requests.push(route);
+            let owner = handle_confirmation(state, hash, body)?;
+            state
+                .requests
+                .push(RequestEvent::Confirm { hash: owner_transaction_hash(state)?, owner });
             return Ok(ServiceResponse::Empty);
         }
         if let Some(hash) = tx_path.strip_suffix('/') {
             ensure_method(&method, Method::GET, path)?;
             ensure_no_query(uri)?;
-            let transaction = transaction_json(handle_transaction_get(state, hash)?);
-            state.requests.push(route);
+            let transaction_ref = handle_transaction_get(state, hash)?;
+            let transaction_hash = transaction_ref.hash;
+            let transaction = transaction_json(transaction_ref);
+            state
+                .requests
+                .push(RequestEvent::GetTransaction { version: 1, hash: transaction_hash });
             return Ok(ServiceResponse::Json(transaction));
         }
     }
@@ -383,8 +405,10 @@ fn strict_service_request(
     {
         ensure_method(&method, Method::GET, path)?;
         ensure_no_query(uri)?;
-        let transaction = transaction_json(handle_transaction_get(state, hash)?);
-        state.requests.push(route);
+        let transaction_ref = handle_transaction_get(state, hash)?;
+        let transaction_hash = transaction_ref.hash;
+        let transaction = transaction_json(transaction_ref);
+        state.requests.push(RequestEvent::GetTransaction { version: 2, hash: transaction_hash });
         return Ok(ServiceResponse::Json(transaction));
     }
     if let Some(delegate_path) = path.strip_prefix("/api/v2/delegates/")
@@ -394,8 +418,8 @@ fn strict_service_request(
             return Err(format!("unexpected method {method_name} for {path}"));
         }
         ensure_no_query(uri)?;
-        handle_remove_delegate(state, delegate, body)?;
-        state.requests.push("DELETE /api/v2/delegates/".to_string());
+        let (safe, delegate, delegator) = handle_remove_delegate(state, delegate, body)?;
+        state.requests.push(RequestEvent::RemoveDelegate { safe, delegate, delegator });
         return Ok(ServiceResponse::Empty);
     }
     Err(format!("unexpected Transaction Service route: {method_name} {uri}"))
@@ -431,8 +455,20 @@ fn checksum(address: Address) -> String {
     address.to_checksum(None)
 }
 
+fn expected_transaction(state: &StrictServiceState) -> Result<ExpectedTransaction, String> {
+    state.expected.ok_or("transaction expectation is not configured".to_string())
+}
+
+fn owner_transaction_hash(state: &StrictServiceState) -> Result<B256, String> {
+    state
+        .transaction
+        .as_ref()
+        .map(|transaction| transaction.hash)
+        .ok_or("transaction was not proposed".to_string())
+}
+
 fn handle_list_delegates(state: &StrictServiceState, uri: &Uri) -> Result<(), String> {
-    let safe = state.safe.ok_or("Safe address is not configured")?;
+    let safe = expected_transaction(state)?.safe;
     let expected = format!("safe={}", checksum(safe));
     if uri.query() != Some(expected.as_str()) {
         return Err(format!("delegate list query must be `{expected}`, got {:?}", uri.query()));
@@ -440,8 +476,11 @@ fn handle_list_delegates(state: &StrictServiceState, uri: &Uri) -> Result<(), St
     Ok(())
 }
 
-fn handle_add_delegate(state: &mut StrictServiceState, body: Value) -> Result<(), String> {
-    let safe = state.safe.ok_or("Safe address is not configured")?;
+fn handle_add_delegate(
+    state: &mut StrictServiceState,
+    body: Value,
+) -> Result<(Address, Address), String> {
+    let safe = expected_transaction(state)?.safe;
     ensure_address_field(&body, "safe", safe)?;
     let delegate = parse_checksum_field(&body, "delegate")?;
     let delegator = parse_checksum_field(&body, "delegator")?;
@@ -460,15 +499,15 @@ fn handle_add_delegate(state: &mut StrictServiceState, body: Value) -> Result<()
         return Err(format!("delegate {delegate} was already registered"));
     }
     state.delegates.push((delegate, delegator, label));
-    Ok(())
+    Ok((delegate, delegator))
 }
 
 fn handle_remove_delegate(
     state: &mut StrictServiceState,
     path: &str,
     body: Value,
-) -> Result<(), String> {
-    let safe = state.safe.ok_or("Safe address is not configured")?;
+) -> Result<(Address, Address, Address), String> {
+    let safe = expected_transaction(state)?.safe;
     let delegate = parse_checksum_path(path, "delegate")?;
     ensure_address_field(&body, "safe", safe)?;
     let delegator = parse_checksum_field(&body, "delegator")?;
@@ -483,11 +522,11 @@ fn handle_remove_delegate(
     if state.delegates.len() == before {
         return Err(format!("delegate {delegate} was not registered"));
     }
-    Ok(())
+    Ok((safe, delegate, delegator))
 }
 
 fn handle_nonce_lookup(state: &StrictServiceState, path: &str, uri: &Uri) -> Result<(), String> {
-    let safe = state.safe.ok_or("Safe address is not configured")?;
+    let safe = expected_transaction(state)?.safe;
     ensure_checksum_path(path, safe, "Safe")?;
     let expected = "executed=false&ordering=-nonce&limit=1";
     if uri.query() != Some(expected) {
@@ -496,17 +535,20 @@ fn handle_nonce_lookup(state: &StrictServiceState, path: &str, uri: &Uri) -> Res
     Ok(())
 }
 
-fn handle_proposal(state: &mut StrictServiceState, path: &str, body: Value) -> Result<(), String> {
-    let safe = state.safe.ok_or("Safe address is not configured")?;
+fn handle_proposal(
+    state: &mut StrictServiceState,
+    path: &str,
+    body: Value,
+) -> Result<(Address, B256), String> {
+    let expected = expected_transaction(state)?;
+    let safe = expected.safe;
     ensure_checksum_path(path, safe, "Safe")?;
     if state.transaction.is_some() {
         return Err("only one Safe transaction is supported by this test service".to_string());
     }
     let target = parse_checksum_field(&body, "to")?;
-    if let Some(expected_target) = state.expected_target
-        && target != expected_target
-    {
-        return Err(format!("proposal target {target} does not match {expected_target}"));
+    if target != expected.target {
+        return Err(format!("proposal target {target} does not match {}", expected.target));
     }
     let operation =
         body.get("operation").and_then(Value::as_u64).ok_or("proposal operation is missing")?;
@@ -518,10 +560,8 @@ fn handle_proposal(state: &mut StrictServiceState, path: &str, body: Value) -> R
     let base_gas = decimal_field(&body, "baseGas")?;
     let gas_price = decimal_field(&body, "gasPrice")?;
     let nonce = decimal_field(&body, "nonce")?.parse::<u64>().map_err(|_| "invalid nonce")?;
-    if let Some(expected_nonce) = state.expected_nonce
-        && nonce != expected_nonce
-    {
-        return Err(format!("proposal nonce {nonce} does not match {expected_nonce}"));
+    if nonce != expected.nonce {
+        return Err(format!("proposal nonce {nonce} does not match {}", expected.nonce));
     }
     let data =
         body.get("data").and_then(Value::as_str).ok_or("proposal data is missing")?.to_owned();
@@ -533,14 +573,14 @@ fn handle_proposal(state: &mut StrictServiceState, path: &str, body: Value) -> R
         .ok_or("proposal transaction hash is missing")?
         .parse::<B256>()
         .map_err(|error| format!("invalid proposal transaction hash: {error}"))?;
-    if let Some(expected_hash) = state.expected_hash
-        && hash != expected_hash
-    {
-        return Err(format!("proposal hash {hash} does not match {expected_hash}"));
+    if hash != expected.hash {
+        return Err(format!("proposal hash {hash} does not match {}", expected.hash));
     }
     let sender = parse_checksum_field(&body, "sender")?;
-    if !state.owners.contains(&sender) {
-        return Err(format!("proposal sender {sender} is not a Safe owner"));
+    let is_owner = state.owners.contains(&sender);
+    let is_delegate = state.delegates.iter().any(|(delegate, _, _)| *delegate == sender);
+    if !is_owner && !is_delegate {
+        return Err(format!("proposal sender {sender} is not an owner or registered delegate"));
     }
     let signature = body
         .get("signature")
@@ -548,6 +588,11 @@ fn handle_proposal(state: &mut StrictServiceState, path: &str, body: Value) -> R
         .ok_or("proposal signature is missing")?
         .to_owned();
     ensure_safe_signature(&signature, hash, sender)?;
+    let confirmations = if is_owner {
+        vec![StrictConfirmation { owner: sender, signature: signature.clone() }]
+    } else {
+        Vec::new()
+    };
     state.transaction = Some(StrictTransaction {
         safe,
         to: target,
@@ -561,10 +606,11 @@ fn handle_proposal(state: &mut StrictServiceState, path: &str, body: Value) -> R
         refund_receiver,
         nonce,
         hash,
-        confirmations: vec![StrictConfirmation { owner: sender, signature }],
-        executed: false,
+        proposal_sender: sender,
+        proposal_signature: signature,
+        confirmations,
     });
-    Ok(())
+    Ok((sender, hash))
 }
 
 fn handle_transaction_get<'a>(
@@ -584,7 +630,7 @@ fn handle_confirmation(
     state: &mut StrictServiceState,
     path: &str,
     body: Value,
-) -> Result<(), String> {
+) -> Result<Address, String> {
     let hash =
         path.parse::<B256>().map_err(|error| format!("invalid transaction hash path: {error}"))?;
     let transaction_hash = state.transaction.as_ref().ok_or("transaction was not proposed")?.hash;
@@ -605,7 +651,7 @@ fn handle_confirmation(
         return Err(format!("duplicate confirmation from {owner}"));
     }
     transaction.confirmations.push(StrictConfirmation { owner, signature });
-    Ok(())
+    Ok(owner)
 }
 
 fn transaction_json(transaction: &StrictTransaction) -> Value {
@@ -626,7 +672,7 @@ fn transaction_json(transaction: &StrictTransaction) -> Value {
             "owner": checksum(confirmation.owner),
             "signature": confirmation.signature,
         })).collect::<Vec<_>>(),
-        "isExecuted": transaction.executed,
+        "isExecuted": false,
         "transactionHash": Value::Null,
     })
 }
@@ -898,8 +944,11 @@ casttest!(safe_v1_4_1_lifecycle_uses_stateful_service, async |_prj, cmd| {
     .unwrap();
 
     let target = address!("5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
-    // Store and return msg.sender. This makes CALL simulation and execution observable.
-    api.anvil_set_code(target, "0x338060005560005260206000f3".parse().unwrap()).await.unwrap();
+    // Increment slot zero and return msg.sender. The counter distinguishes one execution from
+    // repeated calls while the return value keeps the simulation assertion observable.
+    api.anvil_set_code(target, "0x6000546001016000553360005260206000f3".parse().unwrap())
+        .await
+        .unwrap();
 
     let owners = vec![ANVIL_OWNER, ANVIL_OWNER_2];
     let service = spawn_strict_safe_service(owners.clone(), 31337).await;
@@ -935,13 +984,36 @@ casttest!(safe_v1_4_1_lifecycle_uses_stateful_service, async |_prj, cmd| {
         .find_map(|line| line.trim().parse().ok())
         .expect("cast safe create did not print a Safe address");
     let safe_contract = TestSafe::new(safe, &provider);
+    assert!(!provider.get_code_at(safe).await.unwrap().is_empty());
     assert_eq!(safe_contract.getOwners().call().await.unwrap(), owners);
     assert_eq!(safe_contract.getThreshold().call().await.unwrap(), U256::from(2));
-    service.set_safe(safe);
-    service.expect_transaction_shape(target, 0);
+    assert_eq!(safe_contract.nonce().call().await.unwrap(), U256::ZERO);
+
+    let calculated_hash = safe_contract
+        .getTransactionHash(
+            target,
+            U256::ZERO,
+            Bytes::new(),
+            0,
+            U256::ZERO,
+            U256::ZERO,
+            U256::ZERO,
+            Address::ZERO,
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .call()
+        .await
+        .unwrap();
+    service.configure_transaction(ExpectedTransaction {
+        safe,
+        target,
+        nonce: 0,
+        hash: calculated_hash,
+    });
 
     let safe_arg = safe.to_string();
-    let delegate = address!("1111111111111111111111111111111111111111");
+    let delegate = ANVIL_OWNER_3;
     let delegate_arg = delegate.to_string();
     let service_args = [
         "--service-url",
@@ -965,7 +1037,7 @@ casttest!(safe_v1_4_1_lifecycle_uses_stateful_service, async |_prj, cmd| {
             ANVIL_KEY,
         ])
         .args(service_args)
-        .assert_json_stdout(json_envelope(json!(delegate)));
+        .assert_json_stdout(json_envelope(json!(checksum(delegate))));
     cmd.cast_fuse()
         .args(["--json", "safe", "list-delegates", &safe_arg])
         .args(service_args)
@@ -978,7 +1050,7 @@ casttest!(safe_v1_4_1_lifecycle_uses_stateful_service, async |_prj, cmd| {
 
     let proposal_output = cmd
         .cast_fuse()
-        .args(["safe", "propose", &safe_arg, &target_arg, "--private-key", ANVIL_KEY])
+        .args(["safe", "propose", &safe_arg, &target_arg, "--private-key", ANVIL_KEY_3])
         .args(service_args)
         .assert_success()
         .get_output()
@@ -988,26 +1060,15 @@ casttest!(safe_v1_4_1_lifecycle_uses_stateful_service, async |_prj, cmd| {
         .rev()
         .find_map(|line| line.trim().parse().ok())
         .expect("cast safe propose did not print a transaction hash");
-    let calculated_hash = safe_contract
-        .getTransactionHash(
-            target,
-            U256::ZERO,
-            Bytes::new(),
-            0,
-            U256::ZERO,
-            U256::ZERO,
-            U256::ZERO,
-            Address::ZERO,
-            Address::ZERO,
-            U256::ZERO,
-        )
-        .call()
-        .await
-        .unwrap();
     assert_eq!(safe_tx_hash, calculated_hash);
     assert_eq!(safe_tx_hash, service.transaction_hash());
+    service.assert_delegate_proposal(delegate, safe_tx_hash);
 
     let safe_tx_hash_arg = safe_tx_hash.to_string();
+    cmd.cast_fuse()
+        .args(["safe", "sign", &safe_arg, &safe_tx_hash_arg, "--private-key", ANVIL_KEY])
+        .args(service_args)
+        .assert_success();
     cmd.cast_fuse()
         .args(["safe", "sign", &safe_arg, &safe_tx_hash_arg, "--private-key", ANVIL_KEY_2])
         .args(service_args)
@@ -1049,13 +1110,26 @@ casttest!(safe_v1_4_1_lifecycle_uses_stateful_service, async |_prj, cmd| {
         .assert_success()
         .get_output()
         .stdout_lossy();
-    assert!(execution_output.trim().parse::<B256>().is_ok());
-    assert_eq!(
-        provider.get_storage_at(target, U256::ZERO).await.unwrap(),
-        U256::from_be_slice(safe.as_slice())
-    );
+    let execution_hash: B256 =
+        execution_output.trim().parse().expect("missing outer transaction hash");
+    let receipt = provider
+        .get_transaction_receipt(execution_hash)
+        .await
+        .unwrap()
+        .expect("Safe execution receipt was not mined");
+    assert!(receipt.status());
+    assert_eq!(receipt.transaction_hash, execution_hash);
+    let matching_events = receipt
+        .logs()
+        .iter()
+        .filter(|log| log.address() == safe)
+        .filter_map(|log| TestSafe::ExecutionSuccess::decode_log(&log.inner).ok())
+        .filter(|event| event.txHash == safe_tx_hash)
+        .collect::<Vec<_>>();
+    assert_eq!(matching_events.len(), 1, "expected one matching ExecutionSuccess event");
+    assert_eq!(matching_events[0].payment, U256::ZERO);
+    assert_eq!(provider.get_storage_at(target, U256::ZERO).await.unwrap(), U256::ONE);
     assert_eq!(safe_contract.nonce().call().await.unwrap(), U256::ONE);
-    service.mark_executed();
 
     cmd.cast_fuse()
         .args([
@@ -1068,12 +1142,28 @@ casttest!(safe_v1_4_1_lifecycle_uses_stateful_service, async |_prj, cmd| {
             ANVIL_KEY,
         ])
         .args(service_args)
-        .assert_json_stdout(json_envelope(json!(delegate)));
+        .assert_json_stdout(json_envelope(json!(checksum(delegate))));
     cmd.cast_fuse()
         .args(["--json", "safe", "list-delegates", &safe_arg])
         .args(service_args)
         .assert_json_stdout(json_envelope(json!([])));
-    service.assert_lifecycle_complete();
+    service.assert_lifecycle_complete(
+        &[
+            RequestEvent::AddDelegate { safe, delegate, delegator: ANVIL_OWNER },
+            RequestEvent::ListDelegates { safe },
+            RequestEvent::NonceLookup { safe },
+            RequestEvent::Propose { safe, sender: delegate, hash: safe_tx_hash },
+            RequestEvent::GetTransaction { version: 1, hash: safe_tx_hash },
+            RequestEvent::Confirm { hash: safe_tx_hash, owner: ANVIL_OWNER },
+            RequestEvent::GetTransaction { version: 1, hash: safe_tx_hash },
+            RequestEvent::Confirm { hash: safe_tx_hash, owner: ANVIL_OWNER_2 },
+            RequestEvent::GetTransaction { version: 2, hash: safe_tx_hash },
+            RequestEvent::GetTransaction { version: 2, hash: safe_tx_hash },
+            RequestEvent::RemoveDelegate { safe, delegate, delegator: ANVIL_OWNER },
+            RequestEvent::ListDelegates { safe },
+        ],
+        delegate,
+    );
 });
 
 casttest!(safe_execute_rejects_approved_hash_confirmation, async |_prj, cmd| {
@@ -1097,7 +1187,7 @@ casttest!(safe_execute_rejects_approved_hash_confirmation, async |_prj, cmd| {
             &safe.to_string(),
             &B256::ZERO.to_string(),
             "--service-url",
-            &service,
+            service.endpoint(),
             "--rpc-url",
             &rpc,
             "--private-key",
@@ -1137,7 +1227,7 @@ casttest!(safe_execute_rejects_future_nonce, async |_prj, cmd| {
             &safe.to_string(),
             &B256::ZERO.to_string(),
             "--service-url",
-            &service,
+            service.endpoint(),
             "--rpc-url",
             &rpc,
             "--private-key",
@@ -1170,7 +1260,7 @@ casttest!(safe_execute_rejects_stale_nonce, async |_prj, cmd| {
             &safe.to_string(),
             &B256::ZERO.to_string(),
             "--service-url",
-            &service,
+            service.endpoint(),
             "--rpc-url",
             &rpc,
             "--private-key",
@@ -1244,7 +1334,7 @@ casttest!(safe_execute_packs_mixed_p256_confirmations, async |_prj, cmd| {
             &safe.to_string(),
             &B256::ZERO.to_string(),
             "--service-url",
-            &service,
+            service.endpoint(),
             "--rpc-url",
             &rpc,
             "--private-key",
@@ -1295,8 +1385,14 @@ casttest!(safe_service_mutations_emit_json_envelopes, async |_prj, cmd| {
     let delegate = delegate.to_string();
     let target = target.to_string();
     let safe_tx_hash = B256::ZERO.to_string();
-    let signer_args =
-        ["--service-url", service.as_str(), "--rpc-url", rpc.as_str(), "--private-key", ANVIL_KEY];
+    let signer_args = [
+        "--service-url",
+        service.endpoint(),
+        "--rpc-url",
+        rpc.as_str(),
+        "--private-key",
+        ANVIL_KEY,
+    ];
 
     cmd.cast_fuse()
         .args(["--json", "safe", "add-delegate", &safe, &delegate, "--label", "test"])
@@ -1338,8 +1434,8 @@ casttest!(safe_list_delegates_follows_pagination, async |_prj, cmd| {
         "label": "second",
     });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let service = format!("http://{}", listener.local_addr().unwrap());
-    let next = format!("{service}/api/v2/delegates/?page=2");
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let next = format!("{endpoint}/api/v2/delegates/?page=2");
     let first_response = first.clone();
     let second_response = second.clone();
     let router = Router::new().fallback(move |RawQuery(query): RawQuery| {
@@ -1356,10 +1452,20 @@ casttest!(safe_list_delegates_follows_pagination, async |_prj, cmd| {
             })
         }
     });
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    let server = TestServerHandle { endpoint, task };
 
     cmd.cast_fuse()
-        .args(["--json", "safe", "list-delegates", &safe.to_string(), "--service-url", &service])
+        .args([
+            "--json",
+            "safe",
+            "list-delegates",
+            &safe.to_string(),
+            "--service-url",
+            server.endpoint(),
+        ])
         .assert_json_stdout(json_envelope(json!([first, second])));
 });
 
@@ -1378,7 +1484,7 @@ casttest!(safe_list_delegates_rejects_external_next_page, async |_prj, cmd| {
             "list-delegates",
             "0x1111111111111111111111111111111111111111",
             "--service-url",
-            &service,
+            service.endpoint(),
         ])
         .assert_failure()
         .get_output()
@@ -1407,7 +1513,7 @@ casttest!(safe_sign_rejects_service_selected_safe, async |_prj, cmd| {
             &expected_arg,
             &safe_tx_hash,
             "--service-url",
-            &service,
+            service.endpoint(),
             "--rpc-url",
             &rpc,
             "--private-key",
@@ -1471,7 +1577,7 @@ casttest!(safe_simulation_uses_executor_context, async |_prj, cmd| {
                 "--accessor",
                 &accessor_arg,
                 "--service-url",
-                &service,
+                service.endpoint(),
                 "--rpc-url",
                 &rpc,
             ])
@@ -1508,7 +1614,7 @@ casttest!(safe_simulation_rejects_reimbursed_transaction, async |_prj, cmd| {
             "--accessor",
             &accessor.to_string(),
             "--service-url",
-            &service,
+            service.endpoint(),
             "--rpc-url",
             &rpc,
         ])
