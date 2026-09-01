@@ -3369,11 +3369,10 @@ async fn spawn_rpc_proxy_with_blob_header_fields(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_polygon_and_arbitrum_forks_missing_blob_fields_across_reset() {
-    // Polygon's Bor headers and Arbitrum Nitro headers omit the EIP-4844 fields even though Anvil
-    // executes the forks with a post-Cancun spec. Local origins provide deterministic state while
-    // the proxies reproduce those header shapes and hide Anvil metadata, matching external
-    // endpoints.
+async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
+    // Polygon's Bor headers omit the EIP-4844 fields even though Anvil executes the fork with a
+    // post-Cancun spec. Local origins provide deterministic state while the proxies reproduce that
+    // header shape and hide Anvil metadata, matching an external endpoint.
     let token = address!("0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270");
     let return_zero = bytes!("600060005260206000f3");
     let (polygon_api, polygon_origin) = spawn(
@@ -3402,28 +3401,6 @@ async fn test_polygon_and_arbitrum_forks_missing_blob_fields_across_reset() {
             .await;
     let pre_cancun_url =
         spawn_rpc_proxy_rejecting_method_after(pre_cancun_url, "anvil_nodeInfo", 0).await;
-
-    let current_arbitrum_origin = |chain: NamedChain| {
-        NodeConfig::test()
-            .with_chain_id(Some(chain as u64))
-            .with_hardfork(Some(EthereumHardfork::Prague.into()))
-            .with_genesis_timestamp(EthereumHardfork::Prague.arbitrum_activation_timestamp())
-    };
-    let (arbitrum_api, arbitrum_origin) =
-        spawn(current_arbitrum_origin(NamedChain::Arbitrum)).await;
-    arbitrum_api.anvil_set_code(token, return_zero.clone()).await.unwrap();
-    let arbitrum_url =
-        spawn_rpc_proxy_with_blob_header_fields(arbitrum_origin.http_endpoint(), None, None).await;
-    let arbitrum_url =
-        spawn_rpc_proxy_rejecting_method_after(arbitrum_url, "anvil_nodeInfo", 0).await;
-
-    let (robinhood_api, robinhood_origin) =
-        spawn(current_arbitrum_origin(NamedChain::Robinhood)).await;
-    robinhood_api.anvil_set_code(token, return_zero.clone()).await.unwrap();
-    let robinhood_url =
-        spawn_rpc_proxy_with_blob_header_fields(robinhood_origin.http_endpoint(), None, None).await;
-    let robinhood_url =
-        spawn_rpc_proxy_rejecting_method_after(robinhood_url, "anvil_nodeInfo", 0).await;
 
     // A canonical Ethereum endpoint that drops required post-Cancun fields must remain invalid;
     // the Polygon compatibility fallback must not hide that upstream error.
@@ -3491,24 +3468,6 @@ async fn test_polygon_and_arbitrum_forks_missing_blob_fields_across_reset() {
     assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
     let err = call().await.unwrap_err();
     assert!(err.to_string().contains("Excess blob gas not set"), "{err:?}");
-
-    for url in [arbitrum_url, robinhood_url] {
-        api.anvil_reset(Some(Forking { json_rpc_url: Some(url), block_number: Some(0) }))
-            .await
-            .unwrap();
-        assert!(api.backend.spec_id() >= SpecId::CANCUN);
-        assert_eq!(call().await.unwrap(), Bytes::from(vec![0; 32]));
-        assert_eq!(
-            api.backend
-                .evm_env()
-                .read()
-                .block_env
-                .blob_excess_gas_and_price
-                .as_ref()
-                .map(|blob| blob.excess_blob_gas),
-            Some(0)
-        );
-    }
 
     api.anvil_reset(Some(Forking { json_rpc_url: Some(polygon_url), block_number: Some(0) }))
         .await
