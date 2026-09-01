@@ -607,9 +607,8 @@ impl NetworkConfigs {
         parent_blob_gas_used: u64,
         parent_base_fee: u64,
     ) -> u64 {
-        #[cfg(feature = "optimism")]
         if self.is_optimism() {
-            return Self::op_next_block_blob_excess_gas();
+            return 0;
         }
         blob_params.next_block_excess_blob_gas_osaka(
             parent_excess_blob_gas,
