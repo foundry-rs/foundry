@@ -5152,11 +5152,7 @@ where
         self.time.reset(timestamp);
         self.time.set_next_block_timestamp(next_timestamp)?;
 
-        let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-            header.gas_used,
-            header.gas_limit,
-            header.base_fee_per_gas.unwrap_or_default(),
-        );
+        let next_block_base_fee = self.fees.get_next_block_base_fee_from_header(&header);
         let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
             header.excess_blob_gas.unwrap_or_default(),
             header.blob_gas_used.unwrap_or_default(),
@@ -5307,7 +5303,7 @@ where
             gas_limit: evm_env.block_env.gas_limit,
             gas_used: block_result.gas_used,
             timestamp: evm_env.block_env.timestamp.saturating_to(),
-            extra_data: Default::default(),
+            extra_data: self.fees.base_fee_extra_data(),
             mix_hash: evm_env.block_env.prevrandao.unwrap_or_default(),
             nonce: Default::default(),
             base_fee_per_gas: (spec_id >= SpecId::LONDON).then_some(evm_env.block_env.basefee),
@@ -5553,11 +5549,7 @@ where
 
             (outcome, header, block_hash)
         };
-        let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-            header.gas_used,
-            header.gas_limit,
-            header.base_fee_per_gas.unwrap_or_default(),
-        );
+        let next_block_base_fee = self.fees.get_next_block_base_fee_from_header(&header);
         let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
             header.excess_blob_gas.unwrap_or_default(),
             header.blob_gas_used.unwrap_or_default(),
@@ -7469,11 +7461,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         }
 
         let next_fees = selected_header.as_ref().map(|header| {
-            let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                header.gas_used(),
-                header.gas_limit(),
-                header.base_fee_per_gas().unwrap_or_default(),
-            );
+            let next_block_base_fee = self.fees.get_next_block_base_fee_from_header(header);
             let next_block_excess_blob_gas =
                 self.fees.blob_params().next_block_excess_blob_gas_osaka(
                     header.excess_blob_gas().unwrap_or_default(),
@@ -8300,7 +8288,7 @@ impl Backend<FoundryNetwork> {
                     gas_limit: block_env.gas_limit,
                     gas_used,
                     timestamp: block_env.timestamp.saturating_to(),
-                    extra_data: Default::default(),
+                    extra_data: self.fees.base_fee_extra_data(),
                     mix_hash: block_env.prevrandao.unwrap_or_default(),
                     nonce: Default::default(),
                     base_fee_per_gas: (spec_id >= SpecId::LONDON).then_some(block_env.basefee),
@@ -8358,11 +8346,7 @@ impl Backend<FoundryNetwork> {
                 inherited_block_env.gas_limit = block_env.gas_limit;
                 // Route through the fee manager so Tempo chains use their own base fee rules.
                 let header = &simulated_block.inner.header;
-                next_base_fee = self.fees.calculate_next_block_base_fee_per_gas(
-                    header.gas_used(),
-                    header.gas_limit(),
-                    header.base_fee_per_gas().unwrap_or_default(),
-                );
+                next_base_fee = self.fees.calculate_next_block_base_fee_from_header(&header.inner);
                 parent_base_fee_per_gas = header.base_fee_per_gas().unwrap_or_default();
                 parent_excess_blob_gas = header.excess_blob_gas().unwrap_or_default();
                 parent_blob_gas_used = header.blob_gas_used().unwrap_or_default();
@@ -8379,11 +8363,7 @@ impl Backend<FoundryNetwork> {
             Some(BlockRequest::Pending(pool_transactions)) => {
                 self.with_pending_block(pool_transactions, |state, block| {
                     let header = &block.block.header;
-                    let base_fee = self.fees.calculate_next_block_base_fee_per_gas(
-                        header.gas_used(),
-                        header.gas_limit(),
-                        header.base_fee_per_gas().unwrap_or_default(),
-                    );
+                    let base_fee = self.fees.calculate_next_block_base_fee_from_header(header);
                     let monad_context = self.active_monad_context_before_mined_transaction(
                         &block.block,
                         block.block.body.transactions.len(),
@@ -8422,11 +8402,8 @@ impl Backend<FoundryNetwork> {
                 let base_number = base_block.header.number();
                 let base_timestamp = base_block.header.timestamp();
                 let base_hash = base_block.header.hash;
-                let base_fee = self.fees.calculate_next_block_base_fee_per_gas(
-                    base_block.header.gas_used(),
-                    base_block.header.gas_limit(),
-                    base_block.header.base_fee_per_gas().unwrap_or_default(),
-                );
+                let base_fee =
+                    self.fees.calculate_next_block_base_fee_from_header(&base_block.header.inner);
 
                 #[cfg(feature = "monad")]
                 let monad_context = if self.is_monad() {

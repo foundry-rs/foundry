@@ -9,7 +9,7 @@ use std::{
 use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_network::Network;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, Bytes};
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
@@ -19,6 +19,11 @@ use crate::eth::{
     backend::{info::StorageInfo, notifications::ChainNotifications},
     error::BlockchainError,
 };
+
+#[cfg(feature = "optimism")]
+mod optimism;
+#[cfg(feature = "optimism")]
+use optimism::OptimismBaseFeeRules;
 
 /// Maximum number of entries in the fee history cache
 pub const MAX_FEE_HISTORY_CACHE_SIZE: u64 = 2048u64;
@@ -47,9 +52,47 @@ pub struct FeeManager {
 #[derive(Clone, Copy, Debug)]
 struct FeeRules {
     spec_id: SpecId,
-    base_fee_params: BaseFeeParams,
+    base_fee: BaseFeeRules,
     /// The active Tempo hardfork, set only when running a Tempo chain.
     tempo_hardfork: Option<TempoHardfork>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum BaseFeeRules {
+    Standard(BaseFeeParams),
+    #[cfg(feature = "optimism")]
+    Optimism(OptimismBaseFeeRules),
+}
+
+impl BaseFeeRules {
+    const fn params(self) -> BaseFeeParams {
+        match self {
+            Self::Standard(params) => params,
+            #[cfg(feature = "optimism")]
+            Self::Optimism(rules) => rules.params(),
+        }
+    }
+
+    fn extra_data(self) -> Bytes {
+        match self {
+            Self::Standard(_) => Bytes::new(),
+            #[cfg(feature = "optimism")]
+            Self::Optimism(rules) => rules.extra_data(),
+        }
+    }
+
+    fn next_block_base_fee<H: BlockHeader>(self, header: &H) -> u64 {
+        match self {
+            Self::Standard(params) => calc_next_block_base_fee(
+                header.gas_used(),
+                header.gas_limit(),
+                header.base_fee_per_gas().unwrap_or_default(),
+                params,
+            ),
+            #[cfg(feature = "optimism")]
+            Self::Optimism(rules) => rules.next_block_base_fee(header),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -85,7 +128,11 @@ impl FeeManager {
     ) -> Self {
         Self {
             state: Arc::new(RwLock::new(FeeState {
-                rules: FeeRules { spec_id, base_fee_params, tempo_hardfork },
+                rules: FeeRules {
+                    spec_id,
+                    base_fee: BaseFeeRules::Standard(base_fee_params),
+                    tempo_hardfork,
+                },
                 blob_params,
                 base_fee,
                 blob_excess_gas_and_price,
@@ -97,17 +144,10 @@ impl FeeManager {
 
     /// Creates an independent copy suitable for staging a fork reset.
     pub(crate) fn detached(&self) -> Self {
-        let state = *self.state.read();
-        Self::new(
-            state.rules.spec_id,
-            state.base_fee,
-            self.is_min_priority_fee_enforced,
-            state.gas_price,
-            state.blob_excess_gas_and_price,
-            state.blob_params,
-            state.rules.base_fee_params,
-            state.rules.tempo_hardfork,
-        )
+        Self {
+            state: Arc::new(RwLock::new(*self.state.read())),
+            is_min_priority_fee_enforced: self.is_min_priority_fee_enforced,
+        }
     }
 
     /// Replaces all mutable fee state with a staged manager's values.
@@ -143,11 +183,26 @@ impl FeeManager {
         base_fee_params: BaseFeeParams,
         tempo_hardfork: Option<TempoHardfork>,
     ) {
-        self.state.write().rules = FeeRules { spec_id, base_fee_params, tempo_hardfork };
+        self.state.write().rules =
+            FeeRules { spec_id, base_fee: BaseFeeRules::Standard(base_fee_params), tempo_hardfork };
+    }
+
+    /// Applies the dynamic EIP-1559 parameters encoded in an Optimism-family parent header.
+    #[cfg(feature = "optimism")]
+    pub(crate) fn set_optimism_base_fee_rules(&self, extra_data: &[u8]) {
+        let Some(rules) = OptimismBaseFeeRules::decode(extra_data) else {
+            return;
+        };
+        self.state.write().rules.base_fee = BaseFeeRules::Optimism(rules);
+    }
+
+    /// Returns the Optimism-family EIP-1559 parameters inherited by locally built blocks.
+    pub(crate) fn base_fee_extra_data(&self) -> Bytes {
+        self.state.read().rules.base_fee.extra_data()
     }
 
     pub fn elasticity(&self) -> f64 {
-        1f64 / self.state.read().rules.base_fee_params.elasticity_multiplier as f64
+        1f64 / self.state.read().rules.base_fee.params().elasticity_multiplier as f64
     }
 
     /// Returns true for post London
@@ -234,6 +289,7 @@ impl FeeManager {
 
     /// Calculates the next block base fee from the parent block without applying the configured
     /// zero-fee sentinel.
+    #[cfg(test)]
     pub(crate) fn calculate_next_block_base_fee_per_gas(
         &self,
         gas_used: u64,
@@ -245,6 +301,28 @@ impl FeeManager {
             return 0;
         }
         calculate_next_block_base_fee_per_gas(rules, gas_used, gas_limit, last_fee_per_gas)
+    }
+
+    /// Calculates the next block base fee from a complete parent header.
+    pub(crate) fn get_next_block_base_fee_from_header<H: BlockHeader>(&self, header: &H) -> u64 {
+        let state = self.state.read();
+        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
+            return 0;
+        }
+        calculate_next_block_base_fee_from_header(state.rules, header)
+    }
+
+    /// Calculates the next block base fee from a complete parent header without applying the
+    /// configured zero-fee sentinel.
+    pub(crate) fn calculate_next_block_base_fee_from_header<H: BlockHeader>(
+        &self,
+        header: &H,
+    ) -> u64 {
+        let rules = self.state.read().rules;
+        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
+            return 0;
+        }
+        calculate_next_block_base_fee_from_header(rules, header)
     }
 
     /// Calculates the next block blob base fee.
@@ -283,7 +361,18 @@ fn calculate_next_block_base_fee_per_gas(
     if let Some(hardfork) = rules.tempo_hardfork {
         return tempo_next_block_base_fee(hardfork, gas_used, last_fee_per_gas);
     }
-    calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, rules.base_fee_params)
+    calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, rules.base_fee.params())
+}
+
+fn calculate_next_block_base_fee_from_header<H: BlockHeader>(rules: FeeRules, header: &H) -> u64 {
+    if let Some(hardfork) = rules.tempo_hardfork {
+        return tempo_next_block_base_fee(
+            hardfork,
+            header.gas_used(),
+            header.base_fee_per_gas().unwrap_or_default(),
+        );
+    }
+    rules.base_fee.next_block_base_fee(header)
 }
 
 /// Computes the next block's base fee for a Tempo chain.
