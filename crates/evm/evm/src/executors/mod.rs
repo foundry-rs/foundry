@@ -12,7 +12,7 @@ use crate::inspectors::{
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_eips::eip4788::{BEACON_ROOTS_ADDRESS, SYSTEM_ADDRESS};
-use alloy_evm::Evm;
+use alloy_evm::{Evm, precompiles::PrecompilesMap};
 use alloy_json_abi::Function;
 use alloy_primitives::{
     Address, Bytes, Log, TxKind, U256, keccak256,
@@ -197,6 +197,11 @@ impl<FEN: FoundryEvmNetwork> ReplayEvm<'_, FEN> {
         let Some(result) = self.try_transact_system(&tx_env)? else { return Ok(false) };
         self.evm.db_mut().commit(result.state);
         Ok(true)
+    }
+
+    /// Returns the precompiles used by this replay EVM.
+    pub fn precompiles_mut(&mut self) -> &mut PrecompilesMap {
+        self.evm.precompiles_mut()
     }
 }
 

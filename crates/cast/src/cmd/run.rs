@@ -57,7 +57,10 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements, Traces},
 };
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{
+    NetworkConfigs,
+    hyperevm::{HyperEvmBlockPrecompileData, is_hyperevm_chain},
+};
 use futures::{StreamExt, TryFutureExt};
 use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
 
@@ -487,6 +490,28 @@ impl RunArgs {
             None,
         )?;
 
+        let hyperevm_precompile_data = if is_hyperevm_chain(chain.id()) {
+            let block_id = block.as_ref().map_or_else(
+                || BlockId::Number(tx_block_number.into()),
+                |block| BlockId::hash(block.header().hash()),
+            );
+            match provider
+                .raw_request::<_, HyperEvmBlockPrecompileData>(
+                    "eth_blockPrecompileData".into(),
+                    (block_id,),
+                )
+                .await
+            {
+                Ok(data) => Some(data),
+                Err(error) => {
+                    trace!(?error, "HyperEVM block precompile data is unavailable");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         evm_env.cfg_env.set_spec_and_mainnet_gas_params(executor.spec_id());
 
         let spec_id = (*evm_env.cfg_env.spec()).into();
@@ -586,6 +611,9 @@ impl RunArgs {
                 target_chain_context,
                 replay_target,
                 |replay_evm| {
+                    if let Some(data) = &hyperevm_precompile_data {
+                        data.inject(replay_evm.precompiles_mut(), tx_block_number);
+                    }
                     if !replay_block_prefix {
                         return Ok(());
                     }

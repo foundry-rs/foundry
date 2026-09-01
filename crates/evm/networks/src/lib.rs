@@ -52,6 +52,7 @@ const MONAD_CHEATCODE_ADDRESSES: &[Address] = &[MONAD_CHEATCODE_ADDRESS];
 
 pub mod arbitrum;
 pub mod celo;
+pub mod hyperevm;
 
 #[cfg(feature = "optimism")]
 mod optimism;
