@@ -533,12 +533,13 @@ forgetest_init!(can_validate_verifier_settings, |prj, cmd| {
     prj.initialize_default_contracts();
     // Build the project to create the cache.
     cmd.forge_fuse().arg("build").assert_success();
+    // Use the explicit chain ID so validation does not depend on the public Lisk RPC endpoint.
     // No verifier URL.
     cmd.forge_fuse()
         .args([
             "verify-contract",
-            "--rpc-url",
-            "https://rpc.sepolia-api.lisk.com",
+            "--chain-id",
+            "4202",
             "--verifier",
             "blockscout",
             "0x19b248616E4964f43F611b5871CE1250f360E9d3",
@@ -555,8 +556,8 @@ Error: No verifier URL specified for verifier blockscout
     cmd.forge_fuse()
         .args([
             "verify-contract",
-            "--rpc-url",
-            "https://rpc.sepolia-api.lisk.com",
+            "--chain-id",
+            "4202",
             "--verifier",
             "etherscan",
             "0x19b248616E4964f43F611b5871CE1250f360E9d3",
@@ -574,8 +575,8 @@ Error: No known Etherscan API URL for chain `4202`. To fix this, please:
     cmd.forge_fuse()
         .args([
             "verify-contract",
-            "--rpc-url",
-            "https://rpc.sepolia-api.lisk.com",
+            "--chain-id",
+            "4202",
             "--verifier",
             "blockscout",
             "--verifier-url",
@@ -600,8 +601,8 @@ Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" 
     cmd.env("ETHERSCAN_API_KEY", "dummy");
     cmd.args([
         "verify-contract",
-        "--rpc-url",
-        "https://rpc.sepolia-api.lisk.com",
+        "--chain-id",
+        "4202",
         "--verifier",
         "blockscout",
         "--verifier-url",
