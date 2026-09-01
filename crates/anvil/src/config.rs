@@ -1968,6 +1968,10 @@ latest block number: {latest_block}"
             self.networks.base_fee_params(block.header.timestamp()),
             self.networks.is_tempo().then(|| TempoHardfork::from(effective_hardfork)),
         );
+        #[cfg(feature = "optimism")]
+        if self.networks.is_optimism() {
+            fees.set_optimism_base_fee_rules(block.header.extra_data());
+        }
 
         // if not set explicitly we use the base fee of the latest block
         self.base_fee = fork_overrides.base_fee.or_else(|| block.header.base_fee_per_gas());
@@ -1977,8 +1981,7 @@ latest block number: {latest_block}"
             // This is the base fee of the current block, but we need the base fee of the next
             // block.
             fees.set_base_fee(base_fee);
-            let next_block_base_fee =
-                fees.get_next_block_base_fee_per_gas(block.header.gas_used(), gas_limit, base_fee);
+            let next_block_base_fee = fees.get_next_block_base_fee_from_header(&block.header);
             fees.set_base_fee(next_block_base_fee);
         } else {
             fees.set_base_fee(self.get_base_fee());

@@ -239,21 +239,26 @@ pub struct AnvilBlockExecutor<E> {
     gas_used: u64,
     /// Blob gas used by the block.
     blob_gas_used: u64,
+    /// Whether OP Jovian repurposes `blobGasUsed` for the DA footprint.
+    #[cfg(feature = "optimism")]
+    optimism_jovian: bool,
     /// State changes captured for deferred publication.
     state_changes: Option<Vec<EvmState>>,
 }
 
 impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AnvilBlockExecutor")
+        let mut debug = f.debug_struct("AnvilBlockExecutor");
+        debug
             .field("evm", &self.evm)
             .field("parent_hash", &self.parent_hash)
             .field("spec_id", &self.spec_id)
             .field("ethereum_transitions", &self.ethereum_transitions)
             .field("gas_used", &self.gas_used)
-            .field("blob_gas_used", &self.blob_gas_used)
-            .field("receipts", &self.receipts.len())
-            .finish_non_exhaustive()
+            .field("blob_gas_used", &self.blob_gas_used);
+        #[cfg(feature = "optimism")]
+        debug.field("optimism_jovian", &self.optimism_jovian);
+        debug.field("receipts", &self.receipts.len()).finish_non_exhaustive()
     }
 }
 
@@ -274,6 +279,8 @@ impl<E> AnvilBlockExecutor<E> {
             receipts: Vec::new(),
             gas_used: 0,
             blob_gas_used: 0,
+            #[cfg(feature = "optimism")]
+            optimism_jovian: false,
             state_changes: None,
         }
     }
@@ -325,14 +332,18 @@ where
 
         let sender = *tx.signer();
         let transaction_hash = tx.tx().trie_hash();
+        #[cfg(feature = "optimism")]
+        let blob_gas_used = if self.optimism_jovian && tx.tx().tx_type() != FoundryTxType::Deposit {
+            optimism::jovian_da_footprint(self.evm.db_mut(), tx.tx())?
+        } else {
+            tx.tx().blob_gas_used().unwrap_or_default()
+        };
+        #[cfg(not(feature = "optimism"))]
+        let blob_gas_used = tx.tx().blob_gas_used().unwrap_or_default();
         let result = transact(&mut self.evm, tx_env, transaction_hash)?;
 
         Ok(AnvilTxResult {
-            inner: EthTxResult {
-                result,
-                blob_gas_used: tx.tx().blob_gas_used().unwrap_or_default(),
-                tx_type: tx.tx().tx_type(),
-            },
+            inner: EthTxResult { result, blob_gas_used, tx_type: tx.tx().tx_type() },
             sender,
         })
     }
