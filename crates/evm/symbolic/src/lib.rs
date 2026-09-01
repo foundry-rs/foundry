@@ -75,6 +75,7 @@ enum SymbolicVmCheatcode {
     CreateUint,
     CreateUintBits(usize),
     EnableSymbolicStorage,
+    EnableSymbolicStorageOverwrite,
     SnapshotStorage,
     SnapshotState,
 }
@@ -93,6 +94,7 @@ impl SymbolicVmCheatcode {
             SymbolicVm::createUintCall::SELECTOR => Some(Self::CreateUint),
             SymbolicVm::enableSymbolicStorageCall::SELECTOR
             | Vm::setArbitraryStorage_0Call::SELECTOR => Some(Self::EnableSymbolicStorage),
+            Vm::setArbitraryStorage_1Call::SELECTOR => Some(Self::EnableSymbolicStorageOverwrite),
             SymbolicVm::snapshotStorageCall::SELECTOR => Some(Self::SnapshotStorage),
             Vm::snapshotStateCall::SELECTOR => Some(Self::SnapshotState),
             _ => {
@@ -124,6 +126,7 @@ impl SymbolicVmCheatcode {
             | Self::CreateStringSized
             | Self::EnableSymbolicStorage
             | Self::SnapshotStorage => 1,
+            Self::EnableSymbolicStorageOverwrite => 2,
             Self::CreateAddress
             | Self::CreateBool
             | Self::CreateBytes
@@ -309,6 +312,27 @@ pub struct SymbolicStats {
     /// Number of queries sent to the SMT backend after local fast paths.
     #[serde(default)]
     pub smt_queries: usize,
+    /// Number of queries attempted by the native solver after the cheap local fast paths.
+    ///
+    /// Native metrics remain internal until a later versioned result schema exposes them.
+    #[serde(skip)]
+    pub native_queries: usize,
+    /// Number of native queries answered with an evaluator-validated model.
+    #[serde(skip)]
+    pub native_sat_queries: usize,
+    /// Number of native queries answered by an exact contradiction proof.
+    #[serde(skip)]
+    pub native_unsat_queries: usize,
+    /// Number of queries the native solver did not classify. These either reach the configured
+    /// SMT backend or remain explicitly incomplete under an executor deferral policy.
+    #[serde(skip)]
+    pub native_unknown_queries: usize,
+    /// Total wall-clock time spent in the native solver, in nanoseconds.
+    #[serde(skip)]
+    pub native_solver_time_ns: u64,
+    /// Longest single native solver query, in nanoseconds.
+    #[serde(skip)]
+    pub native_max_query_time_ns: u64,
     /// Number of satisfiability checks requested by the executor.
     #[serde(default)]
     pub sat_queries: usize,

@@ -856,6 +856,18 @@ contract SymbolicJsonPass {
     assert_eq!(symbolic["bounds"]["max_paths"], 1024);
     assert_eq!(symbolic["solver"]["name"], "z3");
     assert!(symbolic["solver"]["stats"]["paths"].as_u64().unwrap() >= 1);
+    assert!(symbolic["solver"].get("native_frontend").is_none());
+    for key in [
+        "native_queries",
+        "native_sat_queries",
+        "native_unsat_queries",
+        "native_unknown_queries",
+        "native_solver_time_ns",
+        "native_max_query_time_ns",
+    ] {
+        assert!(symbolic["solver"]["stats"].get(key).is_none());
+        assert!(result["kind"]["Symbolic"].get(key).is_none());
+    }
     assert_eq!(symbolic["assumptions"][0]["kind"], "bounded_exploration");
 });
 
@@ -1374,6 +1386,55 @@ contract SymbolicJsonIncomplete {
     assert_eq!(symbolic["incomplete"]["kind"], "stuck");
     assert!(symbolic["incomplete"]["reason"].as_str().unwrap().contains("path limit"));
     assert_eq!(symbolic["bounds"]["max_paths"], 1);
+    assert_eq!(symbolic["replay"]["status"], "not_required");
+    assert!(symbolic["counterexample"].is_null());
+});
+
+forgetest_init!(symbolic_native_only_reports_incomplete_without_fallback, |prj, cmd| {
+    prj.add_test(
+        "SymbolicNativeOnlyIncomplete.t.sol",
+        r#"
+contract SymbolicNativeOnlyIncomplete {
+    function checkUnsupportedProduct(uint256 x, uint256 y) public pure {
+        require(x > 1);
+        require(y > 1);
+        require(x * y == 15);
+        assert(false);
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--symbolic-solver",
+            "native",
+            "--json",
+            "--match-test",
+            "checkUnsupportedProduct",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+
+    let result = json_test_result(&output, "checkUnsupportedProduct(uint256,uint256)");
+    let symbolic = &result["symbolic"];
+    assert_eq!(symbolic["status"], "incomplete");
+    assert_eq!(symbolic["incomplete"]["kind"], "timeout");
+    assert!(
+        symbolic["incomplete"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("hard arithmetic heuristic witness used")
+    );
+    assert_eq!(symbolic["solver"]["name"], "native");
+    assert!(symbolic["solver"]["command"].is_null());
+    assert!(symbolic["solver"]["stats"]["heuristic_witnesses"].as_u64().unwrap() >= 1);
+    assert_eq!(symbolic["solver"]["stats"]["smt_queries"], 0);
+    assert_eq!(symbolic["solver"]["stats"]["smt_input_bytes"], 0);
     assert_eq!(symbolic["replay"]["status"], "not_required");
     assert!(symbolic["counterexample"].is_null());
 });

@@ -3518,6 +3518,19 @@ impl SymbolicExecutor {
                 state.world.enable_arbitrary_storage(target, false);
                 Ok(SymReturnData::empty(&mut self.cx))
             }
+            SymbolicVmCheatcode::EnableSymbolicStorageOverwrite => {
+                let target =
+                    read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;
+                let overwrite = read_abi_bool_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    1,
+                    "symbolic vm.setArbitraryStorage overwrite",
+                )?;
+                state.world.enable_arbitrary_storage(target, overwrite);
+                Ok(SymReturnData::empty(&mut self.cx))
+            }
             SymbolicVmCheatcode::SnapshotStorage => {
                 let _target =
                     read_abi_address_or_symbolic_slot_arg(&mut self.cx, state, args_offset, 0)?;

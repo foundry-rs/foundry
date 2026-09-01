@@ -19,6 +19,7 @@ foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-cheatcodes-spec.workspace = true
 foundry-evm.workspace = true
+foundry-solver = { git = "https://github.com/figtracer/foundry-native-solver.git", rev = "d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a" }
 
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
@@ -32,10 +33,14 @@ hashbrown.workspace = true
 inturn.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.11"
 shlex.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 wait-timeout.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [features]
 default = ["optimism"]

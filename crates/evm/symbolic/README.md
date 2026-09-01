@@ -38,9 +38,13 @@ forge test --symbolic --match-test check_average
 
 Requirements:
 
-- The configured solver must be available. The default solver command is `z3`.
-  Install it locally with your package manager, for example `brew install z3`
-  on macOS or `sudo apt-get install z3` on Ubuntu.
+- Foundry first attempts each normalized query with its in-process native solver. If the native
+  solver does not handle a query, Forge delegates it to the configured external SMT fallback.
+  The default fallback command is `z3`; install it locally for workloads that exercise that tail,
+  for example with `brew install z3` on macOS or `sudo apt-get install z3` on Ubuntu. A workload
+  whose queries are all handled natively does not launch or require the fallback solver. Set
+  `symbolic.solver = "native"` to disable the external fallback entirely; an unhandled native query
+  then produces an explicit incomplete result.
 - `check*` and `prove*` tests are only selected when `--symbolic` is enabled
   and the contract is in a source path Forge compiles for the current project.
 - A reported counterexample must replay concretely before Forge prints it as a
@@ -434,6 +438,11 @@ If the harness imports a smaller Hevm interface that does not expose this
 cheatcode, declare a local interface with `setArbitraryStorage(address)` and
 cast it to `address(vm)`.
 
+The two-argument overload is also honored. Use
+`vm.setArbitraryStorage(address(target), true)` when setup wrote nonzero slots
+that symbolic execution should be allowed to replace; the one-argument form
+preserves those concrete nonzero setup values.
+
 Keep this scoped to external dependencies that model the environment, such as
 token balances, token allowances, and oracle prices. Do not blanket-mark the
 invariant harness or protocol state as arbitrary; that can create unreachable
@@ -451,6 +460,7 @@ The primary configuration path is native Foundry config.
 ```toml
 [profile.default.symbolic]
 solver = "z3"
+# Use "native" to run without an external fallback.
 # Optional exact command. When set, this overrides `solver`.
 # solver_command = "z3 -in -smt2"
 # Optional solver names or commands to race in parallel. Ignored when
@@ -496,6 +506,7 @@ Common CLI and environment overrides:
 
 ```sh
 forge test --symbolic
+forge test --symbolic --symbolic-solver native
 forge test --symbolic --symbolic-solver yices
 forge test --symbolic --symbolic-solver cvc5
 forge test --symbolic --symbolic-solver bitwuzla
@@ -514,8 +525,9 @@ FOUNDRY_SYMBOLIC_SOLVER_PORTFOLIO="yices,z3" forge test --symbolic
 FOUNDRY_SYMBOLIC_TIMEOUT=120 forge test --symbolic
 ```
 
-Known solver names are `z3`, `yices`, `cvc5`, `cvc5-int`, `bitwuzla`, and
-`bitwuzla-abs`. Unknown `symbolic.solver` values are treated as z3-compatible
+Known solver names are `native`, `z3`, `yices`, `cvc5`, `cvc5-int`, `bitwuzla`, and
+`bitwuzla-abs`. The `native` mode is in-process and cannot be used as a portfolio entry. Unknown
+`symbolic.solver` values are treated as z3-compatible
 executables and are invoked with `-in -smt2` to preserve the old
 `symbolic.solver = "/path/to/z3"` behavior. Use `symbolic.solver_command` for
 non-z3-compatible command lines or wrapper tools.
@@ -623,6 +635,7 @@ interface Svm {
     function createCalldata(string calldata name) external returns (bytes memory);
     function enableSymbolicStorage(address target) external;
     function setArbitraryStorage(address target) external;
+    function setArbitraryStorage(address target, bool overwrite) external;
     function snapshotStorage(address target) external returns (uint256);
     function snapshotState() external returns (uint256);
 }

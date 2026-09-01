@@ -206,7 +206,7 @@ dependencies = [
  "alloy-sol-types",
  "arbitrary",
  "derive_more",
- "itoa",
+ "itoa 1.0.18",
  "proptest",
  "serde",
  "serde_json",
@@ -498,7 +498,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hashbrown 0.17.1",
  "indexmap 2.14.1",
- "itoa",
+ "itoa 1.0.18",
  "k256",
  "keccak-asm",
  "paste",
@@ -507,7 +507,7 @@ dependencies = [
  "rand 0.9.5",
  "rapidhash",
  "ruint",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "secp256k1 0.31.1",
  "serde",
  "sha3 0.11.0",
@@ -2305,7 +2305,7 @@ dependencies = [
  "http-body 0.4.6",
  "http-body 1.1.0",
  "http-body-util",
- "itoa",
+ "itoa 1.0.18",
  "num-integer",
  "pin-project-lite",
  "pin-utils",
@@ -2357,7 +2357,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "itoa",
+ "itoa 1.0.18",
  "matchit",
  "memchr",
  "mime",
@@ -2628,7 +2628,7 @@ dependencies = [
  "boa_string",
  "indexmap 2.14.1",
  "num-bigint 0.4.8",
- "rustc-hash",
+ "rustc-hash 2.1.3",
 ]
 
 [[package]]
@@ -2669,7 +2669,7 @@ dependencies = [
  "portable-atomic",
  "rand 0.9.5",
  "regress",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "ryu-js",
  "serde",
  "serde_json",
@@ -2707,7 +2707,7 @@ dependencies = [
  "indexmap 2.14.1",
  "once_cell",
  "phf 0.13.1",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "static_assertions",
 ]
 
@@ -2722,7 +2722,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
- "synstructure",
+ "synstructure 0.13.2",
 ]
 
 [[package]]
@@ -2740,7 +2740,7 @@ dependencies = [
  "num-bigint 0.4.8",
  "num-traits",
  "regress",
- "rustc-hash",
+ "rustc-hash 2.1.3",
 ]
 
 [[package]]
@@ -2750,9 +2750,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca2da1d7f4a76fd9040788a122f0d807910800a7b86f5952e9244848c36511de"
 dependencies = [
  "fast-float2",
- "itoa",
+ "itoa 1.0.18",
  "paste",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "ryu-js",
  "static_assertions",
 ]
@@ -3847,7 +3847,7 @@ checksum = "9dfdd1c2274d9aa354115b09dc9a901d6c5576818cdf70d14cae2bdb47df00ab"
 dependencies = [
  "castaway",
  "cfg-if",
- "itoa",
+ "itoa 1.0.18",
  "rustversion",
  "ryu",
  "static_assertions",
@@ -6174,10 +6174,13 @@ dependencies = [
  "foundry-common",
  "foundry-config",
  "foundry-evm",
+ "foundry-solver",
  "hashbrown 0.17.1",
  "inturn",
+ "libc",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "shlex",
  "thiserror 2.0.20",
  "tracing",
@@ -6292,6 +6295,15 @@ dependencies = [
  "tempo-alloy",
  "tempo-primitives",
  "tempo-revm",
+]
+
+[[package]]
+name = "foundry-solver"
+version = "0.1.0"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a#d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a"
+dependencies = [
+ "alloy-primitives",
+ "varisat",
 ]
 
 [[package]]
@@ -6876,7 +6888,7 @@ checksum = "601cbb57e577e2f5ef5be8e7b83f0f63994f25aa94d673e54a92d5c516d101f1"
 dependencies = [
  "bytes",
  "fnv",
- "itoa",
+ "itoa 1.0.18",
 ]
 
 [[package]]
@@ -6886,7 +6898,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "918d3568bebf352712bc2ef3d46a8bcf1a75b373be6539de198e9105cbbf9ce0"
 dependencies = [
  "bytes",
- "itoa",
+ "itoa 1.0.18",
 ]
 
 [[package]]
@@ -6961,7 +6973,7 @@ dependencies = [
  "http-body 1.1.0",
  "httparse",
  "httpdate",
- "itoa",
+ "itoa 1.0.18",
  "pin-project-lite",
  "smallvec",
  "tokio",
@@ -7293,7 +7305,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c460d4fa06223667240720ab69a8045133755ae6dfbe100cf481b95e3a014f1"
 dependencies = [
  "ahash",
- "itoa",
+ "itoa 1.0.18",
  "log",
  "num-format",
  "once_cell",
@@ -7448,6 +7460,12 @@ checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
 dependencies = [
  "either",
 ]
+
+[[package]]
+name = "itoa"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b71991ff56294aa922b450139ee08b3bfc70982c6b2c7562771375cf73542dd4"
 
 [[package]]
 name = "itoa"
@@ -7702,6 +7720,12 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+
+[[package]]
+name = "leb128"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c83bff1d572d6b9aeef67ddfc8448e4a3737909cb28e81f97c791b9018703e52"
 
 [[package]]
 name = "levenshtein"
@@ -8319,7 +8343,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a652d9771a63711fd3c3deb670acfbe5c30a4072e664d7a3bf5a9e1056ac72c3"
 dependencies = [
  "arrayvec",
- "itoa",
+ "itoa 1.0.18",
 ]
 
 [[package]]
@@ -8738,6 +8762,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
+name = "ordered-float"
+version = "2.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68f19d67e5a2795c94e73e0bb1cc1a7edeb2e28efd39e2e1c9b7a40c1108b11c"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "outref"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8873,6 +8906,26 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-link 0.2.1",
+]
+
+[[package]]
+name = "partial_ref"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6223a0b76d36dfb9583a3e0e8b01d7ba1674f663352b522d950e07db40e5075"
+dependencies = [
+ "partial_ref_derive",
+]
+
+[[package]]
+name = "partial_ref_derive"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "300e1d2cb5b898b5a5342e994e0d0c367dbfe69cbf717cd307045ec9fb057581"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -9447,7 +9500,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cca3d75b4566b9a29fe1ed623587fb058e826eb329a0be4b7c4da1ebb2d7a6ca"
 dependencies = [
  "dtoa",
- "itoa",
+ "itoa 1.0.18",
  "parking_lot",
  "prometheus-client-derive-encode",
 ]
@@ -9663,7 +9716,7 @@ dependencies = [
  "pin-project-lite",
  "quinn-proto",
  "quinn-udp",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "rustls",
  "socket2",
  "thiserror 2.0.20",
@@ -9685,7 +9738,7 @@ dependencies = [
  "rand 0.10.2",
  "rand_pcg",
  "ring",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "rustls",
  "rustls-pki-types",
  "slab",
@@ -10311,7 +10364,7 @@ dependencies = [
  "alloy-primitives",
  "auto_impl",
  "once_cell",
- "rustc-hash",
+ "rustc-hash 2.1.3",
 ]
 
 [[package]]
@@ -11031,6 +11084,12 @@ checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
 
 [[package]]
 name = "rustc-hash"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
+
+[[package]]
+name = "rustc-hash"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
@@ -11516,7 +11575,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
 dependencies = [
  "indexmap 2.14.1",
- "itoa",
+ "itoa 1.0.18",
  "memchr",
  "serde",
  "serde_core",
@@ -11540,7 +11599,7 @@ version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10a9ff822e371bb5403e391ecd83e182e0e77ba7f6fe0160b795797109d1b457"
 dependencies = [
- "itoa",
+ "itoa 1.0.18",
  "serde",
  "serde_core",
 ]
@@ -11572,7 +11631,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3491c14715ca2294c4d6a88f15e84739788c1d030eed8c110436aafdaa2f3fd"
 dependencies = [
  "form_urlencoded",
- "itoa",
+ "itoa 1.0.18",
  "ryu",
  "serde",
 ]
@@ -12022,7 +12081,7 @@ dependencies = [
  "oxc_index",
  "parking_lot",
  "rayon",
- "rustc-hash",
+ "rustc-hash 2.1.3",
  "smallvec",
 ]
 
@@ -12038,7 +12097,7 @@ dependencies = [
  "dunce",
  "inturn",
  "itertools 0.14.0",
- "itoa",
+ "itoa 1.0.18",
  "normalize-path",
  "once_map",
  "rayon",
@@ -12382,7 +12441,7 @@ version = "2.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6b5888e40f80568733217f27b7317b845f463400ced36c424b1a804730e53b2"
 dependencies = [
- "itoa",
+ "itoa 1.0.18",
  "ryu",
  "sval",
 ]
@@ -12393,7 +12452,7 @@ version = "2.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e17664d6bb6b74947afaab9d7c991caa9bf5638d4dee16fcbef637f440796049"
 dependencies = [
- "itoa",
+ "itoa 1.0.18",
  "ryu",
  "sval",
 ]
@@ -12512,6 +12571,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bf256ce5efdfa370213c1dabab5935a12e49f2c58d15e9eac2870d3b4f27263"
 dependencies = [
  "futures-core",
+]
+
+[[package]]
+name = "synstructure"
+version = "0.12.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f36bdaa60a83aca3921b5259d5400cbf5e90fc51931376a9bd4a0eb79aa7210f"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+ "unicode-xid",
 ]
 
 [[package]]
@@ -12934,7 +13005,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "743bd48c283afc0388f9b8827b976905fb217ad9e647fae3a379a9283c4def2c"
 dependencies = [
  "deranged",
- "itoa",
+ "itoa 1.0.18",
  "libc",
  "num-conv",
  "num_threads",
@@ -13761,10 +13832,91 @@ dependencies = [
 ]
 
 [[package]]
+name = "varisat"
+version = "0.2.2"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a#d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a"
+dependencies = [
+ "anyhow",
+ "itoa 0.4.8",
+ "leb128",
+ "log",
+ "ordered-float",
+ "partial_ref",
+ "rustc-hash 1.1.0",
+ "serde",
+ "thiserror 1.0.69",
+ "varisat-checker",
+ "varisat-dimacs",
+ "varisat-formula",
+ "varisat-internal-macros",
+ "varisat-internal-proof",
+ "vec_mut_scan",
+]
+
+[[package]]
+name = "varisat-checker"
+version = "0.2.2"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a#d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a"
+dependencies = [
+ "anyhow",
+ "log",
+ "partial_ref",
+ "rustc-hash 1.1.0",
+ "smallvec",
+ "thiserror 1.0.69",
+ "varisat-dimacs",
+ "varisat-formula",
+ "varisat-internal-proof",
+]
+
+[[package]]
+name = "varisat-dimacs"
+version = "0.2.2"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a#d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a"
+dependencies = [
+ "anyhow",
+ "itoa 0.4.8",
+ "thiserror 1.0.69",
+ "varisat-formula",
+]
+
+[[package]]
+name = "varisat-formula"
+version = "0.2.2"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a#d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a"
+
+[[package]]
+name = "varisat-internal-macros"
+version = "0.2.2"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a#d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 1.0.109",
+ "synstructure 0.12.6",
+]
+
+[[package]]
+name = "varisat-internal-proof"
+version = "0.2.2"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a#d8af32f2a66f3cdafa5eac5ea0ceb93db82c5c0a"
+dependencies = [
+ "anyhow",
+ "varisat-formula",
+]
+
+[[package]]
 name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "vec_mut_scan"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68ed610a8d5e63d9c0e31300e8fdb55104c5f21e422743a9dc74848fa8317fd2"
 
 [[package]]
 name = "vergen"
@@ -14653,7 +14805,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
- "synstructure",
+ "synstructure 0.13.2",
 ]
 
 [[package]]
@@ -14694,7 +14846,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
- "synstructure",
+ "synstructure 0.13.2",
 ]
 
 [[package]]

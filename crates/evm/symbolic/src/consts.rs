@@ -50,6 +50,6 @@ pub(crate) const HARD_ARITH_FALLBACK_MAX_VARS: usize = 4;
 pub(crate) const HARD_ARITH_FALLBACK_MAX_CANDIDATES_PER_VAR: usize = 24;
 pub(crate) const HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS: usize = 50_000;
 
-/// Symbolic solver names with built-in command-line mappings.
+/// Built-in symbolic solver modes.
 pub const BUILTIN_SYMBOLIC_SOLVERS: &[&str] =
-    &["z3", "yices", "cvc5", "cvc5-int", "bitwuzla", "bitwuzla-abs"];
+    &["native", "z3", "yices", "cvc5", "cvc5-int", "bitwuzla", "bitwuzla-abs"];

@@ -848,9 +848,15 @@ impl SymbolicExecutor {
             }
             opcode::RETURNDATACOPY => {
                 let dest = state.stack.peek(0)?.clone();
+                let offset = state.stack.peek(1)?.clone();
                 let size = state.stack.peek(2)?.clone();
                 if let Some(outcome) =
                     self.guard_memory_range(executor, state, worklist, &dest, &size)?
+                {
+                    return Ok(outcome);
+                }
+                if let Some(outcome) =
+                    self.guard_returndata_copy_range(state, worklist, &offset, &size)?
                 {
                     return Ok(outcome);
                 }
@@ -859,14 +865,6 @@ impl SymbolicExecutor {
                 let size = state.stack.pop()?;
                 match state.constrained_usize_checked(&mut self.cx, &size) {
                     Some(Ok(size)) => {
-                        let size_word = SymExpr::constant(&mut self.cx, U256::from(size));
-                        if !self.assume_returndata_copy_in_bounds(
-                            state,
-                            offset.clone(),
-                            size_word,
-                        )? {
-                            return Ok(StepOutcome::Revert);
-                        }
                         state.copy_return_data_to_offset(&mut self.cx, dest, offset, size)?;
                     }
                     Some(Err(_)) => {
@@ -891,13 +889,6 @@ impl SymbolicExecutor {
                                 )
                             })?;
                         if max_size != 0 {
-                            if !self.assume_returndata_copy_in_bounds(
-                                state,
-                                offset.clone(),
-                                size.clone(),
-                            )? {
-                                return Ok(StepOutcome::Revert);
-                            }
                             state.copy_return_data_symbolic_size(
                                 &mut self.cx,
                                 dest,
@@ -1421,31 +1412,23 @@ impl SymbolicExecutor {
         Ok(StepOutcome::Continue)
     }
 
-    pub(super) fn assume_returndata_copy_in_bounds(
+    fn guard_returndata_copy_range(
         &mut self,
         state: &mut PathState,
-        offset: SymExpr,
-        size: SymExpr,
-    ) -> Result<bool, SymbolicError> {
+        worklist: &mut VecDeque<PathState>,
+        offset: &SymExpr,
+        size: &SymExpr,
+    ) -> Result<Option<StepOutcome>, SymbolicError> {
         if offset.contains_gasleft() || size.contains_gasleft() {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
-        let end = SymExpr::binop(&mut self.cx, SymBinOp::Add, offset, size);
-        let in_bounds =
-            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, end, state.return_data.len_expr());
-        match in_bounds.as_const() {
-            Some(value) => Ok(value),
-            None => {
-                let mut constraints = state.constraints.clone();
-                constraints.push(in_bounds);
-                if self.is_sat_with_state(state, &constraints)? {
-                    state.constraints = constraints;
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
-            }
-        }
+        let len = state.return_data.len_expr();
+        let offset_fits =
+            SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, offset.clone(), len.clone());
+        let remaining = SymExpr::binop(&mut self.cx, SymBinOp::Sub, len, offset.clone());
+        let size_fits = SymBoolExpr::cmp(&mut self.cx, SymCmpOp::Ule, size.clone(), remaining);
+        let in_bounds = SymBoolExpr::and(&mut self.cx, vec![offset_fits, size_fits]);
+        self.apply_memory_access_guard(state, worklist, in_bounds)
     }
 
     pub(super) fn return_or_revert(
@@ -1535,5 +1518,41 @@ mod tests {
         assert!(accepted);
         assert!(state.constraints.is_empty());
         assert!(state.satisfies_branch_target());
+    }
+
+    #[test]
+    fn returndata_copy_guard_preserves_reverting_complement() {
+        let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+        let mut state = empty_state(&mut executor);
+        state.return_data = SymReturnData::from_concrete_bytes(&mut executor.cx, vec![0; 32]);
+        state.pc = 1;
+        state.depth = 1;
+
+        let offset_symbol = executor.cx.symbol("returndata_offset");
+        let offset = SymExpr::get_var(&mut executor.cx, offset_symbol);
+        let size = SymExpr::one(&mut executor.cx);
+        let mut worklist = VecDeque::new();
+
+        let outcome = executor
+            .guard_returndata_copy_range(&mut state, &mut worklist, &offset, &size)
+            .unwrap();
+
+        assert!(matches!(outcome, Some(StepOutcome::Revert)));
+        assert_eq!(state.return_data.len(), 0);
+        assert_eq!(worklist.len(), 1);
+
+        let valid = worklist.pop_front().unwrap();
+        assert_eq!(valid.return_data.len(), 32);
+        assert_eq!(valid.pc, 0);
+        assert_eq!(valid.depth, 0);
+
+        let valid_model = [(offset_symbol, U256::from(31))].into_iter().collect::<SymbolicModel>();
+        assert!(eval_model_constraints(&valid.constraints, &valid_model));
+        assert!(!eval_model_constraints(&state.constraints, &valid_model));
+
+        let reverting_model =
+            [(offset_symbol, U256::from(32))].into_iter().collect::<SymbolicModel>();
+        assert!(eval_model_constraints(&state.constraints, &reverting_model));
+        assert!(!eval_model_constraints(&valid.constraints, &reverting_model));
     }
 }
