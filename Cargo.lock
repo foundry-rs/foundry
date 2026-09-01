@@ -6300,7 +6300,7 @@ dependencies = [
 [[package]]
 name = "foundry-solver"
 version = "0.1.0"
-source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=5fc9474e0d85eb5d07a48582753afc57372f8e39#5fc9474e0d85eb5d07a48582753afc57372f8e39"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8b6993c6f8d5995467b117321f6ede882c75659#d8b6993c6f8d5995467b117321f6ede882c75659"
 dependencies = [
  "alloy-primitives",
  "varisat",
@@ -13834,7 +13834,7 @@ dependencies = [
 [[package]]
 name = "varisat"
 version = "0.2.2"
-source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=5fc9474e0d85eb5d07a48582753afc57372f8e39#5fc9474e0d85eb5d07a48582753afc57372f8e39"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8b6993c6f8d5995467b117321f6ede882c75659#d8b6993c6f8d5995467b117321f6ede882c75659"
 dependencies = [
  "anyhow",
  "itoa 0.4.8",
@@ -13856,7 +13856,7 @@ dependencies = [
 [[package]]
 name = "varisat-checker"
 version = "0.2.2"
-source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=5fc9474e0d85eb5d07a48582753afc57372f8e39#5fc9474e0d85eb5d07a48582753afc57372f8e39"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8b6993c6f8d5995467b117321f6ede882c75659#d8b6993c6f8d5995467b117321f6ede882c75659"
 dependencies = [
  "anyhow",
  "log",
@@ -13872,7 +13872,7 @@ dependencies = [
 [[package]]
 name = "varisat-dimacs"
 version = "0.2.2"
-source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=5fc9474e0d85eb5d07a48582753afc57372f8e39#5fc9474e0d85eb5d07a48582753afc57372f8e39"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8b6993c6f8d5995467b117321f6ede882c75659#d8b6993c6f8d5995467b117321f6ede882c75659"
 dependencies = [
  "anyhow",
  "itoa 0.4.8",
@@ -13883,12 +13883,12 @@ dependencies = [
 [[package]]
 name = "varisat-formula"
 version = "0.2.2"
-source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=5fc9474e0d85eb5d07a48582753afc57372f8e39#5fc9474e0d85eb5d07a48582753afc57372f8e39"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8b6993c6f8d5995467b117321f6ede882c75659#d8b6993c6f8d5995467b117321f6ede882c75659"
 
 [[package]]
 name = "varisat-internal-macros"
 version = "0.2.2"
-source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=5fc9474e0d85eb5d07a48582753afc57372f8e39#5fc9474e0d85eb5d07a48582753afc57372f8e39"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8b6993c6f8d5995467b117321f6ede882c75659#d8b6993c6f8d5995467b117321f6ede882c75659"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13900,7 +13900,7 @@ dependencies = [
 [[package]]
 name = "varisat-internal-proof"
 version = "0.2.2"
-source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=5fc9474e0d85eb5d07a48582753afc57372f8e39#5fc9474e0d85eb5d07a48582753afc57372f8e39"
+source = "git+https://github.com/figtracer/foundry-native-solver.git?rev=d8b6993c6f8d5995467b117321f6ede882c75659#d8b6993c6f8d5995467b117321f6ede882c75659"
 dependencies = [
  "anyhow",
  "varisat-formula",

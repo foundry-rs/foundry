@@ -19,7 +19,7 @@ foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-cheatcodes-spec.workspace = true
 foundry-evm.workspace = true
-foundry-solver = { git = "https://github.com/figtracer/foundry-native-solver.git", rev = "5fc9474e0d85eb5d07a48582753afc57372f8e39" }
+foundry-solver = { git = "https://github.com/figtracer/foundry-native-solver.git", rev = "d8b6993c6f8d5995467b117321f6ede882c75659" }
 
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
