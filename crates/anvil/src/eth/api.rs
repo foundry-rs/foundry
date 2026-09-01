@@ -1238,6 +1238,13 @@ impl<N: Network> EthApi<N> {
         N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
     {
         node_info!("eth_feeHistory");
+
+        if reward_percentiles.iter().any(|p| !(0.0..=100.0).contains(p))
+            || reward_percentiles.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return Err(FeeHistoryError::InvalidRewardPercentiles.into());
+        }
+
         // max number of blocks in the requested range
 
         let number = self.backend.convert_block_number(Some(newest_block));
@@ -1379,7 +1386,6 @@ impl<N: Network> EthApi<N> {
                     let mut block_rewards = Vec::new();
                     let resolution_per_percentile: f64 = 2.0;
                     for p in &reward_percentiles {
-                        let p = p.clamp(0.0, 100.0);
                         let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
                         let reward = item.rewards.get(index as usize).map_or(0, |r| *r);
                         block_rewards.push(reward);
@@ -5344,6 +5350,24 @@ mod tests {
         let rewards = fee_history.reward.unwrap();
         assert_eq!(rewards.len(), count as usize);
         assert!(rewards.iter().all(|reward| reward.len() == 1));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fee_history_rejects_invalid_reward_percentiles() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+
+        for percentiles in [vec![-0.5], vec![100.5], vec![50.0, 25.0], vec![50.0, 50.0]] {
+            let err =
+                api.fee_history(U256::from(1), BlockNumber::Latest, percentiles).await.unwrap_err();
+            assert!(matches!(
+                err,
+                BlockchainError::FeeHistory(FeeHistoryError::InvalidRewardPercentiles)
+            ));
+        }
+
+        for percentiles in [vec![], vec![0.0, 100.0]] {
+            api.fee_history(U256::from(1), BlockNumber::Latest, percentiles).await.unwrap();
+        }
     }
 
     #[test]
