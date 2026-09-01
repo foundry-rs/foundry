@@ -10,6 +10,8 @@ use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_network::Network;
 use alloy_primitives::{B256, Bytes};
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::FoundryHardfork;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLock};
 use revm::{context_interface::block::BlobExcessGasAndPrice, primitives::hardfork::SpecId};
@@ -234,6 +236,17 @@ impl FeeManager {
         };
     }
 
+    /// Initializes Optimism-family fee rules for a node that is not inheriting a fork header.
+    #[cfg(feature = "optimism")]
+    pub(crate) fn set_optimism_hardfork(&self, hardfork: FoundryHardfork) {
+        let mut state = self.state.write();
+        let fallback = state.rules.base_fee.params();
+        state.rules.base_fee = BaseFeeRules::Optimism {
+            inherited: optimism::OptimismBaseFeeRules::for_hardfork(hardfork, fallback),
+            fallback,
+        };
+    }
+
     /// Returns the Optimism-family EIP-1559 parameters inherited by locally built blocks.
     pub(crate) fn base_fee_extra_data(&self) -> Bytes {
         self.state.read().rules.base_fee.extra_data()
@@ -247,9 +260,11 @@ impl FeeManager {
     /// Returns whether `header` activates Jovian's DA-footprint base fee accounting.
     #[cfg(feature = "optimism")]
     pub(crate) fn is_optimism_jovian_header<H: BlockHeader>(&self, header: &H) -> bool {
-        matches!(self.state.read().rules.base_fee, BaseFeeRules::Optimism { .. })
-            && optimism::OptimismBaseFeeRules::decode(header.extra_data())
-                .is_some_and(optimism::OptimismBaseFeeRules::is_jovian)
+        if !matches!(self.state.read().rules.base_fee, BaseFeeRules::Optimism { .. }) {
+            return false;
+        }
+        optimism::OptimismBaseFeeRules::decode(header.extra_data())
+            .is_some_and(optimism::OptimismBaseFeeRules::is_jovian)
     }
 
     pub fn elasticity(&self) -> f64 {

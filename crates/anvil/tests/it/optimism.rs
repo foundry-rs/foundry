@@ -518,7 +518,8 @@ async fn jovian_mining_and_simulation_use_da_footprint() {
         NodeConfig::test()
             .with_no_storage_caching(true)
             .with_eth_rpc_url(Some(fork_url))
-            .with_fork_block_number(Some(0u64)),
+            .with_fork_block_number(Some(0u64))
+            .with_hardfork(Some(OpHardfork::Jovian.into())),
     )
     .await;
     let wallet = handle.dev_wallets().next().unwrap();
@@ -543,17 +544,41 @@ async fn jovian_mining_and_simulation_use_da_footprint() {
     assert_eq!(simulated[0]["blobGasUsed"], json!(format!("0x{EXPECTED_DA_FOOTPRINT:x}")));
     assert_eq!(simulated[0]["excessBlobGas"], "0x0");
 
-    provider
-        .send_transaction(WithOtherFields::new(
-            TransactionRequest::default().with_to(to).with_value(U256::ONE),
-        ))
-        .await
-        .unwrap()
-        .get_receipt()
-        .await
-        .unwrap();
+    let overflow: Result<Value, _> = provider
+        .raw_request(
+            "eth_simulateV1".into(),
+            (json!({
+                "blockStateCalls": [{
+                    "calls": [
+                        { "from": wallet.address(), "to": to, "gas": "0x5208" },
+                        { "from": wallet.address(), "to": to, "gas": "0x5208" },
+                    ]
+                }]
+            }),),
+        )
+        .await;
+    let error = overflow.unwrap_err();
+    assert!(
+        error.as_error_resp().unwrap().message.starts_with("blob gas usage exceeds the limit of ")
+    );
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+    let mut pending = Vec::new();
+    for _ in 0..4 {
+        pending.push(
+            provider
+                .send_transaction(WithOtherFields::new(
+                    TransactionRequest::default().with_to(to).with_value(U256::ONE),
+                ))
+                .await
+                .unwrap(),
+        );
+    }
+    api.mine_one().await.unwrap();
+    pending.remove(0).get_receipt().await.unwrap();
     let transaction_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
-    assert_eq!(transaction_block.header.blob_gas_used, Some(EXPECTED_DA_FOOTPRINT));
+    assert_eq!(transaction_block.transactions.len(), 3);
+    assert_eq!(transaction_block.header.blob_gas_used, Some(3 * EXPECTED_DA_FOOTPRINT));
     assert_eq!(transaction_block.header.excess_blob_gas, Some(0));
 
     api.mine_one().await.unwrap();
@@ -562,6 +587,21 @@ async fn jovian_mining_and_simulation_use_da_footprint() {
         next_block.header.base_fee_per_gas > transaction_block.header.base_fee_per_gas,
         "Jovian should price the next block from its DA footprint"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn local_jovian_blocks_include_dynamic_fee_parameters() {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_hardfork(Some(OpHardfork::Jovian.into())),
+    )
+    .await;
+    api.mine_one().await.unwrap();
+
+    let block = handle.http_provider().get_block(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(block.header.extra_data.len(), 17);
+    assert_eq!(block.header.extra_data[0], 1);
 }
 
 /// Test that Optimism uses Canyon base fee params instead of Ethereum params.

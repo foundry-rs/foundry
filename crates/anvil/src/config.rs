@@ -1382,6 +1382,10 @@ impl NodeConfig {
             base_fee_params,
             tempo_hardfork,
         );
+        #[cfg(feature = "optimism")]
+        if self.networks.is_optimism() {
+            fees.set_optimism_hardfork(self.get_hardfork());
+        }
 
         let (db, fork, fork_transaction_replay) =
             if let Some(eth_rpc_url) = self.fork_urls.first().cloned() {

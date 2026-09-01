@@ -3,31 +3,40 @@
 use alloy_consensus::BlockHeader;
 use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
 use alloy_primitives::Bytes;
-use op_alloy_consensus::{decode_holocene_extra_data, decode_jovian_extra_data};
+use foundry_evm::hardfork::{FoundryHardfork, OpHardfork};
+use op_alloy_consensus::{
+    decode_holocene_extra_data, decode_jovian_extra_data, encode_holocene_extra_data,
+    encode_jovian_extra_data,
+};
 
 /// Header-derived EIP-1559 rules introduced by the Optimism Holocene and Jovian upgrades.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum OptimismBaseFeeRules {
-    Holocene { extra_data: [u8; 9], params: BaseFeeParams },
-    Jovian { extra_data: [u8; 17], params: BaseFeeParams, min_base_fee: u64 },
+    Holocene { params: BaseFeeParams },
+    Jovian { params: BaseFeeParams, min_base_fee: u64 },
 }
 
 impl OptimismBaseFeeRules {
+    pub(super) fn for_hardfork(hardfork: FoundryHardfork, params: BaseFeeParams) -> Option<Self> {
+        let hardfork = OpHardfork::from(hardfork);
+        if hardfork >= OpHardfork::Jovian {
+            Some(Self::Jovian { params, min_base_fee: 0 })
+        } else if hardfork >= OpHardfork::Holocene {
+            Some(Self::Holocene { params })
+        } else {
+            None
+        }
+    }
+
     pub(super) fn decode(extra_data: &[u8]) -> Option<Self> {
         if let Ok((elasticity, denominator, min_base_fee)) = decode_jovian_extra_data(extra_data) {
-            let mut encoded = [0; 17];
-            encoded.copy_from_slice(extra_data);
             return Some(Self::Jovian {
-                extra_data: encoded,
                 params: BaseFeeParams::new(denominator as u128, elasticity as u128),
                 min_base_fee,
             });
         }
         if let Ok((elasticity, denominator)) = decode_holocene_extra_data(extra_data) {
-            let mut encoded = [0; 9];
-            encoded.copy_from_slice(extra_data);
             return Some(Self::Holocene {
-                extra_data: encoded,
                 params: BaseFeeParams::new(denominator as u128, elasticity as u128),
             });
         }
@@ -42,9 +51,12 @@ impl OptimismBaseFeeRules {
 
     pub(super) fn extra_data(self) -> Bytes {
         match self {
-            Self::Holocene { extra_data, .. } => Bytes::copy_from_slice(&extra_data),
-            Self::Jovian { extra_data, .. } => Bytes::copy_from_slice(&extra_data),
+            Self::Holocene { params } => encode_holocene_extra_data([0; 8].into(), params),
+            Self::Jovian { params, min_base_fee } => {
+                encode_jovian_extra_data([0; 8].into(), params, min_base_fee)
+            }
         }
+        .expect("optimism fee parameters fit canonical extra data")
     }
 
     pub(super) const fn is_jovian(self) -> bool {

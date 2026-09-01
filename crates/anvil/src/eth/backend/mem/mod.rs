@@ -1436,6 +1436,11 @@ impl<N: Network> Backend<N> {
         OpHardfork::from(hardfork) >= OpHardfork::Jovian
     }
 
+    #[cfg(not(feature = "optimism"))]
+    fn is_optimism_jovian_at_header<H: BlockHeader>(&self, _header: &H) -> bool {
+        false
+    }
+
     /// Returns an error if EIP1559 is not active (pre Berlin)
     pub fn ensure_eip1559_active(&self) -> Result<(), BlockchainError> {
         if self.is_eip1559() {
@@ -2639,7 +2644,8 @@ impl<N: Network> Backend<N> {
             ) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 let mut executor =
-                    AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions);
+                    AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions)
+                        .with_max_blob_gas_per_block(gas_config.max_blob_gas_per_block);
                 #[cfg(feature = "optimism")]
                 if self.is_optimism() {
                     executor.set_optimism_hardfork(hardfork);
@@ -8204,14 +8210,21 @@ impl Backend<FoundryNetwork> {
                     };
                     let tx_hash = tx.as_ref().hash();
                     #[cfg(feature = "optimism")]
-                    if optimism_jovian && !matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
-                        let da_footprint =
-                            crate::eth::backend::executor::optimism::jovian_da_footprint(
-                                &mut cache_db,
-                                tx.as_ref(),
-                            )
-                            .map_err(|err| BlockchainError::Internal(err.to_string()))?;
-                        block_blob_gas_used = block_blob_gas_used.saturating_add(da_footprint);
+                    if optimism_jovian {
+                        let tx_blob_gas = crate::eth::backend::executor::optimism::blob_gas_used(
+                            &mut cache_db,
+                            tx.as_ref(),
+                            true,
+                        )
+                        .map_err(|err| BlockchainError::Internal(err.to_string()))?;
+                        if block_blob_gas_used.saturating_add(tx_blob_gas) > max_blob_gas {
+                            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                                format!(
+                                    "blob gas usage exceeds the limit of {max_blob_gas} gas per block."
+                                ),
+                            )));
+                        }
+                        block_blob_gas_used = block_blob_gas_used.saturating_add(tx_blob_gas);
                     }
 
                     // Commit after calculating the footprint so the scalar comes from pre-tx
@@ -8423,10 +8436,7 @@ impl Backend<FoundryNetwork> {
                     let header = &block.block.header;
                     let base_fee = self.fees.calculate_next_block_base_fee_from_header(header);
                     let base_fee_extra_data = self.fees.base_fee_extra_data_from_header(header);
-                    #[cfg(feature = "optimism")]
                     let optimism_jovian = self.is_optimism_jovian_at_header(header);
-                    #[cfg(not(feature = "optimism"))]
-                    let optimism_jovian = false;
                     let monad_context = self.active_monad_context_before_mined_transaction(
                         &block.block,
                         block.block.body.transactions.len(),
@@ -8471,10 +8481,7 @@ impl Backend<FoundryNetwork> {
                     self.fees.calculate_next_block_base_fee_from_header(&base_block.header.inner);
                 let base_fee_extra_data =
                     self.fees.base_fee_extra_data_from_header(&base_block.header.inner);
-                #[cfg(feature = "optimism")]
                 let optimism_jovian = self.is_optimism_jovian_at_header(&base_block.header.inner);
-                #[cfg(not(feature = "optimism"))]
-                let optimism_jovian = false;
 
                 #[cfg(feature = "monad")]
                 let monad_context = if self.is_monad() {
