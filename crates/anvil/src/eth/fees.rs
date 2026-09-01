@@ -253,15 +253,6 @@ impl FeeManager {
         state.blob_params.calc_blob_fee(state.blob_excess_gas_and_price.excess_blob_gas)
     }
 
-    /// Calculates the next block blob excess gas, using the provided parent blob excess gas and
-    /// parent blob gas used
-    pub fn get_next_block_blob_excess_gas(&self, blob_excess_gas: u64, blob_gas_used: u64) -> u64 {
-        let state = self.state.read();
-        let base_fee =
-            if (state.rules.spec_id as u8) >= (SpecId::LONDON as u8) { state.base_fee } else { 0 };
-        state.blob_params.next_block_excess_blob_gas_osaka(blob_excess_gas, blob_gas_used, base_fee)
-    }
-
     /// Configures the blob params
     pub fn set_blob_params(&self, blob_params: BlobParams) {
         self.state.write().blob_params = blob_params;

@@ -41,6 +41,7 @@ use anvil::{
 use axum::{Json, Router, routing::post};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
+use foundry_evm::hardfork::OpHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
@@ -3366,6 +3367,35 @@ async fn spawn_rpc_proxy_with_blob_header_fields(
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     format!("http://{address}")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_optimism_fork_keeps_excess_blob_gas_zero_after_mining() {
+    // Base Jovian stores the DA footprint in `blobGasUsed`, but OP Stack clients keep
+    // `excessBlobGas` at zero because the chain does not support EIP-4844 blobs. This captured
+    // footprint is from Base mainnet block 50_729_760.
+    let (_, origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Base as u64))
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_hardfork(Some(OpHardfork::Jovian.into())),
+    )
+    .await;
+    let fork_url =
+        spawn_rpc_proxy_with_blob_header_fields(origin.http_endpoint(), Some(0x2e_b434), Some(0))
+            .await;
+    let (api, _) = spawn(
+        NodeConfig::test().with_eth_rpc_url(Some(fork_url)).with_fork_block_number(Some(0u64)),
+    )
+    .await;
+
+    api.mine_one().await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    assert_eq!(block.header.excess_blob_gas, Some(0));
+    let next_blob_fee = api.excess_blob_gas_and_price().unwrap().unwrap();
+    assert_eq!(next_blob_fee.excess_blob_gas, 0);
+    assert_eq!(next_blob_fee.blob_gasprice, 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]

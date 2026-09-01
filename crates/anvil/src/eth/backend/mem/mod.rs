@@ -5157,9 +5157,11 @@ where
             header.gas_limit,
             header.base_fee_per_gas.unwrap_or_default(),
         );
-        let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
+        let next_block_excess_blob_gas = self.networks.next_block_blob_excess_gas(
+            self.fees.blob_params(),
             header.excess_blob_gas.unwrap_or_default(),
             header.blob_gas_used.unwrap_or_default(),
+            header.base_fee_per_gas.unwrap_or_default(),
         );
         self.fees.set_base_fee(next_block_base_fee);
         self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
@@ -5558,9 +5560,11 @@ where
             header.gas_limit,
             header.base_fee_per_gas.unwrap_or_default(),
         );
-        let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
+        let next_block_excess_blob_gas = self.networks.next_block_blob_excess_gas(
+            self.fees.blob_params(),
             header.excess_blob_gas.unwrap_or_default(),
             header.blob_gas_used.unwrap_or_default(),
+            header.base_fee_per_gas.unwrap_or_default(),
         );
 
         // update next base fee
@@ -7474,12 +7478,12 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 header.gas_limit(),
                 header.base_fee_per_gas().unwrap_or_default(),
             );
-            let next_block_excess_blob_gas =
-                self.fees.blob_params().next_block_excess_blob_gas_osaka(
-                    header.excess_blob_gas().unwrap_or_default(),
-                    header.blob_gas_used().unwrap_or_default(),
-                    header.base_fee_per_gas().unwrap_or_default(),
-                );
+            let next_block_excess_blob_gas = self.networks.next_block_blob_excess_gas(
+                self.fees.blob_params(),
+                header.excess_blob_gas().unwrap_or_default(),
+                header.blob_gas_used().unwrap_or_default(),
+                header.base_fee_per_gas().unwrap_or_default(),
+            );
             let blob_excess_gas_and_price = BlobExcessGasAndPrice::new(
                 next_block_excess_blob_gas,
                 get_blob_base_fee_update_fraction(
@@ -7844,7 +7848,8 @@ impl Backend<FoundryNetwork> {
                     .unwrap_or_else(|| block_env.timestamp.saturating_to());
                 let blob_params = self.simulation_blob_params_at_timestamp(block_timestamp);
                 if is_cancun {
-                    let excess_blob_gas = blob_params.next_block_excess_blob_gas_osaka(
+                    let excess_blob_gas = self.networks.next_block_blob_excess_gas(
+                        blob_params,
                         parent_excess_blob_gas,
                         parent_blob_gas_used,
                         parent_base_fee_per_gas,
