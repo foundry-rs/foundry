@@ -7853,9 +7853,10 @@ impl Backend<FoundryNetwork> {
             let mut parent_hash = base_hash;
             let mut next_base_fee = base_fee;
             let mut inherited_block_env = base_block_env;
-            let (is_cancun, is_amsterdam, tx_gas_limit_cap) = {
+            let (is_merge, is_cancun, is_amsterdam, tx_gas_limit_cap) = {
                 let cfg_env = &self.evm_env.read().cfg_env;
                 (
+                    cfg_env.spec >= SpecId::MERGE,
                     cfg_env.spec >= SpecId::CANCUN,
                     cfg_env.spec >= SpecId::AMSTERDAM,
                     cfg_env.tx_gas_limit_cap(),
@@ -7893,6 +7894,9 @@ impl Backend<FoundryNetwork> {
                 }
                 block_env.basefee = if validation { next_base_fee } else { 0 };
                 block_env.prevrandao = Some(B256::ZERO);
+                if is_merge && !is_arbitrum(self.protocol_chain_id()) {
+                    block_env.difficulty = U256::ZERO;
+                }
                 let mut call_res = Vec::with_capacity(calls.len());
                 let mut log_index = 0;
                 let mut cumulative_gas_used = 0;

@@ -1994,12 +1994,15 @@ latest block number: {latest_block}"
         fees.set_blob_params(blob_params);
         let blob_update_fraction = blob_params.update_fraction as u64;
         let blob_excess_gas = block.header.excess_blob_gas().or_else(|| {
-            // Pre-Cancun headers and Polygon Bor headers omit the blob fields. REVM still requires
-            // a valid blob environment when executing with the Cancun spec; zero is the neutral
-            // excess-gas value.
+            // Pre-Cancun headers, Polygon Bor headers, and Arbitrum Nitro headers omit the blob
+            // fields. REVM still requires a valid blob environment when executing with the Cancun
+            // spec; zero is the neutral excess-gas value. On Nitro this makes `BLOBBASEFEE` return
+            // `1`, although Nitro rejects the opcode; matching that requires Arbitrum-specific EVM
+            // handling.
             (effective_spec >= SpecId::CANCUN
                 && ((source_may_omit_blob_fields && block.header.blob_gas_used().is_none())
-                    || Chain::from_id(source_chain_id).is_polygon()))
+                    || Chain::from_id(source_chain_id).is_polygon()
+                    || Chain::from_id(source_chain_id).is_arbitrum()))
             .then_some(0)
         });
         evm_env.block_env.blob_excess_gas_and_price =
