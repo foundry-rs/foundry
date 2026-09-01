@@ -667,11 +667,39 @@ impl VerifyBytecodeArgs {
         Self::ensure_endpoint_identity_unchanged(&config, endpoint_identity.as_ref()).await?;
 
         // In some cases, Etherscan will return incorrect constructor arguments. If this
-        // happens, try extracting arguments ourselves.
-        let user_args_mismatch =
-            args_from_user && !maybe_creation_code.ends_with(&constructor_args);
-        if user_args_mismatch {
-            let message = "Provided constructor args do not match the ones used at deployment";
+        // happens, try extracting arguments ourselves. Never replace user-provided arguments.
+        if !args_from_user && !maybe_creation_code.ends_with(&constructor_args) {
+            trace!("mismatch of constructor args with etherscan");
+            if maybe_creation_code.len() >= local_bytecode.len() {
+                // If local bytecode is longer than on-chain one, this is probably not a match.
+                constructor_args =
+                    Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);
+                trace!(
+                    target: "forge::verify",
+                    "setting constructor args to latest {} bytes of bytecode",
+                    constructor_args.len()
+                );
+            }
+        }
+
+        // Append constructor args to the local_bytecode.
+        trace!(%constructor_args);
+        let mut local_bytecode_vec = local_bytecode.to_vec();
+        local_bytecode_vec.extend_from_slice(&constructor_args);
+
+        // A suffix check alone is insufficient for dynamic ABI values: one valid encoding can
+        // be a suffix of a different valid encoding. Always compare the complete creation code
+        // when arguments came from the user, even if creation output is ignored.
+        let creation_match_type = crate::utils::match_bytecodes(
+            local_bytecode_vec.as_slice(),
+            &maybe_creation_code,
+            &constructor_args,
+            false,
+            config.bytecode_hash,
+        );
+        if args_from_user && creation_match_type.is_none() {
+            let message =
+                "Provided constructor args could not be validated against deployment creation code";
             if shell::is_json() {
                 if self.ignore.is_none_or(|b| !b.is_creation()) {
                     json_results.push(JsonResult {
@@ -712,39 +740,12 @@ impl VerifyBytecodeArgs {
             return Ok(());
         }
 
-        if !maybe_creation_code.ends_with(&constructor_args) {
-            trace!("mismatch of constructor args with etherscan");
-            if maybe_creation_code.len() >= local_bytecode.len() {
-                // If local bytecode is longer than on-chain one, this is probably not a match.
-                constructor_args =
-                    Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);
-                trace!(
-                    target: "forge::verify",
-                    "setting constructor args to latest {} bytes of bytecode",
-                    constructor_args.len()
-                );
-            }
-        }
-
-        // Append constructor args to the local_bytecode.
-        trace!(%constructor_args);
-        let mut local_bytecode_vec = local_bytecode.to_vec();
-        local_bytecode_vec.extend_from_slice(&constructor_args);
-
         trace!(ignore = ?self.ignore);
         // Check if `--ignore` is set to `creation`.
         if self.ignore.is_none_or(|b| !b.is_creation()) {
             // Compare creation code with locally built bytecode and `maybe_creation_code`.
-            let match_type = crate::utils::match_bytecodes(
-                local_bytecode_vec.as_slice(),
-                &maybe_creation_code,
-                &constructor_args,
-                false,
-                config.bytecode_hash,
-            );
-
             crate::utils::print_result(
-                match_type,
+                creation_match_type,
                 BytecodeType::Creation,
                 &mut json_results,
                 etherscan_metadata,
@@ -752,7 +753,7 @@ impl VerifyBytecodeArgs {
             );
 
             // If the creation code does not match, the runtime also won't match. Hence return.
-            if match_type.is_none() {
+            if creation_match_type.is_none() {
                 crate::utils::print_result(
                     None,
                     BytecodeType::Runtime,

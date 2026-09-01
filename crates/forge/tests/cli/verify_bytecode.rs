@@ -302,7 +302,9 @@ forgetest_async!(flaky_verify_bytecode_warns_on_wrong_constructor_args, |prj, cm
     let stdout = output.stdout_lossy();
 
     assert!(
-        stderr.contains("Provided constructor args do not match the ones used at deployment"),
+        stderr.contains(
+            "Provided constructor args could not be validated against deployment creation code"
+        ),
         "expected a warning that the supplied args do not match the deployment, got:\n{stderr}"
     );
     assert!(
@@ -336,7 +338,7 @@ forgetest_async!(flaky_verify_bytecode_warns_on_wrong_constructor_args, |prj, cm
             "--json",
         ])
         .assert_json_stdout(
-            r#"[{"bytecode_type":"runtime","match_type":null,"message":"Provided constructor args do not match the ones used at deployment"}]"#,
+            r#"[{"bytecode_type":"runtime","match_type":null,"message":"Provided constructor args could not be validated against deployment creation code"}]"#,
         );
 });
 

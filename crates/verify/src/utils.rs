@@ -664,6 +664,21 @@ mod tests {
             match_bytecodes(&local, &onchain, &real_args, false, BytecodeHash::Ipfs),
             Some(VerificationType::Full)
         );
+
+        // A valid dynamic encoding can end with another valid encoding. The suffix alone must
+        // not establish that the supplied arguments match.
+        let suffix_args =
+            DynSolValue::Tuple(vec![DynSolValue::Bytes(real_args.to_vec())]).abi_encode();
+        let deployment_args =
+            DynSolValue::Tuple(vec![DynSolValue::Bytes(suffix_args.clone())]).abi_encode();
+        assert!(deployment_args.ends_with(&suffix_args));
+
+        let onchain = [code.as_slice(), deployment_args.as_slice()].concat();
+        let local = [code.as_slice(), suffix_args.as_slice()].concat();
+        assert_eq!(
+            match_bytecodes(&local, &onchain, &suffix_args, false, BytecodeHash::Ipfs),
+            None
+        );
     }
 
     #[test]
