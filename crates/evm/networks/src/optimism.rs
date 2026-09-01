@@ -22,4 +22,9 @@ impl NetworkConfigs {
             BaseFeeParams::optimism()
         }
     }
+
+    /// OP Stack does not support EIP-4844 blobs and always keeps excess blob gas at zero.
+    pub(crate) const fn op_next_block_blob_excess_gas() -> u64 {
+        0
+    }
 }

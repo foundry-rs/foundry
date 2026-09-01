@@ -2005,9 +2005,11 @@ latest block number: {latest_block}"
         evm_env.block_env.blob_excess_gas_and_price =
             blob_excess_gas.map(|excess| BlobExcessGasAndPrice::new(excess, blob_update_fraction));
         let next_block_blob_excess_gas = blob_excess_gas.map_or(0, |excess| {
-            fees.get_next_block_blob_excess_gas(
+            self.networks.next_block_blob_excess_gas(
+                blob_params,
                 excess,
                 block.header.blob_gas_used().unwrap_or_default(),
+                block.header.base_fee_per_gas().unwrap_or_default(),
             )
         });
         fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
