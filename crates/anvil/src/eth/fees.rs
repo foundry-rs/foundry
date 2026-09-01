@@ -22,8 +22,6 @@ use crate::eth::{
 
 #[cfg(feature = "optimism")]
 mod optimism;
-#[cfg(feature = "optimism")]
-use optimism::OptimismBaseFeeRules;
 
 /// Maximum number of entries in the fee history cache
 pub const MAX_FEE_HISTORY_CACHE_SIZE: u64 = 2048u64;
@@ -61,7 +59,7 @@ struct FeeRules {
 enum BaseFeeRules {
     Standard(BaseFeeParams),
     #[cfg(feature = "optimism")]
-    Optimism(OptimismBaseFeeRules),
+    Optimism(optimism::OptimismBaseFeeRules),
 }
 
 impl BaseFeeRules {
@@ -190,7 +188,7 @@ impl FeeManager {
     /// Applies the dynamic EIP-1559 parameters encoded in an Optimism-family parent header.
     #[cfg(feature = "optimism")]
     pub(crate) fn set_optimism_base_fee_rules(&self, extra_data: &[u8]) {
-        let Some(rules) = OptimismBaseFeeRules::decode(extra_data) else {
+        let Some(rules) = optimism::OptimismBaseFeeRules::decode(extra_data) else {
             return;
         };
         self.state.write().rules.base_fee = BaseFeeRules::Optimism(rules);
