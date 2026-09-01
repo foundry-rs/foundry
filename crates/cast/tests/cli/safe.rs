@@ -2,7 +2,7 @@ use alloy_consensus::Transaction;
 use alloy_dyn_abi::TypedData;
 use alloy_eips::Typed2718;
 use alloy_network::ReceiptResponse;
-use alloy_primitives::{Address, B256, Bytes, Signature, U256, address, b256, hex};
+use alloy_primitives::{Address, B256, Bytes, Signature, U256, address, b256, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
@@ -35,6 +35,15 @@ const ANVIL_OWNER_3: Address = address!("3C44CdDdB6a900fa2b585dd299e03d12FA4293B
 const SAFE_L2_V1_4_1: Address = address!("29fcB43b46531BcA003ddC8FCB67FFE91900C762");
 const SAFE_PROXY_FACTORY_V1_4_1: Address = address!("4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67");
 const SIMULATE_TX_ACCESSOR_V1_4_1: Address = address!("3d4BA2E0884aa488718476ca2FB8Efc291A46199");
+const SAFE_L2_V1_4_1_RUNTIME_LEN: usize = 24_421;
+const SAFE_PROXY_FACTORY_V1_4_1_RUNTIME_LEN: usize = 3_054;
+const SIMULATE_TX_ACCESSOR_V1_4_1_RUNTIME_LEN: usize = 850;
+const SAFE_L2_V1_4_1_RUNTIME_HASH: B256 =
+    b256!("b1f926978a0f44a2c0ec8fe822418ae969bd8c3f18d61e5103100339894f81ff");
+const SAFE_PROXY_FACTORY_V1_4_1_RUNTIME_HASH: B256 =
+    b256!("50c3cdc4074750a7a974204a716c999edd37482f907608d960b2b025ee0b3317");
+const SIMULATE_TX_ACCESSOR_V1_4_1_RUNTIME_HASH: B256 =
+    b256!("91f82615581fc73b190b83d72e883608b25e392f72322035df1b13d51766cf8d");
 const SAFE_SERVICE_API_KEY: &str = "cast-safe-test-key";
 const SIMULATION_SAFE_CODE: &str = "0x63d8d11f785f3560e01c146051577333333333333333333333333333333333333333333214602b575f80fd5b60015f5260a0602052602a60405260016060526060608052602060a0523260c05260e05ffd5b5f805260205ff3";
 
@@ -114,8 +123,10 @@ fn json_envelope(data: Value) -> String {
     serde_json::to_string(&JsonEnvelope::success(data)).unwrap()
 }
 
-fn fixture_runtime(source: &str) -> Bytes {
-    source.split_whitespace().collect::<String>().parse().unwrap()
+fn fixture_runtime(bytes: &'static [u8], expected_len: usize, expected_hash: B256) -> Bytes {
+    assert_eq!(bytes.len(), expected_len, "Safe runtime fixture length changed");
+    assert_eq!(keccak256(bytes), expected_hash, "Safe runtime fixture hash changed");
+    Bytes::from_static(bytes)
 }
 
 #[derive(Debug, Clone)]
@@ -926,19 +937,31 @@ casttest!(safe_v1_4_1_lifecycle_uses_stateful_service, async |_prj, cmd| {
     let provider = handle.http_provider();
     api.anvil_set_code(
         SAFE_L2_V1_4_1,
-        fixture_runtime(include_str!("../fixtures/safe/v1.4.1/SafeL2.runtime.hex")),
+        fixture_runtime(
+            include_bytes!("../fixtures/safe/v1.4.1/SafeL2.runtime.bin"),
+            SAFE_L2_V1_4_1_RUNTIME_LEN,
+            SAFE_L2_V1_4_1_RUNTIME_HASH,
+        ),
     )
     .await
     .unwrap();
     api.anvil_set_code(
         SAFE_PROXY_FACTORY_V1_4_1,
-        fixture_runtime(include_str!("../fixtures/safe/v1.4.1/SafeProxyFactory.runtime.hex")),
+        fixture_runtime(
+            include_bytes!("../fixtures/safe/v1.4.1/SafeProxyFactory.runtime.bin"),
+            SAFE_PROXY_FACTORY_V1_4_1_RUNTIME_LEN,
+            SAFE_PROXY_FACTORY_V1_4_1_RUNTIME_HASH,
+        ),
     )
     .await
     .unwrap();
     api.anvil_set_code(
         SIMULATE_TX_ACCESSOR_V1_4_1,
-        fixture_runtime(include_str!("../fixtures/safe/v1.4.1/SimulateTxAccessor.runtime.hex")),
+        fixture_runtime(
+            include_bytes!("../fixtures/safe/v1.4.1/SimulateTxAccessor.runtime.bin"),
+            SIMULATE_TX_ACCESSOR_V1_4_1_RUNTIME_LEN,
+            SIMULATE_TX_ACCESSOR_V1_4_1_RUNTIME_HASH,
+        ),
     )
     .await
     .unwrap();
