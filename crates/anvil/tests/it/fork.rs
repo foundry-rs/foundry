@@ -3271,6 +3271,57 @@ async fn test_pre_cancun_fork_with_post_cancun_hardfork() {
     assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_unknown_schedule_fork_with_post_cancun_hardfork() {
+    let target = Address::random();
+    let (origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::BinanceSmartChain as u64))
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_genesis_timestamp(EthereumHardfork::Cancun.mainnet_activation_timestamp()),
+    )
+    .await;
+    origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
+    origin_api.mine_one().await.unwrap();
+    let origin_url =
+        spawn_rpc_proxy_with_blob_header_fields(origin_handle.http_endpoint(), None, None).await;
+    let origin_url = spawn_rpc_proxy_rejecting_method_after(origin_url, "anvil_nodeInfo", 0).await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_url.clone()))
+            .with_fork_block_number(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Prague.into())),
+    )
+    .await;
+
+    assert_eq!(
+        api.backend
+            .evm_env()
+            .read()
+            .block_env
+            .blob_excess_gas_and_price
+            .as_ref()
+            .map(|blob| blob.excess_blob_gas),
+        Some(0)
+    );
+    assert_eq!(
+        handle
+            .http_provider()
+            .call(
+                TransactionRequest { to: Some(TxKind::Call(target)), ..Default::default() }.into()
+            )
+            .await
+            .unwrap(),
+        Bytes::from(vec![0; 32])
+    );
+
+    let (api, _) = spawn(
+        NodeConfig::test().with_eth_rpc_url(Some(origin_url)).with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
+}
+
 async fn spawn_rpc_proxy_with_blob_header_fields(
     endpoint: String,
     blob_gas_used: Option<u64>,
