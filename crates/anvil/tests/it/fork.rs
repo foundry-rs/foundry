@@ -3369,6 +3369,53 @@ async fn spawn_rpc_proxy_with_blob_header_fields(
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_arbitrum_forks_accept_nitro_headers_without_blob_fields() {
+    // Nitro omits Ethereum's EIP-4844 header fields, including on post-Cancun chains. Hide Anvil
+    // metadata so these deterministic local origins have the same observable shape as public RPCs.
+    for chain in [NamedChain::Arbitrum, NamedChain::Robinhood] {
+        let target = Address::random();
+        let (origin_api, origin) = spawn(
+            NodeConfig::test()
+                .with_chain_id(Some(chain as u64))
+                .with_hardfork(Some(EthereumHardfork::Prague.into()))
+                .with_genesis_timestamp(EthereumHardfork::Prague.arbitrum_activation_timestamp()),
+        )
+        .await;
+        origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
+        let fork_url =
+            spawn_rpc_proxy_with_blob_header_fields(origin.http_endpoint(), None, None).await;
+        let fork_url = spawn_rpc_proxy_rejecting_method_after(fork_url, "anvil_nodeInfo", 0).await;
+
+        let (api, handle) = spawn(
+            NodeConfig::test()
+                .with_no_storage_caching(true)
+                .with_eth_rpc_url(Some(fork_url))
+                .with_fork_block_number(Some(0u64)),
+        )
+        .await;
+
+        assert!(api.backend.spec_id() >= SpecId::CANCUN);
+        assert_eq!(
+            api.backend
+                .evm_env()
+                .read()
+                .block_env
+                .blob_excess_gas_and_price
+                .as_ref()
+                .map(|blob| blob.excess_blob_gas),
+            Some(0),
+            "{chain}"
+        );
+        let request = TransactionRequest { to: Some(TxKind::Call(target)), ..Default::default() };
+        assert_eq!(
+            handle.http_provider().call(request.into()).await.unwrap(),
+            Bytes::from(vec![0; 32]),
+            "{chain}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
     // Polygon's Bor headers omit the EIP-4844 fields even though Anvil executes the fork with a
     // post-Cancun spec. Local origins provide deterministic state while the proxies reproduce that
