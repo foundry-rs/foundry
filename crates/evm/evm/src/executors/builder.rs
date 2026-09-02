@@ -1,8 +1,15 @@
 use crate::{executors::Executor, inspectors::InspectorStackBuilder};
+#[cfg(feature = "optimism")]
+use foundry_evm_core::evm::OpEvmNetwork;
 use foundry_evm_core::{
     backend::Backend,
-    evm::{BlockEnvFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    evm::{
+        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, SpecFor, TempoEvmNetwork,
+        TxEnvFor,
+    },
 };
+#[cfg(feature = "monad")]
+use foundry_evm_core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
 use foundry_evm_networks::NetworkConfigs;
 use revm::context::{Block, Transaction};
 
@@ -29,7 +36,7 @@ impl<FEN: FoundryEvmNetwork> Default for ExecutorBuilder<FEN> {
     #[inline]
     fn default() -> Self {
         Self {
-            stack: InspectorStackBuilder::new(),
+            stack: InspectorStackBuilder::new().extra_cheatcode_addresses(&[]),
             gas_limit: None,
             spec: None,
             legacy_assertions: false,
@@ -38,6 +45,16 @@ impl<FEN: FoundryEvmNetwork> Default for ExecutorBuilder<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
+    /// Creates a builder that temporarily resolves additional cheatcode addresses from network
+    /// configuration.
+    #[doc(hidden)]
+    #[inline]
+    pub fn legacy_network_config() -> Self {
+        let mut this = Self::default();
+        this.stack.extra_cheatcode_addresses = None;
+        this
+    }
+
     /// Modify the inspector stack.
     #[inline]
     pub fn inspectors(
@@ -101,5 +118,40 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
             evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
         }
         Executor::new(db, evm_env, tx_env, stack.build(), networks, gas_limit, legacy_assertions)
+    }
+}
+
+impl ExecutorBuilder<EthEvmNetwork> {
+    /// Creates the default Ethereum executor builder.
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[cfg(feature = "optimism")]
+impl ExecutorBuilder<OpEvmNetwork> {
+    /// Creates the default OP executor builder.
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl ExecutorBuilder<TempoEvmNetwork> {
+    /// Creates the default Tempo executor builder.
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[cfg(feature = "monad")]
+impl ExecutorBuilder<MonadEvmNetwork> {
+    /// Creates a Monad executor builder with MonadVM cheatcode support.
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+            .inspectors(|stack| stack.extra_cheatcode_addresses(&[MONAD_CHEATCODE_ADDRESS]))
     }
 }

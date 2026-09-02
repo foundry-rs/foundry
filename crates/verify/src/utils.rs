@@ -31,7 +31,7 @@ use foundry_evm::{
         decode::RevertDecoder,
         evm::{BlockContext, BlockEnvFor, ChainFor, EvmEnvFor, FoundryEvmNetwork, TxEnvFor},
     },
-    executors::TracingExecutor,
+    executors::{ExecutorBuilder, TracingExecutor},
     opts::EvmOpts,
     traces::TraceRequirements,
     utils::{apply_chain_and_block_specific_env_changes_for_chain, block_env_from_header},
@@ -356,6 +356,7 @@ pub async fn get_tracing_executor<FEN>(
     execution_blk_num: u64,
     execution_block: Option<&AnyRpcBlock>,
     evm_opts: EvmOpts,
+    executor_builder: ExecutorBuilder<FEN>,
 ) -> Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>, TracingExecutor<FEN>)>
 where
     FEN: FoundryEvmNetwork,
@@ -380,6 +381,7 @@ where
     TracingExecutor::<FEN>::extend_precompile_labels(fork_config, networks, resolved_hardfork);
 
     let executor = TracingExecutor::<FEN>::new(
+        executor_builder,
         (evm_env.clone(), tx_env.clone()),
         fork,
         None,

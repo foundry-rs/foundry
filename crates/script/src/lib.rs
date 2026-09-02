@@ -1060,7 +1060,8 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         };
 
         // We need to enable tracing to decode contract names: local or external.
-        let mut builder = ExecutorBuilder::default()
+        // TODO(monad-fen-dispatch): Select the concrete builder at Script network dispatch.
+        let mut builder = ExecutorBuilder::legacy_network_config()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)
