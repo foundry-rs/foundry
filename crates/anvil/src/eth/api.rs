@@ -1116,18 +1116,6 @@ impl<N: Network> EthApi<N> {
         self.backend.transaction_by_block_hash_and_index(hash, index).await
     }
 
-    /// Returns transaction by given block number and index.
-    ///
-    /// Handler for ETH RPC call: `eth_getTransactionByBlockNumberAndIndex`
-    pub async fn transaction_by_block_number_and_index(
-        &self,
-        block: BlockNumber,
-        idx: Index,
-    ) -> Result<Option<AnyRpcTransaction>> {
-        node_info!("eth_getTransactionByBlockNumberAndIndex");
-        self.backend.transaction_by_block_number_and_index(block, idx).await
-    }
-
     /// Returns an uncles at given block and index.
     ///
     /// Handler for ETH RPC call: `eth_getUncleByBlockHashAndIndex`
@@ -1580,6 +1568,25 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> EthApi<N> {
 // == impl EthApi anvil endpoints ==
 
 impl EthApi<FoundryNetwork> {
+    /// Returns transaction by given block number and index.
+    ///
+    /// Handler for ETH RPC call: `eth_getTransactionByBlockNumberAndIndex`
+    pub async fn transaction_by_block_number_and_index(
+        &self,
+        block: BlockNumber,
+        idx: Index,
+    ) -> Result<Option<AnyRpcTransaction>> {
+        node_info!("eth_getTransactionByBlockNumberAndIndex");
+        if block == BlockNumber::Pending {
+            return Ok(self.pending_block_full().await.and_then(|block| {
+                let WithOtherFields { inner: block, .. } = block.0;
+                block.transactions.into_transactions().nth(idx.into())
+            }));
+        }
+
+        self.backend.transaction_by_block_number_and_index(block, idx).await
+    }
+
     /// Create a buffer that represents all state on the chain, which can be loaded to separate
     /// process by calling `anvil_loadState`
     ///
@@ -3855,7 +3862,7 @@ impl EthApi<FoundryNetwork> {
         index: Index,
     ) -> Result<Option<Bytes>> {
         node_info!("eth_getRawTransactionByBlockNumberAndIndex");
-        match self.backend.transaction_by_block_number_and_index(block_number, index).await? {
+        match self.transaction_by_block_number_and_index(block_number, index).await? {
             Some(tx) => self.inner_raw_transaction(tx.tx_hash()).await,
             None => Ok(None),
         }
