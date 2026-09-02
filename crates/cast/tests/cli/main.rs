@@ -346,6 +346,39 @@ casttest!(finds_block, |_prj, cmd| {
 "#]]);
 });
 
+// tests that `cast age` reports a clean error instead of panicking on a block timestamp
+// that parses as i64 but falls outside chrono's representable calendar range.
+casttest!(age_rejects_out_of_range_timestamp, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+
+    // A timestamp far beyond chrono's representable calendar range, but well within u64/i64 -
+    // anvil accepts it happily via `evm_setNextBlockTimestamp`.
+    cmd.args(["rpc", "--rpc-url", rpc.as_str(), "evm_setNextBlockTimestamp", "20000000000000"])
+        .assert_success();
+    cmd.cast_fuse().args(["rpc", "--rpc-url", rpc.as_str(), "evm_mine"]).assert_success();
+
+    cmd.cast_fuse().args(["age", "latest", "--rpc-url", rpc.as_str()]).assert_failure().stderr_eq(
+        str![[r#"
+Error: block timestamp `20000000000000` is outside the representable date range
+
+"#]],
+    );
+});
+
+// tests that `cast age` still works for a normal, in-range block timestamp
+casttest!(age_reports_normal_timestamp, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    // <https://etherscan.io/block/15007840>, timestamp 1655904485
+    cmd.args(["age", "15007840", "--rpc-url", eth_rpc_url.as_str()]).assert_success().stdout_eq(
+        str![[r#"
+Wed Jun 22 13:28:05 2022 UTC
+
+"#]],
+    );
+});
+
 // tests that we can create a new wallet
 casttest!(new_wallet, |_prj, cmd| {
     cmd.args(["wallet", "new"])

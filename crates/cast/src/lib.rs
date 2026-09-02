@@ -1084,7 +1084,12 @@ where
     pub async fn age<B: Into<BlockId>>(&self, block: B) -> Result<String> {
         let timestamp_str =
             Self::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
-        let datetime = DateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0).unwrap();
+        let timestamp = timestamp_str
+            .parse::<i64>()
+            .wrap_err_with(|| format!("block timestamp `{timestamp_str}` out of range"))?;
+        let datetime = DateTime::from_timestamp(timestamp, 0).ok_or_eyre(format!(
+            "block timestamp `{timestamp_str}` is outside the representable date range"
+        ))?;
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
