@@ -49,10 +49,7 @@ impl BytecodeData {
     }
 }
 
-/// Merges overlapping (or directly adjacent) byte ranges in `offsets`, so that callers can
-/// safely walk the result assuming the ranges are sorted by `start` *and* non-overlapping.
-///
-/// `offsets` does not need to be pre-sorted.
+/// Sorts and merges overlapping or adjacent byte ranges.
 fn merge_overlapping_offsets(mut offsets: Vec<Offsets>) -> Vec<Offsets> {
     offsets.sort_by_key(|o| o.start);
 
@@ -356,16 +353,7 @@ impl ContractsByArtifact {
                 });
             }
 
-            // `ignored` is built by chaining immutable references, link references, the
-            // library call-protection prefix, and the detected metadata range from up to
-            // four independent sources, none of which are checked against each other for
-            // overlap (e.g. a library's call-protection prefix `[1, 21)` can genuinely
-            // overlap a declared immutable reference that starts early in the bytecode, or
-            // the detected metadata range for a very short contract). The loop below walks
-            // these ranges assuming they are sorted *and* non-overlapping; merge overlapping
-            // (or directly adjacent) ranges here first, otherwise `left` can end up past the
-            // next range's `start`, which panics when slicing `code[left..right]` with
-            // `left > right`.
+            // Merge ranges from independent sources before slicing between them.
             let merged = merge_overlapping_offsets(ignored);
 
             let mut left = 0;
@@ -834,13 +822,7 @@ mod tests {
         assert!(contracts.find_by_deployed_code_exact_unique(&deployed_code).is_none());
     }
 
-    /// Regression test for a real, reachable panic: a library's call-protection prefix
-    /// (`[1, 21)`, added whenever the bytecode starts with `PUSH20 0x00..00`) can genuinely
-    /// overlap a declared immutable reference that starts early in the runtime bytecode -
-    /// entirely plausible for a real library with an immutable set near the start of its
-    /// code. Before the fix, `ignored` assumed its entries never overlap once sorted, and
-    /// slicing `code[left..right]` with `left > right` (produced by an overlapping range)
-    /// panics. This constructs exactly that overlap and confirms it no longer panics.
+    /// Tests an immutable reference within a library call-protection prefix.
     #[test]
     fn find_by_deployed_code_exact_handles_overlapping_ignored_ranges() {
         // Call-protection prefix: PUSH20 0x00..00 (21 bytes), covers ignored range [1, 21).
