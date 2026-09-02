@@ -46,9 +46,7 @@ contract DumpStateFoundryTomlTest is Test {
 
 contract DumpStateTest is Test {
     function testDumpStateRespectsFsPermissions() public {
-        vm._expectCheatcodeRevert(
-            "the path dump-state.json is not allowed to be accessed for write operations"
-        );
+        vm._expectCheatcodeRevert("the path dump-state.json is not allowed to be accessed for write operations");
         vm.dumpState("dump-state.json");
     }
 
