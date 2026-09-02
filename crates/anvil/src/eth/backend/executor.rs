@@ -347,7 +347,15 @@ where
             optimism::blob_gas_used(self.evm.db_mut(), tx.tx(), self.optimism_jovian)?;
         #[cfg(not(feature = "optimism"))]
         let blob_gas_used = tx.tx().blob_gas_used().unwrap_or_default();
-        if self.blob_gas_used.saturating_add(blob_gas_used) > self.max_blob_gas_per_block {
+        #[cfg(feature = "optimism")]
+        let blob_gas_limit = if self.optimism_jovian {
+            self.evm.block().gas_limit()
+        } else {
+            self.max_blob_gas_per_block
+        };
+        #[cfg(not(feature = "optimism"))]
+        let blob_gas_limit = self.max_blob_gas_per_block;
+        if self.blob_gas_used.saturating_add(blob_gas_used) > blob_gas_limit {
             return Err(BlockExecutionError::msg("block blob gas limit exceeded"));
         }
         let result = transact(&mut self.evm, tx_env, transaction_hash)?;

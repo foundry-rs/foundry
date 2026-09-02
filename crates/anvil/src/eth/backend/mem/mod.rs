@@ -4599,6 +4599,10 @@ impl<N: Network> Backend<N> {
             self.networks.base_fee_params(genesis_timestamp),
             local_tempo_hardfork,
         );
+        #[cfg(feature = "optimism")]
+        if self.networks.is_optimism() {
+            staged_fees.set_optimism_hardfork(local_hardfork);
+        }
         staged_fees.set_blob_params(local_blob_params);
         staged_fees.set_blob_excess_gas_and_price(local_blob_excess_gas_and_price);
 
@@ -7987,7 +7991,11 @@ impl Backend<FoundryNetwork> {
                     } else {
                         0
                     };
-                    let max_blob_gas = blob_params.max_blob_gas_per_block();
+                    let max_blob_gas = if optimism_jovian {
+                        block_env.gas_limit
+                    } else {
+                        blob_params.max_blob_gas_per_block()
+                    };
                     if !optimism_jovian
                         && block_blob_gas_used.saturating_add(request_blob_gas_used) > max_blob_gas
                     {
