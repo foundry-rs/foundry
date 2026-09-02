@@ -328,7 +328,8 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             None,
         );
 
-        let executor = ExecutorBuilder::default()
+        // TODO(monad-fen-dispatch): Select the concrete builder at Chisel network dispatch.
+        let executor = ExecutorBuilder::legacy_network_config()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.foundry_config.live_logs)

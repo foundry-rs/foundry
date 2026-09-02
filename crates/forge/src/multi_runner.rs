@@ -621,7 +621,8 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         );
         cheats_config.isolate = self.isolation;
         let cheats_config = Arc::new(cheats_config);
-        ExecutorBuilder::default()
+        // TODO(monad-fen-dispatch): Select the concrete builder at Forge network dispatch.
+        ExecutorBuilder::legacy_network_config()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)

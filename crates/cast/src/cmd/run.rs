@@ -55,7 +55,7 @@ use foundry_evm::{
         env::FromAnyRpcTransaction as _,
         evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
-    executors::{Executor, TracingExecutor},
+    executors::{Executor, ExecutorBuilder, TracingExecutor},
     hardforks::FoundryHardfork,
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements, Traces},
@@ -213,7 +213,9 @@ impl RunArgs {
         evm_opts.infer_network_from_fork().await?;
 
         if evm_opts.networks.is_tempo() {
-            return self.run_with_evm::<TempoEvmNetwork>(config, evm_opts).await;
+            return self
+                .run_with_evm(config, evm_opts, ExecutorBuilder::<TempoEvmNetwork>::new())
+                .await;
         }
 
         #[cfg(feature = "monad")]
@@ -223,16 +225,19 @@ impl RunArgs {
 
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return self.run_with_evm::<OpEvmNetwork>(config, evm_opts).await;
+            return self
+                .run_with_evm(config, evm_opts, ExecutorBuilder::<OpEvmNetwork>::new())
+                .await;
         }
 
-        self.run_with_evm::<EthEvmNetwork>(config, evm_opts).await
+        self.run_with_evm(config, evm_opts, ExecutorBuilder::<EthEvmNetwork>::new()).await
     }
 
     async fn run_with_evm<FEN: FoundryEvmNetwork>(
         self,
         config: Box<Config>,
         evm_opts: EvmOpts,
+        executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<()> {
         let target = self.fetch_target(&config).await?;
         if target.target_is_system && !self.replay_system_txes && !self.debug_trace_transaction {
@@ -241,7 +246,8 @@ impl RunArgs {
                 target.tx.tx_hash()
             );
         }
-        let Some(mut run) = self.prepare::<FEN>(config, evm_opts, target).await? else {
+        let Some(mut run) = self.prepare::<FEN>(config, evm_opts, target, executor_builder).await?
+        else {
             return Ok(());
         };
         let result = run.execute_ordinary()?;
@@ -251,7 +257,15 @@ impl RunArgs {
     #[cfg(feature = "monad")]
     async fn run_with_monad(self, config: Box<Config>, evm_opts: EvmOpts) -> Result<()> {
         let target = self.fetch_target(&config).await?;
-        let Some(mut run) = self.prepare::<MonadEvmNetwork>(config, evm_opts, target).await? else {
+        let Some(mut run) = self
+            .prepare::<MonadEvmNetwork>(
+                config,
+                evm_opts,
+                target,
+                ExecutorBuilder::<MonadEvmNetwork>::new(),
+            )
+            .await?
+        else {
             return Ok(());
         };
         let result = run.execute_monad().await?;
@@ -287,6 +301,7 @@ impl RunArgs {
         mut config: Box<Config>,
         evm_opts: EvmOpts,
         target: TargetFetch,
+        executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<Option<PreparedRun<FEN>>> {
         #[cfg_attr(not(feature = "monad"), allow(unused_variables))]
         let TargetFetch { tx, provider, compute_units_per_second, .. } = target;
@@ -531,6 +546,7 @@ impl RunArgs {
         apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain.id());
 
         let mut executor = TracingExecutor::<FEN>::new(
+            executor_builder,
             (evm_env.clone(), tx_env),
             fork,
             evm_version,
