@@ -177,8 +177,9 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
                 .into_string()
                 .map_err(|e| eyre::eyre!(format!("{}", e.to_string_lossy())))?;
             sessions.push((
-                systemtime_strftime(modified_time, "[year]-[month]-[day] [hour]:[minute]:[second]")
-                    .unwrap(),
+                OffsetDateTime::from(modified_time).format(&format_description::parse(
+                    "[year]-[month]-[day] [hour]:[minute]:[second]",
+                )?)?,
                 file_name,
             ));
         }
@@ -237,7 +238,6 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::source::SessionSourceConfig;
     use foundry_config::{Config, SolcReq};
     use foundry_evm::core::evm::EthEvmNetwork;
     use semver::Version;
@@ -261,13 +261,4 @@ mod tests {
 
         assert!(!session.source.config.foundry_config.force);
     }
-}
-
-/// Generic helper function that attempts to convert a type that has
-/// an [`Into<OffsetDateTime>`] implementation into a formatted date string.
-fn systemtime_strftime<T>(dt: T, format: &str) -> Result<String>
-where
-    T: Into<OffsetDateTime>,
-{
-    Ok(dt.into().format(&format_description::parse(format)?)?)
 }
