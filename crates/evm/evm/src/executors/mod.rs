@@ -24,8 +24,10 @@ use eyre::WrapErr;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
 #[cfg(feature = "monad")]
 use foundry_evm_core::evm::{MonadEvmNetwork, try_transact_monad_system_replay};
+#[cfg(feature = "monad")]
+use foundry_evm_core::refresh_chain_journal;
 use foundry_evm_core::{
-    EvmEnv, FoundryBlock, FoundryChain, FoundryContextExt, FoundryTransaction,
+    EvmEnv, FoundryBlock, FoundryChain, FoundryTransaction,
     backend::{
         Backend, BackendError, BackendResult, CowBackend, DatabaseError, DatabaseExt,
         GLOBAL_FAIL_SLOT,
@@ -43,7 +45,6 @@ use foundry_evm_core::{
         BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork,
         IntoInstructionResult, SpecFor, TxEnvFor,
     },
-    refresh_chain_journal,
     utils::StateChangeset,
 };
 use foundry_evm_coverage::HitMaps;
@@ -184,10 +185,9 @@ impl Executor<MonadEvmNetwork> {
                 );
             evm.disable_inspector();
             for (tx_hash, tx_env, chain_context) in replay {
-                let context = std::ops::DerefMut::deref_mut(&mut evm);
-                *context.chain_mut() = chain_context;
-                refresh_chain_journal(context);
-                context.cfg_env_mut().disable_balance_check = true;
+                evm.ctx_mut().chain = chain_context;
+                refresh_chain_journal(evm.ctx_mut());
+                evm.ctx_mut().cfg.disable_balance_check = true;
                 let is_system = is_known_system_sender(tx_env.caller())
                     || tx_env.tx_type() == SYSTEM_TRANSACTION_TYPE;
                 let result = if is_system {
@@ -221,9 +221,8 @@ impl Executor<MonadEvmNetwork> {
             }
 
             evm.enable_inspector();
-            let context = std::ops::DerefMut::deref_mut(&mut evm);
-            *context.chain_mut() = target_chain_context;
-            refresh_chain_journal(context);
+            evm.ctx_mut().chain = target_chain_context;
+            refresh_chain_journal(evm.ctx_mut());
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
             let target_is_system = is_known_system_sender(target_tx_env.caller())
                 || target_tx_env.tx_type() == SYSTEM_TRANSACTION_TYPE;
@@ -261,9 +260,7 @@ impl Executor<MonadEvmNetwork> {
         if sancov_trace_cmp {
             SancovGuard::drain_cmp_into(&mut result);
         }
-        let committed_tx = result.tx_env.clone();
         self.commit(&mut result);
-        self.record_block_transaction(committed_tx);
         Ok(Some((result, used_system_replay)))
     }
 }
@@ -972,10 +969,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     #[instrument(name = "transact_block_replay", level = "debug", skip_all)]
     pub fn transact_with_ordinary_block_replay(
         &mut self,
-        evm_env: EvmEnvFor<FEN>,
+        mut evm_env: EvmEnvFor<FEN>,
         target_tx_env: TxEnvFor<FEN>,
-        target_chain_context: ChainFor<FEN>,
-        replay: Vec<(B256, TxEnvFor<FEN>, ChainFor<FEN>)>,
+        replay: Vec<(B256, TxEnvFor<FEN>)>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let block_number = evm_env.block_env.number();
         let mut stack = self.inspector().clone();
@@ -994,19 +990,19 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
                 TxKind::Create => caller.create(target_tx_env.nonce()),
             };
             backend.set_test_contract(target_contract);
+            let target_chain_context = ChainFor::<FEN>::for_transaction(&target_tx_env);
+            if !replay.is_empty() {
+                evm_env.cfg_env.disable_balance_check = true;
+            }
             let evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
                 backend,
                 evm_env,
-                target_chain_context.clone(),
+                target_chain_context,
                 &mut stack,
             );
             let mut evm = evm;
             evm.disable_inspector();
-            for (tx_hash, tx_env, chain_context) in replay {
-                let context = std::ops::DerefMut::deref_mut(&mut evm);
-                *context.chain_mut() = chain_context;
-                refresh_chain_journal(context);
-                context.cfg_env_mut().disable_balance_check = true;
+            for (tx_hash, tx_env) in replay {
                 let created = match tx_env.kind() {
                     TxKind::Create => Some(tx_env.caller().create(tx_env.nonce())),
                     TxKind::Call(_) => None,
@@ -1023,9 +1019,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             }
 
             evm.enable_inspector();
-            let context = std::ops::DerefMut::deref_mut(&mut evm);
-            *context.chain_mut() = target_chain_context;
-            refresh_chain_journal(context);
             let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
             let result = evm.transact(target_tx_env).wrap_err("EVM error")?;
             let tx_env = evm.tx().clone();
@@ -1050,9 +1043,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         if sancov_trace_cmp {
             SancovGuard::drain_cmp_into(&mut result);
         }
-        let committed_tx = result.tx_env.clone();
         self.commit(&mut result);
-        self.record_block_transaction(committed_tx);
         Ok(result)
     }
 
@@ -2208,11 +2199,7 @@ mod tests {
             .transact_with_ordinary_block_replay(
                 EvmEnv::default(),
                 target,
-                (),
-                vec![
-                    (B256::repeat_byte(1), prefix, ()),
-                    (B256::repeat_byte(2), reverted_create, ()),
-                ],
+                vec![(B256::repeat_byte(1), prefix), (B256::repeat_byte(2), reverted_create)],
             )
             .unwrap();
 
@@ -2252,8 +2239,7 @@ mod tests {
             .transact_with_ordinary_block_replay(
                 EvmEnv::default(),
                 target,
-                (),
-                vec![(B256::repeat_byte(1), prefix, ())],
+                vec![(B256::repeat_byte(1), prefix)],
             )
             .unwrap();
 
@@ -2289,8 +2275,7 @@ mod tests {
             .transact_with_ordinary_block_replay(
                 EvmEnv::default(),
                 target,
-                (),
-                vec![(B256::repeat_byte(1), prefix, ())],
+                vec![(B256::repeat_byte(1), prefix)],
             )
             .unwrap();
 

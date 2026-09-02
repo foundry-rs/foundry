@@ -1,7 +1,4 @@
-use std::{
-    fmt::Debug,
-    ops::{Deref, DerefMut},
-};
+use std::{fmt::Debug, ops::Deref};
 
 use crate::{
     FoundryBlock, FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
@@ -160,7 +157,6 @@ pub trait FoundryEvmFactory:
             Spec = Self::Spec,
             HaltReason = Self::HaltReason,
         > + Deref<Target = Self::FoundryContext<'db>>
-        + DerefMut<Target = Self::FoundryContext<'db>>
     where
         Self: 'db;
 

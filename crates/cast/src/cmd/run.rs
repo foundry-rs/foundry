@@ -48,12 +48,12 @@ use foundry_config::{
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 #[cfg(feature = "monad")]
-use foundry_evm::core::evm::{BlockContext, MonadEvmNetwork};
+use foundry_evm::core::evm::{BlockContext, ChainFor, MonadEvmNetwork};
 use foundry_evm::{
     core::{
-        FoundryBlock as _, FoundryChain as _,
+        FoundryBlock as _,
         env::FromAnyRpcTransaction as _,
-        evm::{ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{Executor, TracingExecutor},
     hardforks::FoundryHardfork,
@@ -643,7 +643,6 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
         let tx_hash = self.tx.tx_hash();
         let block = &self.block;
         let replay_system_txes = self.args.replay_system_txes;
-        let target_chain_context = ChainFor::<FEN>::for_transaction(&target_tx_env);
         let mut replay = Vec::new();
         if replay_prefix {
             sh_status!("Executing previous transactions from the block.")?;
@@ -669,8 +668,7 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
                         } else {
                             trace!(tx=?tx.tx_hash(), "preparing previous create transaction");
                         }
-                        let chain_context = ChainFor::<FEN>::for_transaction(&tx_env);
-                        replay.push((tx.tx_hash(), tx_env, chain_context));
+                        replay.push((tx.tx_hash(), tx_env));
                     }
                     pb.set_position((index + 1) as u64);
                 }
@@ -679,7 +677,6 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
         let result = self.executor.transact_with_ordinary_block_replay(
             self.evm_env.clone(),
             target_tx_env,
-            target_chain_context,
             replay,
         )?;
         let trace_kind = if let Some(to) = Transaction::to(&self.tx) {
