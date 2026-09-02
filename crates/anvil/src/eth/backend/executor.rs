@@ -239,21 +239,29 @@ pub struct AnvilBlockExecutor<E> {
     gas_used: u64,
     /// Blob gas used by the block.
     blob_gas_used: u64,
+    /// Maximum blob gas available to transactions in this block.
+    max_blob_gas_per_block: u64,
+    /// Whether OP Jovian repurposes `blobGasUsed` for the DA footprint.
+    #[cfg(feature = "optimism")]
+    optimism_jovian: bool,
     /// State changes captured for deferred publication.
     state_changes: Option<Vec<EvmState>>,
 }
 
 impl<E: fmt::Debug> fmt::Debug for AnvilBlockExecutor<E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AnvilBlockExecutor")
+        let mut debug = f.debug_struct("AnvilBlockExecutor");
+        debug
             .field("evm", &self.evm)
             .field("parent_hash", &self.parent_hash)
             .field("spec_id", &self.spec_id)
             .field("ethereum_transitions", &self.ethereum_transitions)
             .field("gas_used", &self.gas_used)
             .field("blob_gas_used", &self.blob_gas_used)
-            .field("receipts", &self.receipts.len())
-            .finish_non_exhaustive()
+            .field("max_blob_gas_per_block", &self.max_blob_gas_per_block);
+        #[cfg(feature = "optimism")]
+        debug.field("optimism_jovian", &self.optimism_jovian);
+        debug.field("receipts", &self.receipts.len()).finish_non_exhaustive()
     }
 }
 
@@ -274,6 +282,9 @@ impl<E> AnvilBlockExecutor<E> {
             receipts: Vec::new(),
             gas_used: 0,
             blob_gas_used: 0,
+            max_blob_gas_per_block: u64::MAX,
+            #[cfg(feature = "optimism")]
+            optimism_jovian: false,
             state_changes: None,
         }
     }
@@ -281,6 +292,12 @@ impl<E> AnvilBlockExecutor<E> {
     /// Captures every committed changeset so callers can publish them after block execution.
     pub(crate) fn with_state_changes(mut self) -> Self {
         self.state_changes = Some(Vec::new());
+        self
+    }
+
+    /// Applies the active block blob gas limit.
+    pub(crate) const fn with_max_blob_gas_per_block(mut self, limit: u64) -> Self {
+        self.max_blob_gas_per_block = limit;
         self
     }
 
@@ -325,14 +342,26 @@ where
 
         let sender = *tx.signer();
         let transaction_hash = tx.tx().trie_hash();
+        #[cfg(feature = "optimism")]
+        let blob_gas_used =
+            optimism::blob_gas_used(self.evm.db_mut(), tx.tx(), self.optimism_jovian)?;
+        #[cfg(not(feature = "optimism"))]
+        let blob_gas_used = tx.tx().blob_gas_used().unwrap_or_default();
+        #[cfg(feature = "optimism")]
+        let blob_gas_limit = if self.optimism_jovian {
+            self.evm.block().gas_limit()
+        } else {
+            self.max_blob_gas_per_block
+        };
+        #[cfg(not(feature = "optimism"))]
+        let blob_gas_limit = self.max_blob_gas_per_block;
+        if self.blob_gas_used.saturating_add(blob_gas_used) > blob_gas_limit {
+            return Err(BlockExecutionError::msg("block blob gas limit exceeded"));
+        }
         let result = transact(&mut self.evm, tx_env, transaction_hash)?;
 
         Ok(AnvilTxResult {
-            inner: EthTxResult {
-                result,
-                blob_gas_used: tx.tx().blob_gas_used().unwrap_or_default(),
-                tx_type: tx.tx().tx_type(),
-            },
+            inner: EthTxResult { result, blob_gas_used, tx_type: tx.tx().tx_type() },
             sender,
         })
     }
@@ -613,10 +642,11 @@ where
             continue;
         }
 
-        // Blob gas check
-        let tx_blob_gas = pending.transaction.blob_gas_used().unwrap_or(0);
-        if blob_gas_used.saturating_add(tx_blob_gas) > gas_config.max_blob_gas_per_block {
-            trace!(target: "backend", blob_gas = %tx_blob_gas, ?pool_tx, "block blob gas limit exhausting, skipping transaction");
+        // Reject declared blob gas before execution. Network-specific accounting is checked again
+        // against the execution result below.
+        let declared_blob_gas = pending.transaction.blob_gas_used().unwrap_or(0);
+        if blob_gas_used.saturating_add(declared_blob_gas) > gas_config.max_blob_gas_per_block {
+            trace!(target: "backend", blob_gas = %declared_blob_gas, ?pool_tx, "block blob gas limit exhausting, skipping transaction");
             continue;
         }
 
@@ -643,7 +673,7 @@ where
                     executor.evm_mut().inspector_mut().finish_transaction(inspector_config);
 
                 if gas_config.is_cancun {
-                    blob_gas_used = blob_gas_used.saturating_add(tx_blob_gas);
+                    blob_gas_used = blob_gas_used.saturating_add(declared_blob_gas);
                 }
 
                 let (exit_reason, out, _logs) = match exec_result {

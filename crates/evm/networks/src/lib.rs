@@ -19,7 +19,7 @@ use alloy_chains::{
     Chain, NamedChain,
     NamedChain::{Chiado, Gnosis, Moonbase, Moonbeam, MoonbeamDev, Moonriver, Rsk, RskTestnet},
 };
-use alloy_eips::eip1559::BaseFeeParams;
+use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::precompiles::{DynPrecompile, PrecompilesMap};
 use alloy_primitives::{Address, ChainId, address, map::AddressHashMap};
 use clap::Parser;
@@ -593,6 +593,28 @@ impl NetworkConfigs {
     pub const fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
         let _ = timestamp;
         BaseFeeParams::ethereum()
+    }
+
+    /// Calculates the blob excess gas inherited by the next block.
+    ///
+    /// OP Stack headers use the blob fields for protocol metadata rather than EIP-4844 blobs, so
+    /// their excess blob gas remains zero. Other execution profiles use the configured Ethereum
+    /// blob schedule.
+    pub fn next_block_blob_excess_gas(
+        &self,
+        blob_params: BlobParams,
+        parent_excess_blob_gas: u64,
+        parent_blob_gas_used: u64,
+        parent_base_fee: u64,
+    ) -> u64 {
+        if self.is_optimism() {
+            return 0;
+        }
+        blob_params.next_block_excess_blob_gas_osaka(
+            parent_excess_blob_gas,
+            parent_blob_gas_used,
+            parent_base_fee,
+        )
     }
 
     /// Returns contract size limits for networks that override Ethereum defaults.
