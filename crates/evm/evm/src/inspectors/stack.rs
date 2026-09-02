@@ -250,6 +250,9 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         // inspectors
         if let Some(config) = cheatcodes {
             let mut cheatcodes = Cheatcodes::new(config);
+            // TODO(monad-fen-dispatch): Resolve this address slice at the initial FEN dispatch and
+            // pass it into the inspector builder without retaining post-dispatch `NetworkConfigs`.
+            cheatcodes.set_extra_cheatcode_addresses(networks.extra_cheatcode_addresses());
             // Set analysis capabilities if they are provided
             if let Some(analysis) = analysis {
                 stack.set_analysis(analysis.clone());
