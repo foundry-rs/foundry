@@ -943,6 +943,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             cmd.execute()?;
         }
         CastSubcommand::Wallet { command } => command.run().await?,
+        CastSubcommand::Safe { command } => command.run().await?,
         CastSubcommand::Completions { shell } => {
             generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
         }

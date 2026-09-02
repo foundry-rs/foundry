@@ -680,6 +680,14 @@ fn normalize_bool_node_for_solver(cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolE
     }
 
     match expr.kind() {
+        SymBoolExprKind::Not(value) => match value.kind() {
+            SymBoolExprKind::Cmp(SymCmpOp::Ult, left, right)
+                if matches!(left.kind(), SymExprKind::Not(_)) =>
+            {
+                SymBoolExpr::cmp(cx, SymCmpOp::Ule, right.clone(), left.clone())
+            }
+            _ => expr,
+        },
         SymBoolExprKind::Cmp(op, left, right) => {
             let left = normalize_expr_for_solver(cx, left.clone());
             let right = normalize_expr_for_solver(cx, right.clone());
@@ -1538,13 +1546,38 @@ impl SymBoolExpr {
         left: &SymExpr,
         right: &SymExpr,
     ) -> Option<Self> {
-        match op {
-            // `a + b > a => false` when `a + b` cannot overflow.
-            SymCmpOp::Ugt if left.add_overflow_check(right) => Some(Self::constant(cx, false)),
-            // `a < a + b => false` when `a + b` cannot overflow.
-            SymCmpOp::Ult if right.add_overflow_check(left) => Some(Self::constant(cx, false)),
-            _ => None,
+        // Strict forms test overflow and non-strict forms its complement; addition wraps iff the
+        // increment exceeds `~base`.
+        let (base, increment, overflow) = match op {
+            SymCmpOp::Ugt => {
+                right.add_with_operand(left).map(|(_, increment)| (left, increment, true))
+            }
+            SymCmpOp::Ult => {
+                left.add_with_operand(right).map(|(_, increment)| (right, increment, true))
+            }
+            SymCmpOp::Uge => {
+                left.add_with_operand(right).map(|(_, increment)| (right, increment, false))
+            }
+            SymCmpOp::Ule => {
+                right.add_with_operand(left).map(|(_, increment)| (left, increment, false))
+            }
+            SymCmpOp::Eq | SymCmpOp::Slt | SymCmpOp::Sgt => None,
+        }?;
+        if base.add_cannot_overflow_256(increment) {
+            return Some(Self::constant(cx, !overflow));
         }
+
+        let limit = match base.kind() {
+            SymExprKind::BinOp(SymBinOp::Sub, max, value) if max.as_const() == Some(U256::MAX) => {
+                value.clone()
+            }
+            _ => SymExpr::not(cx, base.clone()),
+        };
+        Some(if overflow {
+            Self::cmp(cx, SymCmpOp::Ult, limit, increment.clone())
+        } else {
+            Self::cmp(cx, SymCmpOp::Ule, increment.clone(), limit)
+        })
     }
 
     fn normalize_udiv_eq_zero(cx: &mut SymCx, left: &SymExpr, right: &SymExpr) -> Option<Self> {
@@ -1623,11 +1656,6 @@ impl SymExpr {
         self.strip_low_byte_mask()
             .bool_word_condition()
             .map(|condition| normalize_bool_for_solver(cx, condition))
-    }
-
-    fn add_overflow_check(&self, right: &Self) -> bool {
-        let Some((base, increment)) = right.add_with_operand(self) else { return false };
-        base == self && base.add_cannot_overflow_256(increment)
     }
 
     fn add_with_operand<'a>(&'a self, operand: &Self) -> Option<(&'a Self, &'a Self)> {

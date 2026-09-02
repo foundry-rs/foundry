@@ -41,12 +41,14 @@ use anvil::{
 use axum::{Json, Router, routing::post};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
+use foundry_evm::hardfork::OpHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
     self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_internal_error_after,
     spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
     spawn_rpc_proxy_rejecting_method_when_enabled,
+    spawn_rpc_proxy_retyping_first_block_transaction,
 };
 use futures::StreamExt;
 use revm::{
@@ -235,6 +237,80 @@ async fn test_fork_retries_when_anvil_node_info_becomes_available() {
         spawn_rpc_proxy_method_not_found_before(origin.http_endpoint(), "anvil_nodeInfo", 1).await;
 
     try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await.unwrap();
+}
+
+// A replayed block holds only the transactions anvil executed, so a skipped one must not leave a
+// gap in the indices storage keys receipts by. The proxy stands in for Arbitrum, which opens every
+// block with a system transaction anvil cannot execute.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_skips_unsupported_prefix() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    let origin_provider = origin_handle.http_provider();
+    // Distinct senders, because Arbitrum's system transactions do not consume a user nonce.
+    let senders =
+        origin_handle.dev_wallets().take(2).map(|wallet| wallet.address()).collect::<Vec<_>>();
+
+    let skipped = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(senders[0])
+                .to(Address::random())
+                .value(U256::from(1))
+                .nonce(0),
+        ))
+        .await
+        .unwrap();
+    let target = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(senders[1])
+                .to(Address::random())
+                .value(U256::from(2))
+                .nonce(0),
+        ))
+        .await
+        .unwrap();
+    let target_hash = *target.tx_hash();
+    origin_api.mine_one().await.unwrap();
+
+    let fork_url = spawn_rpc_proxy_retyping_first_block_transaction(
+        origin_handle.http_endpoint(),
+        // `ArbitrumInternalTx`.
+        "0x6a",
+    )
+    .await;
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(fork_url))
+            .with_fork_transaction_hash(Some(target_hash))
+            .with_no_mining(true),
+    )
+    .await;
+    let fork_provider = fork_handle.http_provider();
+
+    // Only the target survives the prefix, so it takes index 0 in the replayed block.
+    let replayed =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(
+        replayed
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>(),
+        vec![target_hash]
+    );
+
+    // Receipt lookups index into that block, so a stale index panics instead of answering.
+    let receipt = fork_provider.get_transaction_receipt(target_hash).await.unwrap().unwrap();
+    assert_eq!(receipt.transaction_index(), Some(0));
+    assert_eq!(
+        fork_provider.get_block_receipts(BlockId::number(1)).await.unwrap().unwrap().len(),
+        1
+    );
+    assert!(fork_api.backend.mined_transaction_by_hash(*skipped.tx_hash()).is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2405,11 +2481,13 @@ async fn flaky_test_arb_fork_mining() {
 // <https://github.com/foundry-rs/foundry/issues/6749>
 #[tokio::test(flavor = "multi_thread")]
 async fn flaky_test_arbitrum_fork_block_number() {
+    // Every fork below must observe the same chain head, so reuse one endpoint: providers are a few
+    // blocks apart and refetching would otherwise fork at a block the next provider has not seen.
+    let fork_rpc = next_rpc_endpoint(NamedChain::Arbitrum);
+
     // fork to get initial block for test
     let (_, handle) = spawn(
-        fork_config()
-            .with_fork_block_number(None::<u64>)
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
+        fork_config().with_fork_block_number(None::<u64>).with_eth_rpc_url(Some(fork_rpc.clone())),
     )
     .await;
     let provider = handle.http_provider();
@@ -2421,7 +2499,7 @@ async fn flaky_test_arbitrum_fork_block_number() {
     let (api, _) = spawn(
         fork_config()
             .with_fork_block_number(Some(initial_block_number))
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
+            .with_eth_rpc_url(Some(fork_rpc.clone())),
     )
     .await;
     let block_number = api.block_number().unwrap().to::<u64>();
@@ -2447,7 +2525,7 @@ async fn flaky_test_arbitrum_fork_block_number() {
 
     // reset fork to different block number and compare with block returned by `eth_blockNumber`
     api.anvil_reset(Some(Forking {
-        json_rpc_url: Some(next_rpc_endpoint(NamedChain::Arbitrum)),
+        json_rpc_url: Some(fork_rpc),
         block_number: Some(initial_block_number - 2),
     }))
     .await
@@ -3208,7 +3286,123 @@ async fn test_fork_reset_to_new_url_updates_source_chain_id() {
     assert!(send().await.unwrap().get_receipt().await.unwrap().status());
 }
 
-async fn spawn_rpc_proxy_without_blob_header_fields(endpoint: String) -> String {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_pre_cancun_fork_with_post_cancun_hardfork() {
+    let target = Address::random();
+    let (origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Mainnet as u64))
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_genesis_timestamp(EthereumHardfork::Cancun.mainnet_activation_timestamp()),
+    )
+    .await;
+    origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
+    origin_api.mine_one().await.unwrap();
+    let origin_url = origin_handle.http_endpoint();
+
+    for hardfork in [EthereumHardfork::Cancun, EthereumHardfork::Prague] {
+        let (api, handle) = spawn(
+            NodeConfig::test()
+                .with_eth_rpc_url(Some(origin_url.clone()))
+                .with_fork_block_number(Some(1u64))
+                .with_hardfork(Some(hardfork.into())),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let request =
+            || TransactionRequest { to: Some(TxKind::Call(target)), ..Default::default() };
+
+        assert_eq!(provider.call(request().into()).await.unwrap(), Bytes::from(vec![0; 32]));
+        assert_eq!(
+            api.backend
+                .evm_env()
+                .read()
+                .block_env
+                .blob_excess_gas_and_price
+                .as_ref()
+                .map(|blob| blob.excess_blob_gas),
+            Some(0)
+        );
+
+        api.anvil_reset(Some(Forking {
+            json_rpc_url: Some(origin_url.clone()),
+            block_number: Some(1),
+        }))
+        .await
+        .unwrap();
+        assert_eq!(provider.call(request().into()).await.unwrap(), Bytes::from(vec![0; 32]));
+    }
+
+    let partial_header_url =
+        spawn_rpc_proxy_with_blob_header_fields(origin_url, Some(0), None).await;
+    let partial_header_url =
+        spawn_rpc_proxy_rejecting_method_after(partial_header_url, "anvil_nodeInfo", 0).await;
+    let (api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(partial_header_url))
+            .with_fork_block_number(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Prague.into())),
+    )
+    .await;
+    assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_unknown_schedule_fork_with_post_cancun_hardfork() {
+    let target = Address::random();
+    let (origin_api, origin_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::BinanceSmartChain as u64))
+            .with_hardfork(Some(EthereumHardfork::Shanghai.into()))
+            .with_genesis_timestamp(EthereumHardfork::Cancun.mainnet_activation_timestamp()),
+    )
+    .await;
+    origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
+    origin_api.mine_one().await.unwrap();
+    let origin_url =
+        spawn_rpc_proxy_with_blob_header_fields(origin_handle.http_endpoint(), None, None).await;
+    let origin_url = spawn_rpc_proxy_rejecting_method_after(origin_url, "anvil_nodeInfo", 0).await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_url.clone()))
+            .with_fork_block_number(Some(1u64))
+            .with_hardfork(Some(EthereumHardfork::Prague.into())),
+    )
+    .await;
+
+    assert_eq!(
+        api.backend
+            .evm_env()
+            .read()
+            .block_env
+            .blob_excess_gas_and_price
+            .as_ref()
+            .map(|blob| blob.excess_blob_gas),
+        Some(0)
+    );
+    assert_eq!(
+        handle
+            .http_provider()
+            .call(
+                TransactionRequest { to: Some(TxKind::Call(target)), ..Default::default() }.into()
+            )
+            .await
+            .unwrap(),
+        Bytes::from(vec![0; 32])
+    );
+
+    let (api, _) = spawn(
+        NodeConfig::test().with_eth_rpc_url(Some(origin_url)).with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    assert!(api.backend.evm_env().read().block_env.blob_excess_gas_and_price.is_none());
+}
+
+async fn spawn_rpc_proxy_with_blob_header_fields(
+    endpoint: String,
+    blob_gas_used: Option<u64>,
+    excess_blob_gas: Option<u64>,
+) -> String {
     let client = reqwest::Client::new();
     let router = Router::new().route(
         "/",
@@ -3230,8 +3424,15 @@ async fn spawn_rpc_proxy_without_blob_header_fields(endpoint: String) -> String 
                     Some("eth_getBlockByHash" | "eth_getBlockByNumber")
                 ) && let Some(block) = response.get_mut("result").and_then(Value::as_object_mut)
                 {
-                    block.remove("blobGasUsed");
-                    block.remove("excessBlobGas");
+                    for (field, value) in
+                        [("blobGasUsed", blob_gas_used), ("excessBlobGas", excess_blob_gas)]
+                    {
+                        if let Some(value) = value {
+                            block.insert(field.to_string(), Value::String(format!("0x{value:x}")));
+                        } else {
+                            block.remove(field);
+                        }
+                    }
                 }
                 Json(response)
             }
@@ -3241,6 +3442,82 @@ async fn spawn_rpc_proxy_without_blob_header_fields(endpoint: String) -> String 
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     format!("http://{address}")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_optimism_fork_keeps_excess_blob_gas_zero_after_mining() {
+    // Base Jovian stores the DA footprint in `blobGasUsed`, but OP Stack clients keep
+    // `excessBlobGas` at zero because the chain does not support EIP-4844 blobs. This captured
+    // footprint is from Base mainnet block 50_729_760.
+    let (_, origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Base as u64))
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_hardfork(Some(OpHardfork::Jovian.into())),
+    )
+    .await;
+    let fork_url =
+        spawn_rpc_proxy_with_blob_header_fields(origin.http_endpoint(), Some(0x2e_b434), Some(0))
+            .await;
+    let (api, _) = spawn(
+        NodeConfig::test().with_eth_rpc_url(Some(fork_url)).with_fork_block_number(Some(0u64)),
+    )
+    .await;
+
+    api.mine_one().await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    assert_eq!(block.header.excess_blob_gas, Some(0));
+    let next_blob_fee = api.excess_blob_gas_and_price().unwrap().unwrap();
+    assert_eq!(next_blob_fee.excess_blob_gas, 0);
+    assert_eq!(next_blob_fee.blob_gasprice, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_arbitrum_forks_accept_nitro_headers_without_blob_fields() {
+    // Nitro omits Ethereum's EIP-4844 header fields, including on post-Cancun chains. Hide Anvil
+    // metadata so these deterministic local origins have the same observable shape as public RPCs.
+    for chain in [NamedChain::Arbitrum, NamedChain::Robinhood] {
+        let target = Address::random();
+        let (origin_api, origin) = spawn(
+            NodeConfig::test()
+                .with_chain_id(Some(chain as u64))
+                .with_hardfork(Some(EthereumHardfork::Prague.into()))
+                .with_genesis_timestamp(EthereumHardfork::Prague.arbitrum_activation_timestamp()),
+        )
+        .await;
+        origin_api.anvil_set_code(target, bytes!("600060005260206000f3")).await.unwrap();
+        let fork_url =
+            spawn_rpc_proxy_with_blob_header_fields(origin.http_endpoint(), None, None).await;
+        let fork_url = spawn_rpc_proxy_rejecting_method_after(fork_url, "anvil_nodeInfo", 0).await;
+
+        let (api, handle) = spawn(
+            NodeConfig::test()
+                .with_no_storage_caching(true)
+                .with_eth_rpc_url(Some(fork_url))
+                .with_fork_block_number(Some(0u64)),
+        )
+        .await;
+
+        assert!(api.backend.spec_id() >= SpecId::CANCUN);
+        assert_eq!(
+            api.backend
+                .evm_env()
+                .read()
+                .block_env
+                .blob_excess_gas_and_price
+                .as_ref()
+                .map(|blob| blob.excess_blob_gas),
+            Some(0),
+            "{chain}"
+        );
+        let request = TransactionRequest { to: Some(TxKind::Call(target)), ..Default::default() };
+        assert_eq!(
+            handle.http_provider().call(request.into()).await.unwrap(),
+            Bytes::from(vec![0; 32]),
+            "{chain}"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -3259,7 +3536,7 @@ async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
     .await;
     polygon_api.anvil_set_code(token, return_zero.clone()).await.unwrap();
     let polygon_url =
-        spawn_rpc_proxy_without_blob_header_fields(polygon_origin.http_endpoint()).await;
+        spawn_rpc_proxy_with_blob_header_fields(polygon_origin.http_endpoint(), None, None).await;
     let polygon_url =
         spawn_rpc_proxy_rejecting_method_after(polygon_url, "anvil_nodeInfo", 0).await;
 
@@ -3272,7 +3549,8 @@ async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
     .await;
     pre_cancun_api.anvil_set_code(token, return_zero.clone()).await.unwrap();
     let pre_cancun_url =
-        spawn_rpc_proxy_without_blob_header_fields(pre_cancun_origin.http_endpoint()).await;
+        spawn_rpc_proxy_with_blob_header_fields(pre_cancun_origin.http_endpoint(), None, None)
+            .await;
     let pre_cancun_url =
         spawn_rpc_proxy_rejecting_method_after(pre_cancun_url, "anvil_nodeInfo", 0).await;
 
@@ -3287,7 +3565,7 @@ async fn test_polygon_fork_missing_blob_fields_is_chain_scoped_across_reset() {
     .await;
     ethereum_api.anvil_set_code(token, return_zero).await.unwrap();
     let ethereum_url =
-        spawn_rpc_proxy_without_blob_header_fields(ethereum_origin.http_endpoint()).await;
+        spawn_rpc_proxy_with_blob_header_fields(ethereum_origin.http_endpoint(), None, None).await;
     let ethereum_url =
         spawn_rpc_proxy_rejecting_method_after(ethereum_url, "anvil_nodeInfo", 0).await;
 

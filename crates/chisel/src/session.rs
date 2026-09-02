@@ -5,7 +5,7 @@
 
 use crate::prelude::{SessionSource, SessionSourceConfig};
 use eyre::Result;
-use foundry_evm::core::evm::FoundryEvmNetwork;
+use foundry_evm::{core::evm::FoundryEvmNetwork, executors::ExecutorBuilder};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use time::{OffsetDateTime, format_description};
@@ -22,6 +22,14 @@ pub struct ChiselSession<FEN: FoundryEvmNetwork> {
 
 // ChiselSession Common Associated Functions
 impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
+    fn deserialize_cached(contents: &str, executor_builder: ExecutorBuilder<FEN>) -> Result<Self> {
+        let mut session: Self = serde_json::from_str(contents)?;
+        // A session load must not run project cleanup requested by cached configuration.
+        session.source.config.foundry_config.force = false;
+        session.source.config.executor_builder = executor_builder;
+        Ok(session)
+    }
+
     /// Create a new `ChiselSession` with a specified `solc` version and configuration.
     ///
     /// ### Takes
@@ -170,8 +178,9 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
                 .into_string()
                 .map_err(|e| eyre::eyre!(format!("{}", e.to_string_lossy())))?;
             sessions.push((
-                systemtime_strftime(modified_time, "[year]-[month]-[day] [hour]:[minute]:[second]")
-                    .unwrap(),
+                OffsetDateTime::from(modified_time).format(&format_description::parse(
+                    "[year]-[month]-[day] [hour]:[minute]:[second]",
+                )?)?,
                 file_name,
             ));
         }
@@ -187,11 +196,10 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     /// ### Returns
     ///
     /// Optionally, an owned instance of the loaded chisel session.
-    pub fn load(id: &str) -> Result<Self> {
+    pub fn load(id: &str, executor_builder: ExecutorBuilder<FEN>) -> Result<Self> {
         let cache_dir = Self::cache_dir()?;
         let contents = std::fs::read_to_string(Path::new(&format!("{cache_dir}chisel-{id}.json")))?;
-        let chisel_env: Self = serde_json::from_str(&contents)?;
-        Ok(chisel_env)
+        Self::deserialize_cached(&contents, executor_builder)
     }
 
     /// Gets the most recent chisel session from the cache dir
@@ -221,19 +229,65 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     /// ### Returns
     ///
     /// Optionally, an owned instance of the most recently modified cached session.
-    pub fn latest() -> Result<Self> {
+    pub fn latest(executor_builder: ExecutorBuilder<FEN>) -> Result<Self> {
         let last_session = Self::latest_cached_session()?;
         let last_session_contents = std::fs::read_to_string(Path::new(&last_session))?;
-        let chisel_env: Self = serde_json::from_str(&last_session_contents)?;
-        Ok(chisel_env)
+        Self::deserialize_cached(&last_session_contents, executor_builder)
     }
 }
 
-/// Generic helper function that attempts to convert a type that has
-/// an [`Into<OffsetDateTime>`] implementation into a formatted date string.
-fn systemtime_strftime<T>(dt: T, format: &str) -> Result<String>
-where
-    T: Into<OffsetDateTime>,
-{
-    Ok(dt.into().format(&format_description::parse(format)?)?)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_config::{Config, SolcReq};
+    use foundry_evm::core::evm::EthEvmNetwork;
+    #[cfg(feature = "monad")]
+    use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
+    use semver::Version;
+
+    #[test]
+    fn deserialized_sessions_do_not_restore_force() {
+        let session = ChiselSession::<EthEvmNetwork>::new(SessionSourceConfig {
+            foundry_config: Config {
+                force: true,
+                solc: Some(SolcReq::Version(Version::new(0, 8, 29))),
+                ..Default::default()
+            },
+            no_vm: true,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(session.source.config.foundry_config.force);
+
+        let serialized = serde_json::to_string(&session).unwrap();
+        let session = ChiselSession::<EthEvmNetwork>::deserialize_cached(
+            &serialized,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
+        )
+        .unwrap();
+
+        assert!(!session.source.config.foundry_config.force);
+    }
+
+    #[cfg(feature = "monad")]
+    #[test]
+    fn deserialized_sessions_use_active_monad_tooling() {
+        let session = ChiselSession::<MonadEvmNetwork>::new(SessionSourceConfig {
+            executor_builder: ExecutorBuilder::<MonadEvmNetwork>::new(),
+            ..Default::default()
+        })
+        .unwrap();
+        let serialized = serde_json::to_string(&session).unwrap();
+
+        let session = ChiselSession::<MonadEvmNetwork>::deserialize_cached(
+            &serialized,
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            session.source.config.executor_builder.extra_cheatcode_addresses(),
+            &[MONAD_CHEATCODE_ADDRESS]
+        );
+    }
 }

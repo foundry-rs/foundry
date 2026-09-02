@@ -434,6 +434,7 @@ impl WorkerCorpusSeed {
 
     pub(crate) fn load_from_disk<FEN: FoundryEvmNetwork>(
         config: &FuzzCorpusConfig,
+        replay_root: Option<&Path>,
         executor: Option<&Executor<FEN>>,
         target: ReplayTarget<'_>,
     ) -> Result<Self> {
@@ -441,7 +442,7 @@ impl WorkerCorpusSeed {
         let Some(corpus_dir) = &config.corpus_dir else {
             return Ok(seed);
         };
-        let replay_dirs = canonical_replay_dirs(corpus_dir);
+        let replay_dirs = canonical_replay_dirs(replay_root.unwrap_or(corpus_dir));
         seed.replay_dirs = Some(replay_dirs.clone());
 
         // Seed in-memory corpus with the persisted optimization best sequence so the mutation
@@ -864,12 +865,13 @@ impl WorkerCorpus {
         id: usize,
         config: FuzzCorpusConfig,
         sequence_generator: SequenceGenerator,
+        replay_root: Option<&Path>,
         // Only required by master worker (id = 0) to replay existing corpus.
         executor: Option<&Executor<FEN>>,
         target: ReplayTarget<'_>,
     ) -> Result<Self> {
         let seed = if id == 0 {
-            WorkerCorpusSeed::load_from_disk(&config, executor, target)?
+            WorkerCorpusSeed::load_from_disk(&config, replay_root, executor, target)?
         } else {
             WorkerCorpusSeed::empty(&config).with_optimization_state(&config)
         };
@@ -2321,6 +2323,7 @@ mod tests {
         let seed = WorkerCorpusSeed::load_from_disk::<foundry_evm_core::evm::EthEvmNetwork>(
             &config,
             None,
+            None,
             ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None },
         )
         .unwrap();
@@ -2552,6 +2555,7 @@ mod tests {
             1,
             config,
             generator,
+            None,
             None,
             ReplayTarget { stateless: None, fuzzed_contracts: None, dynamic: None },
         )

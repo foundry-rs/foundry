@@ -2088,21 +2088,30 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         let mut fuzz_config = self.config.fuzz.clone();
+        let test_name =
+            fuzz_test_path_name(&self.cr.contract.abi, func, &fuzz_config, self.cr.name);
+        let legacy_corpus_dir = legacy_fuzz_corpus_dir(
+            fuzz_config.corpus.corpus_dir.as_deref(),
+            self.cr.name,
+            func,
+            &test_name,
+        );
         let _ = test_paths(
             &mut fuzz_config.corpus,
             fuzz_config.failure_persist_dir.clone().unwrap(),
             self.cr.name,
-            &func.name,
+            &test_name,
         );
+        let corpus_dir = legacy_corpus_dir.or_else(|| fuzz_config.corpus.corpus_dir.clone());
         let limit = self.config.symbolic.corpus_seed_limit;
         let mut metadata = SymbolicCorpusSeedMetadata {
-            corpus_dir: fuzz_config.corpus.corpus_dir.clone(),
+            corpus_dir: corpus_dir.clone(),
             limit,
             loaded: 0,
             skipped: 0,
             used: Vec::new(),
         };
-        let Some(corpus_dir) = fuzz_config.corpus.corpus_dir.clone() else {
+        let Some(corpus_dir) = corpus_dir else {
             let _ = sh_warn!(
                 "`--symbolic-use-fuzz-corpus` requires `--fuzz-corpus-dir` or `fuzz.corpus_dir`; \
                  running without imported corpus seeds"
@@ -3242,7 +3251,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             fuzz_config.fail_on_revert,
             self.address,
             raw_call_result.reverter,
-            self.executor.inspector().networks.extra_cheatcode_addresses(),
+            self.executor.inspector().extra_cheatcode_addresses(),
         ) || self.executor.is_raw_call_success(
             self.address,
             Cow::Borrowed(&raw_call_result.state_changeset),
@@ -3496,6 +3505,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             let invariant_address = self.address;
             return self.run_showmap(
                 func,
+                &func.name,
                 corpus_dir,
                 &showmap,
                 ShowmapReplayTarget {
@@ -4793,11 +4803,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let runner = self.fuzz_runner();
         let mut fuzz_config = self.config.fuzz.clone();
+        let test_name =
+            fuzz_test_path_name(&self.cr.contract.abi, func, &fuzz_config, self.cr.name);
+        let legacy_corpus_dir = legacy_fuzz_corpus_dir(
+            fuzz_config.corpus.corpus_dir.as_deref(),
+            self.cr.name,
+            func,
+            &test_name,
+        );
         let (failure_dir, failure_file) = test_paths(
             &mut fuzz_config.corpus,
             fuzz_config.failure_persist_dir.clone().unwrap(),
             self.cr.name,
-            &func.name,
+            &test_name,
         );
         let fuzz_input = self.cr.mcr.tcfg.fuzz_input.as_ref();
         let is_explicit_target = fuzz_input
@@ -4816,12 +4834,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 .corpus_dir
                 .clone()
                 .map(|corpus_dir| {
-                    narrow_generated_fuzz_corpus_root(corpus_dir, self.cr.name, &func.name)
+                    legacy_fuzz_corpus_dir(Some(&corpus_dir), self.cr.name, func, &test_name)
+                        .unwrap_or_else(|| {
+                            narrow_generated_fuzz_corpus_root(corpus_dir, self.cr.name, &test_name)
+                        })
                 })
+                .or(legacy_corpus_dir)
                 .or_else(|| fuzz_config.corpus.corpus_dir.clone());
             let fuzzed_address = self.address;
             return self.run_showmap(
                 func,
+                &test_name,
                 corpus_dir,
                 &showmap,
                 ShowmapReplayTarget {
@@ -4896,7 +4919,23 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let persisted_failure = if is_explicit_target {
             fuzz_input.map(|input| input.failure.as_ref().clone())
         } else {
-            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok()
+            foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path())
+                .ok()
+                .or_else(|| {
+                    if test_name.as_ref() == func.name {
+                        return None;
+                    }
+                    let legacy_file = canonicalized(failure_dir.join(&func.name));
+                    let failure = foundry_common::fs::read_json_file::<BaseCounterExample>(
+                        legacy_file.as_path(),
+                    )
+                    .ok()?;
+                    failure
+                        .calldata
+                        .get(..4)
+                        .is_some_and(|selector| func.selector() == selector)
+                        .then_some(failure)
+                })
         };
         if self.cr.mcr.tcfg.fuzz_failure_replay {
             let Some(failure) = persisted_failure.as_ref() else {
@@ -4949,8 +4988,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .inspector_mut()
             .collect_sancov_trace_cmp(fuzz_config.corpus.collect_sancov_trace_cmp());
         // Run fuzz test.
-        let mut fuzzed_executor =
-            FuzzedExecutor::new(executor, runner, self.tcfg.sender, fuzz_config, persisted_failure);
+        let mut fuzzed_executor = FuzzedExecutor::new(
+            executor,
+            runner,
+            self.tcfg.sender,
+            fuzz_config,
+            persisted_failure,
+            legacy_corpus_dir,
+        );
         if self.cr.mcr.tcfg.fuzz_failure_replay {
             let result = match fuzzed_executor.replay_persisted_failure(
                 func,
@@ -5056,6 +5101,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     fn run_showmap(
         mut self,
         func: &Function,
+        test_name: &str,
         corpus_dir: Option<PathBuf>,
         showmap: &crate::multi_runner::ShowmapConfig,
         target: ShowmapReplayTarget<'_>,
@@ -5083,7 +5129,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // (which `File::create_new` would reject). Distinct anchors sharing one
         // corpus simply produce equivalent, separately-named approach dirs.
         let safe_id = self.cr.name.replace(['/', '\\', ':'], "_");
-        let safe_fn = func.name.replace(['/', '\\', ':', '(', ')', ',', ' '], "_");
+        let safe_fn = test_name.replace(['/', '\\', ':', '(', ')', ',', ' '], "_");
         let approach = format!("{}__{safe_id}__{safe_fn}", showmap.approach);
         let opts = ShowmapOpts {
             out_dir: showmap.out_dir.clone(),
@@ -5463,6 +5509,61 @@ fn parse_frontier_selector(selector: &str) -> Option<Selector> {
 
 fn frontier_filter_display<T: std::fmt::Display>(values: &[T]) -> String {
     if values.is_empty() { "any".to_string() } else { values.iter().format(", ").to_string() }
+}
+
+/// Returns a stable path component that distinguishes overloaded fuzz tests.
+fn fuzz_test_path_name<'a>(
+    abi: &JsonAbi,
+    func: &'a Function,
+    config: &FuzzConfig,
+    contract_name: &str,
+) -> Cow<'a, str> {
+    let test_name = format!("{}-{}", func.name, hex::encode(func.selector()));
+    let overloaded = abi.functions.get(&func.name).is_some_and(|functions| functions.len() > 1);
+    let contract = contract_name.split(':').next_back().unwrap();
+    let has_qualified_artifact = config
+        .failure_persist_dir
+        .as_ref()
+        .is_some_and(|dir| dir.join("failures").join(contract).join(&test_name).exists())
+        || config
+            .corpus
+            .corpus_dir
+            .as_ref()
+            .is_some_and(|dir| dir.join(contract).join(&test_name).exists())
+        || config
+            .corpus
+            .frontier_dir
+            .as_ref()
+            .is_some_and(|dir| dir.join(contract).join(&test_name).exists());
+
+    if overloaded || has_qualified_artifact {
+        Cow::Owned(test_name)
+    } else {
+        Cow::Borrowed(&func.name)
+    }
+}
+
+/// Returns the legacy unqualified corpus when the qualified corpus has no entries.
+fn legacy_fuzz_corpus_dir(
+    root: Option<&Path>,
+    contract_name: &str,
+    func: &Function,
+    test_name: &str,
+) -> Option<PathBuf> {
+    if test_name == func.name {
+        return None;
+    }
+    let contract = contract_name.split(':').next_back().unwrap();
+    let root = root?;
+    let qualified = root.join(contract).join(test_name);
+    if canonical_replay_dirs(&qualified).iter().any(|dir| read_corpus_dir(dir).next().is_some()) {
+        return None;
+    }
+    let legacy = root.join(contract).join(&func.name);
+    canonical_replay_dirs(&legacy)
+        .iter()
+        .any(|dir| read_corpus_dir(dir).next().is_some())
+        .then(|| canonicalized(legacy))
 }
 
 /// Helper function to set test corpus dir and to compose persisted failure paths.

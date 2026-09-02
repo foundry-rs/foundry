@@ -316,6 +316,225 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 2 skipped (2 total tests)
     ]]);
 });
 
+forgetest_init!(overloaded_fuzz_tests_use_distinct_paths, |prj, cmd| {
+    let corpus_root = prj.root().join("overloaded-corpus");
+    prj.update_config(|config| {
+        config.fuzz.runs = 1;
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.corpus.corpus_dir = Some(corpus_root.clone());
+    });
+    prj.add_test(
+        "OverloadedFuzz.t.sol",
+        r#"
+contract OverloadedFuzzTest {
+    function testFuzz_collision(address) external pure {
+        revert("ADDRESS_BUG");
+    }
+
+    function testFuzz_collision(uint256) external pure {
+        revert("UINT_BUG");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mc", "OverloadedFuzzTest", "-j1"]).assert_failure();
+
+    let failure_root = prj.root().join("cache/fuzz/failures/OverloadedFuzzTest");
+    let address_name = format!(
+        "testFuzz_collision-{}",
+        hex::encode(&keccak256("testFuzz_collision(address)")[..4])
+    );
+    let uint_name = format!(
+        "testFuzz_collision-{}",
+        hex::encode(&keccak256("testFuzz_collision(uint256)")[..4])
+    );
+    let address_failure = failure_root.join(&address_name);
+    let uint_failure = failure_root.join(&uint_name);
+    assert!(address_failure.exists());
+    assert!(uint_failure.exists());
+    assert!(!failure_root.join("testFuzz_collision").exists());
+    assert!(corpus_root.join("OverloadedFuzzTest").join(&address_name).exists());
+    assert!(corpus_root.join("OverloadedFuzzTest").join(&uint_name).exists());
+
+    let address_corpus = corpus_root.join("OverloadedFuzzTest").join(&address_name);
+    let legacy_corpus = corpus_root.join("OverloadedFuzzTest/testFuzz_collision");
+    std::fs::rename(&address_corpus, &legacy_corpus).unwrap();
+
+    let legacy_showmap_root = prj.root().join("legacy-showmap");
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+            "--showmap-out",
+            "legacy-showmap",
+            "--showmap-trial",
+            "legacy",
+            "-j1",
+        ])
+        .assert_success();
+    let showmap_prefix = "replay__test_OverloadedFuzz.t.sol_OverloadedFuzzTest__";
+    assert!(
+        legacy_showmap_root.join(format!("{showmap_prefix}{address_name}/legacy.txt")).exists()
+    );
+
+    let override_corpus = prj.root().join("override-corpus/OverloadedFuzzTest/testFuzz_collision");
+    std::fs::create_dir_all(override_corpus.parent().unwrap()).unwrap();
+    std::fs::rename(&legacy_corpus, &override_corpus).unwrap();
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+            "--showmap-out",
+            "override-showmap",
+            "--showmap-corpus-dir",
+            "override-corpus",
+            "--showmap-trial",
+            "override",
+            "-j1",
+        ])
+        .assert_success();
+    assert!(
+        prj.root()
+            .join("override-showmap")
+            .join(format!("{showmap_prefix}{address_name}/override.txt"))
+            .exists()
+    );
+    std::fs::rename(&override_corpus, &legacy_corpus).unwrap();
+
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+            "-j1",
+        ])
+        .assert_failure();
+    assert!(address_corpus.exists());
+    assert!(legacy_corpus.exists());
+
+    let showmap_root = prj.root().join("overloaded-showmap");
+    cmd.forge_fuse()
+        .args([
+            "test",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            "testFuzz_collision",
+            "--showmap-out",
+            "overloaded-showmap",
+            "--showmap-trial",
+            "overloaded",
+            "-j1",
+        ])
+        .assert_success();
+    assert!(showmap_root.join(format!("{showmap_prefix}{address_name}/overloaded.txt")).exists());
+    assert!(showmap_root.join(format!("{showmap_prefix}{uint_name}/overloaded.txt")).exists());
+    std::fs::remove_dir_all(&legacy_corpus).unwrap();
+
+    let address_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&address_replay.get_output().stdout);
+    assert!(stdout.contains("[FAIL: ADDRESS_BUG; counterexample:"), "{stdout}");
+
+    let uint_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(uint256\)$",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&uint_replay.get_output().stdout);
+    assert!(stdout.contains("[FAIL: UINT_BUG; counterexample:"), "{stdout}");
+
+    prj.add_test(
+        "OverloadedFuzz.t.sol",
+        r#"
+contract OverloadedFuzzTest {
+    function testFuzz_collision(address) external pure {
+        revert("ADDRESS_BUG");
+    }
+}
+   "#,
+    );
+    let address_replay = cmd
+        .forge_fuse()
+        .args(["fuzz", "replay", "--mc", "OverloadedFuzzTest", "--mt", "testFuzz_collision"])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&address_replay.get_output().stdout);
+    assert!(stdout.contains("[FAIL: ADDRESS_BUG; counterexample:"), "{stdout}");
+    assert!(address_failure.exists());
+    assert!(!failure_root.join("testFuzz_collision").exists());
+    assert!(corpus_root.join("OverloadedFuzzTest").join(&address_name).exists());
+    assert!(!corpus_root.join("OverloadedFuzzTest/testFuzz_collision").exists());
+
+    prj.add_test(
+        "OverloadedFuzz.t.sol",
+        r#"
+contract OverloadedFuzzTest {
+    function testFuzz_collision(address) external pure {
+        revert("ADDRESS_BUG");
+    }
+
+    function testFuzz_collision(uint256) external pure {
+        revert("UINT_BUG");
+    }
+}
+   "#,
+    );
+    std::fs::rename(&address_failure, failure_root.join("testFuzz_collision")).unwrap();
+    std::fs::remove_file(&uint_failure).unwrap();
+
+    let mismatched_legacy_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(uint256\)$",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8_lossy(&mismatched_legacy_replay.get_output().stdout);
+    assert!(stdout.contains("no persisted fuzz failure found"), "{stdout}");
+
+    let legacy_replay = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--mc",
+            "OverloadedFuzzTest",
+            "--mt",
+            r"^testFuzz_collision\(address\)$",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8_lossy(&legacy_replay.get_output().stdout);
+    assert!(stdout.contains("[FAIL: ADDRESS_BUG; counterexample:"), "{stdout}");
+});
+
 forgetest_init!(forge_fuzz_replays_explicit_failure_file, |prj, cmd| {
     prj.add_test(
         "ForgeExplicitFuzzReplay.t.sol",
@@ -742,6 +961,31 @@ contract ForgeFuzzReplayFailureTest {
     );
     assert!(stdout.contains("ForgeFuzzReplayFailureTest::testFuzz_reverts(200)"), "{stdout}");
     assert!(stdout.contains("[SKIP: not runnable in replay mode] test_unit()"), "{stdout}");
+});
+
+forgetest_init!(stateless_fuzz_does_not_persist_skips, |prj, cmd| {
+    let corpus_root = prj.root().join("fuzz_corpus");
+    prj.update_config(|config| {
+        config.fuzz.runs = 1;
+        config.fuzz.seed = Some(U256::from(1));
+        config.fuzz.corpus.corpus_dir = Some(corpus_root.clone());
+    });
+    prj.add_test(
+        "StatelessSkip.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract StatelessSkipTest is Test {
+    function testFuzz_skip(uint256) public {
+        vm.skip(true);
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "testFuzz_skip", "-q"]).assert_success();
+
+    assert!(!has_regular_file(&corpus_root));
 });
 
 forgetest_init!(stateless_fuzz_does_not_persist_assume_rejects, |prj, cmd| {

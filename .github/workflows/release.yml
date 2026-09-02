@@ -372,6 +372,10 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
 
+      - name: Install LLVM profiling tools
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: rustup component add llvm-tools-preview
+
       - name: Apple Silicon setup
         if: matrix.target == 'aarch64-apple-darwin'
         run: |
@@ -406,7 +410,7 @@ jobs:
           fi
 
           echo "Building $TARGET with features: $features"
-          flags=(--locked --target "$TARGET" --profile "$RUST_PROFILE" --bins
+          flags=(--locked --target "$TARGET" --profile "$RUST_PROFILE"
             --no-default-features --features "$features")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
@@ -416,10 +420,12 @@ jobs:
 
           [[ "$TARGET" == *windows* ]] && ext=".exe"
 
-          if [[ "$TARGET" == *-musl ]]; then
-            cross build "${flags[@]}"
+          if [[ "$TARGET" == "x86_64-unknown-linux-gnu" ]]; then
+            .github/scripts/pgo.sh "${flags[@]}"
+          elif [[ "$TARGET" == *-musl ]]; then
+            cross build "${flags[@]}" --bins
           else
-            cargo build "${flags[@]}"
+            cargo build "${flags[@]}" --bins
           fi
 
           bins=(anvil cast chisel forge solar)

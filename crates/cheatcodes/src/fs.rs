@@ -288,6 +288,7 @@ impl Cheatcode for removeDirCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path, recursive } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
+        state.config.ensure_not_foundry_toml(&path)?;
         if *recursive { fs::remove_dir_all(path) } else { fs::remove_dir(path) }?;
         Ok(Default::default())
     }
@@ -628,8 +629,10 @@ fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
         }
     });
 
-    // Use available artifacts list if present
-    if let Some(artifacts) = &state.config.available_artifacts {
+    // Use the artifact lookup if present.
+    if let Some(artifacts) =
+        state.config.available_artifacts.as_ref().or(state.config.artifact_lookup.as_ref())
+    {
         let ambiguous_file_profile =
             file.is_some() && version.is_none() && profile.is_none() && contract_name.is_some();
         let filter_artifacts = |treat_ambiguous_as_profile: bool| -> Vec<_> {

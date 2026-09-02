@@ -14,8 +14,7 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
 use alloy_ens::NameOrAddress;
 use alloy_network::{
-    BlockResponse, Network, NetworkTransactionBuilder, TransactionBuilder,
-    primitives::HeaderResponse,
+    BlockResponse, NetworkTransactionBuilder, TransactionBuilder, primitives::HeaderResponse,
 };
 use alloy_primitives::{B256, Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
@@ -47,6 +46,8 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
@@ -54,7 +55,7 @@ use foundry_evm::{
         FoundryBlock, FoundryTransaction,
         evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, context_for_child_transaction},
     },
-    executors::TracingExecutor,
+    executors::{ExecutorBuilder, TracingExecutor},
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
 };
@@ -274,17 +275,23 @@ impl CallArgs {
 
         if evm_opts.networks.is_tempo() {
             return self
-                .run_with_network_and_opts::<TempoEvmNetwork>(config, evm_opts, auth_preflight)
+                .run_with_network_and_opts::<TempoEvmNetwork>(
+                    config,
+                    evm_opts,
+                    auth_preflight,
+                    ExecutorBuilder::<TempoEvmNetwork>::new(),
+                )
                 .await;
         }
 
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
             return self
-                .run_with_network_and_opts::<foundry_evm::core::evm::MonadEvmNetwork>(
+                .run_with_network_and_opts::<MonadEvmNetwork>(
                     config,
                     evm_opts,
                     auth_preflight,
+                    ExecutorBuilder::<MonadEvmNetwork>::new(),
                 )
                 .await;
         }
@@ -292,11 +299,22 @@ impl CallArgs {
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
             return self
-                .run_with_network_and_opts::<OpEvmNetwork>(config, evm_opts, auth_preflight)
+                .run_with_network_and_opts::<OpEvmNetwork>(
+                    config,
+                    evm_opts,
+                    auth_preflight,
+                    ExecutorBuilder::<OpEvmNetwork>::new(),
+                )
                 .await;
         }
 
-        self.run_with_network_and_opts::<EthEvmNetwork>(config, evm_opts, auth_preflight).await
+        self.run_with_network_and_opts::<EthEvmNetwork>(
+            config,
+            evm_opts,
+            auth_preflight,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
+        )
+        .await
     }
 
     /// Returns whether resolving this call can disclose an authorization before the transaction
@@ -351,10 +369,8 @@ impl CallArgs {
         mut config: Box<Config>,
         evm_opts: EvmOpts,
         auth_preflight: AuthDisclosurePreflight,
-    ) -> Result<()>
-    where
-        <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
-    {
+        executor_builder: ExecutorBuilder<FEN>,
+    ) -> Result<()> {
         config.networks = evm_opts.networks;
         let mut state_overrides = self.get_state_overrides()?;
         let block_overrides = self.get_block_overrides()?;
@@ -663,6 +679,7 @@ impl CallArgs {
                 })
                 .with_state_changes(verbosity > 4);
             let mut executor = TracingExecutor::<FEN>::new(
+                executor_builder,
                 (evm_env, tx_env),
                 fork,
                 None,

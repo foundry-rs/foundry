@@ -89,7 +89,12 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
     /// Networks with enabled features.
+    // TODO(monad-fen-dispatch): Remove this post-dispatch configuration. Callers must resolve
+    // family-neutral inspector inputs before selecting `FEN`, while Monad tooling is configured by
+    // the concrete Monad construction path.
     pub networks: NetworkConfigs,
+    /// Explicitly resolved additional cheatcode addresses.
+    pub extra_cheatcode_addresses: &'static [Address],
     /// The wallets to set in the cheatcodes context.
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
@@ -111,6 +116,7 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             chisel_state: None,
             enable_isolation: false,
             networks: NetworkConfigs::default(),
+            extra_cheatcode_addresses: &[],
             wallets: None,
             create2_deployer: Default::default(),
         }
@@ -219,6 +225,13 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
+    /// Sets explicitly resolved additional cheatcode addresses.
+    #[inline]
+    pub const fn extra_cheatcode_addresses(mut self, addresses: &'static [Address]) -> Self {
+        self.extra_cheatcode_addresses = addresses;
+        self
+    }
+
     #[inline]
     pub const fn create2_deployer(mut self, create2_deployer: Address) -> Self {
         self.create2_deployer = create2_deployer;
@@ -242,14 +255,15 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             chisel_state,
             enable_isolation,
             networks,
+            extra_cheatcode_addresses,
             wallets,
             create2_deployer,
         } = self;
         let mut stack = InspectorStack::new();
-
         // inspectors
         if let Some(config) = cheatcodes {
             let mut cheatcodes = Cheatcodes::new(config);
+            cheatcodes.set_extra_cheatcode_addresses(extra_cheatcode_addresses);
             // Set analysis capabilities if they are provided
             if let Some(analysis) = analysis {
                 stack.set_analysis(analysis.clone());
@@ -275,6 +289,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
         stack.enable_isolation(enable_isolation);
         stack.networks(networks);
+        stack.set_extra_cheatcode_addresses(extra_cheatcode_addresses);
         stack.set_create2_deployer(create2_deployer);
 
         if networks.is_tempo() {
@@ -418,6 +433,8 @@ pub struct InspectorStackInner {
     pub sancov_trace_cmp: bool,
     pub enable_isolation: bool,
     pub networks: NetworkConfigs,
+    /// Additional addresses installed and recognized as cheatcode contracts.
+    pub extra_cheatcode_addresses: &'static [Address],
     pub create2_deployer: Address,
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
@@ -727,6 +744,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub const fn networks(&mut self, networks: NetworkConfigs) {
         self.inner.networks = networks;
+    }
+
+    /// Returns additional addresses installed and recognized as cheatcode contracts.
+    #[inline]
+    pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
+        self.inner.extra_cheatcode_addresses
+    }
+
+    /// Sets additional addresses installed and recognized as cheatcode contracts.
+    #[inline]
+    pub const fn set_extra_cheatcode_addresses(&mut self, addresses: &'static [Address]) {
+        self.inner.extra_cheatcode_addresses = addresses;
     }
 
     /// Set the CREATE2 deployer address.
@@ -1120,6 +1149,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         let transaction_gas = res.result.gas();
         let state_gas_used = transaction_gas.block_state_gas_used();
+        if state_gas_used == 0 {
+            let mut snapshot_gas = Gas::new(gas_limit);
+            let _ = snapshot_gas.record_regular_cost(transaction_gas.tx_gas_used());
+            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+                cheats.gas_metering.set_isolated_snapshot_gas_used(snapshot_gas.total_gas_spent());
+            }
+        }
         gas.set_state_gas_spent(
             i64::try_from(state_gas_used)
                 .expect("transaction state gas originates from a signed gas tracker"),

@@ -187,3 +187,29 @@ contract InitFromFunction is Base {
         return local;
     }
 }
+
+struct Config {
+    address owner;
+    uint8 decimals;
+}
+
+library Defaults {
+    function config() internal pure returns (Config memory) {
+        return Config(address(0), 18);
+    }
+}
+
+// Member access on a reference type inside an initializer used to abort the linter, because the
+// base type reached `members_of` with its data location peeled off. Reading a state variable is
+// still reported, and a pure library call is still fine.
+contract InitFromReferenceType {
+    Config internal config;
+    uint256[] internal ids;
+    bytes internal payload;
+
+    address public owner = config.owner; //~NOTE: state variable initializer
+    uint256 public idCount = ids.length; //~NOTE: state variable initializer
+    uint256 public payloadSize = payload.length; //~NOTE: state variable initializer
+
+    uint8 public defaultDecimals = Defaults.config().decimals;
+}

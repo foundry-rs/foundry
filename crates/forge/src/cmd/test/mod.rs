@@ -59,16 +59,17 @@ use foundry_config::{
     fs_permissions::FsAccessPermission,
 };
 use foundry_debugger::{Debugger, DebuggerLayout};
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
-    executors::ShowmapDomain,
+    executors::{ExecutorBuilder, ShowmapDomain},
     fork::ResolvedFork,
     fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
-    hardforks::{ExecutionSpec, TempoHardfork},
     opts::EvmOpts,
     traces::{
         backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth,
@@ -394,6 +395,7 @@ struct CompiledTestProject {
 fn sources_to_compile_from_artifacts(
     config: &Config,
     test_filter: &ProjectPathsAwareFilter,
+    root_sources: &BTreeSet<PathBuf>,
     artifacts: &ProjectCompileOutput,
     test_matcher: &TestFunctionMatcher<'_>,
 ) -> BTreeSet<PathBuf> {
@@ -412,6 +414,9 @@ fn sources_to_compile_from_artifacts(
     artifacts
         .artifact_ids()
         .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
+        // Imported dependencies must remain attached to their roots so compilation restrictions
+        // apply to the entire source graph instead of compiling dependencies with default settings.
+        .filter(|(id, _)| root_sources.contains(&id.source))
         .filter(|(id, abi)| {
             if id.source.starts_with(&paths.sources) {
                 return true;
@@ -1607,9 +1612,9 @@ impl TestArgs {
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter.
     ///
-    /// For filtered runs, this includes all configured source files, non-test artifacts outside
-    /// script-only paths, and runnable tests that match the filter. Non-test artifacts remain
-    /// available because tests may resolve them dynamically through cheatcodes.
+    /// For filtered runs, this includes all configured source roots, non-test fixture roots, and
+    /// runnable tests that match the filter. Imported dependencies remain attached to those roots
+    /// so compiler profiles and restrictions apply to the complete source graph.
     #[instrument(target = "forge::test", skip_all)]
     fn get_sources_to_compile(
         &self,
@@ -1641,7 +1646,7 @@ impl TestArgs {
         let output = compile_abi_project(
             &mut project,
             ProjectCompiler::new()
-                .files(sources)
+                .files(sources.iter().cloned())
                 .dynamic_test_linking(config.dynamic_test_linking)
                 .quiet(true),
         )?;
@@ -1656,7 +1661,13 @@ impl TestArgs {
         };
         let test_matcher =
             TestFunctionMatcher::new(config, &inline_config, symbolic_artifact_replay);
-        let files = sources_to_compile_from_artifacts(config, test_filter, &output, &test_matcher);
+        let files = sources_to_compile_from_artifacts(
+            config,
+            test_filter,
+            &sources,
+            &output,
+            &test_matcher,
+        );
 
         Ok((files, Some(inline_config)))
     }
@@ -2600,6 +2611,7 @@ impl TestArgs {
     }
 
     /// Build the test runner and execute tests for a specific network type.
+    #[allow(clippy::too_many_arguments)]
     async fn build_and_run_tests<FEN: FoundryEvmNetwork>(
         &self,
         config: Config,
@@ -2608,6 +2620,7 @@ impl TestArgs {
         filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
         resolved_fork: Option<&ResolvedFork>,
+        executor_builder: ExecutorBuilder<FEN>,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
         let (evm_env, tx_env, fork) = if let Some(fork) = resolved_fork {
@@ -2645,7 +2658,7 @@ impl TestArgs {
             .with_fuzz_input(execution.fuzz_input)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .with_create2_deployer_available(create2_deployer_available)
-            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
+            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts, executor_builder)?;
 
         let libraries = runner.libraries.clone();
         let outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
@@ -2658,6 +2671,7 @@ impl TestArgs {
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         options: FuzzMinimizeNetworkPassOptions,
+        executor_builder: ExecutorBuilder<FEN>,
     ) -> eyre::Result<MultiContractRunner<FEN>> {
         let (evm_env, tx_env, fork) =
             evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
@@ -2680,7 +2694,7 @@ impl TestArgs {
             .with_fuzz_only(self.fuzz_only.is_enabled())
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .with_create2_deployer_available(create2_deployer_available)
-            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)
+            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts, executor_builder)
     }
 
     /// Dispatches `build_and_run_tests` to the correct network type based on `evm_opts.networks`.
@@ -2704,18 +2718,20 @@ impl TestArgs {
                     filter,
                     execution,
                     resolved_fork,
+                    ExecutorBuilder::<TempoEvmNetwork>::new(),
                 )
                 .await
             }
             #[cfg(feature = "monad")]
             NetworkDispatchKind::Monad => {
-                self.build_and_run_tests::<foundry_evm::core::evm::MonadEvmNetwork>(
+                self.build_and_run_tests::<MonadEvmNetwork>(
                     config,
                     evm_opts,
                     output,
                     filter,
                     execution,
                     resolved_fork,
+                    ExecutorBuilder::<MonadEvmNetwork>::new(),
                 )
                 .await
             }
@@ -2728,6 +2744,7 @@ impl TestArgs {
                     filter,
                     execution,
                     resolved_fork,
+                    ExecutorBuilder::<OpEvmNetwork>::new(),
                 )
                 .await
             }
@@ -2739,6 +2756,7 @@ impl TestArgs {
                     filter,
                     execution,
                     resolved_fork,
+                    ExecutorBuilder::<EthEvmNetwork>::new(),
                 )
                 .await
             }
@@ -2756,23 +2774,45 @@ impl TestArgs {
     ) -> eyre::Result<FuzzMinimizeReplayPass> {
         match network_dispatch_kind(dispatch_opts) {
             NetworkDispatchKind::Tempo => self
-                .build_fuzz_minimize_runner::<TempoEvmNetwork>(config, evm_opts, output, options)
+                .build_fuzz_minimize_runner::<TempoEvmNetwork>(
+                    config,
+                    evm_opts,
+                    output,
+                    options,
+                    ExecutorBuilder::<TempoEvmNetwork>::new(),
+                )
                 .await
                 .map(|runner| fuzz_minimize_replay(runner, filter)),
             #[cfg(feature = "monad")]
             NetworkDispatchKind::Monad => self
-                .build_fuzz_minimize_runner::<foundry_evm::core::evm::MonadEvmNetwork>(
-                    config, evm_opts, output, options,
+                .build_fuzz_minimize_runner::<MonadEvmNetwork>(
+                    config,
+                    evm_opts,
+                    output,
+                    options,
+                    ExecutorBuilder::<MonadEvmNetwork>::new(),
                 )
                 .await
                 .map(|runner| fuzz_minimize_replay(runner, filter)),
             #[cfg(feature = "optimism")]
             NetworkDispatchKind::Optimism => self
-                .build_fuzz_minimize_runner::<OpEvmNetwork>(config, evm_opts, output, options)
+                .build_fuzz_minimize_runner::<OpEvmNetwork>(
+                    config,
+                    evm_opts,
+                    output,
+                    options,
+                    ExecutorBuilder::<OpEvmNetwork>::new(),
+                )
                 .await
                 .map(|runner| fuzz_minimize_replay(runner, filter)),
             NetworkDispatchKind::Eth => self
-                .build_fuzz_minimize_runner::<EthEvmNetwork>(config, evm_opts, output, options)
+                .build_fuzz_minimize_runner::<EthEvmNetwork>(
+                    config,
+                    evm_opts,
+                    output,
+                    options,
+                    ExecutorBuilder::<EthEvmNetwork>::new(),
+                )
                 .await
                 .map(|runner| fuzz_minimize_replay(runner, filter)),
         }
@@ -2970,6 +3010,7 @@ impl TestArgs {
         let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
         let resolved_hardfork = runner.tcfg.hardfork;
         let networks = runner.tcfg.evm_opts.networks;
+        let extra_cheatcode_addresses = runner.tcfg.executor_builder.extra_cheatcode_addresses();
         let decode_internal = runner.decode_internal != InternalTraceMode::None;
 
         // Run tests in a streaming fashion.
@@ -2997,14 +3038,7 @@ impl TestArgs {
             .with_known_contracts(&known_contracts)
             .with_networks(networks)
             .with_chain_id(remote_chain.map(|c| c.id()))
-            .with_tempo_hardfork(resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork));
-        #[cfg(feature = "monad")]
-        {
-            builder = builder.with_monad_hardfork(
-                resolved_hardfork
-                    .and_then(foundry_evm::hardforks::MonadHardfork::from_foundry_hardfork),
-            );
-        }
+            .with_hardfork(resolved_hardfork);
         // Signatures are of no value for gas reports.
         if !self.gas_report {
             builder =
@@ -3023,7 +3057,7 @@ impl TestArgs {
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
                 config.gas_reports_include_tests,
-                config.networks.extra_cheatcode_addresses().iter().copied(),
+                extra_cheatcode_addresses.iter().copied(),
             )
         });
 

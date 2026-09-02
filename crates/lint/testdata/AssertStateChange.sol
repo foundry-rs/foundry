@@ -168,8 +168,8 @@ contract AssertStateChangePushPop {
 }
 
 // ---- using-for library extension calls ----
-// Solar does not yet embed Res on Member expressions for extension methods, so a dedicated
-// library-scan fallback is required (fix for false negatives on using-for mutations).
+// Solar's resolved call is preferred; a library scan remains as a fallback when resolution is
+// unavailable.
 
 library StorageLib {
     function bump(uint256[] storage arr) internal returns (bool) {
@@ -187,9 +187,19 @@ contract AssertStateChangeUsingFor {
 
     uint256[] public items;
 
+    function getItems() internal view returns (uint256[] storage) {
+        return items;
+    }
+
     // Bad: bump() writes to storage via a using-for library extension, must be flagged.
     function badLibraryExtension() external returns (bool) {
         assert(items.bump()); //~WARN: assert() argument contains a state-modifying expression
+        return true;
+    }
+
+    // Bad: the function call returns the same storage array and must remain storage-backed.
+    function badLibraryExtensionOnStorageReturn() external returns (bool) {
+        assert(getItems().bump()); //~WARN: assert() argument contains a state-modifying expression
         return true;
     }
 
