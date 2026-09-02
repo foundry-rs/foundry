@@ -20,7 +20,7 @@ use crate::{
         },
         fees::{
             FeeDetails, FeeHistoryCache, FeeHistoryCacheItem, MIN_SUGGESTED_PRIORITY_FEE,
-            create_fee_history_cache_item,
+            REWARD_PERCENTILE_RESOLUTION, create_fee_history_cache_item,
         },
         macros::node_info,
         miner::FixedBlockTimeMiner,
@@ -1372,11 +1372,8 @@ impl<N: Network> EthApi<N> {
                 // requested percentiles
                 if !reward_percentiles.is_empty() {
                     let mut block_rewards = Vec::new();
-                    let resolution_per_percentile: f64 = 2.0;
                     for p in &reward_percentiles {
-                        let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
-                        let reward = item.rewards.get(index as usize).map_or(0, |r| *r);
-                        block_rewards.push(reward);
+                        block_rewards.push(reward_at_percentile(&item.rewards, *p));
                     }
                     rewards.push(block_rewards);
                 }
@@ -5269,6 +5266,11 @@ fn merge_pre_fork_fee_history(
     response.blob_gas_used_ratio.resize(count, 0.0);
 }
 
+fn reward_at_percentile(rewards: &[u128], percentile: f64) -> u128 {
+    let index = (percentile * REWARD_PERCENTILE_RESOLUTION).round() as usize;
+    rewards.get(index).copied().unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5375,6 +5377,16 @@ mod tests {
         for percentiles in [vec![], vec![0.0, 100.0]] {
             api.fee_history(U256::from(1), BlockNumber::Latest, percentiles).await.unwrap();
         }
+    }
+
+    #[test]
+    fn fractional_reward_percentiles_use_cache_resolution() {
+        let rewards = (0..=200).collect::<Vec<_>>();
+
+        assert_eq!(reward_at_percentile(&rewards, 0.0), 0);
+        assert_eq!(reward_at_percentile(&rewards, 0.5), 1);
+        assert_eq!(reward_at_percentile(&rewards, 1.0), 2);
+        assert_eq!(reward_at_percentile(&rewards, 100.0), 200);
     }
 
     #[test]
