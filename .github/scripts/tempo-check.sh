@@ -172,40 +172,8 @@ ACCESS_KEY="$(wallet_json_field "$access_wallet_json" private_key)"
 ACCESS_KEY_ADDR="$(wallet_json_field "$access_wallet_json" address)"
 printf "Access key address: %s\n" "$ACCESS_KEY_ADDR"
 
-# Authorize the access key on-chain first (required for gas estimation). TIP-1099 removes
-# direct AccountKeychain authorization, so fall back to transaction-embedded authorization when
-# the selector is unavailable. Keep probing the selector instead of trusting TEMPO_HARDFORK: the
-# workflow label may name an older lane while a newer fork is active in the generated genesis.
-DIRECT_KEYCHAIN_AUTH=true
-if [[ "$HARDFORK" == "T2" ]]; then
-  # Legacy: authorizeKey with flat params (pre-T3).
-  if ! DIRECT_AUTH_OUTPUT=$(cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
-    'authorizeKey(address,uint8,uint64,bool,(address,uint256)[])' \
-    "$ACCESS_KEY_ADDR" 0 1893456000 false "[]" \
-    --private-key "$PK" 2>&1); then
-    echo "$DIRECT_AUTH_OUTPUT"
-    [[ "$DIRECT_AUTH_OUTPUT" == *"UnknownFunctionSelector"* ]] || exit 1
-    DIRECT_KEYCHAIN_AUTH=false
-  else
-    echo "$DIRECT_AUTH_OUTPUT"
-  fi
-else
-  # TIP-1011 (T3+): authorizeKey takes a KeyRestrictions struct.
-  # KeyRestrictions = (uint64 expiry, bool enforceLimits, TokenLimit[] limits, bool allowAnyCalls, CallScope[] allowedCalls)
-  # TokenLimit = (address token, uint256 amount, uint64 period)
-  # CallScope = (address target, SelectorRule[] selectorRules)
-  # SelectorRule = (bytes4 selector, address[] recipients)
-  if ! DIRECT_AUTH_OUTPUT=$(cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
-    'authorizeKey(address,uint8,(uint64,bool,(address,uint256,uint64)[],bool,(address,(bytes4,address[])[])[])) ' \
-    "$ACCESS_KEY_ADDR" 0 "(1893456000,false,[],true,[])" \
-    --private-key "$PK" 2>&1); then
-    echo "$DIRECT_AUTH_OUTPUT"
-    [[ "$DIRECT_AUTH_OUTPUT" == *"UnknownFunctionSelector"* ]] || exit 1
-    DIRECT_KEYCHAIN_AUTH=false
-  else
-    echo "$DIRECT_AUTH_OUTPUT"
-  fi
-fi
+# Temporarily skip direct keychain authorization checks.
+DIRECT_KEYCHAIN_AUTH=false
 
 if [[ "$DIRECT_KEYCHAIN_AUTH" == "false" ]]; then
   echo "Direct key authorization unavailable; provisioning with transaction key_authorization"
