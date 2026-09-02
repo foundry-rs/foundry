@@ -391,7 +391,12 @@ impl GasSnapshotDiff {
 
     /// Determines the percentage change
     fn gas_diff(&self) -> f64 {
-        self.gas_change() as f64 / self.target_gas_used.gas() as f64
+        let target_gas = self.target_gas_used.gas();
+        if target_gas > 0 {
+            self.gas_change() as f64 / target_gas as f64
+        } else {
+            0.0
+        }
     }
 }
 
@@ -588,6 +593,13 @@ fn within_tolerance(source_gas: u64, target_gas: u64, tolerance_pct: Option<u32>
         } else {
             (target_gas, source_gas)
         };
+        if hi == 0 {
+            // Both values are 0 (e.g. Invariant/Symbolic/Replay tests report 0 gas by
+            // design) - there's no meaningful percentage difference to compute, and
+            // `0.0 / 0.0` would produce NaN, which always compares false and would
+            // incorrectly flag these tests as out of tolerance.
+            return true;
+        }
         let diff = (1. - (lo as f64 / hi as f64)) * 100.;
         diff < tolerance as f64
     } else {
@@ -606,6 +618,9 @@ mod tests {
         assert!(!within_tolerance(100, 106, Some(5)));
         assert!(!within_tolerance(106, 100, Some(5)));
         assert!(within_tolerance(100, 100, None));
+        // Invariant/Symbolic/Replay tests report 0 gas by design - a 0-vs-0 comparison
+        // must not fall into the NaN trap that division-by-zero would otherwise cause.
+        assert!(within_tolerance(0, 0, Some(5)));
     }
 
     #[test]
