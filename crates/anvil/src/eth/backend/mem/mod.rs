@@ -9708,15 +9708,7 @@ pub fn transaction_build(
                 memo: Default::default(),
             },
         });
-        let tx = Transaction {
-            inner: Recovered::new_unchecked(envelope, from),
-            block_hash: block.as_ref().map(|block| block.header.hash_slow()),
-            block_number: block.as_ref().map(|block| block.header.number()),
-            transaction_index: info.as_ref().map(|info| info.transaction_index),
-            effective_gas_price: None,
-            block_timestamp: block.as_ref().map(|block| block.header.timestamp()),
-        };
-        return AnyRpcTransaction::from(WithOtherFields::new(tx));
+        return build_rpc_transaction(envelope, from, block, info.as_ref(), None);
     }
 
     if let FoundryTxEnvelope::Tempo(tempo_tx) = eth_transaction.as_ref() {

@@ -942,13 +942,7 @@ impl UIfmtSignatureExt for AnyTxEnvelope {
 #[cfg(feature = "base")]
 impl UIfmtSignatureExt for BaseTxEnvelope {
     fn signature_pretty(&self) -> Option<(String, String, String)> {
-        self.signature().map(|sig| {
-            (
-                FixedBytes::from(sig.r()).pretty(),
-                FixedBytes::from(sig.s()).pretty(),
-                U8::from_le_slice(&sig.as_bytes()[64..]).pretty(),
-            )
-        })
+        self.signature().map(pretty_signature_fields)
     }
 }
 
