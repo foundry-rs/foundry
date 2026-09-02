@@ -764,8 +764,9 @@ impl TUIContext<'_> {
                     let mut end = None;
                     let idx = i * 32 + j;
                     if let (Some(offset), Some(len), Some(color)) = (offset, len, color) {
-                        end = Some(offset + len);
-                        if (offset..offset + len).contains(&idx) {
+                        let offset_end = offset.saturating_add(len);
+                        end = Some(offset_end);
+                        if (offset..offset_end).contains(&idx) {
                             // [offset, offset + len] is the memory region to be colored.
                             // If a byte at row i and column j in the memory panel
                             // falls in this region, set the color.
@@ -774,7 +775,7 @@ impl TUIContext<'_> {
                     }
                     if let (Some(write_offset), Some(write_size)) = (write_offset, write_size) {
                         // check for overlap with read region
-                        let write_end = write_offset + write_size;
+                        let write_end = write_offset.saturating_add(write_size);
                         if let Some(read_end) = end {
                             let read_start = offset.unwrap();
                             if (write_offset..write_end).contains(&read_end) {
@@ -1457,7 +1458,7 @@ mod tests {
     };
     use alloy_dyn_abi::parser::Parameters;
     use alloy_primitives::{Address, Bytes, U256, address};
-    use foundry_evm_core::Breakpoints;
+    use foundry_evm_core::{Breakpoints, buffer::BufferKind};
     use foundry_evm_traces::debug::{ContractSources, DebugSourceScope, DebugVariable};
     use ratatui::{
         Terminal,
@@ -1595,6 +1596,34 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(screen.contains("Memory (max expansion: 0 bytes)"));
+    }
+
+    #[test]
+    fn draw_buffer_does_not_overflow_on_saturated_stack_offsets() {
+        // A stack of all-1s values (as produced by e.g. `not(0)` in inline assembly) saturates to
+        // `usize::MAX` when read via `get_buffer_accesses`. Regression test for the unfixed half
+        // of #6472: `offset + len` and `write_offset + write_size` used raw addition on values
+        // that can legitimately be `usize::MAX`, which panics with "attempt to add with overflow"
+        // in a debug build once a non-empty buffer reaches the affected closure.
+        let stack = vec![U256::MAX, U256::MAX];
+        let mut step = trace_step(stack);
+        step.op = OpCode::LOG1;
+
+        let mut node = debug_node(0, 0, vec![step]);
+        node.calldata = Bytes::from(vec![0u8; 64]);
+        let mut context = context_with_arena(vec![node]);
+        let mut tui = TUIContext::new(&mut context);
+        // Route the non-empty buffer through Calldata (a publicly constructible `Bytes`) rather
+        // than Memory (`RecordedMemory`'s content constructor is crate-private to
+        // revm-inspectors) - the offset/len arithmetic under test doesn't depend on which pane is
+        // active, only on the chunk loop actually running over a non-empty buffer.
+        tui.active_buffer = BufferKind::Calldata;
+
+        let backend = TestBackend::new(80, 6);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // Must not panic with "attempt to add with overflow".
+        terminal.draw(|f| tui.draw_buffer(f, Rect::new(0, 0, 80, 6))).unwrap();
     }
 
     #[test]
