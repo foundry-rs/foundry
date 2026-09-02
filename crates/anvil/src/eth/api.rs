@@ -36,7 +36,7 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt,
+    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt, Typed2718,
     transaction::{Recovered, SignerRecoverable},
 };
 use alloy_dyn_abi::TypedData;
@@ -2409,7 +2409,7 @@ impl EthApi<FoundryNetwork> {
         match self.pool.get_transaction(hash) {
             Some(tx) => Ok(Some(tx.transaction.encoded_2718().into())),
             None => match self.backend.transaction_by_hash(hash).await? {
-                Some(tx) => Ok(Some(tx.as_ref().encoded_2718().into())),
+                Some(tx) => encode_rpc_transaction(&tx).map(Some),
                 None => Ok(None),
             },
         }
@@ -3814,7 +3814,7 @@ impl EthApi<FoundryNetwork> {
                 "fork provider returned a non-full block for a full block request".to_string(),
             ));
         };
-        Ok(txs.iter().map(|tx| tx.as_ref().encoded_2718().into()).collect())
+        txs.iter().map(encode_rpc_transaction).collect()
     }
 
     /// Returns RLP encoded raw block header.
@@ -5104,6 +5104,13 @@ fn normalize_fee_payer_service_encoding(raw: &[u8]) -> Option<Vec<u8>> {
     Header { list: true, payload_length: payload.len() }.encode(&mut normalized);
     normalized.extend_from_slice(&payload);
     Some(normalized)
+}
+
+/// EIP-2718 encodes a transaction held in its JSON-RPC form, reporting the types anvil cannot
+/// encode as [`BlockchainError::UnsupportedTransactionEncoding`].
+fn encode_rpc_transaction(transaction: &AnyRpcTransaction) -> Result<Bytes> {
+    FoundryTxEnvelope::encode_rpc_2718(transaction)
+        .map_err(|_| BlockchainError::UnsupportedTransactionEncoding(transaction.ty()))
 }
 
 fn txpool_transaction_key(pending_transaction: &PendingTransaction<FoundryTxEnvelope>) -> String {

@@ -56,7 +56,7 @@ use std::{
 
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
-use foundry_config::{ExecutionSpec, evm_spec_id_from_str};
+use foundry_config::{ExecutionSpec, evm_spec_id_from_str, fs_permissions::FsAccessKind};
 use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 
@@ -379,7 +379,8 @@ impl Cheatcode for cloneAccountCall {
 impl Cheatcode for dumpStateCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { pathToStateJson } = self;
-        let path = Path::new(pathToStateJson);
+        let path = ccx.state.config.ensure_path_allowed(pathToStateJson, FsAccessKind::Write)?;
+        ccx.state.config.ensure_not_foundry_toml(&path)?;
 
         let fork_id = ccx.ecx.db().active_fork_id();
         let created_accounts = ccx
@@ -419,7 +420,7 @@ impl Cheatcode for dumpStateCall {
         }
         ordered_alloc.extend(alloc);
 
-        write_json_file(path, &StateDump(&ordered_alloc))?;
+        write_json_file(&path, &StateDump(&ordered_alloc))?;
         Ok(Default::default())
     }
 }
