@@ -3920,9 +3920,19 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             if to == CHEATCODE_ADDRESS {
                                 let args_offset = try_or_return!(interpreter.stack.peek(3)).saturating_to::<usize>();
                                 let args_size = try_or_return!(interpreter.stack.peek(4)).saturating_to::<usize>();
-                                let memory_word = interpreter.memory.slice_len(args_offset, args_size);
-                                if memory_word[..SELECTOR_LEN] == stopExpectSafeMemoryCall::SELECTOR {
-                                    return
+                                // `args_size` shorter than a selector can never match, and reading
+                                // past the interpreter's current (pre-expansion) memory buffer would
+                                // panic (debug) or be UB (release) inside `slice_len`. This hook runs
+                                // in `step`, before the CALL has expanded memory to cover its own
+                                // args, so an out-of-bounds range here is a live condition, not just
+                                // theoretical.
+                                if args_size >= SELECTOR_LEN
+                                    && args_offset.saturating_add(args_size) <= interpreter.memory.size()
+                                {
+                                    let memory_word = interpreter.memory.slice_len(args_offset, args_size);
+                                    if memory_word[..SELECTOR_LEN] == stopExpectSafeMemoryCall::SELECTOR {
+                                        return
+                                    }
                                 }
                             }
 
