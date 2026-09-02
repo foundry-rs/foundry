@@ -3144,15 +3144,6 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
 
-    /// Returns the secp256k1 point at infinity in affine coordinates as `(0, 0)`.
-    #[cheatcode(group = Crypto)]
-    function ecIdentityAffine() external pure returns (uint256 resultX, uint256 resultY);
-
-    /// Returns whether the secp256k1 affine point `(pointX, pointY)` is the point at infinity,
-    /// represented as `(0, 0)`.
-    #[cheatcode(group = Crypto)]
-    function ecIsIdentityAffine(uint256 pointX, uint256 pointY) external pure returns (bool);
-
     /// Converts the secp256k1 affine point `(pointX, pointY)` to projective coordinates.
     /// The point at infinity is converted from `(0, 0)` to `(0, 1, 0)`.
     #[cheatcode(group = Crypto)]
@@ -3160,15 +3151,6 @@ interface Vm {
         external
         pure
         returns (uint256 resultX, uint256 resultY, uint256 resultZ);
-
-    /// Returns the secp256k1 point at infinity in projective coordinates as `(0, 1, 0)`.
-    #[cheatcode(group = Crypto)]
-    function ecIdentityProjective() external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);
-
-    /// Returns whether the secp256k1 projective point `(pointX, pointY, pointZ)` is the point at
-    /// infinity. The value of `pointY` is ignored.
-    #[cheatcode(group = Crypto)]
-    function ecIsIdentityProjective(uint256 pointX, uint256 pointY, uint256 pointZ) external pure returns (bool);
 
     /// Converts the secp256k1 projective point `(pointX, pointY, pointZ)` to affine coordinates.
     /// The point at infinity is converted from `(0, y, 0)` for any non-zero `y` to `(0, 0)`.

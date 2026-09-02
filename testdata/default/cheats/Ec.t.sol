@@ -9,18 +9,6 @@ contract EcTest is Test {
     uint256 internal constant GX = 0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798;
     uint256 internal constant GY = 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8;
 
-    function testEcIdentityAffine() public {
-        (uint256 x, uint256 y) = vm.ecIdentityAffine();
-        assertEq(x, 0);
-        assertEq(y, 0);
-    }
-
-    function testEcIsIdentityAffine() public {
-        assertTrue(vm.ecIsIdentityAffine(0, 0));
-        assertTrue(!vm.ecIsIdentityAffine(GX, GY));
-        assertTrue(!vm.ecIsIdentityAffine(0, 1));
-    }
-
     function testEcAffineToProjective() public {
         (uint256 x, uint256 y, uint256 z) = vm.ecAffineToProjective(0, 0);
         assertEq(x, 0);
@@ -31,20 +19,6 @@ contract EcTest is Test {
         assertEq(x, GX);
         assertEq(y, GY);
         assertEq(z, 1);
-    }
-
-    function testEcIdentityProjective() public {
-        (uint256 x, uint256 y, uint256 z) = vm.ecIdentityProjective();
-        assertEq(x, 0);
-        assertEq(y, 1);
-        assertEq(z, 0);
-    }
-
-    function testEcIsIdentityProjective() public {
-        assertTrue(vm.ecIsIdentityProjective(0, 1, 0));
-        assertTrue(vm.ecIsIdentityProjective(0, 0, 0));
-        assertTrue(!vm.ecIsIdentityProjective(GX, GY, 1));
-        assertTrue(!vm.ecIsIdentityProjective(0, 1, 1));
     }
 
     function testEcProjectiveToAffine() public {

@@ -216,10 +216,6 @@ interface Vm {
     function ecAddAffine(uint256 pointX1, uint256 pointY1, uint256 pointX2, uint256 pointY2) external pure returns (uint256 resultX, uint256 resultY);
     function ecAddProjective(uint256 pointX1, uint256 pointY1, uint256 pointZ1, uint256 pointX2, uint256 pointY2, uint256 pointZ2) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);
     function ecAffineToProjective(uint256 pointX, uint256 pointY) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);
-    function ecIdentityAffine() external pure returns (uint256 resultX, uint256 resultY);
-    function ecIdentityProjective() external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);
-    function ecIsIdentityAffine(uint256 pointX, uint256 pointY) external pure returns (bool);
-    function ecIsIdentityProjective(uint256 pointX, uint256 pointY, uint256 pointZ) external pure returns (bool);
     function ecMulAffine(uint256 pointX, uint256 pointY, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY);
     function ecMulProjective(uint256 pointX, uint256 pointY, uint256 pointZ, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);
     function ecProjectiveToAffine(uint256 pointX, uint256 pointY, uint256 pointZ) external pure returns (uint256 resultX, uint256 resultY);

@@ -240,37 +240,11 @@ impl Cheatcode for publicKeyP256Call {
     }
 }
 
-impl Cheatcode for ecIdentityAffineCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        Ok((U256::ZERO, U256::ZERO).abi_encode())
-    }
-}
-
-impl Cheatcode for ecIsIdentityAffineCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { pointX, pointY } = self;
-        Ok((pointX.is_zero() && pointY.is_zero()).abi_encode())
-    }
-}
-
 impl Cheatcode for ecAffineToProjectiveCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { pointX, pointY } = self;
         let point = parse_affine_point(pointX, pointY, "point")?;
         encode_projective_point(ProjectivePoint::from(point))
-    }
-}
-
-impl Cheatcode for ecIdentityProjectiveCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        Ok((U256::ZERO, U256::from(1), U256::ZERO).abi_encode())
-    }
-}
-
-impl Cheatcode for ecIsIdentityProjectiveCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { pointX, pointY: _, pointZ } = self;
-        Ok((pointX.is_zero() && pointZ.is_zero()).abi_encode())
     }
 }
 
