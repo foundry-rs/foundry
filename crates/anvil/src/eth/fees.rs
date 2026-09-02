@@ -135,30 +135,6 @@ impl BaseFeeRules {
             }
         }
     }
-
-    fn next_block_base_fee<H: BlockHeader>(self, header: &H) -> u64 {
-        match self {
-            Self::Standard(params) => calc_next_block_base_fee(
-                header.gas_used(),
-                header.gas_limit(),
-                header.base_fee_per_gas().unwrap_or_default(),
-                params,
-            ),
-            #[cfg(feature = "optimism")]
-            Self::Optimism { fallback, .. } => {
-                if let Some(rules) = optimism::OptimismBaseFeeRules::decode(header.extra_data()) {
-                    rules.next_block_base_fee(header)
-                } else {
-                    calc_next_block_base_fee(
-                        header.gas_used(),
-                        header.gas_limit(),
-                        header.base_fee_per_gas().unwrap_or_default(),
-                        fallback,
-                    )
-                }
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -402,18 +378,15 @@ impl FeeManager {
         if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
             return 0;
         }
-        calculate_next_block_base_fee_from_header(state.rules, header)
+        calculate_parent_header_fees(state.rules, header).base_fee
     }
 
     /// Returns all fee metadata inherited from a parent header, honoring the configured zero-fee
     /// sentinel.
     pub(crate) fn get_parent_header_fees<H: BlockHeader>(&self, header: &H) -> ParentHeaderFees {
         let state = self.state.read();
-        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) {
-            return ParentHeaderFees::default();
-        }
         let mut fees = calculate_parent_header_fees(state.rules, header);
-        if state.base_fee == 0 {
+        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) || state.base_fee == 0 {
             fees.base_fee = 0;
         }
         fees
@@ -429,7 +402,7 @@ impl FeeManager {
         if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
             return 0;
         }
-        calculate_next_block_base_fee_from_header(rules, header)
+        calculate_parent_header_fees(rules, header).base_fee
     }
 
     /// Returns all fee metadata inherited from a parent header without applying the configured
@@ -439,10 +412,11 @@ impl FeeManager {
         header: &H,
     ) -> ParentHeaderFees {
         let rules = self.state.read().rules;
+        let mut fees = calculate_parent_header_fees(rules, header);
         if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
-            return ParentHeaderFees::default();
+            fees.base_fee = 0;
         }
-        calculate_parent_header_fees(rules, header)
+        fees
     }
 
     /// Calculates the next block blob base fee.
@@ -487,17 +461,6 @@ fn calculate_parent_header_fees<H: BlockHeader>(rules: FeeRules, header: &H) -> 
         };
     }
     rules.base_fee.parent_header_fees(header)
-}
-
-fn calculate_next_block_base_fee_from_header<H: BlockHeader>(rules: FeeRules, header: &H) -> u64 {
-    if let Some(hardfork) = rules.tempo_hardfork {
-        return tempo_next_block_base_fee(
-            hardfork,
-            header.gas_used(),
-            header.base_fee_per_gas().unwrap_or_default(),
-        );
-    }
-    rules.base_fee.next_block_base_fee(header)
 }
 
 /// Computes the next block's base fee for a Tempo chain.
@@ -878,6 +841,23 @@ mod tests {
             london.calculate_next_block_base_fee_per_gas(30_000_000, 30_000_000, INITIAL_BASE_FEE),
             0
         );
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn pre_london_parent_fees_preserve_optimism_metadata() {
+        let fees = fee_manager(SpecId::BERLIN);
+        let jovian = [1, 0, 0, 0, 250, 0, 0, 0, 2, 0, 0, 0, 0, 0, 76, 75, 64];
+        fees.set_optimism_base_fee_rules(&jovian);
+        let header = alloy_consensus::Header {
+            extra_data: Bytes::copy_from_slice(&jovian),
+            ..Default::default()
+        };
+
+        let parent_fees = fees.get_parent_header_fees(&header);
+        assert_eq!(parent_fees.base_fee, 0);
+        assert_eq!(parent_fees.extra_data.as_ref(), jovian);
+        assert_eq!(parent_fees.optimism_jovian, Some(true));
     }
 
     #[test]

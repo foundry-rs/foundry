@@ -58,18 +58,6 @@ pub(crate) enum BlockExecutionKind {
     TransactionPrefix,
 }
 
-/// Returns the block's blob gas budget.
-///
-/// OP Jovian repurposes the block gas limit as the DA-footprint budget. Every other execution
-/// profile uses the active EIP-4844 limit.
-pub(crate) const fn block_blob_gas_limit(
-    optimism_jovian: bool,
-    block_gas_limit: u64,
-    max_blob_gas_per_block: u64,
-) -> u64 {
-    if optimism_jovian { block_gas_limit } else { max_blob_gas_per_block }
-}
-
 /// Ethereum-only consensus transition configuration for an Anvil block executor.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EthereumBlockTransitions {
@@ -780,6 +768,18 @@ where
     }
 
     tx_env
+}
+
+/// Returns the block's blob gas budget.
+///
+/// OP Jovian repurposes the block gas limit as the DA-footprint budget. Every other execution
+/// profile uses the active EIP-4844 limit.
+pub(crate) const fn block_blob_gas_limit(
+    optimism_jovian: bool,
+    block_gas_limit: u64,
+    max_blob_gas_per_block: u64,
+) -> u64 {
+    if optimism_jovian { block_gas_limit } else { max_blob_gas_per_block }
 }
 
 #[cfg(test)]
