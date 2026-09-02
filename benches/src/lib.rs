@@ -413,14 +413,11 @@ impl BenchmarkProject {
         runs: u32,
         verbose: bool,
     ) -> Result<HyperfineResult> {
-        // No setup needed, forge coverage builds internally
-        // Use --ir-minimum to avoid "Stack too deep" errors
+        // No setup needed, forge coverage builds internally.
         self.hyperfine(
             "forge_coverage",
             version,
-            &self.cmd(
-                "FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge coverage --ir-minimum",
-            ),
+            &self.cmd("FOUNDRY_DYNAMIC_TEST_LINKING=false FOUNDRY_ISOLATE=false forge coverage"),
             runs,
             None,
             None,

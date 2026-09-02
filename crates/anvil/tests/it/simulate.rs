@@ -145,6 +145,42 @@ async fn test_fork_simulate_multiple_blocks_rpc() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_fork_simulate_post_merge_block_context_rpc() {
+    let (source_api, source_handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Prague.into()))).await;
+    source_api.anvil_set_next_block_prevrandao(B256::repeat_byte(0x42)).await.unwrap();
+    source_api.mine_one().await.unwrap();
+
+    let (_, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Prague.into()))
+            .with_eth_rpc_url(Some(source_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+    let contract = "0xc000000000000000000000000000000000000000";
+    let response = rpc_request(
+        &fork_handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{
+            "blockStateCalls": [{
+                "stateOverrides": {
+                    (contract): {"code": "0x445f5260205ff3"}
+                },
+                "calls": [{"to": contract}]
+            }]
+        }, "latest"]),
+    )
+    .await;
+    assert!(response.get("error").is_none(), "{response}");
+
+    let block = &response["result"][0];
+    assert_eq!(block["difficulty"], "0x0");
+    assert_eq!(block["mixHash"], B256::ZERO.to_string());
+    assert_eq!(block["calls"][0]["returnData"], format!("0x{}", "00".repeat(32)));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_simulate_v1_moves_precompiles_per_block_rpc() {
     let (_, handle) = spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
