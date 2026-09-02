@@ -49,6 +49,30 @@ impl BytecodeData {
     }
 }
 
+/// Merges overlapping (or directly adjacent) byte ranges in `offsets`, so that callers can
+/// safely walk the result assuming the ranges are sorted by `start` *and* non-overlapping.
+///
+/// `offsets` does not need to be pre-sorted.
+fn merge_overlapping_offsets(mut offsets: Vec<Offsets>) -> Vec<Offsets> {
+    offsets.sort_by_key(|o| o.start);
+
+    let mut merged: Vec<Offsets> = Vec::with_capacity(offsets.len());
+    for offset in offsets {
+        if let Some(last) = merged.last_mut() {
+            let last_end = last.start + last.length;
+            if offset.start <= last_end {
+                let this_end = offset.start + offset.length;
+                if this_end > last_end {
+                    last.length = this_end - last.start;
+                }
+                continue;
+            }
+        }
+        merged.push(offset);
+    }
+    merged
+}
+
 impl From<CompactBytecode> for BytecodeData {
     fn from(bytecode: CompactBytecode) -> Self {
         Self {
@@ -332,10 +356,20 @@ impl ContractsByArtifact {
                 });
             }
 
-            ignored.sort_by_key(|o| o.start);
+            // `ignored` is built by chaining immutable references, link references, the
+            // library call-protection prefix, and the detected metadata range from up to
+            // four independent sources, none of which are checked against each other for
+            // overlap (e.g. a library's call-protection prefix `[1, 21)` can genuinely
+            // overlap a declared immutable reference that starts early in the bytecode, or
+            // the detected metadata range for a very short contract). The loop below walks
+            // these ranges assuming they are sorted *and* non-overlapping; merge overlapping
+            // (or directly adjacent) ranges here first, otherwise `left` can end up past the
+            // next range's `start`, which panics when slicing `code[left..right]` with
+            // `left > right`.
+            let merged = merge_overlapping_offsets(ignored);
 
             let mut left = 0;
-            for offset in ignored {
+            for offset in merged {
                 let right = offset.start as usize;
 
                 let matched = match deployed_code {
@@ -693,6 +727,14 @@ mod tests {
     use semver::Version;
 
     fn deployed_artifact(name: &str, code: Bytes) -> (ArtifactId, CompactContractBytecode) {
+        deployed_artifact_with_immutables(name, code, Default::default())
+    }
+
+    fn deployed_artifact_with_immutables(
+        name: &str,
+        code: Bytes,
+        immutable_references: BTreeMap<String, Vec<Offsets>>,
+    ) -> (ArtifactId, CompactContractBytecode) {
         (
             ArtifactId {
                 path: format!("out/{name}.json").into(),
@@ -711,7 +753,7 @@ mod tests {
                         source_map: None,
                         link_references: Default::default(),
                     }),
-                    immutable_references: Default::default(),
+                    immutable_references,
                 }),
             },
         )
@@ -790,5 +832,74 @@ mod tests {
 
         assert!(contracts.find_by_deployed_code_exact(&deployed_code).is_some());
         assert!(contracts.find_by_deployed_code_exact_unique(&deployed_code).is_none());
+    }
+
+    /// Regression test for a real, reachable panic: a library's call-protection prefix
+    /// (`[1, 21)`, added whenever the bytecode starts with `PUSH20 0x00..00`) can genuinely
+    /// overlap a declared immutable reference that starts early in the runtime bytecode -
+    /// entirely plausible for a real library with an immutable set near the start of its
+    /// code. Before the fix, `ignored` assumed its entries never overlap once sorted, and
+    /// slicing `code[left..right]` with `left > right` (produced by an overlapping range)
+    /// panics. This constructs exactly that overlap and confirms it no longer panics.
+    #[test]
+    fn find_by_deployed_code_exact_handles_overlapping_ignored_ranges() {
+        // Call-protection prefix: PUSH20 0x00..00 (21 bytes), covers ignored range [1, 21).
+        let mut code = vec![0x73u8];
+        code.extend(std::iter::repeat_n(0u8, 20));
+        // A few trailing bytes so there's something to match after the ignored range.
+        code.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        let code = Bytes::from(code);
+
+        // Immutable reference at [5, 8), fully inside the call-protection range [1, 21).
+        let immutable_references =
+            BTreeMap::from([("someImmutable".to_string(), vec![Offsets { start: 5, length: 3 }])]);
+
+        let contracts = ContractsByArtifact::new([deployed_artifact_with_immutables(
+            "LibWithEarlyImmutable",
+            code.clone(),
+            immutable_references,
+        )]);
+
+        // Must not panic, and the overlap should still resolve to a correct match since the
+        // overlapping ranges cover only bytes that are ignored either way.
+        assert!(contracts.find_by_deployed_code_exact(&code).is_some());
+    }
+
+    #[test]
+    fn merge_overlapping_offsets_merges_overlaps_and_adjacency() {
+        // Overlapping: [1, 21) and [5, 8) -> merges into [1, 21).
+        let merged = merge_overlapping_offsets(vec![
+            Offsets { start: 1, length: 20 },
+            Offsets { start: 5, length: 3 },
+        ]);
+        assert_eq!(merged, vec![Offsets { start: 1, length: 20 }]);
+
+        // Overlap extends past the first range's end: [1, 21) and [15, 30) -> merges into [1, 44).
+        let merged = merge_overlapping_offsets(vec![
+            Offsets { start: 1, length: 20 },
+            Offsets { start: 15, length: 15 },
+        ]);
+        assert_eq!(merged, vec![Offsets { start: 1, length: 29 }]);
+
+        // Directly adjacent (touching, not overlapping): [1, 21) and [21, 25) -> merges into [1, 24).
+        let merged = merge_overlapping_offsets(vec![
+            Offsets { start: 1, length: 20 },
+            Offsets { start: 21, length: 4 },
+        ]);
+        assert_eq!(merged, vec![Offsets { start: 1, length: 24 }]);
+
+        // Genuinely disjoint: stays as two separate ranges.
+        let merged = merge_overlapping_offsets(vec![
+            Offsets { start: 1, length: 5 },
+            Offsets { start: 10, length: 5 },
+        ]);
+        assert_eq!(merged, vec![Offsets { start: 1, length: 5 }, Offsets { start: 10, length: 5 }]);
+
+        // Unsorted input is sorted before merging.
+        let merged = merge_overlapping_offsets(vec![
+            Offsets { start: 10, length: 5 },
+            Offsets { start: 1, length: 5 },
+        ]);
+        assert_eq!(merged, vec![Offsets { start: 1, length: 5 }, Offsets { start: 10, length: 5 }]);
     }
 }
