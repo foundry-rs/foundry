@@ -814,8 +814,10 @@ pub(super) fn resolve_type(
         return ordered_ty(ty);
     };
 
-    if let Ok(encoded) = EncodeType::parse(type_description) {
-        let main_type = encoded.types[0].type_name;
+    if let Ok(encoded) = EncodeType::parse(type_description)
+        && let Some(main) = encoded.types.first()
+    {
+        let main_type = main.type_name;
         let mut resolver = Resolver::default();
         for t in &encoded.types {
             resolver.ingest(t.to_owned());
@@ -1131,6 +1133,20 @@ mod tests {
             return Ok(());
         }
         panic!("Expected Person to be CustomStruct");
+    }
+
+    #[test]
+    fn test_resolve_type_bare_struct_name_errors_instead_of_panicking() {
+        // `EncodeType::parse` returns `Ok` with an empty `types` vec (not `Err`) for input
+        // that has no `(` - e.g. a bare struct/type name a user might pass by mistake. Before
+        // the fix, indexing `encoded.types[0]` unconditionally panicked here instead of
+        // falling through to the `bail!` below, which aborts the whole process in release
+        // builds (`panic = "abort"`).
+        let err = resolve_type("Foo", None).unwrap_err();
+        assert!(
+            err.to_string().contains("valid Solidity type or a EIP712 `encodeType` string"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
