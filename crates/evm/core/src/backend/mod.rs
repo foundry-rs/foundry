@@ -106,16 +106,6 @@ struct ReplayInputs<FEN: FoundryEvmNetwork> {
     networks: NetworkConfigs,
 }
 
-fn inject_replay_precompiles(
-    networks: NetworkConfigs,
-    precompiles: &mut PrecompilesMap,
-    chain_id: ChainId,
-    timestamp: u64,
-) {
-    networks.inject_precompiles(precompiles);
-    networks.inject_chain_precompiles(precompiles, chain_id, timestamp);
-}
-
 /// Block data required to execute or position a fork at a transaction.
 struct TransactionForkTarget {
     fork_block: BlockNumHash,
@@ -3268,6 +3258,16 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
     *journaled_state = staged_journaled_state;
     fork.journaled_state = staged_fork_journaled_state;
     Ok(())
+}
+
+fn inject_replay_precompiles(
+    networks: NetworkConfigs,
+    precompiles: &mut PrecompilesMap,
+    chain_id: ChainId,
+    timestamp: u64,
+) {
+    networks.inject_precompiles(precompiles);
+    networks.inject_chain_precompiles(precompiles, chain_id, timestamp);
 }
 
 #[cfg(test)]
