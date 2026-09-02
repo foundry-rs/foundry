@@ -893,6 +893,7 @@ struct StateSnapshot {
     block_number: u64,
     block_hash: B256,
     fees: FeeSnapshot,
+    time_offset: i128,
 }
 
 /// Gives access to the [revm::Database]
@@ -1598,7 +1599,12 @@ impl<N: Network> Backend<N> {
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
         self.active_state_snapshots.lock().insert(
             id,
-            StateSnapshot { block_number: num, block_hash: hash, fees: self.fees.snapshot() },
+            StateSnapshot {
+                block_number: num,
+                block_hash: hash,
+                fees: self.fees.snapshot(),
+                time_offset: self.time.offset(),
+            },
         );
         id
     }
@@ -4697,11 +4703,10 @@ impl<N: Network> Backend<N> {
 
     /// Reverts the state to the state snapshot identified by the given `id`.
     pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
-        let Some((num, hash, fees)) = self
-            .active_state_snapshots
-            .lock()
-            .get(&id)
-            .map(|snapshot| (snapshot.block_number, snapshot.block_hash, snapshot.fees))
+        let Some((num, hash, fees, time_offset)) =
+            self.active_state_snapshots.lock().get(&id).map(|snapshot| {
+                (snapshot.block_number, snapshot.block_hash, snapshot.fees, snapshot.time_offset)
+            })
         else {
             return Ok(false);
         };
@@ -4718,7 +4723,7 @@ impl<N: Network> Backend<N> {
         self.blockchain.storage.write().unwind_to(num, hash);
 
         let reset_time = block.header.timestamp();
-        self.time.reset(reset_time);
+        self.time.reset_with_offset(reset_time, time_offset);
         // drop any pending next-block prevrandao override so it does not leak into a block
         self.cheats.clear_next_block_prevrandao();
 
