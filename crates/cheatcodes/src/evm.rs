@@ -44,7 +44,7 @@ use revm::{
     bytecode::Bytecode,
     context::{Block, Cfg, ContextTr, Host, JournalTr, Transaction, result::ExecutionResult},
     inspector::JournalExt,
-    primitives::{KECCAK_EMPTY, eip3860::MAX_INITCODE_SIZE, hardfork::SpecId},
+    primitives::{KECCAK_EMPTY, hardfork::SpecId},
     state::{Account, AccountStatus},
 };
 use std::{
@@ -1349,14 +1349,10 @@ impl Cheatcode for executeTransactionCall {
         // Enable nonce checks for realistic simulation.
         ccx.ecx.cfg_env_mut().disable_nonce_check = false;
 
-        // Enforce the active EVM's initcode size limit.
-        let initcode_size_limit = ccx
-            .state
-            .config
-            .evm_opts
-            .networks
-            .contract_size_limits()
-            .map_or(MAX_INITCODE_SIZE, |limits| limits.initcode);
+        // Resolve the limit through the active EVM's concrete `Cfg` implementation. Monad's
+        // implementation supplies its protocol default while ordinary EVMs retain revm's default;
+        // explicit cfg overrides remain effective without redispatching on runtime network config.
+        let initcode_size_limit = ccx.ecx.cfg().max_initcode_size();
         ccx.ecx.cfg_env_mut().limit_contract_initcode_size = Some(initcode_size_limit);
 
         // Reset the tx gas limit cap so revm applies the spec-defined default (EIP-7825).
