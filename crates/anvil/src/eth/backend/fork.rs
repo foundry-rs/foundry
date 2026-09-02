@@ -633,14 +633,9 @@ impl<N: Network> ClientFork<N> {
         &self,
         hash: B256,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
-        if let Some(mut block) = self.storage_read().blocks.get(&hash).cloned() {
+        Ok(self.block_by_hash_at_fork(hash).await?.map(|mut block| {
             block.transactions_mut().convert_to_hashes();
-            return Ok(Some(block));
-        }
-
-        Ok(self.fetch_full_block(hash).await?.map(|mut b| {
-            b.transactions_mut().convert_to_hashes();
-            b
+            block
         }))
     }
 
@@ -648,12 +643,24 @@ impl<N: Network> ClientFork<N> {
         &self,
         hash: B256,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
-        if let Some(block) = self.storage_read().blocks.get(&hash).cloned()
-            && let Some(block) = self.convert_to_full_block(block)
-        {
-            return Ok(Some(block));
+        Ok(self
+            .block_by_hash_at_fork(hash)
+            .await?
+            .and_then(|block| self.convert_to_full_block(block)))
+    }
+
+    async fn block_by_hash_at_fork(
+        &self,
+        hash: B256,
+    ) -> Result<Option<N::BlockResponse>, TransportError> {
+        if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
+            return Ok(self.predates_fork_inclusive(block.header().number()).then_some(block));
         }
-        self.fetch_full_block(hash).await
+
+        Ok(self
+            .fetch_full_block(hash)
+            .await?
+            .filter(|block| self.predates_fork_inclusive(block.header().number())))
     }
 
     pub async fn block_by_number(

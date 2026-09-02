@@ -108,6 +108,46 @@ async fn raw_transaction_by_block_and_index_matches_by_hash() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn fork_hash_lookups_exclude_newer_upstream_blocks() {
+    let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let (_fork_api, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(0u64)),
+    )
+    .await;
+    let (block_hash, block_number, _tx_hash) = mine_block_with_transfer(&origin_handle).await;
+    let provider = fork_handle.http_provider();
+
+    let by_number: Option<Value> = provider
+        .client()
+        .request("eth_getBlockByNumber", (BlockNumberOrTag::Number(block_number), false))
+        .await
+        .unwrap();
+    assert_eq!(by_number, None);
+
+    for full in [false, true] {
+        let by_hash: Option<Value> =
+            provider.client().request("eth_getBlockByHash", (block_hash, full)).await.unwrap();
+        assert_eq!(by_hash, None);
+    }
+
+    let tx: Option<Value> = provider
+        .client()
+        .request("eth_getTransactionByBlockHashAndIndex", (block_hash, Index::from(0)))
+        .await
+        .unwrap();
+    assert_eq!(tx, None);
+
+    let raw: Option<Bytes> = provider
+        .client()
+        .request("eth_getRawTransactionByBlockHashAndIndex", (block_hash, Index::from(0)))
+        .await
+        .unwrap();
+    assert_eq!(raw, None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn pending_transaction_by_block_number_and_index() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
