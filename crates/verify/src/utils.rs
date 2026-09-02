@@ -287,7 +287,8 @@ pub fn check_and_encode_args(
             args.len()
         );
     }
-    encode_args(&constructor.inputs, &args).map(|args| DynSolValue::Tuple(args).abi_encode())
+    encode_args(&constructor.inputs, &args)
+        .map(|args| DynSolValue::Tuple(args).abi_encode_params())
 }
 
 pub fn validate_encoded_constructor_args(
@@ -660,6 +661,29 @@ mod tests {
 
         assert!(check_and_encode_args(&artifact, vec!["1".to_string()]).is_err());
         assert_eq!(check_and_encode_args(&artifact, Vec::new()).unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn dynamic_constructor_args_are_encoded_as_top_level_params() {
+        let artifact = CompactContractBytecode {
+            abi: Some(alloy_json_abi::JsonAbi::parse(["constructor(string value)"]).unwrap()),
+            bytecode: None,
+            deployed_bytecode: None,
+        };
+
+        let encoded = check_and_encode_args(&artifact, vec!["hi".to_string()]).unwrap();
+
+        // Ground truth from `cast abi-encode "constructor(string)" "hi"`. The leading 0x20 here
+        // is the offset to the string payload, which a correct top-level-params encoding always
+        // has; `DynSolValue::abi_encode()` additionally wrapped the whole tuple in a synthetic
+        // 1-element sequence, prepending a SECOND, spurious 0x20 outer-tuple offset before this
+        // one - that extra word, not this one, is what `abi_encode_params()` removes.
+        let expected = alloy_primitives::hex!(
+            "0000000000000000000000000000000000000000000000000000000000000020"
+            "0000000000000000000000000000000000000000000000000000000000000002"
+            "6869000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(encoded, expected);
     }
 
     #[test]
