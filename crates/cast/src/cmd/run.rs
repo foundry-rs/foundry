@@ -221,7 +221,11 @@ impl RunArgs {
         #[cfg(feature = "base")]
         if evm_opts.networks.is_base() {
             return self
-                .run_with_evm::<foundry_evm::core::evm::BaseEvmNetwork>(config, evm_opts)
+                .run_with_evm(
+                    config,
+                    evm_opts,
+                    ExecutorBuilder::<foundry_evm::core::evm::BaseEvmNetwork>::new(),
+                )
                 .await;
         }
 

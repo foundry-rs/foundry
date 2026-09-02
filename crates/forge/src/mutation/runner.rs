@@ -647,6 +647,7 @@ fn compile_and_test(
                 rerun_failures,
                 selected_sources_relative,
                 isolate,
+                ExecutorBuilder::<foundry_evm::core::evm::BaseEvmNetwork>::new(),
             );
         }
         #[cfg(feature = "monad")]

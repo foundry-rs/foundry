@@ -80,6 +80,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             args,
             config,
             evm_opts,
+            ExecutorBuilder::<foundry_evm::core::evm::BaseEvmNetwork>::new(),
             local_networks,
             local_chain_id,
         ))

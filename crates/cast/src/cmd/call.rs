@@ -291,6 +291,7 @@ impl CallArgs {
                     config,
                     evm_opts,
                     auth_preflight,
+                    ExecutorBuilder::<foundry_evm::core::evm::BaseEvmNetwork>::new(),
                 )
                 .await;
         }

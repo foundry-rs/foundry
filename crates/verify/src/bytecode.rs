@@ -253,55 +253,56 @@ impl VerifyBytecodeArgs {
 
         match network {
             NetworkVariant::Ethereum => {
-                self.run_with_network_and_config::<EthEvmNetwork>(
+                Box::pin(self.run_with_network_and_config::<EthEvmNetwork>(
                     config,
                     endpoint_identity,
                     network_was_inferred,
                     replay_block_transactions::<EthEvmNetwork>,
                     ExecutorBuilder::<EthEvmNetwork>::new(),
-                )
+                ))
                 .await
             }
             #[cfg(feature = "base")]
             NetworkVariant::Base => {
-                self.run_with_network_and_config::<BaseEvmNetwork>(
+                Box::pin(self.run_with_network_and_config::<BaseEvmNetwork>(
                     config,
                     endpoint_identity,
                     network_was_inferred,
                     replay_block_transactions::<BaseEvmNetwork>,
-                )
+                    ExecutorBuilder::<BaseEvmNetwork>::new(),
+                ))
                 .await
             }
             #[cfg(feature = "optimism")]
             NetworkVariant::Optimism => {
-                self.run_with_network_and_config::<OpEvmNetwork>(
+                Box::pin(self.run_with_network_and_config::<OpEvmNetwork>(
                     config,
                     endpoint_identity,
                     network_was_inferred,
                     replay_block_transactions::<OpEvmNetwork>,
                     ExecutorBuilder::<OpEvmNetwork>::new(),
-                )
+                ))
                 .await
             }
             NetworkVariant::Tempo => {
-                self.run_with_network_and_config::<TempoEvmNetwork>(
+                Box::pin(self.run_with_network_and_config::<TempoEvmNetwork>(
                     config,
                     endpoint_identity,
                     network_was_inferred,
                     replay_block_transactions::<TempoEvmNetwork>,
                     ExecutorBuilder::<TempoEvmNetwork>::new(),
-                )
+                ))
                 .await
             }
             #[cfg(feature = "monad")]
             NetworkVariant::Monad => {
-                self.run_with_network_and_config::<MonadEvmNetwork>(
+                Box::pin(self.run_with_network_and_config::<MonadEvmNetwork>(
                     config,
                     endpoint_identity,
                     network_was_inferred,
                     replay_monad_block_transactions,
                     ExecutorBuilder::<MonadEvmNetwork>::new(),
-                )
+                ))
                 .await
             }
         }

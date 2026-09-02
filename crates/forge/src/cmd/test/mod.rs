@@ -2731,14 +2731,17 @@ impl TestArgs {
             }
             #[cfg(feature = "base")]
             NetworkDispatchKind::Base => {
-                self.build_and_run_tests::<foundry_evm::core::evm::BaseEvmNetwork>(
+                // Boxed to keep this arm's future out of `dispatch_network`'s frame, which the
+                // extra network would otherwise push past `clippy::large_stack_frames`.
+                Box::pin(self.build_and_run_tests::<foundry_evm::core::evm::BaseEvmNetwork>(
                     config,
                     evm_opts,
                     output,
                     filter,
                     execution,
                     resolved_fork,
-                )
+                    ExecutorBuilder::<foundry_evm::core::evm::BaseEvmNetwork>::new(),
+                ))
                 .await
             }
             #[cfg(feature = "monad")]
@@ -2805,7 +2808,11 @@ impl TestArgs {
             #[cfg(feature = "base")]
             NetworkDispatchKind::Base => self
                 .build_fuzz_minimize_runner::<foundry_evm::core::evm::BaseEvmNetwork>(
-                    config, evm_opts, output, options,
+                    config,
+                    evm_opts,
+                    output,
+                    options,
+                    ExecutorBuilder::<foundry_evm::core::evm::BaseEvmNetwork>::new(),
                 )
                 .await
                 .map(|runner| fuzz_minimize_replay(runner, filter)),
