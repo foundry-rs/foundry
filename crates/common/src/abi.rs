@@ -166,21 +166,6 @@ pub async fn get_func_etherscan(
     Err(eyre::eyre!("Function not found in abi"))
 }
 
-/// Decides which proxy implementation address (if any) `find_source` should follow for
-/// `metadata`.
-///
-/// Returns `Some(address)` when `metadata` reports itself as a proxy (`proxy != 0`) *and*
-/// resolved an implementation address. Returns `None` when `metadata` is not a proxy, or when
-/// it claims to be a proxy but Etherscan did not resolve an implementation address
-/// (`Implementation` came back empty, which does happen in practice for proxy patterns
-/// Etherscan's heuristic can't fully resolve) - callers should treat that the same as "not a
-/// proxy" and fall back to the metadata's own source, rather than panicking.
-const fn resolve_proxy_implementation(
-    metadata: &foundry_block_explorers::contract::Metadata,
-) -> Option<Address> {
-    if metadata.proxy == 0 { None } else { metadata.implementation }
-}
-
 /// If the code at `address` is a proxy, recurse until we find the implementation.
 pub fn find_source(
     client: Client,
@@ -190,7 +175,13 @@ pub fn find_source(
         trace!(%address, "find Etherscan source");
         let source = client.contract_source_code(address).await?;
         let metadata = source.items.first().wrap_err("Etherscan returned no data")?;
-        if let Some(implementation) = resolve_proxy_implementation(metadata) {
+        // `metadata.proxy != 0` means Etherscan reports this as a proxy, but Etherscan (and
+        // compatible explorers) can report `Proxy: 1` while `Implementation` comes back empty -
+        // which `foundry_block_explorers`' own `deserialize_address_opt` turns into `None`. Treat
+        // that the same as "not a proxy" and fall back to the metadata's own source, rather than
+        // panicking on `.unwrap()`.
+        let implementation = if metadata.proxy == 0 { None } else { metadata.implementation };
+        if let Some(implementation) = implementation {
             sh_println!(
                 "Contract at {address} is a proxy, trying to fetch source at {implementation}..."
             )?;
@@ -234,10 +225,11 @@ mod tests {
     /// exhibiting this exact empty-string shape: `0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413`).
     ///
     /// `find_source` used to do `metadata.implementation.unwrap()` on this combination, which
-    /// panics on any real-world response shaped this way. This drives the actual extracted
-    /// decision function, `resolve_proxy_implementation`, with metadata deserialized through
-    /// the real `Metadata` type (not a synthetic struct) - confirmed to panic if you swap the
-    /// function body back to `Some(metadata.implementation.unwrap())` for the `proxy != 0` arm.
+    /// panics on any real-world response shaped this way. This drives `find_source`'s inlined
+    /// proxy-implementation decision (`if metadata.proxy == 0 { None } else {
+    /// metadata.implementation }`) with metadata deserialized through the real `Metadata` type
+    /// (not a synthetic struct) - confirmed to panic if that decision reverts to
+    /// `Some(metadata.implementation.unwrap())` for the `proxy != 0` arm.
     #[test]
     fn test_proxy_without_implementation_does_not_panic() {
         use foundry_block_explorers::contract::Metadata;
@@ -270,12 +262,13 @@ mod tests {
             "an empty Implementation string must deserialize to None, not a parsed address"
         );
 
-        // Must not panic: this is the exact call `find_source` makes.
-        assert_eq!(resolve_proxy_implementation(&metadata), None);
+        // Must not panic: this is the exact decision `find_source` makes.
+        let implementation = if metadata.proxy == 0 { None } else { metadata.implementation };
+        assert_eq!(implementation, None);
     }
 
     #[test]
-    fn resolve_proxy_implementation_follows_real_implementation() {
+    fn proxy_implementation_decision_follows_real_implementation() {
         use alloy_primitives::address;
         use foundry_block_explorers::contract::Metadata;
 
@@ -296,10 +289,8 @@ mod tests {
         });
         let metadata: Metadata = serde_json::from_value(json).unwrap();
 
-        assert_eq!(
-            resolve_proxy_implementation(&metadata),
-            Some(address!("0x1F98431c8aD98523631AE4a59f267346ea31F984"))
-        );
+        let implementation = if metadata.proxy == 0 { None } else { metadata.implementation };
+        assert_eq!(implementation, Some(address!("0x1F98431c8aD98523631AE4a59f267346ea31F984")));
     }
 
     #[test]
