@@ -393,6 +393,7 @@ struct CompiledTestProject {
 fn sources_to_compile_from_artifacts(
     config: &Config,
     test_filter: &ProjectPathsAwareFilter,
+    root_sources: &BTreeSet<PathBuf>,
     artifacts: &ProjectCompileOutput,
     test_matcher: &TestFunctionMatcher<'_>,
 ) -> BTreeSet<PathBuf> {
@@ -411,6 +412,9 @@ fn sources_to_compile_from_artifacts(
     artifacts
         .artifact_ids()
         .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
+        // Imported dependencies must remain attached to their roots so compilation restrictions
+        // apply to the entire source graph instead of compiling dependencies with default settings.
+        .filter(|(id, _)| root_sources.contains(&id.source))
         .filter(|(id, abi)| {
             if id.source.starts_with(&paths.sources) {
                 return true;
@@ -1606,9 +1610,9 @@ impl TestArgs {
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter.
     ///
-    /// For filtered runs, this includes all configured source files, non-test artifacts outside
-    /// script-only paths, and runnable tests that match the filter. Non-test artifacts remain
-    /// available because tests may resolve them dynamically through cheatcodes.
+    /// For filtered runs, this includes all configured source roots, non-test fixture roots, and
+    /// runnable tests that match the filter. Imported dependencies remain attached to those roots
+    /// so compiler profiles and restrictions apply to the complete source graph.
     #[instrument(target = "forge::test", skip_all)]
     fn get_sources_to_compile(
         &self,
@@ -1640,7 +1644,7 @@ impl TestArgs {
         let output = compile_abi_project(
             &mut project,
             ProjectCompiler::new()
-                .files(sources)
+                .files(sources.iter().cloned())
                 .dynamic_test_linking(config.dynamic_test_linking)
                 .quiet(true),
         )?;
@@ -1655,7 +1659,13 @@ impl TestArgs {
         };
         let test_matcher =
             TestFunctionMatcher::new(config, &inline_config, symbolic_artifact_replay);
-        let files = sources_to_compile_from_artifacts(config, test_filter, &output, &test_matcher);
+        let files = sources_to_compile_from_artifacts(
+            config,
+            test_filter,
+            &sources,
+            &output,
+            &test_matcher,
+        );
 
         Ok((files, Some(inline_config)))
     }

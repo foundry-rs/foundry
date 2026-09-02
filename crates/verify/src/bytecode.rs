@@ -4,6 +4,7 @@ use crate::{
     utils::{
         BytecodeType, JsonResult, check_and_encode_args, check_explorer_args,
         load_fork_config_and_evm_opts, maybe_predeploy_contract, synthetic_deployment_context,
+        validate_encoded_constructor_args,
     },
     verify::VerifierArgs,
 };
@@ -444,16 +445,20 @@ impl VerifyBytecodeArgs {
             .ok_or_eyre("Unlinked bytecode is not supported for verification")?;
 
         // Get and encode user provided constructor args
-        let provided_constructor_args = if let Some(path) = self.constructor_args_path.clone() {
-            // Read from file
-            Some(read_constructor_args_file(path)?)
+        let provided_constructor_args = if let Some(encoded) = &self.encoded_constructor_args {
+            Some(validate_encoded_constructor_args(&artifact, hex::decode(encoded)?)?)
         } else {
-            self.constructor_args.clone()
-        }
-        .map(|args| check_and_encode_args(&artifact, args))
-        .transpose()?
-        .or(self.encoded_constructor_args.clone().map(hex::decode).transpose()?);
+            if let Some(path) = self.constructor_args_path.clone() {
+                // Read from file.
+                Some(read_constructor_args_file(path)?)
+            } else {
+                self.constructor_args.clone()
+            }
+            .map(|args| check_and_encode_args(&artifact, args))
+            .transpose()?
+        };
 
+        let args_from_user = provided_constructor_args.is_some();
         let mut constructor_args = if let Some(provided) = provided_constructor_args {
             provided.into()
         } else if let Some(source_code) = &source_code {
@@ -662,11 +667,11 @@ impl VerifyBytecodeArgs {
         Self::ensure_endpoint_identity_unchanged(&config, endpoint_identity.as_ref()).await?;
 
         // In some cases, Etherscan will return incorrect constructor arguments. If this
-        // happens, try extracting arguments ourselves.
-        if !maybe_creation_code.ends_with(&constructor_args) {
+        // happens, try extracting arguments ourselves. Never replace user-provided arguments.
+        if !args_from_user && !maybe_creation_code.ends_with(&constructor_args) {
             trace!("mismatch of constructor args with etherscan");
-            // If local bytecode is longer than on-chain one, this is probably not a match.
             if maybe_creation_code.len() >= local_bytecode.len() {
+                // If local bytecode is longer than on-chain one, this is probably not a match.
                 constructor_args =
                     Bytes::copy_from_slice(&maybe_creation_code[local_bytecode.len()..]);
                 trace!(
@@ -682,20 +687,64 @@ impl VerifyBytecodeArgs {
         let mut local_bytecode_vec = local_bytecode.to_vec();
         local_bytecode_vec.extend_from_slice(&constructor_args);
 
+        // A suffix check alone is insufficient for dynamic ABI values: one valid encoding can
+        // be a suffix of a different valid encoding. Always compare the complete creation code
+        // when arguments came from the user, even if creation output is ignored.
+        let creation_match_type = crate::utils::match_bytecodes(
+            local_bytecode_vec.as_slice(),
+            &maybe_creation_code,
+            &constructor_args,
+            false,
+            config.bytecode_hash,
+        );
+        if args_from_user
+            && creation_match_type.is_none()
+            && self.ignore.is_none_or(|b| !b.is_creation())
+        {
+            let message =
+                "Provided constructor args could not be validated against deployment creation code";
+            if shell::is_json() {
+                json_results.push(JsonResult {
+                    bytecode_type: BytecodeType::Creation,
+                    match_type: None,
+                    message: Some(message.to_string()),
+                });
+                if self.ignore.is_none_or(|b| !b.is_runtime()) {
+                    json_results.push(JsonResult {
+                        bytecode_type: BytecodeType::Runtime,
+                        match_type: None,
+                        message: Some(message.to_string()),
+                    });
+                }
+                sh_println!("{}", serde_json::to_string(&json_results)?)?;
+            } else {
+                sh_warn!("{message}")?;
+                crate::utils::print_result(
+                    None,
+                    BytecodeType::Creation,
+                    &mut json_results,
+                    etherscan_metadata,
+                    &config,
+                );
+                if self.ignore.is_none_or(|b| !b.is_runtime()) {
+                    crate::utils::print_result(
+                        None,
+                        BytecodeType::Runtime,
+                        &mut json_results,
+                        etherscan_metadata,
+                        &config,
+                    );
+                }
+            }
+            return Ok(());
+        }
+
         trace!(ignore = ?self.ignore);
         // Check if `--ignore` is set to `creation`.
         if self.ignore.is_none_or(|b| !b.is_creation()) {
             // Compare creation code with locally built bytecode and `maybe_creation_code`.
-            let match_type = crate::utils::match_bytecodes(
-                local_bytecode_vec.as_slice(),
-                &maybe_creation_code,
-                &constructor_args,
-                false,
-                config.bytecode_hash,
-            );
-
             crate::utils::print_result(
-                match_type,
+                creation_match_type,
                 BytecodeType::Creation,
                 &mut json_results,
                 etherscan_metadata,
@@ -703,7 +752,7 @@ impl VerifyBytecodeArgs {
             );
 
             // If the creation code does not match, the runtime also won't match. Hence return.
-            if match_type.is_none() {
+            if creation_match_type.is_none() {
                 crate::utils::print_result(
                     None,
                     BytecodeType::Runtime,

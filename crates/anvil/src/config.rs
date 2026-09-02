@@ -1950,24 +1950,15 @@ latest block number: {latest_block}"
         let effective_network =
             self.networks.resolved_network().unwrap_or(NetworkVariant::Ethereum);
         let endpoint_matches_execution = fork_identity.network == Some(effective_network);
-        let inferred_hardfork = if endpoint_matches_execution {
-            fork_identity
-                .hardfork
-                .filter(|hardfork| hardfork.namespace() == effective_network.hardfork_namespace())
-                .or_else(|| {
-                    FoundryHardfork::from_chain_and_timestamp(
-                        source_chain_id,
-                        block.header.timestamp(),
-                    )
-                    .filter(|hardfork| {
-                        hardfork.namespace() == effective_network.hardfork_namespace()
-                    })
-                })
-        } else {
-            None
-        };
-        let source_is_pre_cancun =
-            inferred_hardfork.is_some_and(|hardfork| SpecId::from(hardfork) < SpecId::CANCUN);
+        let source_hardfork = fork_identity.hardfork.or_else(|| {
+            FoundryHardfork::from_chain_and_timestamp(source_chain_id, block.header.timestamp())
+        });
+        let inferred_hardfork = source_hardfork.filter(|hardfork| {
+            endpoint_matches_execution
+                && hardfork.namespace() == effective_network.hardfork_namespace()
+        });
+        let source_may_omit_blob_fields = source_hardfork
+            .map_or(self.hardfork.is_some(), |hardfork| SpecId::from(hardfork) < SpecId::CANCUN);
         let fork_hardfork = self.hardfork.or(inferred_hardfork);
         let effective_hardfork = fork_hardfork.unwrap_or_else(|| self.get_hardfork());
         let effective_spec = SpecId::from(effective_hardfork);
@@ -2000,12 +1991,15 @@ latest block number: {latest_block}"
         fees.set_blob_params(blob_params);
         let blob_update_fraction = blob_params.update_fraction as u64;
         let blob_excess_gas = block.header.excess_blob_gas().or_else(|| {
-            // Pre-Cancun headers and Polygon Bor headers omit the blob fields. REVM still requires
-            // a valid blob environment when executing with the Cancun spec; zero is the neutral
-            // excess-gas value.
+            // Pre-Cancun headers, Polygon Bor headers, and Arbitrum Nitro headers omit the blob
+            // fields. REVM still requires a valid blob environment when executing with the Cancun
+            // spec; zero is the neutral excess-gas value. On Nitro this makes `BLOBBASEFEE` return
+            // `1`, although Nitro rejects the opcode; matching that requires Arbitrum-specific EVM
+            // handling.
             (effective_spec >= SpecId::CANCUN
-                && ((source_is_pre_cancun && block.header.blob_gas_used().is_none())
-                    || Chain::from_id(source_chain_id).is_polygon()))
+                && ((source_may_omit_blob_fields && block.header.blob_gas_used().is_none())
+                    || Chain::from_id(source_chain_id).is_polygon()
+                    || Chain::from_id(source_chain_id).is_arbitrum()))
             .then_some(0)
         });
         evm_env.block_env.blob_excess_gas_and_price =

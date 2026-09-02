@@ -228,6 +228,8 @@ pub enum PoolError {
 pub enum FeeHistoryError {
     #[error("requested block range is out of bounds")]
     InvalidBlockRange,
+    #[error("reward percentiles must be strictly increasing and between 0 and 100")]
+    InvalidRewardPercentiles,
     #[error("could not find block number requested: {0}")]
     BlockNotFound(BlockNumberOrTag),
 }

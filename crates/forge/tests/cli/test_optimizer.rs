@@ -1,5 +1,8 @@
 //! Tests for commands using the preprocessed cache.
 
+use foundry_compilers::artifacts::EvmVersion;
+use foundry_config::{CompilationRestrictions, SettingsOverrides};
+
 #[cfg(unix)]
 forgetest_init!(abi_commands_reuse_preprocessed_cache, |prj, cmd| {
     use foundry_test_utils::util::OutputExt;
@@ -167,6 +170,61 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#
     ]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16529>
+forgetest_init!(filtered_tests_preserve_compilation_restrictions, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_lib(
+        "dep/src/Clz.sol",
+        r#"
+library Clz {
+    function msb(uint128 bitmap) internal pure returns (uint256 res) {
+        assembly {
+            res := sub(255, clz(bitmap))
+        }
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Root.sol",
+        r#"
+import "../lib/dep/src/Clz.sol";
+
+contract Root {
+    function msb(uint128 bitmap) external pure returns (uint256) {
+        return Clz.msb(bitmap);
+    }
+}
+"#,
+    );
+    prj.add_test("RootTest.sol", "contract RootTest { function testFoo() public pure {} }");
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Prague;
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "osaka".to_string(),
+            via_ir: None,
+            evm_version: Some(EvmVersion::Osaka),
+            optimizer: None,
+            optimizer_runs: None,
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "src/Root.sol".parse().unwrap(),
+            version: None,
+            via_ir: None,
+            bytecode_hash: None,
+            min_optimizer_runs: None,
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: Some(EvmVersion::Osaka),
+            max_evm_version: None,
+        }];
+    });
+
+    cmd.args(["test", "--match-path", "test/RootTest.sol"]).assert_success();
 });
 
 forgetest_init!(filtered_tests_support_overlapping_source_roots, |prj, cmd| {
