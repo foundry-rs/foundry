@@ -119,6 +119,14 @@ pub async fn parse_code_output(
     }
 
     let args_size = constructor.inputs.len() * 32;
+    if bytecode.len() < args_size {
+        return Err(eyre!(
+            "Invalid creation bytecode length: have {} bytes, need at least {} for {} constructor inputs",
+            bytecode.len(),
+            args_size,
+            constructor.inputs.len()
+        ));
+    }
 
     let bytecode = if without_args {
         Bytes::from(bytecode[..bytecode.len() - args_size].to_vec())
@@ -129,6 +137,147 @@ pub async fn parse_code_output(
     };
 
     Ok(bytecode)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    // Constructor ABI declaring 2 uint256 inputs (64 bytes encoded), paired with a
+    // deployed bytecode shorter than that - e.g. an EIP-1167 minimal proxy is only
+    // ~45 bytes. `--abi-path` is user-supplied and documented as not needing to match
+    // the actually-deployed contract, so this combination is directly reachable.
+    const TWO_UINT_CONSTRUCTOR_ABI: &str = r#"[{
+        "type": "constructor",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {"name": "a", "type": "uint256", "internalType": "uint256"},
+            {"name": "b", "type": "uint256", "internalType": "uint256"}
+        ]
+    }]"#;
+
+    fn write_abi_file(contents: &str) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+        file
+    }
+
+    // 20 bytes of "code" (0xAA) followed by 64 bytes of "args" (0xBB), so a correct
+    // split is verifiable by content, not just by length.
+    fn code_plus_args_bytecode() -> Bytes {
+        let mut b = vec![0xAAu8; 20];
+        b.extend(vec![0xBBu8; 64]);
+        Bytes::from(b)
+    }
+
+    #[tokio::test]
+    async fn without_args_errors_instead_of_panicking_on_undersized_bytecode() {
+        let abi_file = write_abi_file(TWO_UINT_CONSTRUCTOR_ABI);
+        // 20-byte bytecode, but the ABI declares 64 bytes of constructor args.
+        let bytecode = Bytes::from(vec![0u8; 20]);
+
+        let result = parse_code_output(
+            bytecode,
+            Address::ZERO,
+            &Config::default(),
+            Some(abi_file.path().to_str().unwrap()),
+            true,
+            false,
+        )
+        .await;
+
+        assert!(result.is_err(), "expected an error, not a panic, on undersized bytecode");
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("Invalid creation bytecode length"), "unexpected message: {msg}");
+    }
+
+    #[tokio::test]
+    async fn only_args_errors_instead_of_panicking_on_undersized_bytecode() {
+        let abi_file = write_abi_file(TWO_UINT_CONSTRUCTOR_ABI);
+        let bytecode = Bytes::from(vec![0u8; 20]);
+
+        let result = parse_code_output(
+            bytecode,
+            Address::ZERO,
+            &Config::default(),
+            Some(abi_file.path().to_str().unwrap()),
+            false,
+            true,
+        )
+        .await;
+
+        assert!(result.is_err(), "expected an error, not a panic, on undersized bytecode");
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("Invalid creation bytecode length"), "unexpected message: {msg}");
+    }
+
+    #[tokio::test]
+    async fn errors_instead_of_panicking_at_the_exact_equality_boundary() {
+        let abi_file = write_abi_file(TWO_UINT_CONSTRUCTOR_ABI);
+        // bytecode.len() == args_size exactly: no room for any actual code.
+        let bytecode = Bytes::from(vec![0u8; 64]);
+
+        let result = parse_code_output(
+            bytecode.clone(),
+            Address::ZERO,
+            &Config::default(),
+            Some(abi_file.path().to_str().unwrap()),
+            true,
+            false,
+        )
+        .await;
+        assert_eq!(result.unwrap().len(), 0, "without_args should return empty code, not error");
+
+        let result = parse_code_output(
+            bytecode,
+            Address::ZERO,
+            &Config::default(),
+            Some(abi_file.path().to_str().unwrap()),
+            false,
+            true,
+        )
+        .await;
+        assert_eq!(result.unwrap().len(), 64, "only_args should return the whole slice");
+    }
+
+    #[tokio::test]
+    async fn without_args_still_succeeds_on_correctly_sized_bytecode() {
+        let abi_file = write_abi_file(TWO_UINT_CONSTRUCTOR_ABI);
+        let bytecode = code_plus_args_bytecode();
+
+        let result = parse_code_output(
+            bytecode,
+            Address::ZERO,
+            &Config::default(),
+            Some(abi_file.path().to_str().unwrap()),
+            true,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, Bytes::from(vec![0xAAu8; 20]));
+    }
+
+    #[tokio::test]
+    async fn only_args_still_succeeds_on_correctly_sized_bytecode() {
+        let abi_file = write_abi_file(TWO_UINT_CONSTRUCTOR_ABI);
+        let bytecode = code_plus_args_bytecode();
+
+        let result = parse_code_output(
+            bytecode,
+            Address::ZERO,
+            &Config::default(),
+            Some(abi_file.path().to_str().unwrap()),
+            false,
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, Bytes::from(vec![0xBBu8; 64]));
+    }
 }
 
 /// Fetches the creation code of a contract from Etherscan and RPC.
