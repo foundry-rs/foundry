@@ -373,6 +373,12 @@ impl EthApi<FoundryNetwork> {
             return Err(BlockchainError::DataUnavailable);
         }
 
+        // Capture the block's real transaction count before cropping to the requested page -
+        // `OtsBlock`'s `transaction_count` must reflect the whole block (matching Erigon, the
+        // reference `ots_` implementation), not just the page size, or pagination breaks for
+        // any consumer (e.g. Otterscan) that uses this field to compute the page count.
+        let transaction_count = block.transactions().len();
+
         block.transactions = match block.transactions() {
             BlockTransactions::Full(txs) => BlockTransactions::Full(
                 txs.iter().skip(page * page_size).take(page_size).cloned().collect(),
@@ -400,7 +406,6 @@ impl EthApi<FoundryNetwork> {
         .into_iter()
         .collect::<Result<Vec<_>>>()?;
 
-        let transaction_count = block.transactions().len();
         let fullblock = OtsBlock { block: block.inner.clone(), transaction_count };
 
         let ots_block_txs = OtsBlockTransactions { fullblock, receipts };
