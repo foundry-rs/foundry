@@ -478,3 +478,28 @@ forgetest!(bind_single_file_crate_and_module_match, |prj, cmd| {
         fs::read(module_path.join("mod.rs")).unwrap()
     );
 });
+
+// https://github.com/foundry-rs/foundry/issues - `$` is valid in Solidity identifiers but not
+// in Rust ones; `forge bind` used to panic instead of sanitizing it.
+forgetest!(bind_dollar_sign_in_contract_name, |prj, cmd| {
+    prj.add_source(
+        "Foo.sol",
+        r#"
+contract Foo$Bar {
+    uint256 public value;
+
+    function setValue(uint256 v) public {
+        value = v;
+    }
+}
+"#,
+    );
+
+    cmd.args(["bind"]).assert_success();
+
+    let bindings_path = prj.root().join("out/bindings");
+    let binding = fs::read_to_string(bindings_path.join("src/foo_bar.rs")).unwrap();
+    assert!(binding.contains("pub mod Foo_Bar"), "{binding}");
+    assert!(!binding.contains('$'), "{binding}");
+    assert_bindings_compile(&bindings_path);
+});
