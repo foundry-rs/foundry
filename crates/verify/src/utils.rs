@@ -1,5 +1,5 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
-use alloy_dyn_abi::DynSolValue;
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_network::{AnyNetwork, AnyRpcBlock};
 use alloy_primitives::{Address, Bytes, ChainId, TxKind, U256};
 use alloy_provider::{Provider, network::BlockResponse};
@@ -188,6 +188,13 @@ fn is_partial_match(
         return try_extract_and_compare_bytecode(local_bytecode, bytecode);
     }
 
+    // The constructor args are part of what is being verified: the onchain creation code must
+    // actually end with them before they can be stripped, otherwise args of the right length
+    // could never fail the comparison.
+    if !bytecode.ends_with(constructor_args) {
+        return false;
+    }
+
     // If not runtime, extract constructor args from the end of the bytecode
     bytecode = &bytecode[..bytecode.len() - constructor_args.len()];
     local_bytecode = &local_bytecode[..local_bytecode.len() - constructor_args.len()];
@@ -267,18 +274,42 @@ pub fn check_and_encode_args(
     artifact: &CompactContractBytecode,
     args: Vec<String>,
 ) -> Result<Vec<u8>, eyre::ErrReport> {
-    if let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) {
-        if constructor.inputs.len() != args.len() {
-            eyre::bail!(
-                "Mismatch of constructor arguments length. Expected {}, got {}",
-                constructor.inputs.len(),
-                args.len()
-            );
+    let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) else {
+        if args.is_empty() {
+            return Ok(Vec::new());
         }
-        encode_args(&constructor.inputs, &args).map(|args| DynSolValue::Tuple(args).abi_encode())
-    } else {
-        Ok(Vec::new())
+        eyre::bail!("Contract has no constructor arguments, but arguments were provided");
+    };
+    if constructor.inputs.len() != args.len() {
+        eyre::bail!(
+            "Mismatch of constructor arguments length. Expected {}, got {}",
+            constructor.inputs.len(),
+            args.len()
+        );
     }
+    encode_args(&constructor.inputs, &args).map(|args| DynSolValue::Tuple(args).abi_encode())
+}
+
+pub fn validate_encoded_constructor_args(
+    artifact: &CompactContractBytecode,
+    args: Vec<u8>,
+) -> Result<Vec<u8>, eyre::ErrReport> {
+    let Some(constructor) = artifact.abi.as_ref().and_then(|abi| abi.constructor()) else {
+        if args.is_empty() {
+            return Ok(args);
+        }
+        eyre::bail!("Contract has no constructor arguments, but encoded arguments were provided");
+    };
+    let values = constructor
+        .abi_decode_input(&args)
+        .map_err(|err| eyre::eyre!("Invalid ABI-encoded constructor arguments: {err}"))?;
+    let encoded = constructor
+        .abi_encode_input(&values)
+        .map_err(|err| eyre::eyre!("Invalid ABI-encoded constructor arguments: {err}"))?;
+    if encoded != args {
+        eyre::bail!("Constructor arguments are not canonically ABI-encoded");
+    }
+    Ok(args)
 }
 
 pub fn check_explorer_args(source_code: &ContractMetadata) -> Result<Bytes, eyre::ErrReport> {
@@ -591,6 +622,77 @@ mod tests {
         let mut tx = TxEnvFor::<foundry_evm::core::evm::MonadEvmNetwork>::default();
         tx.set_caller(caller);
         tx
+    }
+
+    #[test]
+    fn encoded_constructor_args_must_be_canonical() {
+        let artifact = CompactContractBytecode {
+            abi: Some(alloy_json_abi::JsonAbi::parse(["constructor(uint256 value)"]).unwrap()),
+            bytecode: None,
+            deployed_bytecode: None,
+        };
+        let args = artifact
+            .abi
+            .as_ref()
+            .unwrap()
+            .constructor()
+            .unwrap()
+            .abi_encode_input(&[DynSolValue::Uint(U256::from(1), 256)])
+            .unwrap();
+
+        assert_eq!(validate_encoded_constructor_args(&artifact, args.clone()).unwrap(), args);
+
+        // Arbitrary bytes prepended to valid arguments can overlap the creation bytecode's
+        // metadata and must not be accepted as part of the constructor arguments.
+        let overlapping = [alloy_primitives::hex!("a1616101").as_slice(), &args].concat();
+        assert!(validate_encoded_constructor_args(&artifact, overlapping).is_err());
+    }
+
+    #[test]
+    fn typed_constructor_args_require_a_constructor() {
+        let artifact = CompactContractBytecode {
+            abi: Some(alloy_json_abi::JsonAbi::default()),
+            bytecode: None,
+            deployed_bytecode: None,
+        };
+
+        assert!(check_and_encode_args(&artifact, vec!["1".to_string()]).is_err());
+        assert_eq!(check_and_encode_args(&artifact, Vec::new()).unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn creation_code_must_end_with_constructor_args() {
+        let code = alloy_primitives::hex!("6080604052348015600e575f5ffd5b50607b80601a5f395ff3fe");
+        let real_args = [0x11u8; 32];
+        let wrong_args = [0x22u8; 32];
+
+        let onchain = [code.as_slice(), &real_args].concat();
+
+        // Wrong args of the right length used to report a partial match because the tails were
+        // stripped from both sides without comparing them.
+        let local = [code.as_slice(), &wrong_args].concat();
+        assert_eq!(match_bytecodes(&local, &onchain, &wrong_args, false, BytecodeHash::Ipfs), None);
+
+        let local = [code.as_slice(), &real_args].concat();
+        assert_eq!(
+            match_bytecodes(&local, &onchain, &real_args, false, BytecodeHash::Ipfs),
+            Some(VerificationType::Full)
+        );
+
+        // A valid dynamic encoding can end with another valid encoding. The suffix alone must
+        // not establish that the supplied arguments match.
+        let suffix_args =
+            DynSolValue::Tuple(vec![DynSolValue::Bytes(real_args.to_vec())]).abi_encode();
+        let deployment_args =
+            DynSolValue::Tuple(vec![DynSolValue::Bytes(suffix_args.clone())]).abi_encode();
+        assert!(deployment_args.ends_with(&suffix_args));
+
+        let onchain = [code.as_slice(), deployment_args.as_slice()].concat();
+        let local = [code.as_slice(), suffix_args.as_slice()].concat();
+        assert_eq!(
+            match_bytecodes(&local, &onchain, &suffix_args, false, BytecodeHash::Ipfs),
+            None
+        );
     }
 
     #[test]

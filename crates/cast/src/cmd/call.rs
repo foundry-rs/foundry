@@ -14,8 +14,7 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::BlockNumHash;
 use alloy_ens::NameOrAddress;
 use alloy_network::{
-    BlockResponse, Network, NetworkTransactionBuilder, TransactionBuilder,
-    primitives::HeaderResponse,
+    BlockResponse, NetworkTransactionBuilder, TransactionBuilder, primitives::HeaderResponse,
 };
 use alloy_primitives::{B256, Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
@@ -351,10 +350,7 @@ impl CallArgs {
         mut config: Box<Config>,
         evm_opts: EvmOpts,
         auth_preflight: AuthDisclosurePreflight,
-    ) -> Result<()>
-    where
-        <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
-    {
+    ) -> Result<()> {
         config.networks = evm_opts.networks;
         let mut state_overrides = self.get_state_overrides()?;
         let block_overrides = self.get_block_overrides()?;

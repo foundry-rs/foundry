@@ -79,17 +79,14 @@ def compare(base, candidate, rules):
     print("| Benchmark | Stable | Nightly | Change |")
     print("|-----------|--------:|---------:|--------|")
     has_regression = False
+    has_missing = False
     for key in sorted(base.keys() | candidate.keys()):
         has_base, has_candidate = key in base, key in candidate
         if not has_base or not has_candidate:
+            has_missing = True
             present = duration(mean_of(candidate[key] if not has_base else base[key], key))
             left, right = ("N/A", present) if not has_base else (present, "N/A")
-            if has_base and rules.get(key, {}).get("alert", False):
-                has_regression = True
-                verdict = "❌ Missing nightly result"
-            else:
-                verdict = "⚠️ Inconclusive (missing side)"
-            print(f"| `{key}` | {left} | {right} | {verdict} |")
+            print(f"| `{key}` | {left} | {right} | ⚠️ Incomplete benchmark |")
             continue
 
         baseline = mean_of(base[key], key)
@@ -121,6 +118,8 @@ def compare(base, candidate, rules):
         "\nLegend: ❌ regression, ⚠️ warning/inconclusive, ✅ improvement, "
         "⚪ within threshold or uncalibrated. Advisory results never alert."
     )
+    if has_missing:
+        return 2
     return 1 if has_regression else 0
 
 
