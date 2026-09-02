@@ -6925,7 +6925,7 @@ where
             return Ok(fork.debug_trace_transaction(hash, opts).await?);
         }
 
-        Ok(GethTrace::Default(Default::default()))
+        Err(BlockchainError::TransactionNotFound)
     }
 
     /// Returns geth-style traces for all transactions in an RLP-encoded block.
