@@ -346,6 +346,8 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             &new_session.source.config.foundry_config,
             id,
         )?;
+        new_session.source.config.foundry_config.force =
+            self.session.source.config.foundry_config.force;
         new_session.source.config.initialize_local_context();
         new_session.source.build()?;
         self.session = new_session;
