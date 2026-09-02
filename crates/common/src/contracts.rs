@@ -56,11 +56,11 @@ fn normalize_offsets(offsets: &mut Vec<Offsets>) {
     let mut merged: Vec<Offsets> = Vec::with_capacity(offsets.len());
     for offset in offsets.drain(..) {
         if let Some(last) = merged.last_mut() {
-            let last_end = last.start + last.length;
-            if offset.start <= last_end {
-                let this_end = offset.start + offset.length;
+            let last_end = last.start as u64 + last.length as u64;
+            if offset.start as u64 <= last_end {
+                let this_end = offset.start as u64 + offset.length as u64;
                 if this_end > last_end {
-                    last.length = this_end - last.start;
+                    last.length = (this_end - last.start as u64) as u32;
                 }
                 continue;
             }
