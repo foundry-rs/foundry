@@ -21,6 +21,7 @@ use std::{
 };
 use tempo_alloy::accounts::TempoAccountsStore;
 use tempo_contracts::precompiles::TIP20_FACTORY_ADDRESS;
+use tempo_hardfork::TempoHardfork;
 use tempo_primitives::TempoTxEnvelope;
 
 /// Anvil test accounts (standard mnemonic).
@@ -656,6 +657,112 @@ casttest!(send_with_authorized_access_key_succeeds, async |_prj, cmd| {
         serde_json::from_str(output.trim()).expect("cast send emits a JSON receipt");
     assert!(receipt["transactionHash"].is_string(), "unexpected receipt: {output}");
     assert_eq!(receipt["status"], "0x1", "unexpected receipt: {output}");
+});
+
+// On-chain: `keychain set-scope` uses the legacy ABI before T11 and the RLP ABI from T11 onward.
+casttest!(keychain_set_scope_succeeds_across_t11, async |_prj, cmd| {
+    for hardfork in [TempoHardfork::T10, TempoHardfork::T11] {
+        let (_, handle) =
+            anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(hardfork.into()))).await;
+        let rpc = handle.http_endpoint();
+
+        if hardfork < TempoHardfork::T11 {
+            cmd.cast_fuse()
+                .args([
+                    "keychain",
+                    "authorize",
+                    accounts::ADDR2,
+                    "--private-key",
+                    accounts::PK1,
+                    "--rpc-url",
+                    &rpc,
+                ])
+                .assert_success();
+        } else {
+            let authorization = cmd
+                .cast_fuse()
+                .args([
+                    "key-authorization",
+                    "sign",
+                    accounts::ADDR2,
+                    "--chain-id",
+                    "31337",
+                    "--private-key",
+                    accounts::PK1,
+                ])
+                .assert_success()
+                .get_output()
+                .stdout_lossy()
+                .trim()
+                .to_string();
+            let tempo_home = tempfile::tempdir().unwrap();
+            cmd.cast_fuse();
+            cmd.env("TEMPO_HOME", tempo_home.path());
+            cmd.args([
+                "tempo",
+                "import-access-key",
+                "--account",
+                accounts::ADDR1,
+                "--access-key",
+                accounts::PK2,
+                "--authorization",
+                &authorization,
+            ])
+            .assert_success();
+            cmd.cast_fuse();
+            cmd.env("TEMPO_HOME", tempo_home.path());
+            cmd.args([
+                "send",
+                &path_usd(),
+                "approve(address,uint256)",
+                accounts::ADDR3,
+                "0",
+                "--from",
+                accounts::ADDR1,
+                "--tempo.fee-token",
+                &path_usd(),
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_success();
+        }
+
+        cmd.cast_fuse()
+            .args([
+                "keychain",
+                "set-scope",
+                accounts::ADDR2,
+                "--scope",
+                accounts::ADDR3,
+                "--private-key",
+                accounts::PK1,
+                "--rpc-url",
+                &rpc,
+            ])
+            .assert_success();
+
+        let output = cmd
+            .cast_fuse()
+            .args([
+                "keychain",
+                "inspect",
+                accounts::ADDR2,
+                "--root-account",
+                accounts::ADDR1,
+                "--rpc-url",
+                &rpc,
+                "--json",
+            ])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(
+            parsed["data"]["allowed_calls"]["scopes"][0]["target"].as_str().map(str::to_lowercase),
+            Some(accounts::ADDR3.to_lowercase()),
+            "unexpected {hardfork:?} key info: {output}"
+        );
+    }
 });
 
 casttest!(send_with_local_sponsor_reports_sponsor_as_fee_payer, async |_prj, cmd| {
