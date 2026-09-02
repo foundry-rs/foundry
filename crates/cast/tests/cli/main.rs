@@ -25,7 +25,7 @@ use foundry_test_utils::{
     util::OutputExt,
 };
 #[cfg(unix)]
-use rexpect::{Encoding, reader::Options, spawn_with_options};
+use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
 use serde_json::json;
 use std::{fs, io::ErrorKind, net::TcpListener, path::Path, process::Command, str::FromStr};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
@@ -743,6 +743,45 @@ casttest!(wallet_address_keystore_with_password_file, |_prj, cmd| {
 
 "#]]);
 });
+
+// https://github.com/foundry-rs/foundry/issues/16523
+casttest!(
+    #[cfg(unix)]
+    wallet_address_keystore_from_stdin,
+    |_prj, _cmd| {
+        let keystore =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/keystore/UTC--2022-12-20T10-30-43.591916000Z--ec554aeafe75601aaab43bd4621a22284db566c2");
+        let mut command = Command::new("sh");
+        command
+            .env("CAST_BIN", env!("CARGO_BIN_EXE_cast"))
+            .env("KEYSTORE", keystore)
+            .env("NO_COLOR", "1")
+            .env("TERM", "dumb")
+            .args(["-c", r#"cat "$KEYSTORE" | "$CAST_BIN" wallet address --keystore /dev/stdin"#]);
+
+        let mut session = spawn_with_options(
+            command,
+            Options {
+                timeout_ms: Some(30_000),
+                strip_ansi_escape_codes: true,
+                encoding: Encoding::UTF8,
+            },
+        )
+        .unwrap();
+
+        session.exp_string("Enter keystore password:").unwrap();
+        session.send_line("keystorepassword").unwrap();
+        let output = session.exp_eof().unwrap();
+        assert!(
+            matches!(session.process.wait().unwrap(), WaitStatus::Exited(_, 0)),
+            "cast command failed: {output}"
+        );
+        assert!(
+            output.contains("0xeC554aeAFE75601AaAb43Bd4621A22284dB566C2"),
+            "missing keystore address: {output}"
+        );
+    }
+);
 
 // Tests that `cast wallet remove` can successfully remove a keystore file and validates password.
 casttest!(wallet_remove_keystore_with_unsafe_password, |prj, cmd| {
@@ -6084,6 +6123,42 @@ async fn deploy_counter_and_set_number(
         .unwrap()
         .tx_hash()
 }
+
+// <https://github.com/foundry-rs/foundry/issues/10699>
+forgetest_async!(cast_run_uses_chain_rpc_endpoint, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    let endpoint = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let receipt = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .from(sender)
+                .to(address!("000000000000000000000000000000000000dEaD"))
+                .value(U256::from(1))
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[rpc_endpoints]
+mainnet = "${CAST_RUN_MAINNET_RPC_URL}"
+"#,
+    )
+    .unwrap();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    cmd.env("CAST_RUN_MAINNET_RPC_URL", endpoint);
+    cmd.unset_env("ETH_RPC_URL");
+    cmd.args(["run", &receipt.transaction_hash.to_string(), "--chain", "mainnet", "--quick"])
+        .assert_success();
+});
 
 // `cast run` must replay a transaction's block prefix without changing the trace requested for the
 // selected transaction. A single block covers a deployment in the first position, a revert in the

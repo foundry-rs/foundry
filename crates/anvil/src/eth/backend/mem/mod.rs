@@ -893,6 +893,7 @@ struct StateSnapshot {
     block_number: u64,
     block_hash: B256,
     fees: FeeSnapshot,
+    time_offset: i128,
 }
 
 /// Gives access to the [revm::Database]
@@ -1224,18 +1225,11 @@ impl<N: Network> Backend<N> {
         (self.spec_id() as u8) >= (SpecId::PRAGUE as u8)
     }
 
-    /// Returns true if op-stack deposits are active
-    #[cfg(feature = "optimism")]
-    pub const fn is_optimism(&self) -> bool {
-        self.networks.is_optimism()
-    }
-
     /// Returns true if op-stack deposits are active.
     ///
     /// Always `false` when built without the `optimism` feature.
-    #[cfg(not(feature = "optimism"))]
     pub const fn is_optimism(&self) -> bool {
-        false
+        self.networks.is_optimism()
     }
 
     /// Returns true if Tempo network mode is active
@@ -1605,7 +1599,12 @@ impl<N: Network> Backend<N> {
         trace!(target: "backend", "creating snapshot {} at {}", id, num);
         self.active_state_snapshots.lock().insert(
             id,
-            StateSnapshot { block_number: num, block_hash: hash, fees: self.fees.snapshot() },
+            StateSnapshot {
+                block_number: num,
+                block_hash: hash,
+                fees: self.fees.snapshot(),
+                time_offset: self.time.offset(),
+            },
         );
         id
     }
@@ -4704,11 +4703,10 @@ impl<N: Network> Backend<N> {
 
     /// Reverts the state to the state snapshot identified by the given `id`.
     pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
-        let Some((num, hash, fees)) = self
-            .active_state_snapshots
-            .lock()
-            .get(&id)
-            .map(|snapshot| (snapshot.block_number, snapshot.block_hash, snapshot.fees))
+        let Some((num, hash, fees, time_offset)) =
+            self.active_state_snapshots.lock().get(&id).map(|snapshot| {
+                (snapshot.block_number, snapshot.block_hash, snapshot.fees, snapshot.time_offset)
+            })
         else {
             return Ok(false);
         };
@@ -4725,7 +4723,7 @@ impl<N: Network> Backend<N> {
         self.blockchain.storage.write().unwind_to(num, hash);
 
         let reset_time = block.header.timestamp();
-        self.time.reset(reset_time);
+        self.time.reset_with_offset(reset_time, time_offset);
         // drop any pending next-block prevrandao override so it does not leak into a block
         self.cheats.clear_next_block_prevrandao();
 
@@ -7819,9 +7817,10 @@ impl Backend<FoundryNetwork> {
             let mut parent_hash = base_hash;
             let mut next_base_fee = base_fee;
             let mut inherited_block_env = base_block_env;
-            let (is_cancun, is_amsterdam, tx_gas_limit_cap) = {
+            let (is_merge, is_cancun, is_amsterdam, tx_gas_limit_cap) = {
                 let cfg_env = &self.evm_env.read().cfg_env;
                 (
+                    cfg_env.spec >= SpecId::MERGE,
                     cfg_env.spec >= SpecId::CANCUN,
                     cfg_env.spec >= SpecId::AMSTERDAM,
                     cfg_env.tx_gas_limit_cap(),
@@ -7858,6 +7857,9 @@ impl Backend<FoundryNetwork> {
                 }
                 block_env.basefee = if validation { next_base_fee } else { 0 };
                 block_env.prevrandao = Some(B256::ZERO);
+                if is_merge && !is_arbitrum(self.protocol_chain_id()) {
+                    block_env.difficulty = U256::ZERO;
+                }
                 let mut call_res = Vec::with_capacity(calls.len());
                 let mut log_index = 0;
                 let mut cumulative_gas_used = 0;
