@@ -1744,12 +1744,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                     let chain_context = context.transaction(*index);
                     let mut evm =
                         factory.create_evm_with_context(replay_db, evm_env.clone(), chain_context);
-                    inject_replay_precompiles(
-                        networks,
-                        evm.precompiles_mut(),
-                        chain_id,
-                        timestamp,
-                    );
+                    inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
                     trace!(tx=?tx.tx_hash(), "committing transaction");
                     let result = if *is_system {
                         #[cfg(feature = "monad")]
@@ -1773,12 +1768,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 }
             } else {
                 let mut evm = factory.create_evm(replay_db, evm_env);
-                inject_replay_precompiles(
-                    networks,
-                    evm.precompiles_mut(),
-                    chain_id,
-                    timestamp,
-                );
+                inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
                 for (_, tx, tx_env, is_system) in &txs_to_replay {
                     trace!(tx=?tx.tx_hash(), "committing transaction");
                     let result = if *is_system {
@@ -3502,9 +3492,7 @@ mod tests {
     async fn celo_transaction_hash_fork_replays_transfer_precompile() {
         let networks = NetworkConfigs::with_celo();
         let (api, handle) = spawn(
-            NodeConfig::test()
-                .with_chain_id(Some(NamedChain::Celo as u64))
-                .with_networks(networks),
+            NodeConfig::test().with_chain_id(Some(NamedChain::Celo as u64)).with_networks(networks),
         )
         .await;
         let provider = handle.http_provider();
@@ -3541,10 +3529,7 @@ mod tests {
             .unwrap();
         api.mine_one().await.unwrap();
 
-        assert_eq!(
-            provider.get_balance(recipient).await.unwrap(),
-            transfer_amount + target_amount
-        );
+        assert_eq!(provider.get_balance(recipient).await.unwrap(), transfer_amount + target_amount);
 
         let endpoint = handle.http_endpoint();
         let fork_block_number = provider.get_block_number().await.unwrap();
