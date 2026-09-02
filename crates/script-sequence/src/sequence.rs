@@ -104,7 +104,9 @@ impl<N: Network> ScriptSequence<N> {
         )
         .wrap_err(format!("Deployment's sensitive details not found for chain `{chain_id}`."))?;
 
-        script_sequence.fill_sensitive(&sensitive_script_sequence);
+        script_sequence.fill_sensitive(&sensitive_script_sequence).wrap_err(format!(
+            "Deployment's sensitive details are out of sync with the broadcast file for chain `{chain_id}`; the two were likely written partially (e.g. interrupted mid-save). Try re-running the deployment from scratch."
+        ))?;
 
         script_sequence.paths = Some((path, sensitive_path));
 
@@ -233,11 +235,30 @@ impl<N: Network> ScriptSequence<N> {
         self.transactions.iter().map(|tx| tx.tx())
     }
 
-    pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) {
-        self.transactions
-            .iter_mut()
-            .enumerate()
-            .for_each(|(i, tx)| tx.rpc.clone_from(&sensitive.transactions[i].rpc));
+    /// Fills each transaction's sensitive metadata (currently just the RPC url) from the
+    /// corresponding entry in `sensitive`.
+    ///
+    /// Errors instead of panicking if `sensitive` has a different number of entries than
+    /// `self.transactions` (either fewer OR more) - this can happen if the broadcast file and
+    /// its sensitive-cache counterpart are written out of sync (e.g. the process is interrupted
+    /// between the two separate writes in [`Self::save`], or a stale cache from a shorter prior
+    /// run is left behind). The length check runs up front, before any mutation, so a mismatch
+    /// never leaves `self.transactions` partially filled.
+    pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) -> Result<()> {
+        let transactions_len = self.transactions.len();
+        let sensitive_len = sensitive.transactions.len();
+        if transactions_len != sensitive_len {
+            eyre::bail!(
+                "sensitive-cache entry count ({sensitive_len}) does not match transaction count \
+                 ({transactions_len}); the broadcast file and its sensitive-cache counterpart are \
+                 out of sync"
+            );
+        }
+        for (i, tx) in self.transactions.iter_mut().enumerate() {
+            // Length equality was already checked above, so this index is always in bounds.
+            tx.rpc.clone_from(&sensitive.transactions[i].rpc);
+        }
+        Ok(())
     }
 }
 
@@ -295,5 +316,83 @@ mod tests {
         assert_eq!(sig_to_file_name("0xnotahex").as_str(), "0xnotahex");
         // non-hex non-signature: should return input as-is
         assert_eq!(sig_to_file_name("not_a_sig_or_hex").as_str(), "not_a_sig_or_hex");
+    }
+
+    fn dummy_tx() -> TransactionWithMetadata<alloy_network::Ethereum> {
+        TransactionWithMetadata {
+            hash: None,
+            call_kind: Default::default(),
+            contract_name: None,
+            contract_address: None,
+            function: None,
+            function_abi: None,
+            display_function: None,
+            arguments: None,
+            rpc: String::new(),
+            transaction: TransactionMaybeSigned::new(Default::default()),
+            additional_contracts: vec![],
+            is_fixed_gas_limit: false,
+        }
+    }
+
+    /// A desynced sensitive-cache file (fewer entries than the broadcast file) must error
+    /// instead of panicking on an out-of-bounds index - this is the actual state a partial
+    /// write (e.g. an interrupted `save()`) can leave on disk.
+    #[test]
+    fn fill_sensitive_errors_on_desync_instead_of_panicking() {
+        let mut sequence: ScriptSequence<alloy_network::Ethereum> = ScriptSequence::default();
+        sequence.transactions.push_back(dummy_tx());
+        sequence.transactions.push_back(dummy_tx());
+
+        // Only one sensitive entry for two transactions - the desync case.
+        let sensitive = SensitiveScriptSequence {
+            transactions: [SensitiveTransactionMetadata { rpc: "http://a".to_string() }].into(),
+        };
+
+        let result = sequence.fill_sensitive(&sensitive);
+        assert!(result.is_err(), "expected an error on a desynced sensitive cache, got Ok");
+        // No mutation should have happened before the length check rejected the mismatch.
+        assert_eq!(sequence.transactions[0].rpc, "");
+    }
+
+    /// A sensitive-cache file with MORE entries than the broadcast file must also error, not
+    /// just the shorter case - a stale/leftover cache from a longer prior run is the same class
+    /// of desync.
+    #[test]
+    fn fill_sensitive_errors_on_longer_cache_too() {
+        let mut sequence: ScriptSequence<alloy_network::Ethereum> = ScriptSequence::default();
+        sequence.transactions.push_back(dummy_tx());
+
+        // Two sensitive entries for one transaction - the reverse desync case.
+        let sensitive = SensitiveScriptSequence {
+            transactions: [
+                SensitiveTransactionMetadata { rpc: "http://a".to_string() },
+                SensitiveTransactionMetadata { rpc: "http://b".to_string() },
+            ]
+            .into(),
+        };
+
+        let result = sequence.fill_sensitive(&sensitive);
+        assert!(result.is_err(), "expected an error on a longer sensitive cache, got Ok");
+    }
+
+    /// Sanity check: a properly synced sensitive-cache file still fills correctly.
+    #[test]
+    fn fill_sensitive_fills_rpc_when_synced() {
+        let mut sequence: ScriptSequence<alloy_network::Ethereum> = ScriptSequence::default();
+        sequence.transactions.push_back(dummy_tx());
+        sequence.transactions.push_back(dummy_tx());
+
+        let sensitive = SensitiveScriptSequence {
+            transactions: [
+                SensitiveTransactionMetadata { rpc: "http://a".to_string() },
+                SensitiveTransactionMetadata { rpc: "http://b".to_string() },
+            ]
+            .into(),
+        };
+
+        sequence.fill_sensitive(&sensitive).expect("synced cache must not error");
+        assert_eq!(sequence.transactions[0].rpc, "http://a");
+        assert_eq!(sequence.transactions[1].rpc, "http://b");
     }
 }

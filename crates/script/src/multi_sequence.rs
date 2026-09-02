@@ -104,9 +104,19 @@ impl<N: Network> MultiChainSequence<N> {
             foundry_compilers::utils::read_json_file(&sensitive_path)
                 .wrap_err("Multi-chain deployment sensitive details not found.")?;
 
-        sequence.deployments.iter_mut().enumerate().for_each(|(i, sequence)| {
-            sequence.fill_sensitive(&sensitive_sequence.deployments[i]);
-        });
+        let deployments_len = sequence.deployments.len();
+        let sensitive_deployments_len = sensitive_sequence.deployments.len();
+        if deployments_len != sensitive_deployments_len {
+            eyre::bail!(
+                "sensitive-cache deployment count ({sensitive_deployments_len}) does not match \
+                 deployment count ({deployments_len}); the multi-chain deployment and its \
+                 sensitive-cache counterpart are out of sync"
+            );
+        }
+        for (i, deployment) in sequence.deployments.iter_mut().enumerate() {
+            // Length equality was already checked above, so this index is always in bounds.
+            deployment.fill_sensitive(&sensitive_sequence.deployments[i])?;
+        }
 
         sequence.path = path;
         sequence.sensitive_path = sensitive_path;
