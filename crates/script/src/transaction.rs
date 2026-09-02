@@ -35,7 +35,9 @@ impl<N: Network> ScriptTransactionBuilder<N> {
     ) -> Result<()> {
         if let Some(to) = self.transaction.transaction.to() {
             if to == create2_deployer {
-                if let Some(input) = self.transaction.transaction.input() {
+                if let Some(input) = self.transaction.transaction.input()
+                    && input.len() >= 32
+                {
                     let (salt, init_code) = input.split_at(32);
 
                     self.set_create(
@@ -184,6 +186,44 @@ impl<N: Network> ScriptTransactionBuilder<N> {
 impl<N: Network> From<TransactionWithMetadata<N>> for ScriptTransactionBuilder<N> {
     fn from(transaction: TransactionWithMetadata<N>) -> Self {
         Self { transaction }
+    }
+}
+
+#[cfg(test)]
+mod create2_tests {
+    use super::*;
+    use alloy_network::Ethereum;
+    use alloy_primitives::{Bytes, address};
+    use alloy_rpc_types::TransactionRequest;
+
+    fn call_create2_deployer(input_len: usize) {
+        let create2_deployer = address!("0000000000000000000000000000000000001234");
+        let transaction = TransactionRequest::default()
+            .with_from(Address::repeat_byte(0x11))
+            .with_to(create2_deployer)
+            .with_nonce(0)
+            .with_input(Bytes::from(vec![0xab; input_len]));
+        let mut builder: ScriptTransactionBuilder<Ethereum> = ScriptTransactionBuilder::new(
+            TransactionMaybeSigned::new(transaction),
+            "http://localhost:8545".to_string(),
+        );
+        let decoder = CallTraceDecoder::new();
+        builder.set_call(&BTreeMap::new(), &decoder, create2_deployer).unwrap();
+    }
+
+    #[test]
+    fn set_call_does_not_panic_on_short_create2_input() {
+        // Input shorter than the 32-byte salt prefix must not panic.
+        call_create2_deployer(0);
+        call_create2_deployer(4);
+        call_create2_deployer(31);
+    }
+
+    #[test]
+    fn set_call_handles_exact_and_over_length_create2_input() {
+        // Exactly 32 bytes (empty init_code) and just past it must both succeed.
+        call_create2_deployer(32);
+        call_create2_deployer(33);
     }
 }
 
