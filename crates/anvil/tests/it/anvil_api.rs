@@ -765,6 +765,22 @@ async fn test_revert_invalidates_newer_snapshots() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_revert_restores_time_offset() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+    let initial = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    api.evm_increase_time(U256::from(100)).await.unwrap();
+    let snapshot = api.evm_snapshot().await.unwrap();
+    api.evm_increase_time(U256::from(200)).await.unwrap();
+    assert!(api.evm_revert(snapshot).await.unwrap());
+    api.mine_one().await.unwrap();
+
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+    assert!(block.header.timestamp >= initial.header.timestamp + 100);
+    assert!(block.header.timestamp < initial.header.timestamp + 200);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_revert_restores_next_block_base_fee() {
     let (api, _handle) = spawn(NodeConfig::test()).await;
     let base_fee = api.base_fee().unwrap();

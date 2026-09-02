@@ -28,6 +28,16 @@ mod optimism;
 /// Maximum number of entries in the fee history cache
 pub const MAX_FEE_HISTORY_CACHE_SIZE: u64 = 2048u64;
 
+/// Number of cached reward samples per percentile.
+pub(crate) const REWARD_PERCENTILE_RESOLUTION: f64 = 2.0;
+
+/// Percentile list from 0.0 to 100.0 with a 0.5 resolution (201 points).
+///
+/// Constant across blocks, so it is computed once instead of being rebuilt on every
+/// `create_fee_history_cache_item` call.
+static REWARD_PERCENTILES: LazyLock<Vec<f64>> =
+    LazyLock::new(|| (0..=200).map(|index| index as f64 / REWARD_PERCENTILE_RESOLUTION).collect());
+
 /// Initial base fee for EIP-1559 blocks.
 pub const INITIAL_BASE_FEE: u64 = 1_000_000_000;
 
@@ -529,21 +539,6 @@ pub(crate) fn insert_fee_history_cache_item(
         }
     }
 }
-
-/// Percentile list from 0.0 to 100.0 with a 0.5 resolution (201 points).
-///
-/// Constant across blocks, so it is computed once instead of being rebuilt on every
-/// `create_fee_history_cache_item` call.
-static REWARD_PERCENTILES: LazyLock<Vec<f64>> = LazyLock::new(|| {
-    let mut percentile: f64 = 0.0;
-    (0..=200)
-        .map(|_| {
-            let val = percentile;
-            percentile += 0.5;
-            val
-        })
-        .collect()
-});
 
 /// Calculates percentile rewards from transactions sorted by effective reward.
 ///

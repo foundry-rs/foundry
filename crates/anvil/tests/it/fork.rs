@@ -48,6 +48,7 @@ use foundry_test_utils::rpc::{
     self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_internal_error_after,
     spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
     spawn_rpc_proxy_rejecting_method_when_enabled,
+    spawn_rpc_proxy_retyping_first_block_transaction,
 };
 use futures::StreamExt;
 use revm::{
@@ -236,6 +237,80 @@ async fn test_fork_retries_when_anvil_node_info_becomes_available() {
         spawn_rpc_proxy_method_not_found_before(origin.http_endpoint(), "anvil_nodeInfo", 1).await;
 
     try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await.unwrap();
+}
+
+// A replayed block holds only the transactions anvil executed, so a skipped one must not leave a
+// gap in the indices storage keys receipts by. The proxy stands in for Arbitrum, which opens every
+// block with a system transaction anvil cannot execute.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_skips_unsupported_prefix() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    let origin_provider = origin_handle.http_provider();
+    // Distinct senders, because Arbitrum's system transactions do not consume a user nonce.
+    let senders =
+        origin_handle.dev_wallets().take(2).map(|wallet| wallet.address()).collect::<Vec<_>>();
+
+    let skipped = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(senders[0])
+                .to(Address::random())
+                .value(U256::from(1))
+                .nonce(0),
+        ))
+        .await
+        .unwrap();
+    let target = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(senders[1])
+                .to(Address::random())
+                .value(U256::from(2))
+                .nonce(0),
+        ))
+        .await
+        .unwrap();
+    let target_hash = *target.tx_hash();
+    origin_api.mine_one().await.unwrap();
+
+    let fork_url = spawn_rpc_proxy_retyping_first_block_transaction(
+        origin_handle.http_endpoint(),
+        // `ArbitrumInternalTx`.
+        "0x6a",
+    )
+    .await;
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(fork_url))
+            .with_fork_transaction_hash(Some(target_hash))
+            .with_no_mining(true),
+    )
+    .await;
+    let fork_provider = fork_handle.http_provider();
+
+    // Only the target survives the prefix, so it takes index 0 in the replayed block.
+    let replayed =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(
+        replayed
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>(),
+        vec![target_hash]
+    );
+
+    // Receipt lookups index into that block, so a stale index panics instead of answering.
+    let receipt = fork_provider.get_transaction_receipt(target_hash).await.unwrap().unwrap();
+    assert_eq!(receipt.transaction_index(), Some(0));
+    assert_eq!(
+        fork_provider.get_block_receipts(BlockId::number(1)).await.unwrap().unwrap().len(),
+        1
+    );
+    assert!(fork_api.backend.mined_transaction_by_hash(*skipped.tx_hash()).is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]
