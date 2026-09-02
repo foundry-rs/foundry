@@ -14,7 +14,10 @@ use solar::{
         },
     },
 };
-use std::{collections::HashSet, ops::ControlFlow};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+};
 
 declare_forge_lint!(
     UNINITIALIZED_STATE_VARIABLES,
@@ -71,6 +74,12 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
             }
         }
 
+        // Local `storage` pointers that alias a candidate state variable (directly, or
+        // transitively through another alias), e.g. `Data storage p = someStateVar;`.
+        // Writes through such a local (`p.val = v`) are writes to the aliased state
+        // variable and must be attributed back to it.
+        let mut aliases: HashMap<VariableId, VariableId> = HashMap::new();
+
         // Walk every function in the inheritance chain.
         // Bail out conservatively if any function body contains inline assembly,
         // because we cannot soundly track reads or writes through it.
@@ -88,6 +97,7 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
                             &candidate_set,
                             &mut written,
                             bases,
+                            &mut aliases,
                         )
                         .is_err()
                         {
@@ -97,8 +107,15 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
                 }
 
                 if let Some(body) = function.body
-                    && collect_block_writes_checked(hir, body, &candidate_set, &mut written, bases)
-                        .is_err()
+                    && collect_block_writes_checked(
+                        hir,
+                        body,
+                        &candidate_set,
+                        &mut written,
+                        bases,
+                        &mut aliases,
+                    )
+                    .is_err()
                 {
                     return;
                 }
@@ -106,8 +123,15 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
 
             for base_modifier in hir.contract(cid).bases_args {
                 for expr in base_modifier.args.exprs() {
-                    if collect_expr_writes_checked(hir, expr, &candidate_set, &mut written, bases)
-                        .is_err()
+                    if collect_expr_writes_checked(
+                        hir,
+                        expr,
+                        &candidate_set,
+                        &mut written,
+                        bases,
+                        &mut aliases,
+                    )
+                    .is_err()
                     {
                         return;
                     }
@@ -117,8 +141,15 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
             // Walk state-vars initializer expressions for side-effect writes to other state vars
             for var_id in hir.contract(cid).variables() {
                 if let Some(init) = hir.variable(var_id).initializer
-                    && collect_expr_writes_checked(hir, init, &candidate_set, &mut written, bases)
-                        .is_err()
+                    && collect_expr_writes_checked(
+                        hir,
+                        init,
+                        &candidate_set,
+                        &mut written,
+                        bases,
+                        &mut aliases,
+                    )
+                    .is_err()
                 {
                     return;
                 }
@@ -156,9 +187,10 @@ fn collect_block_writes_checked<'hir>(
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
     bases: &'hir [ContractId],
+    aliases: &mut HashMap<VariableId, VariableId>,
 ) -> Result<(), ()> {
     for stmt in block.stmts {
-        collect_stmt_writes_checked(hir, stmt, candidates, writes, bases)?;
+        collect_stmt_writes_checked(hir, stmt, candidates, writes, bases, aliases)?;
     }
     Ok(())
 }
@@ -169,29 +201,46 @@ fn collect_stmt_writes_checked<'hir>(
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
     bases: &'hir [ContractId],
+    aliases: &mut HashMap<VariableId, VariableId>,
 ) -> Result<(), ()> {
     match &stmt.kind {
         // Assembly can write storage directly; bail conservatively.
         StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => return Err(()),
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-            collect_block_writes_checked(hir, *block, candidates, writes, bases)?;
+            collect_block_writes_checked(hir, *block, candidates, writes, bases, aliases)?;
         }
         StmtKind::If(condition, then_stmt, else_stmt) => {
-            collect_expr_writes_checked(hir, condition, candidates, writes, bases)?;
-            collect_stmt_writes_checked(hir, then_stmt, candidates, writes, bases)?;
+            collect_expr_writes_checked(hir, condition, candidates, writes, bases, aliases)?;
+            collect_stmt_writes_checked(hir, then_stmt, candidates, writes, bases, aliases)?;
             if let Some(else_stmt) = else_stmt {
-                collect_stmt_writes_checked(hir, else_stmt, candidates, writes, bases)?;
+                collect_stmt_writes_checked(hir, else_stmt, candidates, writes, bases, aliases)?;
             }
         }
         StmtKind::Try(stmt_try) => {
-            collect_expr_writes_checked(hir, &stmt_try.expr, candidates, writes, bases)?;
+            collect_expr_writes_checked(hir, &stmt_try.expr, candidates, writes, bases, aliases)?;
             for clause in stmt_try.clauses {
-                collect_block_writes_checked(hir, clause.block, candidates, writes, bases)?;
+                collect_block_writes_checked(
+                    hir,
+                    clause.block,
+                    candidates,
+                    writes,
+                    bases,
+                    aliases,
+                )?;
             }
         }
         StmtKind::DeclSingle(var_id) => {
             if let Some(initializer) = hir.variable(*var_id).initializer {
-                collect_expr_writes_checked(hir, initializer, candidates, writes, bases)?;
+                collect_expr_writes_checked(hir, initializer, candidates, writes, bases, aliases)?;
+
+                // If this local is a `storage` pointer initialized from a candidate state
+                // variable (or from another already-known alias), record it so writes
+                // through the local later in this function attribute back correctly.
+                if hir.variable(*var_id).data_location == Some(DataLocation::Storage)
+                    && let Some(target) = resolve_alias_target(initializer, candidates, aliases)
+                {
+                    aliases.insert(*var_id, target);
+                }
             }
         }
         StmtKind::DeclMulti(_, expr)
@@ -199,7 +248,7 @@ fn collect_stmt_writes_checked<'hir>(
         | StmtKind::Revert(expr)
         | StmtKind::Return(Some(expr))
         | StmtKind::Expr(expr) => {
-            collect_expr_writes_checked(hir, expr, candidates, writes, bases)?
+            collect_expr_writes_checked(hir, expr, candidates, writes, bases, aliases)?
         }
         StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder => {}
     }
@@ -212,38 +261,71 @@ fn collect_expr_writes_checked<'hir>(
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
     bases: &'hir [ContractId],
+    aliases: &mut HashMap<VariableId, VariableId>,
 ) -> Result<(), ()> {
     match &expr.kind {
         ExprKind::Assign(lhs, _, rhs) => {
-            collect_lvalue_writes(lhs, candidates, writes);
-            collect_expr_writes_checked(hir, lhs, candidates, writes, bases)?;
-            collect_expr_writes_checked(hir, rhs, candidates, writes, bases)?;
+            // A bare identifier `lhs` that is itself a known local storage-pointer alias
+            // is a pointer *reassignment* (`p = other;`) — it repoints `p`, it does not
+            // write through to whatever `p` previously aliased. Skip the generic lvalue
+            // write here; the retargeting below records the new alias instead. Any other
+            // lvalue shape (`someStateVar = x`, `p.val = x`, `p[i] = x`, ...) is a real
+            // write and still goes through the normal path.
+            let is_bare_alias_repoint = matches!(
+                &lhs.peel_parens().kind,
+                ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..])
+                    if !candidates.contains(id) && aliases.contains_key(id)
+            );
+            if !is_bare_alias_repoint {
+                collect_lvalue_writes(lhs, candidates, writes, aliases);
+            }
+            collect_expr_writes_checked(hir, lhs, candidates, writes, bases, aliases)?;
+            collect_expr_writes_checked(hir, rhs, candidates, writes, bases, aliases)?;
+
+            // Reassigning a local `storage` pointer (whether previously aliased or not,
+            // e.g. a `storage` parameter aliased for the first time via assignment) must
+            // (re)target the alias, or writes through `p` afterward would misattribute to
+            // a stale target instead of the new one. If the new target can't be resolved,
+            // drop any stale mapping rather than keep attributing to the old one.
+            if let ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) = &lhs.peel_parens().kind
+                && !candidates.contains(id)
+                && hir.variable(*id).data_location == Some(DataLocation::Storage)
+            {
+                match resolve_alias_target(rhs, candidates, aliases) {
+                    Some(target) => {
+                        aliases.insert(*id, target);
+                    }
+                    None => {
+                        aliases.remove(id);
+                    }
+                }
+            }
         }
         ExprKind::Delete(inner) => {
-            collect_lvalue_writes(inner, candidates, writes);
-            collect_expr_writes_checked(hir, inner, candidates, writes, bases)?;
+            collect_lvalue_writes(inner, candidates, writes, aliases);
+            collect_expr_writes_checked(hir, inner, candidates, writes, bases, aliases)?;
         }
         ExprKind::Unary(op, inner) => {
             if op.kind.has_side_effects() {
-                collect_lvalue_writes(inner, candidates, writes);
+                collect_lvalue_writes(inner, candidates, writes, aliases);
             }
-            collect_expr_writes_checked(hir, inner, candidates, writes, bases)?;
+            collect_expr_writes_checked(hir, inner, candidates, writes, bases, aliases)?;
         }
         ExprKind::Array(exprs) => {
             for expr in *exprs {
-                collect_expr_writes_checked(hir, expr, candidates, writes, bases)?;
+                collect_expr_writes_checked(hir, expr, candidates, writes, bases, aliases)?;
             }
         }
         ExprKind::Binary(lhs, _, rhs) => {
-            collect_expr_writes_checked(hir, lhs, candidates, writes, bases)?;
-            collect_expr_writes_checked(hir, rhs, candidates, writes, bases)?;
+            collect_expr_writes_checked(hir, lhs, candidates, writes, bases, aliases)?;
+            collect_expr_writes_checked(hir, rhs, candidates, writes, bases, aliases)?;
         }
         ExprKind::Call(callee, args, named_args) => {
             if let ExprKind::Member(base, _) = &callee.kind {
                 // Covers push/pop and library dispatch (`using Lib for T` with `T storage self`);
                 // can't resolve callee without Gcx. Treat the receiver as a write target to avoid
                 // false positives.
-                collect_lvalue_writes(base, candidates, writes);
+                collect_lvalue_writes(base, candidates, writes, aliases);
             }
 
             // Direct calls to internal functions that take a `storage` parameter
@@ -253,45 +335,47 @@ fn collect_expr_writes_checked<'hir>(
             // callees (`BaseSetter._set(slot, v)`, `super._set(slot, v)`).
             let funcs = collect_callee_funcs(hir, callee, bases);
             if !funcs.is_empty() {
-                mark_storage_args(&funcs, hir, args, candidates, writes);
+                mark_storage_args(&funcs, hir, args, candidates, writes, aliases);
             }
 
-            collect_expr_writes_checked(hir, callee, candidates, writes, bases)?;
+            collect_expr_writes_checked(hir, callee, candidates, writes, bases, aliases)?;
             for expr in args.exprs() {
-                collect_expr_writes_checked(hir, expr, candidates, writes, bases)?;
+                collect_expr_writes_checked(hir, expr, candidates, writes, bases, aliases)?;
             }
             if let Some(named_args) = named_args {
                 for arg in named_args.args {
-                    collect_expr_writes_checked(hir, &arg.value, candidates, writes, bases)?;
+                    collect_expr_writes_checked(
+                        hir, &arg.value, candidates, writes, bases, aliases,
+                    )?;
                 }
             }
         }
         ExprKind::Index(base, index) => {
-            collect_expr_writes_checked(hir, base, candidates, writes, bases)?;
+            collect_expr_writes_checked(hir, base, candidates, writes, bases, aliases)?;
             if let Some(index) = index {
-                collect_expr_writes_checked(hir, index, candidates, writes, bases)?;
+                collect_expr_writes_checked(hir, index, candidates, writes, bases, aliases)?;
             }
         }
         ExprKind::Slice(base, start, end) => {
-            collect_expr_writes_checked(hir, base, candidates, writes, bases)?;
+            collect_expr_writes_checked(hir, base, candidates, writes, bases, aliases)?;
             if let Some(start) = start {
-                collect_expr_writes_checked(hir, start, candidates, writes, bases)?;
+                collect_expr_writes_checked(hir, start, candidates, writes, bases, aliases)?;
             }
             if let Some(end) = end {
-                collect_expr_writes_checked(hir, end, candidates, writes, bases)?;
+                collect_expr_writes_checked(hir, end, candidates, writes, bases, aliases)?;
             }
         }
         ExprKind::Member(base, _) | ExprKind::Payable(base) => {
-            collect_expr_writes_checked(hir, base, candidates, writes, bases)?;
+            collect_expr_writes_checked(hir, base, candidates, writes, bases, aliases)?;
         }
         ExprKind::Ternary(condition, then_expr, else_expr) => {
-            collect_expr_writes_checked(hir, condition, candidates, writes, bases)?;
-            collect_expr_writes_checked(hir, then_expr, candidates, writes, bases)?;
-            collect_expr_writes_checked(hir, else_expr, candidates, writes, bases)?;
+            collect_expr_writes_checked(hir, condition, candidates, writes, bases, aliases)?;
+            collect_expr_writes_checked(hir, then_expr, candidates, writes, bases, aliases)?;
+            collect_expr_writes_checked(hir, else_expr, candidates, writes, bases, aliases)?;
         }
         ExprKind::Tuple(exprs) => {
             for expr in exprs.iter().flatten() {
-                collect_expr_writes_checked(hir, expr, candidates, writes, bases)?;
+                collect_expr_writes_checked(hir, expr, candidates, writes, bases, aliases)?;
             }
         }
         ExprKind::Ident(_)
@@ -377,6 +461,7 @@ fn mark_storage_args<'hir>(
     args: &CallArgs<'hir>,
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
+    aliases: &HashMap<VariableId, VariableId>,
 ) {
     if let CallArgsKind::Unnamed(_) = args.kind {
         for (i, arg_expr) in args.exprs().enumerate() {
@@ -386,7 +471,7 @@ fn mark_storage_args<'hir>(
                 })
             });
             if any_storage {
-                collect_lvalue_writes(arg_expr, candidates, writes);
+                collect_lvalue_writes(arg_expr, candidates, writes, aliases);
             }
         }
     }
@@ -403,9 +488,33 @@ fn mark_storage_args<'hir>(
                 })
             });
             if any_storage {
-                collect_lvalue_writes(&named_arg.value, candidates, writes);
+                collect_lvalue_writes(&named_arg.value, candidates, writes, aliases);
             }
         }
+    }
+}
+
+/// Peels index/slice/member wrappers to find the root identifier of a storage-pointer
+/// initializer expression, resolving it against known state-variable candidates or
+/// previously-registered aliases (so chained aliasing, e.g. `Data storage q = p;` where
+/// `p` itself aliases a state variable, still resolves back to the original state var).
+fn resolve_alias_target(
+    expr: &Expr<'_>,
+    candidates: &HashSet<VariableId>,
+    aliases: &HashMap<VariableId, VariableId>,
+) -> Option<VariableId> {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
+            if candidates.contains(id) {
+                Some(*id)
+            } else {
+                aliases.get(id).copied()
+            }
+        }
+        ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) | ExprKind::Member(base, _) => {
+            resolve_alias_target(base, candidates, aliases)
+        }
+        _ => None,
     }
 }
 
@@ -413,18 +522,23 @@ fn collect_lvalue_writes(
     expr: &Expr<'_>,
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
+    aliases: &HashMap<VariableId, VariableId>,
 ) {
     match &expr.peel_parens().kind {
-        ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) if candidates.contains(id) => {
-            writes.insert(*id);
+        ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
+            if candidates.contains(id) {
+                writes.insert(*id);
+            } else if let Some(&target) = aliases.get(id) {
+                writes.insert(target);
+            }
         }
         ExprKind::Tuple(exprs) => {
             for expr in exprs.iter().flatten() {
-                collect_lvalue_writes(expr, candidates, writes);
+                collect_lvalue_writes(expr, candidates, writes, aliases);
             }
         }
         ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) | ExprKind::Member(base, _) => {
-            collect_lvalue_writes(base, candidates, writes)
+            collect_lvalue_writes(base, candidates, writes, aliases)
         }
         _ => {}
     }

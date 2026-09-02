@@ -419,3 +419,102 @@ contract SuperNonStorageChild is SuperNonStorageBase {
     function use_() external view returns (uint256) { return slot.val; }
     function init() external { super._init(slot); }
 }
+
+// ── Local storage pointer: aliasing a state var and writing through it ───────
+// `Data storage p = slot; p.val = v;` is the standard gas-saving idiom of
+// caching a storage slot in a local pointer instead of repeated field lookups.
+// The write through `p` must be attributed back to `slot`.
+
+contract StoragePointerAlias {
+    struct Data { uint256 val; }
+    Data public slot;
+
+    function set(uint256 v) external {
+        Data storage p = slot;
+        p.val = v;
+    }
+
+    function get() public view returns (uint256) {
+        return slot.val;
+    }
+}
+
+// ── Local storage pointer: chained aliasing ───────────────────────────────────
+// `q` aliases `p`, which aliases `slot`; the write through `q` must still
+// resolve back to `slot`.
+
+contract StoragePointerChainedAlias {
+    struct Data { uint256 val; }
+    Data public slot;
+
+    function set(uint256 v) external {
+        Data storage p = slot;
+        Data storage q = p;
+        q.val = v;
+    }
+
+    function get() public view returns (uint256) {
+        return slot.val;
+    }
+}
+
+// ── Local storage pointer: declared but never used to write ──────────────────
+// A local storage pointer that is only read through must NOT suppress a
+// genuine warning — aliasing alone is not a write.
+
+contract StoragePointerReadOnly {
+    struct Data { uint256 val; }
+    Data public slot; //~WARN: state variable is read but never written
+
+    function get() external view returns (uint256) {
+        Data storage p = slot;
+        return p.val;
+    }
+}
+
+// ── Local storage pointer to an array element, then indexed write ────────────
+// `items[i]` is a storage pointer to a struct; writing a field through it
+// must attribute back to the array state variable.
+
+contract StoragePointerArrayElement {
+    struct Data { uint256 val; }
+    Data[] public items;
+
+    function push() external {
+        items.push();
+    }
+
+    function set(uint256 i, uint256 v) external {
+        Data storage p = items[i];
+        p.val = v;
+    }
+
+    function get(uint256 i) public view returns (uint256) {
+        return items[i].val;
+    }
+}
+
+// ── Local storage pointer: reassigned mid-function to a different state var ──
+// `p` initially aliases `slotA`, then is reassigned to alias `slotB`; the
+// write through `p` after the reassignment must attribute to `slotB`, not
+// the stale `slotA` target.
+
+contract StoragePointerReassigned {
+    struct Data { uint256 val; }
+    Data public slotA; //~WARN: state variable is read but never written
+    Data public slotB;
+
+    function set(uint256 v) external {
+        Data storage p = slotA;
+        p = slotB;
+        p.val = v;
+    }
+
+    function getA() public view returns (uint256) {
+        return slotA.val;
+    }
+
+    function getB() public view returns (uint256) {
+        return slotB.val;
+    }
+}
