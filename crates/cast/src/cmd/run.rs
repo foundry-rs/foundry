@@ -159,7 +159,6 @@ struct TargetFetch {
 /// Fields only needed by the Monad-specific `execute_monad`/`execute_monad_target` path.
 #[cfg(feature = "monad")]
 struct MonadPrepared {
-    target_is_system: bool,
     tx_block_number: u64,
     compute_units_per_second: Option<u64>,
 }
@@ -282,7 +281,7 @@ impl RunArgs {
         target: TargetFetch,
     ) -> Result<Option<PreparedRun<FEN>>> {
         #[cfg_attr(not(feature = "monad"), allow(unused_variables))]
-        let TargetFetch { tx, provider, compute_units_per_second, target_is_system } = target;
+        let TargetFetch { tx, provider, compute_units_per_second, .. } = target;
         let tx_hash = tx.tx_hash();
         config.networks = evm_opts.networks;
         self.tracing.labels.append(&mut self.legacy_labels);
@@ -589,7 +588,7 @@ impl RunArgs {
             verbosity,
             prestate_applied,
             #[cfg(feature = "monad")]
-            monad: MonadPrepared { target_is_system, tx_block_number, compute_units_per_second },
+            monad: MonadPrepared { tx_block_number, compute_units_per_second },
         }))
     }
 }
@@ -665,14 +664,19 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
                                     block_number
                                 )
                             })?;
+                        if let Some(to) = Transaction::to(tx) {
+                            trace!(tx=?tx.tx_hash(), ?to, "preparing previous call transaction");
+                        } else {
+                            trace!(tx=?tx.tx_hash(), "preparing previous create transaction");
+                        }
                         let chain_context = ChainFor::<FEN>::for_transaction(&tx_env);
-                        replay.push((tx_env, chain_context));
+                        replay.push((tx.tx_hash(), tx_env, chain_context));
                     }
                     pb.set_position((index + 1) as u64);
                 }
             }
         }
-        let result = self.executor.transact_with_block_replay(
+        let result = self.executor.transact_with_ordinary_block_replay(
             self.evm_env.clone(),
             target_tx_env,
             target_chain_context,
@@ -755,10 +759,13 @@ impl PreparedRun<MonadEvmNetwork> {
                 let pb = init_progress(txs.len() as u64, "tx");
                 for (index, tx) in txs.iter().take(target_index).enumerate() {
                     let tx_env = TxEnvFor::<MonadEvmNetwork>::from_any_rpc_transaction(tx)?;
+                    if let Some(to) = Transaction::to(tx) {
+                        trace!(tx=?tx.tx_hash(), ?to, "preparing previous call transaction");
+                    } else {
+                        trace!(tx=?tx.tx_hash(), "preparing previous create transaction");
+                    }
                     let chain_context: ChainFor<MonadEvmNetwork> = block_context.transaction(index);
-                    let is_system = is_known_system_sender(tx.from())
-                        || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
-                    replay.push((tx_env, chain_context, is_system));
+                    replay.push((tx.tx_hash(), tx_env, chain_context));
                     pb.set_position((index + 1) as u64);
                 }
             }
@@ -768,7 +775,6 @@ impl PreparedRun<MonadEvmNetwork> {
             target_tx_env,
             block_context.transaction(target_index),
             replay,
-            self.monad.target_is_system,
             replay_system_txes,
         )?;
         let Some((result, used_system_replay)) = result else {
