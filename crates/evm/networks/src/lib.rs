@@ -47,7 +47,6 @@ use tempo_contracts::precompiles::{
 /// The Monad cheatcode handler address.
 pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");
 
-#[cfg(feature = "monad")]
 pub mod arbitrum;
 pub mod celo;
 
