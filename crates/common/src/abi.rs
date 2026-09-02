@@ -175,11 +175,8 @@ pub fn find_source(
         trace!(%address, "find Etherscan source");
         let source = client.contract_source_code(address).await?;
         let metadata = source.items.first().wrap_err("Etherscan returned no data")?;
-        // `metadata.proxy != 0` means Etherscan reports this as a proxy, but Etherscan (and
-        // compatible explorers) can report `Proxy: 1` while `Implementation` comes back empty -
-        // which `foundry_block_explorers`' own `deserialize_address_opt` turns into `None`. Treat
-        // that the same as "not a proxy" and fall back to the metadata's own source, rather than
-        // panicking on `.unwrap()`.
+        // `Proxy: 1` can still come with an empty `Implementation` (unresolved/unverified);
+        // treat that like "not a proxy" instead of panicking on `.unwrap()`.
         let implementation = if metadata.proxy == 0 { None } else { metadata.implementation };
         if let Some(implementation) = implementation {
             sh_println!(
@@ -218,24 +215,12 @@ mod tests {
     use alloy_dyn_abi::EventExt;
     use alloy_primitives::{B256, U256};
 
-    /// Regression test for a real, reachable panic: Etherscan (and compatible explorers) can
-    /// report `Proxy: 1` (this contract is a proxy) while `Implementation` comes back as an
-    /// empty string, which `foundry_block_explorers`' own `deserialize_address_opt` turns into
-    /// `None` (see that crate's `can_deserialize_address_opt` test, which cites a real address
-    /// exhibiting this exact empty-string shape: `0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413`).
-    ///
-    /// `find_source` used to do `metadata.implementation.unwrap()` on this combination, which
-    /// panics on any real-world response shaped this way. This drives `find_source`'s inlined
-    /// proxy-implementation decision (`if metadata.proxy == 0 { None } else {
-    /// metadata.implementation }`) with metadata deserialized through the real `Metadata` type
-    /// (not a synthetic struct) - confirmed to panic if that decision reverts to
-    /// `Some(metadata.implementation.unwrap())` for the `proxy != 0` arm.
+    /// `Proxy: 1` with an empty `Implementation` used to panic on `.unwrap()`
+    /// (real-world shape, see `foundry_block_explorers`' own `can_deserialize_address_opt` test).
     #[test]
     fn test_proxy_without_implementation_does_not_panic() {
         use foundry_block_explorers::contract::Metadata;
 
-        // Shape of a real `getsourcecode` result entry: `Proxy` says "yes, this is a proxy" but
-        // `Implementation` is empty (unresolved/unverified implementation).
         let json = serde_json::json!({
             "SourceCode": "// dummy",
             "ABI": "[]",
