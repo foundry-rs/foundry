@@ -394,8 +394,15 @@ impl GasSnapshotDiff {
         let target_gas = self.target_gas_used.gas();
         if target_gas > 0 {
             self.gas_change() as f64 / target_gas as f64
-        } else {
+        } else if self.source_gas_used.gas() == 0 {
+            // Both zero (e.g. Invariant/Symbolic/Replay tests, which report 0 gas by
+            // design) - there's no change to report.
             0.0
+        } else {
+            // Target is zero but source isn't: an unbounded increase from a
+            // not-applicable baseline. `f64::INFINITY` preserves that signal instead
+            // of silently reading as "no change".
+            f64::INFINITY
         }
     }
 }
