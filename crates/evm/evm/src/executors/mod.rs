@@ -279,7 +279,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ) -> Self {
         inspector.networks(networks);
         backend.set_networks(networks);
-        let extra_cheatcode_addresses = networks.extra_cheatcode_addresses();
+        let extra_cheatcode_addresses = inspector.extra_cheatcode_addresses();
         backend.extend_persistent_accounts(extra_cheatcode_addresses.iter().copied());
 
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks

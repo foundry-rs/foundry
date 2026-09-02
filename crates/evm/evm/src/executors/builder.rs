@@ -84,6 +84,8 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
         mut evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
         db: Backend<FEN>,
+        // TODO(monad-fen-dispatch): Remove this argument after inspector inputs and backend fork
+        // behavior are resolved by the initial concrete FEN dispatch.
         networks: NetworkConfigs,
     ) -> Executor<FEN> {
         let Self { mut stack, gas_limit, spec, legacy_assertions, .. } = self;
