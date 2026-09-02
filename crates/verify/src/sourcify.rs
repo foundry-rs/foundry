@@ -133,6 +133,7 @@ const MAX_RESPONSE_BODY: usize = 1024 * 1024;
 
 fn verification_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
+        .user_agent(foundry_common::DEFAULT_USER_AGENT)
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10))
         .build()

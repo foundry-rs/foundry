@@ -89,6 +89,9 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
     /// Networks with enabled features.
+    // TODO(monad-fen-dispatch): Remove this post-dispatch configuration. Callers must resolve
+    // family-neutral inspector inputs before selecting `FEN`, while Monad tooling is configured by
+    // the concrete Monad construction path.
     pub networks: NetworkConfigs,
     /// The wallets to set in the cheatcodes context.
     pub wallets: Option<Wallets>,
@@ -246,13 +249,14 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             create2_deployer,
         } = self;
         let mut stack = InspectorStack::new();
+        // TODO(monad-fen-dispatch): This is the temporary resolution point for the staged cleanup.
+        // Move it to each command's initial FEN dispatch and pass only the resolved addresses here.
+        let extra_cheatcode_addresses = networks.extra_cheatcode_addresses();
 
         // inspectors
         if let Some(config) = cheatcodes {
             let mut cheatcodes = Cheatcodes::new(config);
-            // TODO(monad-fen-dispatch): Resolve this address slice at the initial FEN dispatch and
-            // pass it into the inspector builder without retaining post-dispatch `NetworkConfigs`.
-            cheatcodes.set_extra_cheatcode_addresses(networks.extra_cheatcode_addresses());
+            cheatcodes.set_extra_cheatcode_addresses(extra_cheatcode_addresses);
             // Set analysis capabilities if they are provided
             if let Some(analysis) = analysis {
                 stack.set_analysis(analysis.clone());
@@ -278,6 +282,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
         stack.enable_isolation(enable_isolation);
         stack.networks(networks);
+        stack.set_extra_cheatcode_addresses(extra_cheatcode_addresses);
         stack.set_create2_deployer(create2_deployer);
 
         if networks.is_tempo() {
@@ -421,6 +426,8 @@ pub struct InspectorStackInner {
     pub sancov_trace_cmp: bool,
     pub enable_isolation: bool,
     pub networks: NetworkConfigs,
+    /// Additional addresses installed and recognized as cheatcode contracts.
+    pub extra_cheatcode_addresses: &'static [Address],
     pub create2_deployer: Address,
     /// Flag marking if we are in the inner EVM context.
     pub in_inner_context: bool,
@@ -730,6 +737,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     #[inline]
     pub const fn networks(&mut self, networks: NetworkConfigs) {
         self.inner.networks = networks;
+    }
+
+    /// Returns additional addresses installed and recognized as cheatcode contracts.
+    #[inline]
+    pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
+        self.inner.extra_cheatcode_addresses
+    }
+
+    /// Sets additional addresses installed and recognized as cheatcode contracts.
+    #[inline]
+    pub const fn set_extra_cheatcode_addresses(&mut self, addresses: &'static [Address]) {
+        self.inner.extra_cheatcode_addresses = addresses;
     }
 
     /// Set the CREATE2 deployer address.

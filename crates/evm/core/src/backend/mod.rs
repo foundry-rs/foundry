@@ -603,6 +603,9 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
 #[must_use]
 pub struct Backend<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Active network configuration.
+    // TODO(monad-fen-dispatch): Remove this post-dispatch configuration. Extract Monad replay and
+    // fork positioning into concrete Monad code, and pass family-neutral chain data directly to
+    // ordinary block/environment updates.
     networks: NetworkConfigs,
     /// The access point for managing forks
     forks: MultiFork<AnyNetwork, SpecFor<FEN>, BlockEnvFor<FEN>>,
