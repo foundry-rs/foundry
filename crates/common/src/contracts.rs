@@ -881,7 +881,8 @@ mod tests {
         ]);
         assert_eq!(merged, vec![Offsets { start: 1, length: 29 }]);
 
-        // Directly adjacent (touching, not overlapping): [1, 21) and [21, 25) -> merges into [1, 24).
+        // Directly adjacent (touching, not overlapping): [1, 21) and [21, 25) -> merges into [1,
+        // 24).
         let merged = merge_overlapping_offsets(vec![
             Offsets { start: 1, length: 20 },
             Offsets { start: 21, length: 4 },
