@@ -130,7 +130,7 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         evm_env: &mut EvmEnvFor<FEN>,
         tx_env: &mut TxEnvFor<FEN>,
         chain_context: ChainFor<FEN>,
-        inspector: I,
+        inspector: &mut I,
     ) -> eyre::Result<Option<ResultAndState<revm::context_interface::result::HaltReason>>> {
         if !self.backend.networks().is_monad()
             || crate::evm::protocol_system_call(tx_env)?.is_none()
@@ -141,9 +141,8 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
         let factory = FEN::EvmFactory::default();
-        let mut inspector = inspector;
         let mut evm =
-            factory.create_foundry_nested_evm(self, evm_env.clone(), chain_context, &mut inspector);
+            factory.create_foundry_nested_evm(self, evm_env.clone(), chain_context, inspector);
         let result = evm.transact_raw(tx_env.clone())?;
 
         // A successful specialized replay replaces the EVM transaction with its synthetic system

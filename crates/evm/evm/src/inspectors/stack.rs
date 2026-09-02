@@ -250,6 +250,9 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         // inspectors
         if let Some(config) = cheatcodes {
             let mut cheatcodes = Cheatcodes::new(config);
+            // TODO(monad-fen-dispatch): Resolve this address slice at the initial FEN dispatch and
+            // pass it into the inspector builder without retaining post-dispatch `NetworkConfigs`.
+            cheatcodes.set_extra_cheatcode_addresses(networks.extra_cheatcode_addresses());
             // Set analysis capabilities if they are provided
             if let Some(analysis) = analysis {
                 stack.set_analysis(analysis.clone());
@@ -1118,6 +1121,21 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             return (result, None, was_precompile_called);
         };
 
+        let transaction_gas = res.result.gas();
+        let state_gas_used = transaction_gas.block_state_gas_used();
+        if state_gas_used == 0 {
+            let mut snapshot_gas = Gas::new(gas_limit);
+            let _ = snapshot_gas.record_regular_cost(transaction_gas.tx_gas_used());
+            if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+                cheats.gas_metering.set_isolated_snapshot_gas_used(snapshot_gas.total_gas_spent());
+            }
+        }
+        gas.set_state_gas_spent(
+            i64::try_from(state_gas_used)
+                .expect("transaction state gas originates from a signed gas tracker"),
+        );
+        let _ = gas.record_regular_cost(transaction_gas.block_regular_gas_used());
+
         let rolled_back = !res.result.is_success();
 
         for (addr, mut acc) in res.state {
@@ -1154,21 +1172,16 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let (result, address, output) = match res.result {
             ExecutionResult::Success { reason, gas: result_gas, logs: _, output } => {
                 gas.set_refund(result_gas.final_refunded() as i64);
-                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
                 let address = match output {
                     Output::Create(_, address) => address,
                     Output::Call(_) => None,
                 };
                 (reason.into(), address, output.into_data())
             }
-            ExecutionResult::Halt { reason, gas: result_gas, .. } => {
-                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
+            ExecutionResult::Halt { reason, .. } => {
                 (InstructionResult::from(reason), None, Bytes::new())
             }
-            ExecutionResult::Revert { gas: result_gas, output, .. } => {
-                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
-                (InstructionResult::Revert, None, output)
-            }
+            ExecutionResult::Revert { output, .. } => (InstructionResult::Revert, None, output),
         };
         if rolled_back {
             refresh_chain_journal(ecx);
@@ -1971,10 +1984,12 @@ impl<FEN: FoundryEvmNetwork> InspectorExt for InspectorStackRefMut<'_, FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for InspectorStack<FEN> {
+    #[inline(always)]
     fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.as_mut().step_inlined(interpreter, ecx)
     }
 
+    #[inline(always)]
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.as_mut().step_end_inlined(interpreter, ecx)
     }

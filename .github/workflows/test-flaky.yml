@@ -33,7 +33,7 @@ jobs:
         with:
           toolchain: stable
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-      - uses: taiki-e/install-action@b6b84cf49ebfe0176417bdce007c624f0db37f20 # v2.86.2
+      - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: nextest
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -50,6 +50,10 @@ jobs:
           ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
           ARBITRUM_RPC: ${{ secrets.ARBITRUM_RPC }}
           ETH_SEPOLIA_RPC: ${{ secrets.ETH_SEPOLIA_RPC }}
+          CELO_RPC: ${{ secrets.CELO_RPC }}
+          GNOSIS_RPC: ${{ secrets.GNOSIS_RPC }}
+          HYPERLIQUID_RPC: ${{ secrets.HYPERLIQUID_RPC }}
+          ROBINHOOD_RPC: ${{ secrets.ROBINHOOD_RPC }}
         run: cargo nextest run --locked --profile flaky --no-fail-fast
 
   # If any of the jobs fail, this will create a normal-priority issue to signal so.

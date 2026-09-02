@@ -3,6 +3,7 @@ use chisel::session::ChiselSession as CachedChiselSession;
 use foundry_evm::core::evm::EthEvmNetwork;
 use session::ChiselSession;
 use std::{
+    fs,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -120,6 +121,21 @@ repl_test!(failed_save_restores_previous_session_id, |repl| {
     repl.sendln_raw(&format!("!load {first_id}"));
     repl.expect("failed to load session");
     repl.expect_prompt();
+});
+
+repl_test!(load_session_preserves_active_force, "--force", |repl| {
+    let id = unique_cache_id("active-force");
+    let _cleanup = CacheCleanup(vec![id.clone()]);
+
+    repl.sendln(&format!("!save {id}"));
+
+    let out_dir = repl.project().root().join("out");
+    fs::create_dir_all(&out_dir).unwrap();
+    fs::write(out_dir.join("sentinel"), []).unwrap();
+
+    repl.sendln(&format!("!load {id}"));
+
+    assert!(!out_dir.exists());
 });
 
 // Test abi encode/decode.

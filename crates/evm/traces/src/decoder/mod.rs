@@ -29,7 +29,7 @@ use foundry_evm_core::{
 };
 #[cfg(feature = "monad")]
 type MonadHardfork = foundry_evm_hardforks::MonadHardfork;
-use foundry_evm_hardforks::TempoHardfork;
+use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::{NetworkConfigs, NetworkVariant, celo::transfer::CELO_TRANSFER_LABEL};
 use itertools::Itertools;
 use revm::{bytecode::opcode::OpCode, interpreter::InstructionResult};
@@ -53,8 +53,6 @@ use tempo_precompiles::{
 mod monad;
 pub(crate) mod precompiles;
 
-#[cfg(not(feature = "monad"))]
-type MonadHardfork = ();
 type AddressEvents = HashMap<Address, BTreeMap<(B256, usize), Vec<Event>>>;
 type AddressAnonymousEvents = HashMap<Address, BTreeMap<usize, Vec<Event>>>;
 
@@ -182,18 +180,10 @@ impl CallTraceDecoderBuilder {
         self
     }
 
-    /// Sets the Tempo hardfork for hardfork-specific precompile detection.
+    /// Sets the hardfork used for network-specific metadata and precompile detection.
     #[inline]
-    pub const fn with_tempo_hardfork(mut self, hardfork: Option<TempoHardfork>) -> Self {
-        self.decoder.tempo_hardfork = hardfork;
-        self
-    }
-
-    /// Sets the Monad hardfork used to register address-scoped metadata when built.
-    #[cfg(feature = "monad")]
-    #[inline]
-    pub const fn with_monad_hardfork(mut self, hardfork: Option<MonadHardfork>) -> Self {
-        self.decoder.monad_hardfork = hardfork;
+    pub const fn with_hardfork(mut self, hardfork: Option<FoundryHardfork>) -> Self {
+        self.decoder.hardfork = hardfork;
         self
     }
 
@@ -288,11 +278,8 @@ pub struct CallTraceDecoder {
     /// Detailed opcodes for analysis.
     pub opcodes: Vec<OpCode>,
 
-    /// The Tempo hardfork, used to determine hardfork-specific precompiles.
-    pub tempo_hardfork: Option<TempoHardfork>,
-
-    /// The Monad hardfork, used to determine network- and hardfork-specific metadata.
-    monad_hardfork: Option<MonadHardfork>,
+    /// The hardfork used to determine network-specific metadata and precompiles.
+    hardfork: Option<FoundryHardfork>,
 
     /// Hide addresses when a label is available, showing only the label.
     pub compact_labels: bool,
@@ -304,8 +291,7 @@ impl CallTraceDecoder {
             CELO_TRANSFER,
             self.networks,
             self.chain_id,
-            self.tempo_hardfork,
-            self.monad_hardfork,
+            self.hardfork,
         ) {
             self.labels.entry(CELO_TRANSFER).or_insert_with(|| CELO_TRANSFER_LABEL.to_string());
         }
@@ -315,12 +301,13 @@ impl CallTraceDecoder {
         if self.networks.is_some_and(|networks| !networks.is_tempo()) {
             return;
         }
-        if self.tempo_hardfork.is_some_and(|hardfork| hardfork.is_t5()) {
+        let hardfork = self.hardfork.and_then(TempoHardfork::from_foundry_hardfork);
+        if hardfork.is_some_and(|hardfork| hardfork.is_t5()) {
             self.labels
                 .entry(TIP20_CHANNEL_RESERVE_ADDRESS)
                 .or_insert_with(|| "TIP20ChannelReserve".to_string());
         }
-        if self.tempo_hardfork.is_some_and(|hardfork| hardfork.is_t6()) {
+        if hardfork.is_some_and(|hardfork| hardfork.is_t6()) {
             self.labels
                 .entry(RECEIVE_POLICY_GUARD_ADDRESS)
                 .or_insert_with(|| "ReceivePolicyGuard".to_string());
@@ -338,36 +325,20 @@ impl CallTraceDecoder {
         INIT.get_or_init(Self::init)
     }
 
-    /// Returns the Monad hardfork used for address-scoped metadata.
-    #[cfg(feature = "monad")]
-    pub const fn monad_hardfork(&self) -> Option<MonadHardfork> {
-        self.monad_hardfork
+    /// Returns the hardfork used for network-specific metadata.
+    pub const fn hardfork(&self) -> Option<FoundryHardfork> {
+        self.hardfork
     }
 
-    /// Returns the Tempo hardfork used for address-scoped metadata.
-    pub const fn tempo_hardfork(&self) -> Option<TempoHardfork> {
-        self.tempo_hardfork
-    }
-
-    /// Rebuilds address-scoped metadata for a new Tempo hardfork.
-    pub fn set_tempo_hardfork(&mut self, hardfork: Option<TempoHardfork>) {
-        if self.tempo_hardfork == hardfork {
-            return;
-        }
-        self.tempo_hardfork = hardfork;
-        self.clear_addresses();
-    }
-
-    /// Rebuilds address-scoped metadata for a new Monad hardfork.
+    /// Rebuilds address-scoped metadata for a new hardfork.
     ///
     /// Hardfork changes invalidate previously identified addresses because the set of active
     /// precompiles can change. Global ABI and signature metadata is preserved.
-    #[cfg(feature = "monad")]
-    pub fn set_monad_hardfork(&mut self, hardfork: Option<MonadHardfork>) {
-        if self.monad_hardfork == hardfork {
+    pub fn set_hardfork(&mut self, hardfork: Option<FoundryHardfork>) {
+        if self.hardfork == hardfork {
             return;
         }
-        self.monad_hardfork = hardfork;
+        self.hardfork = hardfork;
         self.clear_addresses();
     }
 
@@ -502,9 +473,7 @@ impl CallTraceDecoder {
 
             opcodes: Vec::new(),
 
-            tempo_hardfork: None,
-
-            monad_hardfork: None,
+            hardfork: None,
             compact_labels: false,
         }
     }
@@ -543,8 +512,7 @@ impl CallTraceDecoder {
                     **address,
                     self.networks,
                     self.chain_id,
-                    self.tempo_hardfork,
-                    self.monad_hardfork,
+                    self.hardfork,
                 )
             })
             .map(|(address, label)| (*address, label.clone()))
@@ -584,8 +552,7 @@ impl CallTraceDecoder {
                     &node.trace,
                     self.networks,
                     self.chain_id,
-                    self.tempo_hardfork,
-                    self.monad_hardfork,
+                    self.hardfork,
                 )
             {
                 return false;
@@ -695,7 +662,9 @@ impl CallTraceDecoder {
         if self.networks.is_some_and(|networks| !networks.is_monad()) {
             return;
         }
-        let Some(hardfork) = self.monad_hardfork else { return };
+        let Some(hardfork) = self.hardfork.and_then(MonadHardfork::from_foundry_hardfork) else {
+            return;
+        };
 
         self.labels
             .entry(foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS)
@@ -738,13 +707,15 @@ impl CallTraceDecoder {
 
     fn is_current_committee_active(&self, address: Address) -> bool {
         address == CURRENT_COMMITTEE_ADDRESS
-            && self.tempo_hardfork.is_some_and(|hardfork| hardfork.is_t8())
+            && self
+                .hardfork
+                .and_then(TempoHardfork::from_foundry_hardfork)
+                .is_some_and(|hardfork| hardfork.is_t8())
             && precompiles::is_known_precompile(
                 address,
                 self.networks,
                 self.chain_id,
-                self.tempo_hardfork,
-                self.monad_hardfork,
+                self.hardfork,
             )
     }
 
@@ -943,13 +914,8 @@ impl CallTraceDecoder {
             };
         }
 
-        if let Some(trace) = precompiles::decode(
-            trace,
-            self.networks,
-            self.chain_id,
-            self.tempo_hardfork,
-            self.monad_hardfork,
-        ) {
+        if let Some(trace) = precompiles::decode(trace, self.networks, self.chain_id, self.hardfork)
+        {
             return trace;
         }
 
@@ -1429,18 +1395,29 @@ impl CallTraceDecoder {
         log: &LogData,
         canonical_signature: bool,
     ) -> DecodedEvent {
-        let regular_events = log.topics().first().and_then(|&topic| {
-            let key = (topic, log.topics().len() - 1);
+        let key = log.topics().first().map(|&topic| (topic, log.topics().len() - 1));
+        let address_events = key.and_then(|key| {
             address
                 .and_then(|address| self.events_by_address.as_deref()?.get(&address))
                 .and_then(|events| events.get(&key))
-                .or_else(|| self.events.get(&key))
         });
+        let global_events = key.and_then(|key| self.events.get(&key));
+        let regular_events = address_events.or(global_events);
         let anonymous_events = address
             .and_then(|address| self.anonymous_events_by_address.as_deref()?.get(&address))
             .and_then(|events| events.get(&log.topics().len()));
 
-        let decoded = if canonical_signature || anonymous_events.is_some() {
+        let decoded = if canonical_signature && address_events.is_none() {
+            // Topic zero does not encode indexed parameter placement, so global metadata is only
+            // a hint. Try every compatible layout and reject ambiguity.
+            let mut events = global_events
+                .into_iter()
+                .flatten()
+                .flat_map(|event| indexed_event_candidates(event.clone(), log))
+                .collect::<Vec<_>>();
+            events.extend(anonymous_events.into_iter().flatten().cloned());
+            self.decode_unique_event_candidates(address, log, &events, true)
+        } else if canonical_signature || anonymous_events.is_some() {
             self.decode_unique_event_candidates(
                 address,
                 log,
@@ -1565,8 +1542,7 @@ impl CallTraceDecoder {
                         &n.trace,
                         self.networks,
                         self.chain_id,
-                        self.tempo_hardfork,
-                        self.monad_hardfork,
+                        self.hardfork,
                     )
                 {
                     return false;
@@ -1792,7 +1768,7 @@ mod tests {
         CallTraceDecoderBuilder::new()
             .with_execution_network(NetworkVariant::Monad)
             .with_chain_id(Some(143))
-            .with_monad_hardfork(Some(hardfork))
+            .with_hardfork(Some(hardfork.into()))
             .build()
     }
 
@@ -1981,6 +1957,42 @@ mod tests {
         let decoded = decoder.decode_event_with_address_signature(address, &log).await;
         assert!(decoded.name.is_none());
         assert!(decoded.params.is_none());
+    }
+
+    #[tokio::test]
+    async fn canonical_global_events_require_a_unique_indexed_placement() {
+        let known = Event::parse(
+            "event AmbiguousLayout(address indexed from, address indexed to, uint256 amount)",
+        )
+        .unwrap();
+        let emitted = Event::parse(
+            "event AmbiguousLayout(address from, address indexed to, uint256 indexed amount)",
+        )
+        .unwrap();
+        assert_eq!(known.selector(), emitted.selector());
+
+        let address = Address::from([0x12; 20]);
+        let from = Address::from([0x34; 20]);
+        let to = Address::from([0x56; 20]);
+        let amount = U256::from(42);
+        let log = LogData::new_unchecked(
+            vec![emitted.selector(), to.into_word(), amount.into()],
+            (from,).abi_encode().into(),
+        );
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.push_event(known);
+
+        let decoded = decoder.decode_event_with_address_signature(address, &log).await;
+        assert!(decoded.name.is_none());
+        assert!(decoded.params.is_none());
+
+        decoder.push_address_event(address, emitted);
+        let decoded = decoder.decode_event_with_address_signature(address, &log).await;
+        assert_eq!(decoded.name.as_deref(), Some("AmbiguousLayout(address,address,uint256)"));
+        let params = decoded.params.unwrap();
+        assert_eq!(params[0].2, DynSolValue::Address(from));
+        assert_eq!(params[1].2, DynSolValue::Address(to));
+        assert_eq!(params[2].2, DynSolValue::Uint(amount, 256));
     }
 
     #[tokio::test]
@@ -3233,8 +3245,8 @@ mod tests {
         };
         let mut decoder = monad_decoder(MonadHardfork::MonadEight);
 
-        decoder.set_monad_hardfork(Some(MonadHardfork::MonadNine));
-        assert_eq!(decoder.monad_hardfork(), Some(MonadHardfork::MonadNine));
+        decoder.set_hardfork(Some(MonadHardfork::MonadNine.into()));
+        assert_eq!(decoder.hardfork(), Some(MonadHardfork::MonadNine.into()));
         assert_eq!(
             decoder
                 .labels
@@ -3248,8 +3260,8 @@ mod tests {
             Some("dippedIntoReserve()")
         );
 
-        decoder.set_monad_hardfork(Some(MonadHardfork::MonadEight));
-        assert_eq!(decoder.monad_hardfork(), Some(MonadHardfork::MonadEight));
+        decoder.set_hardfork(Some(MonadHardfork::MonadEight.into()));
+        assert_eq!(decoder.hardfork(), Some(MonadHardfork::MonadEight.into()));
         assert!(
             !decoder
                 .labels
@@ -3447,7 +3459,7 @@ mod tests {
         // Decoder with Tempo chain ID (4217).
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T5))
+            .with_hardfork(Some(TempoHardfork::T5.into()))
             .build();
 
         assert_eq!(
@@ -3482,9 +3494,9 @@ mod tests {
 
     #[test]
     fn test_precompile_labels_follow_tempo_hardfork_activation_boundaries() {
-        let labels_for_hardfork = |hardfork| {
+        let labels_for_hardfork = |hardfork: TempoHardfork| {
             CallTraceDecoderBuilder::new()
-                .with_tempo_hardfork(Some(hardfork))
+                .with_hardfork(Some(hardfork.into()))
                 .build()
                 .precompile_labels()
         };
@@ -3525,7 +3537,7 @@ mod tests {
         let ethereum_labels = CallTraceDecoderBuilder::new()
             .with_execution_network(NetworkVariant::Ethereum)
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T7))
+            .with_hardfork(Some(TempoHardfork::T7.into()))
             .build()
             .precompile_labels();
         assert!(!ethereum_labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
@@ -3582,7 +3594,7 @@ mod tests {
 
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T8))
+            .with_hardfork(Some(TempoHardfork::T8.into()))
             .build();
         decoder.clear_addresses();
         let decoded = decoder.decode_function(&trace).await;
@@ -3596,11 +3608,11 @@ mod tests {
         for decoder in [
             CallTraceDecoderBuilder::new()
                 .with_chain_id(Some(4217))
-                .with_tempo_hardfork(Some(TempoHardfork::T7))
+                .with_hardfork(Some(TempoHardfork::T7.into()))
                 .build(),
             CallTraceDecoderBuilder::new()
                 .with_chain_id(Some(1))
-                .with_tempo_hardfork(Some(TempoHardfork::T8))
+                .with_hardfork(Some(TempoHardfork::T8.into()))
                 .build(),
         ] {
             let decoded = decoder.decode_function(&trace).await;
@@ -3621,7 +3633,7 @@ mod tests {
         };
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T8))
+            .with_hardfork(Some(TempoHardfork::T8.into()))
             .build();
         assert_eq!(
             decoder.decode_function(&trace).await.return_data.as_deref(),
@@ -3637,7 +3649,7 @@ mod tests {
     fn test_precompile_labels_skip_tempo_precompiles_on_other_chains() {
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(1))
-            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .with_hardfork(Some(TempoHardfork::T6.into()))
             .build();
 
         let labels = decoder.precompile_labels();
@@ -3655,7 +3667,7 @@ mod tests {
                 (TIP20_CHANNEL_RESERVE_ADDRESS, reserve_label.clone()),
                 (RECEIVE_POLICY_GUARD_ADDRESS, guard_label.clone()),
             ])
-            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .with_hardfork(Some(TempoHardfork::T6.into()))
             .build();
 
         assert_eq!(decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS), Some(&reserve_label));
@@ -3669,7 +3681,7 @@ mod tests {
         let mut decoder = CallTraceDecoderBuilder::new()
             .with_execution_network(NetworkVariant::Tempo)
             .with_labels([(user_address, user_label.clone())])
-            .with_tempo_hardfork(Some(TempoHardfork::T4))
+            .with_hardfork(Some(TempoHardfork::T4.into()))
             .build();
 
         let labels = decoder.precompile_labels();
@@ -3677,21 +3689,21 @@ mod tests {
         assert!(!labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
         assert!(!labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
 
-        decoder.set_tempo_hardfork(Some(TempoHardfork::T6));
+        decoder.set_hardfork(Some(TempoHardfork::T6.into()));
         let labels = decoder.precompile_labels();
         assert!(labels.contains_key(&TIP_FEE_MANAGER_ADDRESS));
         assert!(labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
         assert!(labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
         assert_eq!(decoder.labels.get(&user_address), Some(&user_label));
 
-        decoder.set_tempo_hardfork(Some(TempoHardfork::T4));
+        decoder.set_hardfork(Some(TempoHardfork::T4.into()));
         let labels = decoder.precompile_labels();
         assert!(labels.contains_key(&TIP_FEE_MANAGER_ADDRESS));
         assert!(!labels.contains_key(&TIP20_CHANNEL_RESERVE_ADDRESS));
         assert!(!labels.contains_key(&RECEIVE_POLICY_GUARD_ADDRESS));
         assert_eq!(decoder.labels.get(&user_address), Some(&user_label));
 
-        decoder.set_tempo_hardfork(None);
+        decoder.set_hardfork(None);
         assert_eq!(decoder.labels.get(&user_address), Some(&user_label));
     }
 
@@ -3702,7 +3714,7 @@ mod tests {
         let reserve_label = "UserReserve".to_string();
         let decoder = CallTraceDecoderBuilder::new()
             .with_labels([(TIP20_CHANNEL_RESERVE_ADDRESS, reserve_label.clone())])
-            .with_tempo_hardfork(None)
+            .with_hardfork(None)
             .build();
 
         assert_eq!(decoder.labels.get(&TIP20_CHANNEL_RESERVE_ADDRESS), Some(&reserve_label));
@@ -3726,7 +3738,7 @@ mod tests {
 
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .with_hardfork(Some(TempoHardfork::T6.into()))
             .build();
         let decoded = decoder.decode_function(&trace).await;
 
@@ -3738,7 +3750,7 @@ mod tests {
     async fn test_t6_receive_policy_calls_decode() {
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .with_hardfork(Some(TempoHardfork::T6.into()))
             .build();
 
         let set_policy = ITIP403Registry::setReceivePolicyCall {
@@ -3782,7 +3794,7 @@ mod tests {
     async fn test_t6_admin_key_calls_decode() {
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T6))
+            .with_hardfork(Some(TempoHardfork::T6.into()))
             .build();
         let account = address!("0x0000000000000000000000000000000000000abc");
         let key = address!("0x0000000000000000000000000000000000000def");
@@ -3984,7 +3996,7 @@ mod tests {
 
         let decoder = CallTraceDecoderBuilder::new()
             .with_chain_id(Some(4217))
-            .with_tempo_hardfork(Some(TempoHardfork::T4))
+            .with_hardfork(Some(TempoHardfork::T4.into()))
             .build();
 
         let mut arena = CallTraceArena::default();
@@ -4125,8 +4137,7 @@ mod tests {
             monad_revm::reserve_balance::abi::RESERVE_BALANCE_ADDRESS,
             Some(NetworkVariant::Ethereum.into()),
             Some(143),
-            None,
-            Some(MonadHardfork::MonadNine),
+            Some(MonadHardfork::MonadNine.into()),
         ));
     }
 }

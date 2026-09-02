@@ -10,11 +10,12 @@ use crate::{
         apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
     },
 };
+use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 use alloy_eips::BlockNumHash;
-use alloy_evm::FromRecoveredTx;
 use alloy_network::{
-    BlockResponse, Network, ReceiptResponse, TransactionResponse, primitives::HeaderResponse,
+    AnyNetwork, AnyRpcBlock, AnyRpcTransaction, AnyTxEnvelope, BlockResponse, Network,
+    ReceiptResponse, TransactionResponse, primitives::HeaderResponse,
 };
 use alloy_primitives::{
     Address, B256, Bytes, U256,
@@ -32,7 +33,9 @@ use foundry_cli::{
     utils::{TraceResult, init_progress},
 };
 use foundry_common::{
-    SYSTEM_TRANSACTION_TYPE, is_known_system_sender, provider::ProviderBuilder, shell,
+    SYSTEM_TRANSACTION_TYPE, is_known_system_sender,
+    provider::{ProviderBuilder, RetryProvider},
+    shell,
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
@@ -44,14 +47,15 @@ use foundry_config::{
 };
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::{BlockContext, ChainFor, MonadEvmNetwork};
 use foundry_evm::{
     core::{
-        FoundryBlock as _, FoundryChain,
-        evm::{
-            BlockContext, ChainFor, EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor,
-        },
+        FoundryBlock as _,
+        env::FromAnyRpcTransaction as _,
+        evm::{EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
-    executors::{EvmError, Executor, TracingExecutor},
+    executors::{Executor, TracingExecutor},
     hardforks::FoundryHardfork,
     opts::EvmOpts,
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements, Traces},
@@ -133,12 +137,49 @@ pub struct RunArgs {
     pub with_local_artifacts: bool,
 
     /// Disable block gas limit check.
+    ///
+    /// Always implied: a mined transaction already passed its chain's own check.
     #[arg(long)]
     pub disable_block_gas_limit: bool,
 
     /// Enable the tx gas limit checks as imposed by Osaka (EIP-7825).
     #[arg(long)]
     pub enable_tx_gas_limit: bool,
+}
+
+/// Target transaction resolved up front by [`RunArgs::fetch_target`], before any per-network
+/// preparation.
+struct TargetFetch {
+    tx: AnyRpcTransaction,
+    provider: RetryProvider,
+    compute_units_per_second: Option<u64>,
+    target_is_system: bool,
+}
+
+/// Fields only needed by the Monad-specific `execute_monad`/`execute_monad_target` path.
+#[cfg(feature = "monad")]
+struct MonadPrepared {
+    tx_block_number: u64,
+    compute_units_per_second: Option<u64>,
+}
+
+/// State assembled by [`RunArgs::prepare`] and consumed by the network-specific `execute_*`
+/// methods below.
+struct PreparedRun<FEN: FoundryEvmNetwork> {
+    args: RunArgs,
+    config: Box<Config>,
+    tracing: TracingConfig,
+    tx: AnyRpcTransaction,
+    block: Option<AnyRpcBlock>,
+    evm_env: EvmEnvFor<FEN>,
+    executor: TracingExecutor<FEN>,
+    chain: Chain,
+    networks: NetworkConfigs,
+    resolved_hardfork: Option<FoundryHardfork>,
+    verbosity: u8,
+    prestate_applied: bool,
+    #[cfg(feature = "monad")]
+    monad: MonadPrepared,
 }
 
 impl RunArgs {
@@ -157,7 +198,15 @@ impl RunArgs {
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     pub async fn run(self) -> Result<()> {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-        let (config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
+        let (mut config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
+        if config.eth_rpc_url.is_none()
+            && let Some(chain) = self.etherscan.chain
+        {
+            let alias = chain.to_string();
+            if config.rpc_endpoints.contains_key(&alias) {
+                config.eth_rpc_url = Some(alias);
+            }
+        }
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
 
         // Auto-detect network from fork chain ID when not explicitly configured.
@@ -169,9 +218,7 @@ impl RunArgs {
 
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
-            return self
-                .run_with_evm::<foundry_evm::core::evm::MonadEvmNetwork>(config, evm_opts)
-                .await;
+            return self.run_with_monad(config, evm_opts).await;
         }
 
         #[cfg(feature = "optimism")]
@@ -183,38 +230,79 @@ impl RunArgs {
     }
 
     async fn run_with_evm<FEN: FoundryEvmNetwork>(
+        self,
+        config: Box<Config>,
+        evm_opts: EvmOpts,
+    ) -> Result<()> {
+        let target = self.fetch_target(&config).await?;
+        if target.target_is_system && !self.replay_system_txes && !self.debug_trace_transaction {
+            eyre::bail!(
+                "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
+                target.tx.tx_hash()
+            );
+        }
+        let Some(mut run) = self.prepare::<FEN>(config, evm_opts, target).await? else {
+            return Ok(());
+        };
+        let result = run.execute_ordinary()?;
+        run.finish(result).await
+    }
+
+    #[cfg(feature = "monad")]
+    async fn run_with_monad(self, config: Box<Config>, evm_opts: EvmOpts) -> Result<()> {
+        let target = self.fetch_target(&config).await?;
+        let Some(mut run) = self.prepare::<MonadEvmNetwork>(config, evm_opts, target).await? else {
+            return Ok(());
+        };
+        let result = run.execute_monad().await?;
+        run.finish(result).await
+    }
+
+    /// `AnyNetwork` rather than `FEN::Network`: chains such as Arbitrum, Celo and the OP-stack
+    /// forks Foundry does not route to a dedicated network put transaction types the strict
+    /// Ethereum envelope cannot decode into every block, which would fail the full block fetch in
+    /// `prepare` for the whole chain. Execution still uses `FEN`.
+    async fn fetch_target(&self, config: &Config) -> Result<TargetFetch> {
+        let compute_units_per_second = if self.rpc.common.no_rpc_rate_limit {
+            Some(u64::MAX)
+        } else {
+            self.rpc.common.compute_units_per_second
+        };
+        let provider = ProviderBuilder::<AnyNetwork>::from_config(config)?
+            .compute_units_per_second_opt(compute_units_per_second)
+            .build()?;
+        let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
+        let tx = provider
+            .get_transaction_by_hash(tx_hash)
+            .await
+            .wrap_err_with(|| format!("tx not found: {tx_hash:?}"))?
+            .ok_or_else(|| eyre::eyre!("tx not found: {tx_hash:?}"))?;
+        let target_is_system = is_known_system_sender(tx.from())
+            || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
+        Ok(TargetFetch { tx, provider, compute_units_per_second, target_is_system })
+    }
+
+    async fn prepare<FEN: FoundryEvmNetwork>(
         mut self,
         mut config: Box<Config>,
         evm_opts: EvmOpts,
-    ) -> Result<()> {
+        target: TargetFetch,
+    ) -> Result<Option<PreparedRun<FEN>>> {
+        #[cfg_attr(not(feature = "monad"), allow(unused_variables))]
+        let TargetFetch { tx, provider, compute_units_per_second, .. } = target;
+        let tx_hash = tx.tx_hash();
         config.networks = evm_opts.networks;
         self.tracing.labels.append(&mut self.legacy_labels);
         config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
         let tracing = config.tracing.clone();
 
         let with_local_artifacts = self.with_local_artifacts;
-        let debug = self.debug;
-        let compute_units_per_second = if self.rpc.common.no_rpc_rate_limit {
-            Some(u64::MAX)
-        } else {
-            self.rpc.common.compute_units_per_second
-        };
 
-        let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?
-            .compute_units_per_second_opt(compute_units_per_second)
-            .build()?;
-
-        let tx_hash = self.tx_hash.parse().wrap_err("invalid tx hash")?;
         let endpoint_identity = if self.debug_trace_transaction {
             Some(evm_opts.discover_fork_endpoint().await?)
         } else {
             None
         };
-        let tx = provider
-            .get_transaction_by_hash(tx_hash)
-            .await
-            .wrap_err_with(|| format!("tx not found: {tx_hash:?}"))?
-            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?;
 
         // Fetch the trace from the node via `debug_traceTransaction` (callTracer) instead of
         // re-executing the transaction locally. The node already holds the transaction's exact
@@ -272,12 +360,14 @@ impl RunArgs {
             )?;
 
             let Some(transaction_block) = provider.get_block_by_hash(tx_block_hash).await? else {
-                return ensure_remote_transaction_inclusion(
+                // `actual: None` always errors; this call exists to reuse its error message.
+                ensure_remote_transaction_inclusion(
                     tx_hash,
                     tx_inclusion,
                     None,
                     "block fetched by hash",
-                );
+                )?;
+                unreachable!("ensure_remote_transaction_inclusion errors when actual is None");
             };
             ensure_remote_transaction_inclusion(
                 tx_hash,
@@ -370,12 +460,8 @@ impl RunArgs {
             )
             .await?;
 
-            return Ok(());
+            return Ok(None);
         }
-
-        let target_tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
-        let target_is_system = is_known_system_sender(tx.from())
-            || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
 
         let tx_block_number = tx
             .block_number()
@@ -393,7 +479,11 @@ impl RunArgs {
         )?;
 
         let mut evm_version = self.evm_version;
-        evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
+        // Mined transactions already passed the block gas limit check their chain applies, and
+        // some chains admit transactions whose gas limit exceeds it: BSC validator transactions
+        // carry a gas limit of `i64::MAX`. Re-applying the check can only reject a transaction
+        // the chain accepted.
+        evm_env.cfg_env.disable_block_gas_limit = true;
 
         // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
         // Users can opt-in to enable these limits by setting `enable_tx_gas_limit` to true.
@@ -421,7 +511,7 @@ impl RunArgs {
                 // TODO: add glamsterdam header field checks in the future
                 evm_version = Some(EvmVersion::Cancun);
             }
-            apply_chain_and_block_specific_env_changes_for_chain::<FEN::Network, _, _>(
+            apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
                 &mut evm_env,
                 block,
                 chain.id(),
@@ -438,16 +528,6 @@ impl RunArgs {
         );
         TracingExecutor::<FEN>::extend_precompile_labels(&mut config, networks, resolved_hardfork);
 
-        let block_context = if networks.is_monad() {
-            let block = block.as_ref().ok_or_else(|| {
-                eyre::eyre!(
-                    "block {tx_block_number} is required to reconstruct transaction context"
-                )
-            })?;
-            Some(BlockContext::<FEN>::fetch(&provider, block).await?)
-        } else {
-            None
-        };
         apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain.id());
 
         let mut executor = TracingExecutor::<FEN>::new(
@@ -465,7 +545,7 @@ impl RunArgs {
         let spec_id = (*evm_env.cfg_env.spec()).into();
 
         if let Some(parent_beacon_block_root) =
-            parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root)?
+            parent_beacon_block_root_for_network(networks, spec_id, parent_beacon_block_root)
         {
             executor.apply_beacon_root(parent_beacon_block_root)?;
         }
@@ -502,201 +582,223 @@ impl RunArgs {
             }
         }
 
-        // Fall back to replaying previous transactions if prestate trace wasn't applied.
-        if !self.quick && !prestate_applied {
+        Ok(Some(PreparedRun {
+            args: self,
+            config,
+            tracing,
+            tx,
+            block,
+            evm_env,
+            executor,
+            chain,
+            networks,
+            resolved_hardfork,
+            verbosity,
+            prestate_applied,
+            #[cfg(feature = "monad")]
+            monad: MonadPrepared { tx_block_number, compute_units_per_second },
+        }))
+    }
+}
+
+impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
+    fn enable_target_tracing(&mut self) {
+        let requirements = TraceRequirements::none()
+            .with_calls(true)
+            .with_debug(self.args.debug)
+            .with_decode_internal(if self.tracing.decode_internal {
+                InternalTraceMode::Full
+            } else {
+                InternalTraceMode::None
+            })
+            .with_state_changes(self.verbosity > 4);
+        self.executor.set_trace_requirements(requirements);
+        self.executor.set_trace_printer(self.args.trace_printer);
+    }
+
+    fn disable_balance_check_for_forged_sender(&mut self) {
+        let sender_is_forged = match &*self.tx.inner.inner {
+            AnyTxEnvelope::Ethereum(inner) => {
+                inner.recover_signer().is_ok_and(|signer| signer != self.tx.from())
+            }
+            AnyTxEnvelope::Unknown(_) => true,
+        };
+        if sender_is_forged {
+            self.evm_env.cfg_env.disable_balance_check = true;
+        }
+    }
+
+    fn execute_ordinary(&mut self) -> Result<TraceResult> {
+        // Decode the target transaction before replaying the block: an envelope this build
+        // can't decode should fail fast.
+        let target_tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&self.tx)?;
+
+        let target_index = if let Some(block) = &self.block {
+            let BlockTransactions::Full(txs) = block.transactions() else {
+                eyre::bail!("Could not get block txs");
+            };
+            txs.iter().position(|candidate| candidate.tx_hash() == self.tx.tx_hash()).ok_or_else(
+                || eyre::eyre!("transaction {:?} is missing from its block", self.tx.tx_hash()),
+            )?
+        } else {
+            0
+        };
+
+        self.enable_target_tracing();
+        self.disable_balance_check_for_forged_sender();
+        let replay_prefix = !self.args.quick && !self.prestate_applied;
+        let block_number = self.evm_env.block_env.number();
+        let tx_hash = self.tx.tx_hash();
+        let block = &self.block;
+        let replay_system_txes = self.args.replay_system_txes;
+        let mut replay = Vec::new();
+        if replay_prefix {
             sh_status!("Executing previous transactions from the block.")?;
-
-            if let Some(block) = &block {
-                let pb = init_progress(block.transactions().len() as u64, "tx");
-                pb.set_position(0);
-
-                let BlockTransactions::Full(ref txs) = *block.transactions() else {
-                    return Err(eyre::eyre!("Could not get block txs"));
+            if let Some(block) = block {
+                let BlockTransactions::Full(txs) = block.transactions() else {
+                    eyre::bail!("Could not get block txs");
                 };
-
-                for (index, tx) in txs.iter().enumerate() {
-                    if tx.tx_hash() == tx_hash {
-                        break;
-                    }
-
-                    let tx_env = TxEnvFor::<FEN>::from_recovered_tx(tx.as_ref(), tx.from());
+                let pb = init_progress(txs.len() as u64, "tx");
+                for (index, tx) in txs.iter().take(target_index).enumerate() {
                     let is_system = is_known_system_sender(tx.from())
                         || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
-                    let chain_context = block_context.as_ref().map_or_else(
-                        || ChainFor::<FEN>::for_transaction(&tx_env),
-                        |context| context.transaction(index),
-                    );
-
-                    evm_env.cfg_env.disable_balance_check = true;
-
-                    if is_system {
-                        #[cfg(feature = "monad")]
-                        if executor
-                            .try_transact_system_replay_with_env_and_context(
-                                evm_env.clone(),
-                                tx_env.clone(),
-                                chain_context.clone(),
-                            )
-                            .wrap_err_with(|| {
+                    if !is_system || replay_system_txes {
+                        let tx_env =
+                            TxEnvFor::<FEN>::from_any_rpc_transaction(tx).wrap_err_with(|| {
                                 format!(
-                                    "Failed to replay system transaction: {:?} in block {}",
+                                    "Failed to prepare transaction: {:?} in block {}",
                                     tx.tx_hash(),
-                                    evm_env.block_env.number()
-                                )
-                            })?
-                            .is_some()
-                        {
-                            trace!(tx=?tx.tx_hash(), "executed previous canonical system transaction");
-                            pb.set_position((index + 1) as u64);
-                            continue;
-                        }
-                        if !self.replay_system_txes {
-                            pb.set_position((index + 1) as u64);
-                            continue;
-                        }
-                    }
-
-                    if let Some(to) = Transaction::to(tx) {
-                        trace!(tx=?tx.tx_hash(),?to, "executing previous call transaction");
-                        executor
-                            .transact_with_env_and_context(
-                                evm_env.clone(),
-                                tx_env.clone(),
-                                chain_context,
-                            )
-                            .wrap_err_with(|| {
-                                format!(
-                                    "Failed to execute transaction: {:?} in block {}",
-                                    tx.tx_hash(),
-                                    evm_env.block_env.number()
+                                    block_number
                                 )
                             })?;
-                    } else {
-                        trace!(tx=?tx.tx_hash(), "executing previous create transaction");
-                        if let Err(error) = executor.deploy_with_env_and_context(
-                            evm_env.clone(),
-                            tx_env.clone(),
-                            chain_context,
-                            None,
-                        ) {
-                            match error {
-                                // Reverted transactions should be skipped
-                                EvmError::Execution(_) => (),
-                                error => {
-                                    return Err(error).wrap_err_with(|| {
-                                        format!(
-                                            "Failed to deploy transaction: {:?} in block {}",
-                                            tx.tx_hash(),
-                                            evm_env.block_env.number()
-                                        )
-                                    });
-                                }
-                            }
+                        if let Some(to) = Transaction::to(tx) {
+                            trace!(tx=?tx.tx_hash(), ?to, "preparing previous call transaction");
+                        } else {
+                            trace!(tx=?tx.tx_hash(), "preparing previous create transaction");
                         }
+                        replay.push((tx.tx_hash(), tx_env));
                     }
-
                     pb.set_position((index + 1) as u64);
                 }
             }
         }
-
-        // Execute our transaction
-        let result = {
-            // Enable tracing only for the target transaction; the prefix replay above ran with
-            // tracing disabled.
-            let target_trace_requirements = TraceRequirements::none()
-                .with_calls(true)
-                .with_debug(self.debug)
-                .with_decode_internal(if tracing.decode_internal {
-                    InternalTraceMode::Full
-                } else {
-                    InternalTraceMode::None
-                })
-                .with_state_changes(verbosity > 4);
-            executor.set_trace_requirements(target_trace_requirements);
-            executor.set_trace_printer(self.trace_printer);
-
-            let tx_env = target_tx_env;
-            let target_index = if let Some(block) = &block {
-                let BlockTransactions::Full(transactions) = block.transactions() else {
-                    return Err(eyre::eyre!("Could not get block txs"));
-                };
-                transactions
-                    .iter()
-                    .position(|candidate| candidate.tx_hash() == tx_hash)
-                    .ok_or_else(|| {
-                        eyre::eyre!("transaction {tx_hash:?} is missing from its block")
-                    })?
-            } else {
-                0
-            };
-            let chain_context = block_context.as_ref().map_or_else(
-                || ChainFor::<FEN>::for_transaction(&tx_env),
-                |context| context.transaction(target_index),
-            );
-
-            if tx.as_ref().recover_signer().is_ok_and(|signer| signer != tx.from()) {
-                evm_env.cfg_env.disable_balance_check = true;
-            }
-
-            #[cfg(feature = "monad")]
-            let replay_result = if target_is_system {
-                executor.try_transact_system_replay_with_env_and_context(
-                    evm_env.clone(),
-                    tx_env.clone(),
-                    chain_context.clone(),
-                )?
-            } else {
-                None
-            };
-            #[cfg(not(feature = "monad"))]
-            let replay_result: Option<foundry_evm::executors::RawCallResult<FEN>> = None;
-
-            if let Some(result) = replay_result {
-                trace!(tx=?tx.tx_hash(), "executed canonical system transaction");
-                TraceResult::from(result)
-            } else {
-                if target_is_system && !self.replay_system_txes {
-                    return Err(eyre::eyre!(
-                        "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
-                        tx.tx_hash()
-                    ));
-                }
-
-                if let Some(to) = Transaction::to(&tx) {
-                    trace!(tx=?tx.tx_hash(), to=?to, "executing call transaction");
-                    TraceResult::from(executor.transact_with_env_and_context(
-                        evm_env,
-                        tx_env,
-                        chain_context,
-                    )?)
-                } else {
-                    trace!(tx=?tx.tx_hash(), "executing create transaction");
-                    TraceResult::try_from(executor.deploy_with_env_and_context(
-                        evm_env,
-                        tx_env,
-                        chain_context,
-                        None,
-                    ))?
-                }
-            }
+        let result = self.executor.transact_with_ordinary_block_replay(
+            self.evm_env.clone(),
+            target_tx_env,
+            replay,
+        )?;
+        let trace_kind = if let Some(to) = Transaction::to(&self.tx) {
+            trace!(tx=?self.tx.tx_hash(), ?to, "executing call transaction");
+            TraceKind::Execution
+        } else {
+            trace!(tx=?self.tx.tx_hash(), "executing create transaction");
+            TraceKind::Deployment
         };
+        trace!(?tx_hash, "completed block replay");
+        Ok(TraceResult::from_raw(result, trace_kind))
+    }
 
-        let contracts_bytecode = fetch_contracts_bytecode_from_trace(&executor, &result)?;
+    async fn finish(self, result: TraceResult) -> Result<()> {
+        let contracts_bytecode = fetch_contracts_bytecode_from_trace(&self.executor, &result)?;
         handle_traces(
             result,
-            &config,
-            chain,
+            &self.config,
+            self.chain,
             &contracts_bytecode,
-            &tracing,
-            with_local_artifacts,
-            debug,
-            resolved_hardfork,
-            networks,
+            &self.tracing,
+            self.args.with_local_artifacts,
+            self.args.debug,
+            self.resolved_hardfork,
+            self.networks,
         )
-        .await?;
+        .await
+    }
+}
 
-        Ok(())
+#[cfg(feature = "monad")]
+impl PreparedRun<MonadEvmNetwork> {
+    async fn execute_monad(&mut self) -> Result<TraceResult> {
+        // `BlockContext` is typed to `MonadEvmNetwork::Network` (`Ethereum`). Monad blocks only
+        // carry standard envelopes, so a typed provider can serve this path while the rest of the
+        // command stays on `AnyNetwork`.
+        let provider = ProviderBuilder::<alloy_network::Ethereum>::from_config(&self.config)?
+            .compute_units_per_second_opt(self.monad.compute_units_per_second)
+            .build()?;
+        let block =
+            provider.get_block(self.monad.tx_block_number.into()).full().await?.ok_or_else(
+                || {
+                    eyre::eyre!(
+                        "block {} is required to reconstruct transaction context",
+                        self.monad.tx_block_number
+                    )
+                },
+            )?;
+        let block_context = BlockContext::<MonadEvmNetwork>::fetch(&provider, &block).await?;
+        // Decode the target transaction before replaying the block: an envelope this build
+        // can't decode should fail fast, not after paying for the entire prior-transaction
+        // replay.
+        let target_tx_env = TxEnvFor::<MonadEvmNetwork>::from_any_rpc_transaction(&self.tx)?;
+
+        let target_index = if let Some(block) = &self.block {
+            let BlockTransactions::Full(txs) = block.transactions() else {
+                eyre::bail!("Could not get block txs");
+            };
+            txs.iter().position(|candidate| candidate.tx_hash() == self.tx.tx_hash()).ok_or_else(
+                || eyre::eyre!("transaction {:?} is missing from its block", self.tx.tx_hash()),
+            )?
+        } else {
+            0
+        };
+        self.enable_target_tracing();
+        self.disable_balance_check_for_forged_sender();
+        let replay_prefix = !self.args.quick && !self.prestate_applied;
+        let replay_system_txes = self.args.replay_system_txes;
+        let block = &self.block;
+        let mut replay = Vec::new();
+        if replay_prefix {
+            sh_status!("Executing previous transactions from the block.")?;
+            if let Some(block) = block {
+                let BlockTransactions::Full(txs) = block.transactions() else {
+                    eyre::bail!("Could not get block txs");
+                };
+                let pb = init_progress(txs.len() as u64, "tx");
+                for (index, tx) in txs.iter().take(target_index).enumerate() {
+                    let tx_env = TxEnvFor::<MonadEvmNetwork>::from_any_rpc_transaction(tx)?;
+                    if let Some(to) = Transaction::to(tx) {
+                        trace!(tx=?tx.tx_hash(), ?to, "preparing previous call transaction");
+                    } else {
+                        trace!(tx=?tx.tx_hash(), "preparing previous create transaction");
+                    }
+                    let chain_context: ChainFor<MonadEvmNetwork> = block_context.transaction(index);
+                    replay.push((tx.tx_hash(), tx_env, chain_context));
+                    pb.set_position((index + 1) as u64);
+                }
+            }
+        }
+        let result = self.executor.transact_with_monad_block_replay(
+            self.evm_env.clone(),
+            target_tx_env,
+            block_context.transaction(target_index),
+            replay,
+            replay_system_txes,
+        )?;
+        let Some((result, used_system_replay)) = result else {
+            eyre::bail!(
+                "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
+                self.tx.tx_hash()
+            );
+        };
+        if used_system_replay {
+            trace!(tx=?self.tx.tx_hash(), "executed canonical system transaction");
+        }
+        let trace_kind = if let Some(to) = Transaction::to(&self.tx) {
+            trace!(tx=?self.tx.tx_hash(), ?to, "executing call transaction");
+            TraceKind::Execution
+        } else {
+            trace!(tx=?self.tx.tx_hash(), "executing create transaction");
+            TraceKind::Deployment
+        };
+        Ok(TraceResult::from_raw(result, trace_kind))
     }
 }
 
@@ -724,20 +826,19 @@ fn ensure_remote_transaction_inclusion(
     Ok(())
 }
 
-fn parent_beacon_block_root_for_network(
+const fn parent_beacon_block_root_for_network(
     networks: NetworkConfigs,
     spec_id: SpecId,
     parent_beacon_block_root: Option<B256>,
-) -> Result<Option<B256>> {
+) -> Option<B256> {
     if networks.is_monad() || !spec_id.is_enabled_in(SpecId::CANCUN) {
-        return Ok(None);
+        return None;
     }
 
-    parent_beacon_block_root.map(Some).ok_or_else(|| {
-        eyre::eyre!(
-            "MissingParentBeaconBlockRoot: missing parent beacon block root for Cancun block"
-        )
-    })
+    // Chains that run a Cancun or later EVM without Ethereum's beacon chain, such as Polygon and
+    // Scroll, never populate this header field and never deploy the EIP-4788 contract, so there
+    // is no root to apply. Requiring one makes their blocks unreplayable.
+    parent_beacon_block_root
 }
 
 pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
@@ -969,24 +1070,21 @@ mod tests {
     }
 
     #[test]
-    fn parent_beacon_block_root_is_required_for_cancun() {
+    fn parent_beacon_block_root_is_applied_only_when_the_header_has_one() {
         let networks = NetworkConfigs::default();
-        let err = parent_beacon_block_root_for_network(networks, SpecId::CANCUN, None).unwrap_err();
-        assert!(err.to_string().contains("MissingParentBeaconBlockRoot"));
+        // Polygon and Scroll run a Cancun or later EVM without populating the header field.
+        assert_eq!(parent_beacon_block_root_for_network(networks, SpecId::CANCUN, None), None);
 
         let root = B256::repeat_byte(0x42);
         assert_eq!(
-            parent_beacon_block_root_for_network(networks, SpecId::CANCUN, Some(root)).unwrap(),
+            parent_beacon_block_root_for_network(networks, SpecId::CANCUN, Some(root)),
             Some(root),
         );
         assert_eq!(
-            parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, Some(root)).unwrap(),
+            parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, Some(root)),
             None,
         );
-        assert_eq!(
-            parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, None).unwrap(),
-            None,
-        );
+        assert_eq!(parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, None), None,);
     }
 
     #[cfg(feature = "monad")]
@@ -994,17 +1092,13 @@ mod tests {
     fn parent_beacon_block_root_is_not_used_by_monad() {
         let networks = NetworkConfigs::with_monad();
         for spec_id in [SpecId::PRAGUE, SpecId::OSAKA] {
-            assert_eq!(
-                parent_beacon_block_root_for_network(networks, spec_id, None).unwrap(),
-                None,
-            );
+            assert_eq!(parent_beacon_block_root_for_network(networks, spec_id, None), None,);
             assert_eq!(
                 parent_beacon_block_root_for_network(
                     networks,
                     spec_id,
                     Some(B256::repeat_byte(0x42)),
-                )
-                .unwrap(),
+                ),
                 None,
             );
         }

@@ -149,10 +149,12 @@ pub(crate) fn exec_create<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
 ) -> std::result::Result<CreateOutcome, EVMError<DatabaseError>> {
     let fee_token = ccx.ecx.tx().fee_token();
+    let tx_origin = ccx.ecx.tx().caller();
     let mut inputs = Some(inputs);
     let mut outcome = None;
     executor.with_nested_evm(ccx.state, ccx.ecx, &mut |evm| {
         evm.tx_mut().set_fee_token(fee_token);
+        evm.tx_mut().set_caller(tx_origin);
         let inputs = inputs.take().unwrap();
         evm.journal_inner_mut().depth += 1;
 
@@ -450,10 +452,17 @@ pub struct GasMetering {
     /// Cache of the amount of gas used in previous call.
     /// This is used by the `lastCallGas` cheatcode.
     pub last_call_gas: Option<crate::Vm::Gas>,
+    /// Gas used by `snapshotGasLastCall`.
+    pub(crate) last_call_snapshot_gas_used: u64,
 
     /// Cache of the amount of gas used in previous call or create frame.
     /// This is used by the `lastFrameGas` cheatcode.
     pub last_frame_gas: Option<crate::Vm::Gas>,
+    /// Gas used by `snapshotGasLastFrame`.
+    pub(crate) last_frame_snapshot_gas_used: u64,
+
+    /// Post-refund gas used by the isolated transaction wrapping the current frame.
+    isolated_snapshot_gas_used: Option<u64>,
 
     /// True if gas recording is enabled.
     pub recording: bool,
@@ -489,6 +498,11 @@ impl GasMetering {
         self.touched = true;
         self.reset = true;
         self.paused_frames.clear();
+    }
+
+    /// Preserves the historical gas snapshot value for an isolated transaction.
+    pub const fn set_isolated_snapshot_gas_used(&mut self, gas_used: u64) {
+        self.isolated_snapshot_gas_used = Some(gas_used);
     }
 }
 
@@ -799,6 +813,9 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Additional, user configurable context this Inspector has access to when inspecting a call.
     pub config: Arc<CheatsConfig>,
 
+    /// Additional addresses recognized as cheatcode contracts by this executor.
+    pub extra_cheatcode_addresses: &'static [Address],
+
     /// Test-scoped context holding data that needs to be reset every test run
     pub test_context: TestContext,
 
@@ -938,6 +955,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             fs_commit: true,
             labels: config.labels.clone(),
             config,
+            extra_cheatcode_addresses: &[],
             block: Default::default(),
             fork_block_number_override: Default::default(),
             active_delegations: Default::default(),
@@ -1002,6 +1020,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             context_snapshots: Default::default(),
             in_isolation_context: false,
         }
+    }
+
+    /// Sets additional addresses recognized as cheatcode contracts.
+    #[inline]
+    pub const fn set_extra_cheatcode_addresses(&mut self, addresses: &'static [Address]) {
+        self.extra_cheatcode_addresses = addresses;
     }
 
     /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
@@ -1456,7 +1480,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         #[cfg(feature = "monad")]
         if crate::monad::is_monad_cheatcode_call(
-            self.config.evm_opts.networks.extra_cheatcode_addresses(),
+            self.extra_cheatcode_addresses,
             call.target_address,
         ) {
             let checkpoint = ecx.journal_mut().checkpoint();
@@ -2103,6 +2127,24 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 }
 
+const fn frame_gas(result: &InterpreterResult) -> Vm::Gas {
+    let gas = &result.gas;
+    // A halt consumes the regular gas restored while rolling back state gas.
+    let regular_gas_spent = if result.is_halt() {
+        gas.total_gas_spent()
+    } else {
+        gas.total_gas_spent().saturating_sub(gas.state_gas_spilled())
+    };
+    Vm::Gas {
+        gasLimit: gas.limit(),
+        gasTotalUsed: regular_gas_spent,
+        gasMemoryUsed: 0,
+        gasRefunded: gas.refunded(),
+        gasRemaining: gas.remaining(),
+        gasStateUsed: if result.is_ok() { gas.state_gas_spent() } else { 0 },
+    }
+}
+
 impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcodes<FEN> {
     fn initialize_interp(
         &mut self,
@@ -2357,6 +2399,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
+        let isolated_snapshot_gas_used = self.gas_metering.isolated_snapshot_gas_used.take();
         if self.finish_storage_hook_call(ecx, call, outcome) {
             return;
         }
@@ -2366,7 +2409,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         #[cfg(feature = "monad")]
         let cheatcode_call = cheatcode_call
             || crate::monad::is_monad_cheatcode_call(
-                self.config.evm_opts.networks.extra_cheatcode_addresses(),
+                self.extra_cheatcode_addresses,
                 call.target_address,
             );
         let curr_depth = ecx.journal().depth();
@@ -2549,16 +2592,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
         // Record the gas usage of the call, this allows the `lastFrameGas` cheatcode to
         // retrieve the gas usage of the last call or create.
-        let gas = outcome.result.gas;
-        let frame_gas = crate::Vm::Gas {
-            gasLimit: gas.limit(),
-            gasTotalUsed: gas.total_gas_spent(),
-            gasMemoryUsed: 0,
-            gasRefunded: gas.refunded(),
-            gasRemaining: gas.remaining(),
-        };
+        let frame_gas = frame_gas(&outcome.result);
+        let snapshot_gas_used =
+            isolated_snapshot_gas_used.unwrap_or_else(|| outcome.result.gas.total_gas_spent());
         self.gas_metering.last_call_gas = Some(frame_gas.clone());
         self.gas_metering.last_frame_gas = Some(frame_gas);
+        self.gas_metering.last_call_snapshot_gas_used = snapshot_gas_used;
+        self.gas_metering.last_frame_snapshot_gas_used = snapshot_gas_used;
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
         // previous call depth's recorded accesses, if any
@@ -2968,6 +3008,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
+        let isolated_snapshot_gas_used = self.gas_metering.isolated_snapshot_gas_used.take();
         let call = Some(call);
         let curr_depth = ecx.journal().depth();
 
@@ -3059,14 +3100,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if curr_depth > 0 {
             // Record the gas usage of the create frame, this allows the `lastFrameGas` cheatcode to
             // retrieve the gas usage of the last call or create.
-            let gas = outcome.result.gas;
-            self.gas_metering.last_frame_gas = Some(crate::Vm::Gas {
-                gasLimit: gas.limit(),
-                gasTotalUsed: gas.total_gas_spent(),
-                gasMemoryUsed: 0,
-                gasRefunded: gas.refunded(),
-                gasRemaining: gas.remaining(),
-            });
+            self.gas_metering.last_frame_gas = Some(frame_gas(&outcome.result));
+            self.gas_metering.last_frame_snapshot_gas_used =
+                isolated_snapshot_gas_used.unwrap_or_else(|| outcome.result.gas.total_gas_spent());
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
@@ -4269,6 +4305,36 @@ mod tests {
             Default::default(),
         ));
         assert!(cheats.has_log_hooks());
+    }
+
+    #[test]
+    fn frame_gas_reports_settled_components() {
+        for mut gas in [Gas::new(100_000), Gas::new_with_regular_gas_and_reservoir(100_000, 50_000)]
+        {
+            assert!(gas.record_regular_cost(1_000));
+            assert!(gas.record_state_cost(20_000));
+
+            let mut result = InterpreterResult::new(InstructionResult::Stop, Bytes::new(), gas);
+            let reported = frame_gas(&result);
+            assert_eq!(reported.gasTotalUsed, 1_000);
+            assert_eq!(reported.gasStateUsed, 20_000);
+
+            result.result = InstructionResult::Revert;
+            assert_eq!(frame_gas(&result).gasStateUsed, 0);
+        }
+
+        let mut gas = Gas::new(100_000);
+        gas.refill_reservoir(20_000);
+        let result = InterpreterResult::new(InstructionResult::Stop, Bytes::new(), gas);
+        assert_eq!(frame_gas(&result).gasStateUsed, -20_000);
+
+        let mut gas = Gas::new(100_000);
+        assert!(gas.record_state_cost(20_000));
+        gas.spend_all();
+        let result = InterpreterResult::new(InstructionResult::OutOfGas, Bytes::new(), gas);
+        let reported = frame_gas(&result);
+        assert_eq!(reported.gasTotalUsed, 100_000);
+        assert_eq!(reported.gasStateUsed, 0);
     }
 
     #[test]

@@ -16,7 +16,7 @@ use crate::{
 };
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_eips::BlockNumHash;
-use alloy_evm::{Evm, EvmEnv, EvmFactory};
+use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_genesis::GenesisAccount;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, TransactionResponse,
@@ -39,7 +39,7 @@ use revm::{
     state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     fmt::Debug,
     time::Instant,
 };
@@ -683,7 +683,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> eyre::Result<Self> {
         trace!(target: "backend", forking_mode=?fork.is_some(), "creating executor backend");
         // Note: this will take of registering the `fork`
-        let persistent_accounts = HashSet::from(DEFAULT_PERSISTENT_ACCOUNTS);
+        let persistent_accounts = AddressSet::from_iter(DEFAULT_PERSISTENT_ACCOUNTS);
         let inner = BackendInner { persistent_accounts, ..Default::default() };
 
         let mut backend = Self {
@@ -1355,7 +1355,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// Populates a rolled active fork and the outer journal at the new block state.
     fn populate_rolled_active_fork(
         fork: &mut Fork<AnyNetwork, BlockEnvFor<FEN>>,
-        persistent_accounts: &HashSet<Address>,
+        persistent_accounts: &AddressSet,
         caller: Option<Address>,
         journaled_state: &mut JournaledState,
     ) {
@@ -1383,7 +1383,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     fn reset_rolled_active_fork(
         fork: &mut Fork<AnyNetwork, BlockEnvFor<FEN>>,
         fork_init_journaled_state: &JournaledState,
-        persistent_accounts: &HashSet<Address>,
+        persistent_accounts: &AddressSet,
         caller: Option<Address>,
         journaled_state: &mut JournaledState,
     ) {
@@ -1688,7 +1688,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
         block_context: Option<&BlockContext<FEN>>,
         tx_hash: B256,
         journaled_state: &mut JournaledState,
-        persistent_accounts: &HashSet<Address>,
+        persistent_accounts: &AddressSet,
     ) -> eyre::Result<Option<AnyRpcTransaction>> {
         let ReplayInputs { evm_env, networks } = replay;
         trace!(?tx_hash, "replay until transaction");
@@ -1744,7 +1744,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                     let chain_context = context.transaction(*index);
                     let mut evm =
                         factory.create_evm_with_context(replay_db, evm_env.clone(), chain_context);
-                    networks.inject_chain_precompiles(evm.precompiles_mut(), chain_id, timestamp);
+                    inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
                     trace!(tx=?tx.tx_hash(), "committing transaction");
                     let result = if *is_system {
                         #[cfg(feature = "monad")]
@@ -1768,7 +1768,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 }
             } else {
                 let mut evm = factory.create_evm(replay_db, evm_env);
-                networks.inject_chain_precompiles(evm.precompiles_mut(), chain_id, timestamp);
+                inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
                 for (_, tx, tx_env, is_system) in &txs_to_replay {
                     trace!(tx=?tx.tx_hash(), "committing transaction");
                     let result = if *is_system {
@@ -2678,7 +2678,7 @@ impl<N: Network, B: ForkBlockEnv> Fork<N, B> {
     fn refresh_journaled_states(
         &mut self,
         journaled_state: &mut JournaledState,
-        persistent_accounts: &HashSet<Address>,
+        persistent_accounts: &AddressSet,
     ) -> Result<(), BackendError> {
         update_state(&mut journaled_state.state, &mut self.db, Some(persistent_accounts))?;
         update_state(&mut self.journaled_state.state, &mut self.db, Some(persistent_accounts))?;
@@ -2737,11 +2737,11 @@ pub struct BackendInner<FEN: FoundryEvmNetwork> {
     /// All accounts that should be kept persistent when switching forks.
     /// This means all accounts stored here _don't_ use a separate storage section on each fork
     /// instead the use only one that's persistent across fork swaps.
-    pub persistent_accounts: HashSet<Address>,
+    pub persistent_accounts: AddressSet,
     /// The configured spec id
     pub spec_id: SpecFor<FEN>,
     /// All accounts that are allowed to execute cheatcodes
-    pub cheatcode_access_accounts: HashSet<Address>,
+    pub cheatcode_access_accounts: AddressSet,
 }
 
 impl<FEN: FoundryEvmNetwork> Clone for BackendInner<FEN> {
@@ -3051,7 +3051,7 @@ impl<FEN: FoundryEvmNetwork> Default for BackendInner<FEN> {
             spec_id: SpecFor::<FEN>::default(),
             // grant the cheatcode,default test and caller address access to execute cheatcodes
             // itself
-            cheatcode_access_accounts: HashSet::from([
+            cheatcode_access_accounts: AddressSet::from_iter([
                 CHEATCODE_ADDRESS,
                 TEST_CONTRACT_ADDRESS,
                 CALLER,
@@ -3174,7 +3174,7 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
     fork: &mut Fork<AnyNetwork, BlockEnvFor<FEN>>,
     fork_id: &ForkId,
     networks: NetworkConfigs,
-    persistent_accounts: &HashSet<Address>,
+    persistent_accounts: &AddressSet,
     inspector: &mut dyn for<'db> FoundryInspectorExt<
         <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'db>,
     >,
@@ -3209,7 +3209,7 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
 pub fn update_state<DB: Database>(
     state: &mut EvmState,
     db: &mut DB,
-    persistent_accounts: Option<&HashSet<Address>>,
+    persistent_accounts: Option<&AddressSet>,
 ) -> Result<(), DB::Error> {
     for (addr, acc) in state.iter_mut() {
         if persistent_accounts.is_none_or(|accounts| !accounts.contains(addr)) {
@@ -3229,7 +3229,7 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
     state: EvmState,
     journaled_state: &mut JournaledState,
     fork: &mut Fork<N, B>,
-    persistent_accounts: &HashSet<Address>,
+    persistent_accounts: &AddressSet,
 ) -> Result<(), BackendError> {
     // Refresh cloned journals against a cloned database so a failed read cannot publish only part
     // of the transaction state.
@@ -3250,6 +3250,16 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
     Ok(())
 }
 
+fn inject_replay_precompiles(
+    networks: NetworkConfigs,
+    precompiles: &mut PrecompilesMap,
+    chain_id: ChainId,
+    timestamp: u64,
+) {
+    networks.inject_precompiles(precompiles);
+    networks.inject_chain_precompiles(precompiles, chain_id, timestamp);
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -3258,6 +3268,7 @@ mod tests {
     use crate::{
         backend::{Backend, DatabaseExt, ForkPosition},
         evm::EthEvmNetwork,
+        fork::CreateFork,
         opts::EvmOpts,
     };
     use alloy_consensus::transaction::Recovered;
@@ -3265,16 +3276,19 @@ mod tests {
     use alloy_evm::EvmEnv;
     use alloy_network::{
         AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope,
-        AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction,
+        AnyTxType, TransactionBuilder, UnknownTxEnvelope, UnknownTypedTransaction,
     };
-    use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
+    use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256, map::AddressSet};
     use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
-    use alloy_rpc_types::{Block, BlockTransactions, Transaction as RpcTransaction};
+    use alloy_rpc_types::{
+        Block, BlockTransactions, Transaction as RpcTransaction, TransactionRequest,
+    };
     use alloy_serde::WithOtherFields;
+    use alloy_sol_types::SolValue;
     use anvil::{NodeConfig, spawn};
     use foundry_common::{SYSTEM_TRANSACTION_TYPE, provider::get_http_provider};
     use foundry_config::{Config, NamedChain};
-    use foundry_evm_networks::NetworkConfigs;
+    use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
     use foundry_fork_db::{
         SharedBackend,
         cache::{BlockchainDb, BlockchainDbMeta},
@@ -3285,7 +3299,6 @@ mod tests {
         primitives::{KECCAK_EMPTY, hardfork::SpecId},
         state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
     };
-    use std::collections::HashSet;
 
     fn fork_with_closed_backend() -> Fork<AnyNetwork, BlockEnv> {
         let provider =
@@ -3362,7 +3375,8 @@ mod tests {
         let mut state = EvmState::default();
         state.insert(committed, committed_account);
 
-        let result = apply_state_changeset(state, &mut journaled_state, &mut fork, &HashSet::new());
+        let result =
+            apply_state_changeset(state, &mut journaled_state, &mut fork, &AddressSet::default());
         assert!(result.is_err());
         assert!(!fork.db.cache.accounts.contains_key(&committed));
         assert_eq!(journaled_state.state[&externally_loaded].info.balance, U256::from(1));
@@ -3390,7 +3404,8 @@ mod tests {
         let mut state = EvmState::default();
         state.insert(address, touched_account);
 
-        let result = apply_state_changeset(state, &mut journaled_state, &mut fork, &HashSet::new());
+        let result =
+            apply_state_changeset(state, &mut journaled_state, &mut fork, &AddressSet::default());
         assert!(result.is_err());
         assert_eq!(fork.db.cache.accounts[&address].account_state, AccountState::NotExisting);
         assert_eq!(journaled_state.state[&address].info.balance, U256::from(1));
@@ -3471,6 +3486,73 @@ mod tests {
                 .is_none()
         );
         assert!(Backend::<EthEvmNetwork>::replay_tx_env(&transaction(0xff)).is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn celo_transaction_hash_fork_replays_transfer_precompile() {
+        let networks = NetworkConfigs::with_celo();
+        let (api, handle) = spawn(
+            NodeConfig::test().with_chain_id(Some(NamedChain::Celo as u64)).with_networks(networks),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let sender = provider.get_accounts().await.unwrap()[0];
+        let recipient = Address::with_last_byte(0x99);
+        let transfer_amount = U256::from(1_000);
+        let target_amount = U256::from(1);
+        let nonce = provider.get_transaction_count(sender).await.unwrap();
+        let gas_price = provider.get_gas_price().await.unwrap();
+
+        api.anvil_set_auto_mine(false).await.unwrap();
+        api.send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(CELO_TRANSFER_ADDRESS)
+                .with_nonce(nonce)
+                .with_gas_limit(100_000)
+                .with_gas_price(gas_price)
+                .with_input(Bytes::from((sender, recipient, transfer_amount).abi_encode())),
+        ))
+        .await
+        .unwrap();
+        let target_hash = api
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default()
+                    .with_from(sender)
+                    .with_to(recipient)
+                    .with_nonce(nonce + 1)
+                    .with_gas_limit(21_000)
+                    .with_gas_price(gas_price)
+                    .with_value(target_amount),
+            ))
+            .await
+            .unwrap();
+        api.mine_one().await.unwrap();
+
+        assert_eq!(provider.get_balance(recipient).await.unwrap(), transfer_amount + target_amount);
+
+        let endpoint = handle.http_endpoint();
+        let fork_block_number = provider.get_block_number().await.unwrap();
+        let evm_opts = EvmOpts {
+            fork_url: Some(endpoint.clone()),
+            fork_block_number: Some(fork_block_number),
+            networks,
+            ..Default::default()
+        };
+        let fork = CreateFork { url: endpoint, enable_caching: false, evm_opts, resolved: None };
+        let mut backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        backend.set_networks(networks);
+
+        let fork_id = backend.create_fork_at_transaction(fork, target_hash).unwrap();
+        let fork = backend.inner.get_fork_by_id(fork_id).unwrap();
+        assert!(matches!(
+            fork.position,
+            ForkPosition::BeforeTransaction { transaction_index: 1, .. }
+        ));
+        assert_eq!(
+            fork.db.basic_ref(recipient).unwrap().unwrap_or_default().balance,
+            transfer_amount
+        );
     }
 
     #[test]

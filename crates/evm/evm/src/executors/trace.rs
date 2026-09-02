@@ -10,7 +10,7 @@ use foundry_evm_core::{
     fork::CreateFork,
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
 };
-use foundry_evm_hardforks::{ExecutionSpec, FoundryHardfork, TempoHardfork};
+use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::TraceRequirements;
 use revm::state::Bytecode;
@@ -41,33 +41,8 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
             .spec_id_opt(version.map(evm_spec_id::<SpecFor<FEN>>))
             .build(env.0, env.1, db, networks);
 
-        // Apply the state overrides.
         if let Some(state_overrides) = state_overrides {
-            for (address, overrides) in state_overrides {
-                if let Some(balance) = overrides.balance {
-                    executor.set_balance(address, balance)?;
-                }
-                if let Some(nonce) = overrides.nonce {
-                    executor.set_nonce(address, nonce)?;
-                }
-                if let Some(code) = overrides.code {
-                    let bytecode = Bytecode::new_raw_checked(code)
-                        .wrap_err("invalid bytecode in state override")?;
-                    executor.set_code(address, bytecode)?;
-                }
-                if let Some(state) = overrides.state {
-                    let state: HashMap<U256, U256> = state
-                        .into_iter()
-                        .map(|(slot, value)| (slot.into(), value.into()))
-                        .collect();
-                    executor.set_storage(address, state)?;
-                }
-                if let Some(state_diff) = overrides.state_diff {
-                    for (slot, value) in state_diff {
-                        executor.set_storage_slot(address, slot.into(), value.into())?;
-                    }
-                }
-            }
+            apply_state_overrides(&mut executor, state_overrides)?;
         }
 
         Ok(Self { executor })
@@ -122,14 +97,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         networks: NetworkConfigs,
         resolved_hardfork: Option<FoundryHardfork>,
     ) {
-        let tempo_hardfork = resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork);
-        #[cfg(feature = "monad")]
-        let monad_hardfork =
-            resolved_hardfork.and_then(foundry_evm_hardforks::MonadHardfork::from_foundry_hardfork);
-        #[cfg(not(feature = "monad"))]
-        let monad_hardfork = None;
-
-        config.labels.extend(networks.precompiles_label(tempo_hardfork, monad_hardfork));
+        config.labels.extend(networks.precompiles_label(resolved_hardfork));
     }
 
     /// uses the fork block number from the config
@@ -161,6 +129,36 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
     }
 }
 
+fn apply_state_overrides<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    state_overrides: StateOverride,
+) -> eyre::Result<()> {
+    for (address, overrides) in state_overrides {
+        if let Some(balance) = overrides.balance {
+            executor.set_balance(address, balance)?;
+        }
+        if let Some(nonce) = overrides.nonce {
+            executor.set_account_nonce(address, nonce)?;
+        }
+        if let Some(code) = overrides.code {
+            let bytecode =
+                Bytecode::new_raw_checked(code).wrap_err("invalid bytecode in state override")?;
+            executor.set_code(address, bytecode)?;
+        }
+        if let Some(state) = overrides.state {
+            let state: HashMap<U256, U256> =
+                state.into_iter().map(|(slot, value)| (slot.into(), value.into())).collect();
+            executor.set_storage(address, state)?;
+        }
+        if let Some(state_diff) = overrides.state_diff {
+            for (slot, value) in state_diff {
+                executor.set_storage_slot(address, slot.into(), value.into())?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn network_hardfork_from_evm_version(
     networks: NetworkConfigs,
     evm_version: EvmVersion,
@@ -188,5 +186,45 @@ impl<FEN: FoundryEvmNetwork> Deref for TracingExecutor<FEN> {
 impl<FEN: FoundryEvmNetwork> DerefMut for TracingExecutor<FEN> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.executor
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_rpc_types::state::AccountOverride;
+    use foundry_evm_core::{FoundryTransaction, evm::EthEvmNetwork};
+    use revm::context::Transaction;
+
+    #[test]
+    fn state_override_nonce_does_not_modify_transaction_nonce() {
+        let sender = Address::repeat_byte(0x11);
+        let mut tx_env = TxEnvFor::<EthEvmNetwork>::default();
+        tx_env.set_caller(sender);
+        tx_env.set_nonce(7);
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut evm_env = EvmEnvFor::<EthEvmNetwork>::default();
+        evm_env.cfg_env.disable_nonce_check = true;
+        let mut executor =
+            ExecutorBuilder::default().build(evm_env, tx_env, backend, NetworkConfigs::default());
+        executor.set_gas_limit(1_000_000);
+        executor.set_account_nonce(sender, 7).unwrap();
+
+        let overridden = Address::repeat_byte(0x42);
+        let mut state_overrides = StateOverride::default();
+        state_overrides.insert(sender, AccountOverride { nonce: Some(100), ..Default::default() });
+        state_overrides
+            .insert(overridden, AccountOverride { nonce: Some(200), ..Default::default() });
+
+        apply_state_overrides(&mut executor, state_overrides).unwrap();
+
+        assert_eq!(executor.get_nonce(sender).unwrap(), 100);
+        assert_eq!(executor.get_nonce(overridden).unwrap(), 200);
+        assert_eq!(executor.tx_env().caller(), sender);
+        assert_eq!(executor.tx_env().nonce(), 7);
+
+        let result =
+            executor.transact_raw(sender, overridden, Default::default(), U256::ZERO).unwrap();
+        assert_eq!(result.tx_env.nonce(), 7);
     }
 }

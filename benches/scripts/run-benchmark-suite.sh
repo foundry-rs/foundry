@@ -34,7 +34,9 @@ SYMBOLIC_REPOSITORIES=$(join_repositories \
   "SorellaLabs/angstrom:73b55b8eca667b9a50fa4d8b6a7f45ec647420f5" \
   "farcasterxyz/contracts:3f37e21db8e9c6319b4a3d5f62b1c514ef01c36b")
 
-NIGHTLY_REPOSITORIES="aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35"
+NIGHTLY_REPOSITORIES="aave/aave-v4:1e8de8630dfeb26ad309d986eaec44c1ceb48a6d"
+# The pinned Aave revision has three malformed expected revert payloads that exact matching rejects.
+NIGHTLY_TEST_REPOSITORIES="${NIGHTLY_REPOSITORIES} --nmt 'test_(updateUser(RiskPremium|DynamicConfig)WithSig_revertsWith_SpokeNotRegistered|repayWithSig_revertsWith_ERC20InsufficientAllowance)'"
 
 SUITE_PROFILES=()
 SUITE_NAMES=()
@@ -73,16 +75,16 @@ define_suite ci symbolic \
 
 # Nightly suites run once for stable and once for nightly.
 define_suite nightly test \
-  "forge_test" "${NIGHTLY_REPOSITORIES}" \
+  "forge_test" "${NIGHTLY_TEST_REPOSITORIES}" \
   "" "{version}-{date}-forge_test.json" true
 define_suite nightly fuzz \
-  "forge_fuzz_test" "${NIGHTLY_REPOSITORIES}" \
+  "forge_fuzz_test" "${NIGHTLY_TEST_REPOSITORIES}" \
   "" "{version}-{date}-forge_fuzz_test.json" false
 define_suite nightly build \
   "forge_build_no_cache,forge_build_with_cache" "${NIGHTLY_REPOSITORIES}" \
   "" "{version}-{date}-forge_build.json" false
 define_suite nightly coverage \
-  "forge_coverage" "${NIGHTLY_REPOSITORIES}" \
+  "forge_coverage" "${NIGHTLY_TEST_REPOSITORIES}" \
   "" "{version}-{date}-forge_coverage.json" false
 define_suite nightly symbolic \
   "forge_symbolic_test" "${SYMBOLIC_REPOSITORIES}" \

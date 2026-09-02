@@ -286,6 +286,122 @@ note[mixed-case-function]: function names should use mixedCase
 nothing to lint
 
 "#]]);
+
+    // Check config again, ignoring a directory via the documented `dir/**` glob form
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec![],
+            ignore: vec!["src/**".into()],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
+nothing to lint
+
+"#]]);
+
+    // Check config again, ignoring a bare directory path
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec![],
+            ignore: vec!["src".into()],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
+nothing to lint
+
+"#]]);
+});
+
+forgetest!(inline_config_suppresses_lint_in_inherited_source, |prj, cmd| {
+    prj.add_source(
+        "Base",
+        r#"
+abstract contract Base {
+    uint256 public value;
+}
+"#,
+    );
+    prj.add_source(
+        "Concrete",
+        r#"
+import {Base} from "./Base.sol";
+
+contract Concrete is Base {
+    function readValue() external view returns (uint256) {
+        return value;
+    }
+}
+"#,
+    );
+
+    cmd.args(["lint", "--only-lint", "uninitialized-state", "-D", "warnings"]).assert_failure();
+
+    prj.add_source(
+        "Base",
+        r#"
+abstract contract Base {
+    // forge-lint: disable-next-line(uninitialized-state)
+    uint256 public value;
+}
+"#,
+    );
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "uninitialized-state", "-D", "warnings"])
+        .assert_success()
+        .stderr_eq("");
+});
+
+forgetest!(ignored_inherited_source_does_not_receive_lints, |prj, cmd| {
+    prj.add_source(
+        "Base",
+        r#"
+abstract contract Base {
+    uint256 public value;
+}
+"#,
+    );
+    prj.add_source(
+        "Concrete",
+        r#"
+import {Base} from "./Base.sol";
+
+contract Concrete is Base {
+    function readValue() external view returns (uint256) {
+        return value;
+    }
+}
+"#,
+    );
+    prj.update_config(|config| config.lint.ignore = vec!["src/Base.sol".into()]);
+
+    cmd.args(["lint", "--only-lint", "uninitialized-state"]).assert_success().stderr_eq("");
+});
+
+forgetest!(span_owner_activates_lint_for_inherited_source, |prj, cmd| {
+    prj.add_source(
+        "Base",
+        r#"
+contract Base {
+    uint256 public value = 1;
+}
+"#,
+    );
+    prj.add_test(
+        "Concrete",
+        r#"
+import {Base} from "../src/Base.sol";
+
+contract ConcreteTest is Base {}
+"#,
+    );
+
+    cmd.args(["lint", "--only-lint", "could-be-constant", "-D", "notes"]).assert_failure();
 });
 
 forgetest!(default_lint_severity_includes_info, |prj, cmd| {
@@ -895,6 +1011,32 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 
 
 "#]]);
+});
+
+forgetest!(build_lint_resolves_imports_with_explicit_root, |prj, cmd| {
+    prj.add_source("Imported", "contract Imported {}");
+    prj.add_source(
+        "RelativeImporter",
+        r#"
+import {Imported} from "./Imported.sol";
+
+contract RelativeImporter is Imported {}
+"#,
+    );
+    prj.add_source(
+        "Importer",
+        r#"
+import {RelativeImporter} from "src/RelativeImporter.sol";
+
+contract Importer is RelativeImporter {}
+"#,
+    );
+
+    let root = prj.root();
+    cmd.current_dir(root.parent().unwrap())
+        .args(["build", "--force", "--no-cache", "--root"])
+        .arg(root.file_name().unwrap())
+        .assert_success();
 });
 
 forgetest!(build_no_lint_flag_skips_lint, |prj, cmd| {

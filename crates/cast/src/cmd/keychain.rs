@@ -21,7 +21,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     FoundryTransactionBuilder,
-    provider::ProviderBuilder,
+    provider::{ProviderBuilder, is_rpc_method_not_found},
     sh_warn, shell,
     tempo::{
         self, AccountsStoreView, KeyType, maybe_print_fee_token, read_tempo_accounts_store,
@@ -41,7 +41,7 @@ use tempo_contracts::precompiles::{
     ISignatureVerifier, ITIP20, PATH_USD_ADDRESS, SIGNATURE_VERIFIER_ADDRESS,
     account_keychain::{
         authorizeAdminKeyCall, authorizeKeyCall, authorizeKeyWithWitnessCall,
-        legacyAuthorizeKeyCall,
+        legacyAuthorizeKeyCall, legacySetAllowedCallsCall, setAllowedCallsCall,
     },
 };
 use tempo_primitives::transaction::{
@@ -3410,10 +3410,26 @@ async fn run_set_scope(
     send_tx: SendTxOpts,
     force: bool,
 ) -> Result<()> {
-    let calldata =
-        IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
+    let config = send_tx.eth.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let is_t11 = is_tempo_hardfork_active(&provider, TempoHardfork::T11).await?;
+    let calldata = encode_set_allowed_calls_calldata(key_address, scopes, is_t11);
     send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
+}
+
+fn encode_set_allowed_calls_calldata(
+    key_address: Address,
+    scopes: Vec<CallScope>,
+    is_t11: bool,
+) -> Vec<u8> {
+    if !is_t11 {
+        return legacySetAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
+    }
+
+    let scopes: Vec<_> = scopes.into_iter().map(abi_scope_to_auth_scope).collect();
+    let encoded_scopes = alloy_rlp::encode(scopes);
+    setAllowedCallsCall { keyId: key_address, scopes: encoded_scopes.into() }.abi_encode()
 }
 
 /// `cast keychain rs` — remove call scope for a target.
@@ -3488,9 +3504,8 @@ async fn run_policy_add_call(
         return Ok(());
     }
 
-    let calldata =
-        IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes: vec![target_scope] }
-            .abi_encode();
+    let is_t11 = is_tempo_hardfork_active(&provider, TempoHardfork::T11).await?;
+    let calldata = encode_set_allowed_calls_calldata(key_address, vec![target_scope], is_t11);
     send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
     Ok(())
 }
@@ -3842,10 +3857,6 @@ fn active_from_anvil_node_info(info: &AnvilNodeInfo, hardfork: TempoHardfork) ->
             .and_then(|active_hardfork| active_hardfork.parse::<TempoHardfork>().ok())
             .is_some_and(|active_hardfork| active_hardfork >= hardfork)
     })
-}
-
-fn is_rpc_method_not_found(err: &TransportError) -> bool {
-    err.as_error_resp().is_some_and(|payload| payload.code == -32601)
 }
 
 fn resolve_key_metadata(
@@ -4293,7 +4304,6 @@ fn decoded_entry_key_authorization(entry: &tempo::KeyEntry) -> Option<SignedKeyA
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_json_rpc::ErrorPayload;
     use std::str::FromStr;
 
     #[test]
@@ -4491,6 +4501,30 @@ mod tests {
             hard_fork: Some("T3".to_string()),
         };
         assert_eq!(active_from_anvil_node_info(&ethereum_t3, TempoHardfork::T3), None);
+    }
+
+    #[test]
+    fn test_encode_set_allowed_calls_calldata_by_hardfork() {
+        let key_address = target_addr(0x11);
+        let target = target_addr(0x22);
+        let recipient = target_addr(0x33);
+        let selector = [0xaa, 0xbb, 0xcc, 0xdd];
+        let scopes =
+            vec![CallScope { target, selectorRules: vec![rule(selector, vec![recipient])] }];
+
+        let legacy = encode_set_allowed_calls_calldata(key_address, scopes.clone(), false);
+        let legacy = legacySetAllowedCallsCall::abi_decode(&legacy).unwrap();
+        assert_eq!(legacy.keyId, key_address);
+        assert_eq!(legacy.scopes, scopes);
+
+        let t11 = encode_set_allowed_calls_calldata(key_address, scopes, true);
+        let t11 = setAllowedCallsCall::abi_decode(&t11).unwrap();
+        assert_eq!(t11.keyId, key_address);
+        let scopes: Vec<AuthCallScope> = alloy_rlp::decode_exact(&t11.scopes).unwrap();
+        assert_eq!(scopes.len(), 1);
+        assert_eq!(scopes[0].target, target);
+        assert_eq!(scopes[0].selector_rules[0].selector, selector);
+        assert_eq!(scopes[0].selector_rules[0].recipients, vec![recipient]);
     }
 
     fn rule(selector: [u8; 4], recipients: Vec<Address>) -> SelectorRule {
@@ -5272,19 +5306,5 @@ mod tests {
 
         assert!(sanitized.contains("private-key://<redacted>"));
         assert!(!sanitized.contains("super-secret"));
-    }
-
-    #[test]
-    fn test_rpc_method_not_found_detection() {
-        let method_missing: TransportError =
-            TransportError::ErrorResp(ErrorPayload::method_not_found());
-        assert!(is_rpc_method_not_found(&method_missing));
-
-        let internal_error: TransportError =
-            TransportError::ErrorResp(ErrorPayload::internal_error());
-        assert!(!is_rpc_method_not_found(&internal_error));
-
-        let transport_error = alloy_transport::TransportErrorKind::backend_gone();
-        assert!(!is_rpc_method_not_found(&transport_error));
     }
 }

@@ -1,10 +1,12 @@
 use std::fmt::Debug;
 
-use alloy_consensus::Typed2718;
+use alloy_chains::NamedChain;
+use alloy_consensus::{Transaction as _, Typed2718};
 pub use alloy_evm::EvmEnv;
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_primitives::{Address, B256, Bytes, U256};
+use foundry_evm_networks::celo::CELO_DYNAMIC_FEE_TX_TYPE;
 #[cfg(feature = "optimism")]
 use op_revm::transaction::deposit::DEPOSIT_TRANSACTION_TYPE;
 use revm::{
@@ -668,9 +670,8 @@ impl<DB: Database> FoundryContextExt
 
 /// Trait for converting an [`AnyRpcTransaction`] into a specific `TxEnv`.
 ///
-/// Implementations extract the inner [`alloy_consensus::TxEnvelope`] via
-/// [`as_envelope()`](alloy_network::AnyTxEnvelope::as_envelope) then delegate to
-/// [`FromRecoveredTx`].
+/// Ethereum envelopes delegate to [`FromRecoveredTx`]. Implementations may also explicitly
+/// project compatible network-specific envelopes into their execution environment.
 pub trait FromAnyRpcTransaction: Sized {
     /// Tries to convert an [`AnyRpcTransaction`] into `Self`.
     fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self>;
@@ -679,16 +680,43 @@ pub trait FromAnyRpcTransaction: Sized {
 impl FromAnyRpcTransaction for TxEnv {
     fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self> {
         if let Some(envelope) = tx.as_envelope() {
-            Ok(Self::from_recovered_tx(envelope, tx.from()))
-        } else {
-            eyre::bail!("cannot convert unknown transaction type to TxEnv");
+            return Ok(Self::from_recovered_tx(envelope, tx.from()));
         }
+
+        // CIP-64 transactions have EIP-1559 execution fields plus a Celo-specific fee currency.
+        // Foundry does not model fee payment in TxEnv, but can replay their EVM payload. Preserve
+        // the custom type so revm does not compare the fee-currency price with the native-CELO
+        // base fee. Keep this projection restricted to active Celo chains so an unrelated network
+        // cannot silently acquire semantics for its own type 0x7b envelope.
+        if let AnyTxEnvelope::Unknown(unknown) = &*tx.inner.inner
+            && unknown.ty() == CELO_DYNAMIC_FEE_TX_TYPE
+            && matches!(
+                unknown.chain_id().and_then(NamedChain::from_chain_id),
+                Some(NamedChain::Celo | NamedChain::CeloSepolia)
+            )
+        {
+            return Ok(Self {
+                tx_type: CELO_DYNAMIC_FEE_TX_TYPE,
+                caller: tx.from(),
+                gas_limit: unknown.gas_limit(),
+                gas_price: unknown.max_fee_per_gas(),
+                gas_priority_fee: unknown.max_priority_fee_per_gas(),
+                kind: unknown.kind(),
+                value: unknown.value(),
+                data: unknown.input().clone(),
+                nonce: unknown.nonce(),
+                chain_id: unknown.chain_id(),
+                access_list: unknown.access_list().cloned().unwrap_or_default(),
+                ..Default::default()
+            });
+        }
+
+        eyre::bail!("cannot convert unknown transaction type to TxEnv");
     }
 }
 
 impl FromAnyRpcTransaction for TempoTxEnv {
     fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self> {
-        use alloy_consensus::Transaction as _;
         if let Some(envelope) = tx.as_envelope() {
             return Ok(TxEnv::from_recovered_tx(envelope, tx.from()).into());
         }
@@ -723,6 +751,7 @@ impl FromAnyRpcTransaction for TempoTxEnv {
 #[cfg(feature = "optimism")]
 mod optimism {
     use super::*;
+    use alloy_eips::eip2718::Encodable2718;
     use alloy_op_evm::OpTx;
     use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
     use op_revm::{OpTransaction, transaction::OpTxTr};
@@ -914,7 +943,9 @@ mod optimism {
             if let Some(envelope) = tx.as_envelope() {
                 return Ok(Self(OpTransaction::<TxEnv> {
                     base: TxEnv::from_recovered_tx(envelope, tx.from()),
-                    enveloped_tx: None,
+                    // The L1 data fee is charged off these bytes, and op-revm rejects a
+                    // non-deposit transaction that arrives without them.
+                    enveloped_tx: Some(envelope.encoded_2718().into()),
                     deposit: Default::default(),
                 }));
             }
@@ -1149,6 +1180,55 @@ mod tests {
     }
 
     #[test]
+    fn from_any_rpc_transaction_for_celo_dynamic_fee() {
+        let from = Address::with_last_byte(0xAA);
+        let to = Address::with_last_byte(0xBB);
+        let fee_currency = Address::with_last_byte(0xCC);
+        let json = serde_json::json!({
+            "accessList": [],
+            "blockHash": B256::ZERO,
+            "blockNumber": "0x1",
+            "chainId": "0xa4ec",
+            "feeCurrency": fee_currency,
+            "from": from,
+            "gas": "0x5208",
+            "gasPrice": "0x3",
+            "hash": B256::ZERO,
+            "input": "0x1234",
+            "maxFeePerGas": "0x3",
+            "maxPriorityFeePerGas": "0x1",
+            "nonce": "0x2a",
+            "r": B256::ZERO,
+            "s": B256::ZERO,
+            "to": to,
+            "transactionIndex": "0x0",
+            "type": "0x7b",
+            "v": "0x0",
+            "value": "0x65",
+            "yParity": "0x0"
+        });
+        let mut non_celo_json = json.clone();
+        non_celo_json["chainId"] = serde_json::json!("0x1");
+        let non_celo_tx: AnyRpcTransaction = serde_json::from_value(non_celo_json).unwrap();
+        assert!(TxEnv::from_any_rpc_transaction(&non_celo_tx).is_err());
+
+        let any_tx: AnyRpcTransaction = serde_json::from_value(json).unwrap();
+
+        let tx_env = TxEnv::from_any_rpc_transaction(&any_tx).unwrap();
+
+        assert_eq!(tx_env.tx_type, CELO_DYNAMIC_FEE_TX_TYPE);
+        assert_eq!(tx_env.caller, from);
+        assert_eq!(tx_env.nonce, 42);
+        assert_eq!(tx_env.gas_limit, 21000);
+        assert_eq!(tx_env.gas_price, 3);
+        assert_eq!(tx_env.gas_priority_fee, Some(1));
+        assert_eq!(tx_env.kind, TxKind::Call(to));
+        assert_eq!(tx_env.value, U256::from(101));
+        assert_eq!(tx_env.data, Bytes::from_static(&[0x12, 0x34]));
+        assert_eq!(tx_env.chain_id, Some(42_220));
+    }
+
+    #[test]
     fn from_any_rpc_transaction_for_tempo_eth_envelope() {
         let from = Address::random();
         let signed_tx = make_signed_eip1559();
@@ -1209,6 +1289,7 @@ mod tests {
     mod optimism {
         use super::*;
         use alloy_consensus::Sealed;
+        use alloy_eips::eip2718::Encodable2718;
         use alloy_op_evm::{OpEvmFactory, OpTx};
         use op_alloy_consensus::{OpTxEnvelope, TxDeposit, transaction::OpTransactionInfo};
         use op_alloy_rpc_types::Transaction as OpRpcTransaction;
@@ -1253,6 +1334,12 @@ mod tests {
 
             let op_tx_env = OpTx::from_any_rpc_transaction(&any_tx).unwrap();
             assert_eq!(op_tx_env.base, expected_base);
+            // op-revm charges the L1 data fee off these bytes and rejects a non-deposit
+            // transaction that arrives without them.
+            assert_eq!(
+                op_tx_env.enveloped_tx,
+                Some(any_tx.as_envelope().unwrap().encoded_2718().into())
+            );
         }
 
         #[test]

@@ -22,21 +22,21 @@ use monad_revm::{
 };
 use revm::{
     context::{
-        BlockEnv, ContextTr, LocalContextTr, Transaction, TransactionType, TxEnv,
+        BlockEnv, ContextTr, Transaction, TransactionType, TxEnv,
         journaled_state::account::JournaledAccountTr,
         result::{EVMError, ResultAndState},
     },
     context_interface::{Cfg, ContextSetters, transaction::AuthorizationTr},
-    handler::{EthFrame, EvmTr, FrameResult, Handler},
+    handler::{EthFrame, EvmTr, FrameResult},
     inspector::{InspectSystemCallEvm, Inspector, InspectorHandler},
-    interpreter::{FrameInput, GasTracker, SharedMemory, interpreter_action::FrameInit},
+    interpreter::FrameInput,
     primitives::{Address, Bytes, HashSet, U256},
 };
 
 use crate::{
     FoundryChain, FoundryContextExt, FoundryInspectorExt, FoundryJournal,
     backend::{DatabaseExt, JournaledState},
-    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor},
+    evm::{FoundryEvmFactory, NestedEvm, NestedEvmFor, run_inspected_frame},
 };
 
 impl FoundryChain<TxEnv> for MonadChainContext {
@@ -326,7 +326,8 @@ fn finish_protocol_system_call<H>(
     Ok(result)
 }
 
-fn try_transact_monad_system_replay<DB, I>(
+/// Tries to execute a canonical Monad system transaction on an existing Monad EVM.
+pub fn try_transact_monad_system_replay<DB, I>(
     evm: &mut MonadEvm<DB, I>,
     tx: &TxEnv,
 ) -> eyre::Result<Option<ResultAndState>>
@@ -452,22 +453,7 @@ impl<'db, I: FoundryInspectorExt<MonadContext<&'db mut dyn DatabaseExt<MonadEvmF
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
-        let mut handler = MonadEvmHandler::<I>::new();
-
-        let memory =
-            SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
-        let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
-
-        let mut frame_result = handler.inspect_run_exec_loop(self, first_frame_input)?;
-
-        let mut parent_gas = GasTracker::new(
-            frame_result.gas().limit(),
-            frame_result.gas().remaining(),
-            frame_result.gas().reservoir(),
-        );
-        handler.last_frame_result(self, &mut frame_result, &mut parent_gas)?;
-
-        Ok(frame_result)
+        run_inspected_frame(self, MonadEvmHandler::<I>::new(), frame)
     }
 
     fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState> {

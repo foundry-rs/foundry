@@ -85,7 +85,10 @@ pub fn apply_chain_and_block_specific_env_changes_for_chain<
     source_chain_id: ChainId,
     configs: NetworkConfigs,
 ) {
-    use NamedChain::{BinanceSmartChain, BinanceSmartChainTestnet, Mainnet};
+    use NamedChain::{
+        Avalanche, AvalancheFuji, BinanceSmartChain, BinanceSmartChainTestnet, Mainnet, Polygon,
+        PolygonAmoy,
+    };
 
     if let Ok(chain) = NamedChain::try_from(source_chain_id) {
         let block_number = block.header().number();
@@ -101,13 +104,18 @@ pub fn apply_chain_and_block_specific_env_changes_for_chain<
 
                 return;
             }
-            BinanceSmartChain | BinanceSmartChainTestnet => {
+            BinanceSmartChain
+            | BinanceSmartChainTestnet
+            | Polygon
+            | PolygonAmoy
+            | Avalanche
+            | AvalancheFuji => {
                 // https://github.com/foundry-rs/foundry/issues/9942
                 // As far as observed from the source code of bnb-chain/bsc, the `difficulty` field
                 // is still in use and returned by the corresponding opcode but `prevrandao`
                 // (`mixHash`) is always zero, even though bsc adopts the newer EVM
                 // specification. This will confuse revm and causes emulation
-                // failure.
+                // failure. Polygon and Avalanche behave the same way.
                 evm_env.block_env.set_prevrandao(Some(evm_env.block_env.difficulty().into()));
                 return;
             }
@@ -123,6 +131,10 @@ pub fn apply_chain_and_block_specific_env_changes_for_chain<
                 {
                     evm_env.block_env.set_number(l1_block_number);
                 }
+
+                // `mixHash` carries L1 metadata rather than randomness here, while the
+                // `PREVRANDAO` opcode returns `difficulty` like it does on the chains above.
+                evm_env.block_env.set_prevrandao(Some(evm_env.block_env.difficulty().into()));
             }
             _ => {}
         }
@@ -276,6 +288,56 @@ mod tests {
         );
 
         assert!(evm_env.block_env.prevrandao.is_some());
+    }
+
+    #[test]
+    fn block_normalization_uses_difficulty_as_prevrandao() {
+        // These chains keep using `difficulty` and return it from `PREVRANDAO`, so a header
+        // `mixHash` of zero (or, on Arbitrum, packed L1 metadata) must not reach the block env.
+        for (chain, mix_hash) in [
+            (NamedChain::BinanceSmartChain, B256::ZERO),
+            (NamedChain::Polygon, B256::ZERO),
+            (NamedChain::PolygonAmoy, B256::ZERO),
+            (NamedChain::Avalanche, B256::ZERO),
+            (NamedChain::AvalancheFuji, B256::ZERO),
+            (NamedChain::Arbitrum, B256::repeat_byte(0xab)),
+            (NamedChain::ArbitrumNova, B256::repeat_byte(0xab)),
+            (NamedChain::ArbitrumSepolia, B256::repeat_byte(0xab)),
+        ] {
+            let header = AnyHeader {
+                difficulty: U256::from(1),
+                mix_hash: Some(mix_hash),
+                ..Default::default()
+            };
+            let block = AnyRpcBlock::new(
+                Block::new(
+                    AnyRpcHeader::from_sealed(header.seal(B256::ZERO)),
+                    BlockTransactions::Full(Vec::new()),
+                )
+                .into(),
+            );
+            let mut evm_env = EvmEnv::new(
+                CfgEnv::<SpecId>::default(),
+                BlockEnv {
+                    difficulty: U256::from(1),
+                    prevrandao: Some(mix_hash),
+                    ..Default::default()
+                },
+            );
+
+            apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
+                &mut evm_env,
+                &block,
+                chain as u64,
+                NetworkConfigs::default(),
+            );
+
+            assert_eq!(
+                evm_env.block_env.prevrandao,
+                Some(B256::from(U256::from(1))),
+                "{chain:?} should expose `difficulty` as `PREVRANDAO`"
+            );
+        }
     }
 
     #[test]

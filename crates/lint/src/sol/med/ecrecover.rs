@@ -559,7 +559,7 @@ impl<'hir> Analyzer<'hir> {
         }) else {
             return;
         };
-        if matches!(source, LoopSource::For)
+        if matches!(source, LoopSource::ForWithUpdate)
             && let Some(next) = for_loop_next_expr(block)
         {
             self.add_expr_effects(next, &mut effects);

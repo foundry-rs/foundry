@@ -236,7 +236,7 @@ async fn load_prelude_file<FEN: FoundryEvmNetwork>(
 ) -> Result<ControlFlow<()>> {
     let prelude = fs::read_to_string(file)
         .wrap_err("Could not load source file. Are you sure this path is correct?")?;
-    dispatcher.dispatch(&prelude).await
+    dispatcher.dispatch_solidity(&prelude).await
 }
 
 async fn handle_cli_command<FEN: FoundryEvmNetwork>(
@@ -290,5 +290,22 @@ mod tests {
         let inferred = infer_network_from_chain_id(ethereum, Some(143)).unwrap();
 
         assert_eq!(inferred, ethereum);
+    }
+
+    #[tokio::test]
+    async fn prelude_does_not_dispatch_chisel_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("prelude.sol");
+        std::fs::write(&file, "!calldata 0x00").unwrap();
+        let config = crate::source::SessionSourceConfig::<EthEvmNetwork> {
+            foundry_config: Config {
+                solc: Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 29))),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut dispatcher = ChiselDispatcher::new(config).unwrap();
+
+        assert!(load_prelude_file(&mut dispatcher, file).await.is_err());
     }
 }

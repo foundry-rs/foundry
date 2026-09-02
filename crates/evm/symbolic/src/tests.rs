@@ -4181,20 +4181,31 @@ fn solver_normalizes_checked_add_overflow_guard_for_bounded_operands() {
 }
 
 #[test]
-fn solver_does_not_normalize_unbounded_checked_add_overflow_guard() {
+fn solver_normalizes_unbounded_checked_add_overflow_guard() {
     let mut cx = SymCx::new();
     let a = SymExpr::var(&mut cx, "a");
     let b = SymExpr::var(&mut cx, "b");
-    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, a.clone(), b);
-    let original = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, a, sum);
-    let normalized = normalize_bool_for_solver(&mut cx, original.clone());
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, a.clone(), b.clone());
+    let limit = SymExpr::not(&mut cx, a.clone());
+    let overflow = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, limit.clone(), b.clone());
+    let no_overflow = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, b, limit);
+    let cases = [
+        (SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, a.clone(), sum.clone()), overflow.clone()),
+        (SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, sum.clone(), a.clone()), overflow),
+        (SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, a.clone(), sum.clone()), no_overflow.clone()),
+        (SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, sum.clone(), a.clone()), no_overflow.clone()),
+        (SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, sum, a).not(&mut cx), no_overflow),
+    ];
+    for (original, expected) in &cases {
+        assert_eq!(normalize_bool_for_solver(&mut cx, original.clone()), *expected);
+    }
 
-    assert_ne!(normalized, SymBoolExpr::constant(&mut cx, false));
-
-    let model =
-        symbolic_model(&mut cx, [("a".to_string(), U256::MAX), ("b".to_string(), U256::from(1))]);
-    assert!(original.eval_model(&model).unwrap());
-    assert_eq!(original.eval_model(&model).unwrap(), normalized.eval_model(&model).unwrap());
+    for (a, b) in [(U256::MAX, U256::ZERO), (U256::MAX, U256::ONE)] {
+        let model = symbolic_model(&mut cx, [("a".to_string(), a), ("b".to_string(), b)]);
+        for (original, expected) in &cases {
+            assert_eq!(original.eval_model(&model).unwrap(), expected.eval_model(&model).unwrap());
+        }
+    }
 }
 
 #[test]
@@ -4707,6 +4718,30 @@ fn is_sat_uses_two_var_witness_before_solver() {
 
 #[cfg(unix)]
 #[test]
+fn is_sat_uses_zero_witness_before_solver() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("zero-is-sat");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    let x = SymExpr::var(&mut cx, "calldata_0");
+    let y = SymExpr::var(&mut cx, "calldata_1");
+    let z = SymExpr::var(&mut cx, "calldata_2");
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, x, y);
+    let sum = SymExpr::binop(&mut cx, SymBinOp::Add, sum, z);
+    let ten = SymExpr::constant(&mut cx, U256::from(10));
+    let constraints = vec![SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, sum, ten)];
+
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
 fn gasleft_can_use_single_var_witness_before_solver() {
     let mut cx = SymCx::new();
     let marker = portfolio_test_marker("gasleft-single-var");
@@ -4920,9 +4955,9 @@ fn is_sat_removes_implied_mul_div_monotonic_condition() {
     assert!(solver.is_sat_branch(&mut cx, &constraints).unwrap());
 
     let stats = solver.stats();
-    assert_eq!(stats.smt_queries, 1);
+    assert_eq!(stats.smt_queries, 0);
     assert_eq!(solver.heuristic_witnesses(), 0);
-    assert_eq!(counted_solver_invocations(&marker), 1);
+    assert_eq!(counted_solver_invocations(&marker), 0);
     let _ = std::fs::remove_file(&marker);
 }
 
@@ -5168,7 +5203,7 @@ fn sat_cache_reuses_reversed_comparisons() {
     assert_eq!(stats.solver_queries, 3);
     assert_eq!(stats.sat_queries, 6);
     assert_eq!(stats.sat_cache_hits, 3);
-    assert_eq!(counted_solver_invocations(&marker), 3);
+    assert_eq!(counted_solver_invocations(&marker), 2);
     let _ = std::fs::remove_file(&marker);
 }
 
