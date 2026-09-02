@@ -166,6 +166,21 @@ pub async fn get_func_etherscan(
     Err(eyre::eyre!("Function not found in abi"))
 }
 
+/// Decides which proxy implementation address (if any) `find_source` should follow for
+/// `metadata`.
+///
+/// Returns `Some(address)` when `metadata` reports itself as a proxy (`proxy != 0`) *and*
+/// resolved an implementation address. Returns `None` when `metadata` is not a proxy, or when
+/// it claims to be a proxy but Etherscan did not resolve an implementation address
+/// (`Implementation` came back empty, which does happen in practice for proxy patterns
+/// Etherscan's heuristic can't fully resolve) - callers should treat that the same as "not a
+/// proxy" and fall back to the metadata's own source, rather than panicking.
+const fn resolve_proxy_implementation(
+    metadata: &foundry_block_explorers::contract::Metadata,
+) -> Option<Address> {
+    if metadata.proxy == 0 { None } else { metadata.implementation }
+}
+
 /// If the code at `address` is a proxy, recurse until we find the implementation.
 pub fn find_source(
     client: Client,
@@ -175,10 +190,7 @@ pub fn find_source(
         trace!(%address, "find Etherscan source");
         let source = client.contract_source_code(address).await?;
         let metadata = source.items.first().wrap_err("Etherscan returned no data")?;
-        if metadata.proxy == 0 {
-            Ok(source)
-        } else {
-            let implementation = metadata.implementation.unwrap();
+        if let Some(implementation) = resolve_proxy_implementation(metadata) {
             sh_println!(
                 "Contract at {address} is a proxy, trying to fetch source at {implementation}..."
             )?;
@@ -194,6 +206,11 @@ pub fn find_source(
                     }
                 }
             }
+        } else {
+            if metadata.proxy != 0 {
+                error!(%address, "Etherscan reports this contract as a proxy but returned no implementation address");
+            }
+            Ok(source)
         }
     })
 }
@@ -209,6 +226,81 @@ mod tests {
     use super::*;
     use alloy_dyn_abi::EventExt;
     use alloy_primitives::{B256, U256};
+
+    /// Regression test for a real, reachable panic: Etherscan (and compatible explorers) can
+    /// report `Proxy: 1` (this contract is a proxy) while `Implementation` comes back as an
+    /// empty string, which `foundry_block_explorers`' own `deserialize_address_opt` turns into
+    /// `None` (see that crate's `can_deserialize_address_opt` test, which cites a real address
+    /// exhibiting this exact empty-string shape: `0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413`).
+    ///
+    /// `find_source` used to do `metadata.implementation.unwrap()` on this combination, which
+    /// panics on any real-world response shaped this way. This drives the actual extracted
+    /// decision function, `resolve_proxy_implementation`, with metadata deserialized through
+    /// the real `Metadata` type (not a synthetic struct) - confirmed to panic if you swap the
+    /// function body back to `Some(metadata.implementation.unwrap())` for the `proxy != 0` arm.
+    #[test]
+    fn test_proxy_without_implementation_does_not_panic() {
+        use foundry_block_explorers::contract::Metadata;
+
+        // Shape of a real `getsourcecode` result entry: `Proxy` says "yes, this is a proxy" but
+        // `Implementation` is empty (unresolved/unverified implementation).
+        let json = serde_json::json!({
+            "SourceCode": "// dummy",
+            "ABI": "[]",
+            "ContractName": "Dummy",
+            "CompilerVersion": "v0.8.0+commit.c7dfd78e",
+            "OptimizationUsed": "0",
+            "Runs": "200",
+            "ConstructorArguments": "",
+            "EVMVersion": "Default",
+            "Library": "",
+            "LicenseType": "None",
+            "Proxy": "1",
+            "Implementation": "",
+            "SwarmSource": ""
+        });
+
+        let metadata: Metadata =
+            serde_json::from_value(json).expect("realistic Etherscan payload must deserialize");
+
+        // This is exactly the combination that used to reach `.unwrap()` on `None`.
+        assert_eq!(metadata.proxy, 1, "Proxy: 1 must deserialize to a nonzero proxy flag");
+        assert_eq!(
+            metadata.implementation, None,
+            "an empty Implementation string must deserialize to None, not a parsed address"
+        );
+
+        // Must not panic: this is the exact call `find_source` makes.
+        assert_eq!(resolve_proxy_implementation(&metadata), None);
+    }
+
+    #[test]
+    fn resolve_proxy_implementation_follows_real_implementation() {
+        use alloy_primitives::address;
+        use foundry_block_explorers::contract::Metadata;
+
+        let json = serde_json::json!({
+            "SourceCode": "// dummy",
+            "ABI": "[]",
+            "ContractName": "Dummy",
+            "CompilerVersion": "v0.8.0+commit.c7dfd78e",
+            "OptimizationUsed": "0",
+            "Runs": "200",
+            "ConstructorArguments": "",
+            "EVMVersion": "Default",
+            "Library": "",
+            "LicenseType": "None",
+            "Proxy": "1",
+            "Implementation": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+            "SwarmSource": ""
+        });
+        let metadata: Metadata = serde_json::from_value(json).unwrap();
+
+        assert_eq!(
+            resolve_proxy_implementation(&metadata),
+            Some(address!("0x1F98431c8aD98523631AE4a59f267346ea31F984"))
+        );
+    }
 
     #[test]
     fn test_get_func() {
