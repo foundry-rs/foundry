@@ -5335,6 +5335,8 @@ where
             let current_excess_blob_gas_and_price = self.excess_blob_gas_and_price();
 
             let mut evm_env = self.evm_env.read().clone();
+            #[cfg(feature = "monad")]
+            let execution_chain_id = evm_env.cfg_env.chain_id;
             let hardfork = self.hardfork();
 
             if evm_env.block_env.basefee == 0 {
@@ -5441,6 +5443,30 @@ where
                     self.cheats.consume_next_block_prevrandao(pending);
                 }
 
+                let header = &block_info.block.header;
+                let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
+                    header.gas_used,
+                    header.gas_limit,
+                    header.base_fee_per_gas.unwrap_or_default(),
+                );
+                let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
+                    header.excess_blob_gas.unwrap_or_default(),
+                    header.blob_gas_used.unwrap_or_default(),
+                );
+                let next_block_blob_fees = BlobExcessGasAndPrice::new(
+                    next_block_excess_blob_gas,
+                    self.fees.blob_params().update_fraction as u64,
+                );
+
+                // Live execution readers acquire the database read lock before cloning the block
+                // environment and next-block fee state. Publish the complete snapshot under the
+                // database write lock so readers observe either the parent or newly mined state.
+                // The database is always the outer lock, and no path holds an environment or fee
+                // guard while waiting for it, so these acquisitions cannot form a lock cycle.
+                evm_env.block_env.difficulty = U256::ZERO;
+                *self.evm_env.write() = evm_env;
+                self.fees.set_next_block_fees(next_block_base_fee, next_block_blob_fees);
+
                 (block_info, included, invalid, not_yet_valid, block_hash, parent_state)
             };
 
@@ -5492,7 +5518,7 @@ where
                     &mut storage,
                     block_hash,
                     participants,
-                    evm_env.cfg_env.chain_id,
+                    execution_chain_id,
                     hardfork,
                 );
             }
@@ -5530,12 +5556,6 @@ where
 
             self.time.mark_block_created();
 
-            // we intentionally set the difficulty to `0` for newer blocks
-            evm_env.block_env.difficulty = U256::from(0);
-
-            // update env with new values
-            *self.evm_env.write() = evm_env;
-
             let timestamp = utc_from_secs(header.timestamp);
 
             node_info!("    Block Number: {}", block_number);
@@ -5551,24 +5571,6 @@ where
 
             (outcome, header, block_hash)
         };
-        let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-            header.gas_used,
-            header.gas_limit,
-            header.base_fee_per_gas.unwrap_or_default(),
-        );
-        let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
-            header.excess_blob_gas.unwrap_or_default(),
-            header.blob_gas_used.unwrap_or_default(),
-        );
-
-        // update next base fee
-        self.fees.set_base_fee(next_block_base_fee);
-
-        self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
-            next_block_excess_blob_gas,
-            self.fees.blob_params().update_fraction as u64,
-        ));
-
         // notify all listeners
         self.notify_on_new_block(header.into_inner(), block_hash);
 
@@ -9319,12 +9321,12 @@ fn foundry_header(networks: &NetworkConfigs, header: Header) -> FoundryHeader {
 #[cfg(test)]
 mod tests {
     use super::{
-        ForkCacheNamespace, ForkCacheSource, StagedForkCacheLease, StagedForkDbUser,
-        arbitrum_replay_block_number,
+        BlockRequest, FeeDetails, ForkCacheNamespace, ForkCacheSource, InstructionResult, Output,
+        StagedForkCacheLease, StagedForkDbUser, arbitrum_replay_block_number,
     };
     use crate::{NodeConfig, config::ForkTransactionReplay, spawn};
     use alloy_network::{AnyHeader, AnyRpcBlock, AnyRpcHeader, TransactionBuilder};
-    use alloy_primitives::{B256, Bytes, U256};
+    use alloy_primitives::{Address, B256, Bytes, U256};
     use alloy_provider::Provider;
     use alloy_rpc_types::{Block, BlockTransactions, TransactionRequest, state::EvmOverrides};
     use alloy_serde::WithOtherFields;
@@ -9334,7 +9336,7 @@ mod tests {
         hardfork::{EthereumHardfork, FoundryHardfork},
     };
     use foundry_evm_networks::arbitrum;
-    use std::sync::Arc;
+    use std::sync::{Arc, mpsc};
     use tempfile::tempdir;
 
     fn test_cache_db(cache_path: std::path::PathBuf) -> BlockchainDb {
@@ -9456,6 +9458,79 @@ mod tests {
         assert_eq!(api.backend.best_number(), best_number);
         assert_eq!(api.backend.best_hash(), best_hash);
         assert_eq!(api.backend.time().last_block_wall_time(), head_wall_time);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn live_execution_snapshot_is_coherent_during_mining() {
+        let (api, handle) = spawn(NodeConfig::test().with_no_mining(true)).await;
+        let sender = handle.dev_wallets().next().unwrap().address();
+        let recipient = Address::repeat_byte(0x11);
+        let contract = Address::repeat_byte(0x22);
+
+        // Return the recipient balance followed by NUMBER. Before mining both are zero; after the
+        // queued transfer is mined both are one.
+        let mut code = vec![0x73];
+        code.extend_from_slice(recipient.as_slice());
+        code.extend_from_slice(&[
+            0x31, 0x60, 0x00, 0x52, 0x43, 0x60, 0x20, 0x52, 0x60, 0x40, 0x60, 0x00, 0xf3,
+        ]);
+        api.anvil_set_code(contract, code.into()).await.unwrap();
+        api.send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(recipient).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+
+        let resolved_head = api.backend.best_number();
+        let db_guard = api.backend.db.write().await;
+
+        // Polling while holding the database makes the lock queue deterministic: mining owns the
+        // first waiter and the call that already resolved `latest` owns the second.
+        let mining_api = api.clone();
+        let mut mining = Box::pin(async move { mining_api.mine_one().await });
+        assert!(futures::poll!(mining.as_mut()).is_pending());
+
+        let request = WithOtherFields::new(TransactionRequest::default().to(contract));
+        let mut call = Box::pin(api.backend.call(
+            request,
+            FeeDetails::zero(),
+            Some(BlockRequest::Number(resolved_head)),
+            EvmOverrides::default(),
+        ));
+        assert!(futures::poll!(call.as_mut()).is_pending());
+
+        // Pause canonical block publication after the database snapshot is published. A separate
+        // thread owns this synchronous lock so the async test does not hold it across an await.
+        let backend = api.backend.clone();
+        let (storage_locked_tx, storage_locked_rx) = mpsc::channel();
+        let (release_storage_tx, release_storage_rx) = mpsc::channel();
+        let storage_thread = std::thread::spawn(move || {
+            let storage_guard = backend.blockchain.storage.write();
+            storage_locked_tx.send(()).unwrap();
+            release_storage_rx.recv().unwrap();
+            drop(storage_guard);
+        });
+        storage_locked_rx.recv().unwrap();
+        drop(db_guard);
+        let mining = tokio::spawn(mining);
+        let (exit, output, _, _) = call.await.unwrap();
+
+        // `with_pending_block` builds its environment from this snapshot before reading canonical
+        // storage. It must already contain the fee derived for block two while mining is paused.
+        let pending_env = api.backend.next_evm_env();
+        assert_eq!(pending_env.block_env.number, U256::from(2));
+        assert_eq!(pending_env.block_env.basefee, 875_175_000);
+
+        release_storage_tx.send(()).unwrap();
+        storage_thread.join().unwrap();
+        mining.await.unwrap().unwrap();
+
+        assert_eq!(exit, InstructionResult::Return);
+        let Some(Output::Call(output)) = output else { panic!("call did not return data") };
+        assert_eq!(output.len(), 64);
+        let balance = U256::from_be_slice(&output[..32]);
+        let block_number = U256::from_be_slice(&output[32..]);
+        assert_eq!((balance, block_number), (U256::from(1), U256::from(1)));
     }
 
     struct CacheFlushingDb(BlockchainDb);
