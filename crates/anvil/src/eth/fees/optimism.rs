@@ -194,11 +194,11 @@ mod tests {
                 inherited: Some(OptimismBaseFeeRules::decode(cached).unwrap()),
                 fallback,
             };
+            let parent_fees = rules.parent_header_fees(&header);
 
-            assert_eq!(
-                rules.next_block_base_fee(&header),
-                supplied_rules.next_block_base_fee(&header)
-            );
+            assert_eq!(parent_fees.base_fee, supplied_rules.next_block_base_fee(&header));
+            assert_eq!(parent_fees.extra_data.as_ref(), supplied);
+            assert_eq!(parent_fees.optimism_jovian, Some(supplied_rules.is_jovian()));
         }
     }
 }

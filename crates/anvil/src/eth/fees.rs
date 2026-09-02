@@ -102,15 +102,37 @@ impl BaseFeeRules {
         }
     }
 
-    fn extra_data_from_header<H: BlockHeader>(
-        self,
-        #[cfg_attr(not(feature = "optimism"), allow(unused_variables))] header: &H,
-    ) -> Bytes {
+    fn parent_header_fees<H: BlockHeader>(self, header: &H) -> ParentHeaderFees {
         match self {
-            Self::Standard(_) => Bytes::new(),
+            Self::Standard(params) => ParentHeaderFees {
+                base_fee: calc_next_block_base_fee(
+                    header.gas_used(),
+                    header.gas_limit(),
+                    header.base_fee_per_gas().unwrap_or_default(),
+                    params,
+                ),
+                ..Default::default()
+            },
             #[cfg(feature = "optimism")]
-            Self::Optimism { .. } => optimism::OptimismBaseFeeRules::decode(header.extra_data())
-                .map_or_else(Bytes::new, optimism::OptimismBaseFeeRules::extra_data),
+            Self::Optimism { fallback, .. } => {
+                let inherited = optimism::OptimismBaseFeeRules::decode(header.extra_data());
+                ParentHeaderFees {
+                    base_fee: inherited.map_or_else(
+                        || {
+                            calc_next_block_base_fee(
+                                header.gas_used(),
+                                header.gas_limit(),
+                                header.base_fee_per_gas().unwrap_or_default(),
+                                fallback,
+                            )
+                        },
+                        |rules| rules.next_block_base_fee(header),
+                    ),
+                    extra_data: inherited
+                        .map_or_else(Bytes::new, optimism::OptimismBaseFeeRules::extra_data),
+                    optimism_jovian: inherited.map(optimism::OptimismBaseFeeRules::is_jovian),
+                }
+            }
         }
     }
 
@@ -137,6 +159,16 @@ impl BaseFeeRules {
             }
         }
     }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ParentHeaderFees {
+    /// Base fee inherited by the child block.
+    pub(crate) base_fee: u64,
+    /// Dynamic fee parameters inherited by the child block.
+    pub(crate) extra_data: Bytes,
+    /// Whether the decoded Optimism fee parameters activate Jovian.
+    pub(crate) optimism_jovian: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -262,21 +294,6 @@ impl FeeManager {
         self.state.read().rules.base_fee.extra_data()
     }
 
-    /// Returns the dynamic Optimism-family fee parameters encoded by `header`, if any.
-    pub(crate) fn base_fee_extra_data_from_header<H: BlockHeader>(&self, header: &H) -> Bytes {
-        self.state.read().rules.base_fee.extra_data_from_header(header)
-    }
-
-    /// Returns whether `header` activates Jovian's DA-footprint base fee accounting.
-    #[cfg(feature = "optimism")]
-    pub(crate) fn is_optimism_jovian_header<H: BlockHeader>(&self, header: &H) -> bool {
-        if !matches!(self.state.read().rules.base_fee, BaseFeeRules::Optimism { .. }) {
-            return false;
-        }
-        optimism::OptimismBaseFeeRules::decode(header.extra_data())
-            .is_some_and(optimism::OptimismBaseFeeRules::is_jovian)
-    }
-
     pub fn elasticity(&self) -> f64 {
         1f64 / self.state.read().rules.base_fee.params().elasticity_multiplier as f64
     }
@@ -388,6 +405,20 @@ impl FeeManager {
         calculate_next_block_base_fee_from_header(state.rules, header)
     }
 
+    /// Returns all fee metadata inherited from a parent header, honoring the configured zero-fee
+    /// sentinel.
+    pub(crate) fn get_parent_header_fees<H: BlockHeader>(&self, header: &H) -> ParentHeaderFees {
+        let state = self.state.read();
+        if (state.rules.spec_id as u8) < (SpecId::LONDON as u8) {
+            return ParentHeaderFees::default();
+        }
+        let mut fees = calculate_parent_header_fees(state.rules, header);
+        if state.base_fee == 0 {
+            fees.base_fee = 0;
+        }
+        fees
+    }
+
     /// Calculates the next block base fee from a complete parent header without applying the
     /// configured zero-fee sentinel.
     pub(crate) fn calculate_next_block_base_fee_from_header<H: BlockHeader>(
@@ -399,6 +430,19 @@ impl FeeManager {
             return 0;
         }
         calculate_next_block_base_fee_from_header(rules, header)
+    }
+
+    /// Returns all fee metadata inherited from a parent header without applying the configured
+    /// zero-fee sentinel.
+    pub(crate) fn calculate_parent_header_fees<H: BlockHeader>(
+        &self,
+        header: &H,
+    ) -> ParentHeaderFees {
+        let rules = self.state.read().rules;
+        if (rules.spec_id as u8) < (SpecId::LONDON as u8) {
+            return ParentHeaderFees::default();
+        }
+        calculate_parent_header_fees(rules, header)
     }
 
     /// Calculates the next block blob base fee.
@@ -429,6 +473,20 @@ fn calculate_next_block_base_fee_per_gas(
         return tempo_next_block_base_fee(hardfork, gas_used, last_fee_per_gas);
     }
     calc_next_block_base_fee(gas_used, gas_limit, last_fee_per_gas, rules.base_fee.params())
+}
+
+fn calculate_parent_header_fees<H: BlockHeader>(rules: FeeRules, header: &H) -> ParentHeaderFees {
+    if let Some(hardfork) = rules.tempo_hardfork {
+        return ParentHeaderFees {
+            base_fee: tempo_next_block_base_fee(
+                hardfork,
+                header.gas_used(),
+                header.base_fee_per_gas().unwrap_or_default(),
+            ),
+            ..Default::default()
+        };
+    }
+    rules.base_fee.parent_header_fees(header)
 }
 
 fn calculate_next_block_base_fee_from_header<H: BlockHeader>(rules: FeeRules, header: &H) -> u64 {
