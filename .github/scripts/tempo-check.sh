@@ -286,22 +286,6 @@ else
   echo "$KC_INFO"
   echo "$KC_INFO" | grep -q "secp256k1"
 
-  echo -e "\n=== CAST KEYCHAIN: REVOKE ==="
-  cast keychain rev "$ACCESS_KEY_ADDR" \
-    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-
-  KC_INFO_REV=$(cast keychain info "$ADDR" "$ACCESS_KEY_ADDR" --rpc-url "$ETH_RPC_URL")
-  echo "$KC_INFO_REV"
-  echo "$KC_INFO_REV" | grep -q "revoked"
-
-  echo -e "\n=== CAST KEYCHAIN: REVOKED KEY REJECTION ==="
-  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-    --tempo.access-key "$ACCESS_KEY" --tempo.root-account "$ADDR" 2>&1; then
-    echo "ERROR: revoked key should have been rejected"
-    exit 1
-  fi
-  echo "OK: revoked key correctly rejected"
 fi
 
 if [[ "$HARDFORK_UPPER" == "T6" ]]; then
@@ -480,6 +464,25 @@ if [[ ! "$HARDFORK_UPPER" =~ ^T(0|1|1B|2)$ ]]; then
   echo "OK: call correctly blocked after remove-scope"
 else
   echo -e "\n=== SKIPPING T3+ set-scope tests (HARDFORK=$HARDFORK) ==="
+fi
+
+if [[ "$DIRECT_KEYCHAIN_AUTH" == "false" ]]; then
+  echo -e "\n=== CAST KEYCHAIN: REVOKE ==="
+  cast keychain rev "$ACCESS_KEY_ADDR" \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+
+  KC_INFO_REV=$(cast keychain info "$ADDR" "$ACCESS_KEY_ADDR" --rpc-url "$ETH_RPC_URL")
+  echo "$KC_INFO_REV"
+  echo "$KC_INFO_REV" | grep -q "revoked"
+
+  echo -e "\n=== CAST KEYCHAIN: REVOKED KEY REJECTION ==="
+  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+    --tempo.access-key "$ACCESS_KEY" --tempo.root-account "$ADDR" 2>&1; then
+    echo "ERROR: revoked key should have been rejected"
+    exit 1
+  fi
+  echo "OK: revoked key correctly rejected"
 fi
 
 # --- T3-only scope / call-restriction tests ---
