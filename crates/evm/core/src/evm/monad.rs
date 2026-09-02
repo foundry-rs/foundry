@@ -326,7 +326,8 @@ fn finish_protocol_system_call<H>(
     Ok(result)
 }
 
-fn try_transact_monad_system_replay<DB, I>(
+/// Tries to execute a canonical Monad system transaction on an existing Monad EVM.
+pub fn try_transact_monad_system_replay<DB, I>(
     evm: &mut MonadEvm<DB, I>,
     tx: &TxEnv,
 ) -> eyre::Result<Option<ResultAndState>>
