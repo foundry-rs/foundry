@@ -858,13 +858,18 @@ where
             Ok(estimated) => apply_gas_estimate_multiplier(estimated, multiplier),
             Err(err) => {
                 if let TransportError::ErrorResp(payload) = &err {
-                    // If execution reverted with code 3 during provider gas estimation then try
-                    // to decode custom errors and append it to the error message.
-                    if payload.code == 3
-                        && let Some(data) = &payload.data
-                        && let Ok(Some(decoded_error)) = decode_execution_revert(data).await
-                    {
-                        eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error);
+                    // Providers do not consistently use code 3 for execution errors, so also
+                    // recognize the standard revert message without classifying every server
+                    // error as a revert.
+                    if payload.code == 3 || payload.message.contains("execution reverted") {
+                        if let Some(data) = &payload.data
+                            && let Ok(Some(decoded_error)) = decode_execution_revert(data).await
+                        {
+                            eyre::bail!("Failed to estimate gas: {}: {}", err, decoded_error);
+                        }
+                        eyre::bail!(
+                            "Failed to estimate gas: {err}\n\nPossible causes: the function does not exist, the function signature or arguments are incorrect, or the contract's logic is reverting."
+                        );
                     }
                 }
                 eyre::bail!("Failed to estimate gas: {}", err);
@@ -975,7 +980,7 @@ pub(crate) async fn decode_custom_error(data: &[u8]) -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_json_rpc::{RequestPacket, ResponsePacket};
+    use alloy_json_rpc::{ErrorPayload, RequestPacket, ResponsePacket};
     use alloy_network::Ethereum;
     use alloy_provider::{ProviderBuilder, mock::Asserter};
     use alloy_rpc_client::RpcClient;
@@ -1071,6 +1076,56 @@ mod tests {
         let mut fill_methods = fill_methods.lock().unwrap().clone();
         fill_methods.sort();
         assert_eq!(fill_methods, ["eth_estimateGas", "eth_getTransactionCount"]);
+    }
+
+    #[tokio::test]
+    async fn estimate_gas_recognizes_nonstandard_revert_code() {
+        let asserter = Asserter::new();
+        asserter.push_failure(ErrorPayload {
+            code: -32000,
+            message: "execution reverted".into(),
+            data: None,
+        });
+        let provider =
+            ProviderBuilder::new_with_network::<Ethereum>().connect_mocked_client(asserter);
+
+        let err = CastTxBuilder::<Ethereum, _, InputState>::estimate_gas(
+            &provider,
+            Default::default(),
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "Failed to estimate gas: server returned an error response: error code -32000: execution reverted\n\nPossible causes: the function does not exist, the function signature or arguments are incorrect, or the contract's logic is reverting."
+        );
+    }
+
+    #[tokio::test]
+    async fn estimate_gas_does_not_hint_for_unrelated_server_error() {
+        let asserter = Asserter::new();
+        asserter.push_failure(ErrorPayload {
+            code: -32000,
+            message: "insufficient funds for gas * price + value".into(),
+            data: None,
+        });
+        let provider =
+            ProviderBuilder::new_with_network::<Ethereum>().connect_mocked_client(asserter);
+
+        let err = CastTxBuilder::<Ethereum, _, InputState>::estimate_gas(
+            &provider,
+            Default::default(),
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "Failed to estimate gas: server returned an error response: error code -32000: insufficient funds for gas * price + value"
+        );
     }
 
     #[tokio::test]

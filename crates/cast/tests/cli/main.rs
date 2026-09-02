@@ -8597,7 +8597,26 @@ contract SimpleStorageScript is Script {
             &handle.http_endpoint(),
         ])
         .assert_failure().stderr_eq(str![[r#"
-Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted: custom error 0x6786ad34: 000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8, data: "0x6786ad34000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8"[..]
+Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted: custom error 0x6786ad34: 000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8, data: "0x6786ad34000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000003e8": AddressInsufficientBalance(0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, 1000)
+
+"#]]);
+
+    // Assert cast send provides hints when the revert cannot be decoded.
+    cmd.cast_fuse()
+        .args([
+            "send",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "missingFunction()",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Failed to estimate gas: server returned an error response: error code 3: execution reverted, data: "0x"
+
+Possible causes: the function does not exist, the function signature or arguments are incorrect, or the contract's logic is reverting.
 
 "#]]);
 });
