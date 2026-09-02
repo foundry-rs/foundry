@@ -1,8 +1,8 @@
 note[pascal-case-struct]: structs should use PascalCase
    ╭▸ ROOT/testdata/StructPascalCase.sol:LL:CC
    │
-LL │     struct _PascalCase {
-   │            ━━━━━━━━━━━ help: consider using: `PascalCase`
+LL │     struct _pascalCase {
+   │            ━━━━━━━━━━━ help: consider using: `_PascalCase`
    │
    ╰ help: https://getfoundry.sh/forge/linting/pascal-case-struct
 

@@ -12,7 +12,12 @@ contract StructPascalCaseTest {
         uint256 a;
     }
 
-    struct _PascalCase { //~NOTE: structs should use PascalCase
+    // Already valid PascalCase with a preserved leading underscore - not flagged.
+    struct _PascalCase {
+        uint256 a;
+    }
+
+    struct _pascalCase { //~NOTE: structs should use PascalCase
         uint256 a;
     }
 
@@ -33,6 +38,11 @@ contract StructPascalCaseTest {
     }
 
     struct PASCALCASE { //~NOTE: structs should use PascalCase
+        uint256 a;
+    }
+
+    // Configured acronym exception ("ERC") - not flagged.
+    struct ERC20Data {
         uint256 a;
     }
 }
