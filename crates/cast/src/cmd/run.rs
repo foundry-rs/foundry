@@ -198,7 +198,15 @@ impl RunArgs {
     /// Note: This executes the transaction(s) as is: Cheatcodes are disabled
     pub async fn run(self) -> Result<()> {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-        let (config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
+        let (mut config, mut evm_opts) = super::load_cast_config_and_evm_opts(figment)?;
+        if config.eth_rpc_url.is_none()
+            && let Some(chain) = self.etherscan.chain
+        {
+            let alias = chain.to_string();
+            if config.rpc_endpoints.contains_key(&alias) {
+                config.eth_rpc_url = Some(alias);
+            }
+        }
         evm_opts.fork_url = Some(config.get_rpc_url_or_localhost_http()?.into_owned());
 
         // Auto-detect network from fork chain ID when not explicitly configured.

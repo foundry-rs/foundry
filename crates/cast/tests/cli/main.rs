@@ -6124,6 +6124,42 @@ async fn deploy_counter_and_set_number(
         .tx_hash()
 }
 
+// <https://github.com/foundry-rs/foundry/issues/10699>
+forgetest_async!(cast_run_uses_chain_rpc_endpoint, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_chain_id(Some(1u64))).await;
+    let endpoint = handle.http_endpoint();
+    let provider = handle.http_provider();
+    let sender = handle.dev_wallets().next().unwrap().address();
+    let receipt = provider
+        .send_transaction(
+            TransactionRequest::default()
+                .from(sender)
+                .to(address!("000000000000000000000000000000000000dEaD"))
+                .value(U256::from(1))
+                .into(),
+        )
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+
+    fs::write(
+        prj.root().join("foundry.toml"),
+        r#"[rpc_endpoints]
+mainnet = "${CAST_RUN_MAINNET_RPC_URL}"
+"#,
+    )
+    .unwrap();
+
+    cmd.cast_fuse();
+    cmd.set_current_dir(prj.root());
+    cmd.env("CAST_RUN_MAINNET_RPC_URL", endpoint);
+    cmd.unset_env("ETH_RPC_URL");
+    cmd.args(["run", &receipt.transaction_hash.to_string(), "--chain", "mainnet", "--quick"])
+        .assert_success();
+});
+
 // `cast run` must replay a transaction's block prefix without changing the trace requested for the
 // selected transaction. A single block covers a deployment in the first position, a revert in the
 // middle, and an internally traced state change in the last position.
