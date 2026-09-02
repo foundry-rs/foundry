@@ -94,7 +94,7 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     // the concrete Monad construction path.
     pub networks: NetworkConfigs,
     /// Explicitly resolved additional cheatcode addresses.
-    pub extra_cheatcode_addresses: Option<&'static [Address]>,
+    pub extra_cheatcode_addresses: &'static [Address],
     /// The wallets to set in the cheatcodes context.
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
@@ -116,7 +116,7 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             chisel_state: None,
             enable_isolation: false,
             networks: NetworkConfigs::default(),
-            extra_cheatcode_addresses: None,
+            extra_cheatcode_addresses: &[],
             wallets: None,
             create2_deployer: Default::default(),
         }
@@ -228,7 +228,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
     /// Sets explicitly resolved additional cheatcode addresses.
     #[inline]
     pub const fn extra_cheatcode_addresses(mut self, addresses: &'static [Address]) -> Self {
-        self.extra_cheatcode_addresses = Some(addresses);
+        self.extra_cheatcode_addresses = addresses;
         self
     }
 
@@ -260,11 +260,6 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             create2_deployer,
         } = self;
         let mut stack = InspectorStack::new();
-        // TODO(monad-fen-dispatch): Forge, Script, and Chisel still rely on this fallback until
-        // their concrete construction paths select the corresponding executor builder.
-        let extra_cheatcode_addresses =
-            extra_cheatcode_addresses.unwrap_or_else(|| networks.extra_cheatcode_addresses());
-
         // inspectors
         if let Some(config) = cheatcodes {
             let mut cheatcodes = Cheatcodes::new(config);

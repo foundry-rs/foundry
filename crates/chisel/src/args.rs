@@ -7,10 +7,13 @@ use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
 use foundry_config::Config;
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+    executors::ExecutorBuilder,
     opts::EvmOpts,
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -64,6 +67,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             args,
             config,
             evm_opts,
+            ExecutorBuilder::<TempoEvmNetwork>::new(),
             local_networks,
             local_chain_id,
         ))
@@ -72,10 +76,11 @@ pub async fn run_command(args: Chisel) -> Result<()> {
 
     #[cfg(feature = "monad")]
     if evm_opts.networks.is_monad() {
-        return Box::pin(run_command_with_network::<foundry_evm::core::evm::MonadEvmNetwork>(
+        return Box::pin(run_command_with_network::<MonadEvmNetwork>(
             args,
             config,
             evm_opts,
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             local_networks,
             local_chain_id,
         ))
@@ -88,6 +93,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
             args,
             config,
             evm_opts,
+            ExecutorBuilder::<OpEvmNetwork>::new(),
             local_networks,
             local_chain_id,
         ))
@@ -98,6 +104,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
         args,
         config,
         evm_opts,
+        ExecutorBuilder::<EthEvmNetwork>::new(),
         local_networks,
         local_chain_id,
     ))
@@ -119,6 +126,7 @@ async fn run_command_with_network<FEN: FoundryEvmNetwork>(
     args: Chisel,
     config: Config,
     evm_opts: EvmOpts,
+    executor_builder: ExecutorBuilder<FEN>,
     local_networks: NetworkConfigs,
     local_chain_id: Option<u64>,
 ) -> Result<()> {
@@ -131,6 +139,7 @@ async fn run_command_with_network<FEN: FoundryEvmNetwork>(
         foundry_config: config,
         no_vm: args.no_vm,
         evm_opts,
+        executor_builder,
         local_networks: Some(local_networks),
         local_chain_id,
         fork_network_is_inferred,
