@@ -328,3 +328,18 @@ async fn get_logs_future_to_block_returns_error() {
         "expected `BlockOutOfRangeError` in error, got: {err}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_logs_reversed_block_range_returns_error() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+    api.mine_one().await.unwrap();
+
+    let filter = Filter::new().from_block(1).to_block(0);
+
+    let err = provider.get_logs(&filter).await.unwrap_err();
+    assert!(
+        err.to_string().contains("invalid block range params"),
+        "expected `invalid block range params` in error, got: {err}"
+    );
+}
