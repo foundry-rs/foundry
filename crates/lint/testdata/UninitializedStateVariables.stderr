@@ -102,3 +102,51 @@ LL │     Data public slotA;
    │
    ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
 
+warning[uninitialized-state]: state variable is read but never written
+   ╭▸ ROOT/testdata/UninitializedStateVariables.sol:LL:CC
+   │
+LL │     Data public slotA;
+   │     ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
+
+warning[uninitialized-state]: state variable is read but never written
+   ╭▸ ROOT/testdata/UninitializedStateVariables.sol:LL:CC
+   │
+LL │     Data public slotB;
+   │     ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
+
+warning[uninitialized-state]: state variable is read but never written
+   ╭▸ ROOT/testdata/UninitializedStateVariables.sol:LL:CC
+   │
+LL │     Data public slotA;
+   │     ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
+
+warning[uninitialized-state]: state variable is read but never written
+   ╭▸ ROOT/testdata/UninitializedStateVariables.sol:LL:CC
+   │
+LL │     Data public slot;
+   │     ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
+
+warning[uninitialized-state]: state variable is read but never written
+   ╭▸ ROOT/testdata/UninitializedStateVariables.sol:LL:CC
+   │
+LL │     StoragePointerReadLib.Data public slot;
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
+
+warning[uninitialized-state]: state variable is read but never written
+   ╭▸ ROOT/testdata/UninitializedStateVariables.sol:LL:CC
+   │
+LL │     Data public slotB;
+   │     ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
+

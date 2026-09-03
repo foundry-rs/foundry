@@ -461,11 +461,7 @@ contract StoragePointerReadOnly {
 
 contract StoragePointerArrayElement {
     struct Data { uint256 val; }
-    Data[] public items;
-
-    function push() external {
-        items.push();
-    }
+    Data[2] public items;
 
     function set(uint256 i, uint256 v) external {
         Data storage p = items[i];
@@ -537,4 +533,145 @@ contract StoragePointerReassignedInLoop {
     function getB() public view returns (uint256) {
         return slotB.val;
     }
+}
+
+contract StoragePointerMultiIterationLoop {
+    struct Data { uint256 val; }
+    Data public slotA;
+    Data public slotB;
+    Data public slotC;
+
+    function set(uint256 count, uint256 v) external {
+        Data storage p = slotA;
+        Data storage q = slotB;
+        for (uint256 i; i < count; ++i) {
+            p = q;
+            q = slotC;
+        }
+        p.val = v;
+    }
+
+    function getA() public view returns (uint256) { return slotA.val; }
+    function getB() public view returns (uint256) { return slotB.val; }
+    function getC() public view returns (uint256) { return slotC.val; }
+}
+
+contract StoragePointerDoWhile {
+    struct Data { uint256 val; }
+    Data public slotA; //~WARN: state variable is read but never written
+    Data public slotB;
+
+    function set(bool again, uint256 v) external {
+        Data storage p = slotA;
+        do {
+            p = slotB;
+        } while (again);
+        p.val = v;
+    }
+
+    function getA() public view returns (uint256) { return slotA.val; }
+    function getB() public view returns (uint256) { return slotB.val; }
+}
+
+contract StoragePointerTerminatingBranch {
+    struct Data { uint256 val; }
+    Data public slotA;
+    Data public slotB; //~WARN: state variable is read but never written
+
+    function set(bool stop, uint256 v) external {
+        Data storage p = slotA;
+        if (stop) {
+            p = slotB;
+            return;
+        }
+        p.val = v;
+    }
+
+    function getA() public view returns (uint256) { return slotA.val; }
+    function getB() public view returns (uint256) { return slotB.val; }
+}
+
+contract StoragePointerTryJoin {
+    struct Data { uint256 val; }
+    Data public slotA; //~WARN: state variable is read but never written
+    Data public slotB;
+
+    function succeeds() external {}
+
+    function set(uint256 v) external {
+        Data storage p = slotA;
+        try this.succeeds() {
+            p = slotB;
+        } catch {
+            p = slotB;
+        }
+        p.val = v;
+    }
+
+    function getA() public view returns (uint256) { return slotA.val; }
+    function getB() public view returns (uint256) { return slotB.val; }
+}
+
+contract StoragePointerTernaryJoin {
+    struct Data { uint256 val; }
+    Data public slotA;
+    Data public slotB;
+
+    function set(bool chooseB, uint256 v) external {
+        Data storage p = slotA;
+        chooseB ? p = slotB : p = slotA;
+        p.val = v;
+    }
+
+    function getA() public view returns (uint256) { return slotA.val; }
+    function getB() public view returns (uint256) { return slotB.val; }
+}
+
+contract StoragePointerReadOnlyCall {
+    struct Data { uint256 val; }
+    Data public slot; //~WARN: state variable is read but never written
+
+    function inspect(Data storage target) internal view returns (uint256) {
+        return target.val;
+    }
+
+    function get() external view returns (uint256) {
+        Data storage p = slot;
+        return inspect(p);
+    }
+}
+
+library StoragePointerReadLib {
+    struct Data { uint256 val; }
+    function get(Data storage self) internal view returns (uint256) { return self.val; }
+}
+
+contract StoragePointerReadOnlyLibraryCall {
+    using StoragePointerReadLib for StoragePointerReadLib.Data;
+    StoragePointerReadLib.Data public slot; //~WARN: state variable is read but never written
+
+    function get() external view returns (uint256) {
+        StoragePointerReadLib.Data storage p = slot;
+        return p.get();
+    }
+}
+
+contract StoragePointerUnconditionedForUpdate {
+    struct Data { uint256 val; }
+    Data public slotA;
+    Data public slotB; //~WARN: state variable is read but never written
+
+    function set(uint256 count, uint256 v) external {
+        Data storage p = slotA;
+        uint256 i;
+        for (;; p = slotA) {
+            p.val = v;
+            if (i++ == count) break;
+            p = slotB;
+            continue;
+        }
+    }
+
+    function getA() public view returns (uint256) { return slotA.val; }
+    function getB() public view returns (uint256) { return slotB.val; }
 }
