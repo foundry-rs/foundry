@@ -13,7 +13,9 @@ mod anvil_const {
     pub const VAULT: &str = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 }
 
-const FORK_BLOCK: u64 = 25_519_075;
+const ETHEREUM_FORK_BLOCK: u64 = 25_519_075;
+const TEMPO_FORK_BLOCK: u64 = 37_847_799;
+const TEMPO_RPC_URL: &str = "https://rpc.tempo.xyz";
 
 struct ProductionVault {
     project: &'static str,
@@ -31,6 +33,44 @@ const PRODUCTION_VAULTS: &[ProductionVault] = &[
         address: "0x80ac24aA929eaF5013f6436cdA2a7ba190f5Cc0b",
     },
 ];
+
+const TEMPO_VAULT: ProductionVault = ProductionVault {
+    project: "Morpho on Tempo",
+    address: "0x83a1491f3e7f8dAAB8F787a631334b9ca7a87023",
+};
+
+const READ_CALLS: &[(&str, &[&str])] = &[
+    ("asset", &[]),
+    ("total-assets", &[]),
+    ("convert-to-shares", &["1"]),
+    ("convert-to-assets", &["1"]),
+    ("max-deposit", &[anvil_const::ADDR1]),
+    ("preview-deposit", &["1"]),
+    ("max-mint", &[anvil_const::ADDR1]),
+    ("preview-mint", &["1"]),
+    ("max-withdraw", &[anvil_const::ADDR1]),
+    ("preview-withdraw", &["1"]),
+    ("max-redeem", &[anvil_const::ADDR1]),
+    ("preview-redeem", &["1"]),
+];
+
+fn assert_read_surface(
+    cmd: &mut foundry_test_utils::TestCommand,
+    vault: &ProductionVault,
+    rpc: &str,
+) {
+    for (command, args) in READ_CALLS {
+        let output = cmd
+            .cast_fuse()
+            .args(["erc4626", command, vault.address])
+            .args(*args)
+            .args(["--rpc-url", rpc])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        assert!(!output.trim().is_empty(), "{} {command} returned no output", vault.project);
+    }
+}
 
 fn read_amount(
     cmd: &mut foundry_test_utils::TestCommand,
@@ -245,36 +285,21 @@ forgetest_async!(erc4626_complete_synchronous_interface, |prj, cmd| {
 casttest!(erc4626_fork_reads_multiple_production_vaults, async |_prj, cmd| {
     let fork = NodeConfig::test()
         .with_eth_rpc_url(Some(next_http_archive_rpc_url()))
-        .with_fork_block_number(Some(FORK_BLOCK));
+        .with_fork_block_number(Some(ETHEREUM_FORK_BLOCK));
     let (_, handle) = anvil::spawn(fork).await;
     let rpc = handle.http_endpoint();
 
-    let read_calls: &[(&str, &[&str])] = &[
-        ("asset", &[]),
-        ("total-assets", &[]),
-        ("convert-to-shares", &["1"]),
-        ("convert-to-assets", &["1"]),
-        ("max-deposit", &[anvil_const::ADDR1]),
-        ("preview-deposit", &["1"]),
-        ("max-mint", &[anvil_const::ADDR1]),
-        ("preview-mint", &["1"]),
-        ("max-withdraw", &[anvil_const::ADDR1]),
-        ("preview-withdraw", &["1"]),
-        ("max-redeem", &[anvil_const::ADDR1]),
-        ("preview-redeem", &["1"]),
-    ];
-
     for vault in PRODUCTION_VAULTS {
-        for (command, args) in read_calls {
-            let output = cmd
-                .cast_fuse()
-                .args(["erc4626", command, vault.address])
-                .args(*args)
-                .args(["--rpc-url", &rpc])
-                .assert_success()
-                .get_output()
-                .stdout_lossy();
-            assert!(!output.trim().is_empty(), "{} {command} returned no output", vault.project);
-        }
+        assert_read_surface(&mut cmd, vault, &rpc);
     }
+});
+
+casttest!(flaky_erc4626_fork_reads_tempo_vault, async |_prj, cmd| {
+    let fork = NodeConfig::test_tempo()
+        .with_eth_rpc_url(Some(TEMPO_RPC_URL.to_string()))
+        .with_fork_block_number(Some(TEMPO_FORK_BLOCK));
+    let (_, handle) = anvil::spawn(fork).await;
+    let rpc = handle.http_endpoint();
+
+    assert_read_surface(&mut cmd, &TEMPO_VAULT, &rpc);
 });
