@@ -323,36 +323,51 @@ fn build_source_to_url(pages: &[PathBuf]) -> SourceToUrl {
 /// Without this, README content with template placeholders like `{FOO}` or
 /// HTML-like tokens like `<TOKEN>` would be interpreted as MDX expressions/JSX
 /// and break `vocs dev` / `vocs build`.
-fn escape_mdx_outside_code_fences(text: &str) -> String {
-    struct Fence {
-        marker: char,
-        len: usize,
+/// Shared fence-open/fence-close detection for a single markdown line, used
+/// by both `escape_mdx_outside_code_fences` and `code_regions` so the two
+/// line-walkers agree on what counts as "inside a code fence".
+struct FenceState {
+    marker: char,
+    len: usize,
+}
+
+impl FenceState {
+    /// If `trimmed` (a line with leading whitespace stripped) opens a code
+    /// fence, return the state to track until it closes.
+    fn opens(trimmed: &str) -> Option<Self> {
+        let marker = trimmed.chars().next()?;
+        if !matches!(marker, '`' | '~') {
+            return None;
+        }
+        let len = trimmed.chars().take_while(|&ch| ch == marker).count();
+        if len < 3 || marker == '`' && trimmed[len..].contains('`') {
+            return None;
+        }
+        Some(Self { marker, len })
     }
 
+    /// Whether `trimmed` closes this fence (a line of `>= len` fence markers
+    /// and nothing else).
+    fn closes(&self, trimmed: &str) -> bool {
+        // Fence markers are ASCII, so their character count is also the byte index.
+        let marker_len = trimmed.chars().take_while(|&ch| ch == self.marker).count();
+        let suffix = &trimmed[marker_len..];
+        marker_len >= self.len && suffix.trim().is_empty()
+    }
+}
+
+fn escape_mdx_outside_code_fences(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut fence: Option<Fence> = None;
+    let mut fence: Option<FenceState> = None;
     for line in text.split_inclusive('\n') {
         let trimmed = line.trim_start();
         if let Some(open) = fence.as_ref() {
             out.push_str(line);
-            let marker_len = trimmed.chars().take_while(|&ch| ch == open.marker).count();
-            // Fence markers are ASCII, so their character count is also the byte index.
-            let suffix = &trimmed[marker_len..];
-            if marker_len >= open.len && suffix.trim().is_empty() {
+            if open.closes(trimmed) {
                 fence = None;
             }
         } else {
-            let opening = trimmed.chars().next().and_then(|marker| {
-                if !matches!(marker, '`' | '~') {
-                    return None;
-                }
-                let len = trimmed.chars().take_while(|&ch| ch == marker).count();
-                if len < 3 || marker == '`' && trimmed[len..].contains('`') {
-                    return None;
-                }
-                Some(Fence { marker, len })
-            });
-            if let Some(opening) = opening {
+            if let Some(opening) = FenceState::opens(trimmed) {
                 fence = Some(opening);
                 out.push_str(line);
                 continue;
@@ -392,10 +407,80 @@ fn escape_mdx_outside_code_fences(text: &str) -> String {
     out
 }
 
+/// Byte ranges of `text` that sit inside a code fence or an inline code span
+/// (`` `...` ``), reusing `FenceState` so this agrees with
+/// `escape_mdx_outside_code_fences` about what counts as "code". Used by
+/// `rewrite_homepage_links` so it never mistakes Solidity syntax like
+/// `new address[](2)` for a markdown link.
+fn code_regions(text: &str) -> Vec<std::ops::Range<usize>> {
+    let mut regions = Vec::new();
+    let mut fence: Option<FenceState> = None;
+    let mut offset = 0usize;
+    for line in text.split_inclusive('\n') {
+        let line_start = offset;
+        offset += line.len();
+        let trimmed = line.trim_start();
+
+        if let Some(open) = fence.as_ref() {
+            regions.push(line_start..offset);
+            if open.closes(trimmed) {
+                fence = None;
+            }
+            continue;
+        }
+        if let Some(opening) = FenceState::opens(trimmed) {
+            fence = Some(opening);
+            regions.push(line_start..offset);
+            continue;
+        }
+
+        // Inline code spans (`` `...` `` or longer runs of backticks) within
+        // this line, mirroring escape_mdx_outside_code_fences's tick pairing.
+        let mut pending_ticks = 0usize;
+        let mut inline_code_ticks = 0usize;
+        let mut span_start: Option<usize> = None;
+        let mut pos = line_start;
+        for ch in line.chars() {
+            let ch_len = ch.len_utf8();
+            if ch == '`' {
+                pending_ticks += 1;
+                pos += ch_len;
+                continue;
+            }
+            if pending_ticks > 0 {
+                if inline_code_ticks == 0 {
+                    inline_code_ticks = pending_ticks;
+                    span_start = Some(pos - pending_ticks);
+                } else if inline_code_ticks == pending_ticks {
+                    inline_code_ticks = 0;
+                    if let Some(start) = span_start.take() {
+                        regions.push(start..pos);
+                    }
+                }
+                pending_ticks = 0;
+            }
+            pos += ch_len;
+        }
+        // An unterminated run of backticks (odd number of tick groups) opens
+        // an inline span that extends to end-of-line, matching how
+        // escape_mdx_outside_code_fences treats the remainder of the line as
+        // inline code once `inline_code_ticks > 0`.
+        if inline_code_ticks > 0
+            && let Some(start) = span_start
+        {
+            regions.push(start..offset);
+        }
+    }
+    regions
+}
+
 /// Rewrite inline `[text](url)` markdown links in the homepage:
 /// * `.sol` paths that resolve to a known page → vocs URL.
 /// * Any other relative path under `root` → `{repo}/blob/{commit}/...`.
 /// * Absolute URLs, anchors, and unresolved targets are left untouched.
+/// * Anything inside a code fence or inline code span is left untouched —
+///   Solidity syntax like `new address[](2)` looks like a markdown link
+///   (`](`) to a naive scanner but is not one.
 fn rewrite_homepage_links(
     text: &str,
     base_dir: &Path,
@@ -404,11 +489,15 @@ fn rewrite_homepage_links(
     repo: Option<&str>,
     commit: Option<&str>,
 ) -> String {
+    let protected = code_regions(text);
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
+    let mut consumed = 0usize;
     while let Some(open) = rest.find("](") {
+        let abs_open = consumed + open;
         out.push_str(&rest[..open + 2]);
         rest = &rest[open + 2..];
+        consumed += open + 2;
         // Scan the URL, counting parens so we don't split on `(` / `)` inside it.
         let bytes = rest.as_bytes();
         let mut i = 0;
@@ -429,7 +518,10 @@ fn rewrite_homepage_links(
                     i += 1;
                 }
                 b'\\' => {
-                    i += 2; // skip escaped character
+                    // Skip the escaped character. Clamp so a trailing
+                    // backslash at the very end of the text can't push `i`
+                    // past `bytes.len()` and panic the slice below.
+                    i = (i + 2).min(bytes.len());
                 }
                 _ => {
                     i += 1;
@@ -437,13 +529,20 @@ fn rewrite_homepage_links(
             }
         }
         let target = &rest[..i];
-        match try_rewrite_target(target, base_dir, root, src_to_url, repo, commit) {
+        let in_protected = protected.iter().any(|r| r.contains(&abs_open));
+        let rewritten = if in_protected {
+            None
+        } else {
+            try_rewrite_target(target, base_dir, root, src_to_url, repo, commit)
+        };
+        match rewritten {
             Some(new) => out.push_str(&new),
             None => out.push_str(target),
         }
         if closed {
             out.push(')');
             rest = &rest[i + 1..];
+            consumed += i + 1;
         } else {
             rest = &rest[i..];
             break;
@@ -674,5 +773,63 @@ End {brace}.
         assert_eq!(json_str(r#"Acme\"#), r#""Acme\\""#);
         assert_eq!(json_str("Bob's Docs"), r#""Bob's Docs""#);
         assert_eq!(json_str(r#"Quote " Docs"#), r#""Quote \" Docs""#);
+    }
+
+    #[test]
+    fn rewrite_homepage_links_leaves_code_fences_alone() {
+        // `new address[](2)` contains a literal `](` that a naive scanner
+        // mistakes for a markdown link — the fenced Solidity must survive
+        // byte-for-byte, while a real link in the surrounding prose still
+        // gets rewritten.
+        let map = build_source_to_url(&[PathBuf::from("src/contract.Foo.mdx")]);
+        let root = Path::new("/repo");
+        let repo = Some("https://github.com/x/y");
+        let commit = Some("abc123");
+        let input = "\
+See [Foo](./src/Foo.sol) for details.
+
+```solidity
+function deploy() external {
+    address[] memory targets = new address[](2);
+    bytes memory data = new bytes(4);
+}
+```
+
+Also uses `new bytes(4)` inline.
+";
+        let out = rewrite_homepage_links(input, Path::new("/repo"), root, &map, repo, commit);
+
+        // Real link outside the fence is still rewritten.
+        assert!(out.contains("[Foo](/src/contract.Foo)"), "prose link must still be rewritten");
+        // Fenced Solidity is untouched — no GitHub URL leaked into the array length.
+        assert!(
+            out.contains("new address[](2)"),
+            "array allocation inside a fence must survive unchanged, got: {out}"
+        );
+        assert!(
+            !out.contains("address[](https://"),
+            "must not rewrite `](` inside a code fence, got: {out}"
+        );
+        // Inline-code span outside the fence is also untouched.
+        assert!(
+            out.contains("`new bytes(4)`"),
+            "array allocation inside inline code must survive unchanged, got: {out}"
+        );
+        assert!(
+            !out.contains("bytes(https://"),
+            "must not rewrite `](` inside an inline code span, got: {out}"
+        );
+    }
+
+    #[test]
+    fn rewrite_homepage_links_handles_trailing_unclosed_backslash() {
+        // A dangling `](` with no closing paren, ending in a literal
+        // backslash as the very last byte of the text, must not panic on an
+        // out-of-bounds slice.
+        let map = SourceToUrl::new();
+        let root = Path::new("/repo");
+        let input = "See [Foo](abc\\";
+        let out = rewrite_homepage_links(input, root, root, &map, None, None);
+        assert_eq!(out, input, "unclosed target should be left untouched, not panic");
     }
 }
