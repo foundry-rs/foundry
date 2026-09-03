@@ -2293,17 +2293,7 @@ mod tests {
         // If the forbidden call never occurs, the expectation is satisfied.
         assert!(never_called.is_satisfied());
 
-        // If the forbidden call DOES occur, observe() rejects it immediately
-        // (returns false, `observed` stays unadvanced) rather than being
-        // corrupted into recording a call that was supposed to be forbidden.
-        // NOTE: this unit only covers ExpectedCall's own bookkeeping. The
-        // caller (calls.rs) is expected to turn a `false` return into a hard
-        // StepOutcome::Failure, but that failure can currently be swallowed
-        // by a nested vm.expectRevert() (see calls.rs:1095), and a separate
-        // bug means only the first matching expectCall entry is observed at
-        // all when several overlapping expectations exist (calls.rs:388) -
-        // both are real gaps in end-to-end enforcement, tracked separately,
-        // not fixed by this unit-level correction.
+        // A forbidden call is rejected without incrementing the observed count.
         assert!(!never_called.observe());
         assert!(never_called.is_satisfied());
 
