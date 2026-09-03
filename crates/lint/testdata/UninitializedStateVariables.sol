@@ -518,3 +518,52 @@ contract StoragePointerReassigned {
         return slotB.val;
     }
 }
+
+// ── Local storage pointer: conditional reassignment ──────────────────────────
+// After the join, `p` may still point to `slotA` or may point to `slotB`.
+// The write through it therefore makes both state variables potentially written.
+
+contract StoragePointerConditionallyReassigned {
+    struct Data { uint256 val; }
+    Data public slotA;
+    Data public slotB;
+
+    function set(bool chooseB, uint256 v) external {
+        Data storage p = slotA;
+        if (chooseB) p = slotB;
+        p.val = v;
+    }
+
+    function getA() public view returns (uint256) {
+        return slotA.val;
+    }
+
+    function getB() public view returns (uint256) {
+        return slotB.val;
+    }
+}
+
+// ── Local storage pointer: reassignment in a potentially empty loop ─────────
+// The loop may execute zero times, so the post-loop write may target either slot.
+
+contract StoragePointerReassignedInLoop {
+    struct Data { uint256 val; }
+    Data public slotA;
+    Data public slotB;
+
+    function set(uint256 count, uint256 v) external {
+        Data storage p = slotA;
+        for (uint256 i; i < count; ++i) {
+            p = slotB;
+        }
+        p.val = v;
+    }
+
+    function getA() public view returns (uint256) {
+        return slotA.val;
+    }
+
+    function getB() public view returns (uint256) {
+        return slotB.val;
+    }
+}

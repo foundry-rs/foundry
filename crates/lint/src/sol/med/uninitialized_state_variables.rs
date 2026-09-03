@@ -78,7 +78,7 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
         // transitively through another alias), e.g. `Data storage p = someStateVar;`.
         // Writes through such a local (`p.val = v`) are writes to the aliased state
         // variable and must be attributed back to it.
-        let mut aliases: HashMap<VariableId, VariableId> = HashMap::new();
+        let mut aliases: HashMap<VariableId, HashSet<VariableId>> = HashMap::new();
 
         // Walk every function in the inheritance chain.
         // Bail out conservatively if any function body contains inline assembly,
@@ -187,7 +187,7 @@ fn collect_block_writes_checked<'hir>(
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
     bases: &'hir [ContractId],
-    aliases: &mut HashMap<VariableId, VariableId>,
+    aliases: &mut HashMap<VariableId, HashSet<VariableId>>,
 ) -> Result<(), ()> {
     for stmt in block.stmts {
         collect_stmt_writes_checked(hir, stmt, candidates, writes, bases, aliases)?;
@@ -201,33 +201,69 @@ fn collect_stmt_writes_checked<'hir>(
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
     bases: &'hir [ContractId],
-    aliases: &mut HashMap<VariableId, VariableId>,
+    aliases: &mut HashMap<VariableId, HashSet<VariableId>>,
 ) -> Result<(), ()> {
     match &stmt.kind {
         // Assembly can write storage directly; bail conservatively.
         StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => return Err(()),
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
             collect_block_writes_checked(hir, *block, candidates, writes, bases, aliases)?;
+        }
+        StmtKind::Loop(block, _) => {
+            let mut body_aliases = aliases.clone();
+            collect_block_writes_checked(
+                hir,
+                *block,
+                candidates,
+                writes,
+                bases,
+                &mut body_aliases,
+            )?;
+            merge_aliases(aliases, body_aliases);
         }
         StmtKind::If(condition, then_stmt, else_stmt) => {
             collect_expr_writes_checked(hir, condition, candidates, writes, bases, aliases)?;
-            collect_stmt_writes_checked(hir, then_stmt, candidates, writes, bases, aliases)?;
+            let mut then_aliases = aliases.clone();
+            collect_stmt_writes_checked(
+                hir,
+                then_stmt,
+                candidates,
+                writes,
+                bases,
+                &mut then_aliases,
+            )?;
             if let Some(else_stmt) = else_stmt {
-                collect_stmt_writes_checked(hir, else_stmt, candidates, writes, bases, aliases)?;
+                let mut else_aliases = aliases.clone();
+                collect_stmt_writes_checked(
+                    hir,
+                    else_stmt,
+                    candidates,
+                    writes,
+                    bases,
+                    &mut else_aliases,
+                )?;
+                merge_aliases(&mut then_aliases, else_aliases);
+                *aliases = then_aliases;
+            } else {
+                merge_aliases(aliases, then_aliases);
             }
         }
         StmtKind::Try(stmt_try) => {
             collect_expr_writes_checked(hir, &stmt_try.expr, candidates, writes, bases, aliases)?;
+            let mut joined_aliases = aliases.clone();
             for clause in stmt_try.clauses {
+                let mut clause_aliases = aliases.clone();
                 collect_block_writes_checked(
                     hir,
                     clause.block,
                     candidates,
                     writes,
                     bases,
-                    aliases,
+                    &mut clause_aliases,
                 )?;
+                merge_aliases(&mut joined_aliases, clause_aliases);
             }
+            *aliases = joined_aliases;
         }
         StmtKind::DeclSingle(var_id) => {
             if let Some(initializer) = hir.variable(*var_id).initializer {
@@ -237,7 +273,7 @@ fn collect_stmt_writes_checked<'hir>(
                 // variable (or from another already-known alias), record it so writes
                 // through the local later in this function attribute back correctly.
                 if hir.variable(*var_id).data_location == Some(DataLocation::Storage)
-                    && let Some(target) = resolve_alias_target(initializer, candidates, aliases)
+                    && let Some(target) = resolve_alias_targets(initializer, candidates, aliases)
                 {
                     aliases.insert(*var_id, target);
                 }
@@ -261,7 +297,7 @@ fn collect_expr_writes_checked<'hir>(
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
     bases: &'hir [ContractId],
-    aliases: &mut HashMap<VariableId, VariableId>,
+    aliases: &mut HashMap<VariableId, HashSet<VariableId>>,
 ) -> Result<(), ()> {
     match &expr.kind {
         ExprKind::Assign(lhs, _, rhs) => {
@@ -291,9 +327,9 @@ fn collect_expr_writes_checked<'hir>(
                 && !candidates.contains(id)
                 && hir.variable(*id).data_location == Some(DataLocation::Storage)
             {
-                match resolve_alias_target(rhs, candidates, aliases) {
-                    Some(target) => {
-                        aliases.insert(*id, target);
+                match resolve_alias_targets(rhs, candidates, aliases) {
+                    Some(targets) => {
+                        aliases.insert(*id, targets);
                     }
                     None => {
                         aliases.remove(id);
@@ -370,8 +406,26 @@ fn collect_expr_writes_checked<'hir>(
         }
         ExprKind::Ternary(condition, then_expr, else_expr) => {
             collect_expr_writes_checked(hir, condition, candidates, writes, bases, aliases)?;
-            collect_expr_writes_checked(hir, then_expr, candidates, writes, bases, aliases)?;
-            collect_expr_writes_checked(hir, else_expr, candidates, writes, bases, aliases)?;
+            let mut then_aliases = aliases.clone();
+            collect_expr_writes_checked(
+                hir,
+                then_expr,
+                candidates,
+                writes,
+                bases,
+                &mut then_aliases,
+            )?;
+            let mut else_aliases = aliases.clone();
+            collect_expr_writes_checked(
+                hir,
+                else_expr,
+                candidates,
+                writes,
+                bases,
+                &mut else_aliases,
+            )?;
+            merge_aliases(&mut then_aliases, else_aliases);
+            *aliases = then_aliases;
         }
         ExprKind::Tuple(exprs) => {
             for expr in exprs.iter().flatten() {
@@ -461,7 +515,7 @@ fn mark_storage_args<'hir>(
     args: &CallArgs<'hir>,
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
-    aliases: &HashMap<VariableId, VariableId>,
+    aliases: &HashMap<VariableId, HashSet<VariableId>>,
 ) {
     if let CallArgsKind::Unnamed(_) = args.kind {
         for (i, arg_expr) in args.exprs().enumerate() {
@@ -498,23 +552,32 @@ fn mark_storage_args<'hir>(
 /// initializer expression, resolving it against known state-variable candidates or
 /// previously-registered aliases (so chained aliasing, e.g. `Data storage q = p;` where
 /// `p` itself aliases a state variable, still resolves back to the original state var).
-fn resolve_alias_target(
+fn resolve_alias_targets(
     expr: &Expr<'_>,
     candidates: &HashSet<VariableId>,
-    aliases: &HashMap<VariableId, VariableId>,
-) -> Option<VariableId> {
+    aliases: &HashMap<VariableId, HashSet<VariableId>>,
+) -> Option<HashSet<VariableId>> {
     match &expr.peel_parens().kind {
         ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
             if candidates.contains(id) {
-                Some(*id)
+                Some(HashSet::from([*id]))
             } else {
-                aliases.get(id).copied()
+                aliases.get(id).cloned()
             }
         }
         ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) | ExprKind::Member(base, _) => {
-            resolve_alias_target(base, candidates, aliases)
+            resolve_alias_targets(base, candidates, aliases)
         }
         _ => None,
+    }
+}
+
+fn merge_aliases(
+    aliases: &mut HashMap<VariableId, HashSet<VariableId>>,
+    other: HashMap<VariableId, HashSet<VariableId>>,
+) {
+    for (alias, targets) in other {
+        aliases.entry(alias).or_default().extend(targets);
     }
 }
 
@@ -522,14 +585,14 @@ fn collect_lvalue_writes(
     expr: &Expr<'_>,
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
-    aliases: &HashMap<VariableId, VariableId>,
+    aliases: &HashMap<VariableId, HashSet<VariableId>>,
 ) {
     match &expr.peel_parens().kind {
         ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
             if candidates.contains(id) {
                 writes.insert(*id);
-            } else if let Some(&target) = aliases.get(id) {
-                writes.insert(target);
+            } else if let Some(targets) = aliases.get(id) {
+                writes.extend(targets);
             }
         }
         ExprKind::Tuple(exprs) => {
