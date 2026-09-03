@@ -1450,10 +1450,7 @@ impl SimpleCast {
             (sign, value_stripped, value_len)
         };
         let decimals_num = NumberWithBase::parse_uint(decimals, None)?.number();
-        // `decimals` is used below as a dynamic `format!` width, which panics on values
-        // above `u16::MAX` regardless of whether the underlying integer conversion itself
-        // would succeed - reject both a too-large-to-convert and a too-large-to-format
-        // value here with a clean error instead of panicking either way.
+        // Dynamic format widths are limited to `u16::MAX`.
         let decimals: usize = decimals_num
             .try_into()
             .ok()
@@ -1863,9 +1860,7 @@ impl SimpleCast {
     /// ```
     pub fn pad(s: &str, right: bool, len: usize) -> Result<String> {
         let s = strip_0x(s);
-        // `hex_len` is used below as a dynamic `format!` width, which panics on values
-        // above `u16::MAX` - reject an oversized `len` up front with a clean error instead
-        // of a panic, and guard the multiplication itself against overflow too.
+        // Convert the byte length to a supported dynamic format width.
         let hex_len = len
             .checked_mul(2)
             .filter(|&h| h <= u16::MAX as usize)
@@ -3054,35 +3049,25 @@ mod tests {
         );
     }
 
-    /// A `decimals` value that doesn't fit in a `usize` (e.g. `2^64` on a 64-bit host) used to
-    /// panic inside `Uint::to::<usize>()`; it must now be a clean error instead.
     #[test]
     fn to_fixed_point_rejects_decimals_too_large_to_convert() {
         assert!(Cast::to_fixed_point("10", "18446744073709551616").is_err());
     }
 
-    /// A `decimals` value that does fit in a `usize` but exceeds Rust's dynamic `format!` width
-    /// limit (`u16::MAX`) used to panic with "Formatting argument out of range"; it must now be
-    /// a clean error instead.
     #[test]
     fn to_fixed_point_rejects_decimals_above_format_width_limit() {
         assert!(Cast::to_fixed_point("12345", "70000").is_err());
-        // One past the boundary this repo's own format! call can actually handle.
         assert!(Cast::to_fixed_point("12345", "65536").is_err());
     }
 
-    /// `len * 2` used as a dynamic `format!` width above `u16::MAX` used to panic with
-    /// "Formatting argument out of range"; it must now be a clean error instead.
     #[test]
     fn pad_rejects_len_above_format_width_limit() {
         assert!(Cast::pad("abcd", false, 32768).is_err());
-        // `usize::MAX` must not panic on the `len * 2` multiplication either.
         assert!(Cast::pad("abcd", false, usize::MAX).is_err());
     }
 
-    /// Valid inputs right at the boundary must still work.
     #[test]
-    fn pad_and_to_fixed_point_still_work_at_the_boundary() {
+    fn pad_and_to_fixed_point_still_work_for_valid_inputs() {
         assert_eq!(
             Cast::pad("abcd", false, 20).unwrap(),
             "0x000000000000000000000000000000000000abcd"
