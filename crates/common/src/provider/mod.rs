@@ -192,7 +192,12 @@ impl<N: Network> ProviderBuilder<N> {
     /// Defaults to `http://localhost:8545` and `Mainnet`.
     pub fn from_config(config: &Config) -> Result<Self> {
         let url = config.get_rpc_url_or_localhost_http()?;
-        let mut builder = Self::new(url.as_ref())
+        Self::from_config_with_url(config, url.as_ref())
+    }
+
+    /// Constructs a [ProviderBuilder] for `url`, applying transport options from [Config].
+    pub fn from_config_with_url(config: &Config, url: &str) -> Result<Self> {
+        let mut builder = Self::new(url)
             .accept_invalid_certs(config.eth_rpc_accept_invalid_certs)
             .no_proxy(config.eth_rpc_no_proxy)
             .curl_mode(config.eth_rpc_curl);
@@ -713,6 +718,22 @@ mod tests {
 
         assert!(builder.accept_invalid_certs);
         assert!(builder.no_proxy);
+        assert_eq!(builder.timeout, Duration::from_secs(7));
+    }
+
+    #[test]
+    fn from_config_with_url_overrides_rpc_url() {
+        let config = Config {
+            eth_rpc_url: Some("http://configured.example".to_string()),
+            eth_rpc_timeout: Some(7),
+            ..Default::default()
+        };
+
+        let builder =
+            ProviderBuilder::<AnyNetwork>::from_config_with_url(&config, "http://sequence.example")
+                .unwrap();
+
+        assert_eq!(builder.url.unwrap().as_str(), "http://sequence.example/");
         assert_eq!(builder.timeout, Duration::from_secs(7));
     }
 }
