@@ -20,8 +20,7 @@ use foundry_cli::{
     },
 };
 use foundry_common::{
-    FoundryTransactionBuilder,
-    compile::{self},
+    FoundryTransactionBuilder, compile,
     provider::{
         ProviderBuilder,
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
