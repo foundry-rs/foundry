@@ -814,7 +814,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                     });
                     if let Some((base_fee, priority_fee)) = &fee_breakdown {
                         json["estimated_max_fee_per_gas"] =
-                            serde_json::Value::from(estimated_gas_price.clone());
+                            serde_json::Value::from(estimated_gas_price);
                         json["estimated_base_fee_per_gas"] =
                             serde_json::Value::from(base_fee.clone());
                         json["estimated_max_priority_fee_per_gas"] =

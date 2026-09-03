@@ -7271,6 +7271,33 @@ where
         MinedTransactionReceipt { inner, out: info.out.clone() }
     }
 
+    /// Executes the pending block and returns its transaction receipts.
+    pub async fn pending_block_receipts(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+    ) -> Vec<FoundryTxReceipt> {
+        let BlockInfo { block, transactions, receipts } =
+            self.pending_block(pool_transactions).await;
+        let block_hash = block.header.hash_slow();
+        let mut pending_receipts = Vec::with_capacity(receipts.len());
+        let mut next_log_index = 0;
+
+        for (info, receipt) in transactions.iter().zip(receipts) {
+            let log_count = receipt.logs().len();
+            let receipt = self.build_mined_transaction_receipt(
+                info,
+                receipt,
+                block_hash,
+                &block,
+                next_log_index,
+            );
+            pending_receipts.push(receipt.inner);
+            next_log_index += log_count;
+        }
+
+        pending_receipts
+    }
+
     /// Returns the blocks receipts for the given number
     pub async fn block_receipts(
         &self,

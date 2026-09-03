@@ -6,10 +6,7 @@ use crate::{
 use solar::{
     ast::{self as ast, Span},
     interface::kw,
-    sema::{
-        Gcx,
-        hir::{self},
-    },
+    sema::{Gcx, hir},
 };
 
 declare_forge_lint!(
