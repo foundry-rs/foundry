@@ -8281,7 +8281,7 @@ impl Backend<FoundryNetwork> {
                     cache_db.commit(state);
                     preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
                     #[cfg(feature = "optimism")]
-                    let receipt = if matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
+                    let receipt = if tx.as_ref().is_deposit() {
                         crate::eth::backend::executor::optimism::build_simulated_deposit_receipt(
                             self.hardfork(),
                             caller_nonce,
