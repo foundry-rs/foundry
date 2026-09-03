@@ -215,7 +215,15 @@ contract StateGasTest is Test {
     // Amsterdam is an experimental EVM version in solc 0.8.36.
     let args = ["test", "--use", "0.8.36", "--evm-version", "amsterdam", "--experimental"];
     cmd.args(args).assert_success();
+    // Exercise the individual and combined CLI flags.
     cmd.forge_fuse().args(args).arg("--enable-tx-gas-limit").assert_success();
     cmd.forge_fuse().args(args).arg("--isolate").assert_success();
     cmd.forge_fuse().args(args).args(["--isolate", "--enable-tx-gas-limit"]).assert_success();
+
+    // Exercise the equivalent foundry.toml settings.
+    prj.update_config(|config| {
+        config.isolate = true;
+        config.enable_tx_gas_limit = true;
+    });
+    cmd.forge_fuse().args(args).assert_success();
 });
