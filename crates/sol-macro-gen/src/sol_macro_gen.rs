@@ -561,11 +561,7 @@ mod tests {
 
     #[test]
     fn get_sol_input_rejects_invalid_identifier_instead_of_panicking() {
-        // Regression test: `$` is valid in a Solidity identifier but not in a Rust one.
-        // `get_sol_input` must return an error here rather than panicking, even if an invalid
-        // name somehow reaches it uncleaned. End-to-end coverage (that `forge bind` correctly
-        // sanitizes `$` before it gets here) lives in `bind_dollar_sign_in_contract_name` in
-        // `crates/forge/tests/cli/bind.rs`.
+        // `$` is valid in Solidity identifiers but not Rust identifiers.
         let instance =
             super::SolMacroGen::new(std::path::PathBuf::from("Foo.json"), "Foo$Bar".to_string());
         assert!(instance.get_sol_input().is_err());
