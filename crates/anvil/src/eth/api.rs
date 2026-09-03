@@ -3679,6 +3679,11 @@ impl EthApi<FoundryNetwork> {
         if to_block > best {
             return Err(BlockchainError::BlockOutOfRange(best, to_block));
         }
+        let from_block =
+            self.backend.convert_block_number(filter.block_option.get_from_block().copied());
+        if from_block > to_block {
+            return Err(RpcError::invalid_params("invalid block range params").into());
+        }
 
         self.backend.logs(filter).await
     }
