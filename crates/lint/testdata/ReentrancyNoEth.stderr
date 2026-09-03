@@ -78,3 +78,11 @@ LL │         delete balances[hook.key()];
    │
    ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
 
+warning[reentrancy-no-eth]: external call can be reentered before `locked` is updated
+   ╭▸ ROOT/testdata/ReentrancyNoEth.sol:LL:CC
+   │
+LL │             (bool ok,) = target.call("");
+   │                          ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+

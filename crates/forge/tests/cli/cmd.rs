@@ -36,7 +36,10 @@ Options:
   -j, --threads <THREADS>
           Number of threads to use. Specifying 0 defaults to the number of logical cores
           
-          [aliases: --jobs]
+          [alias: --jobs]
+
+      --profile <PROFILE>
+          The configuration profile to use
 
   -V, --version
           Print version
@@ -52,13 +55,6 @@ Display options:
 
       --json
           Format log messages as JSON
-
-      --machine
-          Activate the agent contract: disables color and wraps CLI-runtime exits (parse / usage /
-          help / version) in a structured envelope. Per-command machine output (declared
-          `output_mode`, progress and prompt suppression, canonical exit codes) is adopted
-          incrementally — see `docs/agents/spec.md` §10. Mutually exclusive with `--json` and `--md`
-          to keep machine-mode output unambiguous
 
       --md
           Format log messages as Markdown
@@ -699,8 +695,7 @@ forgetest!(fail_init_nonexistent_template, |prj, cmd| {
     prj.wipe();
     cmd.args(["init", "--template", "a"]).arg(prj.root()).assert_failure().stderr_eq(str![[r#"
 Initializing [..] from https://github.com/a...
-remote: Not Found
-fatal: repository 'https://github.com/a/' not found
+...
 Error: git fetch exited with code 128
 
 "#]]);
@@ -767,6 +762,27 @@ Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d735
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
+
+// Checks that clone follows the SparkLend USDS proxy to its AToken implementation.
+forgetest!(flaky_can_clone_proxy_implementation, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--implementation",
+        "0xC02aB1A5eaA8d1B114EF786D9bde108cD4364359",
+    ])
+    .arg(prj.root())
+    .assert_success();
+
+    let metadata: serde_json::Value =
+        serde_json::from_str(&read_string(prj.root().join(".clone.meta"))).unwrap();
+    assert_eq!(metadata["targetContract"], "AToken");
+    assert_eq!(metadata["address"], "0x6175ddec3b9b38c88157c10a01ed4a3fa8639cc6");
+    assert!(prj.root().join(metadata["path"].as_str().unwrap()).exists());
 });
 
 // Checks that `--no-commit` is accepted as a noop backwards-compatibility flag for clone
@@ -999,8 +1015,8 @@ Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: N
     );
     assert!(
         foundry_toml.contains("[rpc_endpoints]")
-            && foundry_toml.contains("tempo = \"https://rpc.tempo.xyz/\"")
-            && foundry_toml.contains("moderato = \"https://rpc.moderato.tempo.xyz/\""),
+            && foundry_toml.contains("tempo = \"https://rpc.mpp.tempo.xyz\"")
+            && foundry_toml.contains("moderato = \"https://rpc.mpp.moderato.tempo.xyz\""),
         "foundry.toml should contain tempo rpc_endpoints, got:\n{foundry_toml}"
     );
 
@@ -1145,13 +1161,20 @@ forgetest_init!(can_clean_test_cache, |prj, cmd| {
     let _ = fs::create_dir(fuzz_cache_dir.clone());
     let invariant_cache_dir = prj.root().join("cache/invariant");
     let _ = fs::create_dir(invariant_cache_dir.clone());
+    let frontier_cache_dir = prj.root().join("cache/frontiers");
+    let _ = fs::create_dir(frontier_cache_dir.clone());
+    prj.update_config(|config| {
+        config.fuzz.corpus.frontier_dir = Some("cache/frontiers".into());
+    });
 
     assert!(fuzz_cache_dir.exists());
     assert!(invariant_cache_dir.exists());
+    assert!(frontier_cache_dir.exists());
 
     cmd.forge_fuse().arg("clean").assert_empty_stdout();
     assert!(!fuzz_cache_dir.exists());
     assert!(!invariant_cache_dir.exists());
+    assert!(!frontier_cache_dir.exists());
 });
 
 // checks that extra output works
@@ -1367,6 +1390,77 @@ contract Foo {
 "0x60806040[..]"
 
 "#]]);
+});
+
+// tests that `forge inspect <contract> transientStorageLayout` works
+forgetest!(can_inspect_transient_storage_layout, |prj, cmd| {
+    prj.add_source(
+        "Transient.sol",
+        r#"
+contract Transient {
+    uint256 transient counter;
+    address transient owner;
+}
+    "#,
+    );
+
+    cmd.arg("inspect").args(["Transient", "transientStorageLayout"]).assert_success().stdout_eq(
+        str![[r#"
+
+╭---------+---------+------+--------+-------+-----------------------------╮
+| Name    | Type    | Slot | Offset | Bytes | Contract                    |
++=========================================================================+
+| counter | uint256 | 0    | 0      | 32    | src/Transient.sol:Transient |
+|---------+---------+------+--------+-------+-----------------------------|
+| owner   | address | 1    | 0      | 20    | src/Transient.sol:Transient |
+╰---------+---------+------+--------+-------+-----------------------------╯
+
+
+"#]],
+    );
+
+    // `--json` prints the raw storage layout object.
+    cmd.forge_fuse()
+        .args(["inspect", "Transient", "transientStorageLayout", "--json"])
+        .assert_success()
+        .stdout_eq(
+            str![[r#"
+{
+  "storage": [
+    {
+      "astId": "{...}",
+      "contract": "src/Transient.sol:Transient",
+      "label": "counter",
+      "offset": 0,
+      "slot": "0",
+      "type": "t_uint256"
+    },
+    {
+      "astId": "{...}",
+      "contract": "src/Transient.sol:Transient",
+      "label": "owner",
+      "offset": 0,
+      "slot": "1",
+      "type": "t_address"
+    }
+  ],
+  "types": {
+    "t_address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "t_uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}
+
+"#]]
+            .is_json(),
+        );
 });
 
 forgetest!(can_inspect_linearization_markdown, |prj, cmd| {
@@ -1733,7 +1827,11 @@ forgetest!(can_fail_compile_with_warnings, |prj, cmd| {
         r"
 pragma solidity *;
 contract A {
-    function testExample() public {}
+    event Example();
+
+    function testExample() public {
+        emit Example();
+    }
 }
    ",
     );
@@ -3104,7 +3202,7 @@ contract GasReportFallbackTest is Test {
 +========================================================================================================+
 | Deployment Cost                                     | Deployment Size |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
-|                                              153531 |             494 |      |        |      |         |
+|                                              153519 |             494 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
 |                                                     |                 |      |        |      |         |
 |-----------------------------------------------------+-----------------+------+--------+------+---------|
@@ -3150,7 +3248,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/DelegateProxyTest.sol:ProxiedContract",
     "deployment": {
-      "gas": 153531,
+      "gas": 153519,
       "size": 494
     },
     "functions": {
@@ -3339,7 +3437,7 @@ contract NestedDeploy is Test {
 +============================================================================================+
 | Deployment Cost                           | Deployment Size |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
-|                                    328949 |            1163 |     |        |     |         |
+|                                    328961 |            1163 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
 |                                           |                 |     |        |     |         |
 |-------------------------------------------+-----------------+-----+--------+-----+---------|
@@ -3394,7 +3492,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/NestedDeployTest.sol:Parent",
     "deployment": {
-      "gas": 328949,
+      "gas": 328961,
       "size": 1163
     },
     "functions": {
@@ -3891,6 +3989,29 @@ forgetest!(inspect_custom_counter_abi, |prj, cmd| {
 "#]]);
 });
 
+forgetest!(inspect_abi_does_not_write_artifacts, |prj, cmd| {
+    prj.add_source("Counter.sol", CUSTOM_COUNTER);
+
+    let artifact_path = prj.paths().artifacts.join("Counter.sol/Counter.json");
+
+    cmd.args(["inspect", "Counter", "abi", "--json"]).assert_success();
+    assert!(!artifact_path.exists());
+
+    cmd.forge_fuse().arg("build").assert_success();
+    let built = std::fs::read(&artifact_path).unwrap();
+    let artifact: serde_json::Value =
+        foundry_compilers::utils::read_json_file(&artifact_path).unwrap();
+    let bytecode = artifact["bytecode"]["object"]
+        .as_str()
+        .expect("build artifact should include creation bytecode");
+    assert!(bytecode.starts_with("0x"));
+    assert!(bytecode.len() > 2);
+
+    cmd.forge_fuse().args(["inspect", "Counter", "abi", "--json"]).assert_success();
+    let inspected = std::fs::read(&artifact_path).unwrap();
+    assert_eq!(built, inspected);
+});
+
 forgetest!(inspect_custom_counter_events, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
@@ -4054,6 +4175,47 @@ forgetest!(inspect_multiple_contracts_with_different_paths, |prj, cmd| {
 "#]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/11146>
+forgetest!(inspect_contracts_by_exact_input_path, |prj, cmd| {
+    prj.add_test(
+        "InspectTarget.t.sol",
+        r#"
+contract InspectTarget {
+    function testValue() external pure returns (uint256) {
+        return 1;
+    }
+}
+"#,
+    );
+    prj.create_file(
+        "node_modules/example/Dependency.sol",
+        r#"
+pragma solidity ^0.8.0;
+
+contract Dependency {
+    function dependencyValue() external pure returns (uint256) {
+        return 2;
+    }
+}
+"#,
+    );
+    prj.update_config(|config| config.libs.push("node_modules".into()));
+
+    for (target, function) in [
+        ("test/InspectTarget.t.sol:InspectTarget", "testValue"),
+        ("node_modules/example/Dependency.sol:Dependency", "dependencyValue"),
+    ] {
+        let stdout = cmd
+            .forge_fuse()
+            .args(["inspect", target, "abi", "--json"])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        let abi: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert!(abi.as_array().unwrap().iter().any(|item| item["name"] == function));
+    }
+});
+
 forgetest!(inspect_custom_counter_method_identifiers, |prj, cmd| {
     prj.add_source("Counter.sol", CUSTOM_COUNTER);
 
@@ -4167,12 +4329,88 @@ forgetest_init!(can_inspect_standard_json, |prj, cmd| {
     },
     "evmVersion": "osaka",
     "viaIR": false,
+    "viaSSACFG": false,
     "experimental": false,
     "libraries": {}
   }
 }
 
 "#]]);
+});
+
+forgetest!(can_inspect_artifact_json, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+    "#,
+    );
+
+    let stdout =
+        cmd.args(["inspect", "Counter", "artifact"]).assert_success().get_output().stdout_lossy();
+    let artifact: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("artifact stdout should be valid JSON");
+
+    let abi = artifact["abi"].as_array().expect("artifact should include an ABI array");
+    assert!(abi.iter().any(|item| {
+        item.get("type").and_then(|value| value.as_str()) == Some("function")
+            && item.get("name").and_then(|value| value.as_str()) == Some("increment")
+    }));
+
+    let bytecode =
+        artifact["bytecode"]["object"].as_str().expect("artifact should include creation bytecode");
+    assert!(bytecode.starts_with("0x"));
+
+    let deployed_bytecode = artifact["deployedBytecode"]["object"]
+        .as_str()
+        .expect("artifact should include deployed bytecode");
+    assert!(deployed_bytecode.starts_with("0x"));
+});
+
+forgetest!(can_inspect_artifact_json_with_custom_out_and_duplicate_contract_names, |prj, cmd| {
+    prj.update_config(|config| config.out = "custom-out".into());
+
+    prj.add_source(
+        "Source.sol",
+        r#"
+contract Source {
+    function foo() public {}
+}
+    "#,
+    );
+    prj.add_source(
+        "another/Source.sol",
+        r#"
+contract Source {
+    function bar() public {}
+}
+    "#,
+    );
+
+    let stdout = cmd
+        .args(["inspect", "src/another/Source.sol:Source", "output"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let artifact: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("artifact stdout should be valid JSON");
+
+    let abi = artifact["abi"].as_array().expect("artifact should include an ABI array");
+    assert!(abi.iter().any(|item| {
+        item.get("type").and_then(|value| value.as_str()) == Some("function")
+            && item.get("name").and_then(|value| value.as_str()) == Some("bar")
+    }));
+    assert!(!abi.iter().any(|item| {
+        item.get("type").and_then(|value| value.as_str()) == Some("function")
+            && item.get("name").and_then(|value| value.as_str()) == Some("foo")
+    }));
+    assert!(prj.root().join("custom-out/Source.sol/Source.json").exists());
 });
 
 forgetest_init!(can_inspect_libraries, |prj, cmd| {
@@ -4516,21 +4754,6 @@ Flattened file written at [..]flat.sol
 "#]]);
 
     assert!(out.exists(), "flattened file should have been written");
-});
-
-// `forge generate test` writes the scaffolded file and emits its status string to stderr,
-// keeping stdout empty so agents can pipe the command without diagnostics.
-forgetest!(generate_test_writes_status_to_stderr, |prj, cmd| {
-    cmd.args(["generate", "test", "--contract-name", "Counter"])
-        .assert_success()
-        .stdout_eq(str![""])
-        .stderr_eq(str![[r#"
-Warning: `forge generate` is deprecated and will be removed in a future version
-Generated test file: test/Counter.t.sol
-
-"#]]);
-
-    assert!(prj.root().join("test/Counter.t.sol").exists(), "scaffolded test file should exist");
 });
 
 // `forge init` writes its status prose to stderr and keeps stdout empty so agents

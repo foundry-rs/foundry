@@ -1,5 +1,6 @@
 use alloy_network::Network;
 
+mod header;
 #[cfg(feature = "optimism")]
 mod optimism;
 mod receipt;
@@ -7,6 +8,7 @@ mod receipt;
 use alloy_provider::fillers::{
     BlobGasFiller, ChainIdFiller, GasFiller, JoinFill, NonceFiller, RecommendedFillers,
 };
+pub use header::*;
 #[cfg(feature = "optimism")]
 pub use optimism::FoundryTransactionResponse;
 pub use receipt::*;
@@ -40,7 +42,7 @@ impl Network for FoundryNetwork {
 
     type ReceiptEnvelope = crate::FoundryReceiptEnvelope;
 
-    type Header = alloy_consensus::Header;
+    type Header = FoundryHeader;
 
     type TransactionRequest = crate::FoundryTransactionRequest;
 
@@ -48,7 +50,7 @@ impl Network for FoundryNetwork {
 
     type ReceiptResponse = crate::FoundryTxReceipt;
 
-    type HeaderResponse = alloy_rpc_types_eth::Header;
+    type HeaderResponse = alloy_rpc_types_eth::Header<FoundryHeader>;
 
     type BlockResponse =
         alloy_rpc_types_eth::Block<Self::TransactionResponse, Self::HeaderResponse>;

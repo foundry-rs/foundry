@@ -8,6 +8,10 @@ contract CostlyLoop {
     uint256[] public values;
     mapping(address => uint256) public balances;
 
+    function getValues() internal view returns (uint256[] storage) {
+        return values;
+    }
+
     // bad: direct state variable write in loop
     function badIncrement(uint256 n) public {
         for (uint256 i = 0; i < n; i++) {
@@ -42,6 +46,20 @@ contract CostlyLoop {
     function badArrayWrite(uint256 n) public {
         for (uint256 i = 0; i < n; i++) {
             values[i] = i;
+        }
+    }
+
+    // bad: array element write through a storage reference returned by a function
+    function badStorageReturnWrite(uint256 n) public {
+        for (uint256 i = 0; i < n; i++) {
+            getValues()[i] = i; //~NOTE: storage write inside a loop
+        }
+    }
+
+    // bad: assignment through the storage lvalue returned by array push
+    function badPushReturnWrite(uint256 n) public {
+        for (uint256 i = 0; i < n; i++) {
+            values.push() = i; //~NOTE: storage write inside a loop
         }
     }
 

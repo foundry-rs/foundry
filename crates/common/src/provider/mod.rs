@@ -56,35 +56,6 @@ pub type RetryProviderWithSigner<N = AnyNetwork, W = EthereumWallet> = FillProvi
     N,
 >;
 
-/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
-/// an anvil or other dev node) and with the default, or 7 second otherwise.
-///
-/// See [`try_get_http_provider`] for more details.
-///
-/// # Panics
-///
-/// Panics if the URL is invalid.
-///
-/// # Examples
-///
-/// ```
-/// use foundry_common::provider::get_http_provider;
-///
-/// let retry_provider = get_http_provider("http://localhost:8545");
-/// ```
-#[inline]
-#[track_caller]
-pub fn get_http_provider(builder: impl AsRef<str>) -> RetryProvider {
-    try_get_http_provider(builder).unwrap()
-}
-
-/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
-/// an anvil or other dev node) and with the default, or 7 second otherwise.
-#[inline]
-pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> {
-    ProviderBuilder::new(builder.as_ref()).build()
-}
-
 /// A round-robin transport that distributes requests across multiple transports.
 ///
 /// Each request is sent to exactly one transport, rotating through the list.
@@ -193,7 +164,7 @@ impl<N: Network> ProviderBuilder<N> {
                 }
                 _ => Err(err),
             })
-            .wrap_err_with(|| format!("invalid provider URL: {url_str:?}"));
+            .wrap_err_with(|| format!("invalid provider URL: {:?}", redact_url(url_str)));
 
         // Use the final URL string to guess if it's a local URL.
         let is_local = url.as_ref().is_ok_and(|url| guess_local_url(url.as_str()));
@@ -221,14 +192,21 @@ impl<N: Network> ProviderBuilder<N> {
     /// Defaults to `http://localhost:8545` and `Mainnet`.
     pub fn from_config(config: &Config) -> Result<Self> {
         let url = config.get_rpc_url_or_localhost_http()?;
-        let mut builder = Self::new(url.as_ref())
-            .accept_invalid_certs(config.eth_rpc_accept_invalid_certs)
-            .no_proxy(config.eth_rpc_no_proxy)
-            .curl_mode(config.eth_rpc_curl);
+        let mut builder = Self::from_config_with_url(config, url.as_ref())?;
 
         if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
             builder = builder.chain(chain);
         }
+
+        Ok(builder)
+    }
+
+    /// Constructs a [ProviderBuilder] for `url`, applying transport options from [Config].
+    pub fn from_config_with_url(config: &Config, url: &str) -> Result<Self> {
+        let mut builder = Self::new(url)
+            .accept_invalid_certs(config.eth_rpc_accept_invalid_certs)
+            .no_proxy(config.eth_rpc_no_proxy)
+            .curl_mode(config.eth_rpc_curl);
 
         if let Some(jwt) = config.get_rpc_jwt_secret()? {
             builder = builder.jwt(jwt.as_ref());
@@ -570,6 +548,74 @@ impl<N: Network> ProviderBuilder<N> {
     }
 }
 
+/// Returns whether an RPC transport error reports JSON-RPC method-not-found.
+///
+/// Some providers encode JSON-RPC errors inside an HTTP error response instead of returning a
+/// normal JSON-RPC response. Only the exact `-32601` code is treated as method unavailability;
+/// authentication, internal, and transport errors must remain visible to callers.
+pub fn is_rpc_method_not_found(error: &TransportError) -> bool {
+    rpc_error_code(error) == Some(-32601)
+}
+
+/// Returns an RPC URL safe for display by retaining only its scheme, host, and port.
+pub fn redact_url(raw: &str) -> String {
+    let Ok(mut redacted) = Url::parse(raw) else {
+        return "<redacted>".to_owned();
+    };
+    let _ = redacted.set_username("");
+    let _ = redacted.set_password(None);
+    redacted.set_path("");
+    redacted.set_query(None);
+    redacted.set_fragment(None);
+    redacted.to_string()
+}
+
+fn rpc_error_code(error: &TransportError) -> Option<i64> {
+    if let Some(response) = error.as_error_resp() {
+        return Some(response.code);
+    }
+    let TransportError::Transport(error) = error else { return None };
+    error.as_http_error().and_then(|error| rpc_error_code_from_body(&error.body))
+}
+
+fn rpc_error_code_from_body(body: &str) -> Option<i64> {
+    // HTTP transports may append human-readable diagnostics after the JSON-RPC body. Parse the
+    // first complete JSON value instead of requiring the entire body to be JSON.
+    let value =
+        serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>().next()?.ok()?;
+    let error = value.get("error").unwrap_or(&value);
+    error.get("code")?.as_i64()
+}
+
+/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
+/// an anvil or other dev node) and with the default, or 7 second otherwise.
+///
+/// See [`try_get_http_provider`] for more details.
+///
+/// # Panics
+///
+/// Panics if the URL is invalid.
+///
+/// # Examples
+///
+/// ```
+/// use foundry_common::provider::get_http_provider;
+///
+/// let retry_provider = get_http_provider("http://localhost:8545");
+/// ```
+#[inline]
+#[track_caller]
+pub fn get_http_provider(builder: impl AsRef<str>) -> RetryProvider {
+    try_get_http_provider(builder).unwrap()
+}
+
+/// Constructs a provider with a 100 millisecond interval poll if it's a localhost URL (most likely
+/// an anvil or other dev node) and with the default, or 7 second otherwise.
+#[inline]
+pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> {
+    ProviderBuilder::new(builder.as_ref()).build()
+}
+
 #[cfg(not(windows))]
 fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
     if path.is_absolute() {
@@ -595,7 +641,61 @@ fn resolve_path(path: &Path) -> Result<PathBuf, ()> {
 
 #[cfg(test)]
 mod tests {
+    use alloy_json_rpc::ErrorPayload;
+
     use super::*;
+
+    #[test]
+    fn redacts_url_credentials_and_resource() {
+        let url = "https://user:password@example.com:8545/private-key?token=secret#fragment";
+
+        assert_eq!(redact_url(url), "https://example.com:8545/");
+        assert_eq!(redact_url("not a URL with secret"), "<redacted>");
+    }
+
+    #[test]
+    fn invalid_provider_url_error_is_redacted() {
+        let builder = ProviderBuilder::<AnyNetwork>::new(
+            "https://example.com:bad/private-api-key?token=secret",
+        );
+
+        let error = builder.url.unwrap_err().to_string();
+        assert!(error.contains("<redacted>"));
+        assert!(!error.contains("private-api-key"));
+        assert!(!error.contains("secret"));
+    }
+
+    #[test]
+    fn method_not_found_classification_is_exact() {
+        let method_not_found = TransportError::ErrorResp(ErrorPayload::method_not_found());
+        let internal_error = TransportError::ErrorResp(ErrorPayload::internal_error());
+        let http_method_not_found = alloy_transport::TransportErrorKind::http_error(
+            403,
+            r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"method not allowed"}}"#
+                .to_string(),
+        );
+        let http_internal_error = alloy_transport::TransportErrorKind::http_error(
+            500,
+            r#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"internal error"}}"#.to_string(),
+        );
+        let http_method_not_found_with_diagnostics =
+            alloy_transport::TransportErrorKind::http_error(
+                403,
+                concat!(
+                    r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"method not allowed"}}"#,
+                    "\n\nHTTP diagnostics:\nstatus: 403 Forbidden"
+                )
+                .to_string(),
+            );
+        let transport_error = alloy_transport::TransportErrorKind::backend_gone();
+
+        assert!(is_rpc_method_not_found(&method_not_found));
+        assert!(is_rpc_method_not_found(&http_method_not_found));
+        assert!(is_rpc_method_not_found(&http_method_not_found_with_diagnostics));
+        assert!(!is_rpc_method_not_found(&internal_error));
+        assert!(!is_rpc_method_not_found(&http_internal_error));
+        assert!(!is_rpc_method_not_found(&transport_error));
+    }
 
     #[test]
     fn can_auto_correct_missing_prefix() {
@@ -610,6 +710,7 @@ mod tests {
     fn from_config_applies_rpc_transport_options() {
         let config = Config {
             eth_rpc_url: Some("http://example.com".to_string()),
+            chain: Some(NamedChain::Polygon.into()),
             eth_rpc_accept_invalid_certs: true,
             eth_rpc_no_proxy: true,
             eth_rpc_timeout: Some(7),
@@ -621,5 +722,24 @@ mod tests {
         assert!(builder.accept_invalid_certs);
         assert!(builder.no_proxy);
         assert_eq!(builder.timeout, Duration::from_secs(7));
+        assert_eq!(builder.chain, NamedChain::Polygon);
+    }
+
+    #[test]
+    fn from_config_with_url_overrides_rpc_url() {
+        let config = Config {
+            eth_rpc_url: Some("http://configured.example".to_string()),
+            chain: Some(NamedChain::Polygon.into()),
+            eth_rpc_timeout: Some(7),
+            ..Default::default()
+        };
+
+        let builder =
+            ProviderBuilder::<AnyNetwork>::from_config_with_url(&config, "http://sequence.example")
+                .unwrap();
+
+        assert_eq!(builder.url.unwrap().as_str(), "http://sequence.example/");
+        assert_eq!(builder.timeout, Duration::from_secs(7));
+        assert_eq!(builder.chain, NamedChain::Mainnet);
     }
 }

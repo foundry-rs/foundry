@@ -17,6 +17,8 @@ pub enum CoverageReportKind {
     Lcov,
     Debug,
     Bytecode,
+    /// JSON report mapping each test to the source items it covers.
+    Attribution,
 }
 
 /// Configuration for `forge coverage`, exposed under `[coverage]` and

@@ -3,21 +3,23 @@
 //! Pure functions over `solar`'s HIR:
 //! * `build_name_to_page`: maps contract names to their MDX page paths.
 //! * `inheritance_links`: `**Inherits:**` line for a contract page.
-//! * `resolve_inheritdoc`: pulls natspec from a base contract member.
+//! * `natspec_doc`: resolves effective NatSpec for a callable item.
 //! * `replace_inline_links`: rewrites `{Ident}` to markdown links.
 
 use path_slash::PathBufExt;
 use solar::{
-    ast::{CommentKind, ContractKind, DocComments, FunctionKind, ItemKind, NatSpecKind},
-    interface::source_map::FileName,
+    ast::{
+        ContractKind, DataLocation, FunctionKind, ItemKind, NatSpecItem, NatSpecKind, Visibility,
+    },
+    interface::{Span, source_map::FileName},
     sema::{
         Gcx,
         hir::{ContractId, FunctionId, ItemId, SourceId, VariableId},
-        ty::{TyAbiPrinter, TyAbiPrinterMode},
+        ty::{Ty, TyAbiPrinter, TyAbiPrinterMode},
     },
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry},
     path::{Path, PathBuf},
 };
 use tracing::warn;
@@ -250,254 +252,304 @@ pub fn inheritance_links(
 
 // ── inheritdoc resolution ─────────────────────────────────────────────────────
 
-/// Collected natspec tags from an inherited base member.
-pub struct InheritedDoc {
+/// One rendered row of a public variable getter signature (its name, ABI type and the
+/// inherited description).
+pub struct GetterField {
+    pub name: Option<String>,
+    pub ty: String,
+    pub description: String,
+}
+
+/// Effective NatSpec for an item, resolved by Solar and aligned with the item's callable
+/// signature.
+pub struct NatSpecDoc {
     pub notices: Vec<String>,
     pub devs: Vec<String>,
-    pub params: Vec<(String, String)>,
-    pub returns: Vec<(String, String)>,
+    pub params: Vec<String>,
+    pub returns: Vec<String>,
+    pub getter_params: Vec<GetterField>,
+    pub getter_returns: Vec<GetterField>,
 }
 
-/// Resolve `@inheritdoc BaseContract` for a function named `fn_name` inside
-/// `contract_id` (the current contract). Walks the linearized bases to find a
-/// matching function and returns its natspec if found.
-///
-/// When `param_types` is `Some`, the resolver prefers a function whose parameter
-/// type signature matches exactly; this disambiguates overloads. Ambiguous
-/// overloads are never matched by name alone.
-pub fn resolve_inheritdoc(
+/// Resolves explicit NatSpec inheritance, or Foundry's conservative implicit inheritance policy.
+pub fn natspec_doc(gcx: Gcx<'_>, item: ItemId, implicit: bool) -> Option<NatSpecDoc> {
+    let mut doc = effective_natspec_doc(gcx, item, implicit, &mut HashSet::new())?;
+    let callable = callable_function(gcx, item);
+    if let Some(fid) = callable
+        && matches!(item, ItemId::Variable(_))
+    {
+        let function = gcx.hir.function(fid);
+        doc.getter_params = function
+            .parameters
+            .iter()
+            .enumerate()
+            .map(|(index, &parameter)| getter_field(gcx, parameter, &doc.params[index]))
+            .collect();
+        doc.getter_returns = function
+            .returns
+            .iter()
+            .enumerate()
+            .map(|(index, &return_)| getter_field(gcx, return_, &doc.returns[index]))
+            .collect();
+    }
+    Some(doc)
+}
+
+fn effective_natspec_doc(
     gcx: Gcx<'_>,
-    contract_id: ContractId,
-    fn_name: &str,
-    base_name: &str,
-    param_types: Option<&[String]>,
-) -> Option<InheritedDoc> {
-    let contract = gcx.hir.contract(contract_id);
+    item: ItemId,
+    implicit: bool,
+    visited: &mut HashSet<ItemId>,
+) -> Option<NatSpecDoc> {
+    if !visited.insert(item) {
+        return None;
+    }
 
-    // Find the named base contract in the linearized hierarchy.
-    let base_id = contract
-        .linearized_bases
-        .iter()
-        .copied()
-        .find(|&bid| gcx.hir.contract(bid).name.as_str() == base_name)?;
-
-    // Search the named base and then its own linearized chain so that `@inheritdoc Base`
-    // resolves even when `Base` itself inherits the member without redeclaring NatSpec.
-    // We prefer the first level that has both a name match AND non-empty documentation.
-    let base_contract = gcx.hir.contract(base_id);
-
-    let search_contracts: Vec<ContractId> = std::iter::once(base_id)
-        .chain(base_contract.linearized_bases.iter().copied().filter(|&id| id != base_id))
-        .collect();
-
-    for search_id in &search_contracts {
-        let search_contract = gcx.hir.contract(*search_id);
-        let mut name_matches: Vec<FunctionId> = Vec::new();
-        for &item_id in search_contract.items {
-            if let ItemId::Function(fid) = item_id {
-                let f = gcx.hir.function(fid);
-                let matches = match f.kind {
-                    FunctionKind::Constructor => fn_name == "constructor",
-                    FunctionKind::Fallback => fn_name == "fallback",
-                    FunctionKind::Receive => fn_name == "receive",
-                    _ => f.name.map(|n| n.as_str() == fn_name).unwrap_or(false),
-                };
-                if matches {
-                    name_matches.push(fid);
-                }
-            }
+    let hir_item = gcx.hir.item(item);
+    let raw = gcx.hir.doc(hir_item.doc()).ast_comments();
+    let has_local = raw.iter().any(|comment| !comment.natspec.is_empty());
+    if !has_local {
+        if !implicit {
+            return Some(empty_natspec_doc(gcx, item));
         }
-        if name_matches.is_empty() {
-            continue;
-        }
-
-        // Prefer an exact signature match when overloads exist.
-        if let Some(want) = param_types
-            && name_matches.len() > 1
+        let bases = direct_base_items(gcx, item);
+        let [base] = bases.as_slice() else { return None };
+        if !implicit_edge_compatible(gcx, item, *base)
+            || (!matches!(item, ItemId::Variable(_)) && !parameter_names_equal(gcx, item, *base))
         {
-            // Try to find a signature-exact match with docs; fall through only for
-            // non-overloaded name matches below.
-            for &fid in &name_matches {
-                if let Some(got) = function_param_types(gcx, fid)
-                    && got.len() == want.len()
-                    && got.iter().zip(want).all(|(a, b)| a == b)
-                    && let Some(doc) = extract_inherited_doc(gcx, fid)
-                    && (!doc.notices.is_empty()
-                        || !doc.devs.is_empty()
-                        || !doc.params.is_empty()
-                        || !doc.returns.is_empty())
-                {
-                    return Some(doc);
-                }
-            }
+            return None;
         }
+        return effective_natspec_doc(gcx, *base, true, visited);
+    }
 
-        if name_matches.len() > 1 {
+    let mut local = doc_from_view(gcx, item);
+    let mut inheritdoc = None;
+    let mut local_notice = false;
+    let mut local_dev = false;
+    let mut local_param = false;
+    let mut local_return = false;
+    let raw_items =
+        raw.iter().flat_map(|comment| comment.natspec.iter().copied()).collect::<Vec<_>>();
+    for entry in &raw_items {
+        match entry.kind {
+            NatSpecKind::Inheritdoc { contract } if inheritdoc.is_none() => {
+                inheritdoc = Some(contract)
+            }
+            NatSpecKind::Notice if continuation_parent(gcx, &raw_items, entry).is_none() => {
+                local_notice = true
+            }
+            NatSpecKind::Dev => local_dev = true,
+            NatSpecKind::Param { .. } => local_param = true,
+            NatSpecKind::Return { .. } => local_return = true,
+            _ => {}
+        }
+    }
+    let Some(alias) = inheritdoc else { return Some(local) };
+    let contract = gcx.natspec_contract(alias.name, hir_item.source())?;
+    let source = exact_override_item(gcx, item, contract, &mut HashSet::new())?;
+    let inherited = effective_natspec_doc(gcx, source, true, visited)?;
+
+    // Solar handles ordinary explicit inheritance, including positional remapping. The
+    // recursive source fills only sections that Solar cannot see because they depend on
+    // Foundry's implicit policy at the exact source declaration.
+    if !local_notice {
+        local.notices = inherited.notices;
+    }
+    if !local_dev {
+        local.devs = inherited.devs;
+    }
+    if !local_param {
+        for (description, inherited) in local.params.iter_mut().zip(inherited.params) {
+            *description = inherited;
+        }
+    }
+    if !local_return {
+        for (description, inherited) in local.returns.iter_mut().zip(inherited.returns) {
+            *description = inherited;
+        }
+    }
+    Some(local)
+}
+
+fn empty_natspec_doc(gcx: Gcx<'_>, item: ItemId) -> NatSpecDoc {
+    let (params, returns) = callable_function(gcx, item)
+        .map(|id| {
+            let function = gcx.hir.function(id);
+            (
+                vec![String::new(); function.parameters.len()],
+                vec![String::new(); function.returns.len()],
+            )
+        })
+        .unwrap_or_default();
+    NatSpecDoc {
+        notices: Vec::new(),
+        devs: Vec::new(),
+        params,
+        returns,
+        getter_params: Vec::new(),
+        getter_returns: Vec::new(),
+    }
+}
+
+fn doc_from_view(gcx: Gcx<'_>, item: ItemId) -> NatSpecDoc {
+    let view = gcx.natspec_view(item);
+    let mut doc = empty_natspec_doc(gcx, item);
+    for natspec in view.items() {
+        if continuation_parent(gcx, view.items(), natspec).is_some() {
             continue;
         }
-
-        // Return the first candidate that has actual documentation; if none have docs
-        // at this inheritance level continue walking up the chain.
-        for &fid in &name_matches {
-            if let Some(doc) = extract_inherited_doc(gcx, fid)
-                && (!doc.notices.is_empty()
-                    || !doc.devs.is_empty()
-                    || !doc.params.is_empty()
-                    || !doc.returns.is_empty())
-            {
-                return Some(doc);
-            }
+        let content = positional_description(gcx, view.items(), std::slice::from_ref(natspec));
+        match natspec.kind {
+            NatSpecKind::Notice => doc.notices.push(content),
+            NatSpecKind::Dev => doc.devs.push(content),
+            _ => {}
         }
     }
-
-    None
+    if let Some(fid) = callable_function(gcx, item) {
+        let function = gcx.hir.function(fid);
+        for (index, param) in doc.params[..function.parameters.len()].iter_mut().enumerate() {
+            *param = positional_description(gcx, view.items(), view.parameter(index));
+        }
+        for (index, return_) in doc.returns[..function.returns.len()].iter_mut().enumerate() {
+            *return_ = positional_description(gcx, view.items(), view.return_(index));
+        }
+    }
+    doc
 }
 
-/// Resolve `@inheritdoc BaseContract` for a **state variable** named `var_name`
-/// inside `contract_id`. Walks the linearised bases to find a matching public
-/// variable and returns its natspec if found.
-pub fn resolve_inheritdoc_var(
+fn positional_description(
     gcx: Gcx<'_>,
-    contract_id: ContractId,
-    var_name: &str,
-    base_name: &str,
-) -> Option<InheritedDoc> {
-    let contract = gcx.hir.contract(contract_id);
-    let base_id = contract
-        .linearized_bases
+    all_items: &[NatSpecItem],
+    items: &[NatSpecItem],
+) -> String {
+    items
         .iter()
-        .copied()
-        .find(|&bid| gcx.hir.contract(bid).name.as_str() == base_name)?;
-
-    let base_contract = gcx.hir.contract(base_id);
-    let search_contracts: Vec<ContractId> = std::iter::once(base_id)
-        .chain(base_contract.linearized_bases.iter().copied().filter(|&id| id != base_id))
-        .collect();
-
-    for search_id in &search_contracts {
-        let search_contract = gcx.hir.contract(*search_id);
-        for &item_id in search_contract.items {
-            match item_id {
-                ItemId::Variable(vid) => {
-                    let v = gcx.hir.variable(vid);
-                    if v.name.map(|n| n.as_str() == var_name).unwrap_or(false)
-                        && let Some(doc) = extract_inherited_doc_var(gcx, vid)
-                        && (!doc.notices.is_empty() || !doc.devs.is_empty())
-                    {
-                        return Some(doc);
-                    }
-                }
-                // A public state variable can implement an interface getter declared as a
-                // zero-arg function (e.g. `function totalSupply() external view returns
-                // (uint256)`). Fall back to matching a same-name zero-parameter function so
-                // `@inheritdoc IERC20` on `uint256 public totalSupply` picks up the
-                // interface's notice/return docs.
-                ItemId::Function(fid) => {
-                    let f = gcx.hir.function(fid);
-                    if f.name.map(|n| n.as_str() == var_name).unwrap_or(false)
-                        && function_param_types(gcx, fid).map(|p| p.is_empty()).unwrap_or(false)
-                        && let Some(doc) = extract_inherited_doc(gcx, fid)
-                        && (!doc.notices.is_empty()
-                            || !doc.devs.is_empty()
-                            || !doc.returns.is_empty())
-                    {
-                        return Some(doc);
-                    }
-                }
-                _ => {}
+        .map(|item| {
+            let mut content = normalized_natspec_content(gcx, item);
+            for continuation in all_items.iter().filter(|candidate| {
+                continuation_parent(gcx, all_items, candidate) == Some(Some(item.span))
+            }) {
+                content.push('\n');
+                content.push_str(&normalized_natspec_content(gcx, continuation));
             }
-        }
+            content
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn normalized_natspec_content(gcx: Gcx<'_>, item: &NatSpecItem) -> String {
+    let source_map = gcx.sess.source_map();
+    let snippet = source_map.span_to_snippet(item.span).ok();
+    if snippet.as_deref().is_some_and(|snippet| snippet.starts_with("///")) {
+        return item.content().trim().to_string();
     }
-    None
-}
-
-fn extract_inherited_doc_var(gcx: Gcx<'_>, vid: VariableId) -> Option<InheritedDoc> {
-    let v = gcx.hir.variable(vid);
-    let ast_source = gcx.sources.get(v.source)?;
-    let ast = ast_source.ast.as_ref()?;
-    let var_span = v.span;
-
-    let docs = ast.items.iter().find_map(|item| {
-        if item.span == var_span {
-            return Some(&item.docs);
-        }
-        if let ItemKind::Contract(c) = &item.kind {
-            for member in c.body.iter() {
-                if member.span == var_span {
-                    return Some(&member.docs);
-                }
-            }
-        }
-        None
-    })?;
-
-    Some(collect_inherited_doc(docs))
-}
-
-/// Extract the canonical ABI parameter type strings (in source order) for a function.
-///
-/// Non-ABI-printable internal parameter types, such as mappings, fall back to their
-/// source spelling so inherited docs can still resolve without panicking.
-pub(crate) fn function_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Option<Vec<String>> {
-    let f = gcx.hir.function(fid);
-    let source_types = gcx
-        .sources
-        .get(f.source)
-        .and_then(|source| source.ast.as_ref())
-        .and_then(|ast| {
-            ast.items.iter().find_map(|item| match &item.kind {
-                ItemKind::Function(func) if item.span == f.span => Some(&func.header.parameters),
-                ItemKind::Contract(c) => c.body.iter().find_map(|m| match &m.kind {
-                    ItemKind::Function(func) if m.span == f.span => Some(&func.header.parameters),
-                    _ => None,
-                }),
-                _ => None,
-            })
-        })
-        .map(|params| {
-            let sm = gcx.sess.source_map();
-            params
-                .vars
-                .iter()
-                .map(|v| {
-                    normalize_sol_type(sm.span_to_snippet(v.ty.span).unwrap_or_default().trim())
-                })
-                .collect::<Vec<_>>()
-        });
-
-    f.parameters
-        .iter()
+    if snippet.as_deref().is_some_and(|snippet| snippet.starts_with("/**")) {
+        return clean_block_doc_content(item.content()).trim().to_string();
+    }
+    item.content()
+        .lines()
         .enumerate()
-        .map(|(idx, &param)| {
-            let ty = gcx.type_of_item(param.into());
-            if ty.can_be_exported(gcx) {
-                let mut out = String::new();
-                TyAbiPrinter::new(gcx, &mut out, TyAbiPrinterMode::Signature)
-                    .print(ty)
-                    .expect("writing ABI signature type to a String cannot fail");
-                Some(out)
-            } else {
-                source_types.as_ref().and_then(|types| types.get(idx).cloned())
-            }
-        })
-        .collect()
+        .map(
+            |(index, line)| {
+                if index == 0 { line.to_string() } else { clean_block_doc_content(line) }
+            },
+        )
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
-/// Canonicalize Solidity type aliases for generated anchors and source fallbacks.
-///
-/// Replaces every occurrence of the bare alias tokens `uint` / `int` (not
-/// followed by a digit) with their canonical ABI equivalents `uint256` /
-/// `int256`.
+/// Returns the original tagged parent of a synthetic line-comment notice. The outer `Option`
+/// distinguishes a continuation from a standalone untagged notice; the inner value is `None` when
+/// Solar's resolved view omitted the parent because a local section replaced it.
+fn continuation_parent(
+    gcx: Gcx<'_>,
+    all_items: &[NatSpecItem],
+    item: &NatSpecItem,
+) -> Option<Option<Span>> {
+    if !matches!(item.kind, NatSpecKind::Notice)
+        || !gcx.sess.source_map().span_to_snippet(item.span).ok()?.starts_with("///")
+    {
+        return None;
+    }
+
+    let source_map = gcx.sess.source_map();
+    let location = source_map.lookup_char_pos(item.span.lo());
+    let mut previous_line = location.line.checked_sub(2)?;
+    loop {
+        let line = location.file.get_line(previous_line)?.trim_start();
+        let content = line.strip_prefix("///")?;
+        if content.trim().is_empty() {
+            return None;
+        }
+        let Some(tag) = content.trim_start().strip_prefix('@') else {
+            previous_line = previous_line.checked_sub(1)?;
+            continue;
+        };
+        if !matches!(tag.split_whitespace().next(), Some("notice" | "dev" | "param" | "return")) {
+            return None;
+        }
+        return Some(
+            all_items
+                .iter()
+                .find(|candidate| {
+                    let candidate_location = source_map.lookup_char_pos(candidate.span.lo());
+                    candidate_location.line == previous_line + 1
+                        && std::sync::Arc::ptr_eq(&candidate_location.file, &location.file)
+                })
+                .map(|parent| parent.span),
+        );
+    }
+}
+
+fn getter_field(gcx: Gcx<'_>, variable: VariableId, description: &str) -> GetterField {
+    GetterField {
+        name: gcx.hir.variable(variable).name.map(|name| name.as_str().to_string()),
+        ty: render_ty(gcx, gcx.type_of_item(variable.into())),
+        description: description.to_string(),
+    }
+}
+
+/// Renders a resolved type as its ABI signature string.
+fn render_ty<'a>(gcx: Gcx<'a>, ty: Ty<'a>) -> String {
+    let mut out = String::new();
+    let _ = TyAbiPrinter::new(gcx, &mut out, TyAbiPrinterMode::Signature).print(ty);
+    out
+}
+
+/// Extracts function parameter types exactly as spelled in source for link anchors.
+fn function_source_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Option<Vec<String>> {
+    let f = gcx.hir.function(fid);
+    let ast = gcx.sources.get(f.source)?.ast.as_ref()?;
+    let params = ast.items.iter().find_map(|item| match &item.kind {
+        ItemKind::Function(func) if item.span == f.span => Some(&func.header.parameters),
+        ItemKind::Contract(c) => c.body.iter().find_map(|member| match &member.kind {
+            ItemKind::Function(func) if member.span == f.span => Some(&func.header.parameters),
+            _ => None,
+        }),
+        _ => None,
+    })?;
+    let sm = gcx.sess.source_map();
+    Some(
+        params
+            .vars
+            .iter()
+            .map(|variable| {
+                sm.span_to_snippet(variable.ty.span).unwrap_or_default().trim().to_string()
+            })
+            .collect(),
+    )
+}
+
+/// Canonicalizes Solidity type aliases for generated link anchors.
 fn normalize_sol_type(t: &str) -> String {
-    // Walk char-by-char and replace `uint` / `int` that are not followed by a
-    // digit (i.e. are bare aliases, not `uint8`, `uint256`, etc.).
     let bytes = t.as_bytes();
     let len = bytes.len();
     let mut out = String::with_capacity(len + 8);
     let mut i = 0;
     while i < len {
-        // Try to match the longer alias first (`uint` before `int`) to avoid
-        // a prefix match of `int` inside `uint`.
         if bytes[i..].starts_with(b"uint")
             && !bytes.get(i + 4).copied().map(|b| b.is_ascii_digit()).unwrap_or(false)
         {
@@ -518,109 +570,155 @@ fn normalize_sol_type(t: &str) -> String {
     out
 }
 
-fn extract_inherited_doc(gcx: Gcx<'_>, fid: FunctionId) -> Option<InheritedDoc> {
-    // HIR functions store a span; we need the AST doc comments.
-    // The AST source has the doc comments on the Item.
-    // We find the source file for this function and look up the AST item by span.
-    let f = gcx.hir.function(fid);
-    let ast_source = gcx.sources.get(f.source)?;
-    let ast = ast_source.ast.as_ref()?;
-
-    let fn_span = f.span;
-    // Walk the AST to find the Item whose span matches.
-    let docs = ast.items.iter().find_map(|item| {
-        if item.span == fn_span {
-            return Some(&item.docs);
-        }
-        // Also search inside contracts.
-        if let solar::ast::ItemKind::Contract(c) = &item.kind {
-            for member in c.body.iter() {
-                if member.span == fn_span {
-                    return Some(&member.docs);
-                }
-            }
-        }
-        None
-    })?;
-
-    Some(collect_inherited_doc(docs))
+fn callable_function(gcx: Gcx<'_>, item: ItemId) -> Option<FunctionId> {
+    match item {
+        ItemId::Function(id) => Some(id),
+        ItemId::Variable(id) => gcx.hir.variable(id).getter,
+        _ => None,
+    }
 }
 
-fn collect_inherited_doc(docs: &DocComments<'_>) -> InheritedDoc {
-    let mut result = InheritedDoc {
-        notices: Vec::new(),
-        devs: Vec::new(),
-        params: Vec::new(),
-        returns: Vec::new(),
-    };
-    let mut prev_doc_was_blank = false;
-    #[derive(Clone, Copy)]
-    enum LastSection {
-        Notice,
-        Dev,
-        Param,
-        Return,
+fn exact_override_item(
+    gcx: Gcx<'_>,
+    item: ItemId,
+    owner: ContractId,
+    visited: &mut HashSet<ItemId>,
+) -> Option<ItemId> {
+    if !visited.insert(item) {
+        return None;
     }
-    let mut last_section: Option<LastSection> = None;
+    if gcx.hir.item(item).contract() == Some(owner) {
+        return Some(item);
+    }
+    for &base in gcx.base_override_items(item) {
+        if let Some(found) = exact_override_item(gcx, base, owner, visited) {
+            return Some(found);
+        }
+    }
+    None
+}
 
-    for doc in docs.iter() {
-        if doc.natspec.is_empty() {
-            prev_doc_was_blank = true;
-            continue;
-        }
-        for item in doc.natspec.iter() {
-            let raw = doc.natspec_content(item);
-            // For /** */ block comments Solar preserves raw ` * ` line decorations; strip them.
-            let raw: &str =
-                if doc.kind == CommentKind::Block { &clean_block_doc_content(raw) } else { raw };
-            // Solar emits lines without a `@` tag as synthetic @notice with leading whitespace.
-            let is_continuation = matches!(item.kind, NatSpecKind::Notice)
-                && raw.starts_with(|c: char| c.is_whitespace());
-            let content = raw.trim().to_string();
-            if content.is_empty() {
-                prev_doc_was_blank = true;
-                continue;
-            }
-            if is_continuation && !prev_doc_was_blank {
-                let last: Option<&mut String> = match last_section {
-                    Some(LastSection::Notice) => result.notices.last_mut(),
-                    Some(LastSection::Dev) => result.devs.last_mut(),
-                    Some(LastSection::Param) => result.params.last_mut().map(|(_, d)| d),
-                    Some(LastSection::Return) => result.returns.last_mut().map(|(_, d)| d),
-                    None => None,
-                };
-                if let Some(last) = last {
-                    last.push('\n');
-                    last.push_str(&content);
-                    continue;
-                }
-            }
-            prev_doc_was_blank = false;
-            match item.kind {
-                NatSpecKind::Notice => {
-                    result.notices.push(content);
-                    last_section = Some(LastSection::Notice);
-                }
-                NatSpecKind::Dev => {
-                    result.devs.push(content);
-                    last_section = Some(LastSection::Dev);
-                }
-                NatSpecKind::Param { name } => {
-                    result.params.push((name.as_str().to_string(), content));
-                    last_section = Some(LastSection::Param);
-                }
-                NatSpecKind::Return { name } => {
-                    result.returns.push((
-                        name.map(|name| name.as_str().to_string()).unwrap_or_default(),
-                        content,
-                    ));
-                    last_section = Some(LastSection::Return);
-                }
-                _ => {}
-            }
-        }
+fn direct_base_items(gcx: Gcx<'_>, item: ItemId) -> Vec<ItemId> {
+    let mut bases = Vec::new();
+    let mut visited = HashSet::new();
+    for &base in gcx.base_override_items(item) {
+        push_non_yul_base_items(gcx, base, &mut bases, &mut visited);
     }
-    result
+    bases
+}
+
+fn push_non_yul_base_items(
+    gcx: Gcx<'_>,
+    item: ItemId,
+    bases: &mut Vec<ItemId>,
+    visited: &mut HashSet<ItemId>,
+) {
+    if !visited.insert(item) {
+        return;
+    }
+    if matches!(item, ItemId::Function(id) if gcx.hir.function(id).is_yul) {
+        for &base in gcx.base_override_items(item) {
+            push_non_yul_base_items(gcx, base, bases, visited);
+        }
+    } else {
+        bases.push(item);
+    }
+}
+
+fn parameter_names_equal(gcx: Gcx<'_>, target: ItemId, base: ItemId) -> bool {
+    let names = |item| {
+        callable_function(gcx, item).map(|id| {
+            gcx.hir
+                .function(id)
+                .parameters
+                .iter()
+                .map(|&id| gcx.hir.variable(id).name.map(|name| name.name))
+                .collect::<Vec<_>>()
+        })
+    };
+    names(target) == names(base)
+}
+
+fn implicit_edge_compatible(gcx: Gcx<'_>, target: ItemId, base: ItemId) -> bool {
+    let (Some(target_id), Some(base_id)) =
+        (callable_function(gcx, target), callable_function(gcx, base))
+    else {
+        return false;
+    };
+    let target_fn = gcx.hir.function(target_id);
+    let base_fn = gcx.hir.function(base_id);
+    if !base_fn.virtual_
+        || target_fn.visibility == Visibility::Private
+        || base_fn.visibility == Visibility::Private
+        || (target_fn.body.is_none() && base_fn.body.is_some())
+    {
+        return false;
+    }
+    let visibility_ok = if matches!(target, ItemId::Variable(_)) {
+        base_fn.visibility == Visibility::External
+    } else {
+        target_fn.visibility == base_fn.visibility
+            || (base_fn.visibility == Visibility::External
+                && target_fn.visibility == Visibility::Public)
+    };
+    let target_mutability = match target {
+        ItemId::Variable(id) if gcx.hir.variable(id).is_constant() => {
+            solar::ast::StateMutability::Pure
+        }
+        _ => target_fn.state_mutability,
+    };
+    let mutability_ok = target_mutability == base_fn.state_mutability
+        || matches!(
+            (target_mutability, base_fn.state_mutability),
+            (
+                solar::ast::StateMutability::Pure,
+                solar::ast::StateMutability::View | solar::ast::StateMutability::NonPayable
+            ) | (solar::ast::StateMutability::View, solar::ast::StateMutability::NonPayable)
+        );
+    if !visibility_ok || !mutability_ok {
+        return false;
+    }
+    let types_equal = |left: &[VariableId], right: &[VariableId], locations: bool| {
+        left.len() == right.len()
+            && left.iter().zip(right).all(|(&left, &right)| {
+                let left = gcx.type_of_item(left.into());
+                let right = gcx.type_of_item(right.into());
+                left.peel_refs() == right.peel_refs() && (!locations || left.loc() == right.loc())
+            })
+    };
+    let external_types_equal = |left: &[VariableId], right: &[VariableId]| {
+        let normalize = |location| match location {
+            Some(DataLocation::Calldata) => Some(DataLocation::Memory),
+            location => location,
+        };
+        left.len() == right.len()
+            && left.iter().zip(right).all(|(&left, &right)| {
+                let left_variable = gcx.hir.variable(left);
+                let right_variable = gcx.hir.variable(right);
+                let left = gcx.type_of_item(left.into());
+                let right = gcx.type_of_item(right.into());
+                let left_location = left_variable.data_location.or_else(|| left.loc());
+                let right_location = right_variable.data_location.or_else(|| right.loc());
+                left.peel_refs() == right.peel_refs()
+                    && normalize(left_location) == normalize(right_location)
+            })
+    };
+    let target_returns =
+        gcx.type_of_item(target_id.into()).as_externally_callable_function(false, gcx).returns();
+    let base_returns =
+        gcx.type_of_item(base_id.into()).as_externally_callable_function(false, gcx).returns();
+    if target_returns != base_returns || !external_types_equal(target_fn.returns, base_fn.returns) {
+        return false;
+    }
+    if target_fn.kind == FunctionKind::Modifier {
+        return types_equal(target_fn.parameters, base_fn.parameters, false);
+    }
+    if base_fn.visibility == Visibility::External {
+        external_types_equal(target_fn.parameters, base_fn.parameters)
+    } else {
+        types_equal(target_fn.parameters, base_fn.parameters, true)
+            && types_equal(target_fn.returns, base_fn.returns, true)
+    }
 }
 
 /// Strip the ` * ` block-comment line decoration from each line of a `/** */` NatSpec item's
@@ -642,6 +740,186 @@ pub(crate) fn clean_block_doc_content(raw: &str) -> String {
 
 // ── inline link replacement ───────────────────────────────────────────────────
 
+/// Members of the contract page currently being rendered.
+///
+/// Used to resolve `{member}` and `{Contract-member}` references lexically:
+/// a name that belongs to the current contract links to its heading anchor on
+/// the same page instead of going through the global name index (which only
+/// contains top-level items and could otherwise resolve to an unrelated page).
+#[derive(Debug)]
+pub struct LocalMembers {
+    /// The current contract's name.
+    name: String,
+    /// Member names with a heading (and thus an anchor) on the current page.
+    members: HashSet<String>,
+    /// Heading and exact signature anchors rendered on the current page.
+    anchors: HashSet<String>,
+    /// Effective inherited member names and their optional documentation pages.
+    inherited: HashMap<String, Option<PathBuf>>,
+    /// Inherited contracts and the members rendered on their exact pages.
+    inherited_contracts: HashMap<String, InheritedContract>,
+}
+
+#[derive(Debug)]
+enum InheritedContract {
+    Unique { id: ContractId, page: Option<PathBuf>, anchors: HashSet<String> },
+    Ambiguous,
+}
+
+/// Record the heading and exact signature anchor for a rendered Solidity function.
+fn insert_function_anchors(
+    gcx: Gcx<'_>,
+    id: FunctionId,
+    anchors: &mut HashSet<String>,
+) -> Option<String> {
+    let function = gcx.hir.function(id);
+    if function.is_yul || function.is_getter() {
+        return None;
+    }
+    let params = function_source_param_types(gcx, id)?;
+    let name = match function.kind {
+        FunctionKind::Constructor => "constructor".to_string(),
+        FunctionKind::Fallback => "fallback".to_string(),
+        FunctionKind::Receive => "receive".to_string(),
+        FunctionKind::Function | FunctionKind::Modifier => function.name?.as_str().to_string(),
+    };
+    anchors.insert(slug_anchor_segment(&name));
+    anchors.insert(function_signature_anchor(&name, &params));
+    Some(name)
+}
+
+impl LocalMembers {
+    /// Create an empty member set for the contract `name`.
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            members: HashSet::new(),
+            anchors: HashSet::new(),
+            inherited: HashMap::new(),
+            inherited_contracts: HashMap::new(),
+        }
+    }
+
+    /// Create a member set populated with members declared by base contracts.
+    pub fn for_contract(gcx: Gcx<'_>, contract_id: ContractId, name_to_page: &NameToPage) -> Self {
+        let contract = gcx.hir.contract(contract_id);
+        let mut this = Self::new(contract.name.as_str());
+
+        // Solidity's linearization lists the current contract first, followed by bases in
+        // resolution order. Reserve the first inherited declaration even if its page is not
+        // rendered so a farther declaration cannot produce a confidently incorrect link.
+        for &base_id in contract.linearized_bases.iter().filter(|&&id| id != contract_id) {
+            let base = gcx.hir.contract(base_id);
+            let page = name_to_page.get_contract(base_id).cloned();
+            let mut anchors = HashSet::new();
+
+            for &item_id in base.items {
+                let (name, is_inherited) = match item_id {
+                    ItemId::Function(id) => {
+                        let function = gcx.hir.function(id);
+                        (
+                            insert_function_anchors(gcx, id, &mut anchors),
+                            function.visibility != Visibility::Private
+                                && function.kind != FunctionKind::Constructor,
+                        )
+                    }
+                    ItemId::Variable(id) => {
+                        let variable = gcx.hir.variable(id);
+                        (
+                            variable.name.map(|name| name.as_str().to_string()),
+                            variable.visibility != Some(Visibility::Private),
+                        )
+                    }
+                    ItemId::Struct(id) => {
+                        (Some(gcx.hir.strukt(id).name.as_str().to_string()), true)
+                    }
+                    ItemId::Enum(id) => (Some(gcx.hir.enumm(id).name.as_str().to_string()), true),
+                    ItemId::Error(id) => (Some(gcx.hir.error(id).name.as_str().to_string()), true),
+                    ItemId::Event(id) => (Some(gcx.hir.event(id).name.as_str().to_string()), true),
+                    ItemId::Udvt(id) => (Some(gcx.hir.udvt(id).name.as_str().to_string()), true),
+                    ItemId::Contract(_) => (None, false),
+                };
+                if let Some(name) = name {
+                    anchors.insert(slug_anchor_segment(&name));
+                    if is_inherited {
+                        this.inherited.entry(name).or_insert_with(|| page.clone());
+                    }
+                }
+            }
+
+            match this.inherited_contracts.entry(base.name.as_str().to_string()) {
+                Entry::Vacant(entry) => {
+                    entry.insert(InheritedContract::Unique { id: base_id, page, anchors });
+                }
+                Entry::Occupied(mut entry) => {
+                    if matches!(entry.get(), InheritedContract::Unique { id, .. } if *id != base_id)
+                    {
+                        entry.insert(InheritedContract::Ambiguous);
+                    }
+                }
+            }
+        }
+
+        this
+    }
+
+    /// Record a member that is rendered as a `### member` heading on the page.
+    pub fn insert(&mut self, member: &str) {
+        self.members.insert(member.to_string());
+        self.anchors.insert(slug_anchor_segment(member));
+    }
+
+    /// Record an exact signature anchor rendered on the current page.
+    pub fn insert_anchor(&mut self, anchor: String) {
+        self.anchors.insert(anchor);
+    }
+
+    /// Anchor for a bare `{member}` reference, if `member` is documented on this page.
+    ///
+    /// Overloads share the base heading slug; the first heading owns it.
+    fn member_anchor(&self, member: &str) -> Option<String> {
+        self.members.contains(member).then(|| slug_anchor_segment(member))
+    }
+
+    /// Anchor for a qualified `{Contract-member[-params...]}` reference, if `member` is
+    /// documented on this page.
+    fn xref_member_anchor(&self, part: &str) -> Option<String> {
+        let anchor = xref_part_anchor(part);
+        self.anchors.contains(&anchor).then_some(anchor)
+    }
+
+    /// Page and anchor for a bare inherited-member reference.
+    ///
+    /// The outer option indicates whether the name is inherited; the inner option is absent when
+    /// the effective declaration has no rendered page.
+    fn inherited_member_link(&self, member: &str, current_page: &Path) -> Option<Option<String>> {
+        let page = self.inherited.get(member)?;
+        Some(page.as_ref().map(|page| {
+            format!("{}#{}", page_link(page, current_page), slug_anchor_segment(member))
+        }))
+    }
+
+    /// Exact page and anchor for a qualified inherited-contract member reference.
+    ///
+    /// The outer option indicates whether the contract is an inherited base; the inner option is
+    /// absent when that base has no rendered page or the named member has no rendered heading.
+    fn inherited_contract_member_link(
+        &self,
+        contract: &str,
+        part: &str,
+        current_page: &Path,
+    ) -> Option<Option<String>> {
+        let base = self.inherited_contracts.get(contract)?;
+        let InheritedContract::Unique { page, anchors, .. } = base else {
+            return Some(None);
+        };
+        let anchor = xref_part_anchor(part);
+        Some(page.as_ref().and_then(|page| {
+            anchors.contains(&anchor).then(|| format!("{}#{anchor}", page_link(page, current_page)))
+        }))
+    }
+}
+
 /// Escape a string for use as a markdown link label.
 ///
 /// Prevents MDX from treating user-controlled NatSpec label text as JSX or
@@ -654,7 +932,17 @@ fn escape_link_label(s: &str) -> String {
 ///
 /// Matches the legacy pattern: `{[xref-]Ident[-part]}[label]` where `label` defaults
 /// to `Ident`.
-pub fn replace_inline_links(text: &str, name_to_page: &NameToPage, current_page: &Path) -> String {
+///
+/// Resolution prefers lexical proximity: a reference naming a member of the current
+/// contract (`{member}`, or `{Contract-member}` where `Contract` is the current
+/// contract) becomes an anchor-only link within the page; everything else goes
+/// through the global `name_to_page` index.
+pub fn replace_inline_links(
+    text: &str,
+    name_to_page: &NameToPage,
+    current_page: &Path,
+    local: Option<&LocalMembers>,
+) -> String {
     let mut out = String::with_capacity(text.len());
     let bytes = text.as_bytes();
     let mut i = 0;
@@ -670,6 +958,56 @@ pub fn replace_inline_links(text: &str, name_to_page: &NameToPage, current_page:
                 } else {
                     lookup_name
                 };
+
+                // Same-contract references resolve to anchor-only links: a bare
+                // `{member}` documented on this page, or `{Contract-member}` where
+                // `Contract` is the contract being rendered.
+                if let Some(local) = local {
+                    let local_anchor = match part {
+                        None => local.member_anchor(lookup_name).map(Some),
+                        Some(member) if lookup_name == local.name => {
+                            Some(local.xref_member_anchor(member))
+                        }
+                        Some(_) => None,
+                    };
+                    if let Some(anchor) = local_anchor {
+                        if let Some(anchor) = anchor {
+                            let default_display = match part {
+                                Some(member) => format!("{lookup_name}.{member}"),
+                                None => lookup_name.to_string(),
+                            };
+                            let display = escape_link_label(label.unwrap_or(&default_display));
+                            out.push_str(&format!("[{display}](#{anchor})"));
+                        } else {
+                            let safe_name = lookup_name.replace('`', "'");
+                            out.push_str(&format!("`{safe_name}`"));
+                        }
+                        i += end;
+                        continue;
+                    }
+
+                    let inherited_link = match part {
+                        None => local.inherited_member_link(lookup_name, current_page),
+                        Some(member) => {
+                            local.inherited_contract_member_link(lookup_name, member, current_page)
+                        }
+                    };
+                    if let Some(link) = inherited_link {
+                        if let Some(link) = link {
+                            let default_display = match part {
+                                Some(member) => format!("{lookup_name}.{member}"),
+                                None => lookup_name.to_string(),
+                            };
+                            let display = escape_link_label(label.unwrap_or(&default_display));
+                            out.push_str(&format!("[{display}]({link})"));
+                        } else {
+                            let safe_name = lookup_name.replace('`', "'");
+                            out.push_str(&format!("`{safe_name}`"));
+                        }
+                        i += end;
+                        continue;
+                    }
+                }
 
                 if let Some(candidates) = name_to_page.get(lookup_name) {
                     let page = resolve_page(candidates, current_page);
@@ -757,7 +1095,7 @@ fn slug_anchor_segment(s: &str) -> String {
         if ch.is_ascii_alphanumeric() || ch == '_' {
             out.push(ch);
             last_was_dash = false;
-        } else if !last_was_dash && !out.is_empty() {
+        } else if ch != '$' && !last_was_dash && !out.is_empty() {
             out.push('-');
             last_was_dash = true;
         }
@@ -845,11 +1183,85 @@ mod tests {
             "See {xref-ERC721-_safeMint-address-uint256-}.",
             &name_to_page,
             Path::new("src/contract.Child.mdx"),
+            None,
         );
 
         assert_eq!(
             out,
             "See [ERC721._safeMint-address-uint256-](/src/contract.ERC721#_safemint-address-uint256)."
         );
+    }
+
+    #[test]
+    fn same_contract_member_links_anchor_only() {
+        let name_to_page = NameToPage::new();
+        let mut local = LocalMembers::new("ECDSA");
+        local.insert("toEthSignedMessageHash");
+        local.insert("tryRecover");
+
+        // Bare member reference -> anchor-only link.
+        let out = replace_inline_links(
+            "then calling {toEthSignedMessageHash} on it.",
+            &name_to_page,
+            Path::new("src/library.ECDSA.mdx"),
+            Some(&local),
+        );
+        assert_eq!(out, "then calling [toEthSignedMessageHash](#toethsignedmessagehash) on it.");
+
+        // `{Contract-member}` self-reference -> anchor-only link.
+        let out = replace_inline_links(
+            "Overload of {ECDSA-tryRecover} that ...",
+            &name_to_page,
+            Path::new("src/library.ECDSA.mdx"),
+            Some(&local),
+        );
+        assert_eq!(out, "Overload of [ECDSA.tryRecover](#tryrecover) that ...");
+
+        // Unknown member still falls back to inline code.
+        let out = replace_inline_links(
+            "See {unknownMember}.",
+            &name_to_page,
+            Path::new("src/library.ECDSA.mdx"),
+            Some(&local),
+        );
+        assert_eq!(out, "See `unknownMember`.");
+
+        // Unknown qualified self-reference should not create a broken same-page anchor.
+        let out = replace_inline_links(
+            "See {ECDSA-doesNotExist}.",
+            &name_to_page,
+            Path::new("src/library.ECDSA.mdx"),
+            Some(&local),
+        );
+        assert_eq!(out, "See `ECDSA`.");
+    }
+
+    #[test]
+    fn local_member_wins_over_global_name() {
+        // A top-level item elsewhere shares the member's name; lexical
+        // proximity resolves to the same-page anchor, not the other page.
+        let mut name_to_page = NameToPage::new();
+        name_to_page
+            .by_name
+            .insert("transfer".to_string(), vec![PathBuf::from("src/other/contract.transfer.mdx")]);
+        let mut local = LocalMembers::new("Token");
+        local.insert("transfer");
+
+        let out = replace_inline_links(
+            "Calls {transfer}.",
+            &name_to_page,
+            Path::new("src/contract.Token.mdx"),
+            Some(&local),
+        );
+        assert_eq!(out, "Calls [transfer](#transfer).");
+
+        // Without local context the global index still resolves.
+        let out = replace_inline_links(
+            "Calls {transfer}.",
+            &name_to_page,
+            Path::new("src/contract.Token.mdx"),
+            None,
+        );
+        assert_eq!(out, "Calls [transfer](/src/other/contract.transfer).");
     }
 }

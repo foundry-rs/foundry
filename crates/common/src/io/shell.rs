@@ -45,6 +45,14 @@ pub fn is_err_tty() -> bool {
     Shell::get().is_err_tty()
 }
 
+/// Returns whether stdout is a terminal (tty).
+///
+/// Used to gate machine-readable stdout records that would duplicate the status prose
+/// already shown on stderr in interactive sessions.
+pub fn is_out_tty() -> bool {
+    Shell::get().is_out_tty()
+}
+
 /// Returns whether the output format is [`OutputFormat::Json`].
 pub fn is_json() -> bool {
     Shell::get().is_json()
@@ -152,6 +160,7 @@ enum ShellOut {
     Stream {
         stdout: AutoStream<std::io::Stdout>,
         stderr: AutoStream<std::io::Stderr>,
+        stdout_tty: bool,
         stderr_tty: bool,
         color_choice: ColorChoice,
     },
@@ -203,6 +212,7 @@ impl Shell {
                 stdout: AutoStream::new(std::io::stdout(), color.to_anstream_color_choice()),
                 stderr: AutoStream::new(std::io::stderr(), color.to_anstream_color_choice()),
                 color_choice: color,
+                stdout_tty: std::io::stdout().is_terminal(),
                 stderr_tty: std::io::stderr().is_terminal(),
             },
             output_format: format,
@@ -343,6 +353,14 @@ impl Shell {
     pub const fn is_err_tty(&self) -> bool {
         match self.output {
             ShellOut::Stream { stderr_tty, .. } => stderr_tty,
+            ShellOut::Empty(_) | ShellOut::Captured { .. } => false,
+        }
+    }
+
+    /// Returns `true` if stdout is a tty.
+    pub const fn is_out_tty(&self) -> bool {
+        match self.output {
+            ShellOut::Stream { stdout_tty, .. } => stdout_tty,
             ShellOut::Empty(_) | ShellOut::Captured { .. } => false,
         }
     }

@@ -25,10 +25,6 @@ impl TomlFile {
         &self.doc
     }
 
-    const fn doc_mut(&mut self) -> &mut toml_edit::DocumentMut {
-        &mut self.doc
-    }
-
     fn path(&self) -> &Path {
         self.path.as_ref()
     }
@@ -47,7 +43,7 @@ impl Deref for TomlFile {
 
 impl DerefMut for TomlFile {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.doc_mut()
+        &mut self.doc
     }
 }
 

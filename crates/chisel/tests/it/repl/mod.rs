@@ -1,5 +1,34 @@
 mod session;
+use chisel::session::ChiselSession as CachedChiselSession;
+use foundry_evm::core::evm::EthEvmNetwork;
 use session::ChiselSession;
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+struct CacheCleanup(Vec<String>);
+
+impl Drop for CacheCleanup {
+    fn drop(&mut self) {
+        for id in &self.0 {
+            let _ = CachedChiselSession::<EthEvmNetwork>::remove_cached_session(id);
+        }
+    }
+}
+
+fn unique_cache_id(prefix: &str) -> String {
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    format!("{prefix}-{}-{timestamp}", std::process::id())
+}
+
+fn cache_file(id: &str) -> PathBuf {
+    PathBuf::from(format!(
+        "{}chisel-{id}.json",
+        CachedChiselSession::<EthEvmNetwork>::cache_dir().unwrap()
+    ))
+}
 
 macro_rules! repl_test {
     ($name:ident, | $cmd:ident | $test:expr) => {
@@ -25,6 +54,90 @@ repl_test!(repl_help, |repl| {
     repl.expect_prompt();
 });
 
+repl_test!(save_renamed_session_removes_stale_cache, |repl| {
+    let old_id = unique_cache_id("rename-old");
+    let new_id = unique_cache_id("rename-new");
+    let _cleanup = CacheCleanup(vec![old_id.clone(), new_id.clone()]);
+
+    repl.sendln(&format!("!save {old_id}"));
+    repl.sendln(&format!("!save {new_id}"));
+    repl.sendln_raw("!list");
+    repl.expect(&format!("chisel-{new_id}.json"));
+    repl.expect_prompt();
+
+    // A renamed session must not leave the previous cache entry loadable.
+    repl.sendln_raw(&format!("!load {old_id}"));
+    repl.expect("failed to load session");
+    repl.expect_prompt();
+
+    repl.sendln_raw(&format!("!load {new_id}"));
+    repl.expect(&format!("Loaded Chisel session! (ID = {new_id})"));
+    repl.expect_prompt();
+});
+
+repl_test!(save_case_only_rename_preserves_destination, |repl| {
+    let old_id = unique_cache_id("rename-case").to_ascii_lowercase();
+    let new_id = old_id.to_ascii_uppercase();
+    let _cleanup = CacheCleanup(vec![old_id.clone(), new_id.clone()]);
+
+    repl.sendln(&format!("!save {old_id}"));
+    let old_cache_file = cache_file(&old_id);
+    let new_cache_file = cache_file(&new_id);
+    let paths_alias =
+        std::fs::canonicalize(&old_cache_file).ok() == std::fs::canonicalize(&new_cache_file).ok();
+
+    repl.sendln(&format!("!save {new_id}"));
+
+    // On case-insensitive filesystems, both IDs resolve to the same cache path.
+    repl.sendln_raw(&format!("!load {new_id}"));
+    repl.expect(&format!("Loaded Chisel session! (ID = {new_id})"));
+    repl.expect_prompt();
+
+    if !paths_alias {
+        repl.sendln_raw(&format!("!load {old_id}"));
+        repl.expect("failed to load session");
+        repl.expect_prompt();
+    }
+});
+
+repl_test!(failed_save_restores_previous_session_id, |repl| {
+    let first_id = unique_cache_id("failed-save-first");
+    let second_id = unique_cache_id("failed-save-second");
+    let _cleanup = CacheCleanup(vec![first_id.clone(), second_id.clone()]);
+    let invalid_id = format!("{}/id", unique_cache_id("failed-save-invalid"));
+
+    repl.sendln(&format!("!save {first_id}"));
+    // The nested path makes the write fail without touching the existing cache file.
+    repl.sendln_raw(&format!("!save {invalid_id}"));
+    repl.expect("No such file or directory");
+    repl.expect_prompt();
+
+    // A failed rename must not lose the ID of the last successfully saved file.
+    repl.sendln(&format!("!save {second_id}"));
+    repl.sendln_raw("!list");
+    repl.expect(&format!("chisel-{second_id}.json"));
+    repl.expect_prompt();
+
+    repl.sendln_raw(&format!("!load {first_id}"));
+    repl.expect("failed to load session");
+    repl.expect_prompt();
+});
+
+repl_test!(load_session_preserves_active_force, "--force", |repl| {
+    let id = unique_cache_id("active-force");
+    let _cleanup = CacheCleanup(vec![id.clone()]);
+
+    repl.sendln(&format!("!save {id}"));
+
+    let out_dir = repl.project().root().join("out");
+    fs::create_dir_all(&out_dir).unwrap();
+    fs::write(out_dir.join("sentinel"), []).unwrap();
+
+    repl.sendln(&format!("!load {id}"));
+
+    assert!(!out_dir.exists());
+});
+
 // Test abi encode/decode.
 repl_test!(abi_encode_decode, |repl| {
     repl.sendln("bytes memory encoded = abi.encode(42, \"hello\")");
@@ -33,6 +146,24 @@ repl_test!(abi_encode_decode, |repl| {
     repl.expect("42");
     repl.sendln("str");
     repl.expect("hello");
+});
+
+// Issue #5253: Dynamic bytes should be displayed as their raw value.
+repl_test!(dynamic_bytes_display, |repl| {
+    repl.sendln(r#"bytes memory encoded = abi.encode("Not initialized")"#);
+    repl.sendln("bytes memory decoded = abi.decode(encoded, (bytes))");
+    repl.sendln(r#"bytes memory raw = bytes("Not initialized")"#);
+
+    repl.sendln("encoded");
+    repl.expect(
+        "Data: 0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000f4e6f7420696e697469616c697a65640000000000000000000000000000000000",
+    );
+
+    repl.sendln("decoded");
+    repl.expect("Data: 0x4e6f7420696e697469616c697a6564");
+
+    repl.sendln("raw");
+    repl.expect("Data: 0x4e6f7420696e697469616c697a6564");
 });
 
 // Test 0x prefixed strings.
@@ -78,6 +209,51 @@ repl_test!(int_min_values, |repl| {
     repl.expect("-128");
     repl.sendln("type(int256).min");
     repl.expect("-57896044618658097711785492504343953926634992332820282019728792003956564819968");
+});
+
+// Issue #5370: The last evaluated result can be reused in subsequent input.
+repl_test!(last_result, |repl| {
+    repl.sendln("type(uint256).max");
+    repl.sendln("uint256 MAX = $_");
+    repl.sendln("MAX");
+    repl.expect(
+        "Decimal: 115792089237316195423570985008687907853269984665640564039457584007913129639935",
+    );
+
+    repl.sendln("uint256 value = 1");
+    repl.sendln("value = 2");
+    repl.sendln("uint256 assigned = $_");
+    repl.sendln("assigned");
+    repl.expect("Decimal: 2");
+
+    repl.sendln(r#""hello""#);
+    repl.sendln("string memory greeting = $_");
+    repl.sendln("greeting");
+    repl.expect("UTF-8: hello");
+});
+
+repl_test!(last_result_resets_with_session, |repl| {
+    let saved_id = unique_cache_id("last-result-saved");
+    let loaded_id = unique_cache_id("last-result-loaded");
+    let _cleanup = CacheCleanup(vec![saved_id.clone(), loaded_id.clone()]);
+
+    repl.sendln("uint256 persisted = 7");
+    repl.sendln(&format!("!save {saved_id}"));
+    std::fs::copy(cache_file(&saved_id), cache_file(&loaded_id)).unwrap();
+
+    repl.sendln(r#""stale""#);
+    repl.sendln_raw(&format!("!load {loaded_id}"));
+    repl.expect(&format!("Loaded Chisel session! (ID = {saved_id})"));
+    repl.expect_prompt();
+    repl.sendln_raw("$_");
+    repl.expect("no previous result");
+    repl.expect_prompt();
+
+    repl.sendln("persisted");
+    repl.sendln("!clear");
+    repl.sendln_raw("$_");
+    repl.expect("no previous result");
+    repl.expect_prompt();
 });
 
 // Issue #4393: Test edit command with traces.
@@ -141,6 +317,22 @@ repl_test!(eval_subcommand, "eval type(uint8).max", |repl| {
     repl.expect("Decimal: 255");
 });
 
+// Issue #4963: inspect the value of the final inline assembly expression.
+repl_test!(inline_assembly_expression, |repl| {
+    repl.sendln("uint256 value = 1");
+    repl.sendln("assembly { value := 2 add(value, 0) } // trailing comment");
+    repl.expect("Decimal: 2");
+    repl.sendln("value");
+    repl.expect("Decimal: 2");
+
+    repl.sendln("assembly { let __chisel_yul_result := 3 add(__chisel_yul_result, 0) }");
+    repl.expect("Decimal: 3");
+
+    repl.sendln("uint256 __chisel_yul_result_1 = 0");
+    repl.sendln("assembly { add(3, 4) }");
+    repl.expect("Decimal: 7");
+});
+
 repl_test!(
     eval_tempo_network_uses_tempo_executor,
     "--network tempo eval address(0xfeEC000000000000000000000000000000000000).code.length",
@@ -164,6 +356,16 @@ repl_test!(
         repl.expect("Decimal: 1");
     }
 );
+
+#[cfg(feature = "monad")]
+repl_test!(eval_monad_network_option_runs, "--network monad eval uint256(block.chainid)", |repl| {
+    repl.expect("Decimal: 31337");
+});
+
+#[cfg(feature = "monad")]
+repl_test!(eval_monad_chain_id_option_runs, "--chain 143 eval uint256(block.chainid)", |repl| {
+    repl.expect("Decimal: 143");
+});
 
 // Issue #4938: Test memory/stack dumps with assembly.
 repl_test!(assembly_memory_dump, |repl| {
@@ -258,6 +460,14 @@ repl_test!(enum_min_max, |repl| {
     repl.expect("Decimal: 0");
     repl.sendln("type(Color).max");
     repl.expect("Decimal: 2");
+});
+
+// Issue #7193: Test that inspected delete expressions persist in the session.
+repl_test!(delete_expression_persistence, |repl| {
+    repl.sendln("uint256 value = 42");
+    repl.sendln("delete value");
+    repl.sendln("value");
+    repl.expect("Decimal: 0");
 });
 
 // Issue #9377: Test correct hex formatting for uint256.

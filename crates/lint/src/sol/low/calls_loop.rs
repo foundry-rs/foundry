@@ -460,10 +460,10 @@ fn function_signature_from_ty_fn(
     if let Some(func_id) = func.function_id {
         let f = hir.function(func_id);
         (f.visibility, f.state_mutability, f.parameters.len())
-    } else if func.is_internal() {
-        (Visibility::Internal, func.state_mutability, func.parameters.len())
-    } else {
+    } else if func.is_external() {
         (Visibility::External, func.state_mutability, func.parameters.len())
+    } else {
+        (Visibility::Internal, func.state_mutability, func.parameters.len())
     }
 }
 

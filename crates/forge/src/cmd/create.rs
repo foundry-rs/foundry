@@ -1,8 +1,8 @@
 use crate::cmd::install;
 use alloy_chains::Chain;
 use alloy_consensus::{SignableTransaction, Signed};
-use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
-use alloy_json_abi::{Constructor, JsonAbi};
+use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
+use alloy_json_abi::JsonAbi;
 use alloy_network::{Ethereum, EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256, hex};
 use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder as AlloyProviderBuilder};
@@ -10,27 +10,29 @@ use alloy_signer::{Signature, Signer};
 use alloy_transport::TransportError;
 use clap::{Parser, ValueHint};
 use eyre::{Context, ContextCompat, Result};
-use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
+use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, parse_etherscan_license_type};
 use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{
-        LoadConfig, ResolvedLane, find_contract_artifacts, maybe_print_resolved_lane,
-        read_constructor_args_file, resolve_lane,
+        LoadConfig, ResolvedLane, apply_gas_estimate_multiplier, find_contract_artifacts,
+        maybe_print_resolved_lane, parse_constructor_args, read_constructor_args_file,
+        resolve_lane,
     },
 };
 use foundry_common::{
-    FoundryTransactionBuilder,
-    compile::{self},
-    fmt::parse_tokens,
-    provider::ProviderBuilder,
+    FoundryTransactionBuilder, compile,
+    provider::{
+        ProviderBuilder,
+        fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
+    },
     shell,
-    tempo::{TEMPO_BROWSER_GAS_BUFFER, maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
 };
 use foundry_config::{
-    Config,
+    Config, Eip1559FeeEstimatePreset,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
@@ -38,7 +40,7 @@ use foundry_config::{
     merge_impl_figment_convert,
 };
 use foundry_wallets::{
-    BrowserWalletOpts, TempoAccessKeyConfig, WalletSigner, wallet_browser::signer::BrowserSigner,
+    BrowserWalletOpts, TempoAccountsWallet, WalletSigner, wallet_browser::signer::BrowserSigner,
 };
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
@@ -48,6 +50,7 @@ merge_impl_figment_convert!(CreateArgs, build, eth);
 
 /// CLI arguments for `forge create`.
 #[derive(Clone, Debug, Parser)]
+#[command(mut_arg("auth", |arg| arg.hide(true)))]
 pub struct CreateArgs {
     /// The contract identifier in the form `<path>:<contractname>`.
     contract: ContractInfo,
@@ -89,9 +92,27 @@ pub struct CreateArgs {
     #[arg(long, requires = "verify")]
     show_standard_json_input: bool,
 
+    /// The Etherscan license type code or SPDX identifier to include with the verification
+    /// request.
+    ///
+    /// Accepts either an Etherscan numeric license code or a common SPDX identifier such as `MIT`.
+    /// This is only used for Etherscan-style verifiers when `--verify` is enabled.
+    #[arg(
+        long,
+        requires = "verify",
+        value_name = "LICENSE",
+        help_heading = "Verifier options",
+        value_parser = parse_etherscan_license_type,
+    )]
+    license_type: Option<String>,
+
     /// Timeout to use for broadcasting transactions.
     #[arg(long, env = "ETH_TIMEOUT")]
     pub timeout: Option<u64>,
+
+    /// Relative percentage to multiply the gas estimate by.
+    #[arg(long, value_name = "PERCENT", help_heading = "Transaction options")]
+    gas_estimate_multiplier: Option<u64>,
 
     #[command(flatten)]
     build: BuildOpts,
@@ -116,20 +137,33 @@ pub struct CreateArgs {
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
-        let (signer, tempo_access_key) = self.eth.wallet.maybe_signer().await?;
+        if self.tx.tempo.sponsor_url.is_some() {
+            eyre::bail!(
+                "--sponsor-url is not supported by forge create; use --tempo.sponsor with \
+                 --tempo.sponsor-signer or --tempo.sponsor-sig"
+            );
+        }
 
         // Resolve chain early so we can dispatch to the correct network type.
-        if self.chain_id().is_none() {
+        let chain = if let Some(chain) = self.chain_id() {
+            chain
+        } else {
             let config = self.load_config()?;
             let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
             let chain_id = provider.get_chain_id().await?;
-            self.eth.etherscan.chain = Some(chain_id.into());
+            let chain = Chain::from(chain_id);
+            self.eth.etherscan.chain = Some(chain);
+            chain
+        };
+        let mut wallet = self.eth.wallet.clone();
+        if !chain.is_tempo() && !self.tx.tempo.is_tempo() {
+            // Do not let a matching entry in the Tempo Accounts store change an ordinary Ethereum
+            // deployment into a Tempo transaction.
+            wallet.from = None;
         }
+        let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain.id()).await?;
 
-        if tempo_access_key.is_some()
-            || self.tx.tempo.is_tempo()
-            || self.chain_id().is_some_and(|c| c.is_tempo())
-        {
+        if tempo_access_key.is_some() || self.tx.tempo.is_tempo() || chain.is_tempo() {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
         } else {
             self.run_generic::<Ethereum>(signer, None).await
@@ -139,7 +173,7 @@ impl CreateArgs {
     async fn run_generic<N: Network>(
         mut self,
         pre_resolved_signer: Option<WalletSigner>,
-        access_key: Option<TempoAccessKeyConfig>,
+        access_key: Option<TempoAccountsWallet>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -184,7 +218,7 @@ impl CreateArgs {
                 eyre::bail!(
                     "Dynamic linking not supported in `create` command - deploy the following library contracts first, then provide the address to link at compile time\n{}",
                     link_refs
-                )
+                );
             }
         };
 
@@ -192,7 +226,7 @@ impl CreateArgs {
         let params = if let Some(constructor) = &abi.constructor {
             let constructor_args =
                 self.constructor_args_path.clone().map(read_constructor_args_file).transpose()?;
-            self.parse_constructor_args(
+            parse_constructor_args(
                 constructor,
                 constructor_args.as_deref().unwrap_or(&self.constructor_args),
             )?
@@ -210,7 +244,7 @@ impl CreateArgs {
 
         // Inject access key ID into TempoOpts so it's set before gas estimation.
         if let Some(ref ak) = access_key {
-            self.tx.tempo.key_id = Some(ak.key_address);
+            self.tx.tempo.key_id = Some(ak.key_id()?);
         }
 
         // Resolve `--tempo.lane <name>` against the lanes file (default
@@ -242,6 +276,7 @@ impl CreateArgs {
                 resolved_lane,
                 expires_at,
                 resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
             )
             .await
         } else if self.unlocked {
@@ -261,15 +296,11 @@ impl CreateArgs {
                 resolved_lane,
                 expires_at,
                 resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
             )
             .await
         } else if let Some(ak) = access_key {
-            // Tempo keychain mode: sign with access key and send raw
-            let signer = match pre_resolved_signer {
-                Some(s) => s,
-                None => self.eth.wallet.signer().await?,
-            };
-            let deployer_address = ak.wallet_address;
+            let deployer_address = ak.account();
             self.deploy(
                 abi,
                 bin,
@@ -279,11 +310,12 @@ impl CreateArgs {
                 config.transaction_timeout,
                 id,
                 dry_run,
-                Some((signer, ak)),
+                Some(ak),
                 None,
                 resolved_lane,
                 expires_at,
                 resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
             )
             .await
         } else {
@@ -310,6 +342,7 @@ impl CreateArgs {
                 resolved_lane,
                 expires_at,
                 resolve_unknown_fee_token_symbol,
+                config.eip1559_fee_estimate,
             )
             .await
         }
@@ -351,12 +384,13 @@ impl CreateArgs {
             force: false,
             skip_is_verified_check: true,
             watch: true,
+            print_submission_result_to_stdout: false,
             retry: self.retry,
             libraries: self.build.libraries.clone(),
             root: None,
             verifier: self.verifier.clone(),
-            via_ir: self.build.via_ir,
-            license_type: None,
+            via_ir: self.build.compiler.via_ir,
+            license_type: self.license_type.clone(),
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -400,11 +434,12 @@ impl CreateArgs {
         timeout: u64,
         id: ArtifactId,
         dry_run: bool,
-        tempo_keychain: Option<(WalletSigner, TempoAccessKeyConfig)>,
+        mut tempo_keychain: Option<TempoAccountsWallet>,
         browser_signer: Option<BrowserSigner<N>>,
         resolved_lane: Option<ResolvedLane>,
         expires_at: Option<u64>,
         resolve_unknown_fee_token_symbol: bool,
+        eip1559_fee_estimate: Eip1559FeeEstimatePreset,
     ) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
@@ -414,7 +449,7 @@ impl CreateArgs {
 
         let bin = bin.into_bytes().unwrap_or_default();
         if bin.is_empty() {
-            eyre::bail!("no bytecode found in bin object for {}", self.contract.name)
+            eyre::bail!("no bytecode found in bin object for {}", self.contract.name);
         }
 
         let provider = Arc::new(provider);
@@ -442,18 +477,15 @@ impl CreateArgs {
         // Apply user-provided gas, fee, nonce, and Tempo options.
         self.tx.apply::<N>(&mut deployer.tx, is_legacy);
 
-        // Convert the CREATE into an AA-compatible call entry since Tempo AA
-        // transactions use a `calls` list instead of `to`+`input`.
-        if chain.is_tempo() {
+        // Convert only AA CREATE transactions into a call entry. Plain Tempo
+        // CREATE transactions remain Ethereum transactions, while AA requests
+        // (for example, an expiring nonce) require a non-empty `calls` list.
+        if deployer.tx.is_tempo_aa() {
             deployer.tx.convert_create_to_call();
         }
 
-        // For keychain mode, set key_id and nonce_key before gas estimation.
-        if let Some((_, ref ak)) = tempo_keychain {
-            deployer.tx.set_key_id(ak.key_address);
-            if deployer.tx.nonce_key().is_none() {
-                deployer.tx.set_nonce_key(U256::ZERO);
-            }
+        if tempo_keychain.is_some() && deployer.tx.nonce_key().is_none() {
+            deployer.tx.set_nonce_key(U256::ZERO);
         }
 
         // Fetch defaults from provider for values not specified by user.
@@ -463,16 +495,9 @@ impl CreateArgs {
 
         maybe_print_resolved_lane(resolved_lane.as_ref(), deployer.tx.nonce().unwrap_or_default())?;
 
-        if let Some((_, ref ak)) = tempo_keychain {
-            deployer
-                .tx
-                .prepare_access_key_authorization(
-                    provider.as_ref(),
-                    ak.wallet_address,
-                    ak.key_address,
-                    ak.key_authorization.as_ref(),
-                )
-                .await?;
+        if let Some(wallet) = tempo_keychain.as_ref() {
+            tempo_keychain =
+                Some(deployer.tx.prepare_with_tempo_wallet(provider.as_ref(), wallet).await?);
         }
 
         if is_legacy {
@@ -481,15 +506,22 @@ impl CreateArgs {
             }
         } else {
             if self.tx.gas_price.is_none() || self.tx.priority_gas_price.is_none() {
-                let mut estimate = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
-                if browser_signer.is_some()
-                    && self.tx.priority_gas_price.is_none()
-                    && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
-                    && suggested_tip > estimate.max_priority_fee_per_gas
-                {
-                    estimate.max_fee_per_gas += suggested_tip - estimate.max_priority_fee_per_gas;
-                    estimate.max_priority_fee_per_gas = suggested_tip;
-                }
+                let estimate = estimate_eip1559_fees(&provider, eip1559_fee_estimate).await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
+
+                // Only honor the browser-suggested tip when the user has not pinned
+                // a priority fee; `resolve_broadcast_eip1559_fees` ignores a lower tip.
+                let browser_suggested_tip =
+                    if browser_signer.is_some() && self.tx.priority_gas_price.is_none() {
+                        provider.get_max_priority_fee_per_gas().await.ok()
+                    } else {
+                        None
+                    };
+
+                // User `--gas-price`/`--priority-gas-price` overrides are applied
+                // below only for unset fields; pass `None` to avoid double-applying.
+                let estimate =
+                    resolve_broadcast_eip1559_fees(estimate, None, None, browser_suggested_tip)?;
+
                 if self.tx.priority_gas_price.is_none() {
                     deployer.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
                 }
@@ -517,16 +549,16 @@ impl CreateArgs {
         }
 
         if self.tx.gas_limit.is_none() {
-            let mut estimated = provider.estimate_gas(deployer.tx.clone()).await?;
-
-            // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
-            // costs more gas for signature verification on Tempo chains. Add a
-            // conservative buffer since we can't determine the signature type beforehand.
-            if browser_signer.is_some() && chain.is_tempo() {
-                estimated += TEMPO_BROWSER_GAS_BUFFER;
-            }
-
-            deployer.tx.set_gas_limit(estimated);
+            let request = if browser_signer.is_some() && chain.is_tempo() {
+                deployer.tx.browser_wallet_gas_estimation_request()
+            } else {
+                deployer.tx.clone()
+            };
+            let estimated = provider.estimate_gas(request).await?;
+            deployer.tx.set_gas_limit(apply_gas_estimate_multiplier(
+                estimated,
+                self.gas_estimate_multiplier,
+            )?);
         }
 
         // Before we actually deploy the contract we try check if the verify settings are valid
@@ -620,18 +652,8 @@ impl CreateArgs {
                 .ok_or_else(|| eyre::eyre!("contract was not deployed"))?;
 
             (address, receipt)
-        } else if let Some((signer, ak)) = tempo_keychain {
-            // Tempo keychain mode: sign with access key provisioning and send raw
-            let raw_tx = deployer
-                .tx
-                .sign_with_access_key(
-                    &provider,
-                    &signer,
-                    ak.wallet_address,
-                    ak.key_address,
-                    ak.key_authorization.as_ref(),
-                )
-                .await?;
+        } else if let Some(wallet) = tempo_keychain {
+            let raw_tx = deployer.tx.sign_with_tempo_wallet(&wallet).await?;
 
             let receipt = provider
                 .send_raw_transaction(&raw_tx)
@@ -692,12 +714,13 @@ impl CreateArgs {
             force: false,
             skip_is_verified_check: true,
             watch: true,
+            print_submission_result_to_stdout: false,
             retry: self.retry,
             libraries: self.build.libraries.clone(),
             root: None,
             verifier: self.verifier,
-            via_ir: self.build.via_ir,
-            license_type: None,
+            via_ir: self.build.compiler.via_ir,
+            license_type: self.license_type,
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
@@ -716,35 +739,6 @@ impl CreateArgs {
         let resolved_verifier = verify.verifier.resolve(effective_key.as_deref(), Some(chain));
         sh_status!("Waiting for {resolved_verifier} to detect contract deployment...")?;
         verify.run().await
-    }
-
-    /// Parses the given constructor arguments into a vector of `DynSolValue`s, by matching them
-    /// against the constructor's input params.
-    ///
-    /// Returns a list of parsed values that match the constructor's input params.
-    fn parse_constructor_args(
-        &self,
-        constructor: &Constructor,
-        constructor_args: &[String],
-    ) -> Result<Vec<DynSolValue>> {
-        if constructor.inputs.len() != constructor_args.len() {
-            eyre::bail!(
-                "Constructor argument count mismatch: expected {} but got {}",
-                constructor.inputs.len(),
-                constructor_args.len()
-            );
-        }
-
-        let mut params = Vec::with_capacity(constructor.inputs.len());
-        for (input, arg) in constructor.inputs.iter().zip(constructor_args) {
-            // resolve the input type directly
-            let ty = input
-                .resolve()
-                .wrap_err_with(|| format!("Could not resolve constructor arg: input={input}"))?;
-            params.push((ty, arg));
-        }
-        let params = params.iter().map(|(ty, arg)| (ty, arg.as_str()));
-        parse_tokens(params).map_err(Into::into)
     }
 }
 
@@ -908,6 +902,7 @@ impl From<PendingTransactionError> for ContractDeploymentError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_json_abi::Constructor;
     use alloy_primitives::I256;
 
     #[test]
@@ -920,10 +915,48 @@ mod tests {
             "10",
             "--delay",
             "30",
+            "--license-type",
+            "13",
+            "--gas-estimate-multiplier",
+            "125",
         ]);
         assert_eq!(args.retry.retries, 10);
         assert_eq!(args.retry.delay, 30);
+        assert_eq!(args.license_type.as_deref(), Some("13"));
+        assert_eq!(args.gas_estimate_multiplier, Some(125));
     }
+
+    #[test]
+    fn create_help_hides_auth() {
+        let help = <CreateArgs as clap::CommandFactory>::command().render_long_help().to_string();
+        assert!(!help.contains("--auth"));
+    }
+
+    #[test]
+    fn can_parse_create_license_type_spdx() {
+        let args: CreateArgs = CreateArgs::parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--license-type",
+            "MIT",
+        ]);
+        assert_eq!(args.license_type.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn errors_on_invalid_create_license_type() {
+        let err = CreateArgs::try_parse_from([
+            "foundry-cli",
+            "src/Domains.sol:Domains",
+            "--verify",
+            "--license-type",
+            "definitely-not-a-license",
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("unsupported Etherscan license type"));
+    }
+
     #[test]
     fn can_parse_chain_id() {
         let args: CreateArgs = CreateArgs::parse_from([
@@ -949,7 +982,7 @@ mod tests {
             "Hello",
         ]);
         let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_name","type":"string","internalType":"string"}],"stateMutability":"nonpayable"}"#).unwrap();
-        let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+        let params = parse_constructor_args(&constructor, &args.constructor_args).unwrap();
         assert_eq!(params, vec![DynSolValue::String("Hello".to_string())]);
     }
 
@@ -962,7 +995,7 @@ mod tests {
             "[(1,2), (2,3), (3,4)]",
         ]);
         let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_points","type":"tuple[]","internalType":"struct Point[]","components":[{"name":"x","type":"uint256","internalType":"uint256"},{"name":"y","type":"uint256","internalType":"uint256"}]}],"stateMutability":"nonpayable"}"#).unwrap();
-        let _params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+        let _params = parse_constructor_args(&constructor, &args.constructor_args).unwrap();
     }
 
     #[test]
@@ -974,7 +1007,7 @@ mod tests {
             "-5",
         ]);
         let constructor: Constructor = serde_json::from_str(r#"{"type":"constructor","inputs":[{"name":"_name","type":"int256","internalType":"int256"}],"stateMutability":"nonpayable"}"#).unwrap();
-        let params = args.parse_constructor_args(&constructor, &args.constructor_args).unwrap();
+        let params = parse_constructor_args(&constructor, &args.constructor_args).unwrap();
         assert_eq!(params, vec![DynSolValue::Int(I256::unchecked_from(-5), 256)]);
     }
 }

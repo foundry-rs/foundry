@@ -89,7 +89,7 @@ impl SessionAuthorizationRequest {
 }
 
 impl PreparedSessionAuthorization {
-    /// Attach session key material and a root-signed authorization to the local registry entry.
+    /// Attach key material and a root-signed authorization for the Tempo Accounts store.
     pub fn into_active_entry(
         mut self,
         session_key: GeneratedSessionKey,

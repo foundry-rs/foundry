@@ -1,11 +1,12 @@
 use super::{install, watch::WatchArgs};
-use crate::diagnostic::build::SOLC_ERROR;
+use crate::Lockfile;
 use clap::Parser;
 use eyre::Result;
-use forge_lint::{linter::Linter, sol::SolidityLinter};
+use forge_lint::{
+    linter::Linter,
+    sol::{DeniedLintDiagnostics, SolidityLinter},
+};
 use foundry_cli::{
-    ExitCode,
-    json::{JsonEnvelope, JsonMessage, print_json},
     opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
     utils::{Git, LoadConfig, cache_local_signatures},
 };
@@ -20,20 +21,20 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, DenyLevel, SkipBuildFilters,
+    Config, SkipBuildFilters,
     figment::{
         self, Metadata, Profile, Provider,
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
     },
-    filter::expand_globs,
+    filter::{expand_globs, is_ignored_path},
 };
 use serde::Serialize;
 use solar::{
-    interface::{Session, config::Opts},
+    interface::{Session, config::CompileOpts},
     sema::Compiler,
 };
-use std::path::PathBuf;
+use std::{fmt::Write, path::PathBuf};
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, build);
 
@@ -89,52 +90,20 @@ pub struct BuildArgs {
 }
 
 impl BuildArgs {
-    /// Reject flags whose stdout shape conflicts with the envelope contract.
-    /// Must be called before dispatch so `--watch` is caught before the watch
-    /// loop short-circuits past `BuildArgs::run`.
-    pub fn ensure_machine_compatible(&self) {
-        if !foundry_cli::is_machine() {
-            return;
-        }
-        let unsupported =
-            [("--watch", self.is_watch()), ("--names", self.names), ("--sizes", self.sizes)]
-                .into_iter()
-                .filter_map(|(name, on)| on.then_some(name))
-                .collect::<Vec<_>>();
-        if !unsupported.is_empty() {
-            foundry_cli::machine::bail_machine_usage_with_details(
-                format!(
-                    "`forge build` under `--machine` does not yet support {}; \
-                     run without `--machine` or omit those flags.",
-                    unsupported.join(", ")
-                ),
-                serde_json::json!({ "unsupported_flags": unsupported }),
-            );
-        }
-    }
-
-    pub async fn run(self) -> Result<ProjectCompileOutput> {
-        self.ensure_machine_compatible();
-
-        let machine_mode = foundry_cli::is_machine();
+    pub async fn run(self, locked: bool) -> Result<ProjectCompileOutput> {
         let mut config = self.load_config()?;
 
-        // Skip implicit dep install under `--machine`: it writes to stdout and mutates the project
-        // behind the agent's back. Missing deps will surface as a typed compile-error envelope.
-        if !machine_mode
-            && install::install_missing_dependencies(&mut config).await
-            && config.auto_detect_remappings
+        if locked {
+            self.check_foundry_lock_consistency(&config)?;
+        }
+
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
         }
 
-        // Lock-consistency checks emit `sh_warn!` to stderr; skip under `--machine` to keep
-        // the agent channel quiet.
-        if !machine_mode {
-            self.check_soldeer_lock_consistency(&config).await;
-            self.check_foundry_lock_consistency(&config);
-        }
+        self.check_soldeer_lock_consistency(&config).await;
 
         let project = config.project()?;
 
@@ -147,80 +116,31 @@ impl BuildArgs {
                 files.extend(source_files_iter(path, MultiCompilerLanguage::FILE_EXTENSIONS));
             }
             if files.is_empty() {
-                eyre::bail!("No source files found in specified build paths.")
+                eyre::bail!("No source files found in specified build paths.");
             }
         }
 
         let format_json = shell::is_json();
 
-        // Pre-empt the inner `"Nothing to compile" + exit(0)` path so it can't break the
-        // envelope-only stdout contract.
-        if machine_mode && !project.paths.has_input_files() && self.paths.is_none() {
-            let payload = BuildData { artifacts: 0, errors: 0, warnings: 0, unchanged: false };
-            print_json(&JsonEnvelope::success(payload))?;
-            std::process::exit(ExitCode::Success.to_i32());
-        }
-
-        // Under `--machine`: force quiet (envelope-only stdout) and disable `bail` so we can
-        // emit a typed failure envelope instead of a generic eyre error. v1 skips post-build
-        // lint (not yet modeled in the envelope schema).
-        let mut compiler = ProjectCompiler::new()
+        let mut output = ProjectCompiler::new()
             .files(files)
             .dynamic_test_linking(config.dynamic_test_linking)
+            .print_compiler_settings(shell::verbosity() >= 2)
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
-            .size_limits(
-                config
-                    .code_size_limit
-                    .map(ContractSizeLimits::with_runtime_limit)
-                    .unwrap_or_default(),
-            )
-            .bail(!format_json && !machine_mode);
-        if machine_mode {
-            compiler = compiler.quiet(true);
-        }
-
-        let mut output = compiler.compile(&project)?;
-
-        // Under `--machine`, emit the typed envelope *before* `cache_local_signatures` so a
-        // cache-write failure can never mask a compile-error envelope as `cli.unknown`.
-        if machine_mode && output.has_compiler_errors() {
-            let errors: Vec<JsonMessage> = output
-                .output()
-                .errors
-                .iter()
-                .filter(|e| e.is_error())
-                .map(|e| JsonMessage::error(SOLC_ERROR, e.to_string()))
-                .collect();
-            // Best-effort: bubbling via `?` on a broken stdout would demote
-            // the canonical `Build (4)` exit to `GenericError (1)`.
-            let _ = print_json(&JsonEnvelope::<()>::failure(errors));
-            std::process::exit(ExitCode::Build.to_i32());
-        }
+            .size_limits(contract_size_limits(&config))
+            .bail(!format_json)
+            .compile(&project)?;
 
         // Cache project selectors.
         cache_local_signatures(&output)?;
 
-        if format_json && !self.names && !self.sizes && !machine_mode {
+        if format_json && (!self.names && !self.sizes || output.has_compiler_errors()) {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
         }
-
-        if machine_mode {
-            // Lint output isn't modeled in the v1 envelope; refuse configs that would otherwise
-            // diverge human and machine outcomes (deferred until after compile so a failed
-            // build still emits `compiler.solc.error` + `Build (4)`).
-            if !self.no_lint && config.lint.lint_on_build && config.deny != DenyLevel::Never {
-                foundry_cli::machine::bail_machine_usage(
-                    "`forge build --machine` does not model lint diagnostics in v1; \
-                     `lint_on_build = true` with `deny != never` would diverge human and \
-                     machine outcomes. Pass `--no-lint` or set `deny = never`.",
-                );
-            }
-
-            let payload = BuildData::from_output(&output);
-            print_json(&JsonEnvelope::success(payload))?;
-            return Ok(output);
+        if format_json && output.has_compiler_errors() {
+            std::process::exit(1);
         }
 
         // Only run the `SolidityLinter` if lint on build and no compilation errors.
@@ -229,7 +149,9 @@ impl BuildArgs {
             && !output.output().errors.iter().any(|e| e.is_error())
             && let Err(err) = self.lint(&project, &config, self.paths.as_deref(), &mut output)
         {
-            emit_lint_failure_notice();
+            if err.downcast_ref::<DeniedLintDiagnostics>().is_none() {
+                emit_lint_failure_notice();
+            }
             return Err(err.wrap_err("post-build lint step failed"));
         }
 
@@ -283,8 +205,7 @@ impl BuildArgs {
                     if let Some(files) = files {
                         return files.iter().any(|file| &curr_dir.join(file) == p);
                     }
-                    skip.is_match(p)
-                        && !(ignored.contains(p) || ignored.contains(&curr_dir.join(p)))
+                    skip.is_match(p) && !is_ignored_path(p, &ignored, &curr_dir)
                 })
                 .collect::<Vec<_>>();
 
@@ -299,8 +220,7 @@ impl BuildArgs {
 
             // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
             // compiler, we should reuse the parser from the project output.
-            let mut opts = Opts::default();
-            opts.unstable.typeck = true;
+            let opts = CompileOpts::default();
             let mut compiler =
                 Compiler::new(Session::builder().opts(opts).with_stderr_emitter().build());
 
@@ -379,92 +299,35 @@ impl BuildArgs {
         }
     }
 
-    /// Check foundry.lock file consistency with git submodules
-    fn check_foundry_lock_consistency(&self, config: &Config) {
-        use crate::lockfile::{DepIdentifier, FOUNDRY_LOCK, Lockfile};
-
-        let foundry_lock_path = config.root.join(FOUNDRY_LOCK);
-        if !foundry_lock_path.exists() {
-            return;
-        }
-
+    /// Checks foundry.lock file consistency with Git submodules.
+    fn check_foundry_lock_consistency(&self, config: &Config) -> Result<()> {
         let git = Git::new(&config.root);
-
         let mut lockfile = Lockfile::new(&config.root).with_git(&git);
-        if let Err(e) = lockfile.read() {
-            if !e.to_string().contains("Lockfile not found") {
-                sh_warn!("Failed to parse foundry.lock: {}", e).ok();
-            }
-            return;
+        let mismatches = lockfile.check()?;
+        if mismatches.is_empty() {
+            return Ok(());
         }
 
-        for (dep_path, dep_identifier) in lockfile.iter() {
-            let full_path = config.root.join(dep_path);
-
-            if !full_path.exists() {
-                sh_warn!("Dependency '{}' not found at expected path", dep_path.display()).ok();
-                continue;
-            }
-
-            let actual_rev = match git.get_rev("HEAD", &full_path) {
-                Ok(rev) => rev,
-                Err(_) => {
-                    sh_warn!("Failed to get git revision for dependency '{}'", dep_path.display())
-                        .ok();
-                    continue;
-                }
-            };
-
-            // Compare with the expected revision from lockfile
-            let expected_rev = match dep_identifier {
-                DepIdentifier::Branch { rev, .. }
-                | DepIdentifier::Tag { rev, .. }
-                | DepIdentifier::Rev { rev, .. } => rev.clone(),
-            };
-
-            if actual_rev != expected_rev {
-                sh_warn!(
-                    "Dependency '{}' revision mismatch: expected '{}', found '{}'",
-                    dep_path.display(),
-                    expected_rev,
-                    actual_rev
-                )
-                .ok();
-            }
+        let mut message = String::from("foundry.lock does not match installed dependencies:");
+        for mismatch in mismatches {
+            write!(message, "\n  {mismatch}")?;
         }
+        Err(eyre::eyre!(message))
     }
 }
 
-/// Stable payload emitted in the `forge build` envelope under `--machine`.
-#[derive(Clone, Debug, Serialize)]
-pub struct BuildData {
-    /// Total number of compiled artifacts in the project.
-    pub artifacts: usize,
-    /// Number of compiler errors in the output.
-    pub errors: usize,
-    /// Number of compiler warnings in the output.
-    pub warnings: usize,
-    /// Whether the build was a no-op (no input files changed since the last
-    /// compile). Mirrors `ProjectCompileOutput::is_unchanged`.
-    pub unchanged: bool,
+fn contract_size_limits(config: &Config) -> ContractSizeLimits {
+    config
+        .code_size_limit
+        .map(ContractSizeLimits::with_runtime_limit)
+        .or_else(|| {
+            config
+                .networks
+                .contract_size_limits()
+                .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
+        })
+        .unwrap_or_else(|| ContractSizeLimits::for_spec_id(config.evm_spec_id()))
 }
-
-impl BuildData {
-    fn from_output(output: &ProjectCompileOutput) -> Self {
-        let artifacts = output.artifact_ids().count();
-        let mut errors = 0usize;
-        let mut warnings = 0usize;
-        for diag in &output.output().errors {
-            if diag.is_error() {
-                errors += 1;
-            } else {
-                warnings += 1;
-            }
-        }
-        Self { artifacts, errors, warnings, unchanged: output.is_unchanged() }
-    }
-}
-
 /// Notice shown on lint-on-build failure; printed separately so it survives single-line
 /// cause-chain rendering.
 const LINT_FAILURE_NOTICE: &str = "\

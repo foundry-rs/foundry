@@ -2,7 +2,7 @@
 
 use crate::{Cheatcode, Cheatcodes, CheatsCtxt, Result, Vm::*};
 use alloy_chains::Chain as AlloyChain;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolValue;
 use foundry_common::version::SEMVER_VERSION;
 use foundry_evm_core::{constants::MAGIC_SKIP, evm::FoundryEvmNetwork};
@@ -69,28 +69,14 @@ impl Cheatcode for sleepCall {
 impl Cheatcode for skip_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { skipTest } = *self;
-        if skipTest {
-            // Skip should not work if called deeper than at test level.
-            // Since we're not returning the magic skip bytes, this will cause a test failure.
-            ensure!(ccx.ecx.journal().depth() <= 1, "`skip` can only be used at test level");
-            Err([MAGIC_SKIP, &[]].concat().into())
-        } else {
-            Ok(Default::default())
-        }
+        skip(ccx, skipTest, "")
     }
 }
 
 impl Cheatcode for skip_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { skipTest, reason } = self;
-        if *skipTest {
-            // Skip should not work if called deeper than at test level.
-            // Since we're not returning the magic skip bytes, this will cause a test failure.
-            ensure!(ccx.ecx.journal().depth() <= 1, "`skip` can only be used at test level");
-            Err([MAGIC_SKIP, reason.as_bytes()].concat().into())
-        } else {
-            Ok(Default::default())
-        }
+        skip(ccx, *skipTest, reason)
     }
 }
 
@@ -108,6 +94,24 @@ impl Cheatcode for getChain_1Call {
         let chain_id_str = chainId.to_string();
         get_chain(state, &chain_id_str)
     }
+}
+
+/// Reverts with the magic skip payload and records it in the state, so that the executor can
+/// distinguish this genuine skip from user-crafted revert data carrying the same prefix.
+fn skip<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    skip_test: bool,
+    reason: &str,
+) -> Result {
+    if !skip_test {
+        return Ok(Default::default());
+    }
+    // Skip should not work if called deeper than at test level.
+    // Since we're not returning the magic skip bytes, this will cause a test failure.
+    ensure!(ccx.ecx.journal().depth() <= 1, "`skip` can only be used at test level");
+    let payload = Bytes::from([MAGIC_SKIP, reason.as_bytes()].concat());
+    ccx.state.skip_payloads.push(payload.clone());
+    Err(payload.into())
 }
 
 /// Adds or removes the given breakpoint to the state.

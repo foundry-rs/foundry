@@ -19,6 +19,26 @@ pub struct FindBlockArgs {
     rpc: RpcOpts,
 }
 
+fn interpolate_block(
+    low_block: u64,
+    low_timestamp: u64,
+    high_block: u64,
+    high_timestamp: u64,
+    target_timestamp: u64,
+) -> u64 {
+    let block_range = high_block - low_block;
+    let midpoint = high_block - block_range / 2;
+    if high_timestamp <= low_timestamp {
+        return midpoint;
+    }
+
+    let timestamp_offset = target_timestamp - low_timestamp;
+    let timestamp_range = high_timestamp - low_timestamp;
+    let block_offset =
+        u128::from(timestamp_offset) * u128::from(block_range) / u128::from(timestamp_range);
+    (low_block + block_offset as u64).clamp(low_block + 1, high_block - 1)
+}
+
 impl FindBlockArgs {
     pub async fn run(self) -> Result<()> {
         let Self { timestamp, rpc } = self;
@@ -43,45 +63,80 @@ impl FindBlockArgs {
         } else {
             // Otherwise, find the block that is closest to the timestamp
             let mut low_block = 1_u64; // block 0 has a timestamp of 0: https://github.com/ethereum/go-ethereum/issues/17042#issuecomment-559414137
+            let mut low_timestamp = ts_block_1;
             let mut high_block = last_block_num;
-            let mut matching_block = None;
-            while high_block > low_block && matching_block.is_none() {
-                // Get timestamp of middle block (this approach to avoids overflow)
-                let high_minus_low_over_2 = high_block
-                    .checked_sub(low_block)
-                    .ok_or_else(|| eyre::eyre!("unexpected underflow"))
-                    .unwrap()
-                    .checked_div(2_u64)
-                    .unwrap();
-                let mid_block = high_block.checked_sub(high_minus_low_over_2).unwrap();
-                let ts_mid_block = cast_provider.timestamp(mid_block).await?.to::<u64>();
+            let mut high_timestamp = ts_block_latest;
+            // Limit interpolation to the range's binary search depth so irregular chains retain
+            // logarithmic worst-case behavior.
+            let mut interpolation_budget =
+                u64::BITS - last_block_num.saturating_sub(1).leading_zeros();
+            loop {
+                let block_range = high_block - low_block;
+                if block_range == 0 {
+                    break low_block;
+                }
+                if block_range == 1 {
+                    // Round to the higher block when the timestamp is equidistant.
+                    let high_diff = high_timestamp - ts_target;
+                    let low_diff = ts_target - low_timestamp;
+                    break if low_diff < high_diff { low_block } else { high_block };
+                }
 
-                // Check if we've found a match or should keep searching
-                if ts_mid_block == ts_target {
-                    matching_block = Some(mid_block)
-                } else if high_block.checked_sub(low_block).unwrap() == 1_u64 {
-                    // The target timestamp is in between these blocks. This rounds to the
-                    // highest block if timestamp is equidistant between blocks
-                    let res = join!(
-                        cast_provider.timestamp(high_block),
-                        cast_provider.timestamp(low_block)
-                    );
-                    let ts_high: u64 = res.0.unwrap().to();
-                    let ts_low: u64 = res.1.unwrap().to();
-                    let high_diff = ts_high.checked_sub(ts_target).unwrap();
-                    let low_diff = ts_target.checked_sub(ts_low).unwrap();
-                    let is_low = low_diff < high_diff;
-                    matching_block = if is_low { Some(low_block) } else { Some(high_block) }
-                } else if ts_mid_block < ts_target {
-                    low_block = mid_block;
+                let midpoint = high_block - block_range / 2;
+                let next_block = if interpolation_budget == 0 {
+                    midpoint
                 } else {
-                    high_block = mid_block;
+                    interpolation_budget -= 1;
+                    interpolate_block(
+                        low_block,
+                        low_timestamp,
+                        high_block,
+                        high_timestamp,
+                        ts_target,
+                    )
+                };
+                let next_timestamp = cast_provider.timestamp(next_block).await?.to::<u64>();
+
+                if next_timestamp == ts_target {
+                    break next_block;
+                }
+                if next_timestamp < ts_target {
+                    low_block = next_block;
+                    low_timestamp = next_timestamp;
+                } else {
+                    high_block = next_block;
+                    high_timestamp = next_timestamp;
                 }
             }
-            matching_block.unwrap_or(low_block)
         };
         print_scalar(block_num)?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::interpolate_block;
+
+    #[test]
+    fn interpolates_block_from_timestamps() {
+        assert_eq!(interpolate_block(1, 100, 11, 200, 150), 6);
+    }
+
+    #[test]
+    fn keeps_interpolation_inside_search_bounds() {
+        assert_eq!(interpolate_block(1, 100, 11, 200, 100), 2);
+        assert_eq!(interpolate_block(1, 100, 11, 200, 200), 10);
+    }
+
+    #[test]
+    fn interpolates_without_overflow() {
+        assert_eq!(interpolate_block(0, 0, u64::MAX, u64::MAX, u64::MAX / 2), u64::MAX / 2);
+    }
+
+    #[test]
+    fn uses_midpoint_for_equal_timestamps() {
+        assert_eq!(interpolate_block(1, 100, 10, 100, 100), 6);
     }
 }

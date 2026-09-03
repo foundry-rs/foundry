@@ -7,12 +7,12 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use revm::state::Bytecode;
-use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_contracts::{
     ARACHNID_CREATE2_FACTORY_ADDRESS, CREATEX_ADDRESS, CreateX, MULTICALL3_ADDRESS, Multicall3,
     PERMIT2_ADDRESS, Permit2, SAFE_DEPLOYER_ADDRESS, SafeDeployer,
     contracts::ARACHNID_CREATE2_FACTORY_BYTECODE, precompiles::VALIDATOR_CONFIG_ADDRESS,
 };
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},
@@ -20,6 +20,8 @@ use tempo_precompiles::{
     tip20_factory::TIP20Factory,
     validator_config,
 };
+
+use crate::constants::SYSTEM_PRECOMPILE_STUB;
 
 pub use foundry_common::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
@@ -122,7 +124,7 @@ fn initialize_tempo_genesis_inner_with_precompiles(
     let mut ctx = StorageCtx;
 
     // Set sentinel bytecode for precompile addresses
-    let sentinel = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
+    let sentinel = Bytecode::new_legacy(Bytes::from_static(SYSTEM_PRECOMPILE_STUB));
     for precompile in precompiles {
         ctx.set_code(precompile, sentinel.clone())?;
     }

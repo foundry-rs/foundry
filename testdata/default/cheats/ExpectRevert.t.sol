@@ -36,6 +36,12 @@ contract Reverter {
     function revertWithoutReason() public pure {
         revert();
     }
+
+    function outOfGas() public pure {
+        assembly {
+            for {} 1 {} {}
+        }
+    }
 }
 
 contract ConstructorReverter {
@@ -134,6 +140,12 @@ contract ExpectRevertTest is Test {
         Reverter reverter = new Reverter();
         vm.expectRevert(bytes(""));
         reverter.revertWithoutReason();
+    }
+
+    function testExpectRevertEvmError() public {
+        Reverter reverter = new Reverter();
+        vm.expectRevert(bytes("EvmError: OutOfGas"));
+        reverter.outOfGas{gas: 10_000}();
     }
 
     function testExpectRevertAnyRevert() public {
@@ -554,6 +566,27 @@ contract ExpectRevertWithErrorTest is Test {
         bytes memory v1 = abi.encodeWithSignature("Error(string)", unicode"🙀");
         vm.expectRevert(v1);
         this.f(v1);
+    }
+
+    /// `expectRevert(bytes)` must accept byte-identical revert data of any shape.
+    /// Ref: <https://github.com/foundry-rs/foundry/issues/12511>
+    function testExpectRevertExactMatchAnyRevertData(bytes calldata data) external {
+        vm.expectRevert(data);
+        this.f(data);
+    }
+
+    /// `expectPartialRevert(bytes4)` must accept any revert data starting with the selector.
+    function testExpectPartialRevertMatchesAnySuffix(bytes4 selector, bytes calldata suffix) external {
+        vm.expectPartialRevert(selector);
+        this.f(abi.encodePacked(selector, suffix));
+    }
+
+    /// A bare-message expectation matches an actual `Error(string)` payload even when the
+    /// wrapper carries trailing bytes: the actual revert data is unwrapped leniently.
+    /// Ref: <https://github.com/foundry-rs/foundry/issues/16424>
+    function testExpectRevertActualErrorStringWithTrailingData() external {
+        vm.expectRevert(bytes("reason"));
+        this.f(abi.encodePacked(abi.encodeWithSignature("Error(string)", "reason"), uint256(2)));
     }
 
     function f(bytes memory v) external pure {

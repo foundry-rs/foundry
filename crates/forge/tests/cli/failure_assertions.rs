@@ -133,10 +133,11 @@ forgetest!(expect_call_tests_should_fail, |prj, cmd| {
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001, value 0, gas 25000 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithNoValueAndWrongGas() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001, value 0, minimum gas 50001 to be called 1 time, but was called 0 times] testShouldFailExpectCallWithNoValueAndWrongMinGas() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailExpectCallWithRevertDisallowed() ([GAS])
+[FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002, call type DelegateCall to be called 1 time, but was called 0 times] testShouldFailExpectDelegateCallWithCall() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x3fc7c698 to be called 1 time, but was called 0 times] testShouldFailExpectInnerCall() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002 to be called 3 times, but was called 2 times] testShouldFailExpectMultipleCallsWithDataAdditive() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f7 to be called 1 time, but was called 0 times] testShouldFailExpectSelectorCall() ([GAS])
-Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 10 failed; 0 skipped; [ELAPSED]
 ...
 "#,
     );
@@ -207,7 +208,7 @@ forgetest!(flaky_expect_emit_tests_should_fail, |prj, cmd| {
     cmd.forge_fuse().arg("build").assert_success();
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
-    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"No files changed, compilation skipped
 ...
 [FAIL: E != expected A] testShouldFailCanMatchConsecutiveEvents() ([GAS])
 [FAIL: SomethingElse indexed topic count mismatch: expected 1, got 0] testShouldFailDifferentIndexedParameters() ([GAS])
@@ -591,6 +592,52 @@ forgetest!(emit_diff_anonymous, |prj, cmd| {
 [SOLC_VERSION] [ELAPSED]
 ...
 [FAIL: log != expected log] testShouldFailEmitDifferentEventNonIndexed() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]],
+    );
+});
+
+// An `assumeNoRevert` partial-match reason shorter than a selector must not match revert data
+// that is also shorter than 4 bytes; the revert should surface as a failure instead of being
+// discarded as anticipated.
+forgetest_init!(assume_no_revert_short_partial_should_fail, |prj, cmd| {
+    prj.add_test(
+        "AssumeShortPartial.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {VmSafe} from "forge-std/Vm.sol";
+
+contract ShortReverter {
+    function revertShort() external pure {
+        assembly {
+            mstore(0x00, shl(240, 0xffff))
+            revert(0x00, 0x02)
+        }
+    }
+}
+
+contract AssumeShortPartialTest is Test {
+    ShortReverter reverter;
+
+    function setUp() public {
+        reverter = new ShortReverter();
+    }
+
+    function testShortPartialDoesNotMatch(uint256) public view {
+        vm.assumeNoRevert(
+            VmSafe.PotentialRevert({revertData: hex"ff", partialMatch: true, reverter: address(0)})
+        );
+        reverter.revertShort();
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-contract", "AssumeShortPartialTest"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+[FAIL: EvmError: Revert; counterexample: calldata=[..] args=[..]] testShortPartialDoesNotMatch(uint256) (runs: 0, [AVG_GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]],

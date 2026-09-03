@@ -1,6 +1,4 @@
 use crate::eth::error::BlockchainError;
-#[cfg(feature = "optimism")]
-use alloy_consensus::Sealed;
 use alloy_consensus::SignableTransaction;
 use alloy_dyn_abi::TypedData;
 use alloy_network::{Network, TxSignerSync};
@@ -8,7 +6,6 @@ use alloy_primitives::{Address, B256, Signature, map::AddressHashMap};
 use alloy_signer::Signer as AlloySigner;
 use alloy_signer_local::PrivateKeySigner;
 use foundry_primitives::{FoundryTxEnvelope, FoundryTypedTx};
-use tempo_primitives::TempoSignature;
 
 /// Network-agnostic signing: messages, typed data, and hashes.
 #[async_trait::async_trait]
@@ -110,7 +107,12 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
         sender: &Address,
         tx: FoundryTypedTx,
     ) -> Result<FoundryTxEnvelope, BlockchainError> {
-        let signer = self.accounts.get(sender).ok_or(BlockchainError::NoSignerAvailable)?;
+        let mut signer =
+            self.accounts.get(sender).ok_or(BlockchainError::NoSignerAvailable)?.clone();
+        // The transaction is authoritative for its chain ID. Developer wallets are created with
+        // the node's initial chain ID, which can later change through a reset or
+        // `anvil_setChainId`.
+        signer.set_chain_id(None);
         let envelope = match tx {
             FoundryTypedTx::Legacy(mut t) => {
                 let sig = signer.sign_transaction_sync(&mut t)?;
@@ -149,29 +151,26 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
     }
 }
 
-/// Builds a TxEnvelope from UnsignedTx with r=1, s=1 dummy signature.
-///
-/// Used for impersonated accounts, where transactions are accepted without a valid signature.
-/// The signature uses r=1, s=1 (not zero) because go-ethereum and other clients reject transactions
-/// where r or s are zero with "invalid transaction v, r, s values".
-pub fn build_impersonated(typed_tx: FoundryTypedTx) -> FoundryTxEnvelope {
-    let signature =
-        Signature::from_scalars_and_parity(B256::with_last_byte(1), B256::with_last_byte(1), false);
-    match typed_tx {
-        FoundryTypedTx::Legacy(tx) => FoundryTxEnvelope::Legacy(tx.into_signed(signature)),
-        FoundryTypedTx::Eip2930(tx) => FoundryTxEnvelope::Eip2930(tx.into_signed(signature)),
-        FoundryTypedTx::Eip1559(tx) => FoundryTxEnvelope::Eip1559(tx.into_signed(signature)),
-        FoundryTypedTx::Eip7702(tx) => FoundryTxEnvelope::Eip7702(tx.into_signed(signature)),
-        FoundryTypedTx::Eip4844(tx) => FoundryTxEnvelope::Eip4844(tx.into_signed(signature)),
-        #[cfg(feature = "optimism")]
-        FoundryTypedTx::Deposit(tx) => FoundryTxEnvelope::Deposit(Sealed::new(tx)),
-        #[cfg(feature = "optimism")]
-        FoundryTypedTx::PostExec(_) => {
-            unreachable!("op post-exec txs should not be impersonated")
-        }
-        FoundryTypedTx::Tempo(tx) => {
-            let tempo_sig: TempoSignature = signature.into();
-            FoundryTxEnvelope::Tempo(tx.into_signed(tempo_sig))
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::TxLegacy;
+
+    #[test]
+    fn dev_signer_uses_transaction_chain_id() {
+        let mut account = PrivateKeySigner::random();
+        account.set_chain_id(Some(1));
+        let sender = account.address();
+        let signer = DevSigner::new(vec![account]);
+        let tx = TxLegacy { chain_id: Some(56), ..Default::default() };
+
+        let FoundryTxEnvelope::Legacy(signed) =
+            signer.sign_transaction_from(&sender, FoundryTypedTx::Legacy(tx)).unwrap()
+        else {
+            panic!("expected legacy transaction")
+        };
+
+        assert_eq!(signed.tx().chain_id, Some(56));
+        assert_eq!(signed.recover_signer().unwrap(), sender);
     }
 }

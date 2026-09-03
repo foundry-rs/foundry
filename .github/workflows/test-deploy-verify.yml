@@ -1,0 +1,171 @@
+# Daily CI job running the on-chain deploy + verify tests against public testnets.
+#
+# These are excluded from regular CI via the nextest default-filter: they spend testnet funds from
+# a shared deployer account and depend on three external verifier services (Etherscan, Sourcify,
+# Blockscout), so they are too slow and too flaky to gate pull requests on.
+
+name: test-deploy-verify
+
+permissions: {}
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # Run daily at 3 AM UTC (offset from the other nightlies)
+  workflow_dispatch: # Needed so we can run it manually
+
+concurrency:
+  # Never run two of these at once: they share one deployer account per network, and concurrent
+  # runs would collide on the account nonce.
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  test:
+    name: deploy + verify
+    runs-on: depot-ubuntu-latest-16
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      deployer: ${{ steps.balances.outputs.deployer }}
+      low: ${{ steps.balances.outputs.low }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        with:
+          tool: nextest
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # Fatal and cheap: without the key every test below would quietly pass as a no-op, which
+      # is the exact failure mode this workflow exists to avoid.
+      - name: Check deployer key is configured
+        env:
+          TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.FUNDED_TESTNET_PKEY }}
+        shell: bash
+        run: |
+          if [[ -z "$TESTNET_DEPLOYER_PRIVATE_KEY" ]]; then
+            echo "::error::FUNDED_TESTNET_PKEY is not set; every deploy+verify test would silently no-op."
+            exit 1
+          fi
+          echo "Deployer key is configured."
+
+      # Running dry is the most likely failure, so balances go at the top of the log and anything
+      # under its threshold is reported to the refund job below. Never fail the run over this - the
+      # tests themselves are the signal, and one dry network should not stop the others.
+      - name: Report deployer balances
+        id: balances
+        continue-on-error: true
+        env:
+          HOODI_RPC_URL: ${{ secrets.HOODI_RPC_URL || 'https://ethereum-hoodi-rpc.publicnode.com' }}
+          SEPOLIA_RPC_URL: ${{ secrets.ETH_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com' }}
+          BASE_SEPOLIA_RPC_URL: ${{ secrets.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org' }}
+          ARBITRUM_SEPOLIA_RPC_URL: ${{ secrets.ARBITRUM_SEPOLIA_RPC_URL || 'https://sepolia-rollup.arbitrum.io/rpc' }}
+          MONAD_TESTNET_RPC_URL: ${{ secrets.MONAD_TESTNET_RPC_URL || 'https://testnet-rpc.monad.xyz' }}
+          ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL || 'https://rpc.testnet.chain.robinhood.com' }}
+          TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.FUNDED_TESTNET_PKEY }}
+        shell: bash
+        run: |
+          cargo build --locked --bin cast
+          cast=./target/debug/cast
+          addr=$("$cast" wallet address "$TESTNET_DEPLOYER_PRIVATE_KEY")
+          echo "Deployer: $addr"
+          echo "deployer=$addr" >> "$GITHUB_OUTPUT"
+
+          # Thresholds are roughly 20 more runs at the measured per-run burn. Monad testnet is the
+          # expensive one at ~0.08 MON per run; the L2s are effectively free.
+          low=""
+          for spec in HOODI:0.05 SEPOLIA:0.05 BASE_SEPOLIA:0.01 ARBITRUM_SEPOLIA:0.01 MONAD_TESTNET:2.0 ROBINHOOD_TESTNET:0.01; do
+            net="${spec%%:*}"
+            min="${spec##*:}"
+            url_var="${net}_RPC_URL"
+            if ! bal=$("$cast" balance "$addr" --rpc-url "${!url_var}" 2>/dev/null); then
+              echo "::warning::$net: could not read balance"
+              continue
+            fi
+            human=$("$cast" from-wei "$bal")
+            if awk -v b="$human" -v m="$min" 'BEGIN { exit !(b + 0 < m + 0) }'; then
+              echo "::warning::$net: $human is below the $min top-up threshold"
+              low="$low $net=$human(min $min)"
+            else
+              echo "$net: $human"
+            fi
+          done
+          echo "low=${low# }" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy and verify on testnets
+        env:
+          SVM_TARGET_PLATFORM: linux-amd64
+          # Read by `EnvExternalities::deploy_verify` as <NETWORK>_RPC_URL. Public endpoints are
+          # fine here; the secrets exist so a network can be repointed without a code change.
+          HOODI_RPC_URL: ${{ secrets.HOODI_RPC_URL || 'https://ethereum-hoodi-rpc.publicnode.com' }}
+          SEPOLIA_RPC_URL: ${{ secrets.ETH_SEPOLIA_RPC || 'https://ethereum-sepolia-rpc.publicnode.com' }}
+          BASE_SEPOLIA_RPC_URL: ${{ secrets.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org' }}
+          ARBITRUM_SEPOLIA_RPC_URL: ${{ secrets.ARBITRUM_SEPOLIA_RPC_URL || 'https://sepolia-rollup.arbitrum.io/rpc' }}
+          MONAD_TESTNET_RPC_URL: ${{ secrets.MONAD_TESTNET_RPC_URL || 'https://testnet-rpc.monad.xyz' }}
+          ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL || 'https://rpc.testnet.chain.robinhood.com' }}
+          # Funded throwaway deployer, shared by every network. Holds testnet funds only, and is
+          # topped up by hand; a per-network override is possible via <NETWORK>_PRIVATE_KEY.
+          TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.FUNDED_TESTNET_PKEY }}
+          # `etherscan_key` reads ETHERSCAN_API_KEY, which is a different variable from the
+          # ETHERSCAN_KEY that the regular test workflow exports for `foundry_test_utils::rpc`.
+          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+        run: cargo nextest run --locked --profile deploy-verify --no-fail-fast
+
+  # Raised before the account actually runs dry, so the tests keep passing while someone tops it
+  # up. Independent of whether the tests passed - a low balance is worth reporting either way.
+  refund:
+    name: Open a refund issue
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: always() && github.event_name == 'schedule' && needs.test.outputs.low != ''
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2.9.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOYER: ${{ needs.test.outputs.deployer }}
+          LOW_NETWORKS: ${{ needs.test.outputs.low }}
+          WORKFLOW_URL: |
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          update_existing: true
+          filename: .github/DEPLOY_VERIFY_REFUND_TEMPLATE.md
+
+  # If the nightly run fails, this will create a normal-priority issue to signal so.
+  issue:
+    name: Open an issue
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: failure() && github.event_name == 'schedule'
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2.9.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_URL: |
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          update_existing: true
+          filename: .github/DEPLOY_VERIFY_FAILURE_TEMPLATE.md

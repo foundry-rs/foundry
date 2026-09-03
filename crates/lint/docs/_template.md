@@ -26,3 +26,8 @@ Explain the impact (security, correctness, gas, readability).
 ```solidity
 // non-triggering, recommended example
 ```
+
+## Configuration
+
+Document any inline-config or `foundry.toml` options that affect this lint. Omit this section when
+the lint has no additional configuration.

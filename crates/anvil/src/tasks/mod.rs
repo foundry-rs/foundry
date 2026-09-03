@@ -53,8 +53,8 @@ impl TaskManager {
         })
     }
 
-    /// Spawns a new task that listens for new blocks and resets the forked provider for every new
-    /// block
+    /// Spawns a new task that listens for new blocks and resets the forked provider to the latest
+    /// available block.
     ///
     /// ```
     /// use alloy_network::Ethereum;
@@ -92,8 +92,8 @@ impl TaskManager {
     }
 
     /// Spawns a new [`BlockListener`] task that listens for new blocks (poll-based) See also
-    /// [`Provider::watch_blocks`] and executes the future the `task_factory` returns for the new
-    /// block hash
+    /// [`Provider::watch_blocks`] and executes the future the `task_factory` returns for the latest
+    /// available block hash.
     pub fn spawn_block_poll_listener<N, P, F, Fut>(&self, provider: P, task_factory: F)
     where
         N: Network,
@@ -113,8 +113,8 @@ impl TaskManager {
         });
     }
 
-    /// Spawns a new task that listens for new blocks and resets the forked provider for every new
-    /// block
+    /// Spawns a new task that listens for new blocks and resets the forked provider to the latest
+    /// available block.
     ///
     /// ```
     /// use alloy_network::Ethereum;
@@ -150,7 +150,7 @@ impl TaskManager {
 
     /// Spawns a new [`BlockListener`] task that listens for new blocks (via subscription) See also
     /// [`Provider::subscribe_blocks()`] and executes the future the `task_factory` returns for the
-    /// new block hash
+    /// latest available block.
     pub fn spawn_block_subscription<N, P, F, Fut>(&self, provider: P, task_factory: F)
     where
         N: Network,

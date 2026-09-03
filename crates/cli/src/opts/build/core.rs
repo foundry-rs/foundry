@@ -16,6 +16,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
     },
     filter::SkipBuildFilter,
+    providers::relative_remapping_preserving_context_boundary,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -75,9 +76,9 @@ pub struct BuildOpts {
     #[serde(skip)]
     pub no_auto_detect: bool,
 
-    /// Specify the solc version, or a path to a local solc, to build with.
+    /// Specify the solc version, path, or executable name on `PATH` to build with.
     ///
-    /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
+    /// Valid values are in the format `x.y.z`, `solc:x.y.z`, `path/to/solc`, or `solc`.
     #[arg(
         long = "use",
         alias = "compiler-version",
@@ -93,11 +94,6 @@ pub struct BuildOpts {
     #[arg(help_heading = "Compiler options", long)]
     #[serde(skip)]
     pub offline: bool,
-
-    /// Use the Yul intermediate representation compilation pipeline.
-    #[arg(long, help_heading = "Compiler options")]
-    #[serde(skip)]
-    pub via_ir: bool,
 
     /// Changes compilation to only use literal content and not URLs.
     #[arg(long, help_heading = "Compiler options")]
@@ -198,14 +194,33 @@ impl<'a> From<&'a BuildOpts> for Figment {
         } else {
             args.project_paths.project_root()
         };
-        let mut figment = Config::figment_with_root(root);
+        let mut figment = Config::figment_with_root(&root);
 
         // remappings should stack
-        let mut remappings = Remappings::new_with_remappings(args.project_paths.get_remappings())
-            .with_figment(&figment);
-        remappings
-            .extend(figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default());
-        figment = figment.merge(("remappings", remappings.into_inner())).merge(args);
+        let remappings_root = canonicalized(&root);
+        let cli_remappings = args
+            .project_paths
+            .get_remappings()
+            .into_iter()
+            .map(|remapping| {
+                let remapping = relative_remapping_preserving_context_boundary(remapping, &root)
+                    .to_relative_remapping();
+                relative_remapping_preserving_context_boundary(remapping, &remappings_root)
+                    .to_relative_remapping()
+            })
+            .collect();
+        let mut remappings = Remappings::new_with_remappings(cli_remappings).with_figment(&figment);
+        let generated_remappings = Remappings::generated_from_figment(&figment);
+        remappings.extend_with_config_remappings(
+            figment.extract_inner::<Vec<Remapping>>("remappings").unwrap_or_default(),
+            &generated_remappings,
+        );
+        let remappings = remappings
+            .into_inner()
+            .into_iter()
+            .map(|remapping| relative_remapping_preserving_context_boundary(remapping, &root))
+            .collect::<Vec<_>>();
+        figment = figment.merge(("remappings", remappings)).merge(args);
 
         if let Some(skip) = &args.skip {
             let mut skip = skip.iter().map(|s| s.file_pattern().to_string()).collect::<Vec<_>>();
@@ -246,10 +261,6 @@ impl Provider for BuildOpts {
             dict.insert("deny".to_string(), figment::value::Value::serialize(deny)?);
         }
 
-        if self.via_ir {
-            dict.insert("via_ir".to_string(), true.into());
-        }
-
         if self.use_literal_content {
             dict.insert("use_literal_content".to_string(), true.into());
         }
@@ -280,12 +291,20 @@ impl Provider for BuildOpts {
             dict.insert("ast".to_string(), true.into());
         }
 
-        if self.compiler.experimental {
-            dict.insert("experimental".to_string(), true.into());
-        }
-
         if let Some(optimize) = self.compiler.optimize {
             dict.insert("optimizer".to_string(), optimize.into());
+        }
+
+        if self.compiler.via_ir {
+            dict.insert("via_ir".to_string(), true.into());
+        }
+
+        if self.compiler.via_ssa_cfg {
+            dict.insert("via_ssa_cfg".to_string(), true.into());
+        }
+
+        if self.compiler.experimental {
+            dict.insert("experimental".to_string(), true.into());
         }
 
         if !self.compiler.extra_output.is_empty() {

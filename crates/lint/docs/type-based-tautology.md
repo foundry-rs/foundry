@@ -15,6 +15,7 @@ Examples:
 - `int8 x < -128` is always false because -128 is the minimum value of `int8`.
 - `uint8 x == 256` is always false because 256 is outside the range of `uint8`.
 - `uint8 x != 256` is always true because 256 is outside the range of `uint8`.
+- `uint x > 0 || x == 0` is always true because the two branches cover the full `uint` range.
 
 The check also applies to explicit type casts: `uint8(x) < 256` is always true.
 
@@ -43,6 +44,10 @@ function isBelowMin(int8 x) public pure returns (bool) {
 
 function isImpossible(uint8 x) public pure returns (bool) {
     return x == 256; // always false, 256 is outside uint8 range
+}
+
+function coversRange(uint256 x) public pure returns (bool) {
+    return x > 0 || x == 0; // always true, every uint256 is either zero or greater
 }
 ```
 

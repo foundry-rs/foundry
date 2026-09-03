@@ -7,17 +7,18 @@
 //! This module provides a storage provider adapter for Anvil's `Db` trait and
 //! uses the shared initialization logic from `foundry-evm-core`.
 
-use alloy_primitives::{Address, U256, address};
+use alloy_primitives::{Address, B256, U256, address};
 use foundry_evm::core::tempo::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
     initialize_tempo_genesis_at_hardfork,
 };
 use revm::{
-    context::journaled_state::JournalCheckpoint,
+    DatabaseRef,
+    context::{BlockEnv, journaled_state::JournalCheckpoint},
     state::{AccountInfo, Bytecode},
 };
 use std::collections::HashMap;
-use tempo_chainspec::hardfork::TempoHardfork;
+use tempo_hardfork::TempoHardfork;
 use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS,
     account_keychain::{
@@ -29,6 +30,7 @@ use tempo_precompiles::{
     tip_fee_manager::{IFeeManager, TipFeeManager},
     tip20::{ITIP20, TIP20Token},
 };
+use tempo_primitives::TempoBlockEnv;
 
 use super::db::Db;
 
@@ -41,8 +43,7 @@ const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
 pub struct AnvilStorageProvider<'a> {
     db: &'a mut dyn Db,
     chain_id: u64,
-    timestamp: U256,
-    block_number: u64,
+    block_env: TempoBlockEnv,
     gas_used: u64,
     gas_refunded: i64,
     reservoir: u64,
@@ -62,8 +63,14 @@ impl<'a> AnvilStorageProvider<'a> {
         Self {
             db,
             chain_id,
-            timestamp,
-            block_number,
+            block_env: TempoBlockEnv {
+                inner: BlockEnv {
+                    timestamp,
+                    number: U256::from(block_number),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             gas_used: 0,
             gas_refunded: 0,
             reservoir: 0,
@@ -83,12 +90,8 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         self.chain_id
     }
 
-    fn timestamp(&self) -> U256 {
-        self.timestamp
-    }
-
-    fn block_number(&self) -> u64 {
-        self.block_number
+    fn block_env(&self) -> &TempoBlockEnv {
+        &self.block_env
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<(), TempoPrecompileError> {
@@ -109,7 +112,6 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         address: Address,
         f: &mut dyn FnMut(&AccountInfo),
     ) -> Result<(), TempoPrecompileError> {
-        use revm::DatabaseRef;
         if let Some(info) =
             self.db.basic_ref(address).map_err(|e| TempoPrecompileError::Fatal(e.to_string()))?
         {
@@ -120,13 +122,29 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         }
     }
 
+    fn account_code(&mut self, address: Address) -> Result<(B256, Bytecode), TempoPrecompileError> {
+        let Some(info) =
+            self.db.basic_ref(address).map_err(|e| TempoPrecompileError::Fatal(e.to_string()))?
+        else {
+            return Ok((B256::ZERO, Bytecode::default()));
+        };
+        let code_hash = info.code_hash;
+        let code = if let Some(code) = info.code {
+            code
+        } else {
+            self.db
+                .code_by_hash_ref(code_hash)
+                .map_err(|e| TempoPrecompileError::Fatal(e.to_string()))?
+        };
+        Ok((code_hash, code))
+    }
+
     fn sstore(
         &mut self,
         address: Address,
         key: U256,
         value: U256,
     ) -> Result<(), TempoPrecompileError> {
-        use alloy_primitives::B256;
         self.db
             .set_storage_at(address, B256::from(key), B256::from(value))
             .map_err(|e| TempoPrecompileError::Fatal(e.to_string()))
@@ -172,6 +190,10 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         0
     }
 
+    fn state_gas_spilled(&self) -> u64 {
+        0
+    }
+
     fn gas_limit(&self) -> u64 {
         u64::MAX
     }
@@ -186,10 +208,6 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
 
     fn refund_gas(&mut self, gas: i64) {
         self.gas_refunded = self.gas_refunded.saturating_add(gas);
-    }
-
-    fn beneficiary(&self) -> Address {
-        Address::ZERO
     }
 
     fn is_static(&self) -> bool {

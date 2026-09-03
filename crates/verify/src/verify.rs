@@ -3,7 +3,10 @@
 use crate::{
     RetryArgs,
     etherscan::EtherscanVerificationProvider,
-    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
+    provider::{
+        ExternalVerificationContext, VerificationContext, VerificationProvider,
+        VerificationProviderType,
+    },
     sourcify::SourcifyVerificationProvider,
     utils::wrap_verifier_url_error,
 };
@@ -16,9 +19,9 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{ContractsByArtifact, compile::ProjectCompiler};
-use foundry_compilers::{artifacts::EvmVersion, compilers::solc::Solc, info::ContractInfo};
+use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{
-    Chain, Config, SolcReq,
+    Chain, Config,
     figment::{
         Error, Metadata, Profile, Provider as FigmentProvider,
         value::{Dict, Map, Value},
@@ -235,7 +238,7 @@ impl VerifierArgs {
                             | VerifierCredentialProbe::Inconclusive,
                         ) => {}
                         Ok(VerifierCredentialProbe::InvalidApiKey) => {
-                            eyre::bail!("verifier credential check failed: invalid API key")
+                            eyre::bail!("verifier credential check failed: invalid API key");
                         }
                     }
                 }
@@ -359,6 +362,11 @@ pub struct VerifyArgs {
     #[arg(long)]
     pub watch: bool,
 
+    /// Print the submission ID and URL to stdout. Only set for standalone `verify-contract`, so
+    /// embedded verification (`forge create`/`script --verify`) keeps stdout clean.
+    #[arg(skip)]
+    pub print_submission_result_to_stdout: bool,
+
     /// Set pre-linked libraries.
     #[arg(long, help_heading = "Linker options", env = "DAPP_LIBRARIES")]
     pub libraries: Vec<String>,
@@ -381,11 +389,19 @@ pub struct VerifyArgs {
     #[arg(long)]
     pub via_ir: bool,
 
-    /// The Etherscan license type code to include with the verification request.
+    /// The Etherscan license type code or SPDX identifier to include with the verification
+    /// request.
     ///
-    /// See Etherscan's supported `licenseType` values. This is only used for Etherscan-style
-    /// verifiers.
-    #[arg(long, value_name = "CODE", help_heading = "Verifier options")]
+    /// Accepts either an Etherscan numeric license code (see
+    /// <https://etherscan.io/contract-license-types>) or a common SPDX identifier such as
+    /// `MIT`, `Apache-2.0`, `GPL-3.0-or-later`, or `AGPL-3.0-or-later`. Only used for
+    /// Etherscan-style verifiers.
+    #[arg(
+        long,
+        value_name = "LICENSE",
+        help_heading = "Verifier options",
+        value_parser = parse_etherscan_license_type,
+    )]
     pub license_type: Option<String>,
 
     /// The EVM version to use.
@@ -398,9 +414,9 @@ pub struct VerifyArgs {
     #[arg(long, help_heading = "Compiler options")]
     pub no_auto_detect: bool,
 
-    /// Specify the solc version, or a path to a local solc, to build with.
+    /// Specify the solc version, path, or executable name on `PATH` to build with.
     ///
-    /// Valid values are in the format `x.y.z`, `solc:x.y.z` or `path/to/solc`.
+    /// Valid values are in the format `x.y.z`, `solc:x.y.z`, `path/to/solc`, or `solc`.
     #[arg(long = "use", help_heading = "Compiler options", value_name = "SOLC_VERSION")]
     pub use_solc: Option<String>,
 
@@ -421,6 +437,71 @@ pub struct VerifyArgs {
     /// Defaults to `solidity` if none provided.
     #[arg(long, value_enum)]
     pub language: Option<ContractLanguage>,
+}
+
+pub fn parse_etherscan_license_type(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("license type cannot be empty".into());
+    }
+
+    if let Ok(code) = value.parse::<u32>() {
+        return Ok(code.to_string());
+    }
+
+    let normalized = normalize_license_type(value);
+    let code = match normalized.as_str() {
+        "none" | "no-license" | "unlicensed" => 1,
+        "unlicense" | "the-unlicense" => 2,
+        "mit" | "mit-license" => 3,
+        "gpl-2.0" | "gpl-2.0+" | "gpl-2.0-only" | "gpl-2.0-or-later" | "gplv2" | "gnu-gplv2" => 4,
+        "gpl-3.0" | "gpl-3.0+" | "gpl-3.0-only" | "gpl-3.0-or-later" | "gplv3" | "gnu-gplv3" => 5,
+        "lgpl-2.1" | "lgpl-2.1+" | "lgpl-2.1-only" | "lgpl-2.1-or-later" | "lgplv2.1"
+        | "gnu-lgplv2.1" => 6,
+        "lgpl-3.0" | "lgpl-3.0+" | "lgpl-3.0-only" | "lgpl-3.0-or-later" | "lgplv3"
+        | "gnu-lgplv3" => 7,
+        "bsd-2-clause" => 8,
+        "bsd-3-clause" => 9,
+        "mpl-2.0" => 10,
+        "osl-3.0" => 11,
+        "apache-2.0" | "apache-license-2.0" => 12,
+        "agpl-3.0" | "agpl-3.0+" | "agpl-3.0-only" | "agpl-3.0-or-later" | "agplv3"
+        | "gnu-agplv3" => 13,
+        "bsl-1.1" | "busl-1.1" | "business-source-license-1.1" => 14,
+        _ => {
+            return Err(format!(
+                "unsupported Etherscan license type `{value}`; expected a numeric code or a \
+                 supported SPDX identifier such as MIT, Apache-2.0, GPL-3.0-or-later, or \
+                 AGPL-3.0-or-later"
+            ));
+        }
+    };
+
+    Ok(code.to_string())
+}
+
+fn normalize_license_type(value: &str) -> String {
+    let mut normalized = String::with_capacity(value.len());
+    let mut last_was_dash = false;
+
+    for ch in value.trim().chars() {
+        let ch = match ch {
+            '_' | ' ' | '\t' | '\n' | '\r' => '-',
+            _ => ch.to_ascii_lowercase(),
+        };
+
+        if ch == '-' {
+            if !last_was_dash {
+                normalized.push(ch);
+            }
+            last_was_dash = true;
+        } else {
+            normalized.push(ch);
+            last_was_dash = false;
+        }
+    }
+
+    normalized.trim_matches('-').to_string()
 }
 
 impl_figment_convert!(VerifyArgs);
@@ -473,19 +554,65 @@ struct ProviderRun {
     required: bool,
 }
 
+#[derive(Clone)]
+enum RunContext {
+    Local(Box<VerificationContext>),
+    External(Box<ExternalVerificationContext>),
+}
+
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
-    pub async fn run(mut self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
         let config = self.load_config()?;
+        let context = self.resolve_context().await?;
+        self.run_with_resolved_context(RunContext::Local(Box::new(context)), config).await
+    }
 
+    /// Runs verification using caller-provided Standard JSON input.
+    pub async fn run_with_external_context(
+        self,
+        context: ExternalVerificationContext,
+    ) -> Result<()> {
+        self.validate_external_args()?;
+        eyre::ensure!(
+            !context.target.is_empty()
+                && context.target.len() <= 8193
+                && context.target.is_ascii()
+                && !context.target.bytes().any(|byte| byte.is_ascii_control()),
+            "external contract identifier must contain bounded printable ASCII"
+        );
+        let config = context.config.clone();
+        self.run_with_resolved_context(RunContext::External(Box::new(context)), config).await
+    }
+
+    fn validate_external_args(&self) -> Result<()> {
+        eyre::ensure!(!self.flatten, "flattening is unsupported for external verification");
+        eyre::ensure!(
+            !matches!(self.language, Some(ContractLanguage::Vyper)),
+            "Vyper is unsupported for external verification"
+        );
+        eyre::ensure!(
+            !self.guess_constructor_args,
+            "constructor argument guessing is unsupported for external verification"
+        );
+        eyre::ensure!(
+            self.constructor_args_path.is_none(),
+            "constructor args paths are unsupported for external verification; provide encoded constructor args"
+        );
+        Ok(())
+    }
+
+    async fn run_with_resolved_context(
+        mut self,
+        context: RunContext,
+        config: Config,
+    ) -> Result<()> {
         if self.guess_constructor_args && config.get_rpc_url().is_none() {
             eyre::bail!(
                 "You have to provide a valid RPC URL to use --guess-constructor-args feature"
-            )
+            );
         }
 
-        // If chain is not set, we try to get it from the RPC.
-        // If RPC is not set, the default chain is used.
         let chain = match config.get_rpc_url() {
             Some(_) => {
                 let provider = utils::get_provider(&config)?;
@@ -494,18 +621,27 @@ impl VerifyArgs {
             None => config.chain.unwrap_or_default(),
         };
 
-        let context = self.resolve_context().await?;
-
         // Set Etherscan options.
         self.etherscan.chain = Some(chain);
         // `get_etherscan_config_with_chain` returns None for chains with no known Etherscan API
         // URL (even when a key was explicitly passed), because `ResolvedEtherscanConfig::create`
         // requires `chain.etherscan_urls()`. Fall back to the raw `etherscan_api_key` from config
         // so that the key survives for warning/fallback logic in `client()`.
-        self.etherscan.key = config
-            .get_etherscan_config_with_chain(Some(chain))?
-            .map(|c| c.key)
-            .or_else(|| config.etherscan_api_key.clone());
+        let config_key = match config.get_etherscan_config_with_chain(Some(chain)) {
+            Ok(config) => config.map(|config| config.key),
+            // A user-selected URL does not depend on the optional configured endpoint. Explicit
+            // Sourcify likewise must not fail because an unrelated Etherscan fallback is invalid.
+            Err(_)
+                if self.verifier.verifier_url.is_some()
+                    || self.verifier.verifier.is_some_and(|provider| provider.is_sourcify()) =>
+            {
+                None
+            }
+            Err(err) => return Err(err.into()),
+        }
+        .or_else(|| config.etherscan_api_key.clone());
+        self.etherscan.key =
+            self.verifier.resolve_api_key(config_key.as_deref()).map(str::to_owned);
 
         // Capture whether the user explicitly provided a verifier URL *before* any auto-injection.
         // This is passed to `client()` so that an auto-injected Sourcify URL does not look like a
@@ -528,10 +664,17 @@ impl VerifyArgs {
         }
 
         if self.show_standard_json_input {
-            let args = EtherscanVerificationProvider::default()
-                .create_verify_request(&self, &context)
-                .await?;
-            sh_println!("{}", args.source)?;
+            match &context {
+                RunContext::Local(context) => {
+                    let args = EtherscanVerificationProvider::default()
+                        .create_verify_request(&self, context)
+                        .await?;
+                    sh_println!("{}", args.source)?;
+                }
+                RunContext::External(context) => {
+                    sh_println!("{}", serde_json::to_string(&context.standard_json_input)?)?;
+                }
+            }
             return Ok(());
         }
 
@@ -561,7 +704,11 @@ impl VerifyArgs {
         for ProviderRun { label, args, mut provider, required } in runs {
             sh_status!("\nVerifying on {label}...")?;
             let watch = args.watch;
-            match provider.submit(args, context.clone()).await {
+            let submission = match context.clone() {
+                RunContext::Local(context) => provider.submit(args, *context).await,
+                RunContext::External(context) => provider.submit_external(args, *context).await,
+            };
+            match submission {
                 Ok(check_args) => {
                     if required
                         && watch
@@ -678,10 +825,7 @@ impl VerifyArgs {
             let mut version = if let Some(ref version) = self.compiler_version {
                 version.trim_start_matches('v').parse()?
             } else if let Some(ref solc) = config.solc {
-                match solc {
-                    SolcReq::Version(version) => version.to_owned(),
-                    SolcReq::Local(solc) => Solc::new(solc)?.version,
-                }
+                solc.try_version()?
             } else if let Some(entry) =
                 cache.as_ref().and_then(|cache| cache.files.get(&contract_path).cloned())
             {
@@ -704,14 +848,14 @@ impl VerifyArgs {
                     );
                     eyre::bail!(
                         "Compiler version has to be set in `foundry.toml`. If the project was not deployed with foundry, specify the version through `--compiler-version` flag."
-                    )
+                    );
                 }
 
                 unique_versions.into_iter().next().unwrap().to_owned()
             } else {
                 eyre::bail!(
                     "If cache is disabled, compiler version must be either provided with `--compiler-version` option or set in foundry.toml"
-                )
+                );
             };
 
             let settings = if let Some(profile) = &self.compilation_profile {
@@ -720,7 +864,7 @@ impl VerifyArgs {
                 } else if let Some(settings) = project.additional_settings.get(profile.as_str()) {
                     settings
                 } else {
-                    eyre::bail!("Unknown compilation profile: {}", profile)
+                    eyre::bail!("Unknown compilation profile: {}", profile);
                 }
             } else if let Some((cache, entry)) = cache
                 .as_ref()
@@ -758,7 +902,7 @@ impl VerifyArgs {
                     eyre::bail!(
                         "Ambiguous compilation profiles found in cache: {}, please specify the profile through `--compilation-profile` flag",
                         profiles.iter().join(", ")
-                    )
+                    );
                 }
 
                 let profile = profiles.into_iter().next().unwrap().to_owned();
@@ -768,7 +912,7 @@ impl VerifyArgs {
             } else {
                 eyre::bail!(
                     "If cache is disabled, compilation profile must be provided with `--compilation-profile` option or set in foundry.toml"
-                )
+                );
             };
 
             VerificationContext::new(
@@ -780,7 +924,7 @@ impl VerifyArgs {
             )
         } else {
             if config.get_rpc_url().is_none() {
-                eyre::bail!("You have to provide a contract name or a valid RPC URL")
+                eyre::bail!("You have to provide a contract name or a valid RPC URL");
             }
             let provider = utils::get_provider(&config)?;
             let code = provider.get_code_at(self.address).await?;
@@ -794,7 +938,7 @@ impl VerifyArgs {
                 eyre::bail!(format!(
                     "Bytecode at {} does not match any local contracts",
                     self.address
-                ))
+                ));
             };
 
             let settings = project
@@ -883,7 +1027,7 @@ impl FigmentProvider for VerifyCheckArgs {
 ///
 /// Some chains register their Sourcify-compatible verification API under `etherscan_urls` in
 /// alloy-chains. This function returns the properly formatted URL for such chains.
-fn sourcify_api_url(chain: Chain) -> Option<String> {
+pub fn sourcify_api_url(chain: Chain) -> Option<String> {
     if chain.is_custom_sourcify() {
         chain.etherscan_urls().map(|(api_url, _)| {
             let api_url = api_url.trim_end_matches('/');
@@ -905,6 +1049,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn verifier_api_key_takes_precedence_over_etherscan_key() {
+        let args = VerifierArgs { verifier_api_key: Some("explicit".into()), ..Default::default() };
+        assert_eq!(args.resolve_api_key(Some("config")), Some("explicit"));
+        assert_eq!(VerifierArgs::default().resolve_api_key(Some("config")), Some("config"));
+    }
+
+    #[tokio::test]
+    async fn external_context_rejects_control_characters_in_fqn() {
+        let args =
+            VerifyArgs::parse_from(["foundry-cli", "0xd8509bee9c9bf012282ad33aba0d87241baf5064"]);
+        let context = ExternalVerificationContext {
+            config: Config::default(),
+            compiler_version: semver::Version::new(0, 8, 30),
+            standard_json_input: std::sync::Arc::new(serde_json::json!({})),
+            target: "A.sol:A\nforged".into(),
+        };
+        assert!(
+            args.run_with_external_context(context)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("printable")
+        );
+    }
+
+    #[test]
+    fn external_run_context_clone_shares_standard_json() {
+        let input = std::sync::Arc::new(serde_json::json!({"large": [1, 2, 3]}));
+        let context = RunContext::External(Box::new(ExternalVerificationContext {
+            config: Config::default(),
+            compiler_version: semver::Version::new(0, 8, 30),
+            standard_json_input: input.clone(),
+            target: "A.sol:A".into(),
+        }));
+        let RunContext::External(context) = &context else { unreachable!() };
+        let cloned = context.clone();
+        assert!(std::sync::Arc::ptr_eq(&input, &cloned.standard_json_input));
+    }
+
+    #[test]
     fn can_parse_verify_contract() {
         let args: VerifyArgs = VerifyArgs::parse_from([
             "foundry-cli",
@@ -916,6 +1100,77 @@ mod tests {
         ]);
         assert!(args.via_ir);
         assert_eq!(args.license_type.as_deref(), Some("13"));
+    }
+
+    #[test]
+    fn can_parse_verify_contract_license_type_spdx() {
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Domains.sol:Domains",
+            "--license-type",
+            "AGPL-3.0-or-later",
+        ]);
+        assert_eq!(args.license_type.as_deref(), Some("13"));
+
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Domains.sol:Domains",
+            "--license-type",
+            "MIT",
+        ]);
+        assert_eq!(args.license_type.as_deref(), Some("3"));
+
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Domains.sol:Domains",
+            "--license-type",
+            "apache 2.0",
+        ]);
+        assert_eq!(args.license_type.as_deref(), Some("12"));
+    }
+
+    #[test]
+    fn verify_contract_license_type_is_case_insensitive() {
+        for variant in ["mit", "MIT", "Mit", "mIt"] {
+            let args: VerifyArgs = VerifyArgs::parse_from([
+                "foundry-cli",
+                "0x0000000000000000000000000000000000000000",
+                "src/Domains.sol:Domains",
+                "--license-type",
+                variant,
+            ]);
+            assert_eq!(args.license_type.as_deref(), Some("3"), "input: {variant}");
+        }
+    }
+
+    #[test]
+    fn verify_contract_license_type_accepts_numeric_codes() {
+        for (code, expected) in [("1", "1"), ("14", "14"), ("15", "15")] {
+            let args: VerifyArgs = VerifyArgs::parse_from([
+                "foundry-cli",
+                "0x0000000000000000000000000000000000000000",
+                "src/Domains.sol:Domains",
+                "--license-type",
+                code,
+            ]);
+            assert_eq!(args.license_type.as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn errors_on_invalid_verify_contract_license_type() {
+        let err = VerifyArgs::try_parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Domains.sol:Domains",
+            "--license-type",
+            "Unknown-License",
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("unsupported Etherscan license type"));
     }
 
     #[test]

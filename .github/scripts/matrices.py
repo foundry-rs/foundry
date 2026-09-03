@@ -45,7 +45,8 @@ class Expanded:
     runner_label: str
     target: str
     svm_target_platform: str
-    flags: str
+    filter: str
+    partition_arg: str
     partition: int
 
     def __init__(
@@ -54,14 +55,16 @@ class Expanded:
         runner_label: str,
         target: str,
         svm_target_platform: str,
-        flags: str,
+        filter: str,
+        partition_arg: str,
         partition: int,
     ):
         self.name = name
         self.runner_label = runner_label
         self.target = target
         self.svm_target_platform = svm_target_platform
-        self.flags = flags
+        self.filter = filter
+        self.partition_arg = partition_arg
         self.partition = partition
 
 
@@ -108,22 +111,21 @@ def main():
                     os_str = f" ({target.target})"
 
                 name = case.name
-                flags = f"-E '{case.filter}'"
+                partition_arg = ""
                 if case.n_partitions > 1:
                     s = f"{partition}/{case.n_partitions}"
                     name += f" ({s})"
-                    flags += f" --partition count:{s}"
+                    partition_arg = f"count:{s}"
 
                 name += os_str
-
-                flags += " --no-fail-fast"
 
                 obj = Expanded(
                     name=name,
                     runner_label=target.runner_label,
                     target=target.target,
                     svm_target_platform=target.svm_target_platform,
-                    flags=flags,
+                    filter=case.filter,
+                    partition_arg=partition_arg,
                     partition=partition,
                 )
                 expanded.append(vars(obj))

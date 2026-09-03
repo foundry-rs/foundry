@@ -1,4 +1,4 @@
-use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
+use crate::sol::SolLint;
 
 mod cache_array_length;
 mod costly_loop;

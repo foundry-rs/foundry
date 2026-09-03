@@ -1,6 +1,6 @@
 # No-ETH read-before-write reentrancy
 
-**Severity**: `Medium`
+**Severity**: `Med`
 **ID**: `reentrancy-no-eth`
 
 Flags external calls that do not transfer ETH when state read before the call is written after the

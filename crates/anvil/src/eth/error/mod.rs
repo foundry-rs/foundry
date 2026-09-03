@@ -43,6 +43,8 @@ pub enum BlockchainError {
     FailedToDecodeTransaction,
     #[error("Failed to decode receipt")]
     FailedToDecodeReceipt,
+    #[error("Cannot EIP-2718 encode transaction type 0x{0:x}")]
+    UnsupportedTransactionEncoding(u8),
     #[error("Failed to decode state")]
     FailedToDecodeStateDump,
     #[error("Prevrandao not in the EVM's environment after merge")]
@@ -69,6 +71,8 @@ pub enum BlockchainError {
     EvmOverrideError(String),
     #[error("Invalid url {0:?}")]
     InvalidUrl(String),
+    #[error("unsupported fork network for chain {chain_id}: {reason}")]
+    UnsupportedForkNetwork { chain_id: u64, reason: &'static str },
     #[error("Internal error: {0:?}")]
     Internal(String),
     #[error("BlockOutOfRangeError: block height is {0} but requested was {1}")]
@@ -226,7 +230,9 @@ pub enum PoolError {
 pub enum FeeHistoryError {
     #[error("requested block range is out of bounds")]
     InvalidBlockRange,
-    #[error("could not find newest block number requested: {0}")]
+    #[error("reward percentiles must be strictly increasing and between 0 and 100")]
+    InvalidRewardPercentiles,
+    #[error("could not find block number requested: {0}")]
     BlockNotFound(BlockNumberOrTag),
 }
 
@@ -318,6 +324,9 @@ pub enum InvalidTransactionError {
     /// Thrown when Blob transaction contains a versioned hash with an incorrect version.
     #[error("Blob transaction contains a versioned hash with an incorrect version")]
     BlobVersionNotSupported,
+    /// Thrown when a blob transaction is submitted on a Monad network.
+    #[error("EIP-4844 blob transactions are not supported on Monad")]
+    MonadBlobTransactionUnsupported,
     /// Thrown when there are no `blob_hashes` in the transaction.
     #[error("There should be at least one blob in a Blob transaction.")]
     EmptyBlobs,
@@ -449,9 +458,11 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::ChainIdNotAvailable => {
                     RpcError::invalid_params("Chain Id not available")
                 }
-                BlockchainError::TransactionConfirmationTimeout { .. } => {
-                    RpcError::internal_error_with("Transaction confirmation timeout")
-                }
+                BlockchainError::TransactionConfirmationTimeout { hash, .. } => RpcError {
+                    code: ErrorCode::ServerError(4),
+                    message: "Transaction confirmation timeout".into(),
+                    data: Some(serde_json::Value::String(hash.to_string())),
+                },
                 BlockchainError::InvalidTransaction(err) => match err {
                     InvalidTransactionError::Revert(data) => {
                         // this mimics geth revert error
@@ -500,6 +511,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::FailedToDecodeReceipt => {
                     RpcError::invalid_params("Failed to decode receipt")
                 }
+                BlockchainError::UnsupportedTransactionEncoding(_) => {
+                    RpcError::internal_error_with(err.to_string())
+                }
                 BlockchainError::FailedToDecodeStateDump => {
                     RpcError::invalid_params("Failed to decode state dump")
                 }
@@ -535,6 +549,9 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                     RpcError::invalid_params(err.to_string())
                 }
                 err @ BlockchainError::InvalidUrl(_) => RpcError::invalid_params(err.to_string()),
+                err @ BlockchainError::UnsupportedForkNetwork { .. } => {
+                    RpcError::invalid_params(err.to_string())
+                }
                 BlockchainError::Internal(err) => RpcError::internal_error_with(err),
                 err @ BlockchainError::BlockOutOfRange(_, _) => {
                     RpcError::invalid_params(err.to_string())

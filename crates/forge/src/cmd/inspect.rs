@@ -1,6 +1,9 @@
 use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
 use clap::Parser;
-use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
+use comfy_table::{
+    Cell, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
+};
 use eyre::{Result, eyre};
 use foundry_cli::opts::{BuildOpts, CompilerOpts};
 use foundry_common::{
@@ -13,7 +16,7 @@ use foundry_compilers::{
         StorageLayout,
         output_selection::{
             BytecodeOutputSelection, ContractOutputSelection, DeployedBytecodeOutputSelection,
-            EvmOutputSelection, EwasmOutputSelection,
+            EvmOutputSelection, EwasmOutputSelection, OutputSelection,
         },
     },
     solc::SolcLanguage,
@@ -54,6 +57,9 @@ impl InspectArgs {
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
 
+        let user_extra_output = !build.compiler.extra_output.is_empty()
+            || !build.compiler.extra_output_files.is_empty();
+
         // Map field to ContractOutputSelection
         let mut cos = build.compiler.extra_output;
         if !field.can_skip_field() && !cos.iter().any(|selected| field == *selected) {
@@ -77,7 +83,15 @@ impl InspectArgs {
         };
 
         // Build the project
-        let project = modified_build_args.project()?;
+        let mut project = modified_build_args.project()?;
+        if !user_extra_output
+            && !project.build_info
+            && let Some(selection) = field.inspect_output_selection()
+        {
+            project.no_artifacts = true;
+            project
+                .update_output_selection(|output_selection| *output_selection = selection.clone());
+        }
         let target_path = find_target_path(&project, &contract)?;
         if field == ContractArtifactField::Linearization && !is_solidity_source(&target_path) {
             eyre::bail!(
@@ -92,6 +106,9 @@ impl InspectArgs {
 
         // Match on ContractArtifactFields and pretty-print
         match field {
+            ContractArtifactField::Artifact => {
+                print_json(&artifact)?;
+            }
             ContractArtifactField::Abi => {
                 let abi = artifact.abi.as_ref().ok_or_else(|| missing_error("ABI"))?;
                 print_abi(abi, wrap)?;
@@ -115,7 +132,14 @@ impl InspectArgs {
                 print_json(&artifact.gas_estimates)?;
             }
             ContractArtifactField::StorageLayout => {
-                print_storage_layout(artifact.storage_layout.as_ref(), wrap)?;
+                print_storage_layout(artifact.storage_layout.as_ref(), "storage layout", wrap)?;
+            }
+            ContractArtifactField::TransientStorageLayout => {
+                print_storage_layout(
+                    artifact.transient_storage_layout.as_ref(),
+                    "transient storage layout",
+                    wrap,
+                )?;
             }
             ContractArtifactField::DevDoc => {
                 print_json(&artifact.devdoc)?;
@@ -323,10 +347,11 @@ fn internal_ty(ty: &InternalType) -> String {
 
 pub fn print_storage_layout(
     storage_layout: Option<&StorageLayout>,
+    field: &str,
     should_wrap: bool,
 ) -> Result<()> {
     let Some(storage_layout) = storage_layout else {
-        return Err(missing_error("storage layout"));
+        return Err(missing_error(field));
     };
 
     if shell::is_json() {
@@ -414,9 +439,9 @@ fn print_table(
 ) -> Result<()> {
     let mut table = Table::new();
     if shell::is_markdown() {
-        table.load_preset(ASCII_MARKDOWN);
+        table.load_style(ASCII_MARKDOWN);
     } else {
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        table.load_style(ASCII_FULL.with_rounded_corners());
     }
     table.set_header(headers);
     if should_wrap {
@@ -496,9 +521,8 @@ fn print_linearization(
     let diags = compiler.sess().dcx.emitted_diagnostics().unwrap();
     if compiler.sess().dcx.has_errors().is_err() {
         eyre::bail!("{diags}");
-    } else {
-        let _ = sh_eprint!("{diags}");
     }
+    let _ = sh_eprint!("{diags}");
     if !lowered {
         eyre::bail!(
             "unable to inspect linearization: failed to lower Solidity ASTs for `{}`",
@@ -535,6 +559,7 @@ fn print_linearization(
 /// Contract level output selection
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ContractArtifactField {
+    Artifact,
     Abi,
     Bytecode,
     DeployedBytecode,
@@ -544,6 +569,7 @@ pub enum ContractArtifactField {
     MethodIdentifiers,
     GasEstimates,
     StorageLayout,
+    TransientStorageLayout,
     DevDoc,
     Ir,
     IrOptimized,
@@ -614,6 +640,8 @@ macro_rules! impl_value_enum {
 
 impl_value_enum! {
     enum ContractArtifactField {
+        Artifact          => "artifact" | "artifactJson" | "artifact-json" | "artifact_json"
+                             | "output",
         Abi               => "abi",
         Bytecode          => "bytecode" | "bytes" | "b",
         DeployedBytecode  => "deployedBytecode" | "deployed_bytecode" | "deployed-bytecode"
@@ -629,6 +657,10 @@ impl_value_enum! {
                              | "gasestimates",
         StorageLayout     => "storageLayout" | "storage_layout" | "storage-layout"
                              | "storagelayout" | "storage",
+        TransientStorageLayout => "transientStorageLayout" | "transient_storage_layout"
+                             | "transient-storage-layout" | "transientstoragelayout"
+                             | "transientStorage" | "transient-storage" | "transient_storage"
+                             | "transientstorage" | "transient" | "tsl",
         DevDoc            => "devdoc" | "dev-doc" | "devDoc",
         Ir                => "ir" | "iR" | "IR",
         IrOptimized       => "irOptimized" | "ir-optimized" | "iroptimized" | "iro" | "iropt",
@@ -651,6 +683,7 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
     fn try_from(field: ContractArtifactField) -> Result<Self, Self::Error> {
         type Caf = ContractArtifactField;
         match field {
+            Caf::Artifact => Err(eyre!("Artifact is not supported for ContractOutputSelection")),
             Caf::Abi => Ok(Self::Abi),
             Caf::Bytecode => {
                 Ok(Self::Evm(EvmOutputSelection::ByteCode(BytecodeOutputSelection::All)))
@@ -663,6 +696,7 @@ impl TryFrom<ContractArtifactField> for ContractOutputSelection {
             Caf::MethodIdentifiers => Ok(Self::Evm(EvmOutputSelection::MethodIdentifiers)),
             Caf::GasEstimates => Ok(Self::Evm(EvmOutputSelection::GasEstimates)),
             Caf::StorageLayout => Ok(Self::StorageLayout),
+            Caf::TransientStorageLayout => Ok(Self::TransientStorageLayout),
             Caf::DevDoc => Ok(Self::DevDoc),
             Caf::Ir => Ok(Self::Ir),
             Caf::IrOptimized => Ok(Self::IrOptimized),
@@ -696,6 +730,7 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
                 | (Self::MethodIdentifiers, Cos::Evm(Eos::MethodIdentifiers))
                 | (Self::GasEstimates, Cos::Evm(Eos::GasEstimates))
                 | (Self::StorageLayout, Cos::StorageLayout)
+                | (Self::TransientStorageLayout, Cos::TransientStorageLayout)
                 | (Self::DevDoc, Cos::DevDoc)
                 | (Self::Ir, Cos::Ir)
                 | (Self::IrOptimized, Cos::IrOptimized)
@@ -717,12 +752,28 @@ impl ContractArtifactField {
     pub const fn can_skip_field(&self) -> bool {
         matches!(
             self,
-            Self::Bytecode
+            Self::Artifact
+                | Self::Bytecode
                 | Self::DeployedBytecode
                 | Self::StandardJson
                 | Self::Libraries
                 | Self::Linearization
         )
+    }
+
+    fn inspect_output_selection(&self) -> Option<OutputSelection> {
+        match self {
+            Self::Artifact
+            | Self::Bytecode
+            | Self::DeployedBytecode
+            | Self::StandardJson
+            | Self::Libraries
+            | Self::Linearization => None,
+            _ => {
+                let selection: ContractOutputSelection = (*self).try_into().ok()?;
+                Some(OutputSelection::common_output_selection([selection.to_string()]))
+            }
+        }
     }
 }
 
@@ -787,7 +838,15 @@ mod tests {
     #[test]
     fn contract_output_selection() {
         for &field in ContractArtifactField::ALL {
-            if field == ContractArtifactField::StandardJson {
+            if field == ContractArtifactField::Artifact {
+                let selection: Result<ContractOutputSelection, _> = field.try_into();
+                assert!(
+                    selection
+                        .unwrap_err()
+                        .to_string()
+                        .eq("Artifact is not supported for ContractOutputSelection")
+                );
+            } else if field == ContractArtifactField::StandardJson {
                 let selection: Result<ContractOutputSelection, _> = field.try_into();
                 assert!(
                     selection

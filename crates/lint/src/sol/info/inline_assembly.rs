@@ -5,7 +5,7 @@ use crate::{
 };
 use solar::{
     ast::{Stmt, StmtKind},
-    interface::{BytePos, Span},
+    interface::BytePos,
 };
 
 declare_forge_lint!(
@@ -22,7 +22,8 @@ impl<'ast> EarlyLintPass<'ast> for InlineAssembly {
     fn check_stmt(&mut self, ctx: &LintContext, stmt: &'ast Stmt<'ast>) {
         let StmtKind::Assembly(asm) = &stmt.kind else { return };
 
-        let kw_span = assembly_keyword_span(stmt.span);
+        // Keep the diagnostic highlight on the leading `assembly` keyword.
+        let kw_span = stmt.span.with_hi(stmt.span.lo() + BytePos(ASSEMBLY_KW_LEN));
 
         let memory_safe = asm.flags.iter().any(|f| f.value.as_str() == "memory-safe")
             || has_memory_safe_natspec(ctx, stmt.span.lo());
@@ -35,11 +36,6 @@ impl<'ast> EarlyLintPass<'ast> for InlineAssembly {
 
         ctx.emit_with_msg(&INLINE_ASSEMBLY, kw_span, msg);
     }
-}
-
-/// Narrows a span to the leading `assembly` keyword to keep diagnostics readable.
-fn assembly_keyword_span(span: Span) -> Span {
-    span.with_hi(span.lo() + BytePos(ASSEMBLY_KW_LEN))
 }
 
 /// Returns `true` when the lines immediately preceding `stmt_lo` form a `///` NatSpec block

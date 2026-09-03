@@ -250,6 +250,7 @@ impl Display for MutationType {
             Self::Assignment(kind) => match kind {
                 AssignVarTypes::Literal(lit) => write!(f, "{lit}"),
                 AssignVarTypes::Identifier(ident) => write!(f, "{ident}"),
+                AssignVarTypes::NegatedIdentifier(ident) => write!(f, "-{ident}"),
             },
             Self::BinaryOp(kind) => write!(f, "{}", kind.to_str()),
             Self::BinaryOpExpr { mutated_expr, .. } => write!(f, "{mutated_expr}"),

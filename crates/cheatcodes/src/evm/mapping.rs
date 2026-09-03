@@ -32,7 +32,7 @@ impl Cheatcode for getMappingSlotAtCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { target, mappingSlot, idx } = self;
         let result = slot_child(state, target, mappingSlot)
-            .and_then(|set| set.get(idx.saturating_to::<usize>()))
+            .and_then(|set| usize::try_from(*idx).ok().and_then(|idx| set.get(idx)))
             .copied()
             .unwrap_or_default();
         Ok(result.abi_encode())

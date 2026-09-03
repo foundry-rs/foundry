@@ -120,9 +120,13 @@ impl Base {
             // anyway;
             // strip prefix when using u128::from_str_radix because it does not recognize it as
             // valid.
-            _ if s.starts_with("0b") => Self::detect_prefixed(s, 2, Self::Binary, "binary"),
-            _ if s.starts_with("0o") => Self::detect_prefixed(s, 8, Self::Octal, "octal"),
-            _ if s.starts_with("0x") => {
+            _ if s.get(..2).is_some_and(|prefix| prefix.eq_ignore_ascii_case("0b")) => {
+                Self::detect_prefixed(s, 2, Self::Binary, "binary")
+            }
+            _ if s.get(..2).is_some_and(|prefix| prefix.eq_ignore_ascii_case("0o")) => {
+                Self::detect_prefixed(s, 8, Self::Octal, "octal")
+            }
+            _ if s.get(..2).is_some_and(|prefix| prefix.eq_ignore_ascii_case("0x")) => {
                 Self::detect_prefixed(s, 16, Self::Hexadecimal, "hexadecimal")
             }
             // No prefix => first try parsing as decimal
@@ -623,6 +627,14 @@ mod tests {
         assert_eq!(Base::detect("0o100").unwrap(), Octal);
         assert_eq!(Base::detect("100").unwrap(), Decimal);
         assert_eq!(Base::detect("0x100").unwrap(), Hexadecimal);
+
+        assert_eq!(Base::detect("0B100").unwrap(), Binary);
+        assert_eq!(Base::detect("0O100").unwrap(), Octal);
+        assert_eq!(Base::detect("0X100").unwrap(), Hexadecimal);
+
+        assert_eq!(Base::detect("-0B100").unwrap(), Binary);
+        assert_eq!(Base::detect("-0O100").unwrap(), Octal);
+        assert_eq!(Base::detect("-0X100").unwrap(), Hexadecimal);
 
         assert_eq!(Base::detect("0123456789abcdef").unwrap(), Hexadecimal);
 

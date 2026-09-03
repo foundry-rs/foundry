@@ -5,9 +5,11 @@ use foundry_cli::utils::{Git, Submodules};
 use foundry_compilers::artifacts::Remapping;
 use foundry_config::Config;
 use foundry_test_utils::util::{
-    ExtTester, FORGE_STD_REVISION, TestCommand, pretty_err, read_string,
+    ExtTester, FORGE_STD_REVISION, OutputExt, TestCommand, pretty_err, read_string,
 };
 use semver::Version;
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -91,6 +93,26 @@ Missing dependencies found. Installing now...
     assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
 });
 
+// Checks missing dependencies are auto installed.
+forgetest_init!(can_install_missing_deps_lint, |prj, cmd| {
+    prj.initialize_default_contracts();
+    prj.clear();
+
+    // Wipe forge-std.
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    cmd.arg("lint").assert_success().stdout_eq(str![""]).stderr_eq(str![[r#"
+Missing dependencies found. Installing now...
+[UPDATING_DEPENDENCIES]
+...
+"#]]);
+
+    // Assert lockfile.
+    let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+    assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
+});
+
 // test to check that install/remove works properly
 forgetest!(can_install_and_remove, |prj, cmd| {
     cmd.git_init();
@@ -149,6 +171,315 @@ Removing 'forge-std' in [..], (url: https://github.com/foundry-rs/forge-std, tag
     remove(&mut cmd, "lib/forge-std");
 });
 
+// https://github.com/foundry-rs/foundry/issues/6790
+forgetest!(failed_install_leaves_repository_clean, |prj, cmd| {
+    cmd.git_init();
+    let git = Git::new(prj.root());
+    assert!(git.is_clean().unwrap());
+
+    cmd.forge_fuse()
+        .args(["install", "vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Installing solady in [..] (url: https://github.com/vectorized/solady, tag: this-tag-does-not-exist)
+...
+Error: Tag: "this-tag-does-not-exist" not found for repo "https://github.com/vectorized/solady"!
+
+"#]]);
+
+    assert!(git.is_clean().unwrap());
+    assert!(!prj.root().join(".gitmodules").exists());
+    assert!(!prj.root().join("lib/solady").exists());
+    assert!(!git.absolute_git_dir().unwrap().join("modules/lib/solady").exists());
+    assert!(git.submodule_url(Path::new("lib/solady")).unwrap_or(None).is_none());
+});
+
+forgetest!(install_rejects_assume_unchanged_orphan_gitlink, |prj, cmd| {
+    cmd.git_init();
+    fs::write(prj.root().join("README.md"), "baseline").unwrap();
+    cmd.git_add();
+    cmd.git_commit("baseline");
+    let head = Command::new("git")
+        .current_dir(prj.root())
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap()
+        .stdout;
+    let head = String::from_utf8(head).unwrap();
+    let git = |args: &[&str]| {
+        assert!(Command::new("git").current_dir(prj.root()).args(args).status().unwrap().success());
+    };
+    git(&["update-index", "--add", "--cacheinfo", "160000", head.trim(), "lib/solady"]);
+    git(&["update-index", "--assume-unchanged", "lib/solady"]);
+    let index = fs::read(prj.root().join(".git/index")).unwrap();
+    let status = Command::new("git")
+        .current_dir(prj.root())
+        .args(["status", "--porcelain=v2"])
+        .output()
+        .unwrap()
+        .stdout;
+
+    cmd.forge_fuse().args(["install", "vectorized/solady"]).assert_failure();
+
+    assert_eq!(fs::read(prj.root().join(".git/index")).unwrap(), index);
+    assert_eq!(
+        Command::new("git")
+            .current_dir(prj.root())
+            .args(["status", "--porcelain=v2"])
+            .output()
+            .unwrap()
+            .stdout,
+        status
+    );
+    assert!(!prj.root().join(".gitmodules").exists());
+    assert!(!prj.root().join("lib/solady").exists());
+});
+
+forgetest!(failed_install_with_wildcard_alias_preserves_sibling, |prj, cmd| {
+    cmd.git_init();
+    cmd.forge_fuse().args(["install", "foundry-rs/forge-std"]).assert_success();
+    let sibling = prj.root().join("lib/forge-std");
+    assert!(
+        Command::new("git")
+            .current_dir(&sibling)
+            .args(["checkout", "HEAD^"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let index = || {
+        Command::new("git")
+            .current_dir(prj.root())
+            .args(["ls-files", "--stage", "-v", "-z"])
+            .output()
+            .unwrap()
+            .stdout
+    };
+    let index_before = index();
+
+    cmd.forge_fuse()
+        .args(["install", "*=vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure();
+
+    assert_eq!(index(), index_before);
+    assert!(sibling.join(".git").exists());
+    assert!(Git::new(prj.root()).is_gitlink(Path::new("lib/forge-std")).unwrap());
+});
+
+forgetest!(install_rejects_non_normal_alias, |prj, cmd| {
+    cmd.git_init();
+    let git = Git::new(prj.root());
+
+    cmd.forge_fuse()
+        .args(["install", "foo/../solady=vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure();
+
+    assert!(git.is_clean().unwrap());
+    assert!(!prj.root().join(".gitmodules").exists());
+    assert!(!prj.root().join("lib/solady").exists());
+    assert!(!git.absolute_git_dir().unwrap().join("modules/lib/solady").exists());
+    assert!(!git.has_submodule_config(Path::new("lib/solady")).unwrap());
+});
+
+forgetest!(failed_install_preserves_gitmodules, |prj, cmd| {
+    cmd.git_init();
+    let gitmodules = prj.root().join(".gitmodules");
+    let original = r#"[submodule "existing"]
+	path = lib/existing
+	url = https://github.com/example/existing
+"#;
+    fs::write(&gitmodules, original).unwrap();
+    cmd.git_add();
+    cmd.git_commit("add gitmodules");
+
+    cmd.forge_fuse()
+        .args(["install", "vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure();
+
+    assert!(Git::new(prj.root()).is_clean().unwrap());
+    assert_eq!(read_string(&gitmodules), original);
+});
+
+forgetest!(failed_submodule_add_leaves_repository_clean, |prj, cmd| {
+    cmd.git_init();
+    let git = Git::new(prj.root());
+    let git_dir = git.absolute_git_dir().unwrap();
+    let index_lock = git_dir.join("index.lock");
+    fs::write(&index_lock, []).unwrap();
+
+    let output = cmd
+        .forge_fuse()
+        .args(["install", "vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure();
+    assert!(output.get_output().stderr_lossy().contains("index.lock"));
+
+    assert!(index_lock.exists());
+    assert!(git.is_clean().unwrap());
+    assert!(!prj.root().join(".gitmodules").exists());
+    assert!(!prj.root().join("lib/solady").exists());
+    assert!(!git_dir.join("modules/lib/solady").exists());
+    assert!(!git.has_submodule_config(Path::new("lib/solady")).unwrap());
+});
+
+forgetest!(install_rejects_dirty_gitmodules, |prj, cmd| {
+    cmd.git_init();
+    let git = Git::new(prj.root());
+    let gitmodules = prj.root().join(".gitmodules");
+    let original = r#"[submodule "existing"]
+	path = lib/existing
+	url = https://github.com/example/existing
+"#;
+    fs::write(&gitmodules, original).unwrap();
+    cmd.git_add();
+    cmd.git_commit("add gitmodules");
+
+    let modified = format!("{original}# local edit\n");
+    fs::write(&gitmodules, &modified).unwrap();
+    let status = || {
+        Command::new("git")
+            .current_dir(prj.root())
+            .args(["status", "--porcelain", "--", ".gitmodules"])
+            .output()
+            .unwrap()
+            .stdout
+    };
+
+    let unstaged_status = status();
+    let output = cmd
+        .forge_fuse()
+        .args(["install", "vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure();
+    assert!(
+        output.get_output().stderr_lossy().contains("target or .gitmodules has existing changes")
+    );
+    assert_eq!(status(), unstaged_status);
+    assert_eq!(read_string(&gitmodules), modified);
+
+    cmd.git_add();
+    let staged_status = status();
+    cmd.forge_fuse()
+        .args(["install", "vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure();
+    assert_eq!(status(), staged_status);
+    assert_eq!(read_string(&gitmodules), modified);
+
+    assert!(!prj.root().join("lib/solady").exists());
+    assert!(!git.absolute_git_dir().unwrap().join("modules/lib/solady").exists());
+    assert!(!git.has_submodule_config(Path::new("lib/solady")).unwrap());
+});
+
+forgetest!(install_rejects_hidden_gitmodules_changes, |prj, cmd| {
+    cmd.git_init();
+    let gitmodules = prj.root().join(".gitmodules");
+    fs::write(
+        &gitmodules,
+        "[submodule \"existing\"]\n\tpath = lib/existing\n\turl = https://example.com\n",
+    )
+    .unwrap();
+    cmd.git_add();
+    cmd.git_commit("add gitmodules");
+
+    fs::write(&gitmodules, "preserve\n").unwrap();
+    assert!(
+        Command::new("git")
+            .current_dir(prj.root())
+            .args(["update-index", "--assume-unchanged", ".gitmodules"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let index = fs::read(prj.root().join(".git/index")).unwrap();
+
+    let output = cmd
+        .forge_fuse()
+        .args(["install", "vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure();
+    assert!(
+        output.get_output().stderr_lossy().contains("target or .gitmodules has existing changes")
+    );
+    assert_eq!(read_string(&gitmodules), "preserve\n");
+    assert_eq!(fs::read(prj.root().join(".git/index")).unwrap(), index);
+    assert!(!prj.root().join("lib/solady").exists());
+});
+
+#[cfg(unix)]
+forgetest!(install_rejects_dangling_gitmodules_symlink, |prj, cmd| {
+    cmd.git_init();
+    fs::write(prj.root().join(".gitignore"), ".gitmodules\n").unwrap();
+    cmd.git_add();
+    cmd.git_commit("ignore gitmodules");
+
+    let gitmodules = prj.root().join(".gitmodules");
+    symlink("gitmodules-target", &gitmodules).unwrap();
+    let index = fs::read(prj.root().join(".git/index")).unwrap();
+
+    cmd.forge_fuse()
+        .args(["install", "vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure();
+
+    assert_eq!(fs::read_link(&gitmodules).unwrap(), Path::new("gitmodules-target"));
+    assert!(!prj.root().join("gitmodules-target").exists());
+    assert_eq!(fs::read(prj.root().join(".git/index")).unwrap(), index);
+    assert!(!prj.root().join("lib/solady").exists());
+});
+
+forgetest!(install_rejects_ignored_gitmodules, |prj, cmd| {
+    cmd.git_init();
+    let git = Git::new(prj.root());
+    fs::write(prj.root().join(".gitignore"), ".gitmodules\n").unwrap();
+    cmd.git_add();
+    cmd.git_commit("ignore gitmodules");
+
+    let gitmodules = prj.root().join(".gitmodules");
+    let original = r#"[submodule "existing"]
+	path = lib/existing
+	url = https://github.com/example/existing
+"#;
+    fs::write(&gitmodules, original).unwrap();
+    assert!(git.is_clean().unwrap());
+
+    let output = cmd
+        .forge_fuse()
+        .args(["install", "vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure();
+    assert!(
+        output.get_output().stderr_lossy().contains("target or .gitmodules has existing changes")
+    );
+
+    assert!(git.is_clean().unwrap());
+    assert_eq!(read_string(&gitmodules), original);
+    assert!(!prj.root().join("lib/solady").exists());
+    assert!(!git.absolute_git_dir().unwrap().join("modules/lib/solady").exists());
+    assert!(!git.has_submodule_config(Path::new("lib/solady")).unwrap());
+});
+
+forgetest!(install_rejects_existing_submodule_path, |prj, cmd| {
+    cmd.git_init();
+    let git = Git::new(prj.root());
+    let gitmodules = prj.root().join(".gitmodules");
+    let original = r#"[submodule "different-name"]
+	path = lib/solady
+	url = https://github.com/example/solady
+"#;
+    fs::write(&gitmodules, original).unwrap();
+    cmd.git_add();
+    cmd.git_commit("add orphan submodule path");
+
+    let output = cmd
+        .forge_fuse()
+        .args(["install", "vectorized/solady@this-tag-does-not-exist"])
+        .assert_failure();
+    assert!(output.get_output().stderr_lossy().contains("already contains a matching submodule"));
+
+    assert!(git.is_clean().unwrap());
+    assert_eq!(read_string(&gitmodules), original);
+    assert!(!prj.root().join("lib/solady").exists());
+    assert!(!git.absolute_git_dir().unwrap().join("modules/lib/solady").exists());
+    assert!(!git.has_submodule_config(Path::new("lib/solady")).unwrap());
+});
+
 // test to check we can run `forge install` in an empty dir <https://github.com/foundry-rs/foundry/issues/6519>
 forgetest!(can_install_empty, |prj, cmd| {
     // create
@@ -164,6 +495,40 @@ forgetest!(can_install_empty, |prj, cmd| {
 
     cmd.forge_fuse().args(["install"]);
     cmd.assert_empty_stdout();
+});
+
+// <https://github.com/foundry-rs/foundry/issues/7205>
+forgetest!(install_from_nested_git_repo_uses_project_root, |prj, cmd| {
+    prj.update_config(|config| config.libs = vec![PathBuf::from("dependencies")]);
+    cmd.git_init();
+
+    let nested = prj.root().join("vendor/dependency");
+    fs::create_dir_all(&nested).unwrap();
+    Git::new(&nested).init().unwrap();
+
+    cmd.forge_fuse().current_dir(&nested).args(["install", "--no-git"]).assert_success();
+
+    assert!(prj.root().join("dependencies").is_dir());
+    assert!(!nested.join("lib").exists());
+});
+
+forgetest!(install_from_nested_foundry_project_uses_nested_root, |prj, cmd| {
+    prj.update_config(|config| config.libs = vec![PathBuf::from("outer-dependencies")]);
+    cmd.git_init();
+
+    let nested = prj.root().join("vendor/dependency");
+    fs::create_dir_all(&nested).unwrap();
+    Git::new(&nested).init().unwrap();
+    fs::write(
+        nested.join(Config::FILE_NAME),
+        "[profile.default]\nlibs = [\"nested-dependencies\"]\n",
+    )
+    .unwrap();
+
+    cmd.forge_fuse().current_dir(&nested).args(["install", "--no-git"]).assert_success();
+
+    assert!(nested.join("nested-dependencies").is_dir());
+    assert!(!prj.root().join("outer-dependencies").exists());
 });
 
 // test to check that package can be reinstalled after manually removing the directory
@@ -206,6 +571,55 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     assert!(matches!(forge_std_lock, DepIdentifier::Tag { .. }));
 });
 
+// https://github.com/foundry-rs/foundry/issues/4353
+forgetest!(can_reinit_submodules, |prj, cmd| {
+    cmd.git_init();
+
+    let source = tempfile::tempdir().unwrap();
+    let source_git = Git::new(source.path());
+    source_git.init().unwrap();
+    fs::write(source.path().join("source.txt"), "first revision\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("first revision").unwrap();
+    let first_rev = source_git.head().unwrap();
+
+    fs::write(source.path().join("source.txt"), "second revision\n").unwrap();
+    source_git.add(["source.txt"]).unwrap();
+    source_git.commit("second revision").unwrap();
+    let second_rev = source_git.head().unwrap();
+
+    let output = Command::new("git")
+        .current_dir(prj.root())
+        .args(["-c", "protocol.file.allow=always", "submodule", "add", "--"])
+        .arg(source.path())
+        .arg("lib/dep")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    let dependency = prj.root().join("lib/dep");
+    let dependency_git = Git::new(&dependency);
+    dependency_git.checkout(false, &first_rev).unwrap();
+    cmd.git_add();
+    cmd.git_commit("add dependency");
+
+    dependency_git.checkout(false, &second_rev).unwrap();
+    Git::new(prj.root()).add(["lib/dep"]).unwrap();
+    cmd.git_commit("advance dependency");
+
+    dependency_git.checkout(false, &first_rev).unwrap();
+    fs::write(dependency.join("source.txt"), "local edit\n").unwrap();
+
+    cmd.forge_fuse();
+    cmd.env("GIT_ALLOW_PROTOCOL", "file");
+    cmd.arg("reinit").assert_success();
+    assert_eq!(dependency_git.head().unwrap(), second_rev);
+    assert_eq!(
+        read_string(dependency.join("source.txt")).replace("\r\n", "\n"),
+        "second revision\n"
+    );
+});
+
 // test that we can repeatedly install the same dependency without changes
 forgetest!(can_install_repeatedly, |_prj, cmd| {
     cmd.git_init();
@@ -214,6 +628,13 @@ forgetest!(can_install_repeatedly, |_prj, cmd| {
     for _ in 0..3 {
         cmd.assert_success();
     }
+});
+
+forgetest!(can_install_multiple_submodules, |_prj, cmd| {
+    cmd.git_init();
+    cmd.forge_fuse()
+        .args(["install", "foundry-rs/forge-std", "vectorized/solady"])
+        .assert_success();
 });
 
 // test that by default we install the latest semver release tag

@@ -1,0 +1,9 @@
+{
+  // Line comments are allowed in JSONC.
+  "value": 42,
+  /*
+   * Block comments are also allowed.
+   */
+  "enabled": true,
+  "url": "https://example.com/path/*literal*/"
+}

@@ -197,6 +197,7 @@ impl ScriptProgress {
         deployment_sequence: &mut ScriptSequence<N>,
         provider: &RootProvider<N>,
         timeout: u64,
+        confirmations: u64,
     ) -> Result<()> {
         if deployment_sequence.pending.is_empty() {
             return Ok(());
@@ -213,7 +214,7 @@ impl ScriptProgress {
             .pending
             .clone()
             .into_iter()
-            .map(|tx| check_tx_status(provider, tx, timeout));
+            .map(|tx| check_tx_status(provider, tx, timeout, confirmations));
         let mut tasks = futures::stream::iter(futs).buffer_unordered(10);
 
         let mut errors: Vec<String> = vec![];

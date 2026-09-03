@@ -1,22 +1,29 @@
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_bench::{
-    BENCHMARK_REPOS, BenchmarkProject, FOUNDRY_VERSIONS, RUNS, RepoConfig, get_forge_version,
-    get_forge_version_details, install_local_version,
-    results::{BenchmarkResults, HyperfineResult},
+    BENCHMARK_REPOS, BenchmarkProject, FOUNDRY_VERSIONS, RUNS, RepoConfig, get_forge_commit,
+    get_forge_version, get_forge_version_details, install_local_workspace, parse_version_specs,
+    results::{BenchmarkResults, versioned_summary_filename},
     switch_foundry_version,
 };
 use foundry_common::sh_println;
 use rayon::prelude::*;
-use std::{fs, path::PathBuf, process::Command, sync::Mutex};
+use serde::Serialize;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::Mutex,
+};
 
-const ALL_BENCHMARKS: [&str; 6] = [
+const ALL_BENCHMARKS: [&str; 7] = [
     "forge_test",
     "forge_build_no_cache",
     "forge_build_with_cache",
     "forge_fuzz_test",
     "forge_coverage",
     "forge_isolate_test",
+    "forge_symbolic_test",
 ];
 
 /// Foundry Benchmark Runner
@@ -44,13 +51,32 @@ struct Cli {
     #[clap(long)]
     output_file: Option<String>,
 
-    /// Filename for a flat JSON summary (benchmark/repo -> mean_seconds).
-    /// Resolved relative to --output-dir. Used by the nightly regression comparison script.
+    /// Filename for a JSON summary (benchmark/repo -> wall-time stats and, when
+    /// available, symbolic solver counters). Resolved relative to --output-dir.
+    /// Consumed by the nightly regression comparison script.
     #[clap(long)]
     json_output: Option<PathBuf>,
 
+    /// Filename for results using the common benchmark JSON schema.
+    /// Resolved relative to --output-dir.
+    #[clap(long)]
+    common_json_output: Option<PathBuf>,
+
+    /// Filename for a machine-readable manifest describing the benchmark cases.
+    #[clap(long, requires = "suite")]
+    manifest_output: Option<PathBuf>,
+
+    /// Stable suite identifier included in --manifest-output.
+    #[clap(long, requires = "manifest_output")]
+    suite: Option<String>,
+
+    /// Filename for the opt-in versioned symbolic benchmark sidecar.
+    #[clap(long)]
+    symbolic_sidecar_output: Option<PathBuf>,
+
     /// Run only specific benchmarks (comma-separated:
-    /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage)
+    /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage,
+    /// forge_symbolic_test)
     #[clap(long, value_delimiter = ',')]
     benchmarks: Option<Vec<String>>,
 
@@ -70,9 +96,48 @@ struct Cli {
 
 /// Mutex to prevent concurrent foundryup calls
 static FOUNDRY_LOCK: Mutex<()> = Mutex::new(());
-fn switch_version_safe(version: &str) -> Result<()> {
+
+#[derive(Serialize)]
+struct BenchmarkCaseManifest {
+    id: String,
+    benchmark: String,
+    workload_name: String,
+    workload_repository: String,
+    workload_requested_ref: String,
+    workload_commit: String,
+    arguments: Option<String>,
+    versions: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct BenchmarkSuiteManifest {
+    schema: &'static str,
+    suite: String,
+    cases: Vec<BenchmarkCaseManifest>,
+}
+
+/// Activate a version: build from `source` when the spec was `name=path`,
+/// otherwise switch via foundryup (or build the default workspace for `local`).
+fn activate_version_safe(name: &str, source: Option<&Path>) -> Result<()> {
     let _lock = FOUNDRY_LOCK.lock().unwrap();
-    switch_foundry_version(version)
+    match source {
+        Some(path) => install_local_workspace(path),
+        None => switch_foundry_version(name),
+    }
+}
+
+fn forge_test_supports_symbolic() -> Result<bool> {
+    let output = Command::new("forge")
+        .args(["test", "--help"])
+        .output()
+        .wrap_err("Failed to run forge test --help")?;
+
+    if !output.status.success() {
+        eyre::bail!("forge test --help failed");
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).contains("--symbolic")
+        || String::from_utf8_lossy(&output.stderr).contains("--symbolic"))
 }
 
 #[allow(unused_must_use)]
@@ -88,12 +153,18 @@ fn main() -> Result<()> {
         );
     }
 
-    // Determine versions to test
-    let versions = if let Some(v) = cli.versions {
+    // Determine versions to test. Each entry is a display name, optionally
+    // `name=path` to build that ref from source (e.g. a baseline worktree).
+    let raw_versions = if let Some(v) = cli.versions {
         v
     } else {
         FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
     };
+    let version_specs = parse_version_specs(&raw_versions)?;
+    let versions: Vec<String> = version_specs.iter().map(|(name, _)| name.clone()).collect();
+    if cli.symbolic_sidecar_output.is_some() && versions.len() != 1 {
+        eyre::bail!("--symbolic-sidecar-output requires exactly one --versions entry");
+    }
 
     // Get repo configurations
     let repos = if let Some(repo_specs) = cli.repos.clone() {
@@ -109,9 +180,16 @@ fn main() -> Result<()> {
         repos.iter().map(|r| format!("{}/{}", r.org, r.repo)).collect::<Vec<_>>().join(", ")
     );
 
-    // Install versions if requested
+    // Install versions if requested. Only released versions need pre-installing
+    // via foundryup; source-built specs (`name=path`) and `local` are built in
+    // the benchmark loop.
     if cli.force_install {
-        install_foundry_versions(&versions)?;
+        let installable: Vec<String> = version_specs
+            .iter()
+            .filter(|(name, source)| source.is_none() && name != "local")
+            .map(|(name, _)| name.clone())
+            .collect();
+        install_foundry_versions(&installable)?;
     }
 
     // Determine benchmarks to run
@@ -128,6 +206,8 @@ fn main() -> Result<()> {
     sh_println!("Running benchmarks: {}", benchmarks.join(", "));
 
     let mut results = BenchmarkResults::new();
+    let mut version_commits = std::collections::HashMap::new();
+    let write_common_json = cli.common_json_output.is_some();
     // Set the first version as baseline
     if let Some(first_version) = versions.first() {
         results.set_baseline_version(first_version.clone());
@@ -162,59 +242,77 @@ fn main() -> Result<()> {
     sh_println!("Will run {} benchmark tasks per version", benchmark_tasks.len());
 
     // Run benchmarks for each version
-    for version in &versions {
+    for (version, source) in &version_specs {
         sh_println!("🔧 Switching to Foundry version: {version}");
-        switch_version_safe(version)?;
+        activate_version_safe(version, source.as_deref())?;
 
         // Verify the switch and capture full version details
         let current = get_forge_version()?;
         sh_println!("Current version: {}", current.trim());
 
         // Get and store the full version details with commit hash and date
+        if write_common_json {
+            version_commits.insert(version.clone(), get_forge_commit()?);
+        }
         let version_details = get_forge_version_details()?;
         results.add_version_details(version, version_details);
+
+        let supports_symbolic_test = if benchmarks.iter().any(|b| b == "forge_symbolic_test") {
+            forge_test_supports_symbolic()?
+        } else {
+            false
+        };
 
         sh_println!("Running benchmark tasks for version {version}...");
 
         // Run all benchmarks sequentially
-        let version_results = benchmark_tasks
-            .iter()
-            .map(|(repo_config, project, benchmark)| -> Result<(String, String, HyperfineResult)> {
-                sh_println!("Running {} on {}/{}", benchmark, repo_config.org, repo_config.repo);
+        let mut version_results = Vec::new();
+        for (repo_config, project, benchmark) in &benchmark_tasks {
+            if benchmark == "forge_symbolic_test" && !supports_symbolic_test {
+                sh_println!(
+                    "Skipping forge_symbolic_test on {}/{} for {version}: active forge does not support --symbolic",
+                    repo_config.org,
+                    repo_config.repo
+                );
+                continue;
+            }
 
-                // Determine runs based on benchmark type
-                let runs = match benchmark.as_str() {
-                    "forge_coverage" => 1, // Coverage runs only once as an exception
-                    _ => RUNS,             // Use default RUNS constant for all other benchmarks
-                };
+            sh_println!("Running {} on {}/{}", benchmark, repo_config.org, repo_config.repo);
 
-                // Run the appropriate benchmark
-                let result = project.run(benchmark, version, runs, cli.verbose);
+            // Determine runs based on benchmark type
+            let runs = match benchmark.as_str() {
+                "forge_coverage" => 1, // Coverage runs only once as an exception
+                _ => RUNS,             // Use default RUNS constant for all other benchmarks
+            };
 
-                match result {
-                    Ok(hyperfine_result) => {
-                        sh_println!(
-                            "  {} on {}/{}: {:.3}s ± {:.3}s",
-                            benchmark,
-                            repo_config.org,
-                            repo_config.repo,
-                            hyperfine_result.mean,
-                            hyperfine_result.stddev.unwrap_or(0.0)
-                        );
-                        Ok((repo_config.name.clone(), benchmark.clone(), hyperfine_result))
-                    }
-                    Err(e) => {
-                        eyre::bail!(
-                            "Benchmark {} failed for {}/{}: {}",
-                            benchmark,
-                            repo_config.org,
-                            repo_config.repo,
-                            e
-                        );
-                    }
+            // Run the appropriate benchmark
+            match project.run(benchmark, version, runs, cli.verbose) {
+                Ok(hyperfine_result) => {
+                    sh_println!(
+                        "  {} on {}/{}: {:.3}s ± {:.3}s",
+                        benchmark,
+                        repo_config.org,
+                        repo_config.repo,
+                        hyperfine_result.mean,
+                        hyperfine_result.stddev.unwrap_or(0.0)
+                    );
+                    version_results.push((
+                        repo_config.name.clone(),
+                        benchmark.clone(),
+                        hyperfine_result,
+                    ));
                 }
-            })
-            .collect::<Result<Vec<_>>>()?;
+                Err(e) => {
+                    eyre::bail!(
+                        "Benchmark {} failed for {}/{}: {}",
+                        benchmark,
+                        repo_config.org,
+                        repo_config.repo,
+                        e
+                    );
+                }
+            }
+        }
 
         // Add all collected results to the main results structure
         for (repo_name, benchmark, hyperfine_result) in version_results {
@@ -231,21 +329,135 @@ fn main() -> Result<()> {
     if let Some(filename) = md_filename {
         sh_println!("📝 Generating report...");
         let markdown = results.generate_markdown(&versions, &repos);
+        fs::create_dir_all(&cli.output_dir).wrap_err("Failed to create output directory")?;
         let output_path = cli.output_dir.join(filename);
         fs::write(&output_path, markdown).wrap_err("Failed to write output file")?;
         sh_println!("✅ Report written to: {}", output_path.display());
     }
 
     if let Some(json_filename) = cli.json_output {
-        let summary = results.generate_json_summary(&versions);
-        let json =
-            serde_json::to_string_pretty(&summary).wrap_err("Failed to serialize JSON summary")?;
-        let json_path = cli.output_dir.join(json_filename);
-        fs::write(&json_path, json).wrap_err("Failed to write JSON summary")?;
-        sh_println!("✅ JSON summary written to: {}", json_path.display());
+        fs::create_dir_all(&cli.output_dir).wrap_err("Failed to create output directory")?;
+        // The summary is keyed by "benchmark/repo", so it holds one version.
+        // Write one file per version (suffixed) when several are benchmarked.
+        if versions.len() <= 1 {
+            let summary = results.generate_json_summary(&versions);
+            let json = serde_json::to_string_pretty(&summary)
+                .wrap_err("Failed to serialize JSON summary")?;
+            let json_path = cli.output_dir.join(&json_filename);
+            fs::write(&json_path, json).wrap_err("Failed to write JSON summary")?;
+            sh_println!("✅ JSON summary written to: {}", json_path.display());
+        } else {
+            for version in &versions {
+                let summary = results.generate_json_summary(std::slice::from_ref(version));
+                let json = serde_json::to_string_pretty(&summary)
+                    .wrap_err("Failed to serialize JSON summary")?;
+                // Preserve any directory component of --json-output.
+                let versioned = json_filename
+                    .with_file_name(versioned_summary_filename(&json_filename, version));
+                let json_path = cli.output_dir.join(versioned);
+                fs::write(&json_path, json).wrap_err("Failed to write JSON summary")?;
+                sh_println!("✅ JSON summary written to: {}", json_path.display());
+            }
+        }
+    }
+
+    if let Some(filename) = cli.common_json_output {
+        let repo =
+            std::env::var("GITHUB_REPOSITORY").unwrap_or_else(|_| "foundry-rs/foundry".to_string());
+        let pr = github_pull_request();
+        for version in &versions {
+            let commit = version_commits
+                .get(version)
+                .expect("commit captured for every benchmarked version")
+                .clone();
+            let common = results.generate_common_result(version, repo.clone(), commit, pr);
+            if common.benchmarks.is_empty() {
+                eyre::bail!("no benchmark results produced for {version}");
+            }
+            let output = if versions.len() == 1 {
+                filename.clone()
+            } else {
+                filename.with_file_name(versioned_summary_filename(&filename, version))
+            };
+            let path = cli.output_dir.join(output);
+            fs::create_dir_all(path.parent().unwrap_or(&cli.output_dir))?;
+            fs::write(&path, serde_json::to_string_pretty(&common)?)?;
+            sh_println!("✅ Common JSON result written to: {}", path.display());
+        }
+    }
+
+    if let Some(filename) = cli.manifest_output {
+        let mut cases = Vec::new();
+        for (repo_config, project) in &projects {
+            for benchmark in &benchmarks {
+                let present_versions = versions
+                    .iter()
+                    .filter(|version| {
+                        results
+                            .data
+                            .get(benchmark)
+                            .and_then(|version_data| version_data.get(*version))
+                            .is_some_and(|repo_data| repo_data.contains_key(&repo_config.name))
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if present_versions.is_empty() {
+                    continue;
+                }
+                cases.push(BenchmarkCaseManifest {
+                    id: format!("{benchmark}/{}", repo_config.name),
+                    benchmark: benchmark.clone(),
+                    workload_name: repo_config.name.clone(),
+                    workload_repository: format!("{}/{}", project.org, project.repo),
+                    workload_requested_ref: repo_config.rev.clone(),
+                    workload_commit: project.revision.clone(),
+                    arguments: repo_config.extra_args.clone(),
+                    versions: present_versions,
+                });
+            }
+        }
+        cases.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+        let manifest = BenchmarkSuiteManifest {
+            schema: "foundry-benchmark-suite/v1",
+            suite: cli.suite.expect("clap requires --suite with --manifest-output"),
+            cases,
+        };
+        let path = cli.output_dir.join(filename);
+        fs::create_dir_all(path.parent().unwrap_or(&cli.output_dir))?;
+        fs::write(&path, serde_json::to_string_pretty(&manifest)? + "\n")?;
+        sh_println!("✅ Benchmark manifest written to: {}", path.display());
+    }
+
+    if let Some(filename) = cli.symbolic_sidecar_output {
+        let mut sidecars = std::collections::BTreeMap::new();
+        for (benchmark, version_data) in &results.data {
+            if benchmark != "forge_symbolic_test" {
+                continue;
+            }
+            for version in &versions {
+                if let Some(repo_data) = version_data.get(version) {
+                    for (repo, result) in repo_data {
+                        if let Some(sidecar) = &result.symbolic_sidecar {
+                            sidecars.insert(format!("forge_symbolic_test/{repo}"), sidecar);
+                        }
+                    }
+                }
+            }
+        }
+        if sidecars.is_empty() {
+            eyre::bail!("symbolic sidecar requested but no symbolic results were produced");
+        }
+        let path = cli.output_dir.join(filename);
+        fs::create_dir_all(path.parent().unwrap_or(&cli.output_dir))?;
+        fs::write(&path, serde_json::to_string_pretty(&sidecars)?)?;
+        sh_println!("✅ Symbolic sidecar written to: {}", path.display());
     }
 
     Ok(())
+}
+
+fn github_pull_request() -> Option<u64> {
+    std::env::var("BENCHMARK_PR_NUMBER").ok()?.parse().ok()
 }
 
 #[allow(unused_must_use)]
@@ -254,11 +466,6 @@ fn install_foundry_versions(versions: &[String]) -> Result<()> {
 
     for version in versions {
         sh_println!("Installing {version}...");
-
-        if version == "local" {
-            install_local_version()?;
-            continue;
-        }
 
         let status = Command::new("foundryup")
             .args(["--install", version, "--force"])

@@ -1,3 +1,4 @@
+//@compile-flags: --only-lint divide-before-multiply custom-errors inline-assembly
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
@@ -114,7 +115,7 @@ contract DivideBeforeMultiply {
     function noBroadRhsTaint(uint256 a, uint256 b, uint256 c) public pure returns (uint256) {
         uint256 q = (a / b) + 1;
         uint256 z = helper(a / b);
-        return (q * c) + (z * c);
+        return (q * c) + (z * c) + helper(q);
     }
 
     function helper(uint256 value) internal pure returns (uint256) {

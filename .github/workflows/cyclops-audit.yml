@@ -1,0 +1,56 @@
+name: Cyclops audit
+
+on:
+  pull_request:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  audit:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (
+        github.event.label.name == 'cyclops' ||
+        github.event.label.name == 'agentic-audit'
+      )
+    permissions:
+      contents: read
+    uses: tempoxyz/gh-actions/.github/workflows/pr-audit.yml@af809bfc35e4dd023bd52f6cc45e09809612a8cf
+    with:
+      required-labels: |
+        cyclops
+        agentic-audit
+    secrets:
+      EVENTS_KEY: ${{ secrets.EVENTS_KEY }}
+      EVENTS_CERT: ${{ secrets.EVENTS_CERT }}
+      EVENTS_ARGS: ${{ secrets.EVENTS_ARGS }}
+
+  audit-comment:
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      (
+        startsWith(github.event.comment.body, 'cyclops audit') ||
+        startsWith(github.event.comment.body, 'derek audit') ||
+        startsWith(github.event.comment.body, '@decofe cyclops audit') ||
+        startsWith(github.event.comment.body, '@decofe derek audit')
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: tempoxyz/gh-actions/actions/pr-audit-comment@af809bfc35e4dd023bd52f6cc45e09809612a8cf
+        with:
+          command-regex: '^(?:@decofe\s+)?(?:cyclops\s+audit|derek\s+audit)\b'
+          permission-check-mode: association
+          organization: foundry-rs
+          events-key: ${{ secrets.EVENTS_KEY }}
+          events-cert: ${{ secrets.EVENTS_CERT }}
+          events-args: ${{ secrets.EVENTS_ARGS }}
+          github-token: ${{ github.token }}

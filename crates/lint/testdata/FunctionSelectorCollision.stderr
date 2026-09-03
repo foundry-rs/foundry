@@ -1,0 +1,192 @@
+warning[function-selector-collision]: proxy function `TypedProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract TypedProxy {
+   │          ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ConcreteTypedProxy.burn(uint256)` collides with implementation function `ConcreteImplementation.collate_propagate_storage(bytes16)` at selector `0x42966c68`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ConcreteTypedProxy {
+   │          ━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ParameterizedFallbackProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ParameterizedFallbackProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ReassignedAfterForwardingProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ReassignedAfterForwardingProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `SelectorCorrelatedMutationProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract SelectorCorrelatedMutationProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `TryCatchExitProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract TryCatchExitProxy {
+   │          ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `TryCatchMutationProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract TryCatchMutationProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `LoopZeroIterationProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract LoopZeroIterationProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `LoopBreakProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract LoopBreakProxy {
+   │          ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `LoopContinueProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract LoopContinueProxy {
+   │          ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `DoWhileContinueProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract DoWhileContinueProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ForContinueProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ForContinueProxy {
+   │          ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ForZeroIterationProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ForZeroIterationProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ForBreakProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ForBreakProxy {
+   │          ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `DoWhileBreakProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract DoWhileBreakProxy {
+   │          ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ShortCircuitMutationProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ShortCircuitMutationProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `TernaryMutationProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract TernaryMutationProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `CollisionSelectorGatedProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract CollisionSelectorGatedProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `RequireCollisionSelectorGatedProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract RequireCollisionSelectorGatedProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ModifierDelegatecallProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ModifierDelegatecallProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ModifierPostReturnDelegatecallProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ModifierPostReturnDelegatecallProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ModifierParameterizedDelegatecallProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ModifierParameterizedDelegatecallProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `ModifierAssemblyScopeProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract ModifierAssemblyScopeProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+
+warning[function-selector-collision]: proxy function `RepeatedModifierPlaceholderProxy.tgeo()` collides with implementation function `IImplementation.gsf()` at selector `0x67e43e43`
+   ╭▸ ROOT/testdata/FunctionSelectorCollision.sol:LL:CC
+   │
+LL │ contract RepeatedModifierPlaceholderProxy {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/function-selector-collision
+

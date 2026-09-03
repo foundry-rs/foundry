@@ -37,7 +37,8 @@ function repros() public {
     SnapshotRegistry(adapterRegistry)
         .add(adapter, LidoFundamentalOracle(adapter).WSTETH(), LidoFundamentalOracle(adapter).WETH());
 
-    (bool success, bytes memory data) = GenericFactory(eVaultFactory).implementation()
+    (bool success, bytes memory data) = GenericFactory(eVaultFactory)
+        .implementation()
         .staticcall(abi.encodePacked(EVCUtil.EVC.selector, uint256(0), uint256(0)));
 
     IEVC.BatchItem[] memory items = new IEVC.BatchItem[](3);

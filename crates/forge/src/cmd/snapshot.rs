@@ -3,7 +3,8 @@ use crate::result::{SuiteTestResult, TestKindReport, TestOutcome};
 use alloy_primitives::{U256, map::HashMap};
 use clap::{Parser, ValueHint, builder::RangedU64ValueParser};
 use comfy_table::{
-    Cell, Color, Row, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN,
+    Cell, Color, Row, Table,
+    presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
 use eyre::{Context, Result};
 use foundry_cli::utils::STATIC_FUZZ_SEED;
@@ -127,11 +128,8 @@ impl GasSnapshotArgs {
         } else if let Some(path) = self.check {
             let snap = path.as_ref().unwrap_or(&self.snap);
             let snaps = read_gas_snapshot(snap)?;
-            if check(tests, snaps, self.tolerance) {
-                std::process::exit(0)
-            } else {
-                std::process::exit(1)
-            }
+            let code = if check(tests, snaps, self.tolerance) { 0 } else { 1 };
+            std::process::exit(code)
         } else {
             if matches!(self.format, Some(Format::Table)) {
                 let table = build_gas_snapshot_table(&tests);
@@ -352,9 +350,9 @@ fn write_to_gas_snapshot_file(
 fn build_gas_snapshot_table(tests: &[SuiteTestResult]) -> Table {
     let mut table = Table::new();
     if shell::is_markdown() {
-        table.load_preset(ASCII_MARKDOWN);
+        table.load_style(ASCII_MARKDOWN);
     } else {
-        table.apply_modifier(UTF8_ROUND_CORNERS);
+        table.load_style(ASCII_FULL.with_rounded_corners());
     }
 
     table.set_header(vec![
@@ -393,7 +391,16 @@ impl GasSnapshotDiff {
 
     /// Determines the percentage change
     fn gas_diff(&self) -> f64 {
-        self.gas_change() as f64 / self.target_gas_used.gas() as f64
+        let target_gas = self.target_gas_used.gas();
+        if target_gas > 0 {
+            self.gas_change() as f64 / target_gas as f64
+        } else if self.source_gas_used.gas() == 0 {
+            // No percentage change when both values are zero.
+            0.0
+        } else {
+            // Preserve an unbounded increase from zero.
+            f64::INFINITY
+        }
     }
 }
 
@@ -590,6 +597,10 @@ fn within_tolerance(source_gas: u64, target_gas: u64, tolerance_pct: Option<u32>
         } else {
             (target_gas, source_gas)
         };
+        if hi == 0 {
+            // No percentage difference when both values are zero.
+            return true;
+        }
         let diff = (1. - (lo as f64 / hi as f64)) * 100.;
         diff < tolerance as f64
     } else {
@@ -608,6 +619,7 @@ mod tests {
         assert!(!within_tolerance(100, 106, Some(5)));
         assert!(!within_tolerance(106, 100, Some(5)));
         assert!(within_tolerance(100, 100, None));
+        assert!(within_tolerance(0, 0, Some(5)));
     }
 
     #[test]

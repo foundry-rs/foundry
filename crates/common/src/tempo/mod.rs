@@ -19,7 +19,7 @@ use tempo_alloy::contracts::precompiles::{
 use tempo_primitives::TempoAddressExt;
 
 mod keystore;
-mod registry;
+mod lane;
 mod session;
 mod session_policy;
 #[cfg(test)]
@@ -29,6 +29,7 @@ mod tip20;
 pub(crate) use auth::is_known_tempo_endpoint;
 pub use auth::{AccessKeyOutcome, EnsureAccessKeyConfig, ensure_access_key};
 pub use keystore::*;
+pub use lane::{PaymentLane, PaymentLaneClassification, PaymentLaneReason, classify_payment_lane};
 pub use session::*;
 pub use session_policy::{
     GeneratedSessionKey, PreparedSessionAuthorization, SessionAuthorizationRequest,
@@ -40,26 +41,10 @@ pub use tip20::{
 };
 
 #[cfg(test)]
-pub(crate) use test_utils::{test_env_mutex, with_tempo_home};
+pub(crate) use test_utils::test_env_mutex;
 
 #[cfg(test)]
 mod tests;
-
-/// Placeholder rendered by `Debug` impls in place of secret key material.
-fn redacted_debug(value: &str) -> &'static str {
-    if value.trim().is_empty() { "<empty>" } else { "<redacted>" }
-}
-
-/// Conservative gas buffer for browser wallet transactions on Tempo chains.
-///
-/// Browser wallets may sign with P256 or WebAuthn instead of secp256k1, which costs more gas
-/// for signature verification. Since we can't determine the signature type before signing,
-/// we add the worst-case (WebAuthn) overhead:
-///   - P256: +5,000 gas (P256 precompile cost minus ecrecover savings)
-///   - WebAuthn: ~6,500 gas (P256 cost + calldata for webauthn_data)
-///
-/// See <https://github.com/tempoxyz/tempo/blob/6ebf1a8/crates/revm/src/handler.rs#L108-L124>
-pub const TEMPO_BROWSER_GAS_BUFFER: u64 = 7_000;
 
 /// Reserved Tempo TIP20 fee-token addresses created during Foundry genesis.
 ///
@@ -69,6 +54,206 @@ pub const TEMPO_BROWSER_GAS_BUFFER: u64 = 7_000;
 pub const ALPHA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000001");
 pub const BETA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000002");
 pub const THETA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000003");
+
+/// Gas sponsor configuration for Tempo fee-payer signatures.
+#[derive(Clone, Debug)]
+pub struct TempoSponsor {
+    sponsor: Address,
+    signer: Option<Arc<WalletSigner>>,
+    signature: Option<Signature>,
+}
+
+impl TempoSponsor {
+    pub const fn new(
+        sponsor: Address,
+        signer: Option<Arc<WalletSigner>>,
+        signature: Option<Signature>,
+    ) -> Self {
+        Self { sponsor, signer, signature }
+    }
+
+    pub const fn sponsor(&self) -> Address {
+        self.sponsor
+    }
+
+    /// Resolves the fee token paid by this sponsor and applies it to the transaction request.
+    ///
+    /// This must happen before computing a sponsor digest, because Tempo sponsor signatures commit
+    /// to the fee token.
+    pub async fn resolve_and_set_fee_token<N>(
+        &self,
+        provider: Option<&dyn Provider<N>>,
+        chain: Option<Chain>,
+        tx: &mut N::TransactionRequest,
+    ) -> Result<Option<Address>>
+    where
+        N: Network,
+        N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    {
+        resolve_and_set_fee_token(provider, chain, tx, Some(self.sponsor)).await
+    }
+
+    pub async fn attach_and_print<N: Network>(
+        &self,
+        tx: &mut N::TransactionRequest,
+        sender: Address,
+    ) -> Result<TempoSponsorPreview>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        if self.sponsor == sender {
+            eyre::bail!(
+                "invalid Tempo sponsorship: sponsor {} must not equal transaction sender",
+                self.sponsor
+            );
+        }
+
+        let digest = tx.compute_sponsor_hash(sender).ok_or_else(|| {
+            eyre::eyre!(
+                "failed to compute Tempo sponsor digest; make sure this is a complete Tempo AA transaction"
+            )
+        })?;
+
+        let preview = TempoSponsorPreview {
+            sponsor: self.sponsor,
+            fee_token: tx.fee_token(),
+            valid_before: tx.valid_before().map(|v| v.get()),
+            valid_after: tx.valid_after().map(|v| v.get()),
+            digest,
+        };
+        preview.print()?;
+
+        let signature = if let Some(signature) = self.signature {
+            signature
+        } else if let Some(signer) = &self.signer {
+            signer.sign_hash(&digest).await.context("failed to sign Tempo sponsor digest")?
+        } else {
+            eyre::bail!("missing Tempo sponsor signature or signer");
+        };
+
+        let recovered = signature
+            .recover_address_from_prehash(&digest)
+            .context("failed to recover Tempo sponsor signature")?;
+        if recovered != self.sponsor {
+            eyre::bail!(
+                "Tempo sponsor signature recovered {recovered}, expected {}; the signature must \
+                 cover this exact transaction's sponsor digest — when signing a digest produced \
+                 with `--tempo.print-sponsor-hash`, pin --nonce, --gas-limit, --gas-price and \
+                 --priority-gas-price on both commands so the digest does not change in between",
+                self.sponsor
+            );
+        }
+        if recovered == sender {
+            eyre::bail!(
+                "invalid Tempo sponsorship: recovered fee payer {recovered} must not equal transaction sender"
+            );
+        }
+
+        tx.set_fee_payer_signature(signature);
+        Ok(preview)
+    }
+}
+
+/// User-visible sponsor digest metadata for a single outgoing Tempo transaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TempoSponsorPreview {
+    pub sponsor: Address,
+    pub fee_token: Option<Address>,
+    pub valid_before: Option<u64>,
+    pub valid_after: Option<u64>,
+    pub digest: B256,
+}
+
+impl TempoSponsorPreview {
+    pub fn print(&self) -> Result<()> {
+        crate::sh_eprintln!("Tempo sponsor: {}", self.sponsor)?;
+        crate::sh_eprintln!(
+            "Tempo fee token: {}",
+            self.fee_token.map_or_else(|| "network default".to_string(), |addr| addr.to_string())
+        )?;
+        crate::sh_eprintln!(
+            "Tempo validity: after {}, before {}",
+            self.valid_after.map_or_else(|| "none".to_string(), |v| v.to_string()),
+            self.valid_before.map_or_else(|| "none".to_string(), |v| v.to_string())
+        )?;
+        crate::sh_eprintln!("Tempo sponsor digest: {:?}", self.digest)?;
+        Ok(())
+    }
+}
+
+/// Resolves a `--tempo.sponsor-signer` URI into a Foundry wallet signer.
+pub async fn resolve_tempo_sponsor_signer(spec: &str) -> Result<WalletSigner> {
+    let spec = spec.trim();
+    let (scheme, value) = spec
+        .split_once("://")
+        .map(|(scheme, value)| (scheme.to_ascii_lowercase(), value))
+        .unwrap_or_else(|| (spec.to_ascii_lowercase(), ""));
+
+    match scheme.as_str() {
+        "env" => {
+            if value.is_empty() {
+                eyre::bail!("env:// sponsor signer requires an environment variable name");
+            }
+            let private_key = std::env::var(value)
+                .wrap_err_with(|| format!("{value} environment variable is required"))?;
+            foundry_wallets::utils::create_private_key_signer(&private_key)
+        }
+        "private-key" => {
+            if value.is_empty() {
+                eyre::bail!("private-key:// sponsor signer requires a private key");
+            }
+            foundry_wallets::utils::create_private_key_signer(value)
+        }
+        "keystore" => {
+            if value.is_empty() {
+                eyre::bail!("keystore:// sponsor signer requires a keystore path");
+            }
+            WalletOpts { keystore_path: Some(value.to_string()), ..Default::default() }
+                .signer()
+                .await
+        }
+        "account" => {
+            if value.is_empty() {
+                eyre::bail!("account:// sponsor signer requires an account name");
+            }
+            WalletOpts { keystore_account_name: Some(value.to_string()), ..Default::default() }
+                .signer()
+                .await
+        }
+        "ledger" => {
+            let raw = RawWalletOpts {
+                hd_path: (!value.is_empty()).then(|| value.to_string()),
+                ..Default::default()
+            };
+            WalletOpts { ledger: true, raw, ..Default::default() }.signer().await
+        }
+        "trezor" => {
+            let raw = RawWalletOpts {
+                hd_path: (!value.is_empty()).then(|| value.to_string()),
+                ..Default::default()
+            };
+            WalletOpts { trezor: true, raw, ..Default::default() }.signer().await
+        }
+        "aws" => WalletOpts { aws: true, ..Default::default() }.signer().await,
+        "gcp" => WalletOpts { gcp: true, ..Default::default() }.signer().await,
+        "turnkey" => WalletOpts { turnkey: true, ..Default::default() }.signer().await,
+        "browser" => {
+            eyre::bail!(
+                "browser:// sponsor signing is not supported by the current browser wallet API; use --tempo.sponsor-sig or another sponsor signer"
+            );
+        }
+        _ => {
+            eyre::bail!(
+                "unsupported Tempo sponsor signer `{spec}`; expected env://VAR, keystore://PATH, account://NAME, ledger://, trezor://, aws://, gcp://, turnkey://, or private-key://KEY"
+            );
+        }
+    }
+}
+
+/// Placeholder rendered by `Debug` impls in place of secret key material.
+fn redacted_debug(value: &str) -> &'static str {
+    if value.trim().is_empty() { "<empty>" } else { "<redacted>" }
+}
 
 /// Resolves and applies the Tempo fee token selected by the network.
 ///
@@ -95,6 +280,13 @@ where
     let has_call_list = tx.has_tempo_call_list();
     let is_aa = tx.is_tempo_aa();
     let tx_from = tx.from();
+
+    // A stored fee-token preference would classify a contract creation as Tempo AA, but AA
+    // transactions require a non-empty call list. Leave CREATE requests as Ethereum transactions;
+    // the protocol still applies the account's stored fee-token preference when charging fees.
+    if !has_call_list && calls.iter().any(|(to, _)| matches!(to, TxKind::Create)) {
+        return Ok(None);
+    }
 
     let immediate_user_token =
         infer_fee_token_from_set_user_token_call(&calls, is_aa, tx_from, fee_payer);
@@ -218,7 +410,7 @@ fn decode_stablecoin_dex_fee_token(input: &[u8]) -> Option<Address> {
 }
 
 /// Returns the known symbol for a Tempo fee token without making an RPC call.
-const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> {
+pub const fn known_fee_token_symbol(fee_token: Address) -> Option<&'static str> {
     match fee_token {
         PATH_USD_ADDRESS => Some("PathUSD"),
         ALPHA_USD_ADDRESS => Some("AlphaUSD"),
@@ -273,191 +465,4 @@ where
         }
     }
     Ok(())
-}
-
-/// Gas sponsor configuration for Tempo fee-payer signatures.
-#[derive(Clone, Debug)]
-pub struct TempoSponsor {
-    sponsor: Address,
-    signer: Option<Arc<WalletSigner>>,
-    signature: Option<Signature>,
-}
-
-impl TempoSponsor {
-    pub const fn new(
-        sponsor: Address,
-        signer: Option<Arc<WalletSigner>>,
-        signature: Option<Signature>,
-    ) -> Self {
-        Self { sponsor, signer, signature }
-    }
-
-    pub const fn sponsor(&self) -> Address {
-        self.sponsor
-    }
-
-    /// Resolves the fee token paid by this sponsor and applies it to the transaction request.
-    ///
-    /// This must happen before computing a sponsor digest, because Tempo sponsor signatures commit
-    /// to the fee token.
-    pub async fn resolve_and_set_fee_token<N>(
-        &self,
-        provider: Option<&dyn Provider<N>>,
-        chain: Option<Chain>,
-        tx: &mut N::TransactionRequest,
-    ) -> Result<Option<Address>>
-    where
-        N: Network,
-        N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
-    {
-        resolve_and_set_fee_token(provider, chain, tx, Some(self.sponsor)).await
-    }
-
-    pub async fn attach_and_print<N: Network>(
-        &self,
-        tx: &mut N::TransactionRequest,
-        sender: Address,
-    ) -> Result<TempoSponsorPreview>
-    where
-        N::TransactionRequest: FoundryTransactionBuilder<N>,
-    {
-        if self.sponsor == sender {
-            eyre::bail!(
-                "invalid Tempo sponsorship: sponsor {} must not equal transaction sender",
-                self.sponsor
-            );
-        }
-
-        let digest = tx.compute_sponsor_hash(sender).ok_or_else(|| {
-            eyre::eyre!(
-                "failed to compute Tempo sponsor digest; make sure this is a complete Tempo AA transaction"
-            )
-        })?;
-
-        let preview = TempoSponsorPreview {
-            sponsor: self.sponsor,
-            fee_token: tx.fee_token(),
-            valid_before: tx.valid_before().map(|v| v.get()),
-            valid_after: tx.valid_after().map(|v| v.get()),
-            digest,
-        };
-        preview.print()?;
-
-        let signature = if let Some(signature) = self.signature {
-            signature
-        } else if let Some(signer) = &self.signer {
-            signer.sign_hash(&digest).await.context("failed to sign Tempo sponsor digest")?
-        } else {
-            eyre::bail!("missing Tempo sponsor signature or signer")
-        };
-
-        let recovered = signature
-            .recover_address_from_prehash(&digest)
-            .context("failed to recover Tempo sponsor signature")?;
-        if recovered != self.sponsor {
-            eyre::bail!("Tempo sponsor signature recovered {recovered}, expected {}", self.sponsor);
-        }
-        if recovered == sender {
-            eyre::bail!(
-                "invalid Tempo sponsorship: recovered fee payer {recovered} must not equal transaction sender"
-            );
-        }
-
-        tx.set_fee_payer_signature(signature);
-        Ok(preview)
-    }
-}
-
-/// User-visible sponsor digest metadata for a single outgoing Tempo transaction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TempoSponsorPreview {
-    pub sponsor: Address,
-    pub fee_token: Option<Address>,
-    pub valid_before: Option<u64>,
-    pub valid_after: Option<u64>,
-    pub digest: B256,
-}
-
-impl TempoSponsorPreview {
-    pub fn print(&self) -> Result<()> {
-        crate::sh_eprintln!("Tempo sponsor: {}", self.sponsor)?;
-        crate::sh_eprintln!(
-            "Tempo fee token: {}",
-            self.fee_token.map_or_else(|| "network default".to_string(), |addr| addr.to_string())
-        )?;
-        crate::sh_eprintln!(
-            "Tempo validity: after {}, before {}",
-            self.valid_after.map_or_else(|| "none".to_string(), |v| v.to_string()),
-            self.valid_before.map_or_else(|| "none".to_string(), |v| v.to_string())
-        )?;
-        crate::sh_eprintln!("Tempo sponsor digest: {:?}", self.digest)?;
-        Ok(())
-    }
-}
-
-/// Resolves a `--tempo.sponsor-signer` URI into a Foundry wallet signer.
-pub async fn resolve_tempo_sponsor_signer(spec: &str) -> Result<WalletSigner> {
-    let spec = spec.trim();
-    let (scheme, value) = spec
-        .split_once("://")
-        .map(|(scheme, value)| (scheme.to_ascii_lowercase(), value))
-        .unwrap_or_else(|| (spec.to_ascii_lowercase(), ""));
-
-    match scheme.as_str() {
-        "env" => {
-            if value.is_empty() {
-                eyre::bail!("env:// sponsor signer requires an environment variable name");
-            }
-            let private_key = std::env::var(value)
-                .wrap_err_with(|| format!("{value} environment variable is required"))?;
-            foundry_wallets::utils::create_private_key_signer(&private_key)
-        }
-        "private-key" => {
-            if value.is_empty() {
-                eyre::bail!("private-key:// sponsor signer requires a private key");
-            }
-            foundry_wallets::utils::create_private_key_signer(value)
-        }
-        "keystore" => {
-            if value.is_empty() {
-                eyre::bail!("keystore:// sponsor signer requires a keystore path");
-            }
-            WalletOpts { keystore_path: Some(value.to_string()), ..Default::default() }
-                .signer()
-                .await
-        }
-        "account" => {
-            if value.is_empty() {
-                eyre::bail!("account:// sponsor signer requires an account name");
-            }
-            WalletOpts { keystore_account_name: Some(value.to_string()), ..Default::default() }
-                .signer()
-                .await
-        }
-        "ledger" => {
-            let raw = RawWalletOpts {
-                hd_path: (!value.is_empty()).then(|| value.to_string()),
-                ..Default::default()
-            };
-            WalletOpts { ledger: true, raw, ..Default::default() }.signer().await
-        }
-        "trezor" => {
-            let raw = RawWalletOpts {
-                hd_path: (!value.is_empty()).then(|| value.to_string()),
-                ..Default::default()
-            };
-            WalletOpts { trezor: true, raw, ..Default::default() }.signer().await
-        }
-        "aws" => WalletOpts { aws: true, ..Default::default() }.signer().await,
-        "gcp" => WalletOpts { gcp: true, ..Default::default() }.signer().await,
-        "turnkey" => WalletOpts { turnkey: true, ..Default::default() }.signer().await,
-        "browser" => {
-            eyre::bail!(
-                "browser:// sponsor signing is not supported by the current browser wallet API; use --tempo.sponsor-sig or another sponsor signer"
-            )
-        }
-        _ => eyre::bail!(
-            "unsupported Tempo sponsor signer `{spec}`; expected env://VAR, keystore://PATH, account://NAME, ledger://, trezor://, aws://, gcp://, turnkey://, or private-key://KEY"
-        ),
-    }
 }

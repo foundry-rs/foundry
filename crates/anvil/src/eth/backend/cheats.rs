@@ -2,7 +2,7 @@
 
 use alloy_evm::precompiles::{Precompile, PrecompileInput};
 use alloy_primitives::{
-    Address, Bytes,
+    Address, B256, Bytes,
     map::{AddressHashSet, foldhash::HashMap},
 };
 use parking_lot::RwLock;
@@ -83,6 +83,50 @@ impl CheatsManager {
     pub fn has_recover_overrides(&self) -> bool {
         !self.state.read().signature_overrides.is_empty()
     }
+
+    /// Sets the `prevrandao` value to use for the next mined block.
+    ///
+    /// This is a one-shot override that is consumed by the next block and applies to that block
+    /// only.
+    pub fn set_next_block_prevrandao(&self, prevrandao: B256) {
+        trace!(target: "cheats", %prevrandao, "set next block prevrandao");
+        let mut state = self.state.write();
+        state.prevrandao_generation = state.prevrandao_generation.wrapping_add(1);
+        state.next_block_prevrandao = Some(prevrandao);
+    }
+
+    /// Prepares the manually set `prevrandao` without consuming it.
+    pub(crate) fn prepare_next_block_prevrandao(&self) -> Option<PendingPrevrandao> {
+        let state = self.state.read();
+        state
+            .next_block_prevrandao
+            .map(|value| PendingPrevrandao { value, generation: state.prevrandao_generation })
+    }
+
+    /// Takes the manually set `prevrandao` value for forced replay mining.
+    pub fn take_next_block_prevrandao(&self) -> Option<B256> {
+        let mut state = self.state.write();
+        state.prevrandao_generation = state.prevrandao_generation.wrapping_add(1);
+        state.next_block_prevrandao.take()
+    }
+
+    /// Consumes a `prevrandao` override after the candidate using it was committed.
+    pub(crate) fn consume_next_block_prevrandao(&self, pending: PendingPrevrandao) {
+        let mut state = self.state.write();
+        if state.prevrandao_generation == pending.generation {
+            state.next_block_prevrandao.take();
+        }
+    }
+
+    /// Clears any manually set `prevrandao` value for the next block.
+    ///
+    /// Used on reset/revert so a set-but-unmined override does not leak into a later block,
+    /// mirroring how the next-block timestamp override is cleared by `TimeManager::reset`.
+    pub fn clear_next_block_prevrandao(&self) {
+        let mut state = self.state.write();
+        state.prevrandao_generation = state.prevrandao_generation.wrapping_add(1);
+        state.next_block_prevrandao.take();
+    }
 }
 
 /// Container type for all the state variables
@@ -94,6 +138,18 @@ pub struct CheatsState {
     pub auto_impersonate_accounts: bool,
     /// Overrides for ecrecover: Signature => Address
     pub signature_overrides: HashMap<Bytes, Address>,
+    /// The `prevrandao` value to use for the next mined block, if manually set via
+    /// `anvil_setNextBlockPrevRandao`.
+    pub next_block_prevrandao: Option<B256>,
+    /// Generation of the most recently installed `prevrandao` override.
+    prevrandao_generation: u64,
+}
+
+/// A `prevrandao` override reserved by a candidate block.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PendingPrevrandao {
+    pub(crate) value: B256,
+    generation: u64,
 }
 
 impl CheatEcrecover {
@@ -148,6 +204,19 @@ pub struct CheatEcrecover {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn candidate_consumes_only_its_prevrandao_override() {
+        let cheats = CheatsManager::default();
+        let value = B256::with_last_byte(1);
+        cheats.set_next_block_prevrandao(value);
+        let pending = cheats.prepare_next_block_prevrandao().unwrap();
+
+        cheats.set_next_block_prevrandao(value);
+        cheats.consume_next_block_prevrandao(pending);
+
+        assert_eq!(cheats.prepare_next_block_prevrandao().unwrap().value, value);
+    }
 
     #[test]
     fn impersonate_returns_false_then_true() {

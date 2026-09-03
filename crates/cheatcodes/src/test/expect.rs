@@ -17,7 +17,8 @@ use foundry_evm_traces::DecodedCallLog;
 use revm::{
     context::{ContextTr, JournalTr},
     interpreter::{
-        InstructionResult, Interpreter, InterpreterAction, interpreter_types::LoopControl,
+        CallScheme, InstructionResult, Interpreter, InterpreterAction,
+        interpreter_types::LoopControl,
     },
 };
 use tempo_contracts::precompiles::ISignatureVerifier;
@@ -26,14 +27,16 @@ use tempo_precompiles::SIGNATURE_VERIFIER_ADDRESS;
 use super::revert_handlers::RevertParameters;
 /// Tracks the expected calls per address.
 ///
-/// For each address, we track the expected calls per call data. We track it in such manner
-/// so that we don't mix together calldatas that only contain selectors and calldatas that contain
-/// selector and arguments (partial and full matches).
+/// For each address, we track the expected calls per call data and optional call scheme. We track
+/// it in such manner so that we don't mix together calldatas that only contain selectors and
+/// calldatas that contain selector and arguments (partial and full matches), or unrestricted calls
+/// and calls restricted to a specific scheme.
 ///
 /// This then allows us to customize the matching behavior for each call data on the
 /// `ExpectedCallData` struct and track how many times we've actually seen the call on the second
 /// element of the tuple.
-pub type ExpectedCallTracker = HashMap<Address, HashMap<Bytes, (ExpectedCallData, u64)>>;
+pub type ExpectedCallTracker =
+    HashMap<Address, HashMap<(Bytes, Option<CallScheme>), (ExpectedCallData, u64)>>;
 
 #[derive(Clone, Debug)]
 pub struct ExpectedCallData {
@@ -118,8 +121,53 @@ pub struct ExpectedEmit {
     pub found: bool,
     /// Number of times the log is expected to be emitted
     pub count: u64,
-    /// Stores mismatch details if a log didn't match
-    pub mismatch_error: Option<String>,
+    /// Stores mismatch details if a log didn't match.
+    pub mismatch_error: Option<EmitMismatch>,
+}
+
+#[derive(Clone, Debug)]
+pub enum EmitMismatch {
+    Log { actual: RawLog },
+    Emitter { expected: Address, actual: Address },
+}
+
+impl EmitMismatch {
+    pub fn to_error_msg<FEN: FoundryEvmNetwork>(
+        &self,
+        state: &Cheatcodes<FEN>,
+        checks: [bool; 5],
+        expected: Option<&RawLog>,
+        anonymous: bool,
+    ) -> String {
+        match self {
+            Self::Log { actual } => {
+                let Some(expected) = expected else {
+                    return "log != expected log".to_string();
+                };
+                let (expected_decoded, actual_decoded) = if anonymous {
+                    (None, None)
+                } else {
+                    state
+                        .signatures_identifier()
+                        .map(|identifier| {
+                            (decode_event(identifier, expected), decode_event(identifier, actual))
+                        })
+                        .unwrap_or_default()
+                };
+                get_emit_mismatch_message(
+                    checks,
+                    expected,
+                    actual,
+                    anonymous,
+                    expected_decoded.as_ref(),
+                    actual_decoded.as_ref(),
+                )
+            }
+            Self::Emitter { expected, actual } => {
+                format!("log emitter mismatch: expected={expected:#x}, got={actual:#x}")
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -169,21 +217,31 @@ impl CreateScheme {
 impl Cheatcode for expectCall_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { callee, data } = self;
-        expect_call(state, callee, data, None, None, None, 1, ExpectedCallType::NonCount)
+        expect_call(state, callee, data, None, None, None, None, 1, ExpectedCallType::NonCount)
     }
 }
 
 impl Cheatcode for expectCall_1Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { callee, data, count } = self;
-        expect_call(state, callee, data, None, None, None, *count, ExpectedCallType::Count)
+        expect_call(state, callee, data, None, None, None, None, *count, ExpectedCallType::Count)
     }
 }
 
 impl Cheatcode for expectCall_2Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { callee, msgValue, data } = self;
-        expect_call(state, callee, data, Some(msgValue), None, None, 1, ExpectedCallType::NonCount)
+        expect_call(
+            state,
+            callee,
+            data,
+            Some(msgValue),
+            None,
+            None,
+            None,
+            1,
+            ExpectedCallType::NonCount,
+        )
     }
 }
 
@@ -195,6 +253,7 @@ impl Cheatcode for expectCall_3Call {
             callee,
             data,
             Some(msgValue),
+            None,
             None,
             None,
             *count,
@@ -213,6 +272,7 @@ impl Cheatcode for expectCall_4Call {
             Some(msgValue),
             Some(*gas),
             None,
+            None,
             1,
             ExpectedCallType::NonCount,
         )
@@ -229,8 +289,26 @@ impl Cheatcode for expectCall_5Call {
             Some(msgValue),
             Some(*gas),
             None,
+            None,
             *count,
             ExpectedCallType::Count,
+        )
+    }
+}
+
+impl Cheatcode for expectDelegateCallCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { callee, data } = self;
+        expect_call(
+            state,
+            callee,
+            data,
+            None,
+            None,
+            None,
+            Some(CallScheme::DelegateCall),
+            1,
+            ExpectedCallType::NonCount,
         )
     }
 }
@@ -245,6 +323,7 @@ impl Cheatcode for expectCallMinGas_0Call {
             Some(msgValue),
             None,
             Some(*minGas),
+            None,
             1,
             ExpectedCallType::NonCount,
         )
@@ -261,6 +340,7 @@ impl Cheatcode for expectCallMinGas_1Call {
             Some(msgValue),
             None,
             Some(*minGas),
+            None,
             *count,
             ExpectedCallType::Count,
         )
@@ -452,6 +532,7 @@ fn expect_keychain_verified<FEN: FoundryEvmNetwork>(
         state,
         &SIGNATURE_VERIFIER_ADDRESS,
         &Bytes::from(calldata),
+        None,
         None,
         None,
         None,
@@ -749,6 +830,7 @@ fn expect_call<FEN: FoundryEvmNetwork>(
     value: Option<&U256>,
     mut gas: Option<u64>,
     mut min_gas: Option<u64>,
+    scheme: Option<CallScheme>,
     count: u64,
     call_type: ExpectedCallType,
 ) -> Result {
@@ -773,19 +855,17 @@ fn expect_call<FEN: FoundryEvmNetwork>(
             // Get the expected calls for this target.
             // In this case, as we're using counted expectCalls, we should not be able to set them
             // more than once.
-            ensure!(
-                !expecteds.contains_key(calldata),
-                "counted expected calls can only bet set once"
-            );
+            let key = (calldata.clone(), scheme);
+            ensure!(!expecteds.contains_key(&key), "counted expected calls can only bet set once");
             expecteds.insert(
-                calldata.clone(),
+                key,
                 (ExpectedCallData { value: value.copied(), gas, min_gas, count, call_type }, 0),
             );
         }
         ExpectedCallType::NonCount => {
             // Check if the expected calldata exists.
             // If it does, increment the count by one as we expect to see it one more time.
-            match expecteds.entry(calldata.clone()) {
+            match expecteds.entry((calldata.clone(), scheme)) {
                 Entry::Occupied(mut entry) => {
                     let (expected, _) = entry.get_mut();
                     // Ensure we're not overwriting a counted expectCall.
@@ -955,38 +1035,17 @@ pub(crate) fn handle_expect_emit<FEN: FoundryEvmNetwork>(
 
     event_to_fill_or_check.found = || -> bool {
         if !checks_topics_and_data(event_to_fill_or_check.checks, expected, log) {
-            // Store detailed mismatch information
-
-            // Try to decode the events if we have a signature identifier
-            let (expected_decoded, actual_decoded) = if let Some(signatures_identifier) =
-                state.signatures_identifier()
-                && !event_to_fill_or_check.anonymous
-            {
-                (
-                    decode_event(signatures_identifier, expected),
-                    decode_event(signatures_identifier, log),
-                )
-            } else {
-                (None, None)
-            };
-            event_to_fill_or_check.mismatch_error = Some(get_emit_mismatch_message(
-                event_to_fill_or_check.checks,
-                expected,
-                log,
-                event_to_fill_or_check.anonymous,
-                expected_decoded.as_ref(),
-                actual_decoded.as_ref(),
-            ));
+            event_to_fill_or_check.mismatch_error =
+                Some(EmitMismatch::Log { actual: log.data.clone() });
             return false;
         }
 
         // Maybe match source address.
-        if event_to_fill_or_check.address.is_some_and(|addr| addr != log.address) {
-            event_to_fill_or_check.mismatch_error = Some(format!(
-                "log emitter mismatch: expected={:#x}, got={:#x}",
-                event_to_fill_or_check.address.unwrap(),
-                log.address
-            ));
+        if let Some(expected) = event_to_fill_or_check.address
+            && expected != log.address
+        {
+            event_to_fill_or_check.mismatch_error =
+                Some(EmitMismatch::Emitter { expected, actual: log.address });
             return false;
         }
 

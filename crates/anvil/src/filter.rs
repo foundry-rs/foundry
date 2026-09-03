@@ -1,11 +1,14 @@
 //! Support for polling based filters
 use crate::{
     StorageInfo,
-    eth::{backend::notifications::NewBlockNotifications, error::ToRpcResponseResult},
-    pubsub::filter_logs,
+    eth::{
+        backend::notifications::{ChainNotification, ChainNotifications},
+        error::ToRpcResponseResult,
+    },
+    pubsub::{filter_logs, filter_removed_logs},
 };
 use alloy_consensus::TxReceipt;
-use alloy_network::Network;
+use alloy_network::{AnyRpcTransaction, Network};
 use alloy_primitives::{TxHash, map::HashMap};
 use alloy_rpc_types::{Filter, FilteredParams, Log};
 use anvil_core::eth::subscription::SubscriptionId;
@@ -20,7 +23,7 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 
 /// Type alias for filters identified by their id and their expiration timestamp
 type FilterMap<N> = Arc<Mutex<HashMap<String, (EthFilter<N>, Instant)>>>;
@@ -140,8 +143,9 @@ fn new_id() -> String {
 /// Represents a poll based filter
 pub enum EthFilter<N: Network> {
     Logs(Box<LogsFilter<N>>),
-    Blocks(NewBlockNotifications),
+    Blocks(ChainNotifications),
     PendingTransactions(Receiver<TxHash>),
+    FullPendingTransactions(mpsc::Receiver<AnyRpcTransaction>),
 }
 
 impl<N: Network> std::fmt::Debug for EthFilter<N> {
@@ -150,6 +154,7 @@ impl<N: Network> std::fmt::Debug for EthFilter<N> {
             Self::Logs(_) => f.debug_tuple("Logs").finish(),
             Self::Blocks(_) => f.debug_tuple("Blocks").finish(),
             Self::PendingTransactions(_) => f.debug_tuple("PendingTransactions").finish(),
+            Self::FullPendingTransactions(_) => f.debug_tuple("FullPendingTransactions").finish(),
         }
     }
 }
@@ -166,8 +171,10 @@ where
             Self::Logs(logs) => Poll::Ready(Some(Ok(logs.poll(cx)).to_rpc_result())),
             Self::Blocks(blocks) => {
                 let mut new_blocks = Vec::new();
-                while let Poll::Ready(Some(block)) = blocks.poll_next_unpin(cx) {
-                    new_blocks.push(block.hash);
+                while let Poll::Ready(Some(notification)) = blocks.poll_next_unpin(cx) {
+                    if let Some(block) = notification.as_new_block() {
+                        new_blocks.push(block.hash);
+                    }
                 }
                 Poll::Ready(Some(Ok(new_blocks).to_rpc_result()))
             }
@@ -178,6 +185,13 @@ where
                 }
                 Poll::Ready(Some(Ok(new_txs).to_rpc_result()))
             }
+            Self::FullPendingTransactions(tx) => {
+                let mut new_txs = Vec::new();
+                while let Poll::Ready(Some(tx)) = tx.poll_recv(cx) {
+                    new_txs.push(tx);
+                }
+                Poll::Ready(Some(Ok(new_txs).to_rpc_result()))
+            }
         }
     }
 }
@@ -185,7 +199,7 @@ where
 /// Listens for new blocks and matching logs emitted in that block
 pub struct LogsFilter<N: Network> {
     /// listener for new blocks
-    pub blocks: NewBlockNotifications,
+    pub blocks: ChainNotifications,
     /// accessor for block storage
     pub storage: StorageInfo<N>,
     /// matcher with all provided filter params
@@ -209,11 +223,18 @@ where
     /// Returns all the logs since the last time this filter was polled
     pub fn poll(&mut self, cx: &mut Context<'_>) -> Vec<Log> {
         let mut logs = self.historic.take().unwrap_or_default();
-        while let Poll::Ready(Some(block)) = self.blocks.poll_next_unpin(cx) {
-            let b = self.storage.block(block.hash);
-            let receipts = self.storage.receipts(block.hash);
-            if let (Some(receipts), Some(block)) = (receipts, b) {
-                logs.extend(filter_logs(block, receipts, &self.filter))
+        while let Poll::Ready(Some(notification)) = self.blocks.poll_next_unpin(cx) {
+            match notification {
+                ChainNotification::Block(block) => {
+                    let b = self.storage.block(block.hash);
+                    let receipts = self.storage.receipts(block.hash);
+                    if let (Some(receipts), Some(block)) = (receipts, b) {
+                        logs.extend(filter_logs(block, receipts, &self.filter))
+                    }
+                }
+                ChainNotification::RemovedLogs(removed) => {
+                    logs.extend(filter_removed_logs(&removed, &self.filter))
+                }
             }
         }
         logs

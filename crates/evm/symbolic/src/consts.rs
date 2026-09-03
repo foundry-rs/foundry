@@ -28,9 +28,10 @@ pub(crate) const ERROR_DATA_MIN_LEN: usize = 68; // selector (4) + offset (32) +
 // Precompile address layout
 pub(crate) const PRECOMPILE_ADDRESS_LEADING_ZEROS: usize = 19;
 
-// Solver polling backoff
-pub(crate) const INITIAL_SOLVER_POLL_BACKOFF: Duration = Duration::from_micros(200);
-pub(crate) const MAX_SOLVER_POLL_BACKOFF: Duration = Duration::from_millis(50);
+// Solver subprocess supervision.
+pub(crate) const SOLVER_CANCEL_CHECK_INTERVAL: Duration = Duration::from_millis(50);
+
+// Portfolio scheduler launch delays.
 pub(crate) const SECOND_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(100);
 pub(crate) const RESCUE_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(500);
 

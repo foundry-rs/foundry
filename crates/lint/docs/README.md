@@ -7,8 +7,9 @@ by the lint's `help` URL (`https://getfoundry.sh/forge/linting/<id>`) and is con
 ## Adding a new lint
 
 When you add a new lint with `declare_forge_lint!`, you **must** also add a documentation file at
-`crates/lint/docs/<str_id>.md`. The presence of the file is enforced by the
-`registered_lints_have_docs` unit test in [`crates/lint/src/sol/mod.rs`](../src/sol/mod.rs).
+`crates/lint/docs/<str_id>.md`. The `registered_lints_have_docs` unit test in
+[`crates/lint/src/sol/mod.rs`](../src/sol/mod.rs) enforces the file's presence, registered ID and
+severity, and required section order.
 
 Use [`_template.md`](./_template.md) as a starting point.
 
@@ -48,5 +49,6 @@ Explain the impact (security, correctness, gas, readability).
 
 ## Configuration
 
-Document any inline-config or `foundry.toml` options that affect this lint, if any.
+Document any inline-config or `foundry.toml` options that affect this lint. Omit this section when
+the lint has no additional configuration.
 ```

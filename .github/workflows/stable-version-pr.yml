@@ -1,0 +1,189 @@
+---
+name: Release Version PR
+
+permissions: {}
+
+'on':
+  push:
+    branches: [master]
+    paths:
+      - '.changelog/*.md'
+      - '.changelog/config.toml'
+      - 'Cargo.toml'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'CHANGELOG.md'
+      - '.github/scripts/prepare-stable-release.py'
+      - '.github/workflows/stable-version-pr.yml'
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: RC operation
+        required: true
+        type: choice
+        options: [start, advance, promote]
+      source_tag:
+        description: Exact source tag confirmation
+        required: true
+      target_tag:
+        description: Exact target tag confirmation
+        required: true
+
+concurrency:
+  group: release-version-pr
+  cancel-in-progress: false
+
+env:
+  CHANGELOGS_REV: 74f07b39c7c85773575e32472dfd5298ec6baaf4
+  STABLE_VERSION_PRS_ENABLED: ${{ vars.STABLE_VERSION_PRS_ENABLED || 'false' }}
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Inspect existing release pull requests
+        id: inspect
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REQUESTED_OPERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.operation || 'stable' }}
+          REQUESTED_TARGET: ${{ inputs.target_tag || '' }}
+        with:
+          script: |
+            const prs = await github.paginate(github.rest.pulls.list, {
+              ...context.repo,
+              state: 'open',
+              base: 'master',
+              per_page: 100,
+            });
+            const repository = context.payload.repository.full_name;
+            const internal = prs.filter(pr => pr.head.repo.full_name === repository);
+            if (internal.some(pr => pr.head.ref === 'release/stable')) {
+              throw new Error('Close the legacy release/stable pull request first');
+            }
+            const release = internal.find(pr => pr.head.ref === 'release/version');
+            if (!release) return;
+            const operation = /- Operation: `([^`]+)`/.exec(release.body || '')?.[1];
+            const target = /- Target tag: `([^`]+)`/.exec(release.body || '')?.[1];
+            if (!['stable', 'start', 'advance', 'promote'].includes(operation) || !target) {
+              throw new Error('release/version contains malformed release metadata');
+            }
+            if (context.eventName === 'push') {
+              if (operation !== 'stable') {
+                core.setOutput('skip', 'true');
+              } else {
+                core.setOutput('cleanup', 'true');
+              }
+              return;
+            }
+            if (
+              operation !== process.env.REQUESTED_OPERATION ||
+              target !== process.env.REQUESTED_TARGET
+            ) {
+              throw new Error(`release/version already contains ${operation} ${target}`);
+            }
+
+      - name: Detect pending changelog fragments
+        if: steps.inspect.outputs.skip != 'true'
+        id: fragments
+        run: |
+          if [[ -n "$(find .changelog -maxdepth 1 -type f -name '*.md' ! -name README.md -print -quit)" ]]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install pinned changelogs CLI
+        if: steps.inspect.outputs.skip != 'true' && (steps.fragments.outputs.found == 'true' || inputs.operation == 'promote')
+        run: |
+          cargo install \
+            --git https://github.com/tempoxyz/changelogs \
+            --rev "$CHANGELOGS_REV" \
+            --locked \
+            --root "$RUNNER_TEMP/changelogs"
+
+      - name: Prepare release
+        if: steps.inspect.outputs.skip != 'true'
+        id: prepare
+        env:
+          OPERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.operation || 'stable' }}
+          SOURCE_TAG: ${{ inputs.source_tag || '' }}
+          TARGET_TAG: ${{ inputs.target_tag || '' }}
+        run: |
+          args=(
+            --changelogs "$RUNNER_TEMP/changelogs/bin/changelogs"
+            --operation "$OPERATION"
+          )
+          if [[ "$OPERATION" != stable ]]; then
+            args+=(--source-tag "$SOURCE_TAG" --target-tag "$TARGET_TAG")
+          fi
+          python3 ./.github/scripts/prepare-stable-release.py "${args[@]}"
+
+      - name: Show disabled production changes
+        if: steps.prepare.outputs.changed == 'true' && env.STABLE_VERSION_PRS_ENABLED != 'true'
+        run: |
+          echo "Release version PR writes are disabled."
+          git status --short
+          git diff --stat
+
+      - name: Create repository-scoped App token
+        id: app-token
+        if: (steps.prepare.outputs.changed == 'true' || steps.inspect.outputs.cleanup == 'true') && env.STABLE_VERSION_PRS_ENABLED == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.FOUNDRY_RELEASE_APP_ID }}
+          private-key: ${{ secrets.FOUNDRY_RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Verify checked-out master is current
+        if: (steps.prepare.outputs.changed == 'true' || steps.inspect.outputs.cleanup == 'true') && env.STABLE_VERSION_PRS_ENABLED == 'true'
+        run: |
+          git fetch --no-tags origin +master:refs/remotes/origin/master
+          checked_out=$(git rev-parse HEAD)
+          current=$(git rev-parse refs/remotes/origin/master)
+          if [[ "$checked_out" != "$current" ]]; then
+            echo "master advanced from $checked_out to $current; refusing to write stale output" >&2
+            exit 1
+          fi
+
+      - name: Reconcile release version PR
+        if: (steps.prepare.outputs.changed == 'true' || steps.inspect.outputs.cleanup == 'true') && env.STABLE_VERSION_PRS_ENABLED == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch-token: ${{ steps.app-token.outputs.token }}
+          base: ${{ steps.prepare.outputs.base_branch }}
+          branch: release/version
+          delete-branch: true
+          add-paths: |
+            .changelog
+            Cargo.toml
+            Cargo.lock
+            CHANGELOG.md
+          commit-message: "chore: prepare ${{ steps.prepare.outputs.expected_tag }}"
+          title: "chore: prepare ${{ steps.prepare.outputs.expected_tag }}"
+          labels: L-ignore
+          body: |
+            <!-- foundry-release-version-pr -->
+            Prepares an exact Foundry release transition.
+
+            - Operation: `${{ steps.prepare.outputs.operation }}`
+            - Base branch: `${{ steps.prepare.outputs.base_branch }}`
+            - Source master SHA: `${{ steps.prepare.outputs.source_sha }}`
+            - Source tag: `${{ steps.prepare.outputs.source_tag }}`
+            - Target version: `${{ steps.prepare.outputs.expected_version }}`
+            - Target tag: `${{ steps.prepare.outputs.expected_tag }}`
+            - Changelog fragments: ${{ steps.prepare.outputs.fragment_count }}
+            - Workspace packages: ${{ steps.prepare.outputs.package_count }}

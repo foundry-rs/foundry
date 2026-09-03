@@ -1,5 +1,7 @@
 use alloy_primitives::{Address, B256, address, b256, hex};
 
+pub use foundry_evm_networks::MONAD_CHEATCODE_ADDRESS;
+
 /// The cheatcode handler address.
 ///
 /// This is the same address as the one used in DappTools's HEVM.
@@ -45,6 +47,13 @@ pub const DEFAULT_CREATE2_DEPLOYER_DEPLOYER: Address =
 /// The default CREATE2 deployer.
 pub const DEFAULT_CREATE2_DEPLOYER: Address =
     address!("0x4e59b44847b379578588920ca78fbf26c0b4956c");
+
+/// Sentinel bytecode for network-native precompiles that have no deployed code.
+///
+/// The EIP-3541-reserved `0xEF` prefix makes `extcodesize` treat the account as non-empty while
+/// execution remains handled by the precompile.
+pub const SYSTEM_PRECOMPILE_STUB: &[u8] = &[0xEF];
+
 /// The initcode of the default CREATE2 deployer.
 pub const DEFAULT_CREATE2_DEPLOYER_CODE: &[u8] = &hex!(
     "604580600e600039806000f350fe7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3"

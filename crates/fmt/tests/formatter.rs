@@ -26,6 +26,72 @@ fn assert_eof(content: &str) {
     assert!(!content.ends_with("\n\n"), "extra trailing newline");
 }
 
+#[test]
+fn chained_named_call_layout_ignores_source_spacing() {
+    let path = Path::new("test.sol");
+
+    for (line_length, bracket_spacing, compact, spaced) in [
+        (
+            40,
+            false,
+            "factory().foo(a,b,c).baz({value: result});",
+            "factory().foo(a, b, c).baz({value: result});",
+        ),
+        (
+            32,
+            false,
+            "factory().foo(a+b).baz({value: result});",
+            "factory().foo(a + b).baz({value: result});",
+        ),
+        (
+            34,
+            false,
+            "factory().foo([a,b]).baz({value: result});",
+            "factory().foo([a, b]).baz({value: result});",
+        ),
+        (38, true, "factory().foo(a,b,c).baz({});", "factory().foo(a, b, c).baz({ });"),
+    ] {
+        let config =
+            Arc::new(FormatterConfig { line_length, bracket_spacing, ..Default::default() });
+        let source = |expr| format!("contract C {{ function f() external {{ {expr} }} }}");
+        assert_eq!(
+            format(&source(compact), path, config.clone()),
+            format(&source(spaced), path, config),
+        );
+    }
+}
+
+// <https://github.com/foundry-rs/foundry/issues/3831>
+#[test]
+fn disable_line_uses_comment_context() {
+    let source = r#"contract  C {
+    function f() public {
+        // forgefmt: disable-line
+        assembly { sstore(   0, 0)
+            sstore(1,    1)
+        }
+
+        assembly { sstore(   2, 2) } // forgefmt: disable-line
+    }
+}
+"#;
+    let expected = r#"contract C {
+    function f() public {
+        // forgefmt: disable-line
+        assembly { sstore(   0, 0)
+            sstore(1,    1)
+        }
+        assembly { sstore(   2, 2) } // forgefmt: disable-line
+    }
+}
+"#;
+
+    assert_eq!(
+        format(source, Path::new("test.sol"), Arc::new(FormatterConfig::default())),
+        expected
+    );
+}
+
 fn tests_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata")
 }
@@ -195,7 +261,11 @@ fmt_tests! {
     IntTypes,
     LiteralExpression,
     MappingType,
+    MethodChain,
+    MethodChainCallOptions,
     ModifierDefinition,
+    NamedCallArgsInChain,
+    NestedNamedCallArgumentChain,
     NamedFunctionCallExpression,
     NonKeywords,
     NumberLiteralUnderscore,

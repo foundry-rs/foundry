@@ -56,7 +56,9 @@ impl<'hir> LateLintPass<'hir> for CacheArrayLength {
         hir: &'hir hir::Hir<'hir>,
         stmt: &'hir hir::Stmt<'hir>,
     ) {
-        let StmtKind::Loop(block, LoopSource::For) = &stmt.kind else { return };
+        let StmtKind::Loop(block, LoopSource::For | LoopSource::ForWithUpdate) = &stmt.kind else {
+            return;
+        };
         let Some((condition, body)) = for_loop_parts(*block) else { return };
 
         let mut reads = Vec::new();
@@ -97,6 +99,10 @@ fn collect_condition_length_reads<'hir>(
     reads: &mut Vec<LengthRead<'hir>>,
 ) {
     match &expr.peel_parens().kind {
+        ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
+            collect_condition_length_reads(gcx, lhs, reads);
+            collect_condition_length_reads(gcx, rhs, reads);
+        }
         ExprKind::Binary(lhs, op, rhs) if is_comparison(op.kind) => {
             if matches!(lhs.peel_parens().kind, ExprKind::Ident(_)) {
                 collect_state_array_length_read(gcx, rhs, reads);

@@ -2,13 +2,14 @@
 
 use alloy_primitives::U256;
 use foundry_compilers::utils::canonicalized;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error};
 use std::path::PathBuf;
 
 /// Contains for fuzz testing
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FuzzConfig {
     /// The number of test cases that must execute for each property test
+    #[serde(deserialize_with = "deserialize_fuzz_runs")]
     pub runs: u32,
     /// Optional 1-based fuzz run to execute.
     pub run: Option<u32>,
@@ -84,6 +85,7 @@ pub struct FuzzDictionaryConfig {
     pub max_fuzz_dictionary_addresses: usize,
     /// How many values to record at most.
     /// Once the fuzzer exceeds this limit, it will start evicting random entries
+    /// The dictionary always retains a zero seed, so the effective minimum is one.
     #[serde(
         deserialize_with = "crate::deserialize_usize_or_max",
         serialize_with = "crate::serialize_usize_or_max"
@@ -119,6 +121,10 @@ pub struct FuzzCorpusConfig {
     // Path to corpus directory, enabled coverage guided fuzzing mode.
     // If not set then sequences producing new coverage are not persisted and mutated.
     pub corpus_dir: Option<PathBuf>,
+    // Path to fuzz branch frontier artifacts for symbolic follow-up.
+    pub frontier_dir: Option<PathBuf>,
+    // Maximum number of branch frontier records to write for one fuzz test.
+    pub frontier_limit: usize,
     // Whether corpus to use gzip file compression and decompression.
     pub corpus_gzip: bool,
     // Number of mutations until entry marked as eligible to be flushed from in-memory corpus.
@@ -154,10 +160,14 @@ pub struct FuzzCorpusConfig {
 impl FuzzCorpusConfig {
     pub const DEFAULT_CORPUS_RANDOM_SEQUENCE_WEIGHT: u32 = 10;
     pub const ENSEMBLE_CORPUS_RANDOM_SEQUENCE_WEIGHT: u32 = 50;
+    pub const DEFAULT_FRONTIER_LIMIT: usize = 256;
 
     pub fn with_test(&mut self, contract: &str, test: &str) {
         if let Some(corpus_dir) = &self.corpus_dir {
             self.corpus_dir = Some(canonicalized(corpus_dir.join(contract).join(test)));
+        }
+        if let Some(frontier_dir) = &self.frontier_dir {
+            self.frontier_dir = Some(canonicalized(frontier_dir.join(contract).join(test)));
         }
     }
 
@@ -178,11 +188,20 @@ impl FuzzCorpusConfig {
 
     /// Whether EVM comparison operand capture is enabled.
     ///
-    /// EVM comparison operands are only useful for coverage-guided fuzzing, so they are derived
-    /// from corpus mode. Disabled when sancov edge coverage is active because sancov replaces EVM
-    /// bytecode coverage as the guidance signal.
-    pub const fn collect_evm_cmp_log(&self) -> bool {
-        !self.sancov_edges && self.corpus_dir.is_some()
+    /// EVM comparison operands for corpus mutation are only useful for coverage-guided fuzzing, so
+    /// they are derived from corpus mode and disabled when sancov edge coverage is active.
+    /// Frontier capture still records EVM comparison sites because those artifacts target
+    /// Solidity bytecode branches, not the active coverage guidance source.
+    pub fn collect_evm_cmp_log(&self) -> bool {
+        self.capture_branch_frontiers()
+            || (!self.sancov_edges
+                && self.corpus_dir.is_some()
+                && self.mutation_weights.effective().mutation_weight_cmp > 0)
+    }
+
+    /// Whether fuzz branch frontier artifacts should be captured.
+    pub const fn capture_branch_frontiers(&self) -> bool {
+        self.frontier_dir.is_some() && self.frontier_limit > 0
     }
 
     /// Whether EVM edge coverage should use collision-free dense IDs.
@@ -220,6 +239,8 @@ impl Default for FuzzCorpusConfig {
     fn default() -> Self {
         Self {
             corpus_dir: None,
+            frontier_dir: None,
+            frontier_limit: Self::DEFAULT_FRONTIER_LIMIT,
             corpus_gzip: true,
             corpus_min_mutations: 5,
             corpus_min_size: 0,
@@ -282,4 +303,15 @@ impl Default for FuzzCorpusMutationWeights {
             mutation_weight_cmp: 1,
         }
     }
+}
+
+fn deserialize_fuzz_runs<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let runs = u32::deserialize(deserializer)?;
+    if runs == 0 {
+        return Err(D::Error::custom("`fuzz.runs` must be greater than 0"));
+    }
+    Ok(runs)
 }

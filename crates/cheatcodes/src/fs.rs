@@ -7,13 +7,13 @@ use crate::{
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
 use alloy_network::{Network, ReceiptResponse};
-use alloy_primitives::{Bytes, U256, hex, map::Entry};
+use alloy_primitives::{Bytes, FixedBytes, U256, hex, map::Entry};
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
-use foundry_common::fs;
+use foundry_common::{contracts::ContractData, fs};
 use foundry_config::fs_permissions::FsAccessKind;
-use foundry_evm_core::evm::FoundryEvmNetwork;
+use foundry_evm_core::{FoundryTransaction, env::FoundryContextExt, evm::FoundryEvmNetwork};
 use revm::{
     context::{Cfg, ContextTr, CreateScheme, JournalTr},
     interpreter::CreateInputs,
@@ -288,6 +288,7 @@ impl Cheatcode for removeDirCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { path, recursive } = self;
         let path = state.config.ensure_path_allowed(path, FsAccessKind::Write)?;
+        state.config.ensure_not_foundry_toml(&path)?;
         if *recursive { fs::remove_dir_all(path) } else { fs::remove_dir(path) }?;
         Ok(Default::default())
     }
@@ -377,6 +378,27 @@ impl Cheatcode for getDeployedCodeCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { artifactPath: path } = self;
         Ok(get_artifact_code(state, path, true)?.abi_encode())
+    }
+}
+
+impl Cheatcode for getSelectorsCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { artifactPath: path } = self;
+        let selectors: Vec<FixedBytes<4>> = match get_artifact_source(state, path)? {
+            ArtifactSource::InMemory(data) => data.abi.functions().map(|f| f.selector()).collect(),
+            ArtifactSource::Disk(path) => {
+                let data = read_artifact_file(state, &path)?;
+                // Parse as raw JSON rather than `ContractObject` so we can still read selectors
+                // from artifacts with unlinked bytecode (which `ContractObject` rejects).
+                let json: serde_json::Value = serde_json::from_str(&data)?;
+                let abi =
+                    json.get("abi").ok_or_else(|| fmt_err!("no `abi` field in artifact JSON"))?;
+                let abi: alloy_json_abi::JsonAbi =
+                    serde_json::from_value(abi.clone()).map_err(|e| fmt_err!("{e}"))?;
+                abi.functions().map(|f| f.selector()).collect()
+            }
+        };
+        Ok(selectors.abi_encode())
     }
 }
 
@@ -492,9 +514,31 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     let scheme =
         if let Some(salt) = salt { CreateScheme::Create2 { salt } } else { CreateScheme::Create };
 
-    // If prank active at current depth, then use it as caller for create input.
-    let caller =
-        ccx.state.get_prank(ccx.ecx.journal().depth()).map_or(ccx.caller, |prank| prank.new_caller);
+    // The nested EVM executes the synthetic create one level deeper, so apply the prank at the
+    // original depth just as the native create inspector would.
+    let depth = ccx.ecx.journal().depth();
+    let mut caller = ccx.caller;
+    if let Some(prank) = ccx.state.get_prank(depth).copied()
+        && depth >= prank.depth
+        && caller == prank.prank_caller
+    {
+        let prank_applied = if depth == prank.depth {
+            caller = prank.new_caller;
+            true
+        } else {
+            false
+        };
+        let prank_applied = if let Some(new_origin) = prank.new_origin {
+            ccx.ecx.tx_mut().set_caller(new_origin);
+            true
+        } else {
+            prank_applied
+        };
+
+        if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
+            ccx.state.pranks.insert(depth, applied_prank);
+        }
+    }
 
     let outcome = exec_create(
         executor,
@@ -507,7 +551,19 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
             0,
         ),
         ccx,
-    )?;
+    );
+
+    // Restore the prank state at the original depth as native create cleanup would.
+    if let Some(prank) = ccx.state.get_prank(depth).copied()
+        && depth == prank.depth
+    {
+        ccx.ecx.tx_mut().set_caller(prank.prank_origin);
+        if prank.single_call {
+            std::mem::take(&mut ccx.state.pranks);
+        }
+    }
+
+    let outcome = outcome?;
 
     if !outcome.result.result.is_ok() {
         return Err(crate::Error::from(outcome.result.output));
@@ -518,9 +574,17 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
     Ok(address.abi_encode())
 }
 
-/// Returns the bytecode from a JSON artifact file.
+/// Resolved location of an artifact referenced by a cheatcode path argument.
+enum ArtifactSource<'a> {
+    /// The artifact was matched in the in-memory `available_artifacts` list.
+    InMemory(&'a ContractData),
+    /// The artifact must be read from the given path on disk.
+    Disk(PathBuf),
+}
+
+/// Resolves a cheatcode artifact reference to its source.
 ///
-/// Can parse following input formats:
+/// Can parse the following input formats:
 /// - `path/to/artifact.json`
 /// - `path/to/contract.sol`
 /// - `path/to/contract.sol:ContractName`
@@ -531,6 +595,165 @@ fn deploy_code<FEN: FoundryEvmNetwork>(
 /// - `ContractName`
 /// - `ContractName:0.8.23`
 /// - `ContractName:profile`
+fn get_artifact_source<'a, FEN: FoundryEvmNetwork>(
+    state: &'a Cheatcodes<FEN>,
+    path: &str,
+) -> Result<ArtifactSource<'a>> {
+    if path.ends_with(".json") {
+        let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+        return Ok(ArtifactSource::Disk(path));
+    }
+
+    let parsed =
+        parse_artifact_path(path).map_err(|e| fmt_err!("failed to parse artifact path: {e}"))?;
+    let ParsedArtifactPath { file, contract_name, version, profile } = parsed;
+    let file = file.map(|file| {
+        let cwd = state
+            .config
+            .running_artifact
+            .as_ref()
+            .and_then(|artifact| artifact.source.parent())
+            .unwrap_or(&state.config.paths.root);
+        let relative_cwd = cwd.strip_prefix(&state.config.paths.root).unwrap_or(cwd);
+        let has_matching_remapping = state.config.paths.remappings.iter().any(|remapping| {
+            remapping.context.as_ref().is_none_or(|context| relative_cwd.starts_with(context))
+                && file.strip_prefix(&remapping.name).is_ok()
+        });
+
+        if has_matching_remapping {
+            state.config.paths.resolve_library_import(cwd, &file).map_or(file, |resolved| {
+                resolved.strip_prefix(&state.config.paths.root).unwrap_or(&resolved).to_path_buf()
+            })
+        } else {
+            file
+        }
+    });
+
+    // Use the artifact lookup if present.
+    if let Some(artifacts) =
+        state.config.available_artifacts.as_ref().or(state.config.artifact_lookup.as_ref())
+    {
+        let ambiguous_file_profile =
+            file.is_some() && version.is_none() && profile.is_none() && contract_name.is_some();
+        let filter_artifacts = |treat_ambiguous_as_profile: bool| -> Vec<_> {
+            artifacts
+                .iter()
+                .filter(|(id, _)| {
+                    // name might be in the form of "Counter.0.8.23"
+                    let id_name = id.name.split('.').next().unwrap();
+
+                    if let Some(path) = &file
+                        && !id.source.ends_with(path)
+                    {
+                        return false;
+                    }
+                    if let Some(ref version) = version
+                        && (id.version.minor != version.minor
+                            || id.version.major != version.major
+                            || id.version.patch != version.patch)
+                    {
+                        return false;
+                    }
+                    if let Some(profile) = profile
+                        && id.profile != profile
+                    {
+                        return false;
+                    }
+                    if let Some(name) = contract_name {
+                        if treat_ambiguous_as_profile && ambiguous_file_profile {
+                            return id.profile == name;
+                        }
+
+                        return id_name == name;
+                    }
+
+                    true
+                })
+                .collect()
+        };
+
+        let mut filtered = filter_artifacts(false);
+        if filtered.is_empty() && ambiguous_file_profile {
+            filtered = filter_artifacts(true);
+        }
+
+        let artifact = match &filtered[..] {
+            [] => None,
+            [artifact] => Some(Ok(*artifact)),
+            filtered => {
+                let mut filtered = filtered.to_vec();
+                // If we know the current script/test contract solc version, try to filter by it
+                Some(
+                    state
+                        .config
+                        .running_artifact
+                        .as_ref()
+                        .and_then(|running| {
+                            // Only filter by running version if user did NOT specify a version
+                            if version.is_none() {
+                                filtered.retain(|(id, _)| id.version == running.version);
+
+                                // Return artifact if only one matched
+                                if filtered.len() == 1 {
+                                    return Some(filtered[0]);
+                                }
+                            }
+
+                            // Only filter by running profile if user did NOT specify a profile
+                            if profile.is_none() {
+                                filtered.retain(|(id, _)| id.profile == running.profile);
+
+                                return (filtered.len() == 1).then(|| filtered[0]);
+                            }
+
+                            None
+                        })
+                        .ok_or_else(|| fmt_err!("multiple matching artifacts found")),
+                )
+            }
+        };
+
+        if let Some(artifact) = artifact {
+            return Ok(ArtifactSource::InMemory(artifact?.1));
+        }
+    }
+
+    // Fallback: construct path manually when no artifacts list or no match found
+    let path_in_artifacts = match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
+        (Some(file), Some(contract_name)) => PathBuf::from(format!("{file}/{contract_name}.json")),
+        (None, Some(contract_name)) => {
+            PathBuf::from(format!("{contract_name}.sol/{contract_name}.json"))
+        }
+        (Some(file), None) => {
+            let name = file.replace(".sol", "");
+            PathBuf::from(format!("{file}/{name}.json"))
+        }
+        _ => bail!("invalid artifact path"),
+    };
+
+    let path = state.config.paths.artifacts.join(path_in_artifacts);
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+    Ok(ArtifactSource::Disk(path))
+}
+
+/// Reads an artifact JSON file, mapping I/O errors to a helpful message when the
+/// lookup fell through the in-memory artifacts list.
+fn read_artifact_file<FEN: FoundryEvmNetwork>(
+    state: &Cheatcodes<FEN>,
+    path: &Path,
+) -> Result<String> {
+    fs::read_to_string(path).map_err(|e| {
+        if state.config.available_artifacts.is_some() {
+            fmt_err!("no matching artifact found")
+        } else {
+            e.into()
+        }
+    })
+}
+
+/// Returns the bytecode from a JSON artifact file.
+///
+/// See [`get_artifact_source`] for the supported path formats.
 ///
 /// This function is safe to use with contracts that have library dependencies.
 /// `alloy_json_abi::ContractObject` validates bytecode during JSON parsing and will
@@ -540,166 +763,48 @@ fn get_artifact_code<FEN: FoundryEvmNetwork>(
     path: &str,
     deployed: bool,
 ) -> Result<Bytes> {
-    let path = if path.ends_with(".json") {
-        PathBuf::from(path)
-    } else {
-        let parsed = parse_artifact_path(path)
-            .map_err(|e| fmt_err!("failed to parse artifact path: {e}"))?;
-        let ParsedArtifactPath { file, contract_name, version, profile } = parsed;
-
-        // Use available artifacts list if present
-        if let Some(artifacts) = &state.config.available_artifacts {
-            let ambiguous_file_profile =
-                file.is_some() && version.is_none() && profile.is_none() && contract_name.is_some();
-            let filter_artifacts = |treat_ambiguous_as_profile: bool| -> Vec<_> {
-                artifacts
-                    .iter()
-                    .filter(|(id, _)| {
-                        // name might be in the form of "Counter.0.8.23"
-                        let id_name = id.name.split('.').next().unwrap();
-
-                        if let Some(path) = &file
-                            && !id.source.ends_with(path)
-                        {
-                            return false;
-                        }
-                        if let Some(ref version) = version
-                            && (id.version.minor != version.minor
-                                || id.version.major != version.major
-                                || id.version.patch != version.patch)
-                        {
-                            return false;
-                        }
-                        if let Some(profile) = profile
-                            && id.profile != profile
-                        {
-                            return false;
-                        }
-                        if let Some(name) = contract_name {
-                            if treat_ambiguous_as_profile && ambiguous_file_profile {
-                                return id.profile == name;
-                            }
-
-                            return id_name == name;
-                        }
-
-                        true
-                    })
-                    .collect()
-            };
-
-            let mut filtered = filter_artifacts(false);
-            if filtered.is_empty() && ambiguous_file_profile {
-                filtered = filter_artifacts(true);
-            }
-
-            let artifact = match &filtered[..] {
-                [] => None,
-                [artifact] => Some(Ok(*artifact)),
-                filtered => {
-                    let mut filtered = filtered.to_vec();
-                    // If we know the current script/test contract solc version, try to filter by it
-                    Some(
-                        state
-                            .config
-                            .running_artifact
-                            .as_ref()
-                            .and_then(|running| {
-                                // Only filter by running version if user did NOT specify a version
-                                if version.is_none() {
-                                    filtered.retain(|(id, _)| id.version == running.version);
-
-                                    // Return artifact if only one matched
-                                    if filtered.len() == 1 {
-                                        return Some(filtered[0]);
-                                    }
-                                }
-
-                                // Only filter by running profile if user did NOT specify a profile
-                                if profile.is_none() {
-                                    filtered.retain(|(id, _)| id.profile == running.profile);
-
-                                    return (filtered.len() == 1).then(|| filtered[0]);
-                                }
-
-                                None
-                            })
-                            .ok_or_else(|| fmt_err!("multiple matching artifacts found")),
-                    )
-                }
-            };
-
-            if let Some(artifact) = artifact {
-                let artifact = artifact?;
-                let maybe_bytecode = if deployed {
-                    artifact.1.deployed_bytecode().cloned()
-                } else {
-                    artifact.1.bytecode().cloned()
-                };
-
-                return maybe_bytecode.ok_or_else(|| {
-                    fmt_err!("no bytecode for contract; is it abstract or unlinked?")
-                });
-            }
+    let maybe_bytecode = match get_artifact_source(state, path)? {
+        ArtifactSource::InMemory(data) => {
+            if deployed { data.deployed_bytecode() } else { data.bytecode() }.cloned()
         }
-
-        // Fallback: construct path manually when no artifacts list or no match found
-        let path_in_artifacts = match (file.map(|f| f.to_string_lossy().to_string()), contract_name)
-        {
-            (Some(file), Some(contract_name)) => {
-                PathBuf::from(format!("{file}/{contract_name}.json"))
-            }
-            (None, Some(contract_name)) => {
-                PathBuf::from(format!("{contract_name}.sol/{contract_name}.json"))
-            }
-            (Some(file), None) => {
-                let name = file.replace(".sol", "");
-                PathBuf::from(format!("{file}/{name}.json"))
-            }
-            _ => bail!("invalid artifact path"),
-        };
-
-        state.config.paths.artifacts.join(path_in_artifacts)
+        ArtifactSource::Disk(path) => {
+            let data = read_artifact_file(state, &path)?;
+            let artifact = serde_json::from_str::<ContractObject>(&data)?;
+            if deployed { artifact.deployed_bytecode } else { artifact.bytecode }
+        }
     };
-
-    let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
-    let data = fs::read_to_string(path).map_err(|e| {
-        if state.config.available_artifacts.is_some() {
-            fmt_err!("no matching artifact found")
-        } else {
-            e.into()
-        }
-    })?;
-    let artifact = serde_json::from_str::<ContractObject>(&data)?;
-    let maybe_bytecode = if deployed { artifact.deployed_bytecode } else { artifact.bytecode };
     maybe_bytecode.ok_or_else(|| fmt_err!("no bytecode for contract; is it abstract or unlinked?"))
 }
 
 impl Cheatcode for ffiCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { commandInput: input } = self;
+        let stdout = ffi_stdout(state, input)?;
+        Ok(decode_ffi_stdout(&stdout).abi_encode())
+    }
+}
 
-        let output = ffi(state, input)?;
+impl Cheatcode for ffiUintCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { commandInput: input } = self;
+        parse(&ffi_stdout(state, input)?, &DynSolType::Uint(256))
+    }
+}
 
-        // Check the exit code of the command.
-        if output.exitCode != 0 {
-            // If the command failed, return an error with the exit code and stderr.
-            return Err(fmt_err!(
-                "ffi command {:?} exited with code {}. stderr: {}",
-                input,
-                output.exitCode,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+impl Cheatcode for ffiStringCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { commandInput: input } = self;
+        Ok(ffi_stdout(state, input)?.abi_encode())
+    }
+}
 
-        // If the command succeeded but still wrote to stderr, log it as a warning.
-        if !output.stderr.is_empty() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(target: "cheatcodes", ?input, ?stderr, "ffi command wrote to stderr");
-        }
-
-        // We already hex-decoded the stdout in the `ffi` helper function.
-        Ok(output.stdout.abi_encode())
+impl Cheatcode for ffiBytesCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { commandInput: input } = self;
+        let stdout = ffi_stdout(state, input)?;
+        Ok(hex::decode(&stdout)
+            .map_err(|err| fmt_err!("failed parsing ffi stdout as bytes: {err}"))?
+            .abi_encode())
     }
 }
 
@@ -797,6 +902,43 @@ fn read_dir<FEN: FoundryEvmNetwork>(
 }
 
 fn ffi<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>, input: &[String]) -> Result<FfiResult> {
+    let output = ffi_command(state, input)?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    let stdout = stdout.trim();
+    Ok(FfiResult {
+        exitCode: output.status.code().unwrap_or(69),
+        stdout: decode_ffi_stdout(stdout),
+        stderr: output.stderr.into(),
+    })
+}
+
+fn ffi_stdout<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>, input: &[String]) -> Result<String> {
+    let output = ffi_command(state, input)?;
+    let stdout = String::from_utf8(output.stdout)?;
+    if !output.status.success() {
+        return Err(fmt_err!(
+            "ffi command {:?} exited with code {}. stderr: {}",
+            input,
+            output.status.code().unwrap_or(69),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if !output.stderr.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        warn!(target: "cheatcodes", ?input, ?stderr, "ffi command wrote to stderr");
+    }
+    Ok(stdout.trim().to_string())
+}
+
+fn decode_ffi_stdout(stdout: &str) -> Bytes {
+    hex::decode(stdout).unwrap_or_else(|_| stdout.as_bytes().to_vec()).into()
+}
+
+fn ffi_command<FEN: FoundryEvmNetwork>(
+    state: &Cheatcodes<FEN>,
+    input: &[String],
+) -> Result<std::process::Output> {
     ensure!(
         state.config.ffi,
         "FFI is disabled; add the `--ffi` flag to allow tests to call external commands"
@@ -807,25 +949,9 @@ fn ffi<FEN: FoundryEvmNetwork>(state: &Cheatcodes<FEN>, input: &[String]) -> Res
 
     debug!(target: "cheatcodes", ?cmd, "invoking ffi");
 
-    let output = cmd
-        .current_dir(&state.config.root)
+    cmd.current_dir(&state.config.root)
         .output()
-        .map_err(|err| fmt_err!("failed to execute command {cmd:?}: {err}"))?;
-
-    // The stdout might be encoded on valid hex, or it might just be a string,
-    // so we need to determine which it is to avoid improperly encoding later.
-    let trimmed_stdout = String::from_utf8(output.stdout)?;
-    let trimmed_stdout = trimmed_stdout.trim();
-    let encoded_stdout = if let Ok(hex) = hex::decode(trimmed_stdout) {
-        hex
-    } else {
-        trimmed_stdout.as_bytes().to_vec()
-    };
-    Ok(FfiResult {
-        exitCode: output.status.code().unwrap_or(69),
-        stdout: encoded_stdout.into(),
-        stderr: output.stderr.into(),
-    })
+        .map_err(|err| fmt_err!("failed to execute command {cmd:?}: {err}"))
 }
 
 fn prompt_input(prompt_text: &str) -> Result<String, dialoguer::Error> {
@@ -1037,10 +1163,13 @@ mod tests {
     use foundry_common::ContractsByArtifact;
     use foundry_compilers::{
         ArtifactId,
-        artifacts::{BytecodeObject, CompactBytecode, CompactContractBytecode},
+        artifacts::{
+            BytecodeObject, CompactBytecode, CompactContractBytecode, remappings::Remapping,
+        },
     };
     use foundry_evm_core::evm::TempoEvmNetwork;
-    use std::{env, fs as stdfs, sync::Arc};
+    use std::{env, fs as stdfs, str::FromStr, sync::Arc};
+    use tempfile::TempDir;
 
     fn cheats() -> Cheatcodes {
         let config = CheatsConfig {
@@ -1241,6 +1370,62 @@ mod tests {
             super::get_artifact_code(&cheats, "src/GetCodeProfile.t.sol:paris", false).unwrap();
 
         assert_eq!(bytecode, contract_bytecode);
+    }
+
+    #[test]
+    fn test_get_artifact_code_resolves_remapping() {
+        let bytecode = Bytes::from_static(&[0x60, 0x01]);
+        let artifacts = ContractsByArtifact::new([test_artifact(
+            "src/Something.sol",
+            "Something",
+            "default",
+            bytecode.clone(),
+        )]);
+        let root = PathBuf::from(&env!("CARGO_MANIFEST_DIR"));
+        let paths = foundry_compilers::ProjectPathsConfig::builder()
+            .remapping(Remapping::from_str("@example/=src/").unwrap())
+            .build_with_root(&root);
+        let config = CheatsConfig {
+            available_artifacts: Some(artifacts),
+            root,
+            paths,
+            ..Default::default()
+        };
+        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+
+        let resolved =
+            super::get_artifact_code(&cheats, "@example/Something.sol:Something", false).unwrap();
+
+        assert_eq!(resolved, bytecode);
+    }
+
+    #[test]
+    fn test_get_artifact_code_preserves_project_path_on_library_collision() {
+        let root_bytecode = Bytes::from_static(&[0x60, 0x01]);
+        let library_bytecode = Bytes::from_static(&[0x60, 0x02]);
+        let artifacts = ContractsByArtifact::new([
+            test_artifact("src/Thing.sol", "RootThing", "default", root_bytecode.clone()),
+            test_artifact("lib/src/Thing.sol", "LibThing", "default", library_bytecode),
+        ]);
+        let temp = TempDir::new().unwrap();
+        let library = temp.path().join("lib");
+        stdfs::create_dir_all(library.join("src")).unwrap();
+        stdfs::write(library.join("src/Thing.sol"), "").unwrap();
+        let paths = foundry_compilers::ProjectPathsConfig::builder()
+            .remappings([])
+            .lib(library)
+            .build_with_root(temp.path());
+        let config = CheatsConfig {
+            available_artifacts: Some(artifacts),
+            root: temp.path().to_path_buf(),
+            paths,
+            ..Default::default()
+        };
+        let cheats: Cheatcodes = Cheatcodes::new(Arc::new(config));
+
+        let resolved = super::get_artifact_code(&cheats, "src/Thing.sol:RootThing", false).unwrap();
+
+        assert_eq!(resolved, root_bytecode);
     }
 
     #[test]

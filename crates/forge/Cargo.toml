@@ -52,6 +52,7 @@ forge-script.workspace = true
 forge-sol-macro-gen.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
+foundry-tui.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 
 alloy-chains.workspace = true
@@ -68,21 +69,24 @@ tempo-alloy.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete.workspace = true
+ctrlc = "3"
+dialoguer.workspace = true
 dunce.workspace = true
+flate2.workspace = true
 globset = "0.4"
 indicatif.workspace = true
 inferno = { version = "0.12", default-features = false }
 itertools.workspace = true
 parking_lot.workspace = true
 regex = { workspace = true, default-features = false }
-revm.workspace = true
+revm = { workspace = true, features = ["parse"] }
 semver.workspace = true
 serde_json.workspace = true
 similar = { version = "3", features = ["inline"] }
-solar.workspace = true
-strum = { workspace = true, features = ["derive"] }
+solar = { workspace = true, features = ["clap"] }
+solar-lsp.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["time", "signal"] }
+tokio = { workspace = true, features = ["time", "signal", "process"] }
 toml_edit.workspace = true
 watchexec = "8.0"
 watchexec-events = "6.0"
@@ -93,28 +97,35 @@ path-slash.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 url.workspace = true
 
+axum.workspace = true
+tower-http = { workspace = true, features = ["cors"] }
 opener = "0.8"
 
 # soldeer
 soldeer-commands.workspace = true
 soldeer-core.workspace = true
-quick-junit = "0.6.0"
+quick-junit = "0.7.0"
 tempfile.workspace = true
 
 [dev-dependencies]
+async-lsp.workspace = true
+tokio-util.workspace = true
+futures = { workspace = true, features = ["executor"] }
 alloy-hardforks.workspace = true
 anvil.workspace = true
-axum.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
 
-mockall = "0.14"
+mockall = "0.15"
 globset = "0.4"
 similar-asserts.workspace = true
 svm.workspace = true
 tempfile.workspace = true
 
 alloy-signer-local.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+rexpect.workspace = true
 
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]
@@ -125,6 +136,17 @@ tracy-allocator = ["foundry-cli/tracy-allocator"]
 aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
+touch-id = ["foundry-wallets/touch-id"]
+monad = [
+    "anvil/monad",
+    "foundry-config/monad",
+    "foundry-evm/monad",
+    "foundry-evm-networks/monad",
+    "foundry-common/monad",
+    "foundry-cli/monad",
+    "forge-script/monad",
+    "forge-verify/monad",
+]
 optimism = [
     "foundry-evm/optimism",
     "foundry-evm-networks/optimism",

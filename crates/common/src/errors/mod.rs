@@ -45,14 +45,16 @@ fn all_sources<E: private::ErrorChain + ?Sized>(err: &E) -> Vec<String> {
 pub fn convert_solar_errors(dcx: &solar::interface::diagnostics::DiagCtxt) -> eyre::Result<()> {
     match dcx.emitted_errors() {
         Some(Ok(())) => Ok(()),
-        Some(Err(e)) if !e.is_empty() => eyre::bail!("solar reported errors:\n\n{e}"),
+        Some(Err(e)) if !e.is_empty() => {
+            eyre::bail!("solar reported errors:\n\n{e}");
+        }
         _ if dcx.has_errors().is_err() => {
             // Non-buffer emitter: diagnostics already went to stderr; include the count.
             let n = dcx.err_count();
             let plural = if n == 1 { "" } else { "s" };
             eyre::bail!(
                 "solar reported {n} error{plural}; see the diagnostic{plural} printed above"
-            )
+            );
         }
         _ => Ok(()),
     }

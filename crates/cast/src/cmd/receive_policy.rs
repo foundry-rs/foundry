@@ -1,8 +1,9 @@
 use crate::{
     cmd::{
-        keychain::is_tempo_hardfork_active,
+        keychain::ensure_tempo_precompile_active,
         tip20::{resolve_tip20_signer, send_tip20_transaction},
     },
+    tempo::print_payload,
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
@@ -399,16 +400,13 @@ async fn ensure_receive_policy_t6<P>(provider: &P, command: &str) -> Result<()>
 where
     P: Provider<TempoNetwork>,
 {
-    // Prefer the hardfork query, but if it is unavailable (e.g. an older RPC without the method)
-    // fall back to checking whether the guard precompile has code.
-    let active = match is_tempo_hardfork_active(provider, TempoHardfork::T6).await {
-        Ok(active) => active,
-        Err(_) => !provider.get_code_at(RECEIVE_POLICY_GUARD_ADDRESS).await?.is_empty(),
-    };
-    if !active {
-        eyre::bail!("{command} requires a Tempo T6-capable ReceivePolicy RPC");
-    }
-    Ok(())
+    ensure_tempo_precompile_active(
+        provider,
+        TempoHardfork::T6,
+        RECEIVE_POLICY_GUARD_ADDRESS,
+        &format!("{command} requires a Tempo T6-capable ReceivePolicy RPC"),
+    )
+    .await
 }
 
 async fn burn_receipt(receipt: Bytes, send_tx: SendTxOpts, tx: TxParams) -> Result<()> {
@@ -622,18 +620,6 @@ fn print_claim_hint(payload: &Value) -> Result<()> {
     } else {
         sh_println!("\nClaim path: cast receive-policy claim {recipient} {receipt}")
     }
-}
-
-fn print_payload<F>(payload: Value, human: F) -> Result<()>
-where
-    F: FnOnce(&Value) -> Result<()>,
-{
-    if shell::is_json() {
-        print_json_success(payload)?;
-    } else {
-        human(&payload)?;
-    }
-    Ok(())
 }
 
 fn recovery_mode(recovery_authority: Address) -> &'static str {

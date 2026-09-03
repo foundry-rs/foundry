@@ -1,6 +1,6 @@
 use super::UIfmt;
 use alloy_primitives::{Address, Bytes, FixedBytes, I256, U256};
-use comfy_table::{Table, TableComponent, presets::UTF8_FULL};
+use comfy_table::{ContentLineStyle, LineStyle, Table, TableStyle};
 use std::fmt::{self, Write};
 
 /// A piece is a portion of the format string which represents the next part to emit.
@@ -418,18 +418,16 @@ pub fn console_table_format(
     };
     let values_strings: Vec<String> = values.iter().map(|v| v.fmt(FormatSpec::String)).collect();
 
+    const STYLE: TableStyle = TableStyle::new()
+        .top_border(LineStyle::new('┌', '─', '┬', '┐'))
+        .header_lines(ContentLineStyle::new('│', '│', '│'))
+        .header_separator(LineStyle::new('├', '─', '┼', '┤'))
+        .content_lines(ContentLineStyle::new('│', '│', '│'))
+        .bottom_border(LineStyle::new('└', '─', '┴', '┘'));
+
     let mut table = Table::new();
-    table.load_preset(UTF8_FULL);
-    table.set_style(TableComponent::VerticalLines, '│');
-    table.set_style(TableComponent::HeaderLines, '─');
-    table.set_style(TableComponent::MiddleHeaderIntersections, '┼');
-    table.set_style(TableComponent::LeftHeaderIntersection, '├');
-    table.set_style(TableComponent::RightHeaderIntersection, '┤');
+    table.load_style(STYLE);
     table.set_header(vec!["(index)", "Values"]);
-    table.remove_style(TableComponent::HorizontalLines);
-    table.remove_style(TableComponent::MiddleIntersections);
-    table.remove_style(TableComponent::LeftBorderIntersections);
-    table.remove_style(TableComponent::RightBorderIntersections);
     for i in 0..keys_strings.len().max(values_strings.len()) {
         let key = keys_strings.get(i).map(String::as_str).unwrap_or("");
         let value = values_strings.get(i).map(String::as_str).unwrap_or("");

@@ -1,19 +1,19 @@
 use crate::{
     Cast, SimpleCast,
     cmd::erc20::IERC20,
-    introspect::REGISTRY,
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
     tx::CastTxSender,
 };
+use alloy_consensus::Typed2718;
 use alloy_dyn_abi::{ErrorExt, EventExt};
-use alloy_eips::eip7702::SignedAuthorization;
+use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_ens::{ProviderEnsExt, namehash};
 use alloy_network::{Ethereum, eip2718::Decodable2718};
 use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
-use clap::CommandFactory;
+use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -31,9 +31,10 @@ use foundry_common::{
         pretty_calldata,
     },
     shell, stdin,
+    tempo::{PaymentLaneClassification, classify_payment_lane},
 };
 use foundry_evm_networks::NetworkVariant;
-use foundry_primitives::{FoundryTxEnvelope, PaymentLaneClassification};
+use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 use std::time::Instant;
@@ -42,15 +43,11 @@ use tempo_contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_A
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
-    // Pre-parse discovery flags run before `setup()` so they cannot be blocked
-    // by panic-handler / tracing init failures and avoid that init's cost.
-    foundry_cli::machine::check_machine();
-    foundry_cli::opts::GlobalArgs::check_introspect_with(CastArgs::command, &REGISTRY);
     foundry_cli::opts::GlobalArgs::check_markdown_help::<CastArgs>();
 
     setup()?;
 
-    let args = foundry_cli::parse_or_exit::<CastArgs>();
+    let args = CastArgs::parse();
     args.global.init()?;
     args.global.tokio_runtime().block_on(run_command(args))
 }
@@ -206,6 +203,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let out = SimpleCast::to_bytes32(&value)?;
             print_scalar(out)?;
         }
+        CastSubcommand::ToBytesMemory { data } => {
+            let value = stdin::unwrap_line(data)?;
+            let out = SimpleCast::to_bytes_memory(&value)?;
+            print_scalar(out)?;
+        }
         CastSubcommand::Pad { data, right, left: _, len } => {
             let value = stdin::unwrap_line(data)?;
             let out = SimpleCast::pad(&value, right, len)?;
@@ -310,7 +312,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     get_event(event.signature().as_str())?
                         .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
                 } else {
-                    eyre::bail!("No matching event signature found for selector `{selector}`")
+                    eyre::bail!("No matching event signature found for selector `{selector}`");
                 }
             };
             print_tokens(&decoded_event.body)?;
@@ -327,7 +329,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     let _ = sh_println!("{}", error.signature());
                     error
                 } else {
-                    eyre::bail!("No matching error signature found for selector `{selector}`")
+                    eyre::bail!("No matching error signature found for selector `{selector}`");
                 }
             };
             let decoded_error = error.decode_error(&hex::decode(data)?)?;
@@ -374,18 +376,21 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             );
             print_scalar(out)?;
         }
-        CastSubcommand::Balance { block, who, ether, rpc, erc20 } => {
+        CastSubcommand::Balance { block, who, ether, rpc, erc20, overrides } => {
+            if erc20.is_none() && !overrides.is_empty() {
+                eyre::bail!("call overrides require `--erc20` when using `cast balance`");
+            }
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
             let account_addr = who.resolve(&provider).await?;
 
             match erc20 {
                 Some(token) => {
-                    let balance = IERC20::new(token, &provider)
-                        .balanceOf(account_addr)
-                        .block(block.unwrap_or_default())
-                        .call()
-                        .await?;
+                    let token = IERC20::new(token, &provider);
+                    let balance_call =
+                        token.balanceOf(account_addr).block(block.unwrap_or_default());
+                    let call = balance_call.call();
+                    let balance = overrides.apply(call)?.await?;
 
                     sh_warn!("--erc20 flag is deprecated, use `cast erc20 balance` instead")?;
                     print_scalar(format_uint_exp(balance))?;
@@ -723,28 +728,65 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
             let is_raw = raw || field.as_ref().is_some_and(|f| f == "raw");
-            let output = match network {
-                #[cfg(feature = "optimism")]
-                Some(NetworkVariant::Optimism) => {
-                    let provider = ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
+            let output = if is_raw || lane {
+                let encoded = match network {
+                    #[cfg(feature = "optimism")]
+                    Some(NetworkVariant::Optimism) => {
+                        let provider =
+                            ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
+                        let tx =
+                            Cast::new(&provider).transaction_response(tx_hash, from, nonce).await?;
+                        tx.as_ref().encoded_2718().into()
+                    }
+                    Some(NetworkVariant::Tempo) => {
+                        let provider =
+                            ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                        let tx =
+                            Cast::new(&provider).transaction_response(tx_hash, from, nonce).await?;
+                        tx.as_ref().encoded_2718().into()
+                    }
+                    _ => {
+                        let provider = utils::get_provider(&config)?;
+                        let tx =
+                            Cast::new(&provider).transaction_response(tx_hash, from, nonce).await?;
+                        FoundryTxEnvelope::encode_rpc_2718(&tx).wrap_err_with(|| {
+                            format!("Cannot EIP-2718 encode transaction type 0x{:x}", tx.ty())
+                        })?
+                    }
+                };
 
-                    Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
-                        .await?
+                if lane {
+                    FoundryTxEnvelope::decode_2718(&mut encoded.as_ref())
+                        .wrap_err("failed to decode transaction for lane classification")?;
+                    format_lane_classification(&classify_payment_lane(&encoded))?
+                } else {
+                    format!("0x{}", hex::encode(encoded))
                 }
-                Some(NetworkVariant::Tempo) => {
-                    let provider =
-                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-                    Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
-                        .await?
-                }
-                // Ethereum (default) or no --raw flag
-                _ => {
-                    let provider = utils::get_provider(&config)?;
-                    Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
-                        .await?
+            } else {
+                match network {
+                    #[cfg(feature = "optimism")]
+                    Some(NetworkVariant::Optimism) => {
+                        let provider =
+                            ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
+
+                        Cast::new(&provider)
+                            .transaction(tx_hash, from, nonce, field, false, to_request, false)
+                            .await?
+                    }
+                    Some(NetworkVariant::Tempo) => {
+                        let provider =
+                            ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                        Cast::new(&provider)
+                            .transaction(tx_hash, from, nonce, field, false, to_request, false)
+                            .await?
+                    }
+                    // Ethereum (default) or no --raw flag
+                    _ => {
+                        let provider = utils::get_provider(&config)?;
+                        Cast::new(&provider)
+                            .transaction(tx_hash, from, nonce, field, false, to_request, false)
+                            .await?
+                    }
                 }
             };
             print_json_value_or_scalar(output)?;
@@ -782,7 +824,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             });
 
             let sig = match sigs.len() {
-                0 => eyre::bail!("No signatures found"),
+                0 => {
+                    eyre::bail!("No signatures found");
+                }
                 1 => sigs.first().unwrap(),
                 _ => {
                     let i: usize = prompt!("Select a function signature by number: ")?;
@@ -934,13 +978,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
         }
         CastSubcommand::Create2(cmd) => {
-            cmd.run()?;
+            cmd.execute()?;
         }
         CastSubcommand::Wallet { command } => command.run().await?,
+        CastSubcommand::Safe { command } => command.run().await?,
         CastSubcommand::Completions { shell } => {
             generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
         }
         CastSubcommand::Logs(cmd) => cmd.run().await?,
+        CastSubcommand::Events(cmd) => cmd.run().await?,
         CastSubcommand::DecodeTransaction { tx, network } => {
             let tx = stdin::unwrap_line(tx)?;
             let decoded_tx = match network {
@@ -951,7 +997,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Some(NetworkVariant::Tempo) => {
                     SimpleCast::decode_raw_transaction::<TempoNetwork>(&tx)?
                 }
-                _ => SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?,
+                Some(NetworkVariant::Ethereum) => {
+                    SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?
+                }
+                #[cfg(feature = "monad")]
+                Some(NetworkVariant::Monad) => SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?,
+                // Without an explicit `--network` override, decode with the Foundry envelope,
+                // which dispatches on the EIP-2718 type byte for the transaction types compiled
+                // into `FoundryNetwork`, including Tempo txs (`0x76`).
+                None => SimpleCast::decode_raw_transaction::<FoundryNetwork>(&tx)?,
             };
             print_json_object(decoded_tx)?;
         }
@@ -965,6 +1019,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Tip20Token { command } => command.run().await?,
         CastSubcommand::ReceivePolicy { command } => command.run().await?,
         CastSubcommand::Tip403 { command } => command.run().await?,
+        CastSubcommand::StorageCredits { command } => command.run().await?,
         CastSubcommand::Keychain { command } => command.run().await?,
         CastSubcommand::KeyAuthorization { command } => command.run().await?,
         CastSubcommand::Tempo { command } => command.run().await?,
@@ -982,9 +1037,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 pub(crate) fn classify_raw_transaction_output(raw_tx: &str) -> Result<String> {
     let raw_tx = hex::decode(raw_tx)?;
     let mut data = raw_tx.as_slice();
-    let tx =
-        FoundryTxEnvelope::decode_2718(&mut data).wrap_err("failed to decode raw transaction")?;
-    format_lane_classification(&tx.classify_t5_payment_lane())
+    FoundryTxEnvelope::decode_2718(&mut data).wrap_err("failed to decode raw transaction")?;
+    format_lane_classification(&classify_payment_lane(&raw_tx))
 }
 
 pub(crate) fn format_lane_classification(
@@ -994,104 +1048,5 @@ pub(crate) fn format_lane_classification(
         Ok(serde_json::to_string_pretty(classification)?)
     } else {
         Ok(serde_json::to_string(classification)?)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use foundry_cli::introspect::{
-        CommandRegistry, INTROSPECT_SCHEMA_ID, IntrospectDocument, OutputMode, build_document,
-        capability_violations, duplicate_command_ids, render_introspect_document,
-    };
-
-    /// Every `command_id` exposed by `cast --introspect` MUST be unique.
-    /// This is the foundation of the agent contract — agents key on
-    /// `command_id` to identify commands, and duplicates would silently break
-    /// downstream tooling.
-    ///
-    /// Cast's clap tree is large and exhausts the default test-thread stack
-    /// (2 MiB) when constructed in debug builds, so we spawn a worker thread
-    /// with an explicit, generous stack size.
-    #[test]
-    fn introspect_command_ids_are_unique() {
-        let dups = std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let cmd = CastArgs::command();
-                let doc = build_document(&cmd, &REGISTRY);
-                duplicate_command_ids(&doc)
-            })
-            .expect("spawn worker thread")
-            .join()
-            .expect("worker thread join");
-        assert!(dups.is_empty(), "duplicate cast command_ids: {dups:?}");
-    }
-
-    /// `cast --introspect` must produce a JSON document that parses back into
-    /// the canonical `IntrospectDocument` shape. Runs on a 16 MiB worker
-    /// thread for the same reason as the uniqueness check above.
-    #[test]
-    fn introspect_document_is_valid_json() {
-        let json = std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let cmd = CastArgs::command();
-                render_introspect_document(&cmd, &CommandRegistry::EMPTY)
-            })
-            .expect("spawn worker thread")
-            .join()
-            .expect("worker thread join");
-        let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
-        assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
-        assert_eq!(doc.binary.name, "cast");
-    }
-
-    /// Capability self-consistency: any command declaring an output mode
-    /// must wire the matching schema reference. See
-    /// [`capability_violations`].
-    #[test]
-    fn introspect_capabilities_are_consistent() {
-        let v = std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let cmd = CastArgs::command();
-                let doc = build_document(&cmd, &REGISTRY);
-                capability_violations(&doc)
-            })
-            .expect("spawn worker thread")
-            .join()
-            .expect("worker thread join");
-        assert!(v.is_empty(), "cast capability violations: {v:?}");
-    }
-
-    /// Every adopted command (`output_mode = Envelope`) must pin a stable
-    /// `command_id` matching its registry entry.
-    #[test]
-    fn registered_commands_pin_stable_ids() {
-        let ids = std::thread::Builder::new()
-            .stack_size(16 * 1024 * 1024)
-            .spawn(|| {
-                let cmd = <CastArgs as clap::CommandFactory>::command();
-                let doc = build_document(&cmd, &REGISTRY);
-                fn walk(c: &foundry_cli::introspect::CommandInfo) -> Vec<String> {
-                    let mut out = Vec::new();
-                    if matches!(c.capabilities.output_mode, OutputMode::Envelope) {
-                        out.push(c.command_id.clone());
-                    }
-                    for sub in &c.subcommands {
-                        out.extend(walk(sub));
-                    }
-                    out
-                }
-                doc.commands.iter().flat_map(walk).collect::<Vec<_>>()
-            })
-            .expect("spawn worker thread")
-            .join()
-            .expect("worker thread join");
-        assert!(
-            ids.iter().any(|s| s == "cast.call"),
-            "cast.call missing from envelope ids: {ids:?}"
-        );
     }
 }

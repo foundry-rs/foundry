@@ -25,7 +25,7 @@ use revm::context::{ContextTr, JournalTr};
 pub use Vm::ForgeContext;
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
-pub use foundry_evm_core::evm::NestedEvmClosure;
+pub use foundry_evm_core::evm::NestedEvmClosureFor;
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
 };
@@ -53,6 +53,9 @@ mod inspector;
 pub use inspector::CheatcodeAnalysis;
 
 mod json;
+
+#[cfg(feature = "monad")]
+mod monad;
 
 mod script;
 pub use script::{Wallets, WalletsInner};

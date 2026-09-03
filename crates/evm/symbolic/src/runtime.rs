@@ -1,22 +1,25 @@
 use super::{abi::*, *};
 
 mod address;
+mod bytes;
 mod calldata;
 mod cheatcodes;
 mod control;
 mod evm;
-mod expressions;
+mod expr;
 mod memory;
 mod precompiles;
 mod solver;
 mod state;
+mod symbols;
 
 pub(crate) use address::*;
+pub(crate) use bytes::*;
 pub(crate) use calldata::*;
 pub(crate) use cheatcodes::*;
 pub(crate) use control::*;
 pub(crate) use evm::*;
-pub(crate) use expressions::*;
+pub(crate) use expr::*;
 pub(crate) use memory::*;
 pub(crate) use precompiles::*;
 pub use solver::PortfolioDiagnostics;
@@ -25,13 +28,41 @@ pub(crate) use solver::{
 };
 #[cfg(test)]
 pub(crate) use solver::{
-    SolverCommand, SolverConfigError, SolverOutcome, SolverRunSummary, expr_contains_hard_arith,
-    fallback_single_var_model, hard_arith_fallback_model, named_solver_command,
-    normalize_bool_for_solver, normalize_constraints_for_solver, normalize_expr_for_solver,
-    parse_model, product_monotonic_unsat, solver_commands_for_config, split_solver_command,
+    SolverCommand, SolverConfigError, SolverOutcome, SolverRunSummary, fallback_single_var_model,
+    hard_arith_fallback_model, named_solver_command, normalize_bool_for_solver,
+    normalize_constraints_for_solver, normalize_expr_for_solver, parse_model,
+    product_monotonic_unsat, solver_commands_for_config, split_solver_command,
     validate_solver_model_output,
 };
 pub(crate) use state::*;
+pub(crate) use symbols::*;
+
+/// One comparison site from a fuzz branch frontier to target during symbolic execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SymbolicBranchTarget {
+    /// Contract address where the comparison executed.
+    address: Address,
+    /// Program counter of the comparison opcode.
+    pc: usize,
+    /// Comparison opcode.
+    opcode: u8,
+    /// Concrete result observed by fuzzing. Symbolic execution targets the opposite result.
+    result: bool,
+}
+
+impl SymbolicBranchTarget {
+    pub const fn new(address: Address, pc: usize, opcode: u8, result: bool) -> Self {
+        Self { address, pc, opcode, result }
+    }
+
+    pub(crate) const fn result(self) -> bool {
+        self.result
+    }
+
+    pub(crate) fn matches(self, address: Address, pc: usize, opcode: u8) -> bool {
+        self.address == address && self.pc == pc && self.opcode == opcode
+    }
+}
 
 pub struct SymbolicRunInput<'a, FEN: FoundryEvmNetwork> {
     /// Concrete Foundry executor used as the source of deployed bytecode and backend state.
@@ -46,6 +77,12 @@ pub struct SymbolicRunInput<'a, FEN: FoundryEvmNetwork> {
     pub value: U256,
     /// Whether symbolic `vm.ffi` calls are allowed to execute subprocesses.
     pub ffi_enabled: bool,
+    /// Whether to return one successful concrete input when execution is safe.
+    pub collect_success_input: bool,
+    /// Concrete fuzz corpus entries used as path-priority hints.
+    pub corpus_seeds: Vec<SymbolicConcreteInput>,
+    /// Optional comparison site whose opposite branch should be solved.
+    pub branch_target: Option<SymbolicBranchTarget>,
 }
 
 /// Error returned by the internal symbolic executor.
@@ -94,6 +131,9 @@ pub enum SymbolicError {
     /// The solver returned `unknown`.
     #[error("solver returned unknown")]
     SolverUnknown,
+    /// The configured symbolic execution timeout was exceeded.
+    #[error("symbolic execution timeout exceeded ({0}s)")]
+    Timeout(u32),
     /// The configured maximum number of solver queries was reached.
     #[error("symbolic solver query limit exceeded ({0})")]
     SolverQueryLimit(usize),
@@ -103,14 +143,13 @@ pub enum SymbolicError {
 }
 
 impl SymbolicError {
-    /// Implements the `stop_reason` symbolic runtime helper.
     pub(super) const fn stop_reason(&self) -> SymbolicStopReason {
         match self {
             Self::Unsupported(_)
             | Self::CalldataVariantLimit(_)
             | Self::UnsupportedOpcode(_)
             | Self::SolverQueryLimit(_) => SymbolicStopReason::Stuck,
-            Self::SolverUnknown => SymbolicStopReason::Timeout,
+            Self::SolverUnknown | Self::Timeout(_) => SymbolicStopReason::Timeout,
             Self::Solver(_)
             | Self::MissingAccount(_)
             | Self::MissingCode(_)
@@ -126,10 +165,9 @@ impl SymbolicError {
 }
 
 impl fmt::Display for SymbolicRunResult {
-    /// Implements the `fmt` symbolic runtime helper.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Safe(stats) => write!(f, "safe after {} paths", stats.paths),
+            Self::Safe { stats, .. } => write!(f, "safe after {} paths", stats.paths),
             Self::Counterexample { stats, .. } => {
                 write!(f, "counterexample after {} paths", stats.paths)
             }

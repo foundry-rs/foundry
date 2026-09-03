@@ -119,7 +119,9 @@ fn get_bin_op_parts<'a>(
     match &expr.kind {
         ExprKind::Assign(lhs, Some(op), rhs) => Ok((*op, op.span, lhs, rhs, true)),
         ExprKind::Binary(lhs, op, rhs) => Ok((*op, op.span, lhs, rhs, false)),
-        _ => eyre::bail!("BinaryOpMutator: unexpected expression kind"),
+        _ => {
+            eyre::bail!("BinaryOpMutator: unexpected expression kind");
+        }
     }
 }
 

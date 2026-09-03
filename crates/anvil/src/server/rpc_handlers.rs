@@ -27,12 +27,11 @@ impl HttpEthRpcHandler {
     }
 }
 
-#[async_trait::async_trait]
 impl RpcHandler for HttpEthRpcHandler {
     type Request = EthRequest;
 
-    async fn on_request(&self, request: Self::Request) -> ResponseResult {
-        self.api.execute(request).await
+    fn on_request(&self, request: Self::Request) -> impl Future<Output = ResponseResult> + Send {
+        self.api.execute(request)
     }
 }
 
@@ -114,10 +113,28 @@ impl PubSubEthRpcHandler {
                         }
                     }
                     SubscriptionKind::TransactionReceipts => {
-                        return RpcError::internal_error_with("Not implemented").into();
+                        trace!(target: "rpc::ws", "received transaction receipts subscription");
+                        match *raw_params {
+                            Params::None => EthSubscription::TransactionReceipts(
+                                self.api.transaction_receipts_subscription(Default::default()),
+                                id.clone(),
+                            ),
+                            Params::TransactionReceipts(filter) => {
+                                EthSubscription::TransactionReceipts(
+                                    self.api.transaction_receipts_subscription(filter),
+                                    id.clone(),
+                                )
+                            }
+                            _ => {
+                                return ResponseResult::Error(RpcError::invalid_params(
+                                    "Expected transactionReceipts params",
+                                ));
+                            }
+                        }
                     }
                     SubscriptionKind::Syncing => {
-                        return RpcError::internal_error_with("Not implemented").into();
+                        trace!(target: "rpc::ws", "received syncing subscription");
+                        EthSubscription::Syncing(Some(id.clone()))
                     }
                 };
 
@@ -130,7 +147,6 @@ impl PubSubEthRpcHandler {
     }
 }
 
-#[async_trait::async_trait]
 impl PubSubRpcHandler for PubSubEthRpcHandler {
     type Request = EthRpcCall;
     type SubscriptionId = SubscriptionId;

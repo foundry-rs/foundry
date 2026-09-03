@@ -7,6 +7,7 @@ use solar::{
     ast::{ContractKind, DataLocation, FunctionKind, StateMutability, Visibility},
     interface::{Symbol, kw, sym},
     sema::{
+        Gcx,
         builtins::Builtin,
         hir::{self, ContractId, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId},
     },
@@ -24,7 +25,7 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
+        gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         contract_id: ContractId,
     ) {
@@ -59,8 +60,12 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
             }
 
             let Some(body) = func.body else { continue };
-            let mut analyzer =
-                StateWriteAnalyzer { hir, bases: contract.linearized_bases, stack: Vec::new() };
+            let mut analyzer = StateWriteAnalyzer {
+                gcx,
+                hir,
+                bases: contract.linearized_bases,
+                stack: Vec::new(),
+            };
             if analyzer.block_writes_state(body) {
                 ctx.emit(&UNPROTECTED_INITIALIZER, func.name.map_or(func.span, |name| name.span));
             }
@@ -444,6 +449,7 @@ impl<'hir> CallNameFinder<'_, 'hir> {
 }
 
 struct StateWriteAnalyzer<'hir> {
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
     bases: &'hir [ContractId],
     stack: Vec<FunctionId>,
@@ -491,19 +497,19 @@ impl<'hir> StateWriteAnalyzer<'hir> {
     fn expr_writes_state(&mut self, expr: &'hir hir::Expr<'hir>) -> bool {
         match &expr.kind {
             ExprKind::Assign(lhs, _, rhs) => {
-                lhs_writes_state(self.hir, lhs)
+                lhs_writes_state(self.gcx, self.hir, lhs)
                     || self.expr_writes_state(lhs)
                     || self.expr_writes_state(rhs)
             }
             ExprKind::Delete(inner) => {
-                lhs_writes_state(self.hir, inner) || self.expr_writes_state(inner)
+                lhs_writes_state(self.gcx, self.hir, inner) || self.expr_writes_state(inner)
             }
             ExprKind::Unary(op, inner) => {
-                (op.kind.has_side_effects() && lhs_writes_state(self.hir, inner))
+                (op.kind.has_side_effects() && lhs_writes_state(self.gcx, self.hir, inner))
                     || self.expr_writes_state(inner)
             }
             ExprKind::Call(callee, args, opts) => {
-                if member_call_writes_state(self.hir, callee) {
+                if member_call_writes_state(self.gcx, self.hir, callee) {
                     return true;
                 }
 
@@ -566,34 +572,38 @@ impl<'hir> StateWriteAnalyzer<'hir> {
     }
 }
 
-fn member_call_writes_state(hir: &hir::Hir<'_>, callee: &hir::Expr<'_>) -> bool {
+fn member_call_writes_state(gcx: Gcx<'_>, hir: &hir::Hir<'_>, callee: &hir::Expr<'_>) -> bool {
     let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
-    matches!(member.as_str(), "push" | "pop") && lhs_writes_state(hir, base)
+    matches!(member.as_str(), "push" | "pop") && lhs_writes_state(gcx, hir, base)
 }
 
-fn lhs_writes_state(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+fn lhs_writes_state(gcx: Gcx<'_>, hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Ident(resolutions) => {
             resolutions.iter().any(|res| matches!(res, Res::Item(ItemId::Variable(var_id)) if hir.variable(*var_id).kind.is_state()))
         }
         ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) | ExprKind::Member(base, _) => {
-            expr_references_storage(hir, base)
+            expr_references_storage(gcx, hir, base)
         }
+        ExprKind::Call(..) => expr_references_storage(gcx, hir, expr),
         ExprKind::Tuple(exprs) => {
-            exprs.iter().flatten().any(|expr| lhs_writes_state(hir, expr))
+            exprs.iter().flatten().any(|expr| lhs_writes_state(gcx, hir, expr))
         }
         _ => false,
     }
 }
 
-fn expr_references_storage(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+fn expr_references_storage(gcx: Gcx<'_>, hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Ident(resolutions) => resolutions.iter().any(|res| {
             matches!(res, Res::Item(ItemId::Variable(var_id)) if variable_references_storage(hir.variable(*var_id)))
         }),
         ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) | ExprKind::Member(base, _) => {
-            expr_references_storage(hir, base)
+            expr_references_storage(gcx, hir, base)
         }
+        ExprKind::Call(..) | ExprKind::Ternary(..) => gcx
+            .type_of_expr(expr.peel_parens().id)
+            .is_some_and(|ty| ty.loc() == Some(DataLocation::Storage)),
         _ => false,
     }
 }

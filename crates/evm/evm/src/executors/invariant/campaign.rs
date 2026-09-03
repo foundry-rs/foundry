@@ -2,7 +2,7 @@ use super::{
     FailureKey, InvariantFailureMetrics, InvariantFailures, InvariantFuzzError,
     InvariantFuzzTestResult, InvariantMetrics,
 };
-use crate::executors::{EarlyExit, corpus::CampaignCorpusEntry};
+use crate::executors::{EarlyExit, EvmExecutionCancellation};
 use alloy_primitives::{Address, I256, Selector};
 use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
@@ -10,7 +10,7 @@ use foundry_evm_fuzz::BasicTxDetails;
 use std::{
     collections::{HashMap, HashSet},
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -74,12 +74,11 @@ pub struct InvariantWorkerPlan {
 /// Shared state used only to coordinate invariant worker execution.
 pub struct InvariantCampaignState {
     started_at: Instant,
-    timeout: Option<Duration>,
+    timed: bool,
     total_runs: AtomicU32,
     total_txs: AtomicU64,
     total_gas: AtomicU64,
-    terminal_stop: AtomicBool,
-    global_early_exit: EarlyExit,
+    cancellation: EvmExecutionCancellation,
     last_metrics_report: Mutex<Instant>,
     failure_metrics: Mutex<CampaignFailureMetrics>,
 }
@@ -93,14 +92,20 @@ struct CampaignFailureMetrics {
 impl InvariantCampaignState {
     pub fn new(early_exit: EarlyExit, timeout: Option<u32>) -> Self {
         let started_at = Instant::now();
+        let deadline = timeout
+            .map(|timeout| Duration::from_secs(timeout.into()))
+            .and_then(|timeout| started_at.checked_add(timeout));
         Self {
             started_at,
-            timeout: timeout.map(|timeout| Duration::from_secs(timeout.into())),
+            timed: timeout.is_some(),
             total_runs: AtomicU32::new(0),
             total_txs: AtomicU64::new(0),
             total_gas: AtomicU64::new(0),
-            terminal_stop: AtomicBool::new(false),
-            global_early_exit: early_exit,
+            cancellation: EvmExecutionCancellation::campaign(
+                early_exit,
+                Arc::new(AtomicBool::new(false)),
+                deadline,
+            ),
             last_metrics_report: Mutex::new(started_at),
             failure_metrics: Mutex::new(CampaignFailureMetrics::default()),
         }
@@ -129,21 +134,15 @@ impl InvariantCampaignState {
     }
 
     pub const fn is_timed_campaign(&self) -> bool {
-        self.timeout.is_some()
-    }
-
-    pub fn is_timed_out(&self) -> bool {
-        self.timeout.is_some_and(|duration| self.elapsed() > duration)
+        self.timed
     }
 
     pub fn should_stop(&self) -> bool {
-        self.global_early_exit.should_stop()
-            || self.terminal_stop.load(Ordering::Relaxed)
-            || self.is_timed_out()
+        self.cancellation.should_stop(true)
     }
 
     pub fn request_terminal_stop(&self) {
-        self.terminal_stop.store(true, Ordering::Relaxed);
+        self.cancellation.request_stop();
     }
 
     pub fn should_emit_metrics_report(&self, interval: Duration) -> bool {
@@ -173,11 +172,17 @@ impl InvariantCampaignState {
     pub(super) fn sync_handler_failures(&self, failures: &InvariantFailures) {
         let mut failure_metrics =
             self.failure_metrics.lock().expect("failure metrics lock poisoned");
-        for key in failures.failures.keys() {
+        for (key, error) in &failures.failures {
             let FailureKey::Handler(addr, selector) = key else { continue };
-            failure_metrics.handler_sites.insert((*addr, *selector));
+            if failure_metrics.handler_sites.insert((*addr, *selector)) {
+                let reason = error.revert_reason().unwrap_or_default();
+                failure_metrics.metrics.record_handler_failure(*addr, *selector, &reason);
+            }
         }
-        failure_metrics.metrics.broken_handlers = failure_metrics.handler_sites.len();
+        debug_assert_eq!(
+            failure_metrics.metrics.broken_handlers,
+            failure_metrics.handler_sites.len()
+        );
     }
 
     pub(super) fn failure_metrics(&self) -> InvariantFailureMetrics {
@@ -185,7 +190,11 @@ impl InvariantCampaignState {
     }
 
     pub const fn early_exit(&self) -> &EarlyExit {
-        &self.global_early_exit
+        self.cancellation.early_exit_ref()
+    }
+
+    pub const fn cancellation(&self) -> &EvmExecutionCancellation {
+        &self.cancellation
     }
 }
 
@@ -197,13 +206,12 @@ impl InvariantCampaignState {
 pub struct InvariantWorkerOutput {
     pub plan: InvariantWorkerPlan,
     pub result: InvariantFuzzTestResult,
-    pub corpus_entries: Vec<CampaignCorpusEntry>,
 }
 
 impl InvariantWorkerOutput {
     #[cfg(test)]
     pub const fn new(plan: InvariantWorkerPlan, result: InvariantFuzzTestResult) -> Self {
-        Self { plan, result, corpus_entries: Vec::new() }
+        Self { plan, result }
     }
 }
 
@@ -236,14 +244,10 @@ impl InvariantCampaignAggregator {
     /// Validates the collected worker ranges and folds them into one logical campaign result.
     #[cfg(test)]
     pub fn finish(self) -> Result<InvariantFuzzTestResult> {
-        Ok(self.finish_with_corpus_entries()?.0)
+        self.finish_campaign()
     }
 
-    /// Validates the collected worker ranges and folds them into one logical campaign result with
-    /// corpus artifacts selected in logical worker order.
-    pub fn finish_with_corpus_entries(
-        mut self,
-    ) -> Result<(InvariantFuzzTestResult, Vec<CampaignCorpusEntry>)> {
+    pub fn finish_campaign(mut self) -> Result<InvariantFuzzTestResult> {
         ensure!(!self.outputs.is_empty(), "missing invariant worker output");
 
         self.outputs.sort_by_key(|output| output.plan.first_global_run);
@@ -257,9 +261,7 @@ impl InvariantCampaignAggregator {
     /// worker may have completed fewer than its assigned runs, so the original static ranges can
     /// contain gaps. The merge still validates worker identity and preserves deterministic worker
     /// order, but final run count is derived from the completed worker counters.
-    pub fn finish_partial_with_corpus_entries(
-        mut self,
-    ) -> Result<(InvariantFuzzTestResult, Vec<CampaignCorpusEntry>)> {
+    pub fn finish_partial(mut self) -> Result<InvariantFuzzTestResult> {
         ensure!(!self.outputs.is_empty(), "missing invariant worker output");
 
         self.outputs.sort_by_key(|output| output.plan.first_global_run);
@@ -268,9 +270,7 @@ impl InvariantCampaignAggregator {
     }
 }
 
-fn fold_outputs(
-    outputs: Vec<InvariantWorkerOutput>,
-) -> Result<(InvariantFuzzTestResult, Vec<CampaignCorpusEntry>)> {
+fn fold_outputs(outputs: Vec<InvariantWorkerOutput>) -> Result<InvariantFuzzTestResult> {
     let workers = outputs.len();
     let mut errors = HashMap::default();
     let mut handler_errors = HashMap::default();
@@ -281,11 +281,10 @@ fn fold_outputs(
     let mut gas_report_traces = Vec::new();
     let mut line_coverage = None;
     let mut metrics = HashMap::default();
-    let mut corpus_entries = Vec::new();
     let mut failed_corpus_replays = 0;
     let mut optimization_best = None;
 
-    for InvariantWorkerOutput { plan, result, corpus_entries: worker_entries } in outputs {
+    for InvariantWorkerOutput { plan, result } in outputs {
         if plan.worker_id == 0 {
             failed_corpus_replays = result.failed_corpus_replays;
         }
@@ -293,7 +292,6 @@ fn fold_outputs(
             errors.entry(invariant).or_insert(error);
         }
         merge_handler_errors(&mut handler_errors, result.handler_errors);
-        corpus_entries.extend(worker_entries);
         runs += result.runs;
         calls += result.calls;
         reverts += result.reverts;
@@ -311,23 +309,20 @@ fn fold_outputs(
     }
     let (optimization_best_value, optimization_best_sequence) =
         optimization_best.map(|(value, sequence)| (Some(value), sequence)).unwrap_or_default();
-    Ok((
-        InvariantFuzzTestResult::new(
-            errors,
-            handler_errors,
-            runs,
-            calls,
-            reverts,
-            last_run_inputs,
-            gas_report_traces,
-            line_coverage,
-            metrics,
-            failed_corpus_replays,
-            workers,
-            optimization_best_value,
-            optimization_best_sequence,
-        ),
-        corpus_entries,
+    Ok(InvariantFuzzTestResult::new(
+        errors,
+        handler_errors,
+        runs,
+        calls,
+        reverts,
+        last_run_inputs,
+        gas_report_traces,
+        line_coverage,
+        metrics,
+        failed_corpus_replays,
+        workers,
+        optimization_best_value,
+        optimization_best_sequence,
     ))
 }
 
@@ -517,6 +512,7 @@ mod tests {
             shrink_run_limit: 0,
             fail_on_revert: false,
             assertion_failure: false,
+            fork_block_number: None,
         })
     }
 
@@ -533,6 +529,7 @@ mod tests {
             call_sequence: sequence(sequence_len, 0x90),
             original_sequence_len: sequence_len,
             revert_reason: reason.to_string(),
+            fork_block_number: None,
             edge_fingerprint: B256::ZERO,
         })
     }
@@ -633,6 +630,30 @@ mod tests {
         assert_eq!(state.throughput_totals(), (2, 50));
         assert_eq!(state.increment_runs(), 1);
         assert_eq!(state.total_runs(), 1);
+    }
+
+    #[test]
+    fn campaign_state_deduplicates_handler_failure_events_across_workers() {
+        let state = InvariantCampaignState::new(EarlyExit::new(false), None);
+        let target = Address::repeat_byte(0x11);
+        let selector = Selector::from([0xde, 0xad, 0xbe, 0xef]);
+        let mut first_worker = InvariantFailures::new();
+        first_worker.seed_handler_failure(
+            target,
+            selector,
+            handler_error(target, selector, 2, "assertion failed"),
+        );
+        let mut second_worker = InvariantFailures::new();
+        second_worker.seed_handler_failure(
+            target,
+            selector,
+            handler_error(target, selector, 1, "assertion failed"),
+        );
+
+        state.sync_handler_failures(&first_worker);
+        state.sync_handler_failures(&second_worker);
+
+        assert_eq!(state.failure_metrics().broken_handlers, 1);
     }
 
     #[test]
@@ -800,12 +821,11 @@ mod tests {
             result_with_counts(1, 10, true, 0),
         ));
 
-        let (result, corpus_entries) = partial.finish_partial_with_corpus_entries().unwrap();
+        let result = partial.finish_partial().unwrap();
 
         assert_eq!(result.runs, 3);
         assert_eq!(result.calls, 30);
         assert_eq!(result.failed_corpus_replays, 5);
-        assert!(corpus_entries.is_empty());
     }
 
     #[test]

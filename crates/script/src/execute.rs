@@ -21,17 +21,18 @@ use foundry_common::{
     fmt::{format_token, format_token_raw},
     provider::ProviderBuilder,
 };
-use foundry_config::NamedChain;
+use foundry_config::{Chain, NamedChain};
 use foundry_debugger::Debugger;
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
-    hardforks::TempoHardfork,
     inspectors::cheatcodes::BroadcastableTransactions,
     traces::{
-        CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
+        CallTraceDecoder, CallTraceDecoderBuilder, DebugTraceIdentifier, TraceKind,
+        debug::ContractSources,
+        decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
-        render_trace_arena,
+        prune_trace_depth, render_trace_arena_inner, trace_arena_at_depth,
     },
 };
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
@@ -107,7 +108,16 @@ pub struct PreExecutionState<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
     /// Executes the script and returns the state after execution.
     /// Might require executing script twice in cases when we determine sender from execution.
-    pub async fn execute(mut self) -> Result<ExecutedState<FEN>> {
+    pub async fn execute(self) -> Result<ExecutedState<FEN>> {
+        self.execute_inner(false).await
+    }
+
+    /// Executes an optimization candidate while blocking externally observable cheatcodes.
+    pub(crate) async fn execute_restricted(self) -> Result<ExecutedState<FEN>> {
+        self.execute_inner(true).await
+    }
+
+    async fn execute_inner(mut self, restricted: bool) -> Result<ExecutedState<FEN>> {
         let mut runner = self
             .script_config
             .get_runner_with_cheatcodes(
@@ -115,6 +125,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
                 self.script_wallets.clone(),
                 self.args.debug,
                 self.build_data.build_data.target.clone(),
+                restricted,
             )
             .await?;
         let result = self.execute_with_runner(&mut runner).await?;
@@ -133,7 +144,10 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
                 build_data: self.build_data.build_data,
             };
 
-            return Box::pin(state.link().await?.prepare_execution().await?.execute()).await;
+            return Box::pin(
+                state.link().await?.prepare_execution().await?.execute_inner(restricted),
+            )
+            .await;
         }
 
         Ok(ExecutedState {
@@ -229,6 +243,8 @@ pub struct RpcData {
     pub total_rpcs: HashSet<String>,
     /// If true, one of the transactions did not have a rpc.
     pub missing_rpc: bool,
+    /// Chain IDs already fetched for each RPC URL.
+    pub(crate) chain_ids: HashMap<String, u64>,
 }
 
 impl RpcData {
@@ -237,7 +253,7 @@ impl RpcData {
         let missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
         let total_rpcs = txs.iter().filter_map(|tx| tx.rpc.clone()).collect::<HashSet<_>>();
 
-        Self { total_rpcs, missing_rpc }
+        Self { total_rpcs, missing_rpc, chain_ids: HashMap::default() }
     }
 
     /// Returns true if script might be multi-chain.
@@ -247,15 +263,21 @@ impl RpcData {
     }
 
     /// Checks if all RPCs support EIP-3855. Prints a warning if not.
-    async fn check_shanghai_support(&self) -> Result<()> {
-        let chain_ids = self.total_rpcs.iter().map(|rpc| async move {
-            let provider = ProviderBuilder::<AnyNetwork>::new(rpc).build().ok()?;
-            let id = provider.get_chain_id().await.ok()?;
-            NamedChain::try_from(id).ok()
-        });
+    async fn check_shanghai_support(&mut self) -> Result<()> {
+        let chain_ids =
+            self.total_rpcs.iter().filter(|rpc| !self.chain_ids.contains_key(*rpc)).map(
+                |rpc| async move {
+                    let provider = ProviderBuilder::<AnyNetwork>::new(rpc).build().ok()?;
+                    Some((rpc.clone(), provider.get_chain_id().await.ok()?))
+                },
+            );
 
-        let chains = join_all(chain_ids).await;
-        let iter = chains.iter().flatten().map(|c| (c.supports_shanghai(), c));
+        self.chain_ids.extend(join_all(chain_ids).await.into_iter().flatten());
+        let iter = self
+            .chain_ids
+            .values()
+            .filter_map(|id| NamedChain::try_from(*id).ok())
+            .map(|chain| (chain.supports_shanghai(), chain));
         if iter.clone().any(|(s, _)| !s) {
             let msg = format!(
                 "\
@@ -264,7 +286,7 @@ Unsupported Chain IDs: {}.
 Contracts deployed with a Solidity version equal or higher than 0.8.20 might not work properly.
 For more information, please see https://eips.ethereum.org/EIPS/eip-3855",
                 iter.filter(|(supported, _)| !supported)
-                    .map(|(_, chain)| *chain as u64)
+                    .map(|(_, chain)| chain as u64)
                     .format(", ")
             );
             sh_warn!("{msg}")?;
@@ -297,9 +319,17 @@ pub struct ExecutedState<FEN: FoundryEvmNetwork> {
 impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
     /// Collects the data we need for simulation and various post-execution tasks.
     pub async fn prepare_simulation(self) -> Result<PreSimulationState<FEN>> {
-        let returns = self.get_returns()?;
+        self.prepare_simulation_inner(false).await
+    }
 
-        let decoder = self.build_trace_decoder(&self.build_data.known_contracts).await?;
+    /// Collects simulation data without emitting warnings for an optimization candidate that may
+    /// be discarded.
+    pub(crate) async fn prepare_simulation_silent(self) -> Result<PreSimulationState<FEN>> {
+        self.prepare_simulation_inner(true).await
+    }
+
+    async fn prepare_simulation_inner(self, silent: bool) -> Result<PreSimulationState<FEN>> {
+        let returns = self.get_returns()?;
 
         let mut txs: BroadcastableTransactions<FEN::Network> =
             self.execution_result.transactions.clone().unwrap_or_default();
@@ -313,17 +343,26 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
                 *req = req.clone().with_input_kind(input, TransactionInputKind::Both);
             }
         }
-        let rpc_data = RpcData::from_transactions(&txs);
+        let mut rpc_data = RpcData::from_transactions(&txs);
+        if let Some(identity) = &self.script_config.evm_opts.fork_endpoint
+            && rpc_data.total_rpcs.contains(&identity.endpoint)
+        {
+            rpc_data.chain_ids.insert(identity.endpoint.clone(), identity.execution_chain_id);
+        }
 
-        if rpc_data.is_multi_chain() {
+        if rpc_data.is_multi_chain() && !silent {
             sh_warn!("Multi chain deployment is still under development. Use with caution.")?;
             if !self.build_data.libraries.is_empty() {
                 eyre::bail!(
                     "Multi chain deployment does not support library linking at the moment."
-                )
+                );
             }
         }
-        rpc_data.check_shanghai_support().await?;
+        if !silent {
+            rpc_data.check_shanghai_support().await?;
+        }
+
+        let decoder = self.build_trace_decoder(&rpc_data).await?;
 
         Ok(PreSimulationState {
             args: self.args,
@@ -338,43 +377,27 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
     }
 
     /// Builds [CallTraceDecoder] from the execution result and known contracts.
-    async fn build_trace_decoder(
-        &self,
-        known_contracts: &ContractsByArtifact,
-    ) -> Result<CallTraceDecoder> {
-        let chain_id = self.script_config.evm_opts.get_remote_chain_id().await;
-        let is_tempo = self.script_config.evm_opts.networks.is_tempo()
-            || chain_id.as_ref().is_some_and(|chain| chain.is_tempo());
-
-        let mut decoder = CallTraceDecoderBuilder::new()
-            .with_labels(self.execution_result.labeled_addresses.clone())
-            .with_verbosity(self.script_config.evm_opts.verbosity)
-            .with_known_contracts(known_contracts)
-            .with_signature_identifier(SignaturesIdentifier::from_config(
-                &self.script_config.config,
-            )?)
-            .with_label_disabled(self.args.disable_labels)
-            .with_chain_id(chain_id.map(|c| c.id()))
-            .with_tempo_hardfork(
-                is_tempo.then(|| self.script_config.config.evm_spec_id::<TempoHardfork>()),
-            )
-            .build();
-
-        let use_debug_bytecodes =
-            self.args.debug && !self.execution_result.debug_bytecodes.is_empty();
-        let mut identifier = if use_debug_bytecodes {
-            TraceIdentifiers::new()
-                .with_local_and_bytecodes(known_contracts, &self.execution_result.debug_bytecodes)
-        } else {
-            TraceIdentifiers::new().with_local(known_contracts)
-        }
-        .with_external(&self.script_config.config, chain_id)?;
-
-        for (_, trace) in &self.execution_result.traces {
-            decoder.identify(trace, &mut identifier);
-        }
-
-        Ok(decoder)
+    async fn build_trace_decoder(&self, rpc_data: &RpcData) -> Result<CallTraceDecoder> {
+        let chain_id = self.script_config.source_chain_id.map(Chain::from).or_else(|| {
+            self.script_config
+                .evm_opts
+                .fork_url
+                .as_ref()
+                .and_then(|url| rpc_data.chain_ids.get(url))
+                .map(|chain_id| (*chain_id).into())
+        });
+        let chain_id = match chain_id {
+            Some(chain_id) => Some(chain_id),
+            None => self.script_config.evm_opts.get_remote_chain_id().await,
+        };
+        build_trace_decoder_for_context(
+            &self.args,
+            &self.script_config,
+            &self.build_data.known_contracts,
+            &self.build_data.sources,
+            &self.execution_result,
+            chain_id,
+        )
     }
 
     /// Collects the return values from the execution result.
@@ -416,12 +439,58 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
     }
 }
 
+/// Builds a trace decoder for the exact execution context of a script runner.
+pub(crate) fn build_trace_decoder_for_context<FEN: FoundryEvmNetwork>(
+    args: &ScriptArgs,
+    script_config: &ScriptConfig<FEN>,
+    known_contracts: &ContractsByArtifact,
+    sources: &ContractSources,
+    execution_result: &ScriptResult<FEN::Network>,
+    chain_id: Option<Chain>,
+) -> Result<CallTraceDecoder> {
+    let resolved_hardfork = script_config.hardfork;
+    let mut tracing = script_config.config.tracing.clone();
+    tracing.labels.extend(execution_result.labeled_addresses.clone());
+
+    let builder = CallTraceDecoderBuilder::new()
+        .with_tracing_config(&tracing)
+        .with_known_contracts(known_contracts)
+        .with_signature_identifier(SignaturesIdentifier::from_config(&script_config.config)?)
+        .with_networks(script_config.config.networks)
+        .with_chain_id(chain_id.map(|chain| chain.id()))
+        .with_hardfork(resolved_hardfork);
+    let mut decoder = builder.build();
+
+    if tracing.decode_internal {
+        decoder.debug_identifier = Some(DebugTraceIdentifier::new(sources.clone()));
+    }
+
+    let use_debug_bytecodes = args.debug && !execution_result.debug_bytecodes.is_empty();
+    let mut identifier = if use_debug_bytecodes {
+        TraceIdentifiers::new()
+            .with_local_and_bytecodes(known_contracts, &execution_result.debug_bytecodes)
+    } else {
+        TraceIdentifiers::new().with_local(known_contracts)
+    }
+    .with_external(&script_config.config, chain_id)?;
+
+    for (_, trace) in &execution_result.traces {
+        decoder.identify(trace, &mut identifier);
+    }
+
+    Ok(decoder)
+}
+
 impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     pub async fn show_json(&self) -> Result<()> {
         let mut result = self.execution_result.clone();
+        let trace_depth = self.script_config.config.tracing.trace_depth;
 
         for (_, trace) in &mut result.traces {
             decode_trace_arena(trace, &self.execution_artifacts.decoder).await;
+            if let Some(trace_depth) = trace_depth {
+                *trace = trace_arena_at_depth(trace, trace_depth);
+            }
         }
 
         let json_result = JsonResult {
@@ -448,7 +517,8 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     }
 
     pub async fn show_traces(&self) -> Result<()> {
-        let verbosity = self.script_config.evm_opts.verbosity;
+        let tracing = &self.script_config.config.tracing;
+        let verbosity = tracing.verbosity;
         let func = &self.execution_data.func;
         let result = &self.execution_result;
         let decoder = &self.execution_artifacts.decoder;
@@ -469,7 +539,10 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                 if should_include {
                     let mut trace = trace.clone();
                     decode_trace_arena(&mut trace, decoder).await;
-                    sh_println!("{}", render_trace_arena(&trace))?;
+                    if let Some(trace_depth) = tracing.trace_depth {
+                        prune_trace_depth(&mut trace, trace_depth);
+                    }
+                    sh_println!("{}", render_trace_arena_inner(&trace, false, verbosity > 4))?;
                 }
             }
             sh_println!()?;
@@ -554,6 +627,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     .collect(),
             )
             .decoder(&self.execution_artifacts.decoder)
+            .known_contracts(&self.build_data.known_contracts)
             .sources(self.build_data.sources)
             .breakpoints(self.execution_result.breakpoints)
             .layout(self.args.debug_layout.unwrap_or_default())

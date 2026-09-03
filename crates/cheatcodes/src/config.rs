@@ -1,6 +1,6 @@
 use super::Result;
 use crate::Vm::Rpc;
-use alloy_primitives::{Address, U256, map::AddressHashMap};
+use alloy_primitives::{U256, map::AddressHashMap};
 use foundry_common::{ContractsByArtifact, fs::normalize_path};
 use foundry_compilers::{ArtifactId, ProjectPathsConfig, utils::canonicalize};
 use foundry_config::{
@@ -20,6 +20,8 @@ use std::{
 pub struct CheatsConfig {
     /// Whether the FFI cheatcode is enabled.
     pub ffi: bool,
+    /// Cheatcode selectors rejected before dispatch for restricted executions.
+    pub blocked_cheatcodes: Vec<[u8; 4]>,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
     pub always_use_create_2_factory: bool,
     /// Rewrite plain CREATE to CREATE2 for `forge script --batch`.
@@ -42,6 +44,8 @@ pub struct CheatsConfig {
     pub root: PathBuf,
     /// Absolute Path to broadcast dir i.e project_root/broadcast
     pub broadcast: PathBuf,
+    /// Whether isolated test execution is enabled.
+    pub isolate: bool,
     /// How the evm was configured by the user
     pub evm_opts: EvmOpts,
     /// Address labels from config
@@ -50,6 +54,9 @@ pub struct CheatsConfig {
     /// If Some, `vm.getDeployedCode` invocations are validated to be in scope of this list.
     /// If None, no validation is performed.
     pub available_artifacts: Option<ContractsByArtifact>,
+    /// Artifacts used to resolve cheatcode artifact references.
+    /// Unlike `available_artifacts`, this is retained when artifact safety checks are disabled.
+    pub artifact_lookup: Option<ContractsByArtifact>,
     /// Currently running artifact.
     pub running_artifact: Option<ArtifactId>,
     /// Whether to enable legacy (non-reverting) assertions.
@@ -58,8 +65,6 @@ pub struct CheatsConfig {
     pub seed: Option<U256>,
     /// Whether to allow `expectRevert` to work for internal calls.
     pub internal_expect_revert: bool,
-    /// Fee token to use for Tempo transactions.
-    pub fee_token: Option<Address>,
 }
 
 impl CheatsConfig {
@@ -69,18 +74,21 @@ impl CheatsConfig {
         evm_opts: EvmOpts,
         available_artifacts: Option<ContractsByArtifact>,
         running_artifact: Option<ArtifactId>,
-        fee_token: Option<Address>,
         batch_rewrite_creates: bool,
     ) -> Self {
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
         trace!(?rpc_endpoints, "using resolved rpc endpoints");
 
-        // If user explicitly disabled safety checks, do not set available_artifacts
+        let artifact_lookup = available_artifacts.clone();
+        // If user explicitly disabled safety checks, do not set available_artifacts.
         let available_artifacts =
             if config.unchecked_cheatcode_artifacts { None } else { available_artifacts };
+        let mut labels = config.labels.clone();
+        labels.extend(config.tracing.labels.clone());
 
         Self {
             ffi: evm_opts.ffi,
+            blocked_cheatcodes: Vec::new(),
             always_use_create_2_factory: evm_opts.always_use_create_2_factory,
             batch_rewrite_creates,
             prompt_timeout: Duration::from_secs(config.prompt_timeout),
@@ -92,27 +100,29 @@ impl CheatsConfig {
             fs_permissions: config.fs_permissions.clone().joined(config.root.as_ref()),
             root: config.root.clone(),
             broadcast: config.root.clone().join(&config.broadcast),
+            isolate: config.isolate,
             evm_opts,
-            labels: config.labels.clone(),
+            labels,
             available_artifacts,
+            artifact_lookup,
             running_artifact,
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
             internal_expect_revert: config.allow_internal_expect_revert,
-            fee_token,
         }
     }
 
     /// Returns a new `CheatsConfig` configured with the given `Config` and `EvmOpts`.
     pub fn clone_with(&self, config: &Config, evm_opts: EvmOpts) -> Self {
-        Self::new(
+        let mut cloned = Self::new(
             config,
             evm_opts,
-            self.available_artifacts.clone(),
+            self.artifact_lookup.clone().or_else(|| self.available_artifacts.clone()),
             self.running_artifact.clone(),
-            self.fee_token,
             self.batch_rewrite_creates,
-        )
+        );
+        cloned.blocked_cheatcodes.clone_from(&self.blocked_cheatcodes);
+        cloned
     }
 
     /// Attempts to canonicalize (see [std::fs::canonicalize]) the path.
@@ -120,7 +130,7 @@ impl CheatsConfig {
     /// Canonicalization fails for non-existing paths, in which case we just normalize the path.
     pub fn normalized_path(&self, path: impl AsRef<Path>) -> PathBuf {
         let path = self.root.join(path);
-        canonicalize(&path).unwrap_or_else(|_| normalize_path(&path))
+        canonicalize(&path).unwrap_or_else(|_| canonicalize_existing_ancestor(&path))
     }
 
     /// Returns true if the given path is allowed, if any path `allowed_paths` is an ancestor of the
@@ -223,6 +233,7 @@ impl Default for CheatsConfig {
     fn default() -> Self {
         Self {
             ffi: false,
+            blocked_cheatcodes: Vec::new(),
             always_use_create_2_factory: false,
             batch_rewrite_creates: false,
             prompt_timeout: Duration::from_secs(120),
@@ -234,28 +245,48 @@ impl Default for CheatsConfig {
             root: Default::default(),
             bind_json_path: PathBuf::default().join("utils").join("jsonBindings.sol"),
             broadcast: Default::default(),
+            isolate: Config::default().isolate,
             evm_opts: Default::default(),
             labels: Default::default(),
             available_artifacts: Default::default(),
+            artifact_lookup: Default::default(),
             running_artifact: Default::default(),
             assertions_revert: true,
             seed: None,
             internal_expect_revert: false,
-            fee_token: None,
         }
     }
+}
+
+fn canonicalize_existing_ancestor(path: &Path) -> PathBuf {
+    let normalized = normalize_path(path);
+    let mut missing = Vec::new();
+    let mut ancestor = normalized.as_path();
+    while !ancestor.exists() {
+        let Some(name) = ancestor.file_name() else { return normalized };
+        missing.push(name.to_owned());
+        let Some(parent) = ancestor.parent() else { return normalized };
+        ancestor = parent;
+    }
+
+    let mut path = canonicalize(ancestor).unwrap_or_else(|_| ancestor.to_path_buf());
+    for component in missing.iter().rev() {
+        path.push(component);
+    }
+    path
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::address;
     use foundry_config::fs_permissions::PathPermission;
+    use tempfile::TempDir;
 
-    fn config(root: &str, fs_permissions: FsPermissions) -> CheatsConfig {
+    fn config(root: &Path, fs_permissions: FsPermissions) -> CheatsConfig {
         CheatsConfig::new(
             &Config { root: root.into(), fs_permissions, ..Default::default() },
             Default::default(),
-            None,
             None,
             None,
             false,
@@ -264,8 +295,10 @@ mod tests {
 
     #[test]
     fn test_allowed_paths() {
-        let root = "/my/project/root/";
-        let config = config(root, FsPermissions::new(vec![PathPermission::read_write("./")]));
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("my/project/root");
+        std::fs::create_dir_all(&root).unwrap();
+        let config = config(&root, FsPermissions::new(vec![PathPermission::read_write("./")]));
 
         assert!(config.ensure_path_allowed("./t.txt", FsAccessKind::Read).is_ok());
         assert!(config.ensure_path_allowed("./t.txt", FsAccessKind::Write).is_ok());
@@ -279,7 +312,7 @@ mod tests {
     fn test_batch_rewrite_creates_flag_plumbing() {
         assert!(!CheatsConfig::default().batch_rewrite_creates);
 
-        let on = CheatsConfig::new(&Config::default(), Default::default(), None, None, None, true);
+        let on = CheatsConfig::new(&Config::default(), Default::default(), None, None, true);
         assert!(on.batch_rewrite_creates);
 
         let cloned = on.clone_with(&Config::default(), Default::default());
@@ -287,17 +320,60 @@ mod tests {
     }
 
     #[test]
+    fn unchecked_artifacts_retain_lookup_without_validation() {
+        let config = Config { unchecked_cheatcode_artifacts: true, ..Default::default() };
+        let cheats = CheatsConfig::new(
+            &config,
+            Default::default(),
+            Some(ContractsByArtifact::default()),
+            None,
+            false,
+        );
+
+        assert!(cheats.available_artifacts.is_none());
+        assert!(cheats.artifact_lookup.is_some());
+
+        let cloned = cheats.clone_with(&config, Default::default());
+        assert!(cloned.available_artifacts.is_none());
+        assert!(cloned.artifact_lookup.is_some());
+    }
+
+    #[test]
+    fn clone_with_preserves_available_artifacts_without_lookup() {
+        let cheats = CheatsConfig {
+            available_artifacts: Some(ContractsByArtifact::default()),
+            ..Default::default()
+        };
+
+        let cloned = cheats.clone_with(&Config::default(), Default::default());
+        assert!(cloned.available_artifacts.is_some());
+        assert!(cloned.artifact_lookup.is_some());
+    }
+
+    #[test]
+    fn tracing_labels_override_legacy_labels() {
+        let address = address!("0x0000000000000000000000000000000000000001");
+        let mut config = Config::default();
+        config.labels.insert(address, "legacy".to_string());
+        config.tracing.labels.insert(address, "canonical".to_string());
+
+        let config = CheatsConfig::new(&config, Default::default(), None, None, false);
+
+        assert_eq!(config.labels.get(&address).map(String::as_str), Some("canonical"));
+    }
+
+    #[test]
     fn test_is_foundry_toml() {
-        let root = "/my/project/root/";
+        let root = Path::new("/my/project/root/");
         let config = config(root, FsPermissions::new(vec![PathPermission::read_write("./")]));
 
-        let f = format!("{root}foundry.toml");
+        let f = root.join("foundry.toml");
         assert!(config.is_foundry_toml(f));
 
-        let f = format!("{root}Foundry.toml");
+        let f = root.join("Foundry.toml");
         assert!(config.is_foundry_toml(f));
 
-        let f = format!("{root}lib/other/foundry.toml");
+        let f = root.join("lib/other/foundry.toml");
         assert!(!config.is_foundry_toml(f));
     }
 }

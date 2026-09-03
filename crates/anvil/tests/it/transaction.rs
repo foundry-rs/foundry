@@ -2,24 +2,28 @@ use crate::{
     abi::{Greeter, Multicall, SimpleStorage},
     utils::{connect_pubsub, http_provider_with_signer},
 };
-use alloy_consensus::Transaction;
+use alloy_consensus::{Header, Transaction};
 use alloy_network::{
     AnyRpcTransaction, EthereumWallet, ReceiptResponse, TransactionBuilder, TransactionResponse,
+    eip2718::Decodable2718,
 };
 use alloy_primitives::{
-    Address, Bytes, FixedBytes, TxHash, U64, U256, address, hex, map::B256HashSet,
+    Address, B256, Bytes, FixedBytes, TxHash, U64, U256, address, hex, map::B256HashSet,
 };
 use alloy_provider::{Provider, WsConnect};
+use alloy_rlp::Decodable;
 use alloy_rpc_types::{
-    AccessList, AccessListItem, BlockId, BlockNumberOrTag, BlockOverrides, BlockTransactions,
-    TransactionRequest,
+    AccessList, AccessListItem, AccessListResult, BlockId, BlockNumberOrTag, BlockOverrides,
+    BlockTransactions, TransactionRequest,
     state::{AccountOverride, EvmOverrides, StateOverride, StateOverridesBuilder},
 };
 use alloy_serde::WithOtherFields;
 use alloy_sol_types::SolValue;
 use anvil::{NodeConfig, spawn};
+use anvil_core::eth::block::Block;
 use eyre::Ok;
 use foundry_evm::hardfork::EthereumHardfork;
+use foundry_primitives::FoundryReceiptEnvelope;
 use futures::{FutureExt, StreamExt, future::join_all};
 use revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
 use std::{
@@ -66,6 +70,45 @@ async fn can_transfer_eth() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_get_pending_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let sender = accounts[0].address();
+    let other_sender = accounts[1].address();
+    let recipient = accounts[2].address();
+
+    let sender_tx =
+        TransactionRequest::default().from(sender).to(recipient).value(U256::from(1)).nonce(0);
+    let sender_tx = provider.send_transaction(WithOtherFields::new(sender_tx)).await.unwrap();
+
+    let queued_tx =
+        TransactionRequest::default().from(sender).to(recipient).value(U256::from(2)).nonce(2);
+    let queued_tx = provider.send_transaction(WithOtherFields::new(queued_tx)).await.unwrap();
+
+    let other_tx = TransactionRequest::default()
+        .from(other_sender)
+        .to(recipient)
+        .value(U256::from(3))
+        .nonce(0);
+    let other_tx = provider.send_transaction(WithOtherFields::new(other_tx)).await.unwrap();
+
+    let pending: Vec<AnyRpcTransaction> =
+        provider.client().request("eth_pendingTransactions", ()).await.unwrap();
+    let hashes = pending.iter().map(|tx| B256::from(*tx.inner.tx_hash())).collect::<B256HashSet>();
+
+    assert_eq!(pending.len(), 2);
+    assert!(hashes.contains(sender_tx.tx_hash()));
+    assert!(hashes.contains(other_tx.tx_hash()));
+    assert!(!hashes.contains(queued_tx.tx_hash()));
+    assert!(pending.iter().any(|tx| tx.from() == sender));
+    assert!(pending.iter().any(|tx| tx.from() == other_sender));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_order_transactions() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
@@ -96,7 +139,7 @@ async fn can_order_transactions() {
     let tx_higher = provider.send_transaction(tx).await.unwrap();
 
     // manually mine the block with the transactions
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let higher_price = tx_higher.get_receipt().await.unwrap().transaction_hash;
     let lower_price = tx_lower.get_receipt().await.unwrap().transaction_hash;
@@ -180,7 +223,7 @@ async fn can_replace_transaction() {
 
     let higher_tx_hash = *higher_priced_pending_tx.tx_hash();
     // mine exactly one block
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(1.into()).await.unwrap().unwrap();
 
@@ -238,7 +281,7 @@ async fn can_resend_transaction() {
 
     assert_ne!(*original_pending_tx.tx_hash(), replacement_hash);
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let block = provider.get_block(1.into()).await.unwrap().unwrap();
     assert_eq!(BlockTransactions::Hashes(vec![replacement_hash]), block.transactions);
@@ -299,7 +342,7 @@ async fn can_reject_invalid_resend_transaction() {
         underpriced_resend.unwrap_err().to_string().contains("replacement transaction underpriced")
     );
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     pending_tx.get_receipt().await.unwrap();
 }
 
@@ -397,7 +440,7 @@ async fn can_reject_underpriced_replacement() {
     assert!(replacement_err.to_string().contains("replacement transaction underpriced"));
 
     // mine exactly one block
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let higher_priced_receipt = higher_priced_pending_tx.get_receipt().await.unwrap();
 
     // ensure that only the higher priced tx was mined
@@ -542,7 +585,7 @@ async fn can_call_greeter_historic() {
     assert_eq!("Another Message", greeting);
 
     // min
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     // returns previous state
     let greeting =
@@ -814,7 +857,7 @@ async fn can_get_pending_transaction() {
     let pending = provider.get_transaction_by_hash(*tx.tx_hash()).await;
     assert!(pending.is_ok());
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let mined = provider.get_transaction_by_hash(*tx.tx_hash()).await.unwrap().unwrap();
 
     assert_eq!(mined.tx_hash(), pending.unwrap().unwrap().tx_hash());
@@ -865,10 +908,185 @@ async fn can_get_raw_transaction() {
     let res1 = api.raw_transaction(*tx.tx_hash()).await;
     assert!(res1.is_ok());
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let res2 = api.raw_transaction(*tx.tx_hash()).await;
 
     assert_eq!(res1.unwrap(), res2.unwrap());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_raw_receipts() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let first = TransactionRequest::default()
+        .from(accounts[0].address())
+        .value(U256::from(1))
+        .to(Address::random());
+    let second = TransactionRequest::default()
+        .from(accounts[1].address())
+        .value(U256::from(2))
+        .to(Address::random());
+
+    let first = provider.send_transaction(WithOtherFields::new(first)).await.unwrap();
+    let second = provider.send_transaction(WithOtherFields::new(second)).await.unwrap();
+
+    api.mine_one().await.unwrap();
+    let first_receipt = first.get_receipt().await.unwrap();
+    let second_receipt = second.get_receipt().await.unwrap();
+    assert_eq!(first_receipt.block_number, Some(1));
+    assert_eq!(second_receipt.block_number, Some(1));
+
+    let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let raw_by_number: Vec<Bytes> =
+        provider.client().request("debug_getRawReceipts", (BlockId::number(1),)).await.unwrap();
+    let raw_by_hash: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawReceipts", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+    let missing: Result<Vec<Bytes>, _> =
+        provider.client().request("debug_getRawReceipts", (BlockId::number(999),)).await;
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert_eq!(raw_by_number.len(), 2);
+    assert!(missing.is_err());
+
+    let mut first_raw = raw_by_number[0].as_ref();
+    let first_decoded = FoundryReceiptEnvelope::decode_2718(&mut first_raw).unwrap();
+    let mut second_raw = raw_by_number[1].as_ref();
+    let second_decoded = FoundryReceiptEnvelope::decode_2718(&mut second_raw).unwrap();
+
+    assert!(first_decoded.status());
+    assert!(second_decoded.status());
+    assert_eq!(first_decoded.cumulative_gas_used(), 21_000);
+    assert_eq!(second_decoded.cumulative_gas_used(), 42_000);
+
+    // Loaded state can contain transaction metadata that is inconsistent with the block body.
+    // Receipt lookup must continue to use transaction hashes in block-body order.
+    let mut state = api.serialized_state(false).await.unwrap();
+    state.transactions.reverse();
+    for transaction in &mut state.transactions {
+        transaction.info.transaction_index = 99;
+        transaction.block_hash = B256::repeat_byte(0xff);
+        transaction.block_number = 999;
+    }
+    let (loaded_api, _loaded_handle) =
+        spawn(NodeConfig::test().with_init_state(Some(state.clone()))).await;
+    let loaded_raw = loaded_api.raw_receipts(BlockId::number(1)).await.unwrap();
+    assert_eq!(loaded_raw, raw_by_number);
+
+    // A block with any missing stored transaction must not return a partial receipt list.
+    state.transactions.pop();
+    let (incomplete_api, _incomplete_handle) =
+        spawn(NodeConfig::test().with_init_state(Some(state))).await;
+    assert!(incomplete_api.raw_receipts(BlockId::number(1)).await.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_raw_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let provider = handle.http_provider();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let first = TransactionRequest::default()
+        .from(accounts[0].address())
+        .value(U256::from(1))
+        .to(Address::random());
+    let second = TransactionRequest::default()
+        .from(accounts[1].address())
+        .value(U256::from(2))
+        .to(Address::random());
+
+    let first = provider.send_transaction(WithOtherFields::new(first)).await.unwrap();
+    let second = provider.send_transaction(WithOtherFields::new(second)).await.unwrap();
+    let first_hash = *first.tx_hash();
+    let second_hash = *second.tx_hash();
+
+    api.mine_one().await.unwrap();
+    let first_receipt = first.get_receipt().await.unwrap();
+    let second_receipt = second.get_receipt().await.unwrap();
+    assert_eq!(first_receipt.block_number, Some(1));
+    assert_eq!(second_receipt.block_number, Some(1));
+
+    let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let raw_by_number: Vec<Bytes> =
+        provider.client().request("debug_getRawTransactions", (BlockId::number(1),)).await.unwrap();
+    let raw_by_hash: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawTransactions", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+    let missing: Vec<Bytes> = provider
+        .client()
+        .request("debug_getRawTransactions", (BlockId::number(999),))
+        .await
+        .unwrap();
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert_eq!(raw_by_number.len(), 2);
+    assert!(missing.is_empty());
+
+    let first_raw = api.raw_transaction(first_hash).await.unwrap().unwrap();
+    let second_raw = api.raw_transaction(second_hash).await.unwrap().unwrap();
+    assert!(raw_by_number.contains(&first_raw));
+    assert!(raw_by_number.contains(&second_raw));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_raw_header() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let from = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::default().from(from).value(U256::from(1)).to(Address::random());
+    provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
+
+    let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let raw_by_number: Bytes =
+        provider.client().request("debug_getRawHeader", (BlockId::number(1),)).await.unwrap();
+    let raw_by_hash: Bytes = provider
+        .client()
+        .request("debug_getRawHeader", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert!(!raw_by_number.is_empty());
+
+    let decoded = Header::decode(&mut raw_by_number.as_ref()).unwrap();
+    assert_eq!(decoded.number, 1);
+    assert_eq!(decoded.hash_slow(), block.header.hash);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_raw_block() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let from = handle.dev_wallets().next().unwrap().address();
+    let tx = TransactionRequest::default().from(from).value(U256::from(1)).to(Address::random());
+    provider.send_transaction(WithOtherFields::new(tx)).await.unwrap().get_receipt().await.unwrap();
+
+    let block = provider.get_block(BlockId::number(1)).await.unwrap().unwrap();
+    let raw_by_number: Bytes =
+        provider.client().request("debug_getRawBlock", (BlockId::number(1),)).await.unwrap();
+    let raw_by_hash: Bytes = provider
+        .client()
+        .request("debug_getRawBlock", (BlockId::hash(block.header.hash),))
+        .await
+        .unwrap();
+
+    assert_eq!(raw_by_number, raw_by_hash);
+    assert!(!raw_by_number.is_empty());
+
+    let decoded: Block = Block::decode(&mut raw_by_number.as_ref()).unwrap();
+    assert_eq!(decoded.header.hash_slow(), block.header.hash);
+    assert_eq!(decoded.header.number, 1);
+    assert_eq!(decoded.body.transactions.len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -944,7 +1162,7 @@ async fn includes_pending_tx_for_transaction_count() {
         assert_eq!(nonce, idx);
     }
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
     let nonce = provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap();
     assert_eq!(nonce, tx_count);
 }
@@ -1278,6 +1496,34 @@ async fn test_tx_access_list() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn can_create_access_list_with_state_override() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let sender = Address::random();
+    let target = Address::random();
+    let tx = TransactionRequest::default().from(sender).to(target);
+    let tx = WithOtherFields::new(tx);
+
+    // PUSH1 0; SLOAD; STOP.
+    let code = Bytes::from(hex!("60005400").to_vec());
+    let state_override = StateOverridesBuilder::default()
+        .append(target, AccountOverride::default().with_code(code.to_vec()))
+        .build();
+
+    let access_list: AccessListResult = provider
+        .client()
+        .request("eth_createAccessList", (tx, None::<BlockId>, state_override))
+        .await
+        .unwrap();
+
+    assert_eq!(access_list.access_list.0.len(), 1);
+    let item = access_list.access_list.0.first().unwrap();
+    assert_eq!(item.address, target);
+    assert_eq!(item.storage_keys, vec![FixedBytes::ZERO]);
+}
+
 // ensures that the gas estimate is running on pending block by default
 #[tokio::test(flavor = "multi_thread")]
 async fn estimates_gas_on_pending_by_default() {
@@ -1533,7 +1779,7 @@ async fn can_send_tx_osaka_valid_with_limit_enabled() {
     let tx = WithOtherFields::new(tx);
     let err = provider.send_transaction(tx).await.unwrap_err().to_string();
     assert!(
-        err.contains("intrinsic gas too high -- tx.gas_limit > env.cfg.tx_gas_limit_cap"),
+        err.contains("intrinsic gas too high -- tx.gas_limit > resolved tx gas limit cap"),
         "{err}"
     );
 }
@@ -1598,7 +1844,7 @@ async fn can_get_tx_by_sender_and_nonce() {
     }
 
     // mine all transactions
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     for nonce in 0..4 {
         let result: Option<alloy_network::AnyRpcTransaction> = provider
@@ -1651,7 +1897,7 @@ async fn can_get_tx_by_sender_and_nonce() {
     assert_eq!(found_tx.inner.nonce(), 4);
     assert_eq!(found_tx.inner.tx_hash(), *pending_tx.tx_hash());
 
-    api.mine_one().await;
+    api.mine_one().await.unwrap();
 
     let result: Option<alloy_network::AnyRpcTransaction> = provider
         .client()

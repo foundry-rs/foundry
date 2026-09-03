@@ -164,6 +164,56 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest_init!(trace_event_struct_with_function_pointer, |prj, cmd| {
+    prj.add_test(
+        "StructWithFunctionEvent.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+contract StructWithFunctionEvent {
+    struct Action {
+        uint256 id;
+        function(uint256) external callback;
+    }
+
+    uint256 public i;
+
+    event ActionLogged(Action action);
+
+    function sampleCallback(uint256 value) external {
+        i += value;
+    }
+
+    function testEmitFunctionInStruct() external {
+        Action memory myAction = Action({id: 1337, callback: this.sampleCallback});
+        emit ActionLogged(myAction);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mt", "testEmitFunctionInStruct", "-vvvv"]).assert_success().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/StructWithFunctionEvent.t.sol:StructWithFunctionEvent
+[PASS] testEmitFunctionInStruct() ([GAS])
+Traces:
+  [..] StructWithFunctionEvent::testEmitFunctionInStruct()
+    ├─ emit ActionLogged(action: Action({ id: 1337, callback: 0x[..]7cfdab90 }))
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
+});
+
 forgetest_init!(trace_test, |prj, cmd| {
     prj.add_test(
         "Trace.t.sol",

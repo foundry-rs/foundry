@@ -13,6 +13,7 @@ mkdir -p "$OUTPUT_DIR"
 declare -A BENCHMARK_FILES=(
     ["forge_test_bench.md"]="Forge Test"
     ["forge_isolate_test_bench.md"]="Forge Test (Isolated)"
+    ["forge_symbolic_bench.md"]="Forge Symbolic Test"
     ["forge_build_bench.md"]="Forge Build"
     ["forge_coverage_bench.md"]="Forge Coverage"
 )
@@ -126,7 +127,7 @@ EOF
 FIRST_FILE=1
 SYSTEM_INFO=""
 
-for bench_file in "forge_test_bench.md" "forge_isolate_test_bench.md" "forge_build_bench.md" "forge_coverage_bench.md"; do
+for bench_file in "forge_test_bench.md" "forge_isolate_test_bench.md" "forge_symbolic_bench.md" "forge_build_bench.md" "forge_coverage_bench.md"; do
     if [ -f "$OUTPUT_DIR/$bench_file" ]; then
         echo "Processing $bench_file..."
 

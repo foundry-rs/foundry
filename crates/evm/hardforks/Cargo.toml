@@ -18,12 +18,14 @@ alloy-chains.workspace = true
 alloy-hardforks = { workspace = true, features = ["serde"] }
 alloy-op-hardforks = { workspace = true, features = ["serde"], optional = true }
 alloy-rpc-types.workspace = true
+monad-revm = { workspace = true, optional = true }
 op-revm = { workspace = true, optional = true }
 revm.workspace = true
 serde = { workspace = true, features = ["derive"] }
-tempo-chainspec.workspace = true
+tempo-hardfork.workspace = true
 foundry-compilers.workspace = true
 
 [features]
 default = ["optimism"]
+monad = ["dep:monad-revm"]
 optimism = ["dep:alloy-op-hardforks", "dep:op-revm"]

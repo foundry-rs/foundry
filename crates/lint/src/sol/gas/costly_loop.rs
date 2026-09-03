@@ -3,9 +3,13 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar::sema::{
-    Hir,
-    hir::{Block, Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind},
+use solar::{
+    ast::DataLocation,
+    sema::{
+        Gcx, Hir,
+        builtins::Builtin,
+        hir::{Block, Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind},
+    },
 };
 
 declare_forge_lint!(COSTLY_LOOP, Severity::Gas, "costly-loop", "storage write inside a loop");
@@ -14,132 +18,144 @@ impl<'hir> LateLintPass<'hir> for CostlyLoop {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
+        gcx: Gcx<'hir>,
         hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
         if let Some(body) = func.body {
-            check_block(ctx, hir, body, 0);
+            check_block(ctx, gcx, hir, body, 0);
         }
     }
 }
 
-fn check_block<'hir>(ctx: &LintContext, hir: &'hir Hir<'hir>, block: Block<'hir>, loop_depth: u32) {
+fn check_block<'hir>(
+    ctx: &LintContext,
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    block: Block<'hir>,
+    loop_depth: u32,
+) {
     for stmt in block.stmts {
-        check_stmt(ctx, hir, stmt, loop_depth);
+        check_stmt(ctx, gcx, hir, stmt, loop_depth);
     }
 }
 
 fn check_stmt<'hir>(
     ctx: &LintContext,
+    gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     stmt: &'hir Stmt<'hir>,
     loop_depth: u32,
 ) {
     match &stmt.kind {
-        StmtKind::Loop(block, _) => check_block(ctx, hir, *block, loop_depth + 1),
+        StmtKind::Loop(block, _) => check_block(ctx, gcx, hir, *block, loop_depth + 1),
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            check_block(ctx, hir, *block, loop_depth);
+            check_block(ctx, gcx, hir, *block, loop_depth);
         }
         StmtKind::If(_, then_stmt, else_stmt) => {
-            check_stmt(ctx, hir, then_stmt, loop_depth);
+            check_stmt(ctx, gcx, hir, then_stmt, loop_depth);
             if let Some(else_stmt) = else_stmt {
-                check_stmt(ctx, hir, else_stmt, loop_depth);
+                check_stmt(ctx, gcx, hir, else_stmt, loop_depth);
             }
         }
         StmtKind::Try(stmt_try) => {
             for clause in stmt_try.clauses {
-                check_block(ctx, hir, clause.block, loop_depth);
+                check_block(ctx, gcx, hir, clause.block, loop_depth);
             }
         }
         StmtKind::Expr(expr) if loop_depth > 0 => {
-            check_expr_for_writes(ctx, hir, expr);
+            check_expr_for_writes(ctx, gcx, hir, expr);
         }
         StmtKind::DeclSingle(var_id) if loop_depth > 0 => {
             if let Some(init) = hir.variable(*var_id).initializer {
-                check_expr_for_writes(ctx, hir, init);
+                check_expr_for_writes(ctx, gcx, hir, init);
             }
         }
         StmtKind::DeclMulti(_, expr) if loop_depth > 0 => {
-            check_expr_for_writes(ctx, hir, expr);
+            check_expr_for_writes(ctx, gcx, hir, expr);
         }
         StmtKind::Return(Some(expr)) if loop_depth > 0 => {
-            check_expr_for_writes(ctx, hir, expr);
+            check_expr_for_writes(ctx, gcx, hir, expr);
         }
         StmtKind::Emit(expr) | StmtKind::Revert(expr) if loop_depth > 0 => {
-            check_expr_for_writes(ctx, hir, expr);
+            check_expr_for_writes(ctx, gcx, hir, expr);
         }
         _ => {}
     }
 }
 
-fn check_expr_for_writes<'hir>(ctx: &LintContext, hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) {
+fn check_expr_for_writes<'hir>(
+    ctx: &LintContext,
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    expr: &'hir Expr<'hir>,
+) {
     match &expr.kind {
         ExprKind::Assign(lhs, _, rhs) => {
-            if lvalue_is_state_var(hir, lhs) {
+            if lvalue_is_state_var(gcx, hir, lhs) {
                 ctx.emit(&COSTLY_LOOP, expr.span);
             }
-            check_expr_for_writes(ctx, hir, lhs);
-            check_expr_for_writes(ctx, hir, rhs);
+            check_expr_for_writes(ctx, gcx, hir, lhs);
+            check_expr_for_writes(ctx, gcx, hir, rhs);
         }
         ExprKind::Unary(op, inner) => {
-            if op.kind.has_side_effects() && lvalue_is_state_var(hir, inner) {
+            if op.kind.has_side_effects() && lvalue_is_state_var(gcx, hir, inner) {
                 ctx.emit(&COSTLY_LOOP, expr.span);
             }
-            check_expr_for_writes(ctx, hir, inner);
+            check_expr_for_writes(ctx, gcx, hir, inner);
         }
         ExprKind::Delete(inner) => {
-            if lvalue_is_state_var(hir, inner) {
+            if lvalue_is_state_var(gcx, hir, inner) {
                 ctx.emit(&COSTLY_LOOP, expr.span);
             }
-            check_expr_for_writes(ctx, hir, inner);
+            check_expr_for_writes(ctx, gcx, hir, inner);
         }
         ExprKind::Binary(lhs, _, rhs) => {
-            check_expr_for_writes(ctx, hir, lhs);
-            check_expr_for_writes(ctx, hir, rhs);
+            check_expr_for_writes(ctx, gcx, hir, lhs);
+            check_expr_for_writes(ctx, gcx, hir, rhs);
         }
         ExprKind::Ternary(cond, then_expr, else_expr) => {
-            check_expr_for_writes(ctx, hir, cond);
-            check_expr_for_writes(ctx, hir, then_expr);
-            check_expr_for_writes(ctx, hir, else_expr);
+            check_expr_for_writes(ctx, gcx, hir, cond);
+            check_expr_for_writes(ctx, gcx, hir, then_expr);
+            check_expr_for_writes(ctx, gcx, hir, else_expr);
         }
         ExprKind::Call(callee, args, named_args) => {
-            check_expr_for_writes(ctx, hir, callee);
+            check_expr_for_writes(ctx, gcx, hir, callee);
             for arg in args.exprs() {
-                check_expr_for_writes(ctx, hir, arg);
+                check_expr_for_writes(ctx, gcx, hir, arg);
             }
             if let Some(named_args) = named_args {
                 for arg in named_args.args {
-                    check_expr_for_writes(ctx, hir, &arg.value);
+                    check_expr_for_writes(ctx, gcx, hir, &arg.value);
                 }
             }
         }
         ExprKind::Index(base, index) => {
-            check_expr_for_writes(ctx, hir, base);
+            check_expr_for_writes(ctx, gcx, hir, base);
             if let Some(index) = index {
-                check_expr_for_writes(ctx, hir, index);
+                check_expr_for_writes(ctx, gcx, hir, index);
             }
         }
         ExprKind::Slice(base, start, end) => {
-            check_expr_for_writes(ctx, hir, base);
+            check_expr_for_writes(ctx, gcx, hir, base);
             if let Some(start) = start {
-                check_expr_for_writes(ctx, hir, start);
+                check_expr_for_writes(ctx, gcx, hir, start);
             }
             if let Some(end) = end {
-                check_expr_for_writes(ctx, hir, end);
+                check_expr_for_writes(ctx, gcx, hir, end);
             }
         }
         ExprKind::Member(base, _) | ExprKind::Payable(base) => {
-            check_expr_for_writes(ctx, hir, base);
+            check_expr_for_writes(ctx, gcx, hir, base);
         }
         ExprKind::Tuple(exprs) => {
             for e in exprs.iter().flatten() {
-                check_expr_for_writes(ctx, hir, e);
+                check_expr_for_writes(ctx, gcx, hir, e);
             }
         }
         ExprKind::Array(exprs) => {
             for e in *exprs {
-                check_expr_for_writes(ctx, hir, e);
+                check_expr_for_writes(ctx, gcx, hir, e);
             }
         }
         ExprKind::Ident(_)
@@ -154,17 +170,24 @@ fn check_expr_for_writes<'hir>(ctx: &LintContext, hir: &'hir Hir<'hir>, expr: &'
 
 /// Returns `true` if the lvalue expression ultimately writes to a storage variable.
 ///
-/// Peels through index accesses, member accesses, and slices to find the root identifier.
-fn lvalue_is_state_var(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+/// Peels through index accesses, member accesses, and slices to find a state variable or an
+/// expression that returns a storage reference.
+fn lvalue_is_state_var(gcx: Gcx<'_>, hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
             hir.variable(*id).is_state_variable()
         }
+        ExprKind::Call(callee, ..) => {
+            gcx.resolved_builtin(callee) == Some(Builtin::ArrayPush0)
+                || gcx
+                    .type_of_expr(expr.peel_parens().id)
+                    .is_some_and(|ty| ty.loc() == Some(DataLocation::Storage))
+        }
         ExprKind::Index(base, _)
         | ExprKind::Slice(base, _, _)
         | ExprKind::Member(base, _)
-        | ExprKind::Payable(base) => lvalue_is_state_var(hir, base),
-        ExprKind::Tuple(exprs) => exprs.iter().flatten().any(|e| lvalue_is_state_var(hir, e)),
+        | ExprKind::Payable(base) => lvalue_is_state_var(gcx, hir, base),
+        ExprKind::Tuple(exprs) => exprs.iter().flatten().any(|e| lvalue_is_state_var(gcx, hir, e)),
         _ => false,
     }
 }

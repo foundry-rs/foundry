@@ -42,11 +42,11 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
-╭-------+---------------+---------------+---------------+---------------╮
-| File  | % Lines       | % Statements  | % Branches    | % Funcs       |
-+=======================================================================+
-| Total | 100.00% (0/0) | 100.00% (0/0) | 100.00% (0/0) | 100.00% (0/0) |
-╰-------+---------------+---------------+---------------+---------------╯
+╭-------+-----------+--------------+------------+-----------╮
+| File  | % Lines   | % Statements | % Branches | % Funcs   |
++===========================================================+
+| Total | N/A (0/0) | N/A (0/0)    | N/A (0/0)  | N/A (0/0) |
+╰-------+-----------+--------------+------------+-----------╯
 
 "#]]);
 });
@@ -227,12 +227,14 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
 
             /// forge-config: default.isolate = false
             function test_non_isolate() public {
+                assertFalse(vm.isIsolateMode());
                 vm.startSnapshotGas("testNonIsolatedFunction");
                 dummy.setNumber(1);
                 vm.stopSnapshotGas();
             }
 
             function test_isolate() public {
+                assertTrue(vm.isIsolateMode());
                 vm.startSnapshotGas("testIsolatedFunction");
                 dummy.setNumber(1);
                 vm.stopSnapshotGas();
@@ -248,6 +250,7 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
             }
 
             function test_non_isolate() public {
+                assertFalse(vm.isIsolateMode());
                 vm.startSnapshotGas("testNonIsolatedContract");
                 dummy.setNumber(1);
                 vm.stopSnapshotGas();
@@ -327,6 +330,73 @@ Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
         contract_config.test_non_isolated_contract
     );
 });
+
+forgetest_init!(is_isolate_mode_uses_effective_isolation, |prj, cmd| {
+    prj.update_config(|config| config.isolate = false);
+    prj.add_test(
+        "effective_isolation.sol",
+        r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract EffectiveIsolationTest is Test {
+            function test_isolate_mode_disabled_by_config() public view {
+                assertFalse(vm.isIsolateMode());
+            }
+
+            function test_gas_report_enables_isolate_mode() public view {
+                assertTrue(vm.isIsolateMode());
+            }
+        }
+    "#,
+    );
+
+    cmd.args(["test", "--match-test", "test_isolate_mode_disabled_by_config"]).assert_success();
+    cmd.forge_fuse()
+        .args(["test", "--gas-report", "--match-test", "test_gas_report_enables_isolate_mode"])
+        .assert_success();
+});
+
+forgetest_init!(
+    inline_isolate_inherits_default_fs_permissions_for_non_default_profile,
+    |prj, cmd| {
+        std::fs::write(
+            prj.root().join("foundry.toml"),
+            r#"
+        [profile.default]
+        src = "src"
+        out = "out"
+        libs = ["lib"]
+        fs_permissions = [{ access = "read-write", path = "./data" }]
+
+        [profile.test]
+        "#,
+        )
+        .unwrap();
+        prj.add_test(
+            "inline_isolate_fs_permissions.sol",
+            r#"
+        import {Test} from "forge-std/Test.sol";
+
+        contract InlineIsolateFsPermissionsTest is Test {
+            function setUp() public {
+                if (!vm.exists("./data")) {
+                    vm.createDir("./data", true);
+                }
+            }
+
+            /// forge-config: default.isolate = true
+            function testInlineIsolateCanCreateFile() public {
+                vm.writeFile("./data/new.txt", "hello");
+                vm.removeFile("./data/new.txt");
+            }
+        }
+    "#,
+        );
+
+        cmd.env("FOUNDRY_PROFILE", "test");
+        cmd.args(["test", "--match-test", "testInlineIsolateCanCreateFile"]).assert_success();
+    }
+);
 
 forgetest_init!(config_inline_evm_version, |prj, cmd| {
     prj.add_test(
@@ -528,4 +598,93 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 3 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
 
 "#]]);
+});
+
+// Contract-level network configuration must not override the execution profile selected for each
+// multi-network pass. Function-level configuration can still select a different pass.
+forgetest!(contract_network_preserves_pass_profile, |prj, cmd| {
+    prj.add_test(
+        "inline.sol",
+        r#"
+        address constant TIP_FEE_MANAGER = 0xfeEC000000000000000000000000000000000000;
+
+        /// forge-config: default.networks.network = "tempo"
+        contract ContractNetwork {
+            /// forge-config: default.networks.network = "ethereum"
+            function test_fee_manager_absent_on_ethereum() public view {
+                require(
+                    TIP_FEE_MANAGER.code.length == 0,
+                    "TipFeeManager should not exist on Ethereum"
+                );
+            }
+
+            function test_fee_manager_callable_on_tempo() public view {
+                require(
+                    TIP_FEE_MANAGER.code.length > 0,
+                    "TipFeeManager must be deployed on Tempo"
+                );
+            }
+        }
+        "#,
+    );
+
+    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/inline.sol:ContractNetwork
+[PASS] test_fee_manager_absent_on_ethereum() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test for test/inline.sol:ContractNetwork
+[PASS] test_fee_manager_callable_on_tempo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+});
+
+// TIP20 calls made in an inline Tempo pass should use the token name loaded from Tempo state in
+// rendered traces.
+forgetest!(tempo_pass_traces_tip20_name, |prj, cmd| {
+    prj.add_test(
+        "inline.sol",
+        r#"
+        interface ITIP20 {
+            function balanceOf(address account) external view returns (uint256);
+        }
+
+        contract TempoTraceLabels {
+            address constant ALPHA_USD = 0x20C0000000000000000000000000000000000001;
+
+            /// forge-config: default.networks.network = "tempo"
+            function test_tip20_trace_uses_name() public view {
+                ITIP20(ALPHA_USD).balanceOf(address(this));
+            }
+        }
+        "#,
+    );
+
+    cmd.args(["test", "--mt", "test_tip20_trace_uses_name", "-vvvv"]).assert_success().stdout_eq(
+        str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/inline.sol:TempoTraceLabels
+[PASS] test_tip20_trace_uses_name() ([GAS])
+Traces:
+  [..] TempoTraceLabels::test_tip20_trace_uses_name()
+    ├─ [..] AlphaUSD::balanceOf([..]) [staticcall]
+    │   └─ ← [Return] [..]
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]],
+    );
 });

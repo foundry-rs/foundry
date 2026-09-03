@@ -31,7 +31,7 @@ pub struct GeigerArgs {
 impl_figment_convert!(GeigerArgs, build);
 
 impl GeigerArgs {
-    pub fn run(self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
         // Deprecated flags warnings
         if self.check {
             sh_warn!("`--check` is deprecated as it's now the default behavior\n")?;
@@ -54,6 +54,6 @@ impl GeigerArgs {
         lint_args.build.deny = Some(DenyLevel::Notes);
 
         // Run the lint command with the geiger-specific configuration
-        lint_args.run()
+        lint_args.run().await
     }
 }

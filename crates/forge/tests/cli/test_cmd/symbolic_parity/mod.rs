@@ -5,7 +5,8 @@
 //! Scribble, SWC). Cases are tiny, bounded reproductions so they can run in
 //! CI as unit tests against the symbolic engine. The goal is to verify the
 //! engine finds the same counterexamples (or proves the property) the
-//! corresponding fuzzers do on these benchmarks.
+//! corresponding fuzzers do on these benchmarks. Foundry issue regressions
+//! live in `foundry_issues`.
 
 pub use crate::test_cmd::symbolic_helpers::{
     assert_relevant_lines, assert_symbolic, assert_symbolic_witness, json_test_result,
@@ -15,6 +16,7 @@ pub use crate::test_cmd::symbolic_helpers::{
 mod crytic;
 mod devdacian;
 mod echidna;
+mod foundry_issues;
 mod halmos;
 mod hevm;
 mod ityfuzz;

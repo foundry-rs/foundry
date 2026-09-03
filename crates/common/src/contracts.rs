@@ -3,7 +3,7 @@
 use crate::{compile::PathOrContractInfo, find_metadata_start, strip_bytecode_placeholders};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::{Event, Function, JsonAbi};
-use alloy_primitives::{Address, B256, Bytes, Selector, hex};
+use alloy_primitives::{Address, B256, Bytes, Selector, address, hex};
 use eyre::{OptionExt, Result};
 use foundry_compilers::{
     ArtifactId, Project, ProjectCompileOutput,
@@ -29,6 +29,11 @@ use std::{
 const CALL_PROTECTION_BYTECODE_PREFIX: [u8; 21] =
     hex!("730000000000000000000000000000000000000000");
 
+/// Isolated account used to deploy libraries needed only while executing locally.
+///
+/// `address(uint160(uint256(keccak256("foundry library deployer"))))`
+pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
+
 /// Subset of [CompactBytecode] excluding sourcemaps.
 #[expect(missing_docs)]
 #[derive(Debug, Clone)]
@@ -42,6 +47,27 @@ impl BytecodeData {
     fn bytes(&self) -> Option<&Bytes> {
         self.object.as_ref().and_then(|b| b.as_bytes())
     }
+}
+
+/// Sorts and merges overlapping or adjacent byte ranges.
+fn normalize_offsets(offsets: &mut Vec<Offsets>) {
+    offsets.sort_by_key(|o| o.start);
+
+    let mut merged: Vec<Offsets> = Vec::with_capacity(offsets.len());
+    for offset in offsets.drain(..) {
+        if let Some(last) = merged.last_mut() {
+            let last_end = last.start as u64 + last.length as u64;
+            if offset.start as u64 <= last_end {
+                let this_end = offset.start as u64 + offset.length as u64;
+                if this_end > last_end {
+                    last.length = (this_end - last.start as u64) as u32;
+                }
+                continue;
+            }
+        }
+        merged.push(offset);
+    }
+    *offsets = merged;
 }
 
 impl From<CompactBytecode> for BytecodeData {
@@ -246,135 +272,168 @@ impl ContractsByArtifact {
     /// Finds a contract which deployed bytecode exactly matches the given code. Accounts for link
     /// references and immutables.
     pub fn find_by_deployed_code_exact(&self, code: &[u8]) -> Option<ArtifactWithContractRef<'_>> {
+        self.find_by_deployed_code_exact_inner(code, false)
+    }
+
+    /// Finds the only contract whose deployed bytecode exactly matches the given code.
+    pub fn find_by_deployed_code_exact_unique(
+        &self,
+        code: &[u8],
+    ) -> Option<ArtifactWithContractRef<'_>> {
+        self.find_by_deployed_code_exact_inner(code, true)
+    }
+
+    fn find_by_deployed_code_exact_inner(
+        &self,
+        code: &[u8],
+        unique: bool,
+    ) -> Option<ArtifactWithContractRef<'_>> {
         // Immediately return None if the code is empty.
         if code.is_empty() {
             return None;
         }
 
         let mut partial_match = None;
-        self.iter()
-            .find(|(id, contract)| {
-                let Some(deployed_bytecode) = &contract.deployed_bytecode else {
-                    return false;
-                };
-                let Some(deployed_code) = &deployed_bytecode.object else {
-                    return false;
-                };
+        let mut unique_match = None;
+        let matched = self.iter().find(|(id, contract)| {
+            let Some(deployed_bytecode) = &contract.deployed_bytecode else {
+                return false;
+            };
+            let Some(deployed_code) = &deployed_bytecode.object else {
+                return false;
+            };
 
-                let len = match deployed_code {
-                    BytecodeObject::Bytecode(bytes) => bytes.len(),
-                    BytecodeObject::Unlinked(bytes) => bytes.len() / 2,
-                };
+            let len = match deployed_code {
+                BytecodeObject::Bytecode(bytes) => bytes.len(),
+                BytecodeObject::Unlinked(bytes) => bytes.len() / 2,
+            };
 
-                if len != code.len() {
-                    return false;
+            if len != code.len() {
+                return false;
+            }
+
+            // Collect ignored offsets by chaining link and immutable references.
+            let mut ignored = deployed_bytecode
+                .immutable_references
+                .values()
+                .chain(deployed_bytecode.link_references.values().flat_map(|v| v.values()))
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>();
+
+            // For libraries solidity adds a call protection prefix to the bytecode. We need to
+            // ignore it as it includes library address determined at runtime.
+            // See https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries and
+            // https://github.com/NomicFoundation/hardhat/blob/af7807cf38842a4f56e7f4b966b806e39631568a/packages/hardhat-verify/src/internal/solc/bytecode.ts#L172
+            let has_call_protection = match deployed_code {
+                BytecodeObject::Bytecode(bytes) => {
+                    bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
                 }
-
-                // Collect ignored offsets by chaining link and immutable references.
-                let mut ignored = deployed_bytecode
-                    .immutable_references
-                    .values()
-                    .chain(deployed_bytecode.link_references.values().flat_map(|v| v.values()))
-                    .flatten()
-                    .cloned()
-                    .collect::<Vec<_>>();
-
-                // For libraries solidity adds a call protection prefix to the bytecode. We need to
-                // ignore it as it includes library address determined at runtime.
-                // See https://docs.soliditylang.org/en/latest/contracts.html#call-protection-for-libraries and
-                // https://github.com/NomicFoundation/hardhat/blob/af7807cf38842a4f56e7f4b966b806e39631568a/packages/hardhat-verify/src/internal/solc/bytecode.ts#L172
-                let has_call_protection = match deployed_code {
-                    BytecodeObject::Bytecode(bytes) => {
+                BytecodeObject::Unlinked(bytes) => {
+                    if let Ok(bytes) =
+                        Bytes::from_str(&bytes[..CALL_PROTECTION_BYTECODE_PREFIX.len() * 2])
+                    {
                         bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
+                    } else {
+                        false
                     }
+                }
+            };
+
+            if has_call_protection {
+                ignored.push(Offsets { start: 1, length: 20 });
+            }
+
+            let metadata_start = find_metadata_start(code);
+
+            if let Some(metadata) = metadata_start {
+                ignored.push(Offsets {
+                    start: metadata as u32,
+                    length: (code.len() - metadata) as u32,
+                });
+            }
+
+            // Merge ranges from independent sources before slicing between them.
+            normalize_offsets(&mut ignored);
+
+            let mut left = 0;
+            for offset in ignored {
+                let right = offset.start as usize;
+
+                let matched = match deployed_code {
+                    BytecodeObject::Bytecode(bytes) => bytes[left..right] == code[left..right],
                     BytecodeObject::Unlinked(bytes) => {
-                        if let Ok(bytes) =
-                            Bytes::from_str(&bytes[..CALL_PROTECTION_BYTECODE_PREFIX.len() * 2])
-                        {
-                            bytes.starts_with(&CALL_PROTECTION_BYTECODE_PREFIX)
+                        if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..right * 2]) {
+                            bytes == code[left..right]
                         } else {
                             false
                         }
                     }
                 };
 
-                if has_call_protection {
-                    ignored.push(Offsets { start: 1, length: 20 });
-                }
-
-                let metadata_start = find_metadata_start(code);
-
-                if let Some(metadata) = metadata_start {
-                    ignored.push(Offsets {
-                        start: metadata as u32,
-                        length: (code.len() - metadata) as u32,
-                    });
-                }
-
-                ignored.sort_by_key(|o| o.start);
-
-                let mut left = 0;
-                for offset in ignored {
-                    let right = offset.start as usize;
-
-                    let matched = match deployed_code {
-                        BytecodeObject::Bytecode(bytes) => bytes[left..right] == code[left..right],
-                        BytecodeObject::Unlinked(bytes) => {
-                            if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..right * 2]) {
-                                bytes == code[left..right]
-                            } else {
-                                false
-                            }
-                        }
-                    };
-
-                    if !matched {
-                        return false;
-                    }
-
-                    left = right + offset.length as usize;
-                }
-
-                let is_partial = if left < code.len() {
-                    match deployed_code {
-                        BytecodeObject::Bytecode(bytes) => bytes[left..] == code[left..],
-                        BytecodeObject::Unlinked(bytes) => {
-                            if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..]) {
-                                bytes == code[left..]
-                            } else {
-                                false
-                            }
-                        }
-                    }
-                } else {
-                    true
-                };
-
-                if !is_partial {
+                if !matched {
                     return false;
                 }
 
-                let Some(metadata) = metadata_start else { return true };
+                left = right + offset.length as usize;
+            }
 
-                let exact_match = match deployed_code {
-                    BytecodeObject::Bytecode(bytes) => bytes[metadata..] == code[metadata..],
+            let is_partial = if left < code.len() {
+                match deployed_code {
+                    BytecodeObject::Bytecode(bytes) => bytes[left..] == code[left..],
                     BytecodeObject::Unlinked(bytes) => {
-                        if let Ok(bytes) = Bytes::from_str(&bytes[metadata * 2..]) {
-                            bytes == code[metadata..]
+                        if let Ok(bytes) = Bytes::from_str(&bytes[left * 2..]) {
+                            bytes == code[left..]
                         } else {
                             false
                         }
                     }
-                };
-
-                if exact_match {
-                    true
-                } else {
-                    partial_match = Some((*id, *contract));
-                    false
                 }
-            })
-            .or(partial_match)
+            } else {
+                true
+            };
+
+            if !is_partial {
+                return false;
+            }
+
+            let Some(metadata) = metadata_start else {
+                if unique && unique_match.is_none() {
+                    unique_match = Some((*id, *contract));
+                    return false;
+                }
+                return true;
+            };
+
+            let exact_match = match deployed_code {
+                BytecodeObject::Bytecode(bytes) => bytes[metadata..] == code[metadata..],
+                BytecodeObject::Unlinked(bytes) => {
+                    if let Ok(bytes) = Bytes::from_str(&bytes[metadata * 2..]) {
+                        bytes == code[metadata..]
+                    } else {
+                        false
+                    }
+                }
+            };
+
+            if exact_match {
+                if unique && unique_match.is_none() {
+                    unique_match = Some((*id, *contract));
+                    false
+                } else {
+                    true
+                }
+            } else {
+                partial_match = Some((*id, *contract));
+                false
+            }
+        });
+
+        if unique {
+            matched.is_none().then_some(unique_match).flatten()
+        } else {
+            matched.or(partial_match)
+        }
     }
 
     /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
@@ -453,6 +512,21 @@ pub type ContractsByAddress = BTreeMap<Address, (String, JsonAbi)>;
 /// Very simple fuzzy matching of contract bytecode.
 ///
 /// Returns a value between `0.0` (identical) and `1.0` (completely different).
+/// Returns whether `creation_code` is exactly this contract's linked creation bytecode followed by
+/// a complete, canonically encoded constructor argument tuple.
+pub fn matches_contract_creation(contract: &ContractData, creation_code: &[u8]) -> bool {
+    let Some(bytecode) = contract.bytecode() else { return false };
+    let Some(arguments) = creation_code.strip_prefix(bytecode.as_ref()) else { return false };
+    match contract.abi.constructor() {
+        Some(constructor) => constructor
+            .abi_decode_input(arguments)
+            .ok()
+            .and_then(|values| constructor.abi_encode_input(&values).ok())
+            .is_some_and(|encoded| encoded == arguments),
+        None => arguments.is_empty(),
+    }
+}
+
 pub fn bytecode_diff_score<'a>(mut a: &'a [u8], mut b: &'a [u8]) -> f64 {
     // Make sure `a` is the longer one.
     if a.len() < b.len() {
@@ -557,23 +631,14 @@ pub fn find_target_path(project: &Project, identifier: &PathOrContractInfo) -> R
         PathOrContractInfo::ContractInfo(info) => {
             if let Some(path) = info.path.as_ref() {
                 let path = canonicalized(project.root().join(path));
-                let sources = project.sources()?;
-                let contract_path = sources
-                    .iter()
-                    .find_map(|(src_path, _)| {
-                        if **src_path == path {
-                            return Some(src_path.clone());
-                        }
-                        None
-                    })
-                    .ok_or_else(|| {
-                        eyre::eyre!(
-                            "Could not find source file for contract `{}` at {}",
-                            info.name,
-                            path.strip_prefix(project.root()).unwrap().display()
-                        )
-                    })?;
-                return Ok(contract_path);
+                if !path.is_file() {
+                    eyre::bail!(
+                        "Could not find source file for contract `{}` at {}",
+                        info.name,
+                        path.strip_prefix(project.root()).unwrap_or(&path).display()
+                    );
+                }
+                return Ok(path);
             }
             // If ContractInfo.path hasn't been provided we try to find the contract using the name.
             // This will fail if projects have multiple contracts with the same name. In that case,
@@ -591,8 +656,17 @@ pub fn find_matching_contract_artifact(
     target_name: Option<&str>,
 ) -> eyre::Result<ConfigurableContractArtifact> {
     if let Some(name) = target_name {
-        output
-            .remove(target_path, name)
+        if let Some(artifact) = output.remove(target_path, name) {
+            return Ok(artifact);
+        }
+
+        let target_path = canonicalized(target_path);
+        let matching_source = output.artifact_ids().find_map(|(id, _artifact)| {
+            (id.name == name && canonicalized(&id.source) == target_path).then(|| id.source.clone())
+        });
+
+        matching_source
+            .and_then(|source| output.remove(&source, name))
             .ok_or_eyre(format!("Could not find artifact `{name}` in the compiled artifacts"))
     } else {
         let possible_targets = output
@@ -636,6 +710,70 @@ pub fn find_matching_contract_artifact(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_dyn_abi::DynSolValue;
+    use alloy_primitives::U256;
+    use semver::Version;
+
+    fn deployed_artifact(name: &str, code: Bytes) -> (ArtifactId, CompactContractBytecode) {
+        deployed_artifact_with_immutables(name, code, Default::default())
+    }
+
+    fn deployed_artifact_with_immutables(
+        name: &str,
+        code: Bytes,
+        immutable_references: BTreeMap<String, Vec<Offsets>>,
+    ) -> (ArtifactId, CompactContractBytecode) {
+        (
+            ArtifactId {
+                path: format!("out/{name}.json").into(),
+                name: name.to_owned(),
+                source: format!("src/{name}.sol").into(),
+                version: Version::new(0, 8, 30),
+                build_id: String::new(),
+                profile: "default".to_owned(),
+            },
+            CompactContractBytecode {
+                abi: Some(Default::default()),
+                bytecode: None,
+                deployed_bytecode: Some(CompactDeployedBytecode {
+                    bytecode: Some(CompactBytecode {
+                        object: BytecodeObject::Bytecode(code),
+                        source_map: None,
+                        link_references: Default::default(),
+                    }),
+                    immutable_references,
+                }),
+            },
+        )
+    }
+
+    #[test]
+    fn exact_creation_match_requires_canonical_constructor_suffix() {
+        let abi = JsonAbi::parse(["constructor(uint256 value)"]).unwrap();
+        let bytecode = Bytes::from_static(&[0x60, 0x00]);
+        let contract = ContractData {
+            name: "C".to_owned(),
+            abi,
+            bytecode: Some(BytecodeData {
+                object: Some(BytecodeObject::Bytecode(bytecode.clone())),
+                link_references: BTreeMap::new(),
+                immutable_references: BTreeMap::new(),
+            }),
+            deployed_bytecode: None,
+            storage_layout: None,
+        };
+        let arguments = contract
+            .abi
+            .constructor()
+            .unwrap()
+            .abi_encode_input(&[DynSolValue::Uint(U256::from(1), 256)])
+            .unwrap();
+        let creation = [bytecode.as_ref(), &arguments].concat();
+
+        assert!(matches_contract_creation(&contract, &creation));
+        assert!(!matches_contract_creation(&contract, &creation[..creation.len() - 1]));
+        assert!(!matches_contract_creation(&contract, &[creation, vec![0]].concat()));
+    }
 
     #[test]
     fn bytecode_diffing() {
@@ -658,5 +796,87 @@ mod tests {
         let contracts = ContractsByArtifact::new(vec![]);
 
         assert!(contracts.find_by_deployed_code_exact(&[]).is_none());
+    }
+
+    #[test]
+    fn find_by_deployed_code_exact_unique_rejects_ambiguity() {
+        let code = Bytes::from_static(&[0x60, 0x00]);
+        let contracts = ContractsByArtifact::new([
+            deployed_artifact("A", code.clone()),
+            deployed_artifact("B", code.clone()),
+        ]);
+
+        assert!(contracts.find_by_deployed_code_exact_unique(&code).is_none());
+
+        let contracts = ContractsByArtifact::new([deployed_artifact("A", code.clone())]);
+        assert_eq!(contracts.find_by_deployed_code_exact_unique(&code).unwrap().0.name, "A");
+    }
+
+    #[test]
+    fn find_by_deployed_code_exact_unique_rejects_partial_metadata_match() {
+        let artifact_code = Bytes::from_static(&[0x60, 0x00, 0xa0, 0x00, 0x01]);
+        let deployed_code = Bytes::from_static(&[0x60, 0x00, 0xf6, 0x00, 0x01]);
+        let contracts = ContractsByArtifact::new([deployed_artifact("A", artifact_code)]);
+
+        assert!(contracts.find_by_deployed_code_exact(&deployed_code).is_some());
+        assert!(contracts.find_by_deployed_code_exact_unique(&deployed_code).is_none());
+    }
+
+    /// Tests an immutable reference within a library call-protection prefix.
+    #[test]
+    fn find_by_deployed_code_exact_handles_overlapping_ignored_ranges() {
+        // Call-protection prefix covering [1, 21).
+        let mut code = vec![0x73u8];
+        code.extend(std::iter::repeat_n(0u8, 20));
+        // Bytes matched after the ignored range.
+        code.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        let code = Bytes::from(code);
+
+        // Immutable reference [5, 8) lies within [1, 21).
+        let immutable_references =
+            BTreeMap::from([("someImmutable".to_string(), vec![Offsets { start: 5, length: 3 }])]);
+
+        let contracts = ContractsByArtifact::new([deployed_artifact_with_immutables(
+            "LibWithEarlyImmutable",
+            code.clone(),
+            immutable_references,
+        )]);
+
+        // The overlap must not panic or prevent a match.
+        assert!(contracts.find_by_deployed_code_exact(&code).is_some());
+    }
+
+    #[test]
+    fn normalize_offsets_merges_overlaps_and_adjacency() {
+        // Contained overlap.
+        let mut offsets = vec![Offsets { start: 1, length: 20 }, Offsets { start: 5, length: 3 }];
+        normalize_offsets(&mut offsets);
+        assert_eq!(offsets, vec![Offsets { start: 1, length: 20 }]);
+
+        // Extending overlap.
+        let mut offsets = vec![Offsets { start: 1, length: 20 }, Offsets { start: 15, length: 15 }];
+        normalize_offsets(&mut offsets);
+        assert_eq!(offsets, vec![Offsets { start: 1, length: 29 }]);
+
+        // Adjacent ranges.
+        let mut offsets = vec![Offsets { start: 1, length: 20 }, Offsets { start: 21, length: 4 }];
+        normalize_offsets(&mut offsets);
+        assert_eq!(offsets, vec![Offsets { start: 1, length: 24 }]);
+
+        // Disjoint ranges.
+        let mut offsets = vec![Offsets { start: 1, length: 5 }, Offsets { start: 10, length: 5 }];
+        normalize_offsets(&mut offsets);
+        assert_eq!(
+            offsets,
+            vec![Offsets { start: 1, length: 5 }, Offsets { start: 10, length: 5 }]
+        );
+
+        // Unsorted ranges.
+        let mut offsets = vec![Offsets { start: 10, length: 5 }, Offsets { start: 1, length: 5 }];
+        normalize_offsets(&mut offsets);
+        assert_eq!(
+            offsets,
+            vec![Offsets { start: 1, length: 5 }, Offsets { start: 10, length: 5 }]
+        );
     }
 }

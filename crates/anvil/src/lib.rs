@@ -2,6 +2,7 @@
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![recursion_limit = "256"]
 
 #[cfg(feature = "optimism")]
 use op_alloy_rpc_types as _;
@@ -141,12 +142,21 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
     let logger = if config.enable_tracing { init_tracing() } else { Default::default() };
     logger.set_enabled(!config.silent);
 
-    let backend = config.setup::<FoundryNetwork>().await?;
+    let init_state = config.init_state.take();
+    let (backend, fork_transaction_replay) = config.setup::<FoundryNetwork>().await?;
 
-    if let Some(state) = config.init_state.clone() {
+    if let Some(state) = init_state {
         backend.load_state(state).await.wrap_err("failed to load init state")?;
     }
 
+    if let Some(replay) = fork_transaction_replay {
+        backend
+            .apply_fork_transaction_replay(replay)
+            .await
+            .wrap_err("failed to replay fork transaction prefix")?;
+    }
+
+    backend.commit_startup_fork_cache();
     let backend = Arc::new(backend);
 
     if config.enable_auto_impersonate {
@@ -185,12 +195,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
         MiningMode::instant(max_transactions, listener)
     };
 
-    let miner = match &fork {
-        Some(fork) => {
-            Miner::new(mode).with_forced_transactions(fork.config.read().force_transactions.clone())
-        }
-        _ => Miner::new(mode),
-    };
+    let miner = Miner::new(mode);
 
     let dev_signer: Box<dyn EthSigner<foundry_primitives::FoundryNetwork>> =
         Box::new(DevSigner::new(signer_accounts));
@@ -209,7 +214,7 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
 
     let fee_history_cache = Arc::new(Mutex::new(Default::default()));
     let fee_history_service = FeeHistoryService::new(
-        backend.blob_params(),
+        backend.fees().clone(),
         backend.new_block_notifications(),
         Arc::clone(&fee_history_cache),
         StorageInfo::new(Arc::clone(&backend)),

@@ -139,7 +139,7 @@ impl<N: Network> MultiChainSequence<N> {
 
         // cache writes
         //../Contract-latest/run.json
-        fs::write_pretty_json_file(&self.sensitive_path, &sensitive_sequence)?;
+        fs::write_sensitive_json_file(&self.sensitive_path, &sensitive_sequence)?;
 
         if save_ts {
             //../Contract-[timestamp]/run.json

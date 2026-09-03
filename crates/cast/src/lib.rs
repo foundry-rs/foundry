@@ -2,6 +2,7 @@
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![recursion_limit = "256"]
 
 #[macro_use]
 extern crate foundry_common;
@@ -12,7 +13,7 @@ use alloy_consensus::{
     BlockHeader,
     transaction::{Recovered, SignerRecoverable},
 };
-use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt};
+use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, Specifier};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
@@ -33,14 +34,15 @@ use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
-    abi::{coerce_value, encode_function_args, encode_function_args_packed, get_event, get_func},
+    abi::{encode_function_args, encode_function_args_packed, get_event, get_func},
     compile::etherscan_project,
     flatten,
     fmt::*,
     fs, shell,
+    tempo::classify_payment_lane,
 };
 use foundry_config::Chain;
-use foundry_evm::core::bytecode::InstIter;
+use foundry_evm::core::{bytecode::InstIter, decode::RevertDecoder};
 use foundry_primitives::FoundryTxEnvelope;
 use futures::{FutureExt, StreamExt, TryStreamExt, future::Either};
 #[cfg(feature = "optimism")]
@@ -63,8 +65,6 @@ pub use foundry_evm::*;
 
 pub mod args;
 pub mod cmd;
-pub mod diagnostic;
-pub mod introspect;
 pub mod opts;
 pub mod tempo;
 
@@ -73,9 +73,12 @@ pub mod call_spec;
 pub(crate) mod debug;
 pub mod errors;
 mod rlp_converter;
+pub mod rpc_trace;
 pub mod tx;
 
 use rlp_converter::Item;
+
+const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
@@ -161,7 +164,22 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
             call = call.overrides(state_override)
         }
 
-        let res = call.await?;
+        let res = match call.await {
+            Ok(res) => res,
+            Err(err) => {
+                if let Some(data) = err.as_error_resp().and_then(|payload| payload.as_revert_data())
+                {
+                    let decoded = match RevertDecoder::new().maybe_decode_known(&data) {
+                        Some(decoded) => Some(decoded),
+                        None => tx::decode_custom_error(&data).await.ok().flatten(),
+                    };
+                    if let Some(decoded) = decoded {
+                        return Err(err).wrap_err(format!("execution reverted: {decoded}"));
+                    }
+                }
+                return Err(err.into());
+            }
+        };
         let decoded = if let Some(func) = func {
             // decode args into tokens
             match func.abi_decode_output(res.as_ref()) {
@@ -178,7 +196,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
                                 .await
                                 && code.is_empty()
                             {
-                                eyre::bail!("contract {addr:?} does not have any code")
+                                eyre::bail!("contract {addr:?} does not have any code");
                             }
                         } else if req.to().is_none() {
                             eyre::bail!("tx req is a contract deployment");
@@ -201,7 +219,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         } else if shell::is_json() {
             let tokens = decoded
                 .into_iter()
-                .map(|value| serialize_value_as_json(value, None))
+                .map(|value| serialize_value_as_json(value, None, true))
                 .collect::<eyre::Result<Vec<_>>>()?;
             serde_json::to_string_pretty(&tokens).unwrap()
         } else {
@@ -626,8 +644,13 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     }
 
     pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
-        let logs = self.provider.get_logs(&filter).await?;
+        let logs = self.get_logs(&filter).await?;
         Self::format_logs(logs)
+    }
+
+    /// Retrieves logs matching the filter.
+    pub async fn get_logs(&self, filter: &Filter) -> Result<Vec<Log>> {
+        self.provider.get_logs(filter).await.map_err(Into::into)
     }
 
     /// Retrieves logs using chunked requests to handle large block ranges.
@@ -700,7 +723,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     }
 
     /// Retrieves logs, splitting the request into fixed-size block chunks when needed.
-    async fn get_logs_chunked(&self, filter: &Filter, chunk_size: u64) -> Result<Vec<Log>>
+    pub async fn get_logs_chunked(&self, filter: &Filter, chunk_size: u64) -> Result<Vec<Log>>
     where
         P: Clone + Unpin,
     {
@@ -756,7 +779,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
                         Self::get_logs_bisecting(&provider, &filter, start_block, end_block).await
                     }
                 })
-                .buffered(5)
+                .buffered(MAX_CONCURRENT_RPC_REQUESTS)
                 .try_collect()
                 .await?;
 
@@ -939,6 +962,20 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     }
 }
 
+impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P, AnyNetwork> {
+    /// Retrieves all logs from a transaction receipt.
+    pub async fn get_transaction_logs(&self, tx_hash: TxHash) -> Result<Vec<Log>> {
+        Ok(self
+            .provider
+            .get_transaction_receipt(tx_hash)
+            .await?
+            .ok_or_else(|| eyre::eyre!("tx receipt not found: {tx_hash}"))?
+            .inner
+            .logs()
+            .to_vec())
+    }
+}
+
 /// Returns `true` if `err` is a provider range/result-size limit that retrying over a smaller
 /// range can fix. Network, auth, rate-limit, and malformed-response errors return `false`.
 fn is_range_limit_error(err: &RpcError<TransportErrorKind>) -> bool {
@@ -999,7 +1036,7 @@ where
     ) -> Result<String> {
         let block = block.into();
         if fields.contains(&"transactions".into()) && !full {
-            eyre::bail!("use --full to view transactions")
+            eyre::bail!("use --full to view transactions");
         }
 
         let block = self
@@ -1163,6 +1200,37 @@ where
     N::TxEnvelope: Serialize + UIfmtSignatureExt,
     N::TransactionResponse: UIfmt,
 {
+    pub(crate) async fn transaction_response(
+        &self,
+        tx_hash: Option<String>,
+        from: Option<NameOrAddress>,
+        nonce: Option<u64>,
+    ) -> Result<N::TransactionResponse> {
+        if let Some(tx_hash) = tx_hash {
+            let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+            self.provider
+                .get_transaction_by_hash(tx_hash)
+                .await?
+                .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))
+        } else if let Some(from) = from {
+            // If nonce is not provided, uses 0.
+            let nonce = U64::from(nonce.unwrap_or_default());
+            let from = from.resolve(self.provider.root()).await?;
+
+            self.provider
+                .raw_request::<_, Option<N::TransactionResponse>>(
+                    "eth_getTransactionBySenderAndNonce".into(),
+                    (from, nonce),
+                )
+                .await?
+                .ok_or_else(|| {
+                    eyre::eyre!("tx not found for sender {from} and nonce {:?}", nonce.to::<u64>())
+                })
+        } else {
+            eyre::bail!("tx hash or from address is required")
+        }
+    }
+
     /// # Example
     ///
     /// ```
@@ -1191,39 +1259,16 @@ where
         to_request: bool,
         lane: bool,
     ) -> Result<String> {
-        let tx = if let Some(tx_hash) = tx_hash {
-            let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
-            self.provider
-                .get_transaction_by_hash(tx_hash)
-                .await?
-                .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))?
-        } else if let Some(from) = from {
-            // If nonce is not provided, uses 0.
-            let nonce = U64::from(nonce.unwrap_or_default());
-            let from = from.resolve(self.provider.root()).await?;
-
-            self.provider
-                .raw_request::<_, Option<N::TransactionResponse>>(
-                    "eth_getTransactionBySenderAndNonce".into(),
-                    (from, nonce),
-                )
-                .await?
-                .ok_or_else(|| {
-                    eyre::eyre!("tx not found for sender {from} and nonce {:?}", nonce.to::<u64>())
-                })?
-        } else {
-            eyre::bail!("tx hash or from address is required")
-        };
+        let tx = self.transaction_response(tx_hash, from, nonce).await?;
 
         Ok(if raw {
             let encoded = tx.as_ref().encoded_2718();
             format!("0x{}", hex::encode(encoded))
         } else if lane {
             let encoded = tx.as_ref().encoded_2718();
-            let mut data = encoded.as_slice();
-            let tx = FoundryTxEnvelope::decode_2718(&mut data)
+            FoundryTxEnvelope::decode_2718(&mut encoded.as_slice())
                 .wrap_err("failed to decode transaction for lane classification")?;
-            crate::args::format_lane_classification(&tx.classify_t5_payment_lane())?
+            crate::args::format_lane_classification(&classify_payment_lane(&encoded))?
         } else if let Some(ref field) = field {
             if let Some(value) = get_pretty_tx_attr::<N>(&tx, field.as_str()) {
                 value
@@ -1751,6 +1796,34 @@ impl SimpleCast {
         Ok(padded.parse::<B256>()?.to_string())
     }
 
+    /// Converts hex data to the word-aligned layout of a Solidity `bytes memory` value.
+    ///
+    /// The output contains a 32-byte big-endian length prefix followed by the data, right-padded
+    /// with zeros to a whole number of 32-byte words.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use cast::SimpleCast as Cast;
+    ///
+    /// assert_eq!(
+    ///     Cast::to_bytes_memory("0x1234")?,
+    ///     "0x00000000000000000000000000000000000000000000000000000000000000021234000000000000000000000000000000000000000000000000000000000000"
+    /// );
+    /// # Ok::<_, eyre::Report>(())
+    /// ```
+    pub fn to_bytes_memory(data: &str) -> Result<String> {
+        const WORD: usize = 32;
+
+        let data = hex::decode(data).wrap_err("Could not decode hex")?;
+        let padded_len = data.len().next_multiple_of(WORD);
+        let mut out = Vec::with_capacity(WORD + padded_len);
+        out.extend_from_slice(&U256::from(data.len()).to_be_bytes::<WORD>());
+        out.extend_from_slice(&data);
+        out.resize(WORD + padded_len, 0);
+        Ok(hex::encode_prefixed(out))
+    }
+
     /// Encodes string into bytes32 value
     pub fn format_bytes32_string(s: &str) -> Result<String> {
         let str_bytes: &[u8] = s.as_bytes();
@@ -1936,7 +2009,9 @@ impl SimpleCast {
         let func = get_func(sig)?;
         match encode_function_args(&func, args) {
             Ok(res) => Ok(hex::encode_prefixed(&res[4..])),
-            Err(e) => eyre::bail!("Could not ABI encode the function and arguments: {e}"),
+            Err(e) => {
+                eyre::bail!("Could not ABI encode the function and arguments: {e}");
+            }
         }
     }
 
@@ -1966,7 +2041,9 @@ impl SimpleCast {
         let func = get_func(sig.as_str())?;
         let encoded = match encode_function_args_packed(&func, args) {
             Ok(res) => hex::encode(res),
-            Err(e) => eyre::bail!("Could not ABI encode the function and arguments: {e}"),
+            Err(e) => {
+                eyre::bail!("Could not ABI encode the function and arguments: {e}");
+            }
         };
         Ok(format!("0x{encoded}"))
     }
@@ -2011,44 +2088,37 @@ impl SimpleCast {
     /// ```
     pub fn abi_encode_event(sig: &str, args: &[impl AsRef<str>]) -> Result<LogData> {
         let event = get_event(sig)?;
-        let tokens = std::iter::zip(&event.inputs, args)
-            .map(|(input, arg)| coerce_value(&input.ty, arg.as_ref()))
+        if event.inputs.len() != args.len() {
+            eyre::bail!(
+                "encode length mismatch: expected {} types, got {}",
+                event.inputs.len(),
+                args.len(),
+            );
+        }
+
+        let types = event
+            .inputs
+            .iter()
+            .map(Specifier::<DynSolType>::resolve)
+            .collect::<Result<Vec<_>, _>>()?;
+        let tokens = std::iter::zip(&types, args)
+            .map(|(ty, arg)| Ok(DynSolType::coerce_str(ty, arg.as_ref())?))
             .collect::<Result<Vec<_>>>()?;
 
-        let mut topics = vec![event.selector()];
-        let mut data_tokens: Vec<u8> = Vec::new();
+        let mut topics = if event.anonymous { vec![] } else { vec![event.selector()] };
+        let mut data_tokens = Vec::new();
 
         for (input, token) in event.inputs.iter().zip(tokens) {
             if input.indexed {
-                let ty = DynSolType::parse(&input.ty)?;
-                if matches!(
-                    ty,
-                    DynSolType::String
-                        | DynSolType::Bytes
-                        | DynSolType::Array(_)
-                        | DynSolType::Tuple(_)
-                ) {
-                    // For dynamic types, hash the encoded value
-                    let encoded = token.abi_encode();
-                    let hash = keccak256(encoded);
-                    topics.push(hash);
-                } else {
-                    // For fixed-size types, encode directly to 32 bytes
-                    let mut encoded = [0u8; 32];
-                    let token_encoded = token.abi_encode();
-                    if token_encoded.len() <= 32 {
-                        let start = 32 - token_encoded.len();
-                        encoded[start..].copy_from_slice(&token_encoded);
-                    }
-                    topics.push(B256::from(encoded));
-                }
+                topics.push(encode_event_topic(&token));
             } else {
-                // Non-indexed parameters go into data
-                data_tokens.extend_from_slice(&token.abi_encode());
+                // Non-indexed parameters are encoded together as the event body.
+                data_tokens.push(token);
             }
         }
 
-        Ok(LogData::new_unchecked(topics, data_tokens.into()))
+        let data = DynSolValue::Tuple(data_tokens).abi_encode_params();
+        Ok(LogData::new_unchecked(topics, data.into()))
     }
 
     /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.
@@ -2123,7 +2193,7 @@ impl SimpleCast {
             | DynSolType::FixedArray(..)
             | DynSolType::Tuple(..)
             | DynSolType::CustomStruct { .. } => {
-                eyre::bail!("Type `{k_ty}` is not supported as a mapping key")
+                eyre::bail!("Type `{k_ty}` is not supported as a mapping key");
             }
         }
 
@@ -2314,7 +2384,7 @@ impl SimpleCast {
         let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let metadata = client.contract_source_code(contract_address.parse()?).await?;
         let Some(metadata) = metadata.items.first() else {
-            eyre::bail!("Empty contract source code")
+            eyre::bail!("Empty contract source code");
         };
 
         let tmp = tempfile::tempdir()?;
@@ -2406,7 +2476,9 @@ impl SimpleCast {
 
         match result {
             Some((_nonce, selector, signature)) => Ok((selector, signature)),
-            None => eyre::bail!("No selector found"),
+            None => {
+                eyre::bail!("No selector found");
+            }
         }
     }
 
@@ -2435,19 +2507,22 @@ impl SimpleCast {
             .functions
             .expect("functions extraction was requested")
             .into_iter()
-            .map(|f| {
-                (
-                    f.selector.into(),
-                    f.arguments
-                        .expect("arguments extraction was requested")
-                        .into_iter()
-                        .map(|t| t.sol_type_name().to_string())
-                        .collect::<Vec<String>>()
-                        .join(","),
-                    f.state_mutability
-                        .expect("state_mutability extraction was requested")
-                        .as_json_str(),
-                )
+            .filter_map(|f| {
+                if f.dispatch == evmole::SelectorDispatch::Abi {
+                    return Some((
+                        f.selector.into(),
+                        f.arguments
+                            .expect("arguments extraction was requested")
+                            .into_iter()
+                            .map(|t| t.sol_type_name().to_string())
+                            .collect::<Vec<String>>()
+                            .join(","),
+                        f.state_mutability
+                            .expect("state_mutability extraction was requested")
+                            .as_json_str(),
+                    ));
+                }
+                None
             })
             .collect())
     }
@@ -2479,6 +2554,44 @@ impl SimpleCast {
 
 pub(crate) fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
+}
+
+/// Encodes the topic of an indexed event parameter.
+///
+/// Value types are encoded as their 32-byte word. Reference types are hashed over the special
+/// in-place encoding defined for indexed event parameters, which differs from regular ABI
+/// encoding: `string` and `bytes` contribute their raw contents, and array or struct members are
+/// concatenated recursively without any offsets or length prefixes.
+///
+/// See <https://docs.soliditylang.org/en/latest/abi-spec.html#encoding-of-indexed-event-parameters>
+pub(crate) fn encode_event_topic(value: &DynSolValue) -> B256 {
+    if let Some(word) = value.as_word() {
+        return word;
+    }
+    // Top-level `string` and `bytes` hash their raw contents without padding.
+    if let Some(bytes) = value.as_packed_seq() {
+        return keccak256(bytes);
+    }
+    let mut preimage = Vec::new();
+    encode_event_topic_preimage(value, &mut preimage);
+    keccak256(preimage)
+}
+
+/// Encodes a value into the in-place preimage of an indexed event parameter: words as-is,
+/// `string`/`bytes` right-padded to a multiple of 32 bytes, and sequences as the concatenation of
+/// their encoded members.
+fn encode_event_topic_preimage(value: &DynSolValue, out: &mut Vec<u8>) {
+    if let Some(word) = value.as_word() {
+        out.extend_from_slice(word.as_slice());
+    } else if let Some(bytes) = value.as_packed_seq() {
+        let pad = bytes.len().next_multiple_of(32) - bytes.len();
+        out.extend_from_slice(bytes);
+        out.resize(out.len() + pad, 0);
+    } else if let Some(values) = value.as_fixed_seq().or_else(|| value.as_array()) {
+        for value in values {
+            encode_event_topic_preimage(value, out);
+        }
+    }
 }
 
 fn explorer_client(
@@ -2635,7 +2748,87 @@ mod logs_bisecting {
 #[cfg(test)]
 mod tests {
     use super::{DynSolValue, SimpleCast as Cast, serialize_value_as_json};
-    use alloy_primitives::hex;
+    use alloy_primitives::{U256, hex};
+
+    /// Compares [`super::encode_event_topic`] against alloy's static [`EventTopic`]
+    /// implementation, which `sol!`-generated events use to compute indexed topics.
+    #[test]
+    fn encode_event_topic_matches_static_encoding() {
+        use alloy_primitives::{Address, Bytes, U256};
+        use alloy_sol_types::{EventTopic, sol_data};
+
+        let uint = |n: u64| DynSolValue::Uint(U256::from(n), 256);
+        let string = |s: &str| DynSolValue::String(s.into());
+        let topic = |v: &DynSolValue| super::encode_event_topic(v);
+
+        let long = "abcdefghijklmnopqrstuvwxyz0123456789abcd";
+        for s in ["", "hello", long] {
+            assert_eq!(
+                topic(&string(s)),
+                <sol_data::String as EventTopic>::encode_topic(&s.to_string()).0,
+                "string {s:?}"
+            );
+        }
+
+        let bytes = hex::decode("deadbeef").unwrap();
+        assert_eq!(
+            topic(&DynSolValue::Bytes(bytes.clone())),
+            <sol_data::Bytes as EventTopic>::encode_topic(&Bytes::from(bytes)).0,
+        );
+
+        let addr = Address::repeat_byte(0x42);
+        assert_eq!(
+            topic(&DynSolValue::Address(addr)),
+            <sol_data::Address as EventTopic>::encode_topic(&addr).0,
+        );
+
+        assert_eq!(
+            topic(&DynSolValue::Array(vec![uint(1), uint(2)])),
+            <sol_data::Array<sol_data::Uint<256>> as EventTopic>::encode_topic(&vec![
+                U256::from(1),
+                U256::from(2)
+            ])
+            .0,
+        );
+
+        assert_eq!(
+            topic(&DynSolValue::FixedArray(vec![uint(7), uint(9)])),
+            <sol_data::FixedArray<sol_data::Uint<256>, 2> as EventTopic>::encode_topic(&[
+                U256::from(7),
+                U256::from(9)
+            ])
+            .0,
+        );
+
+        assert_eq!(
+            topic(&DynSolValue::Array(vec![string("alpha"), string(long)])),
+            <sol_data::Array<sol_data::String> as EventTopic>::encode_topic(&vec![
+                "alpha".to_string(),
+                long.to_string()
+            ])
+            .0,
+        );
+
+        assert_eq!(
+            topic(&DynSolValue::Tuple(vec![uint(7), string("hello")])),
+            <(sol_data::Uint<256>, sol_data::String) as EventTopic>::encode_topic(&(
+                U256::from(7),
+                "hello".to_string()
+            ))
+            .0,
+        );
+
+        assert_eq!(
+            topic(&DynSolValue::Array(vec![
+                DynSolValue::Array(vec![uint(1)]),
+                DynSolValue::Array(vec![uint(2), uint(3)]),
+            ])),
+            <sol_data::Array<sol_data::Array<sol_data::Uint<256>>> as EventTopic>::encode_topic(
+                &vec![vec![U256::from(1)], vec![U256::from(2), U256::from(3)]]
+            )
+            .0,
+        );
+    }
 
     #[test]
     fn simple_selector() {
@@ -2757,7 +2950,7 @@ mod tests {
         let calldata = "0xdb5b0ed700000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000006772bf190000000000000000000000000000000000000000000000000000000000020716000000000000000000000000af9d27ffe4d51ed54ac8eec78f2785d7e11e5ab100000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000404366a6dc4b2f348a85e0066e46f0cc206fca6512e0ed7f17ca7afb88e9a4c27000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093922dee6e380c28a50c008ab167b7800bb24c2026cd1b22f1c6fb884ceed7400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060f85e59ecad6c1a6be343a945abedb7d5b5bfad7817c4d8cc668da7d391faf700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093dfbf04395fbec1f1aed4ad0f9d3ba880ff58a60485df5d33f8f5e0fb73188600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000aa334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5";
         let sig = "sequenceBatchesValidium((bytes32,bytes32,uint64,bytes32)[],uint64,uint64,address,bytes)";
         let decoded = Cast::calldata_decode(sig, calldata, true).unwrap();
-        let json_value = serialize_value_as_json(DynSolValue::Array(decoded), None).unwrap();
+        let json_value = serialize_value_as_json(DynSolValue::Array(decoded), None, true).unwrap();
         let expected = serde_json::json!([
             [
                 [
@@ -2800,6 +2993,22 @@ mod tests {
     }
 
     #[test]
+    fn to_bytes_memory() {
+        for len in [0, 31, 32, 33] {
+            let data = vec![0xab; len];
+            let out = Cast::to_bytes_memory(&hex::encode_prefixed(&data)).unwrap();
+            let out = hex::decode(out).unwrap();
+
+            assert_eq!(out.len(), 32 + len.next_multiple_of(32));
+            assert_eq!(U256::from_be_slice(&out[..32]), U256::from(len));
+            assert_eq!(&out[32..32 + len], data);
+            assert!(out[32 + len..].iter().all(|byte| *byte == 0));
+        }
+
+        assert!(Cast::to_bytes_memory("0x1").is_err());
+    }
+
+    #[test]
     fn from_rlp() {
         let rlp = "0xf8b1a02b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca8080a02838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f90380a0e46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd8754980a01d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5808080a0236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff08080808080";
         let item = Cast::from_rlp(rlp, false).unwrap();
@@ -2807,6 +3016,14 @@ mod tests {
             item,
             r#"["0x2b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca","0x","0x","0x2838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f903","0x","0xe46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd87549","0x","0x1d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5","0x","0x","0x","0x236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff0","0x","0x","0x","0x","0x"]"#
         )
+    }
+
+    #[test]
+    fn to_base_accepts_uppercase_prefixes() {
+        assert_eq!(Cast::to_base("0B10", None, "dec").unwrap(), "2");
+        assert_eq!(Cast::to_base("0O10", None, "dec").unwrap(), "8");
+        assert_eq!(Cast::to_base("0X10", None, "dec").unwrap(), "16");
+        assert_eq!(Cast::to_base("-0X10", None, "dec").unwrap(), "-16");
     }
 
     #[test]

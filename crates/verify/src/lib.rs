@@ -22,7 +22,7 @@ pub use retry::RetryArgs;
 pub mod sourcify;
 
 pub mod verify;
-pub use verify::{VerifierArgs, VerifyArgs, VerifyCheckArgs};
+pub use verify::{VerifierArgs, VerifyArgs, VerifyCheckArgs, parse_etherscan_license_type};
 
 mod types;
 

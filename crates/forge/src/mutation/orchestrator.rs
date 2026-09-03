@@ -26,14 +26,15 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{Config, filter::GlobMatcher};
-use foundry_evm::opts::EvmOpts;
+use foundry_evm::{fork::ResolvedFork, opts::EvmOpts};
 
 use crate::{
-    cmd::test::FilterArgs,
+    cmd::test::{FilterArgs, RerunFailure},
     mutation::{
         MutationHandler, MutationProgress, MutationReporter, MutationsSummary,
         mutant::{Mutant, MutationResult},
-        runner::run_mutations_parallel_with_progress,
+        runner::{MutationEvmConfig, run_mutations_parallel_with_progress},
+        type_analysis::{collect_mutation_exclusions, normalize_path},
     },
 };
 
@@ -51,7 +52,9 @@ struct ExecutionCacheFingerprint<'a> {
     schema: &'static str,
     config: &'a Config,
     evm_opts: &'a EvmOpts,
+    resolved_fork: Option<alloy_primitives::B256>,
     filter_args: FilterArgsFingerprint<'a>,
+    rerun_failures: Option<&'a [RerunFailure]>,
     num_workers: usize,
     artifacts: &'a [ArtifactCacheFingerprint],
 }
@@ -84,6 +87,10 @@ pub struct MutationRunConfig {
     /// applied identically to baseline and every mutant run so they exercise
     /// the same test set.
     pub filter_args: FilterArgs,
+    /// Exact contract/test pairs selected by `--rerun`, if present. These are
+    /// not representable by `FilterArgs` alone because rerun stores precise
+    /// suite identifiers in addition to a test-name regex.
+    pub rerun_failures: Option<Vec<RerunFailure>>,
     /// Project-relative source files selected for the baseline compile.
     /// Re-rooted into each per-mutant workspace so compilation and execution
     /// honor the same filtered test universe.
@@ -126,8 +133,16 @@ pub async fn run_mutation_testing(
     config: Arc<Config>,
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: EvmOpts,
+    resolved_fork: Option<ResolvedFork>,
     mutation_config: MutationRunConfig,
 ) -> Result<MutationRunResult> {
+    let create2_deployer_available =
+        evm_opts.can_use_create2_deployer_resolved(resolved_fork.as_ref()).await?;
+    let mutation_evm = MutationEvmConfig {
+        opts: evm_opts.clone(),
+        resolved_fork: resolved_fork.clone(),
+        create2_deployer_available,
+    };
     let num_workers = mutation_config.effective_workers();
     let json_output = mutation_config.json_output;
     let artifact_link_references = output.artifact_ids().filter_map(|(id, artifact)| {
@@ -161,9 +176,12 @@ pub async fn run_mutation_testing(
         &config,
         &execution_cache_output,
         &evm_opts,
+        resolved_fork.as_ref(),
         &mutation_config.filter_args,
+        mutation_config.rerun_failures.as_deref(),
         num_workers,
     )?;
+    let mut mutation_exclusions = collect_mutation_exclusions(&config, output).unwrap_or_default();
 
     if !mutation_config.show_progress && !json_output {
         sh_println!("Running mutation tests with {} parallel workers...", num_workers)?;
@@ -195,6 +213,9 @@ pub async fn run_mutation_testing(
         // Create handler for this file, optionally restricting to a subset of
         // contracts by name when --mutate-contract is provided.
         let mut handler = MutationHandler::new(path.clone(), config.clone());
+        if let Some(mutations) = mutation_exclusions.remove(&normalize_path(&path)) {
+            handler = handler.with_mutation_exclusions(mutations);
+        }
         if let Some(filter) = &mutation_config.mutate_contract_pattern {
             handler = handler.with_contract_filter(filter.clone());
         }
@@ -284,15 +305,16 @@ pub async fn run_mutation_testing(
 
         // Run mutations in parallel using isolated workspaces
         let batch = run_mutations_parallel_with_progress(
-            mutants_to_test.clone(),
+            mutants_to_test,
             path.clone(),
             handler.src.clone(),
             config.clone(),
-            evm_opts.clone(),
+            mutation_evm.clone(),
             num_workers,
-            progress.clone(),
+            progress,
             json_output,
             mutation_config.filter_args.clone(),
+            mutation_config.rerun_failures.clone(),
             Arc::new(selected_sources_relative.clone()),
             mutation_config.isolate,
             Arc::clone(&cancellation_requested),
@@ -387,7 +409,9 @@ fn mutation_execution_cache_key(
     config: &Config,
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: &EvmOpts,
+    resolved_fork: Option<&ResolvedFork>,
     filter_args: &FilterArgs,
+    rerun_failures: Option<&[RerunFailure]>,
     num_workers: usize,
 ) -> Result<String> {
     let artifacts = output
@@ -400,22 +424,53 @@ fn mutation_execution_cache_key(
             profile: id.profile,
         })
         .collect::<Vec<_>>();
-    mutation_execution_cache_key_from_parts(config, evm_opts, filter_args, num_workers, artifacts)
+    mutation_execution_cache_key_from_parts_with_rerun_failures(
+        config,
+        evm_opts,
+        resolved_fork.map(ResolvedFork::fingerprint),
+        filter_args,
+        rerun_failures,
+        num_workers,
+        artifacts,
+    )
 }
 
+#[cfg(test)]
 fn mutation_execution_cache_key_from_parts(
     config: &Config,
     evm_opts: &EvmOpts,
     filter_args: &FilterArgs,
     num_workers: usize,
+    artifacts: Vec<ArtifactCacheFingerprint>,
+) -> Result<String> {
+    mutation_execution_cache_key_from_parts_with_rerun_failures(
+        config,
+        evm_opts,
+        None,
+        filter_args,
+        None,
+        num_workers,
+        artifacts,
+    )
+}
+
+fn mutation_execution_cache_key_from_parts_with_rerun_failures(
+    config: &Config,
+    evm_opts: &EvmOpts,
+    resolved_fork: Option<alloy_primitives::B256>,
+    filter_args: &FilterArgs,
+    rerun_failures: Option<&[RerunFailure]>,
+    num_workers: usize,
     mut artifacts: Vec<ArtifactCacheFingerprint>,
 ) -> Result<String> {
     artifacts.sort();
     let fingerprint = ExecutionCacheFingerprint {
-        schema: "mutation-results-v1",
+        schema: "mutation-results-v2",
         config,
         evm_opts,
+        resolved_fork,
         filter_args: filter_args_fingerprint(filter_args),
+        rerun_failures,
         num_workers,
         artifacts: &artifacts,
     };
@@ -672,6 +727,37 @@ mod tests {
     }
 
     #[test]
+    fn execution_cache_key_changes_when_resolved_fork_changes() {
+        let config = Config::default();
+        let evm_opts = EvmOpts::default();
+        let filter_args = filter_args();
+        let artifacts = vec![artifact("build-a")];
+
+        let first_key = mutation_execution_cache_key_from_parts_with_rerun_failures(
+            &config,
+            &evm_opts,
+            Some(alloy_primitives::B256::with_last_byte(1)),
+            &filter_args,
+            None,
+            1,
+            artifacts.clone(),
+        )
+        .unwrap();
+        let second_key = mutation_execution_cache_key_from_parts_with_rerun_failures(
+            &config,
+            &evm_opts,
+            Some(alloy_primitives::B256::with_last_byte(2)),
+            &filter_args,
+            None,
+            1,
+            artifacts,
+        )
+        .unwrap();
+
+        assert_ne!(first_key, second_key);
+    }
+
+    #[test]
     fn execution_cache_key_changes_when_compiled_artifacts_change() {
         let config = Config::default();
         let evm_opts = EvmOpts::default();
@@ -790,6 +876,45 @@ mod tests {
             &config,
             &evm_opts,
             &second_filter,
+            1,
+            artifacts,
+        )
+        .unwrap();
+
+        assert_ne!(first_key, second_key);
+    }
+
+    #[test]
+    fn execution_cache_key_changes_when_rerun_failures_change() {
+        let config = Config::default();
+        let evm_opts = EvmOpts::default();
+        let filter_args = filter_args();
+        let first_failures = vec![RerunFailure {
+            contract: "test/Counter.t.sol:WeakTest".to_string(),
+            test: "test_increment()".to_string(),
+        }];
+        let second_failures = vec![RerunFailure {
+            contract: "test/Counter.t.sol:StrongTest".to_string(),
+            test: "test_increment()".to_string(),
+        }];
+        let artifacts = vec![artifact("build-a")];
+
+        let first_key = mutation_execution_cache_key_from_parts_with_rerun_failures(
+            &config,
+            &evm_opts,
+            None,
+            &filter_args,
+            Some(&first_failures),
+            1,
+            artifacts.clone(),
+        )
+        .unwrap();
+        let second_key = mutation_execution_cache_key_from_parts_with_rerun_failures(
+            &config,
+            &evm_opts,
+            None,
+            &filter_args,
+            Some(&second_failures),
             1,
             artifacts,
         )

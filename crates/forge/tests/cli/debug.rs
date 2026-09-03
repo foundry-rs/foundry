@@ -1,6 +1,67 @@
 use itertools::Itertools;
 use std::path::Path;
 
+forgetest!(
+    #[cfg(unix)]
+    debugger_selects_once_across_network_passes,
+    |prj, _cmd| {
+        use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
+
+        const TIMEOUT_MS: u64 = 30_000;
+
+        prj.add_test(
+            "MultiNetwork.t.sol",
+            r#"
+contract MultiNetworkTest {
+    function testDefault() public {}
+
+    /// forge-config: default.networks.network = "tempo"
+    function testTempo() public {}
+}
+"#,
+        );
+
+        let dump_path = prj.root().join("debug.json");
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_forge"));
+        command
+            .current_dir(prj.root())
+            .env_remove("CI")
+            .env("NO_COLOR", "1")
+            .env("TERM", "dumb")
+            .args(["test", "--debug", "--dump"])
+            .arg(&dump_path);
+
+        let mut session = spawn_with_options(
+            command,
+            Options {
+                timeout_ms: Some(TIMEOUT_MS),
+                strip_ansi_escape_codes: true,
+                encoding: Encoding::UTF8,
+            },
+        )
+        .unwrap();
+
+        session.exp_string("Select a test to debug:").unwrap();
+        session.send("\x1b[B\x1b[B\r").unwrap();
+        session.flush().unwrap();
+
+        let output = session.exp_eof().unwrap();
+        assert!(
+            matches!(session.process.wait().unwrap(), WaitStatus::Exited(_, 0)),
+            "debug command failed: {output}"
+        );
+        assert_eq!(
+            output.matches("Select a test to debug:").count(),
+            1,
+            "selection picker repeated: {output}"
+        );
+        assert!(output.contains("[PASS] testTempo()"), "selected test did not run: {output}");
+        assert!(!output.contains("[PASS] testDefault()"), "unselected test also ran: {output}");
+        assert!(dump_path.exists(), "debugger dump was not created");
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(dump_path).unwrap()).unwrap();
+    }
+);
+
 // Sets up a debuggable test case.
 // Run with `cargo test-debugger`.
 forgetest!(

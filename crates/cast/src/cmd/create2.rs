@@ -1,6 +1,14 @@
+use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::{Address, B256, U256, hex, keccak256};
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
 use eyre::{Result, WrapErr};
+use foundry_cli::{
+    json::print_scalar,
+    opts::BuildOpts,
+    utils::{LoadConfig, find_contract_artifacts, parse_constructor_args},
+};
+use foundry_common::{compile, shell};
+use foundry_compilers::{info::ContractInfo, utils::canonicalize};
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use regex::RegexSetBuilder;
 use std::time::Instant;
@@ -8,9 +16,75 @@ use std::time::Instant;
 // https://etherscan.io/address/0x4e59b44847b379578588920ca78fbf26c0b4956c#code
 const DEPLOYER: &str = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
 
+#[derive(Clone, Debug, Subcommand)]
+enum Create2Subcommand {
+    /// Compute a contract's CREATE2 init code hash.
+    #[command(visible_alias = "initcodehash")]
+    InitCodeHash(InitCodeHashArgs),
+}
+
+foundry_config::impl_figment_convert!(InitCodeHashArgs, build);
+
+#[derive(Clone, Debug, Args)]
+struct InitCodeHashArgs {
+    /// The contract identifier in the form `<path>:<contractname>`.
+    contract: ContractInfo,
+
+    /// The constructor arguments.
+    #[arg(value_name = "ARGS", allow_negative_numbers = true)]
+    constructor_args: Vec<String>,
+
+    #[command(flatten)]
+    build: BuildOpts,
+}
+
+impl Create2Subcommand {
+    fn run(&self) -> Result<()> {
+        match self {
+            Self::InitCodeHash(args) => args.run(),
+        }
+    }
+}
+
+impl InitCodeHashArgs {
+    fn run(&self) -> Result<()> {
+        let config = self.load_config()?;
+        let project = config.project()?;
+        let target_path = if let Some(path) = &self.contract.path {
+            canonicalize(project.root().join(path))?
+        } else {
+            project.find_contract_path(&self.contract.name)?
+        };
+
+        let output = compile::compile_target(&target_path, &project, true)?;
+        let (abi, bin, _) = find_contract_artifacts(output, &target_path, &self.contract.name)?;
+        let Some(bytecode) = bin.object.into_bytes() else {
+            eyre::bail!("contract contains unlinked libraries");
+        };
+        if bytecode.is_empty() {
+            eyre::bail!("no bytecode found in bin object for {}", self.contract.name);
+        }
+
+        let mut init_code = bytecode.to_vec();
+        if let Some(constructor) = &abi.constructor {
+            let params = parse_constructor_args(constructor, &self.constructor_args)?;
+            init_code.extend(constructor.abi_encode_input(&params)?);
+        } else if !self.constructor_args.is_empty() {
+            eyre::bail!("contract does not have a constructor");
+        }
+
+        print_scalar(keccak256(init_code))?;
+        Ok(())
+    }
+}
+
 /// CLI arguments for `cast create2`.
 #[derive(Clone, Debug, Parser)]
+#[command(subcommand_negates_reqs = true, args_conflicts_with_subcommands = true)]
 pub struct Create2Args {
+    #[command(subcommand)]
+    command: Option<Create2Subcommand>,
+
     /// Prefix for the contract address.
     #[arg(
         long,
@@ -89,8 +163,22 @@ pub struct Create2Output {
 }
 
 impl Create2Args {
+    pub fn execute(self) -> Result<()> {
+        if let Some(command) = &self.command {
+            return command.run();
+        }
+        self.run().map(drop)
+    }
+
     pub fn run(self) -> Result<Create2Output> {
+        if self.command.is_some() {
+            eyre::bail!(
+                "`Create2Args::run` does not support subcommands; use `Create2Args::execute` instead"
+            );
+        }
+
         let Self {
+            command: _,
             starts_with,
             ends_with,
             matching,
@@ -213,7 +301,11 @@ impl Create2Args {
         sh_status!("Successfully found contract address in {:?}", timer.elapsed())?;
         sh_status!("Address: {address}")?;
         sh_status!("Salt: {salt} ({})", U256::from_be_bytes(salt.0))?;
-        sh_println!("{address}\t{salt}")?;
+        // The machine-readable stdout record duplicates the prose above when stdout is an
+        // interactive terminal.
+        if !shell::is_out_tty() {
+            sh_println!("{address}\t{salt}")?;
+        }
 
         Ok(Create2Output { address, salt })
     }
@@ -231,6 +323,16 @@ mod tests {
     use super::*;
     use alloy_primitives::{address, b256};
     use std::str::FromStr;
+
+    #[test]
+    fn create2_subcommand_is_rejected_by_legacy_runner() {
+        let args = Create2Args::parse_from(["foundry-cli", "init-code-hash", "MissingContract"]);
+        let err = args.run().err().unwrap();
+        assert_eq!(
+            err.to_string(),
+            "`Create2Args::run` does not support subcommands; use `Create2Args::execute` instead"
+        );
+    }
 
     #[test]
     fn basic_create2() {

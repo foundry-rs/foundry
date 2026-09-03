@@ -26,8 +26,9 @@ pub use session::TEMPO_SESSION_ID_ENV;
 pub struct TempoOpts {
     /// Use a live Tempo wallet session for signing.
     ///
-    /// When set, Foundry resolves the session from `$TEMPO_HOME/wallet/sessions.toml` and signs
-    /// Tempo transactions with the session's temporary access key on behalf of its root account.
+    /// When set, Foundry resolves the authorization witness from
+    /// `$TEMPO_HOME/wallet/store.json` and signs with that Accounts access key on behalf of its
+    /// root account.
     #[arg(long = "tempo.session", id = "tempo_session", value_name = "SESSION_ID")]
     pub session: Option<B256>,
 
@@ -115,14 +116,17 @@ pub struct TempoOpts {
     )]
     pub sponsor_sig: Option<Signature>,
 
-    /// Remote sponsor (fee payer) service URL.
+    /// Remote sponsor (fee payer) service URL for Cast transaction commands.
     ///
     /// When set, the user-signed transaction is forwarded to this URL via
     /// `eth_signRawTransaction`. The service adds its fee payer signature and returns
     /// the fully-sponsored transaction, which is then submitted via the regular RPC.
     /// No local sponsor key is required.
     ///
-    /// Example: `cast send 0x... --sponsor-url https://sponsor.tempo.xyz/tp_abc123`
+    /// This option is supported by `cast send` and `cast erc20`. Forge commands currently support
+    /// local sponsorship through `--tempo.sponsor` and `--tempo.sponsor-signer` instead.
+    ///
+    /// Example: `cast send 0x... --sponsor-url https://sponsor.moderato.tempo.xyz`
     #[arg(
         long = "sponsor-url",
         alias = "tempo.sponsor-url",

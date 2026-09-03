@@ -118,69 +118,6 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
     Ok(value)
 }
 
-/// Splits a shell-like argument string into argv parts without invoking a shell.
-///
-/// This supports whitespace separation, single and double quotes, and backslash escaping. It is
-/// intentionally smaller than a shell parser: expansions, redirection, pipelines, and command
-/// separators are treated as plain argument text by callers.
-///
-/// Returns `Err(quote_char)` when the input contains an unterminated quote.
-pub fn split_quoted_args(args: &str) -> Result<Vec<String>, char> {
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let mut quote = None;
-    let mut escaped = false;
-    let mut token_started = false;
-
-    for ch in args.chars() {
-        if escaped {
-            current.push(ch);
-            escaped = false;
-            token_started = true;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            token_started = true;
-            continue;
-        }
-        if let Some(quote_ch) = quote {
-            if ch == quote_ch {
-                quote = None;
-            } else {
-                current.push(ch);
-            }
-            token_started = true;
-            continue;
-        }
-        if matches!(ch, '"' | '\'') {
-            quote = Some(ch);
-            token_started = true;
-        } else if ch.is_whitespace() {
-            if token_started {
-                parts.push(std::mem::take(&mut current));
-                token_started = false;
-            }
-        } else {
-            current.push(ch);
-            token_started = true;
-        }
-    }
-
-    if let Some(quote_ch) = quote {
-        return Err(quote_ch);
-    }
-    if escaped {
-        current.push('\\');
-        token_started = true;
-    }
-    if token_started {
-        parts.push(current);
-    }
-
-    Ok(parts)
-}
-
 /// Returns a list of _unique_ paths to all folders under `root` that contain a `foundry.toml` file
 ///
 /// This will also resolve symlinks
@@ -207,10 +144,36 @@ pub fn foundry_toml_dirs(root: impl AsRef<Path>) -> Vec<PathBuf> {
         .max_depth(1)
         .into_iter()
         .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_dir())
-        .filter_map(|e| dunce::canonicalize(e.path()).ok())
-        .filter(|p| p.join(Config::FILE_NAME).exists())
+        .filter(|entry| entry.file_type().is_dir())
+        .filter_map(|entry| dunce::canonicalize(entry.path()).ok())
+        .filter(|path| path.join(Config::FILE_NAME).exists())
         .collect()
+}
+
+/// A depth-one dependency path and the canonical directory it resolves to.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct FoundryTomlDir {
+    /// The canonical directory used to identify the dependency config.
+    pub canonical: PathBuf,
+    /// The lexical path under the configured dependency directory.
+    pub path: PathBuf,
+}
+
+/// Returns depth-one dependency entries that resolve to directories containing `foundry.toml`.
+pub(crate) fn foundry_toml_dir_entries(root: impl AsRef<Path>) -> Vec<FoundryTomlDir> {
+    let mut dirs = walkdir::WalkDir::new(root)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let canonical = dunce::canonicalize(entry.path()).ok()?;
+            (canonical.is_dir() && canonical.join(Config::FILE_NAME).exists())
+                .then(|| FoundryTomlDir { path: entry.path().to_path_buf(), canonical })
+        })
+        .collect::<Vec<_>>();
+    dirs.sort_unstable_by(|a, b| a.canonical.cmp(&b.canonical).then_with(|| a.path.cmp(&b.path)));
+    dirs.dedup();
+    dirs
 }
 
 /// Returns a remapping for the given dir
@@ -358,5 +321,85 @@ impl FromStr for Numeric {
         } else {
             U256::from_str(s).map(Numeric::U256).map_err(|err| err.to_string())
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::{FoundryTomlDir, foundry_toml_dir_entries, foundry_toml_dirs};
+    use std::{fs, os::unix::fs::symlink};
+    use tempfile::tempdir;
+
+    #[test]
+    fn finds_physical_foundry_toml_dirs_without_recursing() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("lib");
+        let dependency = root.join("dependency");
+        let nested = dependency.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(dependency.join("foundry.toml"), "").unwrap();
+        fs::write(nested.join("foundry.toml"), "").unwrap();
+
+        assert_eq!(foundry_toml_dirs(&root), vec![dunce::canonicalize(dependency).unwrap()]);
+    }
+
+    #[test]
+    fn preserves_sorted_aliases_for_the_same_canonical_dependency() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("lib");
+        let dependency = temp.path().join("dependency");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&dependency).unwrap();
+        fs::write(dependency.join("foundry.toml"), "").unwrap();
+        symlink(&dependency, root.join("z-alias")).unwrap();
+        symlink(&dependency, root.join("a-alias")).unwrap();
+
+        let canonical = dunce::canonicalize(dependency).unwrap();
+        assert_eq!(
+            foundry_toml_dir_entries(&root),
+            vec![
+                FoundryTomlDir { path: root.join("a-alias"), canonical: canonical.clone() },
+                FoundryTomlDir { path: root.join("z-alias"), canonical },
+            ]
+        );
+    }
+
+    #[test]
+    fn sorts_distinct_dependencies_by_canonical_path() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("lib");
+        let dependency_a = temp.path().join("dependency-a");
+        let dependency_z = temp.path().join("dependency-z");
+        fs::create_dir_all(&root).unwrap();
+        for dependency in [&dependency_z, &dependency_a] {
+            fs::create_dir_all(dependency).unwrap();
+            fs::write(dependency.join("foundry.toml"), "").unwrap();
+        }
+        symlink(&dependency_z, root.join("a-alias")).unwrap();
+        symlink(&dependency_a, root.join("z-alias")).unwrap();
+
+        let canonical = foundry_toml_dir_entries(&root)
+            .into_iter()
+            .map(|entry| entry.canonical)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            canonical,
+            vec![
+                dunce::canonicalize(dependency_a).unwrap(),
+                dunce::canonicalize(dependency_z).unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn ignores_broken_and_cyclic_symlinks() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("lib");
+        fs::create_dir_all(&root).unwrap();
+        symlink("missing", root.join("broken")).unwrap();
+        symlink("cycle-b", root.join("cycle-a")).unwrap();
+        symlink("cycle-a", root.join("cycle-b")).unwrap();
+
+        assert!(foundry_toml_dir_entries(&root).is_empty());
     }
 }

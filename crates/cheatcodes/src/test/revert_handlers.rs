@@ -1,8 +1,7 @@
 use crate::{Error, Result};
-use alloy_dyn_abi::{DynSolValue, ErrorExt};
 use alloy_primitives::{Address, Bytes, address, hex};
 use alloy_sol_types::{SolError, SolValue};
-use foundry_common::{ContractsByArtifact, abi::get_error};
+use foundry_common::ContractsByArtifact;
 use foundry_evm_core::decode::RevertDecoder;
 use revm::interpreter::{InstructionResult, return_ok};
 use spec::Vm;
@@ -22,16 +21,6 @@ static DUMMY_CALL_OUTPUT: Bytes = Bytes::from_static(&[0u8; 8192]);
 
 /// Same reasoning as [DUMMY_CALL_OUTPUT], but for creates.
 const DUMMY_CREATE_ADDRESS: Address = address!("0x0000000000000000000000000000000000000001");
-
-fn stringify(data: &[u8]) -> String {
-    if let Ok(s) = String::abi_decode(data) {
-        return s;
-    }
-    if data.is_ascii() {
-        return std::str::from_utf8(data).unwrap().to_owned();
-    }
-    hex::encode_prefixed(data)
-}
 
 /// Common parameters for expected or assumed reverts. Allows for code reuse.
 pub(crate) trait RevertParameters {
@@ -80,33 +69,34 @@ fn handle_revert(
         return Ok(());
     };
 
-    if !expected_reason.is_empty() && retdata.is_empty() {
-        bail!("call reverted as expected, but without data");
-    }
-
-    let mut actual_revert: Vec<u8> = retdata.to_vec();
+    let actual_revert = if retdata.is_empty() && !expected_reason.is_empty() {
+        if status == InstructionResult::Revert {
+            bail!("call reverted as expected, but without data");
+        }
+        RevertDecoder::new().decode(retdata, Some(status)).into_bytes()
+    } else {
+        retdata.to_vec()
+    };
 
     // Compare only the first 4 bytes if partial match.
-    if revert_params.partial_match() && actual_revert.get(..4) == expected_reason.get(..4) {
-        return Ok(());
-    }
-
-    // Try decoding as known errors.
-    actual_revert = decode_revert(actual_revert);
-
-    if actual_revert == expected_reason
-        || (is_cheatcode && memchr::memmem::find(&actual_revert, expected_reason).is_some())
+    if revert_params.partial_match()
+        && let (Some(actual_prefix), Some(expected_prefix)) =
+            (actual_revert.get(..4), expected_reason.get(..4))
+        && actual_prefix == expected_prefix
     {
         return Ok(());
     }
 
-    // If expected reason is `Error(string)` then decode and compare with actual revert.
-    // See <https://github.com/foundry-rs/foundry/issues/12511>
-    if expected_reason.len() >= 4
-        && let Ok(e) = get_error("Error(string)")
-        && let Ok(dec) = e.decode_error(expected_reason)
-        && let Some(DynSolValue::String(revert_str)) = dec.body.first()
-        && revert_str.as_str() == String::from_utf8_lossy(&actual_revert)
+    // Compare complete payloads before decoding, which may ignore trailing ABI data.
+    if actual_revert == expected_reason {
+        return Ok(());
+    }
+
+    // Unwrap string errors for legacy raw-message matching.
+    let actual_reason = decode_revert(actual_revert);
+
+    if actual_reason == expected_reason
+        || (is_cheatcode && memchr::memmem::find(&actual_reason, expected_reason).is_some())
     {
         return Ok(());
     }
@@ -114,15 +104,22 @@ fn handle_revert(
     let (actual, expected) = if let Some(contracts) = known_contracts {
         let decoder = RevertDecoder::new().with_abis(contracts.values().map(|c| &c.abi));
         (
-            &decoder.decode(actual_revert.as_slice(), Some(status)),
+            &decoder.decode(actual_reason.as_slice(), Some(status)),
             &decoder.decode(expected_reason, Some(status)),
         )
     } else {
-        (&stringify(&actual_revert), &stringify(expected_reason))
+        (&stringify(&actual_reason), &stringify(expected_reason))
     };
 
+    // Lossy decoding can render distinct payloads identically; append the raw data to
+    // disambiguate. Note that `retdata` is the original revert data, unlike `actual_reason`,
+    // which may have been synthesized from the status or unwrapped by `decode_revert`.
     if expected == actual {
-        return Ok(());
+        return Err(fmt_err!(
+            "Error != expected error: {actual} (raw {}) != {expected} (raw {})",
+            hex::encode_prefixed(retdata),
+            hex::encode_prefixed(expected_reason)
+        ));
     }
 
     Err(fmt_err!("Error != expected error: {} != {}", actual, expected))
@@ -283,6 +280,16 @@ pub(crate) fn handle_expect_revert(
         )?;
         Ok(success_return())
     }
+}
+
+fn stringify(data: &[u8]) -> String {
+    if let Ok(s) = String::abi_decode(data) {
+        return s;
+    }
+    if data.is_ascii() {
+        return std::str::from_utf8(data).unwrap().to_owned();
+    }
+    hex::encode_prefixed(data)
 }
 
 fn decode_revert(revert: Vec<u8>) -> Vec<u8> {

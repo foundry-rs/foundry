@@ -41,103 +41,74 @@ impl Cheatcode for parseJson_1Call {
     }
 }
 
-impl Cheatcode for parseJsonUintCall {
+macro_rules! impl_parse_json {
+    ($call:ident, $call_with_default:ident, $ty:expr) => {
+        impl Cheatcode for $call {
+            fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+                let Self { json, key } = self;
+                parse_json_coerce(json, key, &$ty)
+            }
+        }
+
+        impl Cheatcode for $call_with_default {
+            fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+                let Self { json, key, defaultValue } = self;
+                parse_json_coerce_default(json, key, &$ty, defaultValue)
+            }
+        }
+    };
+}
+
+impl_parse_json!(parseJsonUint_0Call, parseJsonUint_1Call, DynSolType::Uint(256));
+impl_parse_json!(
+    parseJsonUintArray_0Call,
+    parseJsonUintArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Uint(256)))
+);
+impl_parse_json!(parseJsonInt_0Call, parseJsonInt_1Call, DynSolType::Int(256));
+impl_parse_json!(
+    parseJsonIntArray_0Call,
+    parseJsonIntArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Int(256)))
+);
+impl_parse_json!(parseJsonBool_0Call, parseJsonBool_1Call, DynSolType::Bool);
+impl_parse_json!(
+    parseJsonBoolArray_0Call,
+    parseJsonBoolArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Bool))
+);
+impl_parse_json!(parseJsonAddress_0Call, parseJsonAddress_1Call, DynSolType::Address);
+impl_parse_json!(
+    parseJsonAddressArray_0Call,
+    parseJsonAddressArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Address))
+);
+impl_parse_json!(parseJsonString_0Call, parseJsonString_1Call, DynSolType::String);
+impl_parse_json!(
+    parseJsonStringArray_0Call,
+    parseJsonStringArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::String))
+);
+
+impl Cheatcode for parseJsonArrayLengthCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Uint(256))
+        parse_json_array_length(json, key)
     }
 }
 
-impl Cheatcode for parseJsonUintArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Uint(256))))
-    }
-}
-
-impl Cheatcode for parseJsonIntCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Int(256))
-    }
-}
-
-impl Cheatcode for parseJsonIntArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Int(256))))
-    }
-}
-
-impl Cheatcode for parseJsonBoolCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Bool)
-    }
-}
-
-impl Cheatcode for parseJsonBoolArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bool)))
-    }
-}
-
-impl Cheatcode for parseJsonAddressCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Address)
-    }
-}
-
-impl Cheatcode for parseJsonAddressArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Address)))
-    }
-}
-
-impl Cheatcode for parseJsonStringCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::String)
-    }
-}
-
-impl Cheatcode for parseJsonStringArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::String)))
-    }
-}
-
-impl Cheatcode for parseJsonBytesCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Bytes)
-    }
-}
-
-impl Cheatcode for parseJsonBytesArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::Bytes)))
-    }
-}
-
-impl Cheatcode for parseJsonBytes32Call {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::FixedBytes(32))
-    }
-}
-
-impl Cheatcode for parseJsonBytes32ArrayCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
-        let Self { json, key } = self;
-        parse_json_coerce(json, key, &DynSolType::Array(Box::new(DynSolType::FixedBytes(32))))
-    }
-}
+impl_parse_json!(parseJsonBytes_0Call, parseJsonBytes_1Call, DynSolType::Bytes);
+impl_parse_json!(
+    parseJsonBytesArray_0Call,
+    parseJsonBytesArray_1Call,
+    DynSolType::Array(Box::new(DynSolType::Bytes))
+);
+impl_parse_json!(parseJsonBytes32_0Call, parseJsonBytes32_1Call, DynSolType::FixedBytes(32));
+impl_parse_json!(
+    parseJsonBytes32Array_0Call,
+    parseJsonBytes32Array_1Call,
+    DynSolType::Array(Box::new(DynSolType::FixedBytes(32)))
+);
 
 impl Cheatcode for parseJsonType_0Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
@@ -318,7 +289,8 @@ impl Cheatcode for serializeJsonType_0Call {
         let Self { typeDescription, value } = self;
         let ty = resolve_type(typeDescription, state.struct_defs())?;
         let value = ty.abi_decode(value)?;
-        let value = foundry_common::fmt::serialize_value_as_json(value, state.struct_defs())?;
+        let value =
+            foundry_common::fmt::serialize_value_as_json(value, state.struct_defs(), false)?;
         Ok(value.to_string().abi_encode())
     }
 }
@@ -391,6 +363,20 @@ pub(super) fn parse_json_coerce(json: &str, path: &str, ty: &DynSolType) -> Resu
     };
 
     parse_json_as(value, ty).map(|v| v.abi_encode())
+}
+
+pub(super) fn parse_json_coerce_default<T: SolValue>(
+    json: &str,
+    path: &str,
+    ty: &DynSolType,
+    default: &T,
+) -> Result {
+    let json = parse_json_str(json)?;
+    match select(&json, path)?.as_slice() {
+        [] => Ok(default.abi_encode()),
+        [value] => parse_json_as(value, ty).map(|value| value.abi_encode()),
+        _ => bail!("path {path:?} must return exactly one JSON value"),
+    }
 }
 
 /// Parses given [serde_json::Value] as a [DynSolValue].
@@ -468,8 +454,86 @@ pub(super) fn parse_json_keys(json: &str, key: &str) -> Result {
     Ok(keys.abi_encode())
 }
 
+pub(super) fn parse_json_array_length(json: &str, key: &str) -> Result {
+    let json = parse_json_str(json)?;
+    let values = select(&json, key)?;
+    let [value] = values[..] else {
+        bail!("key {key:?} must return exactly one JSON array");
+    };
+    let Value::Array(array) = value else {
+        bail!("JSON value at {key:?} is not an array");
+    };
+    Ok(U256::from(array.len()).abi_encode())
+}
+
 fn parse_json_str(json: &str) -> Result<Value> {
-    serde_json::from_str(json).map_err(|e| fmt_err!("failed parsing JSON: {e}"))
+    let json = strip_json_comments(json)?;
+    serde_json::from_str(&json).map_err(|e| fmt_err!("failed parsing JSON: {e}"))
+}
+
+fn strip_json_comments(json: &str) -> Result<Cow<'_, str>> {
+    let bytes = json.as_bytes();
+    let mut stripped = None;
+    let mut index = 0;
+    let mut in_string = false;
+
+    while index < bytes.len() {
+        if in_string {
+            match bytes[index] {
+                b'\\' => index += 2,
+                b'"' => {
+                    in_string = false;
+                    index += 1;
+                }
+                _ => index += 1,
+            }
+            continue;
+        }
+
+        match (bytes[index], bytes.get(index + 1)) {
+            (b'"', _) => {
+                in_string = true;
+                index += 1;
+            }
+            (b'/', Some(b'/')) => {
+                let stripped = stripped.get_or_insert_with(|| bytes.to_vec());
+                while index < bytes.len() && !matches!(bytes[index], b'\r' | b'\n') {
+                    stripped[index] = b' ';
+                    index += 1;
+                }
+            }
+            (b'/', Some(b'*')) => {
+                let stripped = stripped.get_or_insert_with(|| bytes.to_vec());
+                stripped[index] = b' ';
+                stripped[index + 1] = b' ';
+                index += 2;
+
+                let mut closed = false;
+                while index < bytes.len() {
+                    if bytes[index] == b'*' && bytes.get(index + 1) == Some(&b'/') {
+                        stripped[index] = b' ';
+                        stripped[index + 1] = b' ';
+                        index += 2;
+                        closed = true;
+                        break;
+                    }
+                    if !matches!(bytes[index], b'\r' | b'\n') {
+                        stripped[index] = b' ';
+                    }
+                    index += 1;
+                }
+                ensure!(closed, "failed parsing JSON: unterminated block comment");
+            }
+            _ => index += 1,
+        }
+    }
+
+    Ok(match stripped {
+        Some(stripped) => {
+            String::from_utf8(stripped).expect("comment stripping preserves valid UTF-8").into()
+        }
+        None => json.into(),
+    })
 }
 
 fn json_to_sol(defs: Option<&StructDefinitions>, json: &[&Value]) -> Result<Vec<DynSolValue>> {
@@ -536,18 +600,35 @@ fn _json_value_to_token(value: &Value, defs: &StructDefinitions) -> Result<DynSo
         Value::Object(map) => {
             // Try to find a struct definition that matches the object keys.
             let keys: BTreeSet<_> = map.keys().map(|s| s.as_str()).collect();
-            let matching_def = defs.values().find(|fields| {
-                fields.len() == keys.len()
-                    && fields.iter().map(|(name, _)| name.as_str()).collect::<BTreeSet<_>>() == keys
-            });
+            let matching_defs = defs
+                .values()
+                .filter(|fields| {
+                    fields.len() == keys.len()
+                        && fields.iter().map(|(name, _)| name.as_str()).collect::<BTreeSet<_>>()
+                            == keys
+                })
+                .collect::<Vec<_>>();
 
-            if let Some(fields) = matching_def {
+            if let Some(fields) = matching_defs.first() {
                 // Found a struct with matching field names, use the order from the definition.
                 fields
                     .iter()
-                    .map(|(name, _)| {
+                    .map(|(name, type_description)| {
                         // unwrap is safe because we know the key exists.
-                        _json_value_to_token(map.get(name).unwrap(), defs)
+                        let value = map.get(name).unwrap();
+                        let unambiguous = matching_defs.iter().all(|fields| {
+                            fields
+                                .iter()
+                                .find(|(field, _)| field == name)
+                                .is_some_and(|(_, ty)| ty == type_description)
+                        });
+                        if unambiguous
+                            && let Some(parsed) = parse_fixed_array(value, type_description, defs)
+                        {
+                            parsed
+                        } else {
+                            _json_value_to_token(value, defs)
+                        }
                     })
                     .collect::<Result<_>>()
                     .map(DynSolValue::Tuple)
@@ -645,6 +726,60 @@ fn _json_value_to_token(value: &Value, defs: &StructDefinitions) -> Result<DynSo
     }
 }
 
+fn parse_fixed_array(
+    value: &Value,
+    type_description: &str,
+    defs: &StructDefinitions,
+) -> Option<Result<DynSolValue>> {
+    let root_end = type_description.find('[')?;
+    let root = &type_description[..root_end];
+    let (ty, custom) = match defs.get(root) {
+        Ok(Some(_)) => {
+            (DynSolType::parse(&format!("bool{}", &type_description[root_end..])).ok()?, true)
+        }
+        Ok(None) if root.contains('.') => return None,
+        Ok(None) => (DynSolType::parse(type_description).ok()?, false),
+        Err(_) => return None,
+    };
+    if !contains_fixed_array(&ty) {
+        return None;
+    }
+
+    Some(if custom { parse_json_custom_array(value, &ty, defs) } else { parse_json_as(value, &ty) })
+}
+
+fn parse_json_custom_array(
+    value: &Value,
+    ty: &DynSolType,
+    defs: &StructDefinitions,
+) -> Result<DynSolValue> {
+    match (value, ty) {
+        (Value::Array(values), DynSolType::Array(inner)) => values
+            .iter()
+            .map(|value| parse_json_custom_array(value, inner, defs))
+            .collect::<Result<_>>()
+            .map(DynSolValue::Array),
+        (Value::Array(values), DynSolType::FixedArray(inner, len)) => {
+            ensure!(values.len() == *len, "array length mismatch");
+            values
+                .iter()
+                .map(|value| parse_json_custom_array(value, inner, defs))
+                .collect::<Result<_>>()
+                .map(DynSolValue::FixedArray)
+        }
+        (_, DynSolType::Bool) => _json_value_to_token(value, defs),
+        _ => bail!("expected array"),
+    }
+}
+
+fn contains_fixed_array(ty: &DynSolType) -> bool {
+    match ty {
+        DynSolType::FixedArray(_, _) => true,
+        DynSolType::Array(inner) => contains_fixed_array(inner),
+        _ => false,
+    }
+}
+
 /// Serializes a key:value pair to a specific object. If the key is valueKey, the value is
 /// expected to be an object, which will be set as the root object for the provided object key,
 /// overriding the whole root object if the object key already exists. By calling this function
@@ -659,7 +794,7 @@ fn serialize_json<FEN: FoundryEvmNetwork>(
     value_key: &str,
     value: DynSolValue,
 ) -> Result {
-    let value = foundry_common::fmt::serialize_value_as_json(value, state.struct_defs())?;
+    let value = foundry_common::fmt::serialize_value_as_json(value, state.struct_defs(), false)?;
     let map = state.serialized_jsons.entry(object_key.into()).or_default();
     map.insert(value_key.into(), value);
     let stringified = serde_json::to_string(map).unwrap();
@@ -806,6 +941,25 @@ mod tests {
     use proptest::{arbitrary::any, prop_oneof, strategy::Strategy};
     use std::collections::HashSet;
 
+    #[test]
+    fn test_parse_json_comments() {
+        let value = parse_json_str(
+            r#"{
+                // A line comment.
+                "value": 42,
+                /* A block comment. */
+                "url": "https://example.com/path/*literal*/"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(value["value"], 42);
+        assert_eq!(value["url"], "https://example.com/path/*literal*/");
+
+        let error = parse_json_str(r#"{"value": 42} /* unterminated"#).unwrap_err();
+        assert!(error.to_string().contains("unterminated block comment"));
+    }
+
     fn valid_value(value: &DynSolValue) -> bool {
         (match value {
             DynSolValue::String(s) if s == "{}" => false,
@@ -889,7 +1043,7 @@ mod tests {
     proptest::proptest! {
         #[test]
         fn test_json_roundtrip_guessed(v in guessable_types()) {
-            let json = serialize_value_as_json(v.clone(), None).unwrap();
+            let json = serialize_value_as_json(v.clone(), None, false).unwrap();
             let value = json_value_to_token(&json, None).unwrap();
 
             // do additional abi_encode -> abi_decode to avoid zero signed integers getting decoded as unsigned and causing assert_eq to fail.
@@ -899,14 +1053,14 @@ mod tests {
 
         #[test]
         fn test_json_roundtrip(v in any::<DynSolValue>().prop_filter("filter out values without type", |v| v.as_type().is_some())) {
-            let json = serialize_value_as_json(v.clone(), None).unwrap();
+            let json = serialize_value_as_json(v.clone(), None, false).unwrap();
             let value = parse_json_as(&json, &v.as_type().unwrap()).unwrap();
             assert_eq!(value, v);
         }
 
         #[test]
         fn test_json_roundtrip_with_struct_defs((struct_defs, v) in custom_struct_strategy()) {
-            let json = serialize_value_as_json(v.clone(), Some(&struct_defs)).unwrap();
+            let json = serialize_value_as_json(v.clone(), Some(&struct_defs), false).unwrap();
             let sol_type = v.as_type().unwrap();
             let parsed_value = parse_json_as(&json, &sol_type).unwrap();
             assert_eq!(parsed_value, v);
@@ -977,6 +1131,47 @@ mod tests {
             return Ok(());
         }
         panic!("Expected Person to be CustomStruct");
+    }
+
+    #[test]
+    fn test_parse_fixed_array() {
+        let mut struct_defs = TypeDefMap::new();
+        struct_defs.insert(
+            "Contract.Child".to_string(),
+            vec![("value".to_string(), "uint256".to_string())],
+        );
+        let struct_defs = StructDefinitions::from(struct_defs);
+
+        let value = serde_json::json!([[1], [2]]);
+        assert!(parse_fixed_array(&value, "uint256[1][]", &struct_defs).unwrap().is_ok());
+        assert!(parse_fixed_array(&value, "uint256[", &struct_defs).is_none());
+        assert!(parse_fixed_array(&value, "uint256[0]", &struct_defs).is_none());
+        assert!(parse_fixed_array(&value, "Contract.Child[", &struct_defs).is_none());
+        assert!(parse_fixed_array(&value, "Missing.Child[1]", &struct_defs).is_none());
+
+        let value = serde_json::json!([[{"value": 1}, {"value": 2}]]);
+        let parsed =
+            parse_fixed_array(&value, "Contract.Child[2][1]", &struct_defs).unwrap().unwrap();
+        assert!(matches!(
+            parsed,
+            DynSolValue::FixedArray(outer)
+                if matches!(&outer[..], [DynSolValue::FixedArray(inner)] if matches!(&inner[..], [DynSolValue::Tuple(_), DynSolValue::Tuple(_)]))
+        ));
+
+        let value = serde_json::json!([[{"value": 1}], [{"value": 2}]]);
+        assert!(parse_fixed_array(&value, "Contract.Child[1][]", &struct_defs).unwrap().is_ok());
+        let value = serde_json::json!([[]]);
+        assert!(parse_fixed_array(&value, "Contract.Child[][1]", &struct_defs).unwrap().is_ok());
+
+        let mut ambiguous_defs = TypeDefMap::new();
+        ambiguous_defs
+            .insert("A.Child".to_string(), vec![("value".to_string(), "uint256".to_string())]);
+        ambiguous_defs
+            .insert("B.Child".to_string(), vec![("value".to_string(), "uint256".to_string())]);
+        let ambiguous_defs = StructDefinitions::from(ambiguous_defs);
+        let value = serde_json::json!([{"value": 1}]);
+        assert!(parse_fixed_array(&value, "Child[1]", &ambiguous_defs).is_none());
+        assert!(parse_fixed_array(&value, "A.Child[1]", &ambiguous_defs).unwrap().is_ok());
     }
 
     #[test]
@@ -1065,7 +1260,8 @@ mod tests {
         };
 
         // Serialize the value to JSON and verify that the order is preserved.
-        let json_value = serialize_value_as_json(item_struct, Some(&struct_defs.into())).unwrap();
+        let json_value =
+            serialize_value_as_json(item_struct, Some(&struct_defs.into()), false).unwrap();
         let json_string = serde_json::to_string(&json_value).unwrap();
         assert_eq!(json_string, r#"{"name":"Test Item","id":123,"active":true}"#);
     }
@@ -1097,9 +1293,12 @@ mod tests {
         };
 
         // Serialize it. The resulting JSON should respect the struct definition order.
-        let json_value =
-            serialize_value_as_json(original_wallet.clone(), Some(&struct_defs.clone().into()))
-                .unwrap();
+        let json_value = serialize_value_as_json(
+            original_wallet.clone(),
+            Some(&struct_defs.clone().into()),
+            false,
+        )
+        .unwrap();
         let json_string = serde_json::to_string(&json_value).unwrap();
         assert_eq!(
             json_string,

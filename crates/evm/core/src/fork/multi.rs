@@ -3,14 +3,15 @@
 //! The design is similar to the single `SharedBackend`, `BackendHandler` but supports multiple
 //! concurrently active pairs at once.
 
-use super::CreateFork;
-use crate::FoundryBlock;
+use super::{CreateFork, ResolvedFork};
+use crate::{FoundryBlock, opts::ForkContext};
+use alloy_eips::BlockNumHash;
 use alloy_evm::EvmEnv;
 use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::{U256, map::HashMap};
 use foundry_config::Config;
 use foundry_fork_db::{
-    BackendHandler, BlockchainDb, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta,
+    BackendHandler, BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta,
 };
 use futures::{
     FutureExt, StreamExt,
@@ -38,12 +39,42 @@ pub struct ForkId(pub String);
 impl ForkId {
     /// Returns the identifier for a Fork from a URL and block number.
     pub fn new(url: &str, num: Option<u64>) -> Self {
+        Self::new_with_context(url, num, None)
+    }
+
+    fn new_with_context(
+        url: &str,
+        num: Option<u64>,
+        context: Option<&crate::opts::ForkContext>,
+    ) -> Self {
         let mut id = url.to_string();
+        if let Some(context) = context {
+            write!(
+                id,
+                "#{}:{}:{}:{}:{:?}:{:?}:{:?}:{:?}",
+                context.execution_chain_id,
+                context.source_chain_id,
+                context.network,
+                context.network_profile.execution_profile_name(),
+                context.hardfork,
+                context.instance_id,
+                context.source_fork_block_number,
+                context.source_fork_block_hash
+            )
+            .unwrap();
+        }
         id.push('@');
         match num {
             Some(n) => write!(id, "{n:#x}").unwrap(),
             None => id.push_str("latest"),
         }
+        Self(id)
+    }
+
+    /// Returns the identifier for an exactly resolved fork.
+    fn resolved(url: &str, fork: &ResolvedFork) -> Self {
+        let mut id = Self::new_with_context(url, Some(fork.number()), Some(&fork.context())).0;
+        write!(id, "#{}:{}", fork.hash(), fork.source_id()).unwrap();
         Self(id)
     }
 
@@ -63,6 +94,18 @@ impl<T: Into<String>> From<T> for ForkId {
     fn from(id: T) -> Self {
         Self(id.into())
     }
+}
+
+/// Backend, environment, and identity returned after creating or rolling a fork.
+pub struct ForkResult<N: Network, SPEC, BLOCK: ForkBlockEnv> {
+    /// Identifier assigned to the fork.
+    pub id: ForkId,
+    /// Backend pinned to the resolved fork block.
+    pub backend: SharedBackend<N, BLOCK>,
+    /// EVM environment reconstructed from the resolved fork block.
+    pub env: EvmEnv<SPEC, BLOCK>,
+    /// Exact source and block identity used to construct the backend.
+    pub resolved: ResolvedFork,
 }
 
 /// The Sender half of multi fork pair.
@@ -132,11 +175,7 @@ impl<
     /// Returns a fork backend.
     ///
     /// If no matching fork backend exists it will be created.
-    #[allow(clippy::type_complexity)]
-    pub fn create_fork(
-        &self,
-        fork: CreateFork,
-    ) -> eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>)> {
+    pub fn create_fork(&self, fork: CreateFork) -> eyre::Result<ForkResult<N, SPEC, BLOCK>> {
         trace!("Creating new fork, url={}, block={:?}", fork.url, fork.evm_opts.fork_block_number);
         let (sender, rx) = oneshot_channel();
         let req = Request::CreateFork(Box::new(fork), sender);
@@ -147,15 +186,23 @@ impl<
     /// Rolls the block of the fork.
     ///
     /// If no matching fork backend exists it will be created.
-    #[allow(clippy::type_complexity)]
-    pub fn roll_fork(
-        &self,
-        fork: ForkId,
-        block: u64,
-    ) -> eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>)> {
+    pub fn roll_fork(&self, fork: ForkId, block: u64) -> eyre::Result<ForkResult<N, SPEC, BLOCK>> {
         trace!(?fork, ?block, "rolling fork");
         let (sender, rx) = oneshot_channel();
         let req = Request::RollFork(fork, block, sender);
+        self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
+        rx.recv()?
+    }
+
+    /// Rolls a fork to an already resolved exact block.
+    pub fn roll_fork_exact(
+        &self,
+        fork: ForkId,
+        block: BlockNumHash,
+    ) -> eyre::Result<ForkResult<N, SPEC, BLOCK>> {
+        trace!(?fork, ?block, "rolling fork to exact block");
+        let (sender, rx) = oneshot_channel();
+        let req = Request::RollForkExact(fork, block, sender);
         self.handler.clone().try_send(req).map_err(|e| eyre::eyre!("{:?}", e))?;
         rx.recv()?
     }
@@ -227,8 +274,7 @@ type CreateFuture<N, SPEC, BLOCK> = Pin<
             > + Send,
     >,
 >;
-type CreateSender<N, SPEC, BLOCK> =
-    OneshotSender<eyre::Result<(ForkId, SharedBackend<N, BLOCK>, EvmEnv<SPEC, BLOCK>)>>;
+type CreateSender<N, SPEC, BLOCK> = OneshotSender<eyre::Result<ForkResult<N, SPEC, BLOCK>>>;
 type GetEvmEnvSender<SPEC, BLOCK> = OneshotSender<Option<EvmEnv<SPEC, BLOCK>>>;
 
 /// Request that's send to the handler.
@@ -240,6 +286,8 @@ enum Request<N: Network, SPEC, BLOCK: ForkBlockEnv> {
     GetFork(ForkId, OneshotSender<Option<SharedBackend<N, BLOCK>>>),
     /// Adjusts the block that's being forked, by creating a new fork at the new block.
     RollFork(ForkId, u64, CreateSender<N, SPEC, BLOCK>),
+    /// Adjusts the fork to an already resolved exact block.
+    RollForkExact(ForkId, BlockNumHash, CreateSender<N, SPEC, BLOCK>),
     /// Returns the environment of the fork.
     GetEvmEnv(ForkId, GetEvmEnvSender<SPEC, BLOCK>),
     /// Updates the block number and timestamp of the fork.
@@ -323,18 +371,33 @@ impl<
     }
 
     fn create_fork(&mut self, fork: CreateFork, sender: CreateSender<N, SPEC, BLOCK>) {
-        let fork_id = ForkId::new(&fork.url, fork.evm_opts.fork_block_number);
-        trace!(?fork_id, "created new forkId");
+        self.create_fork_with_identity(fork, None, sender);
+    }
 
-        // There could already be a task for the requested fork in progress.
-        if let Some(in_progress) = self.find_in_progress_task(&fork_id) {
+    fn create_fork_with_identity(
+        &mut self,
+        fork: CreateFork,
+        expected_identity: Option<ForkContext>,
+        sender: CreateSender<N, SPEC, BLOCK>,
+    ) {
+        let resolved_id =
+            fork.resolved.as_ref().map(|resolved| ForkId::resolved(&fork.url, resolved));
+        trace!(?resolved_id, "creating fork");
+
+        // Only deduplicate requests that already carry an exact identity. Unresolved requests at
+        // the same URL and height can resolve to different blocks across a reorganization.
+        if let Some(fork_id) = &resolved_id
+            && let Some(in_progress) = self.find_in_progress_task(fork_id)
+        {
             in_progress.push(sender);
             return;
         }
 
         // Need to create a new fork.
-        let task = Box::pin(create_fork(fork));
-        self.pending_tasks.push(ForkTask::Create(task, fork_id, sender, Vec::new()));
+        let task_id =
+            resolved_id.unwrap_or_else(|| ForkId::new(&fork.url, fork.evm_opts.fork_block_number));
+        let task = Box::pin(create_fork(fork, expected_identity));
+        self.pending_tasks.push(ForkTask::Create(task, task_id, sender, Vec::new()));
     }
 
     fn insert_new_fork(
@@ -345,13 +408,29 @@ impl<
         additional_senders: Vec<CreateSender<N, SPEC, BLOCK>>,
     ) {
         self.forks.insert(fork_id.clone(), fork.clone());
-        let _ = sender.send(Ok((fork_id.clone(), fork.backend.clone(), fork.evm_env.clone())));
+        let resolved = fork
+            .opts
+            .resolved
+            .as_ref()
+            .expect("created forks always retain their resolved identity")
+            .clone();
+        let _ = sender.send(Ok(ForkResult {
+            id: fork_id.clone(),
+            backend: fork.backend.clone(),
+            env: fork.evm_env.clone(),
+            resolved: resolved.clone(),
+        }));
 
         // Notify all additional senders and track unique forkIds.
         for sender in additional_senders {
             let next_fork_id = fork.inc_senders(fork_id.clone());
             self.forks.insert(next_fork_id.clone(), fork.clone());
-            let _ = sender.send(Ok((next_fork_id, fork.backend.clone(), fork.evm_env.clone())));
+            let _ = sender.send(Ok(ForkResult {
+                id: next_fork_id,
+                backend: fork.backend.clone(),
+                env: fork.evm_env.clone(),
+                resolved: resolved.clone(),
+            }));
         }
     }
 
@@ -380,8 +459,29 @@ impl<
             Request::RollFork(fork_id, block, sender) => {
                 if let Some(fork) = self.forks.get(&fork_id) {
                     trace!(target: "fork::multi", "rolling {} to {}", fork_id, block);
+                    let expected_identity = fork.opts.resolved.as_ref().map(ResolvedFork::context);
                     let mut opts = fork.opts.clone();
                     opts.evm_opts.fork_block_number = Some(block);
+                    opts.evm_opts.fork_block_number_is_inferred = false;
+                    opts.resolved = None;
+                    self.create_fork_with_identity(opts, expected_identity, sender)
+                } else {
+                    let _ =
+                        sender.send(Err(eyre::eyre!("No matching fork exists for {}", fork_id)));
+                }
+            }
+            Request::RollForkExact(fork_id, block, sender) => {
+                if let Some(fork) = self.forks.get(&fork_id) {
+                    trace!(target: "fork::multi", "rolling {} to exact block {:?}", fork_id, block);
+                    let mut opts = fork.opts.clone();
+                    opts.evm_opts.fork_block_number = Some(block.number);
+                    opts.evm_opts.fork_block_number_is_inferred = false;
+                    opts.resolved = Some(
+                        opts.resolved
+                            .as_ref()
+                            .expect("an exact roll requires an existing resolved fork")
+                            .at_block(block),
+                    );
                     self.create_fork(opts, sender)
                 } else {
                     let _ =
@@ -588,30 +688,144 @@ async fn create_fork<
     BLOCK: FoundryBlock + ForkBlockEnv + Default,
 >(
     mut fork: CreateFork,
+    expected_identity: Option<ForkContext>,
 ) -> eyre::Result<(ForkId, CreatedFork<N, SPEC, BLOCK>, BackendHandler<N, BLOCK>)> {
     // Ensure evm_opts reflects the fork URL (may differ from the resolved CreateFork url when
     // created via cheatcodes, where evm_opts is cloned from the base config).
+    let execution_networks = fork.evm_opts.networks;
+    let require_endpoint_family_match =
+        fork.evm_opts.fork_network_is_inferred || !execution_networks.has_network_selection();
+    let targets_new_endpoint =
+        fork.evm_opts.fork_url.as_ref().is_some_and(|endpoint| endpoint != &fork.url)
+            || fork
+                .evm_opts
+                .fork_endpoint
+                .as_ref()
+                .is_some_and(|identity| identity.endpoint != fork.url);
+    if targets_new_endpoint {
+        // The EVM implementation is already fixed, so use its family as the fallback for a custom
+        // endpoint without metadata. Clear identity and chain values inferred from the old URL;
+        // authoritative metadata from the new endpoint is still checked below.
+        fork.evm_opts.fork_endpoint = None;
+        fork.evm_opts.expected_fork_endpoint = None;
+        fork.evm_opts.fork_network_is_inferred = false;
+        if fork.evm_opts.fork_chain_id_is_inferred {
+            fork.evm_opts.env.chain_id = None;
+            fork.evm_opts.fork_chain_id_is_inferred = false;
+        }
+        if fork.evm_opts.fork_block_number_is_inferred {
+            fork.evm_opts.fork_block_number = None;
+            fork.evm_opts.fork_block_number_is_inferred = false;
+        }
+    }
     fork.evm_opts.fork_url = Some(fork.url.clone());
 
     // Initialise the fork environment.
     // Here we use [`AnyNetwork`] to maximize compatibility with custom chains, aligned with
     // `EvmOpts::env` impl.
     let any_provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
-    let (evm_env, number) = fork.evm_opts.fork_evm_env::<_, BLOCK, _, _>(&any_provider).await?;
-    let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), fork.url.clone());
+    let (evm_env, resolved) = if let Some(resolved) = fork.resolved.clone() {
+        let evm_env = fork
+            .evm_opts
+            .fork_evm_env_at_resolved::<_, BLOCK, _, _>(&any_provider, &resolved)
+            .await?;
+        (evm_env, resolved)
+    } else {
+        let (evm_env, resolved) =
+            fork.evm_opts.fork_evm_env_resolved::<_, BLOCK, _, _>(&any_provider).await?;
+        (evm_env, resolved)
+    };
+    let fork_context = resolved.context();
+    if require_endpoint_family_match
+        && !execution_networks.supports_fork_source(&fork_context.network_profile)
+    {
+        eyre::bail!(
+            "cannot create a `{}` fork with an EVM instantiated for `{}`",
+            fork_context.network,
+            execution_networks.execution_network()
+        );
+    }
+    if let Some(expected) = expected_identity {
+        eyre::ensure!(
+            fork_context.has_same_endpoint_identity(expected),
+            "fork endpoint identity changed while the fork was being rolled"
+        );
+    }
+    let number = resolved.number();
+    let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), fork.url.clone())
+        .with_fork_identity(resolved.hash(), resolved.source_id());
 
     // Determine the cache path if caching is enabled.
     let cache_path = if fork.enable_caching {
-        Config::foundry_block_cache_dir(evm_env.cfg_env.chain_id, number)
+        Config::foundry_block_cache_dir(fork_context.source_chain_id, number)
     } else {
         None
     };
 
     let provider = fork.evm_opts.fork_provider_with_url::<N>(&fork.url)?;
     let db = BlockchainDb::new(meta, cache_path);
-    let (backend, handler) = SharedBackend::new(provider, db, Some(number.into()));
-    let fork_id = ForkId::new(&fork.url, Some(number));
+    let anchor = ForkBlock::with_rpc_number(
+        evm_env.block_env.number().saturating_to(),
+        resolved.number(),
+        resolved.hash(),
+    );
+    let (backend, handler) = SharedBackend::new_with_anchor(provider, db, anchor)?;
+    let fork_id = ForkId::resolved(&fork.url, &resolved);
+    fork.resolved = Some(resolved);
     let fork = CreatedFork::new(fork, evm_env, backend);
 
     Ok((fork_id, fork, handler))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::B256;
+    use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+
+    fn context(block_number: u64) -> ForkContext {
+        ForkContext {
+            execution_chain_id: 1,
+            source_chain_id: 1,
+            network: NetworkVariant::Ethereum,
+            network_profile: NetworkConfigs::default(),
+            block_number,
+            hardfork: None,
+            instance_id: None,
+            source_fork_block_number: None,
+            source_fork_block_hash: None,
+        }
+    }
+
+    #[test]
+    fn resolved_fork_ids_include_hash_and_source_identity() {
+        let url = "http://localhost:8545";
+        let first = ResolvedFork::new(
+            url,
+            None,
+            None,
+            Some(1),
+            BlockNumHash::new(1, B256::with_last_byte(1)),
+            context(1),
+        );
+        let replacement = ResolvedFork::new(
+            url,
+            None,
+            None,
+            Some(1),
+            BlockNumHash::new(1, B256::with_last_byte(2)),
+            context(1),
+        );
+        let authenticated = ResolvedFork::new(
+            url,
+            Some(&["Authorization: secret".to_string()]),
+            None,
+            Some(1),
+            BlockNumHash::new(1, B256::with_last_byte(1)),
+            context(1),
+        );
+
+        assert_ne!(ForkId::resolved(url, &first), ForkId::resolved(url, &replacement));
+        assert_ne!(ForkId::resolved(url, &first), ForkId::resolved(url, &authenticated));
+    }
 }

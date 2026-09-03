@@ -81,7 +81,7 @@ impl TempoOpts {
         };
         ensure_no_explicit_multi_wallet_signer(wallets)?;
         let resolved = resolve_session(session_id)?;
-        ensure_expected_sender(expected_sender, resolved.access_key.wallet_address)?;
+        ensure_expected_sender(expected_sender, resolved.access_key.account())?;
         Ok(Some(resolved))
     }
 
@@ -97,7 +97,7 @@ impl TempoOpts {
     ) -> Result<Option<Address>> {
         Ok(self
             .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
-            .map(|resolved| resolved.access_key.wallet_address))
+            .map(|resolved| resolved.access_key.account()))
     }
 }
 
@@ -120,7 +120,7 @@ fn resolve_session_signer(
         );
     }
 
-    ensure_expected_sender(expected_sender, resolved.access_key.wallet_address)?;
+    ensure_expected_sender(expected_sender, resolved.access_key.account())?;
     Ok(resolved)
 }
 
@@ -206,16 +206,19 @@ impl ExplicitSignerOpts for MultiWalletOpts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_signer::Signer;
+    use alloy_signer::{Signer, SignerSync};
     use clap::Parser;
     use foundry_common::tempo::{
-        KeyType, SessionEntry, SessionKeyMaterial, SessionStatus, TEMPO_HOME_ENV,
+        GeneratedSessionKey, SessionAuthorizationRequest, SessionEntry, TEMPO_HOME_ENV,
         upsert_session_entry,
     };
-    use std::sync::Mutex;
+    use std::{num::NonZeroU64, sync::Mutex};
+    use tempo_primitives::transaction::{CallScope, PrimitiveSignature};
 
     const SESSION_PRIVATE_KEY: &str =
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+    const ROOT_PRIVATE_KEY: &str =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
@@ -250,22 +253,31 @@ mod tests {
     }
 
     fn active_session_entry(session_id: B256) -> SessionEntry {
-        let key = foundry_wallets::utils::create_private_key_signer(SESSION_PRIVATE_KEY).unwrap();
-        SessionEntry {
+        let foundry_wallets::WalletSigner::Local(root) =
+            foundry_wallets::utils::create_private_key_signer(ROOT_PRIVATE_KEY).unwrap()
+        else {
+            unreachable!("a raw private key always creates a local signer")
+        };
+        let key = GeneratedSessionKey::from_private_key(SESSION_PRIVATE_KEY).unwrap();
+        let prepared = SessionAuthorizationRequest {
             session_id,
-            root_account: Address::from([0x11; 20]),
+            root_account: root.address(),
             chain_id: 4217,
             key_address: key.address(),
-            expiry: u64::MAX,
-            scope: None,
-            limits: None,
-            status: SessionStatus::Active,
-            key: Some(SessionKeyMaterial {
-                key_type: KeyType::Secp256k1,
-                key: SESSION_PRIVATE_KEY.to_string(),
-                key_authorization: None,
-            }),
+            expiry: NonZeroU64::new(u64::MAX).unwrap(),
+            scope: vec![CallScope { target: Address::repeat_byte(0xaa), selector_rules: vec![] }],
+            spend_limits: vec![],
         }
+        .prepare(0)
+        .unwrap();
+        let signature = root.sign_hash_sync(&prepared.authorization.signature_hash()).unwrap();
+        let authorization =
+            prepared.authorization.clone().into_signed(PrimitiveSignature::Secp256k1(signature));
+        prepared.into_active_entry(key, &authorization).unwrap()
+    }
+
+    fn root_address() -> Address {
+        foundry_wallets::utils::create_private_key_signer(ROOT_PRIVATE_KEY).unwrap().address()
     }
 
     #[test]
@@ -409,7 +421,7 @@ mod tests {
 
             let sender = opts.session_sender_for_multi_wallet(&wallets, None).unwrap();
 
-            assert_eq!(sender, Some(Address::from([0x11; 20])));
+            assert_eq!(sender, Some(root_address()));
         });
     }
 
@@ -422,15 +434,12 @@ mod tests {
             let wallets = MultiWalletOpts::default();
 
             let session = opts
-                .session_signer_for_multi_wallet_any_chain(
-                    &wallets,
-                    Some(Address::from([0x11; 20])),
-                )
+                .session_signer_for_multi_wallet_any_chain(&wallets, Some(root_address()))
                 .unwrap()
                 .unwrap();
 
             assert_eq!(session.session.chain_id, 4217);
-            assert_eq!(session.access_key.wallet_address, Address::from([0x11; 20]));
+            assert_eq!(session.access_key.account(), root_address());
         });
     }
 

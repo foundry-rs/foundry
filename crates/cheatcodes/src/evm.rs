@@ -10,7 +10,7 @@ use alloy_genesis::{Genesis, GenesisAccount};
 use alloy_network::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{
     Address, B256, U256, hex, keccak256,
-    map::{B256Map, HashMap},
+    map::{AddressMap, AddressSet, B256Map, HashMap},
 };
 use alloy_rlp::Decodable;
 use alloy_sol_types::SolValue;
@@ -27,11 +27,16 @@ use foundry_evm_core::{
     FoundryBlock, FoundryTransaction,
     backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
+    eip2935::{
+        HISTORY_SERVE_WINDOW, HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE, forward_fill_start,
+        history_storage_slot, history_storage_value,
+    },
     env::FoundryContextExt,
     evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
+    refresh_chain_journal,
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
-use foundry_evm_traces::TraceMode;
+use foundry_evm_traces::TraceRequirements;
 use itertools::Itertools;
 use rand::Rng;
 use revm::{
@@ -43,7 +48,7 @@ use revm::{
     state::{Account, AccountStatus},
 };
 use std::{
-    collections::{BTreeMap, HashSet, btree_map::Entry},
+    collections::{BTreeMap, btree_map::Entry},
     fmt::Display,
     path::Path,
     str::FromStr,
@@ -51,9 +56,9 @@ use std::{
 
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
-use foundry_config::{ExecutionSpec, evm_spec_id_from_str};
+use foundry_config::{ExecutionSpec, evm_spec_id_from_str, fs_permissions::FsAccessKind};
 use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
-use serde::Serialize;
+use serde::{Serialize, Serializer, ser::SerializeMap};
 
 mod fork;
 pub(crate) mod mapping;
@@ -70,6 +75,21 @@ struct LogJson {
     data: String,
     /// The address of the log's emitter.
     emitter: String,
+}
+
+struct StateDump<'a>(&'a [(Address, GenesisAccount)]);
+
+impl Serialize for StateDump<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (address, account) in self.0 {
+            map.serialize_entry(address, account)?;
+        }
+        map.end()
+    }
 }
 
 /// Records storage slots reads and writes.
@@ -247,10 +267,11 @@ impl Display for AccountStateDiffs {
 }
 
 impl Cheatcode for addrCall {
-    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey } = self;
-        let wallet = super::crypto::parse_wallet(privateKey)?;
-        Ok(wallet.address().abi_encode())
+        super::crypto::with_private_key_signer(state, privateKey, |wallet| {
+            Ok(wallet.address().abi_encode())
+        })
     }
 }
 
@@ -279,11 +300,17 @@ impl Cheatcode for loadCall {
             .sload(target, slot.into())
             .map_err(|e| fmt_err!("failed to load storage slot: {:?}", e))?;
 
-        if val.is_cold && val.data.is_zero() {
+        if val.is_cold
+            && val.data.is_zero()
+            && !ccx.state.is_arbitrary_storage_slot_explicit(target, slot.into())
+        {
             if ccx.state.has_arbitrary_storage(&target) {
                 // If storage slot is untouched and load from a target with arbitrary storage,
                 // then set random value for current slot.
-                let rand_value = ccx.state.rng().random();
+                let rand_value = ccx
+                    .state
+                    .cached_arbitrary_storage_value(target, slot.into())
+                    .unwrap_or_else(|| ccx.state.rng().random());
                 ccx.state.arbitrary_storage.as_mut().unwrap().save(
                     ccx.ecx,
                     target,
@@ -328,9 +355,9 @@ impl Cheatcode for loadAllocsCall {
 
         // Then, load the allocs into the database.
         let (db, inner) = ccx.ecx.db_journal_inner_mut();
-        db.load_allocs(&allocs, inner)
-            .map(|()| Vec::default())
-            .map_err(|e| fmt_err!("failed to load allocs: {e}"))
+        db.load_allocs(&allocs, inner).map_err(|e| fmt_err!("failed to load allocs: {e}"))?;
+        refresh_chain_journal(ccx.ecx);
+        Ok(Default::default())
     }
 }
 
@@ -344,6 +371,7 @@ impl Cheatcode for cloneAccountCall {
         db.clone_account(&genesis, target, inner)?;
         // Cloned account should persist in forked envs.
         ccx.ecx.db_mut().add_persistent_account(*target);
+        refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
     }
 }
@@ -351,7 +379,18 @@ impl Cheatcode for cloneAccountCall {
 impl Cheatcode for dumpStateCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { pathToStateJson } = self;
-        let path = Path::new(pathToStateJson);
+        let path = ccx.state.config.ensure_path_allowed(pathToStateJson, FsAccessKind::Write)?;
+        ccx.state.config.ensure_not_foundry_toml(&path)?;
+
+        let fork_id = ccx.ecx.db().active_fork_id();
+        let created_accounts = ccx
+            .state
+            .created_accounts(fork_id)
+            .into_iter()
+            .filter(|address| {
+                ccx.ecx.journal().evm_state().get(address).is_some_and(Account::is_created)
+            })
+            .collect::<Vec<_>>();
 
         // Do not include system account or empty accounts in the dump.
         let skip = |key: &Address, val: &Account| {
@@ -364,16 +403,24 @@ impl Cheatcode for dumpStateCall {
                 || val.is_empty()
         };
 
-        let alloc = ccx
+        let mut alloc = ccx
             .ecx
             .journal_mut()
             .evm_state_mut()
             .iter_mut()
             .filter(|(key, val)| !skip(key, val))
-            .map(|(key, val)| (key, genesis_account(val)))
+            .map(|(key, val)| (*key, genesis_account(val)))
             .collect::<BTreeMap<_, _>>();
 
-        write_json_file(path, &alloc)?;
+        let mut ordered_alloc = Vec::with_capacity(alloc.len());
+        for address in created_accounts {
+            if let Some(account) = alloc.remove(&address) {
+                ordered_alloc.push((address, account));
+            }
+        }
+        ordered_alloc.extend(alloc);
+
+        write_json_file(&path, &StateDump(&ordered_alloc))?;
         Ok(Default::default())
     }
 }
@@ -402,6 +449,36 @@ impl Cheatcode for accessesCall {
             state.accesses.writes.entry(target).or_default().as_slice(),
         );
         Ok(result.abi_encode_params())
+    }
+}
+
+impl Cheatcode for registerSloadHookCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, callback } = *self;
+        ccx.state.register_storage_load_hook(target, ccx.caller, callback.0);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for registerSstoreHookCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, callback } = *self;
+        if ccx.state.has_mapping_storage_store_hooks(target) {
+            bail!("cannot register raw SSTORE hook: mapping SSTORE hooks already exist for target");
+        }
+        ccx.state.register_storage_store_hook(target, ccx.caller, callback.0);
+        Ok(Default::default())
+    }
+}
+
+impl Cheatcode for registerMappingSstoreHookCall {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { target, rootSlot, callback } = *self;
+        if !ccx.state.register_mapping_storage_store_hook(target, rootSlot, ccx.caller, callback.0)
+        {
+            bail!("cannot register mapping SSTORE hook: raw SSTORE hook already exists for target");
+        }
+        Ok(Default::default())
     }
 }
 
@@ -470,6 +547,16 @@ impl Cheatcode for lastCallGasCall {
     }
 }
 
+impl Cheatcode for lastFrameGasCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self {} = self;
+        let Some(last_frame_gas) = &state.gas_metering.last_frame_gas else {
+            bail!("no external call or create was made yet");
+        };
+        Ok(last_frame_gas.abi_encode())
+    }
+}
+
 impl Cheatcode for getChainIdCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
@@ -481,7 +568,7 @@ impl Cheatcode for chainIdCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newChainId } = self;
         ensure!(*newChainId <= U256::from(u64::MAX), "chain ID must be less than 2^64");
-        ccx.ecx.cfg_mut().chain_id = newChainId.to();
+        ccx.ecx.cfg_env_mut().chain_id = newChainId.to();
         Ok(Default::default())
     }
 }
@@ -498,7 +585,7 @@ impl Cheatcode for difficultyCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newDifficulty } = self;
         ensure!(
-            (*ccx.ecx.cfg().spec()).into() < SpecId::MERGE,
+            ccx.ecx.cfg().spec().into() < SpecId::MERGE,
             "`difficulty` is not supported after the Paris hard fork, use `prevrandao` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -530,7 +617,7 @@ impl Cheatcode for prevrandao_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            (*ccx.ecx.cfg().spec()).into() >= SpecId::MERGE,
+            ccx.ecx.cfg().spec().into() >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -543,7 +630,7 @@ impl Cheatcode for prevrandao_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newPrevrandao } = self;
         ensure!(
-            (*ccx.ecx.cfg().spec()).into() >= SpecId::MERGE,
+            ccx.ecx.cfg().spec().into() >= SpecId::MERGE,
             "`prevrandao` is not supported before the Paris hard fork, use `difficulty` instead; \
              see EIP-4399: https://eips.ethereum.org/EIPS/eip-4399"
         );
@@ -556,7 +643,7 @@ impl Cheatcode for blobhashesCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { hashes } = self;
         ensure!(
-            (*ccx.ecx.cfg().spec()).into() >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
             "`blobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
@@ -580,7 +667,7 @@ impl Cheatcode for getBlobhashesCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         ensure!(
-            (*ccx.ecx.cfg().spec()).into() >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
             "`getBlobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
@@ -598,6 +685,16 @@ impl Cheatcode for getBlobhashesCall {
 impl Cheatcode for rollCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newHeight } = self;
+        let current_height = ccx.ecx.block().number();
+        if ccx.ecx.cfg().spec().into() >= SpecId::PRAGUE && *newHeight > current_height {
+            let mut block_number = forward_fill_start(current_height, *newHeight);
+            while block_number < *newHeight {
+                let block_hash =
+                    ccx.ecx.db_mut().block_hash(block_number.saturating_to()).unwrap_or_default();
+                set_eip2935_blockhash(ccx.ecx, block_number, block_hash)?;
+                block_number += U256::from(1);
+            }
+        }
         ccx.ecx.block_mut().set_number(*newHeight);
         Ok(Default::default())
     }
@@ -650,12 +747,12 @@ impl Cheatcode for blobBaseFeeCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newBlobBaseFee } = self;
         ensure!(
-            (*ccx.ecx.cfg().spec()).into() >= SpecId::CANCUN,
+            ccx.ecx.cfg().spec().into() >= SpecId::CANCUN,
             "`blobBaseFee` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
 
-        let spec: SpecId = (*ccx.ecx.cfg().spec()).into();
+        let spec: SpecId = ccx.ecx.cfg().spec().into();
         ccx.ecx.block_mut().set_blob_excess_gas_and_price(
             (*newBlobBaseFee).to(),
             get_blob_base_fee_update_fraction_by_spec_id(spec),
@@ -678,6 +775,7 @@ impl Cheatcode for dealCall {
         let old_balance = std::mem::replace(&mut account.info.balance, new_balance);
         let record = DealRecord { address, old_balance, new_balance };
         ccx.state.eth_deals.push(record);
+        refresh_chain_journal(ccx.ecx);
         Ok(Default::default())
     }
 }
@@ -689,6 +787,16 @@ impl Cheatcode for etchCall {
         ccx.ecx.journal_mut().load_account(*target)?;
         let bytecode = Bytecode::new_raw_checked(newRuntimeBytecode.clone())
             .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
+        if *target == HISTORY_STORAGE_ADDRESS
+            && bytecode.hash_slow() != keccak256(&HISTORY_STORAGE_CODE)
+        {
+            let account =
+                ccx.ecx.journal_mut().evm_state_mut().get_mut(target).expect("account is loaded");
+            if account.info.code_hash == keccak256(&HISTORY_STORAGE_CODE) {
+                account.storage.clear();
+                account.mark_created();
+            }
+        }
         ccx.ecx.journal_mut().set_code(*target, bytecode);
         Ok(Default::default())
     }
@@ -743,6 +851,7 @@ impl Cheatcode for storeCall {
             .journal_mut()
             .sstore(target, slot.into(), value.into())
             .map_err(|e| fmt_err!("failed to store storage slot: {:?}", e))?;
+        ccx.state.mark_arbitrary_storage_slot_explicit(target, slot.into());
         Ok(Default::default())
     }
 }
@@ -814,6 +923,13 @@ impl Cheatcode for coolSlotCall {
     }
 }
 
+impl Cheatcode for isIsolateModeCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self {} = self;
+        Ok(state.config.isolate.abi_encode())
+    }
+}
+
 impl Cheatcode for readCallersCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
@@ -838,25 +954,44 @@ impl Cheatcode for snapshotValue_1Call {
 impl Cheatcode for snapshotGasLastCall_0Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { name } = self;
-        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
+        if ccx.state.gas_metering.last_call_gas.is_none() {
             bail!("no external call was made yet");
-        };
-        inner_last_gas_snapshot(ccx, None, Some(name.clone()), last_call_gas.gasTotalUsed)
+        }
+        let gas_used = ccx.state.gas_metering.last_call_snapshot_gas_used;
+        inner_last_gas_snapshot(ccx, None, Some(name.clone()), gas_used)
     }
 }
 
 impl Cheatcode for snapshotGasLastCall_1Call {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { name, group } = self;
-        let Some(last_call_gas) = &ccx.state.gas_metering.last_call_gas else {
+        if ccx.state.gas_metering.last_call_gas.is_none() {
             bail!("no external call was made yet");
-        };
-        inner_last_gas_snapshot(
-            ccx,
-            Some(group.clone()),
-            Some(name.clone()),
-            last_call_gas.gasTotalUsed,
-        )
+        }
+        let gas_used = ccx.state.gas_metering.last_call_snapshot_gas_used;
+        inner_last_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()), gas_used)
+    }
+}
+
+impl Cheatcode for snapshotGasLastFrame_0Call {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { name } = self;
+        if ccx.state.gas_metering.last_frame_gas.is_none() {
+            bail!("no external call or create was made yet");
+        }
+        let gas_used = ccx.state.gas_metering.last_frame_snapshot_gas_used;
+        inner_last_gas_snapshot(ccx, None, Some(name.clone()), gas_used)
+    }
+}
+
+impl Cheatcode for snapshotGasLastFrame_1Call {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
+        let Self { name, group } = self;
+        if ccx.state.gas_metering.last_frame_gas.is_none() {
+            bail!("no external call or create was made yet");
+        }
+        let gas_used = ccx.state.gas_metering.last_frame_snapshot_gas_used;
+        inner_last_gas_snapshot(ccx, Some(group.clone()), Some(name.clone()), gas_used)
     }
 }
 
@@ -946,6 +1081,10 @@ impl Cheatcode for deleteSnapshotCall {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
+        ccx.state.fork_block_number_override_snapshots.remove(snapshotId);
+        #[cfg(feature = "monad")]
+        ccx.state.context_snapshots.remove(snapshotId);
+        ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
     }
 }
@@ -955,6 +1094,10 @@ impl Cheatcode for deleteStateSnapshotCall {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
         ccx.state.env_overrides_snapshots.remove(snapshotId);
+        ccx.state.fork_block_number_override_snapshots.remove(snapshotId);
+        #[cfg(feature = "monad")]
+        ccx.state.context_snapshots.remove(snapshotId);
+        ccx.state.delete_created_accounts_snapshot(*snapshotId);
         Ok(result.abi_encode())
     }
 }
@@ -965,6 +1108,10 @@ impl Cheatcode for deleteSnapshotsCall {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
+        ccx.state.fork_block_number_override_snapshots.clear();
+        #[cfg(feature = "monad")]
+        ccx.state.context_snapshots.clear();
+        ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
     }
 }
@@ -974,6 +1121,10 @@ impl Cheatcode for deleteStateSnapshotsCall {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
         ccx.state.env_overrides_snapshots.clear();
+        ccx.state.fork_block_number_override_snapshots.clear();
+        #[cfg(feature = "monad")]
+        ccx.state.context_snapshots.clear();
+        ccx.state.clear_created_accounts_snapshots();
         Ok(Default::default())
     }
 }
@@ -981,7 +1132,7 @@ impl Cheatcode for deleteStateSnapshotsCall {
 impl Cheatcode for startStateDiffRecordingCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self {} = self;
-        state.recorded_account_diffs_stack = Some(Default::default());
+        state.start_state_diff_recording();
         // Enable mapping recording to track mapping slot accesses
         state.mapping_slots.get_or_insert_default();
         Ok(Default::default())
@@ -1061,9 +1212,12 @@ impl Cheatcode for getStorageSlotsCall {
                 )
             })?;
             let num_slots = num_bytes.div_ceil(U256::from(32));
+            let num_slots = usize::try_from(num_slots).map_err(|_| {
+                fmt_err!("number_of_bytes {} exceeds host usize", storage_type.number_of_bytes)
+            })?;
 
             // Start from 1 since base slot is already added
-            for i in 1..num_slots.to::<usize>() {
+            for i in 1..num_slots {
                 slots.push(slot + U256::from(i));
             }
         }
@@ -1078,7 +1232,9 @@ impl Cheatcode for getStorageSlotsCall {
                 if length_byte & 1 == 1 {
                     // Calculate data slots for long bytes/string
                     let length: U256 = value.data >> 1;
-                    let num_data_slots = length.to::<usize>().div_ceil(32);
+                    let length = usize::try_from(length)
+                        .map_err(|_| fmt_err!("long bytes/string length exceeds host usize"))?;
+                    let num_data_slots = length.div_ceil(32);
                     let data_start = U256::from_be_bytes(keccak256(B256::from(slot).0).0);
 
                     for i in 0..num_data_slots {
@@ -1096,10 +1252,8 @@ impl Cheatcode for getStorageAccessesCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let mut storage_accesses = Vec::new();
 
-        if let Some(recorded_diffs) = &state.recorded_account_diffs_stack {
-            for account_accesses in recorded_diffs.iter().flatten() {
-                storage_accesses.extend(account_accesses.storageAccesses.clone());
-            }
+        for account_access in state.recorded_account_diffs() {
+            storage_accesses.extend(account_access.storageAccesses.clone());
         }
 
         Ok(storage_accesses.abi_encode())
@@ -1121,6 +1275,7 @@ impl Cheatcode for broadcastRawTransactionCall {
         let from = sender;
 
         executor.transact_from_tx_on_db(ccx.state, ccx.ecx, tx_env)?;
+        refresh_chain_journal(ccx.ecx);
 
         if ccx.state.broadcast.is_some() {
             ccx.state.broadcastable_transactions.push_back(BroadcastableTransaction {
@@ -1143,6 +1298,13 @@ impl Cheatcode for setBlockhashCall {
         );
 
         ccx.ecx.db_mut().set_blockhash(blockNumber, blockHash);
+        let current_block = U256::from(ccx.ecx.block().number());
+        if ccx.ecx.cfg().spec().into() >= SpecId::PRAGUE
+            && blockNumber < current_block
+            && current_block - blockNumber <= U256::from(HISTORY_SERVE_WINDOW)
+        {
+            set_eip2935_blockhash(ccx.ecx, blockNumber, blockHash)?;
+        }
 
         Ok(Default::default())
     }
@@ -1171,6 +1333,8 @@ impl Cheatcode for executeTransactionCall {
         let sender =
             tx.recover_signer().map_err(|err| fmt_err!("failed to recover signer: {err}"))?;
         let tx_env = TxEnvFor::<FEN>::from_recovered_tx(&tx, sender);
+        let chain_context = ccx.ecx.db().chain_context_for_synthetic_transaction(&tx_env)?;
+        let created_address = tx_env.kind().is_create().then(|| sender.create(tx_env.nonce()));
 
         // Save current env for restoration after execution.
         let cached_evm_env = ccx.ecx.evm_clone();
@@ -1183,16 +1347,22 @@ impl Cheatcode for executeTransactionCall {
         ccx.ecx.tx_mut().set_gas_priority_fee(None);
 
         // Enable nonce checks for realistic simulation.
-        ccx.ecx.cfg_mut().disable_nonce_check = false;
+        ccx.ecx.cfg_env_mut().disable_nonce_check = false;
 
-        // EIP-3860: enforce initcode size limit.
-        ccx.ecx.cfg_mut().limit_contract_initcode_size =
-            Some(revm::primitives::eip3860::MAX_INITCODE_SIZE);
+        // Resolve the limit through the active EVM's concrete `Cfg` implementation. Replace the
+        // unlimited code-size override used for test contracts with the user-configured value so
+        // it does not implicitly make the initcode limit unlimited as well.
+        let code_size_limit = ccx.ecx.cfg_env().limit_contract_code_size;
+        let configured_code_size_limit = ccx.state.config.evm_opts.env.code_size_limit;
+        ccx.ecx.cfg_env_mut().limit_contract_code_size = configured_code_size_limit;
+        let initcode_size_limit = ccx.ecx.cfg().max_initcode_size();
+        ccx.ecx.cfg_env_mut().limit_contract_code_size = code_size_limit;
+        ccx.ecx.cfg_env_mut().limit_contract_initcode_size = Some(initcode_size_limit);
 
         // Reset the tx gas limit cap so revm applies the spec-defined default (EIP-7825).
         // Normal test execution sets `Some(u64::MAX)` to disable the cap; clearing it here
         // lets the nested EVM enforce the real network limit for realistic simulation.
-        ccx.ecx.cfg_mut().tx_gas_limit_cap = None;
+        ccx.ecx.cfg_env_mut().tx_gas_limit_cap = None;
 
         // Snapshot the modified env for EVM construction.
         let modified_evm_env = ccx.ecx.evm_clone();
@@ -1201,6 +1371,10 @@ impl Cheatcode for executeTransactionCall {
         // Mark as inner context so isolation mode doesn't trigger a nested transact_inner
         // when the inner EVM executes calls at depth == 1.
         executor.set_in_inner_context(true, Some(sender));
+        if let Some(address) = created_address {
+            let fork_id = ccx.ecx.db().active_fork_id();
+            ccx.state.record_created_account(fork_id, address);
+        }
 
         // Clone journaled state and mark all accounts/slots cold.
         let cold_state = {
@@ -1222,14 +1396,20 @@ impl Cheatcode for executeTransactionCall {
         let mut cold_state = Some(cold_state);
         let mut nested_evm_env = {
             let (db, _) = ccx.ecx.db_journal_inner_mut();
-            executor.with_fresh_nested_evm(ccx.state, db, modified_evm_env, &mut |evm| {
-                // SAFETY: closure is called exactly once by the executor.
-                evm.journal_inner_mut().state = cold_state.take().expect("called once");
-                // Set depth to 1 for proper trace collection.
-                evm.journal_inner_mut().depth = 1;
-                res = Some(evm.transact_raw(modified_tx_env.clone()));
-                Ok(())
-            })?
+            executor.with_fresh_nested_evm(
+                ccx.state,
+                db,
+                modified_evm_env,
+                chain_context,
+                &mut |evm| {
+                    // SAFETY: closure is called exactly once by the executor.
+                    evm.journal_inner_mut().state = cold_state.take().expect("called once");
+                    // Set depth to 1 for proper trace collection.
+                    evm.journal_inner_mut().depth = 1;
+                    res = Some(evm.transact_raw(modified_tx_env.clone()));
+                    Ok(())
+                },
+            )?
         };
         let res = res.unwrap();
 
@@ -1276,6 +1456,10 @@ impl Cheatcode for executeTransactionCall {
             }
         }
 
+        // Keep network-specific caches aligned with the state merged from the nested EVM while
+        // preserving the outer transaction's execution context.
+        refresh_chain_journal(ccx.ecx);
+
         // Return output bytes.
         let output = match res.result {
             ExecutionResult::Success { output, .. } => output.into_data(),
@@ -1313,7 +1497,8 @@ impl Cheatcode for startDebugTraceRecordingCall {
         };
 
         // turn on tracer debug configuration for recording
-        *tracer.config_mut() = TraceMode::Debug.into_config().expect("cannot be None");
+        *tracer.config_mut() =
+            TraceRequirements::none().with_debug(true).into_config().expect("cannot be None");
 
         // track where the recording starts
         if let Some(last_node) = tracer.traces().nodes().last() {
@@ -1376,7 +1561,7 @@ impl Cheatcode for setEvmVersionCall {
 
 impl Cheatcode for getEvmVersionCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let spec = *ccx.ecx.cfg().spec();
+        let spec = ccx.ecx.cfg().spec();
         Ok(spec.evm_version_name().to_lowercase().abi_encode())
     }
 }
@@ -1407,12 +1592,22 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
             active.pre_override_blob_hashes = Some(ccx.ecx.tx().blob_versioned_hashes().to_vec());
         }
     }
-    let (db, inner) = ccx.ecx.db_journal_inner_mut();
-    let id = db.snapshot_state(inner, &evm_env);
+    let journaled_state = ccx.ecx.journal_inner().clone();
+    let id = ccx.ecx.db_mut().snapshot_state(&journaled_state, &evm_env);
     // Capture the cheatcode-side env overrides alongside the backend
     // snapshot so they can be rolled back in lockstep with `EvmEnv`. See
     // `Cheatcodes::env_overrides_snapshots`.
     ccx.state.env_overrides_snapshots.insert(id, all_env_overrides);
+    ccx.state.fork_block_number_override_snapshots.insert(id, ccx.state.fork_block_number_override);
+    #[cfg(feature = "monad")]
+    {
+        use foundry_evm_core::FoundryJournal as _;
+
+        ccx.state
+            .context_snapshots
+            .insert(id, (ccx.ecx.chain().clone(), ccx.ecx.journal().capture_reserve_balance()));
+    }
+    ccx.state.snapshot_created_accounts(id, fork_id);
     Ok(id.abi_encode())
 }
 
@@ -1427,6 +1622,7 @@ fn sync_tx_after_env_override_restore<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCt
     let fork_id = ccx.ecx.db().active_fork_id();
     // Clone to avoid borrow conflicts when mutating ecx below.
     let env_overrides = ccx.state.env_overrides.get(&fork_id).cloned().unwrap_or_default();
+    let remove_inactive_entry = !env_overrides.is_any_set();
     match env_overrides.gas_price {
         Some(p) if !ccx.state.in_isolation_context => ccx.ecx.tx_mut().set_gas_price(p),
         None => {
@@ -1454,6 +1650,9 @@ fn sync_tx_after_env_override_restore<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCt
         }
         _ => {}
     }
+    if remove_inactive_entry {
+        ccx.state.env_overrides.remove(&fork_id);
+    }
 }
 
 fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
@@ -1462,21 +1661,37 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
     let caller = ccx.ecx.caller();
-    let (db, inner) = ccx.ecx.db_journal_inner_mut();
-    if let Some(restored) = db.revert_state(
+    let journaled_state = ccx.ecx.journal_inner().clone();
+    if let Some(restored) = ccx.ecx.db_mut().revert_state(
         snapshot_id,
-        inner,
+        &journaled_state,
         &mut evm_env,
         caller,
         RevertStateSnapshotAction::RevertKeep,
     ) {
-        *inner = restored;
+        ccx.ecx.set_journal_inner(restored);
+        #[cfg(feature = "monad")]
+        {
+            use foundry_evm_core::FoundryJournal as _;
+
+            if let Some((context, state)) = ccx.state.context_snapshots.get(&snapshot_id) {
+                *ccx.ecx.chain_mut() = context.clone();
+                ccx.ecx.journal_mut().restore_reserve_balance(state.clone());
+            }
+        }
+        refresh_chain_journal(ccx.ecx);
         ccx.ecx.set_evm(evm_env);
         // `RevertKeep` keeps the backend snapshot alive for further
         // reverts, so keep our matching env-overrides copy too.
         if let Some(snap) = ccx.state.env_overrides_snapshots.get(&snapshot_id) {
             ccx.state.env_overrides = snap.clone();
         }
+        if let Some(&fork_block_number) =
+            ccx.state.fork_block_number_override_snapshots.get(&snapshot_id)
+        {
+            ccx.state.fork_block_number_override = fork_block_number;
+        }
+        ccx.state.revert_created_accounts(snapshot_id, false);
         sync_tx_after_env_override_restore(ccx);
         Ok(true.abi_encode())
     } else {
@@ -1490,19 +1705,35 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
 ) -> Result {
     let mut evm_env = ccx.ecx.evm_clone();
     let caller = ccx.ecx.caller();
-    let (db, inner) = ccx.ecx.db_journal_inner_mut();
-    if let Some(restored) = db.revert_state(
+    let journaled_state = ccx.ecx.journal_inner().clone();
+    if let Some(restored) = ccx.ecx.db_mut().revert_state(
         snapshot_id,
-        inner,
+        &journaled_state,
         &mut evm_env,
         caller,
         RevertStateSnapshotAction::RevertRemove,
     ) {
-        *inner = restored;
+        ccx.ecx.set_journal_inner(restored);
+        #[cfg(feature = "monad")]
+        {
+            use foundry_evm_core::FoundryJournal as _;
+
+            if let Some((context, state)) = ccx.state.context_snapshots.remove(&snapshot_id) {
+                *ccx.ecx.chain_mut() = context;
+                ccx.ecx.journal_mut().restore_reserve_balance(state);
+            }
+        }
+        refresh_chain_journal(ccx.ecx);
         ccx.ecx.set_evm(evm_env);
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
             ccx.state.env_overrides = snap;
         }
+        if let Some(fork_block_number) =
+            ccx.state.fork_block_number_override_snapshots.remove(&snapshot_id)
+        {
+            ccx.state.fork_block_number_override = fork_block_number;
+        }
+        ccx.state.revert_created_accounts(snapshot_id, true);
         sync_tx_after_env_override_restore(ccx);
         Ok(true.abi_encode())
     } else {
@@ -1696,14 +1927,57 @@ pub(super) fn ensure_loaded_account<CTX: ContextTr<Db: Database<Error = Database
     Ok(())
 }
 
+fn set_eip2935_blockhash<
+    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+>(
+    ecx: &mut CTX,
+    block_number: U256,
+    block_hash: B256,
+) -> Result<()> {
+    let account_was_cold = ecx.journal_mut().load_account(HISTORY_STORAGE_ADDRESS)?.is_cold;
+    let account =
+        ecx.journal_mut().evm_state().get(&HISTORY_STORAGE_ADDRESS).expect("account is loaded");
+    if account.info.code_hash != keccak256(&HISTORY_STORAGE_CODE) {
+        restore_eip2935_cold_state(ecx, account_was_cold, None);
+        return Ok(());
+    }
+
+    let slot = history_storage_slot(block_number);
+    let slot_was_cold = ecx
+        .journal_mut()
+        .sstore(HISTORY_STORAGE_ADDRESS, slot, history_storage_value(block_hash))
+        .map_err(|e| fmt_err!("failed to store EIP-2935 history slot: {:?}", e))?
+        .is_cold;
+    restore_eip2935_cold_state(ecx, account_was_cold, Some((slot, slot_was_cold)));
+    Ok(())
+}
+
+fn restore_eip2935_cold_state<
+    CTX: ContextTr<Db: Database<Error = DatabaseError>, Journal: JournalExt>,
+>(
+    ecx: &mut CTX,
+    account_was_cold: bool,
+    slot_state: Option<(U256, bool)>,
+) {
+    let Some(account) = ecx.journal_mut().evm_state_mut().get_mut(&HISTORY_STORAGE_ADDRESS) else {
+        return;
+    };
+    if account_was_cold {
+        account.mark_cold();
+    }
+    if let Some((slot, slot_was_cold)) = slot_state
+        && slot_was_cold
+        && let Some(storage_slot) = account.storage.get_mut(&slot)
+    {
+        storage_slot.is_cold = true;
+    }
+}
+
 // Tempo TIP-1026 stores logoURI in TIP-20 storage slot 5, reusing the
 // previously-unused domainSeparator slot. This mirrors Tempo's
 // crates/precompiles/tests/storage_tests/solidity/testdata/tip20.layout.json
 // fixture, where `logoUri` has slot "5".
 const TIP20_LOGO_URI_SLOT_INDEX: u64 = 5;
-fn tip20_logo_uri_slot() -> U256 {
-    U256::from(TIP20_LOGO_URI_SLOT_INDEX)
-}
 
 fn set_tip20_logo_uri<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
@@ -1716,7 +1990,12 @@ fn set_tip20_logo_uri<FEN: FoundryEvmNetwork>(
     })?;
     ccx.ensure_not_precompile(token)?;
     ensure_loaded_account(ccx.ecx, *token)?;
-    store_solidity_string(ccx.ecx, *token, tip20_logo_uri_slot(), new_logo_uri.as_bytes())
+    store_solidity_string(
+        ccx.ecx,
+        *token,
+        U256::from(TIP20_LOGO_URI_SLOT_INDEX),
+        new_logo_uri.as_bytes(),
+    )
 }
 
 fn store_solidity_string<CTX>(
@@ -1808,7 +2087,7 @@ const fn is_long_string(slot_value: U256) -> bool {
 
 fn long_string_length(slot_value: U256) -> Option<usize> {
     let length: U256 = (slot_value - U256::ONE) >> 1;
-    (length <= U256::from(TIP20_MAX_LOGO_URI_BYTES)).then(|| length.to::<usize>())
+    usize::try_from(length).ok().filter(|length| *length <= TIP20_MAX_LOGO_URI_BYTES)
 }
 
 const fn string_chunks(byte_length: usize) -> usize {
@@ -1823,13 +2102,15 @@ const fn string_chunks(byte_length: usize) -> usize {
 /// depth than `startStateDiffRecording`, multiple `Vec<RecordedAccountAccesses>`
 /// will be flattened, preserving the order of the accesses.
 fn get_state_diff<FEN: FoundryEvmNetwork>(state: &mut Cheatcodes<FEN>) -> Result {
-    let res = state
-        .recorded_account_diffs_stack
-        .replace(Default::default())
-        .unwrap_or_default()
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+    let mut res = state.take_recorded_account_diffs_prefix();
+    res.extend(
+        state
+            .recorded_account_diffs_stack
+            .replace(Default::default())
+            .unwrap_or_default()
+            .into_iter()
+            .flatten(),
+    );
     Ok(res.abi_encode())
 }
 
@@ -1857,25 +2138,23 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     let mut state_diffs: BTreeMap<Address, AccountStateDiffs> = BTreeMap::default();
 
     // First, collect all unique addresses we need to look up
-    let mut addresses_to_lookup = HashSet::new();
-    if let Some(records) = &ccx.state.recorded_account_diffs_stack {
-        for account_access in records.iter().flatten() {
-            if !account_access.storageAccesses.is_empty()
-                || account_access.oldBalance != account_access.newBalance
-            {
-                addresses_to_lookup.insert(account_access.account);
-                for storage_access in &account_access.storageAccesses {
-                    if storage_access.isWrite && !storage_access.reverted {
-                        addresses_to_lookup.insert(storage_access.account);
-                    }
+    let mut addresses_to_lookup = AddressSet::default();
+    for account_access in ccx.state.recorded_account_diffs() {
+        if !account_access.storageAccesses.is_empty()
+            || account_access.oldBalance != account_access.newBalance
+        {
+            addresses_to_lookup.insert(account_access.account);
+            for storage_access in &account_access.storageAccesses {
+                if storage_access.isWrite && !storage_access.reverted {
+                    addresses_to_lookup.insert(storage_access.account);
                 }
             }
         }
     }
 
     // Look up contract names and storage layouts for all addresses
-    let mut contract_names = HashMap::new();
-    let mut storage_layouts = HashMap::new();
+    let mut contract_names = AddressMap::default();
+    let mut storage_layouts = AddressMap::default();
     for address in addresses_to_lookup {
         if let Some((artifact_id, contract_data)) = get_contract_data(ccx, address) {
             contract_names.insert(address, artifact_id.identifier());
@@ -1888,137 +2167,133 @@ fn get_recorded_state_diffs<FEN: FoundryEvmNetwork>(
     }
 
     // Now process the records
-    if let Some(records) = &ccx.state.recorded_account_diffs_stack {
-        records
-            .iter()
-            .flatten()
-            .filter(|account_access| {
-                !account_access.storageAccesses.is_empty()
-                    || account_access.oldBalance != account_access.newBalance
-                    || account_access.oldNonce != account_access.newNonce
-            })
-            .for_each(|account_access| {
-                // Record account balance diffs.
-                if account_access.oldBalance != account_access.newBalance {
-                    let account_diff =
-                        state_diffs.entry(account_access.account).or_insert_with(|| {
-                            AccountStateDiffs {
-                                label: ccx.state.labels.get(&account_access.account).cloned(),
-                                contract: contract_names.get(&account_access.account).cloned(),
-                                ..Default::default()
-                            }
-                        });
-                    // Update balance diff. Do not overwrite the initial balance if already set.
-                    if let Some(diff) = &mut account_diff.balance_diff {
-                        diff.new_value = account_access.newBalance;
-                    } else {
-                        account_diff.balance_diff = Some(BalanceDiff {
-                            previous_value: account_access.oldBalance,
-                            new_value: account_access.newBalance,
-                        });
+    ccx.state
+        .recorded_account_diffs()
+        .filter(|account_access| {
+            !account_access.storageAccesses.is_empty()
+                || account_access.oldBalance != account_access.newBalance
+                || (!account_access.reverted && account_access.oldNonce != account_access.newNonce)
+        })
+        .for_each(|account_access| {
+            // Record account balance diffs.
+            if account_access.oldBalance != account_access.newBalance {
+                let account_diff = state_diffs.entry(account_access.account).or_insert_with(|| {
+                    AccountStateDiffs {
+                        label: ccx.state.labels.get(&account_access.account).cloned(),
+                        contract: contract_names.get(&account_access.account).cloned(),
+                        ..Default::default()
                     }
+                });
+                // Update balance diff. Do not overwrite the initial balance if already set.
+                if let Some(diff) = &mut account_diff.balance_diff {
+                    diff.new_value = account_access.newBalance;
+                } else {
+                    account_diff.balance_diff = Some(BalanceDiff {
+                        previous_value: account_access.oldBalance,
+                        new_value: account_access.newBalance,
+                    });
                 }
+            }
 
-                // Record account nonce diffs.
-                if account_access.oldNonce != account_access.newNonce {
-                    let account_diff =
-                        state_diffs.entry(account_access.account).or_insert_with(|| {
-                            AccountStateDiffs {
-                                label: ccx.state.labels.get(&account_access.account).cloned(),
-                                contract: contract_names.get(&account_access.account).cloned(),
-                                ..Default::default()
-                            }
-                        });
-                    // Update nonce diff. Do not overwrite the initial nonce if already set.
-                    if let Some(diff) = &mut account_diff.nonce_diff {
-                        diff.new_value = account_access.newNonce;
-                    } else {
-                        account_diff.nonce_diff = Some(NonceDiff {
-                            previous_value: account_access.oldNonce,
-                            new_value: account_access.newNonce,
-                        });
+            // Record account nonce diffs.
+            if account_access.oldNonce != account_access.newNonce && !account_access.reverted {
+                let account_diff = state_diffs.entry(account_access.account).or_insert_with(|| {
+                    AccountStateDiffs {
+                        label: ccx.state.labels.get(&account_access.account).cloned(),
+                        contract: contract_names.get(&account_access.account).cloned(),
+                        ..Default::default()
                     }
+                });
+                // Update nonce diff. Do not overwrite the initial nonce if already set.
+                if let Some(diff) = &mut account_diff.nonce_diff {
+                    diff.new_value = account_access.newNonce;
+                } else {
+                    account_diff.nonce_diff = Some(NonceDiff {
+                        previous_value: account_access.oldNonce,
+                        new_value: account_access.newNonce,
+                    });
                 }
+            }
 
-                // Collect all storage accesses for this account
-                let raw_changes_by_slot = account_access
-                    .storageAccesses
-                    .iter()
-                    .filter_map(|access| {
-                        (access.isWrite && !access.reverted)
-                            .then_some((access.slot, (access.previousValue, access.newValue)))
-                    })
-                    .collect::<BTreeMap<_, _>>();
+            // Collect all storage accesses for this account
+            let raw_changes_by_slot = account_access
+                .storageAccesses
+                .iter()
+                .filter_map(|access| {
+                    (access.isWrite && !access.reverted)
+                        .then_some((access.slot, (access.previousValue, access.newValue)))
+                })
+                .collect::<BTreeMap<_, _>>();
 
-                // Record account state diffs.
-                for storage_access in &account_access.storageAccesses {
-                    if storage_access.isWrite && !storage_access.reverted {
-                        let account_diff = state_diffs
-                            .entry(storage_access.account)
-                            .or_insert_with(|| AccountStateDiffs {
+            // Record account state diffs.
+            for storage_access in &account_access.storageAccesses {
+                if storage_access.isWrite && !storage_access.reverted {
+                    let account_diff =
+                        state_diffs.entry(storage_access.account).or_insert_with(|| {
+                            AccountStateDiffs {
                                 label: ccx.state.labels.get(&storage_access.account).cloned(),
                                 contract: contract_names.get(&storage_access.account).cloned(),
                                 ..Default::default()
+                            }
+                        });
+                    let layout = storage_layouts.get(&storage_access.account);
+                    // Update state diff. Do not overwrite the initial value if already set.
+                    let entry = match account_diff.state_diff.entry(storage_access.slot) {
+                        Entry::Vacant(slot_state_diff) => {
+                            // Get storage layout info for this slot
+                            // Include mapping slots if available for the account
+                            let mapping_slots = ccx
+                                .state
+                                .mapping_slots
+                                .as_ref()
+                                .and_then(|slots| slots.get(&storage_access.account));
+
+                            let slot_info = layout.and_then(|layout| {
+                                let decoder = SlotIdentifier::new(layout.clone());
+                                decoder.identify(&storage_access.slot, mapping_slots).or_else(
+                                    || {
+                                        // Create a map of new values for bytes/string
+                                        // identification. These values are used to determine
+                                        // the length of the data which helps determine how many
+                                        // slots to search
+                                        let current_base_slot_values = raw_changes_by_slot
+                                            .iter()
+                                            .map(|(slot, (_, new_val))| (*slot, *new_val))
+                                            .collect::<B256Map<_>>();
+                                        decoder.identify_bytes_or_string(
+                                            &storage_access.slot,
+                                            &current_base_slot_values,
+                                        )
+                                    },
+                                )
                             });
-                        let layout = storage_layouts.get(&storage_access.account);
-                        // Update state diff. Do not overwrite the initial value if already set.
-                        let entry = match account_diff.state_diff.entry(storage_access.slot) {
-                            Entry::Vacant(slot_state_diff) => {
-                                // Get storage layout info for this slot
-                                // Include mapping slots if available for the account
-                                let mapping_slots = ccx
-                                    .state
-                                    .mapping_slots
-                                    .as_ref()
-                                    .and_then(|slots| slots.get(&storage_access.account));
 
-                                let slot_info = layout.and_then(|layout| {
-                                    let decoder = SlotIdentifier::new(layout.clone());
-                                    decoder.identify(&storage_access.slot, mapping_slots).or_else(
-                                        || {
-                                            // Create a map of new values for bytes/string
-                                            // identification. These values are used to determine
-                                            // the length of the data which helps determine how many
-                                            // slots to search
-                                            let current_base_slot_values = raw_changes_by_slot
-                                                .iter()
-                                                .map(|(slot, (_, new_val))| (*slot, *new_val))
-                                                .collect::<B256Map<_>>();
-                                            decoder.identify_bytes_or_string(
-                                                &storage_access.slot,
-                                                &current_base_slot_values,
-                                            )
-                                        },
-                                    )
-                                });
+                            slot_state_diff.insert(SlotStateDiff {
+                                previous_value: storage_access.previousValue,
+                                new_value: storage_access.newValue,
+                                slot_info,
+                            })
+                        }
+                        Entry::Occupied(slot_state_diff) => {
+                            let entry = slot_state_diff.into_mut();
+                            entry.new_value = storage_access.newValue;
+                            entry
+                        }
+                    };
 
-                                slot_state_diff.insert(SlotStateDiff {
-                                    previous_value: storage_access.previousValue,
-                                    new_value: storage_access.newValue,
-                                    slot_info,
-                                })
-                            }
-                            Entry::Occupied(slot_state_diff) => {
-                                let entry = slot_state_diff.into_mut();
-                                entry.new_value = storage_access.newValue;
-                                entry
-                            }
-                        };
-
-                        // Update decoded values if we have slot info
-                        if let Some(slot_info) = &mut entry.slot_info {
-                            slot_info.decode_values(entry.previous_value, storage_access.newValue);
-                            if slot_info.is_bytes_or_string() {
-                                slot_info.decode_bytes_or_string_values(
-                                    &storage_access.slot,
-                                    &raw_changes_by_slot,
-                                );
-                            }
+                    // Update decoded values if we have slot info
+                    if let Some(slot_info) = &mut entry.slot_info {
+                        slot_info.decode_values(entry.previous_value, storage_access.newValue);
+                        if slot_info.is_bytes_or_string() {
+                            slot_info.decode_bytes_or_string_values(
+                                &storage_access.slot,
+                                &raw_changes_by_slot,
+                            );
                         }
                     }
                 }
-            });
-    }
+            }
+        });
     state_diffs
 }
 

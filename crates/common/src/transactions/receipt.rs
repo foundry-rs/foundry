@@ -78,10 +78,12 @@ where
             call_request.set_from(transaction.from());
             match provider.call(call_request).block(BlockId::Hash(block_hash.into())).await {
                 Err(e) => return Ok(extract_revert_reason(e.to_string())),
-                Ok(_) => eyre::bail!("no revert reason as transaction succeeded"),
+                Ok(_) => {
+                    eyre::bail!("no revert reason as transaction succeeded");
+                }
             }
         }
-        eyre::bail!("unable to fetch block_hash")
+        eyre::bail!("unable to fetch block_hash");
     }
 }
 

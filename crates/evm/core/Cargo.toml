@@ -36,6 +36,8 @@ alloy-primitives = { workspace = true, features = [
 alloy-provider.workspace = true
 alloy-network.workspace = true
 alloy-consensus.workspace = true
+alloy-monad-evm = { workspace = true, optional = true }
+alloy-eips.workspace = true
 alloy-op-evm = { workspace = true, optional = true }
 alloy-rpc-types = { workspace = true, features = ["anvil"] }
 alloy-sol-types.workspace = true
@@ -49,18 +51,20 @@ revm = { workspace = true, features = [
     "optional_eip3607",
     "optional_block_gas_limit",
     "optional_no_base_fee",
+    "optional_priority_fee_check",
     "arbitrary",
     "c-kzg",
     "blst",
 ] }
 revm-inspectors.workspace = true
+monad-revm = { workspace = true, optional = true }
 op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
 op-alloy-network = { workspace = true, optional = true }
 op-alloy-rpc-types = { workspace = true, optional = true }
 op-revm = { workspace = true, optional = true }
 tempo-revm.workspace = true
 tempo-alloy.workspace = true
-tempo-chainspec.workspace = true
+tempo-hardfork.workspace = true
 tempo-contracts.workspace = true
 tempo-evm.workspace = true
 tempo-precompiles.workspace = true
@@ -87,6 +91,13 @@ tempo-primitives.workspace = true
 
 [features]
 default = ["optimism"]
+monad = [
+    "anvil/monad",
+    "dep:alloy-monad-evm",
+    "dep:monad-revm",
+    "foundry-evm-hardforks/monad",
+    "foundry-evm-networks/monad",
+]
 optimism = [
     "dep:op-alloy-consensus",
     "dep:op-alloy-network",

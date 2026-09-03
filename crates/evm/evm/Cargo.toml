@@ -27,6 +27,8 @@ foundry-evm-networks.workspace = true
 foundry-evm-traces.workspace = true
 
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
+alloy-eips.workspace = true
+alloy-evm.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = [
     "serde",
@@ -65,6 +67,15 @@ tokio.workspace = true
 
 [features]
 default = ["optimism"]
+monad = [
+    "foundry-evm-core/monad",
+    "foundry-evm-hardforks/monad",
+    "foundry-evm-networks/monad",
+    "foundry-cheatcodes/monad",
+    "foundry-evm-coverage/monad",
+    "foundry-evm-fuzz/monad",
+    "foundry-evm-traces/monad",
+]
 optimism = [
     "foundry-evm-core/optimism",
     "foundry-evm-hardforks/optimism",

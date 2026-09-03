@@ -4,6 +4,9 @@ extern crate foundry_test_utils;
 pub mod constants;
 pub mod utils;
 
+#[path = "../support/lsp_client.rs"]
+mod lsp_client;
+
 mod backtrace;
 mod bind;
 mod bind_json;
@@ -21,10 +24,10 @@ mod eip712;
 mod failure_assertions;
 mod inline_config;
 mod install;
+mod lsp;
 
 mod json;
 mod lint;
-mod machine;
 mod multi_script;
 mod precompiles;
 mod script;
@@ -34,6 +37,7 @@ mod test_cmd;
 mod verify;
 mod verify_bytecode;
 mod version;
+mod watch;
 
 mod ext_integration;
 mod fmt;

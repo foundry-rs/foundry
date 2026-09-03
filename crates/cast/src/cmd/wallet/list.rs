@@ -5,7 +5,7 @@ use foundry_common::{fs, sh_err, sh_println, shell};
 use foundry_config::Config;
 use foundry_wallets::wallet_multi::MultiWalletOptsBuilder;
 use serde::Serialize;
-use std::env;
+use std::{borrow::Cow, env};
 
 /// CLI arguments for `cast wallet list`.
 #[derive(Clone, Debug, Parser)]
@@ -139,27 +139,41 @@ impl ListArgs {
         let mut accounts = Vec::new();
 
         // List all files within the keystore directory.
-        for entry in std::fs::read_dir(keystore_dir)? {
-            let path = entry?.path();
+        let mut paths = std::fs::read_dir(keystore_dir)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?;
+        paths.sort();
+        for path in paths {
             if path.is_file()
                 && let Some(file_name) = path.file_name()
                 && let Some(name) = file_name.to_str()
+                // Skip recognized Touch ID sidecars while retaining ambiguous files.
+                && !matches!(super::is_touch_id_sidecar(&path), Ok(true))
             {
-                // Extract address from keystore filename format: UTC--{timestamp}--{address}
-                if let Some(address) = name.split("--").last() {
-                    if format_json {
-                        accounts.push(WalletAccount {
-                            address: format!("0x{address}"),
-                            source: "Local",
-                        });
-                    } else {
-                        sh_println!("0x{} (Local)", address)?;
-                    }
+                let account = local_account_name(name);
+                if format_json {
+                    accounts.push(WalletAccount { address: account.into_owned(), source: "Local" });
+                } else {
+                    sh_println!("{} (Local)", account)?;
                 }
             }
         }
 
         Ok(accounts)
+    }
+}
+
+/// Extracts the address from a Geth-style keystore filename, preserving custom names.
+fn local_account_name(name: &str) -> Cow<'_, str> {
+    if let Some((timestamp, address)) =
+        name.strip_prefix("UTC--").and_then(|suffix| suffix.rsplit_once("--"))
+        && !timestamp.is_empty()
+        && address.len() == 40
+        && address.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        Cow::Owned(format!("0x{address}"))
+    } else {
+        Cow::Borrowed(name)
     }
 }
 

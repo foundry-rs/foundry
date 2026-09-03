@@ -29,6 +29,8 @@ pub struct HandlerAssertionFailure {
     pub original_sequence_len: usize,
     /// Decoded revert/assert reason.
     pub revert_reason: String,
+    /// Active fork block when the handler assertion failed, if any.
+    pub fork_block_number: Option<u64>,
     /// Stable hash of edge coverage at the asserting call (falls back to `(reverter,
     /// selector)`). Used by the shrinker to preserve path identity, not for dedup.
     pub edge_fingerprint: B256,
@@ -36,22 +38,21 @@ pub struct HandlerAssertionFailure {
 
 impl HandlerAssertionFailure {
     /// Builds a failure from a replayed sequence whose last call asserted.
-    pub fn from_replayed_sequence(
+    pub const fn from_replayed_sequence(
         call_sequence: Vec<BasicTxDetails>,
+        reverter: Address,
+        selector: Selector,
         edge_fingerprint: B256,
         revert_reason: String,
     ) -> Self {
-        let last = call_sequence.last().expect("replayed sequence is non-empty");
-        let reverter = last.call_details.target;
-        let selector_bytes: [u8; 4] =
-            last.call_details.calldata.get(..4).and_then(|s| s.try_into().ok()).unwrap_or_default();
         let original_sequence_len = call_sequence.len();
         Self {
             reverter,
-            selector: Selector::from(selector_bytes),
+            selector,
             call_sequence,
             original_sequence_len,
             revert_reason,
+            fork_block_number: None,
             edge_fingerprint,
         }
     }
@@ -96,6 +97,7 @@ impl<'a> InvariantRunCtx<'a> {
             shrink_run_limit: self.config.shrink_run_limit,
             fail_on_revert,
             assertion_failure,
+            fork_block_number: call_result.fork_block_number,
         }
     }
 
@@ -178,6 +180,7 @@ pub(crate) fn record_handler_assertion_bug<FEN: FoundryEvmNetwork>(
             call_sequence,
             original_sequence_len,
             revert_reason,
+            fork_block_number: call_result.fork_block_number,
             edge_fingerprint: fingerprint,
         });
     }
@@ -265,6 +268,8 @@ pub struct InvariantFailures {
     invariant_count: usize,
     /// Cached `FailureKey::Handler` count, read on progress/metrics ticks.
     handler_count: usize,
+    /// Increments whenever a failure or its reproducer is inserted or replaced.
+    revision: usize,
 }
 
 impl InvariantFailures {
@@ -294,6 +299,7 @@ impl InvariantFailures {
 
     pub fn record_failure(&mut self, invariant: &Function, failure: InvariantFuzzError) {
         let prev = self.failures.insert(FailureKey::Invariant(invariant.name.clone()), failure);
+        self.revision = self.revision.wrapping_add(1);
         if prev.is_none() {
             self.invariant_count += 1;
         }
@@ -327,6 +333,11 @@ impl InvariantFailures {
         self.handler_count
     }
 
+    /// Revision of the failure map, including replacements with shorter reproducers.
+    pub const fn revision(&self) -> usize {
+        self.revision
+    }
+
     pub fn handler_failures_mut(&mut self) -> impl Iterator<Item = &mut InvariantFuzzError> {
         self.failures.iter_mut().filter_map(|(key, error)| match key {
             FailureKey::Handler(_, _) => Some(error),
@@ -343,6 +354,7 @@ impl InvariantFailures {
                 FailureKey::Handler(site.0, site.1),
                 InvariantFuzzError::HandlerAssertion(failure),
             );
+            self.revision = self.revision.wrapping_add(1);
             if prev.is_none() {
                 self.handler_count += 1;
             }
@@ -358,6 +370,7 @@ impl InvariantFailures {
         err: InvariantFuzzError,
     ) {
         let prev = self.failures.insert(FailureKey::Handler(target, selector), err);
+        self.revision = self.revision.wrapping_add(1);
         if prev.is_none() {
             self.handler_count += 1;
         }
@@ -391,6 +404,49 @@ pub enum InvariantFuzzError {
 }
 
 impl InvariantFuzzError {
+    /// Reconstructs a predicate failure from a persisted sequence that still reproduces.
+    #[expect(clippy::too_many_arguments)]
+    pub fn from_replayed_invariant(
+        invariant_address: Address,
+        invariant: &Function,
+        call_sequence: Vec<BasicTxDetails>,
+        reason: Option<String>,
+        config: &InvariantConfig,
+        fail_on_revert: bool,
+        assertion_failure: bool,
+        is_revert: bool,
+    ) -> Self {
+        let revert_reason = reason.unwrap_or_default();
+        let origin = invariant.name.as_str();
+        let failure = FailedInvariantCaseData {
+            test_error: TestError::Fail(
+                format!("{origin}, reason: {revert_reason}").into(),
+                call_sequence,
+            ),
+            return_reason: "".into(),
+            revert_reason,
+            addr: invariant_address,
+            calldata: invariant.selector().to_vec().into(),
+            inner_sequence: Vec::new(),
+            shrink_run_limit: config.shrink_run_limit,
+            fail_on_revert,
+            assertion_failure,
+            fork_block_number: None,
+        };
+        if is_revert { Self::Revert(failure) } else { Self::BrokenInvariant(failure) }
+    }
+
+    /// Active fork block when this invariant failure was observed, if any.
+    pub const fn fork_block_number(&self) -> Option<u64> {
+        match self {
+            Self::BrokenInvariant(case_data) | Self::Revert(case_data) => {
+                case_data.fork_block_number
+            }
+            Self::HandlerAssertion(failure) => failure.fork_block_number,
+            Self::MaxAssumeRejects(_) => None,
+        }
+    }
+
     pub fn revert_reason(&self) -> Option<String> {
         match self {
             Self::BrokenInvariant(case_data) | Self::Revert(case_data) => {
@@ -442,4 +498,51 @@ pub struct FailedInvariantCaseData {
     pub fail_on_revert: bool,
     /// Whether this failure originated from a handler assertion.
     pub assertion_failure: bool,
+    /// Active fork block when the failure was observed, if any.
+    pub fork_block_number: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_evm_fuzz::CallDetails;
+
+    fn handler_failure(sequence_len: usize) -> HandlerAssertionFailure {
+        let tx = BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: CallDetails {
+                target: Address::ZERO,
+                calldata: Bytes::new(),
+                value: None,
+            },
+        };
+        HandlerAssertionFailure::from_replayed_sequence(
+            vec![tx; sequence_len],
+            Address::ZERO,
+            Selector::ZERO,
+            B256::ZERO,
+            "assertion failed".to_string(),
+        )
+    }
+
+    #[test]
+    fn failure_revision_tracks_shorter_handler_reproducer() {
+        let mut failures = InvariantFailures::new();
+        failures.record_handler_failure(handler_failure(2));
+        let checkpoint = failures.revision();
+
+        failures.record_handler_failure(handler_failure(2));
+        assert_eq!(failures.revision(), checkpoint);
+
+        failures.record_handler_failure(handler_failure(1));
+        assert_ne!(failures.revision(), checkpoint);
+        let failure = failures
+            .failures
+            .get(&FailureKey::Handler(Address::ZERO, Selector::ZERO))
+            .and_then(InvariantFuzzError::as_handler_assertion)
+            .unwrap();
+        assert_eq!(failure.call_sequence.len(), 1);
+    }
 }

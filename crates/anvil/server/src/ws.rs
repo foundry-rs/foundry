@@ -13,16 +13,6 @@ use std::{
     task::{Context, Poll},
 };
 
-/// Handles incoming Websocket upgrade
-///
-/// This is the entrypoint invoked by the axum server for a websocket request
-pub async fn handle_ws<Http, Ws: PubSubRpcHandler>(
-    ws: WebSocketUpgrade,
-    State((_, handler)): State<(Http, Ws)>,
-) -> Response {
-    ws.on_upgrade(|socket| PubSubConnection::new(SocketConn(socket), handler))
-}
-
 #[pin_project::pin_project]
 struct SocketConn(#[pin] WebSocket);
 
@@ -71,4 +61,14 @@ fn on_message(msg: Result<Message, axum::Error>) -> Result<Option<Request>, Requ
         }
         _ => Ok(None),
     }
+}
+
+/// Handles incoming Websocket upgrade
+///
+/// This is the entrypoint invoked by the axum server for a websocket request
+pub async fn handle_ws<Http, Ws: PubSubRpcHandler>(
+    ws: WebSocketUpgrade,
+    State((_, handler)): State<(Http, Ws)>,
+) -> Response {
+    ws.on_upgrade(|socket| PubSubConnection::new(SocketConn(socket), handler))
 }

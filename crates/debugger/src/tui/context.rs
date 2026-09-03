@@ -1,14 +1,23 @@
 //! Debugger context and event handler implementation.
 
+use super::storage::{
+    StorageAccess, StorageSpace, hex_u256, next_storage_write_values, storage_access_at,
+    storage_accesses_until,
+};
 use crate::{DebugNode, DebuggerLayout, ExitReason, debugger::DebuggerContext};
-use alloy_primitives::{Address, hex};
+use alloy_primitives::{
+    Address, B256, U256, hex,
+    map::{B256Map, IndexMap},
+};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use foundry_compilers::artifacts::sourcemap::SourceElement;
 use foundry_evm_core::buffer::{BufferKind, get_buffer_accesses};
+use foundry_evm_traces::debug::SourceData;
 use foundry_tui::TuiApp;
 use ratatui::Frame;
 use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
-use std::ops::ControlFlow;
+use std::{fmt::Write, ops::ControlFlow};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StatusKind {
@@ -57,8 +66,15 @@ impl ActiveInternalCallCache {
 pub(crate) struct DrawMemory {
     pub(crate) inner_call_index: usize,
     pub(crate) current_buf_startline: usize,
+    pub(crate) current_storage_startline: usize,
     pub(crate) current_stack_startline: usize,
     pub(crate) active_internal_call: Option<ActiveInternalCallCache>,
+}
+
+#[derive(Default)]
+struct OpcodeListState {
+    inner_call_index: Option<usize>,
+    max_pc: usize,
 }
 
 pub(crate) struct TUIContext<'a> {
@@ -70,6 +86,8 @@ pub(crate) struct TUIContext<'a> {
     pub(crate) pc_input: Option<String>,
     /// Current active-buffer byte offset prompt contents, if the prompt is active.
     pub(crate) buffer_offset_input: Option<String>,
+    /// Current debugger command prompt contents, if the prompt is active.
+    pub(crate) command_input: Option<String>,
     /// Current opcode search prompt contents, if the prompt is active.
     pub(crate) opcode_search_input: Option<String>,
     /// Last opcode search term, used by repeat-search shortcuts.
@@ -79,15 +97,20 @@ pub(crate) struct TUIContext<'a> {
     /// Current step in the debug steps.
     pub(crate) current_step: usize,
     pub(crate) draw_memory: DrawMemory,
-    pub(crate) opcode_list: Vec<String>,
-    pub(crate) last_index: usize,
+    opcode_list: OpcodeListState,
 
     pub(crate) stack_labels: bool,
     /// Whether to decode active buffer as utf8 or not.
     pub(crate) buf_utf: bool,
     pub(crate) show_shortcuts: bool,
+    pub(crate) show_opcodes: bool,
+    pub(crate) show_source: bool,
+    pub(crate) show_variables: bool,
+    pub(crate) show_stack: bool,
+    pub(crate) show_data: bool,
     /// The currently active buffer (memory, calldata, returndata) to be drawn.
     pub(crate) active_buffer: BufferKind,
+    active_storage: Option<StorageSpace>,
 }
 
 impl<'a> TUIContext<'a> {
@@ -98,23 +121,29 @@ impl<'a> TUIContext<'a> {
             key_buffer: String::with_capacity(64),
             pc_input: None,
             buffer_offset_input: None,
+            command_input: None,
             opcode_search_input: None,
             last_opcode_search: None,
             status: None,
             current_step: 0,
             draw_memory: DrawMemory::default(),
-            opcode_list: Vec::new(),
-            last_index: 0,
+            opcode_list: OpcodeListState::default(),
 
             stack_labels: false,
             buf_utf: false,
             show_shortcuts: true,
+            show_opcodes: true,
+            show_source: true,
+            show_variables: true,
+            show_stack: true,
+            show_data: true,
             active_buffer: BufferKind::Memory,
+            active_storage: None,
         }
     }
 
     pub(crate) fn init(&mut self) {
-        self.gen_opcode_list();
+        self.refresh_opcode_list_state();
     }
 
     pub(crate) fn debug_arena(&self) -> &[DebugNode] {
@@ -149,24 +178,80 @@ impl<'a> TUIContext<'a> {
         &self.debug_steps()[self.current_step]
     }
 
-    fn gen_opcode_list(&mut self) {
-        self.opcode_list.clear();
-        let debug_steps =
-            &self.debugger_context.debug_arena[self.draw_memory.inner_call_index].steps;
-        for step in debug_steps {
-            self.opcode_list.push(pretty_opcode(step));
-        }
+    pub(super) const fn opcode_max_pc(&self) -> usize {
+        self.opcode_list.max_pc
     }
 
-    fn gen_opcode_list_if_necessary(&mut self) {
-        if self.last_index != self.draw_memory.inner_call_index {
-            self.gen_opcode_list();
-            self.last_index = self.draw_memory.inner_call_index;
+    fn refresh_opcode_list_state(&mut self) {
+        let inner_call_index = self.draw_memory.inner_call_index;
+        if self.opcode_list.inner_call_index == Some(inner_call_index) {
+            return;
         }
+
+        let debug_steps = &self.debugger_context.debug_arena[inner_call_index].steps;
+        self.opcode_list.max_pc = debug_steps.iter().map(|step| step.pc).max().unwrap_or(0);
+        self.opcode_list.inner_call_index = Some(inner_call_index);
     }
 
     fn active_buffer(&self) -> &[u8] {
-        match self.active_buffer {
+        self.buffer(&self.active_buffer)
+    }
+
+    pub(super) const fn active_storage(&self) -> Option<StorageSpace> {
+        self.active_storage
+    }
+
+    pub(super) fn storage_accesses(&self, space: StorageSpace) -> IndexMap<U256, StorageAccess> {
+        storage_accesses_until(
+            self.debug_arena(),
+            self.draw_memory.inner_call_index,
+            self.current_step,
+            space,
+        )
+    }
+
+    pub(super) fn storage_label(
+        &self,
+        space: StorageSpace,
+        slot: U256,
+        storage_values: Option<&B256Map<B256>>,
+        next_values: Option<&B256Map<B256>>,
+    ) -> Option<String> {
+        if space != StorageSpace::Persistent {
+            return None;
+        }
+        let identifier = self.debugger_context.slot_identifiers.as_ref()?.get(self.address())?;
+        let slot = B256::from(slot);
+        identifier
+            .identify(&slot, None)
+            .or_else(|| {
+                storage_values.and_then(|values| identifier.identify_bytes_or_string(&slot, values))
+            })
+            .or_else(|| {
+                // Solc writes newly allocated string/bytes payload slots before their base-slot
+                // length, so retry with the next write values when the current state is stale.
+                next_values.and_then(|values| identifier.identify_bytes_or_string(&slot, values))
+            })
+            .map(|info| info.label)
+    }
+
+    pub(super) fn next_storage_write_values(&self) -> B256Map<B256> {
+        next_storage_write_values(
+            self.debug_arena(),
+            self.draw_memory.inner_call_index,
+            self.current_step,
+        )
+    }
+
+    fn active_data_len(&self) -> usize {
+        self.active_storage.map_or_else(
+            || self.active_buffer().len().div_ceil(32),
+            |space| self.storage_accesses(space).len(),
+        )
+    }
+
+    fn buffer(&self, buffer: &BufferKind) -> &[u8] {
+        match buffer {
             BufferKind::Memory => self.current_step().memory.as_ref().map_or(&[], |m| m.as_bytes()),
             BufferKind::Calldata => &self.debug_call().calldata,
             BufferKind::Returndata => &self.current_step().returndata,
@@ -174,11 +259,24 @@ impl<'a> TUIContext<'a> {
     }
 
     pub(crate) const fn active_buffer_name(&self) -> &'static str {
-        match self.active_buffer {
-            BufferKind::Memory => "memory",
-            BufferKind::Calldata => "calldata",
-            BufferKind::Returndata => "returndata",
-        }
+        buffer_name(&self.active_buffer)
+    }
+
+    /// Returns source map, source code and source name of the current line.
+    pub(crate) fn src_map(&self) -> Result<(SourceElement, &SourceData), String> {
+        let address = self.address();
+        let Some(contract_name) = self.debugger_context.identified_contracts.get(address) else {
+            return Err(format!("Unknown contract at address {address}"));
+        };
+
+        self.debugger_context
+            .contracts_sources
+            .find_source_mapping(
+                contract_name,
+                self.current_step().pc as u32,
+                self.debug_call().kind.is_any_create(),
+            )
+            .ok_or_else(|| format!("No source map for contract {contract_name}"))
     }
 }
 
@@ -189,8 +287,7 @@ impl TUIContext<'_> {
             Event::Mouse(event) => self.handle_mouse_event(event),
             _ => ControlFlow::Continue(()),
         };
-        // Generate the list after the event has been handled.
-        self.gen_opcode_list_if_necessary();
+        self.refresh_opcode_list_state();
         ret
     }
 
@@ -210,6 +307,11 @@ impl TUIContext<'_> {
             return ControlFlow::Continue(());
         }
 
+        if self.command_input.is_some() {
+            self.handle_command_input_key_event(event);
+            return ControlFlow::Continue(());
+        }
+
         // Breakpoints
         if let KeyCode::Char(c) = event.code
             && c.is_alphabetic()
@@ -225,18 +327,29 @@ impl TUIContext<'_> {
             // Exit
             KeyCode::Char('q') => return ControlFlow::Break(ExitReason::CharExit),
 
-            // Scroll up the memory buffer
+            // Scroll up the active data pane
             KeyCode::Char('k') | KeyCode::Up if control => self.repeat(|this| {
-                this.draw_memory.current_buf_startline =
-                    this.draw_memory.current_buf_startline.saturating_sub(1);
-            }),
-            // Scroll down the memory buffer
-            KeyCode::Char('j') | KeyCode::Down if control => self.repeat(|this| {
-                let max_buf = this.active_buffer().len().div_ceil(32).saturating_sub(1);
-                if this.draw_memory.current_buf_startline < max_buf {
-                    this.draw_memory.current_buf_startline += 1;
+                if this.active_storage.is_some() {
+                    this.draw_memory.current_storage_startline =
+                        this.draw_memory.current_storage_startline.saturating_sub(1);
+                } else {
+                    this.draw_memory.current_buf_startline =
+                        this.draw_memory.current_buf_startline.saturating_sub(1);
                 }
             }),
+            // Scroll down the active data pane
+            KeyCode::Char('j') | KeyCode::Down if control => {
+                let max_line = self.active_data_len().saturating_sub(1);
+                self.repeat(|this| {
+                    if this.active_storage.is_some() {
+                        if this.draw_memory.current_storage_startline < max_line {
+                            this.draw_memory.current_storage_startline += 1;
+                        }
+                    } else if this.draw_memory.current_buf_startline < max_line {
+                        this.draw_memory.current_buf_startline += 1;
+                    }
+                });
+            }
 
             // Move up
             KeyCode::Char('k') | KeyCode::Up => self.repeat(Self::step_back),
@@ -259,8 +372,11 @@ impl TUIContext<'_> {
 
             // Cycle buffers
             KeyCode::Char('b') => {
-                self.active_buffer = self.active_buffer.next();
+                if self.active_storage.take().is_none() {
+                    self.active_buffer = self.active_buffer.next();
+                }
                 self.draw_memory.current_buf_startline = 0;
+                self.set_info(format!("Active buffer: {}", self.active_buffer_name()));
             }
 
             // Cycle layout
@@ -270,22 +386,21 @@ impl TUIContext<'_> {
             KeyCode::Char('g') => {
                 self.draw_memory.inner_call_index = 0;
                 self.current_step = 0;
-                self.scroll_memory_to_current_write();
+                self.update_scroll_positions();
             }
 
             // Go to bottom of file
             KeyCode::Char('G') => {
                 self.draw_memory.inner_call_index = self.debug_arena().len() - 1;
                 self.current_step = self.n_steps() - 1;
-                self.scroll_memory_to_current_write();
+                self.update_scroll_positions();
             }
 
             // Go to previous call
-            KeyCode::Char('c') => {
-                self.draw_memory.inner_call_index =
-                    self.draw_memory.inner_call_index.saturating_sub(1);
+            KeyCode::Char('c') if self.draw_memory.inner_call_index > 0 => {
+                self.draw_memory.inner_call_index -= 1;
                 self.current_step = self.n_steps() - 1;
-                self.scroll_memory_to_current_write();
+                self.update_scroll_positions();
             }
 
             // Go to next call
@@ -294,7 +409,7 @@ impl TUIContext<'_> {
             {
                 self.draw_memory.inner_call_index += 1;
                 self.current_step = 0;
-                self.scroll_memory_to_current_write();
+                self.update_scroll_positions();
             }
 
             // Step forward
@@ -307,7 +422,7 @@ impl TUIContext<'_> {
                     })
                 {
                     this.current_step += i;
-                    this.scroll_memory_to_current_write();
+                    this.update_scroll_positions();
                 }
             }),
 
@@ -325,14 +440,20 @@ impl TUIContext<'_> {
                     })
                     .map(|(i, _)| i)
                     .unwrap_or_default();
-                this.scroll_memory_to_current_write();
+                this.update_scroll_positions();
             }),
 
             // Toggle stack labels
-            KeyCode::Char('t') => self.stack_labels = !self.stack_labels,
+            KeyCode::Char('t') => {
+                self.stack_labels = !self.stack_labels;
+                self.set_info(format!("Stack labels: {}", toggle_state(self.stack_labels)));
+            }
 
             // Toggle memory UTF-8 decoding
-            KeyCode::Char('m') => self.buf_utf = !self.buf_utf,
+            KeyCode::Char('m') => {
+                self.buf_utf = !self.buf_utf;
+                self.set_info(format!("UTF-8 decoding: {}", toggle_state(self.buf_utf)));
+            }
 
             // Go to program counter
             KeyCode::Char('p') => {
@@ -345,7 +466,18 @@ impl TUIContext<'_> {
             KeyCode::Char('o') => {
                 self.key_buffer.clear();
                 self.status = None;
-                self.buffer_offset_input = Some(String::new());
+                if let Some(space) = self.active_storage {
+                    self.command_input = Some(format!("{} ", space.command()));
+                } else {
+                    self.buffer_offset_input = Some(String::new());
+                }
+            }
+
+            // Run debugger command
+            KeyCode::Char(':') => {
+                self.key_buffer.clear();
+                self.status = None;
+                self.command_input = Some(String::new());
             }
 
             // Search opcodes in the current call
@@ -366,7 +498,11 @@ impl TUIContext<'_> {
             }),
 
             // Toggle help notice
-            KeyCode::Char('h') => self.show_shortcuts = !self.show_shortcuts,
+            KeyCode::Char('h') => {
+                self.show_shortcuts = !self.show_shortcuts;
+                let state = if self.show_shortcuts { "shown" } else { "hidden" };
+                self.set_info(format!("Shortcut help: {state}"));
+            }
 
             // Numbers for repeating commands or breakpoints
             KeyCode::Char(
@@ -386,9 +522,9 @@ impl TUIContext<'_> {
     }
 
     fn handle_pc_input_key_event(&mut self, event: KeyEvent) {
-        if let Some(input) =
-            handle_prompt_input_key_event(&mut self.pc_input, event, |_, c| is_pc_input_char(c))
-        {
+        if let Some(input) = handle_prompt_input_key_event(&mut self.pc_input, event, |_, c| {
+            c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | ':')
+        }) {
             self.goto_pc_from_input(&input);
         }
     }
@@ -400,6 +536,14 @@ impl TUIContext<'_> {
             is_buffer_offset_input_char,
         ) {
             self.goto_buffer_offset_from_input(&input);
+        }
+    }
+
+    fn handle_command_input_key_event(&mut self, event: KeyEvent) {
+        if let Some(input) =
+            handle_prompt_input_key_event(&mut self.command_input, event, |_, c| !c.is_control())
+        {
+            self.run_command_from_input(&input);
         }
     }
 
@@ -447,22 +591,35 @@ impl TUIContext<'_> {
     }
 
     fn search_opcode(&mut self, query: &str, direction: SearchDirection) {
-        let Some(step_index) =
-            find_opcode_match(&self.opcode_list, self.current_step, query, direction)
-        else {
+        let Some((node_index, step_index)) = find_opcode_match(
+            self.debug_arena(),
+            self.draw_memory.inner_call_index,
+            self.current_step,
+            query,
+            direction,
+        ) else {
             self.set_error(format!("No opcode matching `{query}` in current call"));
             return;
         };
 
+        self.draw_memory.inner_call_index = node_index;
         self.current_step = step_index;
-        self.scroll_memory_to_current_write();
+        self.update_scroll_positions();
 
         let pc = self.current_step().pc;
-        let opcode = self.opcode_list.get(step_index).map(String::as_str).unwrap_or_default();
+        let opcode = pretty_opcode(self.current_step());
         self.set_info(format!("Found `{query}` at PC 0x{pc:x} ({pc}): {opcode}"));
     }
 
     fn goto_pc_from_input(&mut self, input: &str) {
+        self.move_to_pc_from_input(input, find_pc_target);
+    }
+
+    fn move_to_pc_from_input(
+        &mut self,
+        input: &str,
+        find_target: impl Fn(&[DebugNode], usize, usize, usize) -> Option<StepTarget>,
+    ) {
         let candidates = match parse_pc_candidates(input) {
             Ok(candidates) => candidates,
             Err(err) => {
@@ -473,7 +630,7 @@ impl TUIContext<'_> {
 
         let mut found = Vec::new();
         for &candidate in &candidates {
-            if let Some(target) = find_pc_target(
+            if let Some(target) = find_target(
                 self.debug_arena(),
                 self.draw_memory.inner_call_index,
                 self.current_step,
@@ -516,7 +673,7 @@ impl TUIContext<'_> {
         }
     }
 
-    fn apply_pc_target(&mut self, candidate: PcCandidate, target: PcTarget) {
+    fn apply_pc_target(&mut self, candidate: PcCandidate, target: StepTarget) {
         let already_at_target = self.draw_memory.inner_call_index == target.node_index
             && self.current_step == target.step_index;
 
@@ -524,19 +681,23 @@ impl TUIContext<'_> {
         self.current_step = target.step_index;
         self.draw_memory.current_buf_startline = 0;
         self.draw_memory.current_stack_startline = 0;
-        self.scroll_memory_to_current_write();
+        self.update_scroll_positions();
         self.key_buffer.clear();
 
         let pc = candidate.pc;
         let scope = match target.scope {
-            PcTargetScope::CurrentNode => "current trace",
-            PcTargetScope::SameCodeContext => "same contract",
+            StepTargetScope::CurrentNode => "current trace",
+            StepTargetScope::SameCodeContext => "same contract",
         };
         let action = if already_at_target { "Already at" } else { "Jumped to" };
         self.set_info(format!("{action} PC 0x{pc:x} ({pc}) in {scope}"));
     }
 
     fn goto_buffer_offset_from_input(&mut self, input: &str) {
+        self.goto_buffer_offset(self.active_buffer, input);
+    }
+
+    fn goto_buffer_offset(&mut self, buffer: BufferKind, input: &str) {
         let offset = match parse_buffer_offset(input) {
             Ok(offset) => offset,
             Err(err) => {
@@ -545,8 +706,8 @@ impl TUIContext<'_> {
             }
         };
 
-        let buffer_name = self.active_buffer_name();
-        let buffer_len = self.active_buffer().len();
+        let buffer_name = buffer_name(&buffer);
+        let buffer_len = self.buffer(&buffer).len();
         if buffer_len == 0 {
             self.set_error(format!("Current {buffer_name} buffer is empty"));
             return;
@@ -559,7 +720,263 @@ impl TUIContext<'_> {
             return;
         }
 
+        self.active_buffer = buffer;
+        self.active_storage = None;
         self.apply_buffer_offset(offset);
+    }
+
+    fn run_command_from_input(&mut self, input: &str) {
+        let input = input.trim();
+        let input = input.strip_prefix(':').unwrap_or(input).trim_start();
+        if input.is_empty() {
+            self.set_error("Enter a debugger command".to_string());
+            return;
+        }
+
+        let mut parts = input.split_whitespace();
+        let command = parts.next().unwrap();
+        let is_continue_command = CONTINUE_COMMANDS.contains(&command);
+        if is_continue_command || PC_COMMANDS.contains(&command) {
+            let Some(pc) = parts.next() else {
+                return self.set_error(command_usage(command, "<pc>"));
+            };
+            if parts.next().is_some() {
+                return self.set_error(command_usage(command, "<pc>"));
+            }
+            if is_continue_command {
+                self.move_to_pc_from_input(pc, find_next_pc_target);
+            } else {
+                self.goto_pc_from_input(pc);
+            }
+        } else if MEMORY_COMMANDS.contains(&command) {
+            self.run_buffer_command(command, BufferKind::Memory, parts);
+        } else if CALLDATA_COMMANDS.contains(&command) {
+            self.run_buffer_command(command, BufferKind::Calldata, parts);
+        } else if RETURNDATA_COMMANDS.contains(&command) {
+            self.run_buffer_command(command, BufferKind::Returndata, parts);
+        } else if STORAGE_COMMANDS.contains(&command) {
+            self.run_storage_command(command, StorageSpace::Persistent, parts);
+        } else if TRANSIENT_STORAGE_COMMANDS.contains(&command) {
+            self.run_storage_command(command, StorageSpace::Transient, parts);
+        } else if LINE_COMMANDS.contains(&command) {
+            let Some(line) = parts.next() else {
+                return self.set_error(command_usage(command, "<line>"));
+            };
+            if parts.next().is_some() {
+                return self.set_error(command_usage(command, "<line>"));
+            }
+            self.goto_source_line_from_input(line);
+        } else if OPCODE_COMMANDS.contains(&command) {
+            self.run_pane_command(command, PaneCommand::Opcodes, parts);
+        } else if SOURCE_COMMANDS.contains(&command) {
+            self.run_pane_command(command, PaneCommand::Source, parts);
+        } else if VARIABLES_COMMANDS.contains(&command) {
+            self.run_pane_command(command, PaneCommand::Variables, parts);
+        } else if STACK_COMMANDS.contains(&command) {
+            self.run_pane_command(command, PaneCommand::Stack, parts);
+        } else if DATA_COMMANDS.contains(&command) {
+            self.run_pane_command(command, PaneCommand::Data, parts);
+        } else if HELP_COMMANDS.contains(&command) {
+            self.set_info(command_help());
+        } else {
+            self.set_error(format!("Unknown command `{command}`; try `help`"));
+        }
+    }
+
+    fn run_buffer_command<'a>(
+        &mut self,
+        command: &str,
+        buffer: BufferKind,
+        mut args: impl Iterator<Item = &'a str>,
+    ) {
+        let Some(offset) = args.next() else {
+            self.select_buffer(buffer);
+            return;
+        };
+        if args.next().is_some() {
+            return self.set_error(command_usage(command, "<offset>"));
+        }
+        self.goto_buffer_offset(buffer, offset);
+    }
+
+    fn run_storage_command<'a>(
+        &mut self,
+        command: &str,
+        space: StorageSpace,
+        mut args: impl Iterator<Item = &'a str>,
+    ) {
+        let Some(slot) = args.next() else {
+            self.select_storage(space);
+            return;
+        };
+        if args.next().is_some() {
+            return self.set_error(command_usage(command, "<slot>"));
+        }
+        self.goto_storage_slot_from_input(slot, space);
+    }
+
+    fn select_buffer(&mut self, buffer: BufferKind) {
+        self.active_buffer = buffer;
+        self.active_storage = None;
+        self.draw_memory.current_buf_startline = 0;
+        self.set_info(format!("Active buffer: {}", self.active_buffer_name()));
+    }
+
+    fn select_storage(&mut self, space: StorageSpace) {
+        self.active_storage = Some(space);
+        self.draw_memory.current_storage_startline = 0;
+        self.set_info(format!("Active data: {}", space.noun()));
+    }
+
+    fn goto_source_line_from_input(&mut self, input: &str) {
+        let line = match input.parse::<usize>() {
+            Ok(line) if line > 0 => line,
+            _ => {
+                self.set_error(format!(
+                    "Invalid source line `{input}`; use a positive decimal line number"
+                ));
+                return;
+            }
+        };
+
+        let (source_path, source_line, contract_name) = {
+            let (_, source) = match self.src_map() {
+                Ok(source) => source,
+                Err(err) => {
+                    self.set_error(err);
+                    return;
+                }
+            };
+            let Some(source_line) = source_line_range(&source.source, line) else {
+                let line_count = source.source.lines().count().max(1);
+                self.set_error(format!(
+                    "Source line {line} is outside {} ({line_count} lines)",
+                    source.path.display()
+                ));
+                return;
+            };
+            let contract_name = self
+                .debugger_context
+                .identified_contracts
+                .get(self.address())
+                .expect("source mapping requires an identified contract")
+                .clone();
+            (source.path.clone(), source_line, contract_name)
+        };
+
+        let sources = &self.debugger_context.contracts_sources;
+        let Some(target) = find_step_target(
+            self.debug_arena(),
+            self.draw_memory.inner_call_index,
+            self.current_step,
+            |node, step| {
+                let Some((source_element, source)) = sources.find_source_mapping(
+                    &contract_name,
+                    step.pc as u32,
+                    node.kind.is_any_create(),
+                ) else {
+                    return false;
+                };
+                source.path == source_path
+                    && source_line.contains(&(source_element.offset() as usize))
+            },
+        ) else {
+            self.set_error(format!(
+                "No opcode mapped to {}:{line} in current contract",
+                source_path.display()
+            ));
+            return;
+        };
+
+        let already_at_target = self.draw_memory.inner_call_index == target.node_index
+            && self.current_step == target.step_index;
+        self.draw_memory.inner_call_index = target.node_index;
+        self.current_step = target.step_index;
+        self.draw_memory.current_buf_startline = 0;
+        self.draw_memory.current_stack_startline = 0;
+        self.update_scroll_positions();
+        self.key_buffer.clear();
+
+        let pc = self.current_step().pc;
+        let action = if already_at_target { "Already at" } else { "Jumped to" };
+        self.set_info(format!("{action} {}:{line} at PC 0x{pc:x} ({pc})", source_path.display()));
+    }
+
+    fn run_pane_command<'a>(
+        &mut self,
+        command: &str,
+        pane: PaneCommand,
+        mut args: impl Iterator<Item = &'a str>,
+    ) {
+        if args.next().is_some() {
+            return self.set_error(command_usage(command, ""));
+        }
+        let shown = match pane {
+            PaneCommand::Opcodes => {
+                self.show_opcodes = !self.show_opcodes;
+                self.show_opcodes
+            }
+            PaneCommand::Source => {
+                self.show_source = !self.show_source;
+                self.show_source
+            }
+            PaneCommand::Variables => {
+                self.show_variables = !self.show_variables;
+                self.show_variables
+            }
+            PaneCommand::Stack => {
+                self.show_stack = !self.show_stack;
+                self.show_stack
+            }
+            PaneCommand::Data => {
+                self.show_data = !self.show_data;
+                self.show_data
+            }
+        };
+        let state = if shown { "shown" } else { "hidden" };
+        self.set_info(format!("{} pane: {state}", pane.label()));
+    }
+
+    fn goto_storage_slot_from_input(&mut self, input: &str, space: StorageSpace) {
+        let slot = match parse_storage_slot(input) {
+            Ok(slot) => slot,
+            Err(err) => {
+                self.set_error(err);
+                return;
+            }
+        };
+
+        let Some(target) = find_storage_target(
+            self.debug_arena(),
+            self.draw_memory.inner_call_index,
+            self.current_step,
+            slot,
+            space,
+        ) else {
+            self.set_error(format!(
+                "{} slot {} not accessed in current call",
+                space.label(),
+                hex_u256(slot)
+            ));
+            return;
+        };
+
+        let access = target.access;
+        self.draw_memory.inner_call_index = target.node_index;
+        self.current_step = access.step_index();
+        self.draw_memory.current_buf_startline = 0;
+        self.draw_memory.current_stack_startline = 0;
+        self.active_storage = Some(space);
+        self.draw_memory.current_storage_startline =
+            self.storage_accesses(space).get_index_of(&access.slot()).unwrap_or_default();
+        self.update_scroll_positions();
+        self.key_buffer.clear();
+        self.set_info(format!(
+            "Jumped to {} at PC 0x{:x} ({})",
+            access.describe(),
+            access.pc(),
+            access.pc()
+        ));
     }
 
     fn apply_buffer_offset(&mut self, offset: usize) {
@@ -578,26 +995,38 @@ impl TUIContext<'_> {
     }
 
     fn handle_breakpoint(&mut self, c: char) {
-        // Find the location of the called breakpoint in the whole debug arena (at this address with
-        // this pc)
-        if let Some((caller, pc)) = self.debugger_context.breakpoints.get(&c) {
-            for (i, node) in self.debug_arena().iter().enumerate() {
-                if node.address == *caller
-                    && let Some(step) = node.steps.iter().position(|step| step.pc == *pc)
-                {
-                    self.draw_memory.inner_call_index = i;
-                    self.current_step = step;
-                    self.scroll_memory_to_current_write();
-                    break;
-                }
-            }
-        }
         self.key_buffer.clear();
+
+        let Some((caller, pc)) = self.debugger_context.breakpoints.get(&c).copied() else {
+            self.set_error(format!("Breakpoint '{c}' not found"));
+            return;
+        };
+
+        let Some((inner_call_index, step_index)) = find_next_step_target(
+            self.debug_arena(),
+            self.draw_memory.inner_call_index,
+            self.current_step,
+            |node, step| node.address == caller && step.pc == pc,
+        ) else {
+            self.set_error(format!("Breakpoint '{c}' target not found in trace"));
+            return;
+        };
+
+        let already_at_target = self.draw_memory.inner_call_index == inner_call_index
+            && self.current_step == step_index;
+
+        self.draw_memory.inner_call_index = inner_call_index;
+        self.current_step = step_index;
+        self.update_scroll_positions();
+
+        let action = if already_at_target { "Already at" } else { "Jumped to" };
+        self.set_info(format!("{action} breakpoint '{c}' at PC 0x{pc:x} ({pc})"));
     }
 
     fn handle_mouse_event(&mut self, event: MouseEvent) -> ControlFlow<ExitReason> {
         if self.pc_input.is_some()
             || self.buffer_offset_input.is_some()
+            || self.command_input.is_some()
             || self.opcode_search_input.is_some()
         {
             return ControlFlow::Continue(());
@@ -619,7 +1048,7 @@ impl TUIContext<'_> {
             self.draw_memory.inner_call_index -= 1;
             self.current_step = self.n_steps() - 1;
         }
-        self.scroll_memory_to_current_write();
+        self.update_scroll_positions();
     }
 
     fn step(&mut self) {
@@ -629,16 +1058,28 @@ impl TUIContext<'_> {
             self.draw_memory.inner_call_index += 1;
             self.current_step = 0;
         }
-        self.scroll_memory_to_current_write();
+        self.update_scroll_positions();
     }
 
-    fn scroll_memory_to_current_write(&mut self) {
-        if self.active_buffer != BufferKind::Memory {
-            return;
+    fn update_scroll_positions(&mut self) {
+        if let Some(stack) = &self.current_step().stack
+            && !stack.is_empty()
+        {
+            self.draw_memory.current_stack_startline =
+                self.draw_memory.current_stack_startline.min(stack.len().saturating_sub(1));
         }
 
-        if let Some(line) = self.current_memory_write_line() {
+        if self.active_buffer == BufferKind::Memory
+            && let Some(line) = self.current_memory_write_line()
+        {
             self.draw_memory.current_buf_startline = line;
+        }
+
+        let buffer_len = self.active_buffer().len();
+        if buffer_len > 0 {
+            let max_line = buffer_len.div_ceil(32) - 1;
+            self.draw_memory.current_buf_startline =
+                self.draw_memory.current_buf_startline.min(max_line);
         }
     }
 
@@ -695,6 +1136,81 @@ fn buffer_as_number(s: &str) -> usize {
     s.parse().unwrap_or(MIN).clamp(MIN, MAX)
 }
 
+const fn toggle_state(enabled: bool) -> &'static str {
+    if enabled { "on" } else { "off" }
+}
+
+const fn buffer_name(buffer: &BufferKind) -> &'static str {
+    match buffer {
+        BufferKind::Memory => "memory",
+        BufferKind::Calldata => "calldata",
+        BufferKind::Returndata => "returndata",
+    }
+}
+
+const CONTINUE_COMMANDS: &[&str] = &["continue", "cont", "c"];
+const PC_COMMANDS: &[&str] = &["pc", "p"];
+const MEMORY_COMMANDS: &[&str] = &["mem", "memory"];
+const CALLDATA_COMMANDS: &[&str] = &["calldata", "cd"];
+const RETURNDATA_COMMANDS: &[&str] = &["returndata", "ret", "rd"];
+const STORAGE_COMMANDS: &[&str] = &["storage", "store", "slot"];
+const TRANSIENT_STORAGE_COMMANDS: &[&str] = &["transient", "tslot"];
+const LINE_COMMANDS: &[&str] = &["line", "ln"];
+const OPCODE_COMMANDS: &[&str] = &["opcodes", "opcode", "ops"];
+const SOURCE_COMMANDS: &[&str] = &["source", "src"];
+const VARIABLES_COMMANDS: &[&str] = &["variables", "vars"];
+const STACK_COMMANDS: &[&str] = &["stack"];
+const DATA_COMMANDS: &[&str] = &["data"];
+const HELP_COMMANDS: &[&str] = &["help", "h"];
+
+#[derive(Clone, Copy)]
+enum PaneCommand {
+    Opcodes,
+    Source,
+    Variables,
+    Stack,
+    Data,
+}
+
+impl PaneCommand {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Opcodes => "Opcodes",
+            Self::Source => "Source",
+            Self::Variables => "Variables",
+            Self::Stack => "Stack",
+            Self::Data => "Data",
+        }
+    }
+}
+
+fn command_usage(command: &str, arg: &str) -> String {
+    if arg.is_empty() { format!("Usage: :{command}") } else { format!("Usage: :{command} {arg}") }
+}
+
+fn command_help() -> String {
+    format!(
+        "Commands: {} <pc>, {} <pc>, {} [<offset>], {} [<offset>], {} [<offset>], {} [<slot>], {} [<slot>], {} <line>, {}, {}, {}, {}, {}",
+        command_aliases(CONTINUE_COMMANDS),
+        command_aliases(PC_COMMANDS),
+        command_aliases(MEMORY_COMMANDS),
+        command_aliases(CALLDATA_COMMANDS),
+        command_aliases(RETURNDATA_COMMANDS),
+        command_aliases(STORAGE_COMMANDS),
+        command_aliases(TRANSIENT_STORAGE_COMMANDS),
+        command_aliases(LINE_COMMANDS),
+        command_aliases(OPCODE_COMMANDS),
+        command_aliases(SOURCE_COMMANDS),
+        command_aliases(VARIABLES_COMMANDS),
+        command_aliases(STACK_COMMANDS),
+        command_aliases(DATA_COMMANDS)
+    )
+}
+
+fn command_aliases(commands: &[&str]) -> String {
+    commands.iter().map(|command| format!(":{command}")).collect::<Vec<_>>().join("/")
+}
+
 fn handle_prompt_input_key_event(
     input: &mut Option<String>,
     event: KeyEvent,
@@ -723,10 +1239,6 @@ fn handle_prompt_input_key_event(
     }
 
     None
-}
-
-const fn is_pc_input_char(c: char) -> bool {
-    c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | ':')
 }
 
 fn is_buffer_offset_input_char(input: &str, c: char) -> bool {
@@ -782,16 +1294,22 @@ impl PcCandidate {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PcTargetScope {
+enum StepTargetScope {
     CurrentNode,
     SameCodeContext,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PcTarget {
+struct StepTarget {
     node_index: usize,
     step_index: usize,
-    scope: PcTargetScope,
+    scope: StepTargetScope,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StorageTarget {
+    node_index: usize,
+    access: StorageAccess,
 }
 
 fn parse_pc_candidates(input: &str) -> Result<Vec<PcCandidate>, String> {
@@ -870,42 +1388,247 @@ fn invalid_buffer_offset(input: &str) -> String {
     format!("Invalid buffer offset `{input}`; use hex 0x20/20 or decimal d:32")
 }
 
+fn parse_storage_slot(input: &str) -> Result<U256, String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Err("Enter a storage slot".to_string());
+    }
+
+    let (digits, radix) =
+        if let Some(rest) = input.strip_prefix("0x").or_else(|| input.strip_prefix("0X")) {
+            (rest, 16)
+        } else if let Some(rest) = input.strip_prefix("d:").or_else(|| input.strip_prefix("dec:")) {
+            (rest, 10)
+        } else {
+            (input, 16)
+        };
+
+    let valid_digits = match radix {
+        10 => digits.bytes().all(|b| b.is_ascii_digit()),
+        16 => digits.bytes().all(|b| b.is_ascii_hexdigit()),
+        _ => unreachable!(),
+    };
+    if digits.is_empty() || !valid_digits {
+        return Err(invalid_storage_slot(input));
+    }
+
+    U256::from_str_radix(digits, radix).map_err(|_| invalid_storage_slot(input))
+}
+
+fn invalid_storage_slot(input: &str) -> String {
+    format!("Invalid storage slot `{input}`; use hex 0x20/20 or decimal d:32")
+}
+
+fn find_storage_target(
+    arena: &[DebugNode],
+    current_node_index: usize,
+    current_step: usize,
+    slot: U256,
+    space: StorageSpace,
+) -> Option<StorageTarget> {
+    let current_node = arena.get(current_node_index)?;
+    let trace_node_idx = current_node.trace_node_idx;
+    let current_absolute_step = current_node.step_offset.saturating_add(current_step);
+
+    storage_target_at(arena, current_node_index, current_step, slot, space)
+        .or_else(|| {
+            find_storage_target_after(arena, trace_node_idx, current_absolute_step, slot, space)
+        })
+        .or_else(|| {
+            find_storage_target_before(arena, trace_node_idx, current_absolute_step, slot, space)
+        })
+}
+
+fn storage_target_at(
+    arena: &[DebugNode],
+    node_index: usize,
+    step_index: usize,
+    slot: U256,
+    space: StorageSpace,
+) -> Option<StorageTarget> {
+    let node = arena.get(node_index)?;
+    storage_access_at(&node.steps, step_index)
+        .filter(|access| access.slot() == slot && access.space() == space)
+        .map(|access| StorageTarget { node_index, access })
+}
+
+fn find_storage_target_after(
+    arena: &[DebugNode],
+    trace_node_idx: usize,
+    current_absolute_step: usize,
+    slot: U256,
+    space: StorageSpace,
+) -> Option<StorageTarget> {
+    let mut best = None;
+
+    for (node_index, node) in arena.iter().enumerate() {
+        if node.trace_node_idx != trace_node_idx {
+            continue;
+        }
+
+        for step_index in 0..node.steps.len() {
+            let absolute_step = node.step_offset.saturating_add(step_index);
+            if absolute_step <= current_absolute_step {
+                continue;
+            }
+
+            let Some(access) = storage_access_at(&node.steps, step_index)
+                .filter(|access| access.slot() == slot && access.space() == space)
+            else {
+                continue;
+            };
+
+            match best {
+                Some((best_absolute_step, _, _)) if absolute_step >= best_absolute_step => {}
+                _ => best = Some((absolute_step, node_index, access)),
+            }
+            break;
+        }
+    }
+
+    best.map(|(_, node_index, access)| StorageTarget { node_index, access })
+}
+
+fn find_storage_target_before(
+    arena: &[DebugNode],
+    trace_node_idx: usize,
+    current_absolute_step: usize,
+    slot: U256,
+    space: StorageSpace,
+) -> Option<StorageTarget> {
+    let mut best = None;
+
+    for (node_index, node) in arena.iter().enumerate() {
+        if node.trace_node_idx != trace_node_idx {
+            continue;
+        }
+
+        for step_index in (0..node.steps.len()).rev() {
+            let absolute_step = node.step_offset.saturating_add(step_index);
+            if absolute_step >= current_absolute_step {
+                continue;
+            }
+
+            let Some(access) = storage_access_at(&node.steps, step_index)
+                .filter(|access| access.slot() == slot && access.space() == space)
+            else {
+                continue;
+            };
+
+            match best {
+                Some((best_absolute_step, _, _)) if absolute_step <= best_absolute_step => {}
+                _ => best = Some((absolute_step, node_index, access)),
+            }
+            break;
+        }
+    }
+
+    best.map(|(_, node_index, access)| StorageTarget { node_index, access })
+}
+
 fn find_pc_target(
     arena: &[DebugNode],
     current_node_index: usize,
     current_step: usize,
     pc: usize,
-) -> Option<PcTarget> {
+) -> Option<StepTarget> {
+    find_step_target(arena, current_node_index, current_step, |_, step| step.pc == pc)
+}
+
+fn find_next_pc_target(
+    arena: &[DebugNode],
+    current_node_index: usize,
+    current_step: usize,
+    pc: usize,
+) -> Option<StepTarget> {
+    let current_node = arena.get(current_node_index)?;
+    let (node_index, step_index) =
+        find_next_step_target(arena, current_node_index, current_step, |node, step| {
+            same_code_context(current_node, node) && step.pc == pc
+        })?;
+    let scope = if node_index == current_node_index {
+        StepTargetScope::CurrentNode
+    } else {
+        StepTargetScope::SameCodeContext
+    };
+
+    Some(StepTarget { node_index, step_index, scope })
+}
+
+fn find_next_step_target(
+    arena: &[DebugNode],
+    current_node_index: usize,
+    current_step: usize,
+    mut matches: impl FnMut(&DebugNode, &CallTraceStep) -> bool,
+) -> Option<(usize, usize)> {
     let current_node = arena.get(current_node_index)?;
 
-    if let Some(step_index) = find_pc_in_current_node(&current_node.steps, current_step, pc) {
-        return Some(PcTarget {
+    if let Some(step_index) = current_node
+        .steps
+        .iter()
+        .enumerate()
+        .skip(current_step.saturating_add(1))
+        .find_map(|(i, step)| matches(current_node, step).then_some(i))
+    {
+        return Some((current_node_index, step_index));
+    }
+
+    for (node_index, node) in arena.iter().enumerate().skip(current_node_index + 1) {
+        if let Some(step_index) = node.steps.iter().position(|step| matches(node, step)) {
+            return Some((node_index, step_index));
+        }
+    }
+
+    for (node_index, node) in arena.iter().enumerate().take(current_node_index) {
+        if let Some(step_index) = node.steps.iter().position(|step| matches(node, step)) {
+            return Some((node_index, step_index));
+        }
+    }
+
+    current_node
+        .steps
+        .iter()
+        .enumerate()
+        .take(current_step.saturating_add(1))
+        .find_map(|(i, step)| matches(current_node, step).then_some((current_node_index, i)))
+}
+
+fn find_step_target(
+    arena: &[DebugNode],
+    current_node_index: usize,
+    current_step: usize,
+    mut matches: impl FnMut(&DebugNode, &CallTraceStep) -> bool,
+) -> Option<StepTarget> {
+    let current_node = arena.get(current_node_index)?;
+
+    if let Some(step_index) = find_step_in_current_node(current_node, current_step, &mut matches) {
+        return Some(StepTarget {
             node_index: current_node_index,
             step_index,
-            scope: PcTargetScope::CurrentNode,
+            scope: StepTargetScope::CurrentNode,
         });
     }
 
     for (node_index, node) in arena.iter().enumerate().skip(current_node_index + 1) {
         if same_code_context(current_node, node)
-            && let Some(step_index) = node.steps.iter().position(|step| step.pc == pc)
+            && let Some(step_index) = node.steps.iter().position(|step| matches(node, step))
         {
-            return Some(PcTarget {
+            return Some(StepTarget {
                 node_index,
                 step_index,
-                scope: PcTargetScope::SameCodeContext,
+                scope: StepTargetScope::SameCodeContext,
             });
         }
     }
 
     for (node_index, node) in arena.iter().enumerate().take(current_node_index).rev() {
         if same_code_context(current_node, node)
-            && let Some(step_index) = node.steps.iter().rposition(|step| step.pc == pc)
+            && let Some(step_index) = node.steps.iter().rposition(|step| matches(node, step))
         {
-            return Some(PcTarget {
+            return Some(StepTarget {
                 node_index,
                 step_index,
-                scope: PcTargetScope::SameCodeContext,
+                scope: StepTargetScope::SameCodeContext,
             });
         }
     }
@@ -913,27 +1636,43 @@ fn find_pc_target(
     None
 }
 
-fn find_pc_in_current_node(
-    steps: &[CallTraceStep],
+fn find_step_in_current_node(
+    node: &DebugNode,
     current_step: usize,
-    pc: usize,
+    matches: &mut impl FnMut(&DebugNode, &CallTraceStep) -> bool,
 ) -> Option<usize> {
-    if steps.get(current_step).is_some_and(|step| step.pc == pc) {
+    if node.steps.get(current_step).is_some_and(|step| matches(node, step)) {
         return Some(current_step);
     }
 
-    steps
+    node.steps
         .iter()
         .enumerate()
         .skip(current_step.saturating_add(1))
-        .find_map(|(i, step)| (step.pc == pc).then_some(i))
+        .find_map(|(i, step)| matches(node, step).then_some(i))
         .or_else(|| {
-            steps[..current_step.min(steps.len())]
+            node.steps[..current_step.min(node.steps.len())]
                 .iter()
                 .enumerate()
                 .rev()
-                .find_map(|(i, step)| (step.pc == pc).then_some(i))
+                .find_map(|(i, step)| matches(node, step).then_some(i))
         })
+}
+
+fn source_line_range(source: &str, line: usize) -> Option<std::ops::Range<usize>> {
+    if line == 0 {
+        return None;
+    }
+
+    let mut start = 0;
+    for _ in 1..line {
+        start += source.get(start..)?.find('\n')? + 1;
+    }
+    if start >= source.len() {
+        return None;
+    }
+    let end = source[start..].find('\n').map_or(source.len(), |offset| start + offset + 1);
+    Some(start..end)
 }
 
 fn same_code_context(a: &DebugNode, b: &DebugNode) -> bool {
@@ -947,38 +1686,60 @@ fn pc_exists_outside_code_context(arena: &[DebugNode], current: &DebugNode, pc: 
 }
 
 fn find_opcode_match(
-    opcodes: &[String],
+    arena: &[DebugNode],
+    current_node_index: usize,
     current_step: usize,
     query: &str,
     direction: SearchDirection,
-) -> Option<usize> {
-    if opcodes.is_empty() {
-        return None;
-    }
-
+) -> Option<(usize, usize)> {
     let needle = query.trim().to_ascii_lowercase();
     if needle.is_empty() {
         return None;
     }
 
-    let current = current_step.min(opcodes.len() - 1);
-    let matches = |i: usize| opcodes[i].to_ascii_lowercase().contains(&needle);
-
-    match direction {
-        SearchDirection::Forward => {
-            ((current + 1)..opcodes.len()).chain(0..=current).find(|&i| matches(i))
-        }
-        SearchDirection::Backward => {
-            (0..current).rev().chain((current..opcodes.len()).rev()).find(|&i| matches(i))
-        }
-    }
+    let current_node = arena.get(current_node_index)?;
+    let trace_node_idx = current_node.trace_node_idx;
+    let current_absolute_step = current_node.step_offset.saturating_add(current_step);
+    let steps = || {
+        arena.iter().enumerate().filter(|(_, node)| node.trace_node_idx == trace_node_idx).flat_map(
+            |(node_index, node)| {
+                node.steps.iter().enumerate().map(move |(step_index, step)| {
+                    (node_index, step_index, node.step_offset.saturating_add(step_index), step)
+                })
+            },
+        )
+    };
+    let target = match direction {
+        SearchDirection::Forward => steps()
+            .filter(|(_, _, absolute_step, _)| *absolute_step > current_absolute_step)
+            .chain(
+                steps().filter(|(_, _, absolute_step, _)| *absolute_step <= current_absolute_step),
+            )
+            .find(|(_, _, _, step)| pretty_opcode(step).to_ascii_lowercase().contains(&needle)),
+        SearchDirection::Backward => steps()
+            .rev()
+            .filter(|(_, _, absolute_step, _)| *absolute_step < current_absolute_step)
+            .chain(
+                steps()
+                    .rev()
+                    .filter(|(_, _, absolute_step, _)| *absolute_step >= current_absolute_step),
+            )
+            .find(|(_, _, _, step)| pretty_opcode(step).to_ascii_lowercase().contains(&needle)),
+    };
+    target.map(|(node_index, step_index, _, _)| (node_index, step_index))
 }
 
-fn pretty_opcode(step: &CallTraceStep) -> String {
+pub(super) fn pretty_opcode(step: &CallTraceStep) -> String {
+    let mut buf = String::new();
+    write_pretty_opcode(&mut buf, step);
+    buf
+}
+
+pub(super) fn write_pretty_opcode(buf: &mut String, step: &CallTraceStep) {
     if let Some(immediate) = step.immediate_bytes.as_ref().filter(|b| !b.is_empty()) {
-        format!("{}(0x{})", step.op, hex::encode(immediate))
+        write!(buf, "{}(0x{})", step.op, hex::encode(immediate)).unwrap();
     } else {
-        step.op.to_string()
+        write!(buf, "{}", step.op).unwrap();
     }
 }
 
@@ -1009,10 +1770,15 @@ fn is_jump(step: &CallTraceStep, prev: &CallTraceStep) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{Bytes, U256};
-    use foundry_evm_core::Breakpoints;
-    use foundry_evm_traces::debug::ContractSources;
+    use crate::tui::storage::storage_values;
+    use alloy_primitives::{Bytes, keccak256, map::AddressHashMap};
+    use foundry_common::slot_identifier::{ENCODING_BYTES, SlotIdentifier};
+    use foundry_compilers::artifacts::{Storage, StorageLayout, StorageType, sourcemap::Parser};
+    use foundry_evm_core::{Breakpoints, ic::PcIcMap};
+    use foundry_evm_traces::debug::{ArtifactData, ContractSources};
     use revm::interpreter::InstructionResult;
+    use revm_inspectors::tracing::types::{StorageChange, StorageChangeReason};
+    use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
     fn step(pc: usize) -> CallTraceStep {
         step_with_stack(pc, OpCode::STOP, &[])
@@ -1062,10 +1828,42 @@ mod tests {
             debug_arena: arena,
             stats: None,
             identified_contracts: Default::default(),
+            slot_identifiers: None,
             contracts_sources: ContractSources::default(),
             breakpoints: Breakpoints::default(),
             layout: Default::default(),
         }
+    }
+
+    fn context_with_source_lines(address: Address) -> DebuggerContext {
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[0, 1, 2])]);
+        context.identified_contracts.insert(address, "Test".to_string());
+
+        let build_id = "test-build".to_string();
+        context.contracts_sources.sources_by_id.entry(build_id.clone()).or_default().insert(
+            0,
+            Arc::new(SourceData {
+                source: Arc::new("line one\nline two\nline three\n".to_string()),
+                language: Default::default(),
+                path: PathBuf::from("src/Test.sol"),
+                contract_definitions: Vec::new(),
+                debug_scopes: Vec::new(),
+            }),
+        );
+        context.contracts_sources.artifacts_by_name.insert(
+            "Test".to_string(),
+            vec![ArtifactData {
+                source_map: None,
+                source_map_runtime: Some(
+                    Parser::new("0:8:0;9:8:0;18:10:0").collect::<Result<_, _>>().unwrap(),
+                ),
+                pc_ic_map: None,
+                pc_ic_map_runtime: Some(PcIcMap::new(&[0x00, 0x00, 0x00])),
+                build_id,
+                file_id: 0,
+            }],
+        );
+        context
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1096,6 +1894,128 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('l')));
         assert_eq!(tui.debugger_context.layout, DebuggerLayout::Horizontal);
         assert_eq!(tui.status.as_ref().unwrap().text, "Debugger layout: horizontal");
+    }
+
+    #[test]
+    fn view_shortcuts_report_status() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        assert_eq!(tui.active_buffer, BufferKind::Memory);
+        let _ = tui.handle_key_event(key(KeyCode::Char('b')));
+        assert_eq!(tui.active_buffer, BufferKind::Calldata);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Active buffer: calldata");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('t')));
+        assert!(tui.stack_labels);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack labels: on");
+        let _ = tui.handle_key_event(key(KeyCode::Char('t')));
+        assert!(!tui.stack_labels);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack labels: off");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('m')));
+        assert!(tui.buf_utf);
+        assert_eq!(tui.status.as_ref().unwrap().text, "UTF-8 decoding: on");
+        let _ = tui.handle_key_event(key(KeyCode::Char('m')));
+        assert!(!tui.buf_utf);
+        assert_eq!(tui.status.as_ref().unwrap().text, "UTF-8 decoding: off");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('h')));
+        assert!(!tui.show_shortcuts);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Shortcut help: hidden");
+        let _ = tui.handle_key_event(key(KeyCode::Char('h')));
+        assert!(tui.show_shortcuts);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Shortcut help: shown");
+    }
+
+    #[test]
+    fn previous_call_shortcut_respects_root_boundary() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![
+            node(address, CallKind::Call, &[1, 2]),
+            node(address, CallKind::Call, &[3]),
+        ]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('c')));
+        assert_eq!((tui.draw_memory.inner_call_index, tui.current_step), (0, 0));
+
+        tui.draw_memory.inner_call_index = 1;
+        let _ = tui.handle_key_event(key(KeyCode::Char('c')));
+        assert_eq!((tui.draw_memory.inner_call_index, tui.current_step), (0, 1));
+    }
+
+    #[test]
+    fn breakpoint_shortcut_cycles_trace_hits() {
+        let address = Address::repeat_byte(1);
+        let other = Address::repeat_byte(2);
+        let mut context = context_with_arena(vec![
+            node(other, CallKind::Call, &[1]),
+            node(address, CallKind::Call, &[42, 7, 42]),
+            node(address, CallKind::Call, &[8, 42]),
+        ]);
+        context.breakpoints.insert('a', (address, 42));
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+
+        assert_eq!(tui.draw_memory.inner_call_index, 1);
+        assert_eq!(tui.current_step, 0);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Info);
+        assert_eq!(status.text, "Jumped to breakpoint 'a' at PC 0x2a (42)");
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+        assert_eq!((tui.draw_memory.inner_call_index, tui.current_step), (1, 2));
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+        assert_eq!((tui.draw_memory.inner_call_index, tui.current_step), (2, 1));
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+        assert_eq!((tui.draw_memory.inner_call_index, tui.current_step), (1, 0));
+    }
+
+    #[test]
+    fn breakpoint_shortcut_reports_missing_key() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('z')));
+
+        assert_eq!(tui.draw_memory.inner_call_index, 0);
+        assert_eq!(tui.current_step, 0);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Breakpoint 'z' not found");
+    }
+
+    #[test]
+    fn breakpoint_shortcut_reports_missing_trace_target() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        context.breakpoints.insert('a', (address, 42));
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('\'')));
+        let _ = tui.handle_key_event(key(KeyCode::Char('a')));
+
+        assert_eq!(tui.draw_memory.inner_call_index, 0);
+        assert_eq!(tui.current_step, 0);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Breakpoint 'a' target not found in trace");
     }
 
     #[test]
@@ -1174,6 +2094,42 @@ mod tests {
     }
 
     #[test]
+    fn parses_storage_slots_as_visible_hex_labels() {
+        assert_eq!(parse_storage_slot("0x20").unwrap(), U256::from(32));
+        assert_eq!(parse_storage_slot("d:32").unwrap(), U256::from(32));
+        assert_eq!(parse_storage_slot("dec:32").unwrap(), U256::from(32));
+        assert_eq!(parse_storage_slot("20").unwrap(), U256::from(32));
+        assert_eq!(parse_storage_slot("2a").unwrap(), U256::from(42));
+        assert_eq!(parse_storage_slot("a").unwrap(), U256::from(10));
+
+        assert_eq!(parse_storage_slot("").unwrap_err(), "Enter a storage slot");
+        assert_eq!(
+            parse_storage_slot("0x").unwrap_err(),
+            "Invalid storage slot `0x`; use hex 0x20/20 or decimal d:32"
+        );
+        assert_eq!(
+            parse_storage_slot("2x3").unwrap_err(),
+            "Invalid storage slot `2x3`; use hex 0x20/20 or decimal d:32"
+        );
+        assert_eq!(
+            parse_storage_slot("1_0").unwrap_err(),
+            "Invalid storage slot `1_0`; use hex 0x20/20 or decimal d:32"
+        );
+        assert_eq!(
+            parse_storage_slot("_").unwrap_err(),
+            "Invalid storage slot `_`; use hex 0x20/20 or decimal d:32"
+        );
+        assert_eq!(
+            parse_storage_slot("0x_").unwrap_err(),
+            "Invalid storage slot `0x_`; use hex 0x20/20 or decimal d:32"
+        );
+        assert_eq!(
+            parse_storage_slot("d:_").unwrap_err(),
+            "Invalid storage slot `d:_`; use hex 0x20/20 or decimal d:32"
+        );
+    }
+
+    #[test]
     fn filters_buffer_offset_input_to_parser_prefixes() {
         assert!(is_buffer_offset_input_char("", '0'));
         assert!(is_buffer_offset_input_char("0", 'x'));
@@ -1197,7 +2153,7 @@ mod tests {
 
         assert_eq!(
             find_pc_target(&arena, 0, 0, 3),
-            Some(PcTarget { node_index: 0, step_index: 2, scope: PcTargetScope::CurrentNode })
+            Some(StepTarget { node_index: 0, step_index: 2, scope: StepTargetScope::CurrentNode })
         );
     }
 
@@ -1341,6 +2297,501 @@ mod tests {
         assert_eq!(tui.pc_input, None);
         assert_eq!(tui.current_step, 0);
         assert_eq!(tui.status, None);
+    }
+
+    #[test]
+    fn command_input_mode_handles_keys_and_blocks_normal_commands() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        assert!(matches!(tui.handle_key_event(key(KeyCode::Char(':'))), ControlFlow::Continue(())));
+        assert_eq!(tui.command_input.as_deref(), Some(""));
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('q')));
+        assert_eq!(tui.command_input.as_deref(), Some("q"));
+        assert_eq!(tui.current_step, 0);
+
+        let _ = tui.handle_key_event(key(KeyCode::Backspace));
+        for c in "continue 2a".chars() {
+            let _ = tui.handle_key_event(key(KeyCode::Char(c)));
+        }
+        let _ = tui.handle_key_event(key(KeyCode::Enter));
+
+        assert_eq!(tui.command_input, None);
+        assert_eq!(tui.current_step, 1);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Info);
+        assert_eq!(status.text, "Jumped to PC 0x2a (42) in current trace");
+    }
+
+    #[test]
+    fn command_prompt_jumps_to_named_buffer_offset() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step(1)],
+            Bytes::from(vec![0; 96]),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("calldata 40");
+
+        assert_eq!(tui.active_buffer, BufferKind::Calldata);
+        assert_eq!(tui.draw_memory.current_buf_startline, 2);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to calldata offset 0x40 (64)");
+    }
+
+    #[test]
+    fn labels_long_string_data_slots_written_before_length() {
+        let address = Address::repeat_byte(1);
+        let type_id = "t_string_storage".to_string();
+        let identifier = SlotIdentifier::new(Arc::new(StorageLayout {
+            storage: vec![Storage {
+                ast_id: 1,
+                contract: "StorageTest".to_string(),
+                label: "text".to_string(),
+                offset: 0,
+                slot: "0".to_string(),
+                storage_type: type_id.clone(),
+            }],
+            types: BTreeMap::from([(
+                type_id,
+                StorageType {
+                    encoding: ENCODING_BYTES.to_string(),
+                    key: None,
+                    label: "string".to_string(),
+                    number_of_bytes: "32".to_string(),
+                    value: None,
+                    other: BTreeMap::new(),
+                },
+            )]),
+        }));
+        let data_slot = U256::from_be_bytes(keccak256(B256::ZERO).0);
+        let mut data_access = step(1);
+        data_access.storage_change = Some(Box::new(StorageChange {
+            key: data_slot,
+            value: U256::ZERO,
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut base_access = step(2);
+        base_access.storage_change = Some(Box::new(StorageChange {
+            key: U256::ZERO,
+            value: U256::from(40 * 2 + 1),
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![data_access, base_access],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        context.slot_identifiers = Some(AddressHashMap::from_iter([(address, identifier)]));
+        let mut tui = TUIContext::new(&mut context);
+        tui.current_step = 0;
+        let accesses = tui.storage_accesses(StorageSpace::Persistent);
+        let values = storage_values(&accesses);
+        let next_values = tui.next_storage_write_values();
+
+        assert_eq!(
+            tui.storage_label(
+                StorageSpace::Persistent,
+                data_slot,
+                Some(&values),
+                Some(&next_values),
+            )
+            .as_deref(),
+            Some("text[0]")
+        );
+    }
+
+    #[test]
+    fn command_prompt_jumps_to_storage_slot_access() {
+        let address = Address::repeat_byte(1);
+        let mut first_store = step(2);
+        first_store.storage_change = Some(Box::new(StorageChange {
+            key: U256::ZERO,
+            value: U256::from(7),
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut store = step(42);
+        store.storage_change = Some(Box::new(StorageChange {
+            key: U256::from(1),
+            value: U256::from(42),
+            had_value: Some(U256::from(7)),
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![step(1), first_store, store],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("storage 1");
+
+        assert_eq!(tui.current_step, 2);
+        assert_eq!(tui.active_storage, Some(StorageSpace::Persistent));
+        assert_eq!(tui.storage_accesses(StorageSpace::Persistent).len(), 2);
+        assert_eq!(
+            tui.status.as_ref().unwrap().text,
+            "Jumped to storage SSTORE slot 0x1: 0x7 -> 0x2a at PC 0x2a (42)"
+        );
+    }
+
+    #[test]
+    fn command_prompt_jumps_to_transient_storage_slot_access() {
+        let address = Address::repeat_byte(1);
+        let steps = vec![step(1), step_with_stack(42, OpCode::TSTORE, &[0xbeef, 0x2a])];
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            steps,
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("transient 2a");
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.active_storage, Some(StorageSpace::Transient));
+        assert_eq!(
+            tui.status.as_ref().unwrap().text,
+            "Jumped to transient storage TSTORE slot 0x2a = 0xbeef at PC 0x2a (42)"
+        );
+
+        tui.run_command_from_input("storage 2a");
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(
+            tui.status.as_ref().unwrap().text,
+            "Storage slot 0x2a not accessed in current call"
+        );
+    }
+
+    #[test]
+    fn command_prompt_searches_storage_across_split_call_segments() {
+        let address = Address::repeat_byte(1);
+        let mut store = step(42);
+        store.storage_change = Some(Box::new(StorageChange {
+            key: U256::from(1),
+            value: U256::from(42),
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
+        }));
+
+        let mut first_store = step(1);
+        first_store.storage_change = Some(Box::new(StorageChange {
+            key: U256::ZERO,
+            value: U256::from(7),
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut first =
+            DebugNode::new(address, CallKind::Call, vec![first_store], Bytes::new(), 0, None);
+        first.trace_node_idx = 7;
+        first.step_offset = 0;
+
+        let mut child_store = step(2);
+        child_store.storage_change = Some(Box::new(StorageChange {
+            key: U256::from(9),
+            value: U256::from(99),
+            had_value: None,
+            reason: StorageChangeReason::SSTORE,
+        }));
+        let mut child = DebugNode::new(
+            Address::repeat_byte(2),
+            CallKind::Call,
+            vec![child_store],
+            Bytes::new(),
+            0,
+            None,
+        );
+        child.trace_node_idx = 8;
+        child.step_offset = 1;
+
+        let mut second =
+            DebugNode::new(address, CallKind::Call, vec![store], Bytes::new(), 0, None);
+        second.trace_node_idx = 7;
+        second.step_offset = 2;
+
+        let mut context = context_with_arena(vec![first, child, second]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("storage 1");
+
+        assert_eq!(tui.draw_memory.inner_call_index, 2);
+        assert_eq!(tui.current_step, 0);
+        let accesses = tui.storage_accesses(StorageSpace::Persistent);
+        assert_eq!(accesses.len(), 2);
+        assert!(!accesses.contains_key(&U256::from(9)));
+        assert_eq!(
+            tui.status.as_ref().unwrap().text,
+            "Jumped to storage SSTORE slot 0x1 = 0x2a at PC 0x2a (42)"
+        );
+    }
+
+    #[test]
+    fn command_prompt_finds_warm_sload_from_stack_snapshots() {
+        let address = Address::repeat_byte(1);
+        let steps =
+            vec![step_with_stack(1, OpCode::SLOAD, &[1]), step_with_stack(2, OpCode::STOP, &[42])];
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            steps,
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("store 1");
+
+        assert_eq!(tui.current_step, 0);
+        assert_eq!(
+            tui.status.as_ref().unwrap().text,
+            "Jumped to storage SLOAD slot 0x1 = 0x2a at PC 0x1 (1)"
+        );
+    }
+
+    #[test]
+    fn command_prompt_finds_warm_sstore_from_stack_snapshot() {
+        let address = Address::repeat_byte(1);
+        let steps = vec![step_with_stack(42, OpCode::SSTORE, &[42, 1])];
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            steps,
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("slot 1");
+
+        assert_eq!(tui.current_step, 0);
+        assert_eq!(
+            tui.status.as_ref().unwrap().text,
+            "Jumped to storage SSTORE slot 0x1 = 0x2a at PC 0x2a (42)"
+        );
+    }
+
+    #[test]
+    fn command_prompt_ignores_failed_sstore_stack_snapshot() {
+        let address = Address::repeat_byte(1);
+        let mut store = step_with_stack(42, OpCode::SSTORE, &[42, 1]);
+        store.status = Some(InstructionResult::StateChangeDuringStaticCall);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![store],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("slot 1");
+
+        assert_eq!(tui.current_step, 0);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Storage slot 0x1 not accessed in current call");
+    }
+
+    #[test]
+    fn command_prompt_ignores_failed_sstore_storage_change() {
+        let address = Address::repeat_byte(1);
+        let mut store = step_with_stack(42, OpCode::SSTORE, &[42, 1]);
+        store.storage_change = Some(Box::new(StorageChange {
+            key: U256::from(1),
+            value: U256::from(42),
+            had_value: Some(U256::ZERO),
+            reason: StorageChangeReason::SSTORE,
+        }));
+        store.status = Some(InstructionResult::OutOfGas);
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![store],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("slot 1");
+
+        assert_eq!(tui.current_step, 0);
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Storage slot 0x1 not accessed in current call");
+    }
+
+    #[test]
+    fn command_prompt_accepts_optional_leading_colon() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input(":pc 2a");
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to PC 0x2a (42) in current trace");
+    }
+
+    #[test]
+    fn command_prompt_continues_to_next_pc_hit() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42, 2, 42])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.current_step = 1;
+
+        tui.run_command_from_input("pc 2a");
+        assert_eq!(tui.current_step, 1);
+
+        tui.run_command_from_input("continue 2a");
+        assert_eq!(tui.current_step, 3);
+    }
+
+    #[test]
+    fn command_prompt_jumps_to_source_line() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_source_lines(address);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("line 2");
+
+        assert_eq!(tui.current_step, 1);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Jumped to src/Test.sol:2 at PC 0x1 (1)");
+    }
+
+    #[test]
+    fn command_prompt_reports_help_and_usage_errors() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("help");
+        assert_eq!(tui.status.as_ref().unwrap().kind, StatusKind::Info);
+        let help = &tui.status.as_ref().unwrap().text;
+        for commands in [
+            CONTINUE_COMMANDS,
+            PC_COMMANDS,
+            MEMORY_COMMANDS,
+            CALLDATA_COMMANDS,
+            RETURNDATA_COMMANDS,
+            STORAGE_COMMANDS,
+            TRANSIENT_STORAGE_COMMANDS,
+            LINE_COMMANDS,
+            OPCODE_COMMANDS,
+            SOURCE_COMMANDS,
+            VARIABLES_COMMANDS,
+            STACK_COMMANDS,
+            DATA_COMMANDS,
+        ] {
+            assert!(help.contains(&command_aliases(commands)));
+        }
+
+        tui.run_command_from_input("mem");
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Info);
+        assert_eq!(status.text, "Active buffer: memory");
+
+        tui.run_command_from_input("store");
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Info);
+        assert_eq!(status.text, "Active data: storage");
+
+        tui.run_command_from_input("store 1 2");
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Usage: :store <slot>");
+
+        tui.run_command_from_input("line");
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Usage: :line <line>");
+    }
+
+    #[test]
+    fn command_prompt_toggles_panes() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1])]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+
+        tui.run_command_from_input("opcodes");
+        assert!(!tui.show_opcodes);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Opcodes pane: hidden");
+
+        tui.run_command_from_input(":ops");
+        assert!(tui.show_opcodes);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Opcodes pane: shown");
+
+        tui.run_command_from_input("source");
+        assert!(!tui.show_source);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Source pane: hidden");
+
+        tui.run_command_from_input(":src");
+        assert!(tui.show_source);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Source pane: shown");
+
+        tui.run_command_from_input("variables");
+        assert!(!tui.show_variables);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Variables pane: hidden");
+
+        tui.run_command_from_input(":vars");
+        assert!(tui.show_variables);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Variables pane: shown");
+
+        tui.run_command_from_input("stack");
+        assert!(!tui.show_stack);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack pane: hidden");
+
+        tui.run_command_from_input(":stack");
+        assert!(tui.show_stack);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Stack pane: shown");
+
+        tui.run_command_from_input("data");
+        assert!(!tui.show_data);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Data pane: hidden");
+
+        tui.run_command_from_input(":data");
+        assert!(tui.show_data);
+        assert_eq!(tui.status.as_ref().unwrap().text, "Data pane: shown");
+
+        tui.run_command_from_input("stack extra");
+        let status = tui.status.as_ref().unwrap();
+        assert_eq!(status.kind, StatusKind::Error);
+        assert_eq!(status.text, "Usage: :stack");
     }
 
     #[test]
@@ -1494,14 +2945,57 @@ mod tests {
     }
 
     #[test]
-    fn opcode_search_wraps_and_is_case_insensitive() {
-        let opcodes =
-            vec!["STOP".to_string(), "PUSH4(0x95d89b41)".to_string(), "MSTORE".to_string()];
+    fn storage_scroll_repeats_without_exceeding_last_slot() {
+        let steps =
+            (0..3).map(|slot| step_with_stack(slot, OpCode::TSTORE, &[slot, slot])).collect();
+        let mut context = context_with_arena(vec![DebugNode::new(
+            Address::ZERO,
+            CallKind::Call,
+            steps,
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.current_step = 2;
+        tui.run_command_from_input("transient");
 
-        assert_eq!(find_opcode_match(&opcodes, 0, "push4", SearchDirection::Forward), Some(1));
-        assert_eq!(find_opcode_match(&opcodes, 0, "95D89B41", SearchDirection::Forward), Some(1));
-        assert_eq!(find_opcode_match(&opcodes, 0, "mstore", SearchDirection::Backward), Some(2));
-        assert_eq!(find_opcode_match(&opcodes, 0, "sload", SearchDirection::Forward), None);
+        let _ = tui.handle_key_event(key(KeyCode::Char('2')));
+        let _ = tui.handle_key_event(ctrl_key(KeyCode::Char('j')));
+        assert_eq!(tui.draw_memory.current_storage_startline, 2);
+
+        let _ = tui.handle_key_event(ctrl_key(KeyCode::Char('j')));
+        assert_eq!(tui.draw_memory.current_storage_startline, 2);
+    }
+
+    #[test]
+    fn opcode_search_wraps_and_is_case_insensitive() {
+        let arena = vec![DebugNode::new(
+            Address::repeat_byte(1),
+            CallKind::Call,
+            vec![
+                step(1),
+                step_with_immediate(2, OpCode::PUSH4, &[0x95, 0xd8, 0x9b, 0x41]),
+                step_with_stack(3, OpCode::MSTORE, &[]),
+            ],
+            Bytes::new(),
+            0,
+            None,
+        )];
+
+        assert_eq!(
+            find_opcode_match(&arena, 0, 0, "push4", SearchDirection::Forward),
+            Some((0, 1))
+        );
+        assert_eq!(
+            find_opcode_match(&arena, 0, 0, "95D89B41", SearchDirection::Forward),
+            Some((0, 1))
+        );
+        assert_eq!(
+            find_opcode_match(&arena, 0, 0, "mstore", SearchDirection::Backward),
+            Some((0, 2))
+        );
+        assert_eq!(find_opcode_match(&arena, 0, 0, "sload", SearchDirection::Forward), None);
     }
 
     #[test]
@@ -1570,6 +3064,35 @@ mod tests {
 
         let _ = tui.handle_key_event(key(KeyCode::Char('N')));
         assert_eq!(tui.current_step, 2);
+    }
+
+    #[test]
+    fn opcode_search_crosses_split_call_segments() {
+        let address = Address::repeat_byte(1);
+        let node = |address, trace_node_idx, step_offset, steps| {
+            let mut node = DebugNode::new(address, CallKind::Call, steps, Bytes::new(), 0, None);
+            node.trace_node_idx = trace_node_idx;
+            node.step_offset = step_offset;
+            node
+        };
+        let arena = vec![
+            node(address, 0, 0, vec![step_with_stack(1, OpCode::MSTORE, &[]), step(2)]),
+            node(Address::repeat_byte(2), 1, 0, vec![step_with_stack(3, OpCode::MSTORE, &[])]),
+            node(address, 0, 2, vec![step(4), step_with_stack(5, OpCode::MSTORE, &[])]),
+        ];
+
+        assert_eq!(
+            find_opcode_match(&arena, 0, 0, "mstore", SearchDirection::Forward),
+            Some((2, 1))
+        );
+        assert_eq!(
+            find_opcode_match(&arena, 2, 1, "mstore", SearchDirection::Forward),
+            Some((0, 0))
+        );
+        assert_eq!(
+            find_opcode_match(&arena, 0, 0, "mstore", SearchDirection::Backward),
+            Some((2, 1))
+        );
     }
 
     #[test]
@@ -1690,7 +3213,7 @@ mod tests {
             address,
             CallKind::Call,
             vec![step_with_stack(1, OpCode::MSTORE, &[0, 128]), step(2)],
-            Bytes::new(),
+            Bytes::from(vec![0; 256]),
             0,
             None,
         )]);
@@ -1703,5 +3226,67 @@ mod tests {
 
         assert_eq!(tui.current_step, 1);
         assert_eq!(tui.draw_memory.current_buf_startline, 7);
+    }
+
+    #[test]
+    fn navigation_clamps_scroll_positions_to_non_empty_data() {
+        let address = Address::repeat_byte(1);
+        let mut context = context_with_arena(vec![
+            DebugNode::new(
+                address,
+                CallKind::Call,
+                vec![step_with_stack(1, OpCode::STOP, &[0, 1, 2])],
+                Bytes::from(vec![0; 64]),
+                0,
+                None,
+            ),
+            DebugNode::new(
+                address,
+                CallKind::Call,
+                vec![step_with_stack(2, OpCode::STOP, &[0])],
+                Bytes::from(vec![0; 4]),
+                0,
+                None,
+            ),
+        ]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.active_buffer = BufferKind::Calldata;
+        tui.draw_memory.current_buf_startline = 1;
+        tui.draw_memory.current_stack_startline = 2;
+
+        let _ = tui.handle_key_event(key(KeyCode::Char('C')));
+
+        assert_eq!(tui.draw_memory.inner_call_index, 1);
+        assert_eq!(tui.draw_memory.current_buf_startline, 0);
+        assert_eq!(tui.draw_memory.current_stack_startline, 0);
+    }
+
+    #[test]
+    fn navigation_preserves_stack_scroll_across_empty_snapshot() {
+        let address = Address::repeat_byte(1);
+        let mut empty_stack = step(2);
+        empty_stack.stack = Some(Vec::new().into_boxed_slice());
+        let mut context = context_with_arena(vec![DebugNode::new(
+            address,
+            CallKind::Call,
+            vec![
+                step_with_stack(1, OpCode::STOP, &[0, 1, 2]),
+                empty_stack,
+                step_with_stack(3, OpCode::STOP, &[0, 1, 2]),
+            ],
+            Bytes::new(),
+            0,
+            None,
+        )]);
+        let mut tui = TUIContext::new(&mut context);
+        tui.init();
+        tui.draw_memory.current_stack_startline = 2;
+
+        tui.step();
+        assert_eq!(tui.draw_memory.current_stack_startline, 2);
+
+        tui.step();
+        assert_eq!(tui.draw_memory.current_stack_startline, 2);
     }
 }

@@ -8,6 +8,7 @@ use crate::debugger::DebuggerContext;
 use context::TUIContext;
 
 mod draw;
+mod storage;
 
 /// Debugger exit reason.
 #[derive(Debug)]

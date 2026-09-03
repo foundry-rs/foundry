@@ -51,6 +51,14 @@ impl<T> MaybeImpersonatedTransaction<T> {
     pub fn into_inner(self) -> T {
         self.transaction
     }
+
+    /// Maps the inner transaction while preserving impersonation metadata.
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> MaybeImpersonatedTransaction<U> {
+        MaybeImpersonatedTransaction {
+            transaction: f(self.transaction),
+            impersonated_sender: self.impersonated_sender,
+        }
+    }
 }
 
 impl<T: SignerRecoverable + TxHashRef + Encodable> MaybeImpersonatedTransaction<T> {
@@ -90,6 +98,10 @@ impl<T: Encodable2718> Encodable2718 for MaybeImpersonatedTransaction<T> {
 impl<T: Encodable> Encodable for MaybeImpersonatedTransaction<T> {
     fn encode(&self, out: &mut dyn bytes::BufMut) {
         self.transaction.encode(out)
+    }
+
+    fn length(&self) -> usize {
+        self.transaction.length()
     }
 }
 
@@ -160,6 +172,12 @@ impl<T: SignerRecoverable + TxHashRef + Encodable> PendingTransaction<T> {
         Self { transaction, sender, hash }
     }
 
+    /// Creates a pending transaction from an existing wrapper and authoritative sender.
+    pub fn with_sender(transaction: MaybeImpersonatedTransaction<T>, sender: Address) -> Self {
+        let hash = transaction.hash();
+        Self { transaction, sender, hash }
+    }
+
     /// Converts a [`MaybeImpersonatedTransaction`] into a [`PendingTransaction`].
     pub fn from_maybe_impersonated(
         transaction: MaybeImpersonatedTransaction<T>,
@@ -191,4 +209,26 @@ pub struct TransactionInfo {
     pub out: Option<Bytes>,
     pub nonce: u64,
     pub gas_used: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct EncodableLength;
+
+    impl Encodable for EncodableLength {
+        fn encode(&self, _: &mut dyn BufMut) {
+            panic!("length should not encode")
+        }
+
+        fn length(&self) -> usize {
+            42
+        }
+    }
+
+    #[test]
+    fn rlp_length_delegates_to_inner_transaction() {
+        assert_eq!(MaybeImpersonatedTransaction::new(EncodableLength).length(), 42);
+    }
 }

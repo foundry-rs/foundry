@@ -1,6 +1,7 @@
 [profile.default]
 src = "src"
 test = "./"
+remappings = ["@cheats/=default/cheats/"]
 optimizer = true
 optimizer_runs = 200
 via_ir = false
@@ -21,10 +22,14 @@ extra_output = ["storageLayout"]
 additional_compiler_profiles = [
     # paris - EVM version paris for testing profile selection
     { name = "paris", evm_version = "paris" },
+    # no-metadata - stable bytecode for cross-platform multi-version tests
+    { name = "no-metadata", bytecode_hash = "None" },
 ]
 compilation_restrictions = [
     # paris - files in paris/ directory use paris EVM version
     { paths = "paris/**", evm_version = "paris" },
+    # Keep multi-version bytecode stable across platforms while preserving the encoded solc version.
+    { paths = "multi-version/**", bytecode_hash = "None" },
 ]
 
 ffi = true
@@ -59,7 +64,7 @@ arbitrum = "${RPC_ARBITRUM}"
 polygon = "${RPC_POLYGON}"
 bsc = "${RPC_BSC}"
 avaxTestnet = "https://api.avax-test.network/ext/bc/C/rpc"
-moonbeam = "https://moonbeam-rpc.publicnode.com"
+moonbeam = "https://moonbeam.api.onfinality.io/public"
 polkadotTestnet = "https://eth-rpc-testnet.polkadot.io"
 kusama = "https://eth-rpc-kusama.polkadot.io"
 polkadot = "https://eth-rpc.polkadot.io"

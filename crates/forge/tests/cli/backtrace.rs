@@ -24,74 +24,74 @@ Ran 11 tests for test/Backtrace.t.sol:BacktraceTest
 ...
 Backtrace:
   at SimpleRevert.doAssert
-  at BacktraceTest.testAssertFail (test/Backtrace.t.sol:40:48)
+  at BacktraceTest.testAssertFail (test/Backtrace.t.sol:40:9)
 
 [FAIL: CustomError(42, 0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496)] testCustomError() ([GAS])
 ...
 Backtrace:
-  at SimpleRevert.doCustomError (src/SimpleRevert.sol:21:59)
-  at BacktraceTest.testCustomError (test/Backtrace.t.sol:45:49)
+  at SimpleRevert.doCustomError (src/SimpleRevert.sol:21:16)
+  at BacktraceTest.testCustomError (test/Backtrace.t.sol:45:9)
 
 [FAIL: Delegate compute failed] testDelegateCallRequire() ([GAS])
 ...
 Backtrace:
-  at DelegateTarget.compute (src/DelegateCall.sol:11:84)
-  at DelegateCaller.delegateCompute (src/DelegateCall.sol:32:101)
-  at BacktraceTest.testDelegateCallRequire (test/Backtrace.t.sol:82:57)
+  at DelegateTarget.compute (src/DelegateCall.sol:11:9)
+  at DelegateCaller.delegateCompute (src/DelegateCall.sol:32:9)
+  at BacktraceTest.testDelegateCallRequire (test/Backtrace.t.sol:82:9)
 
 [FAIL: Delegate call failed] testDelegateCallRevert() ([GAS])
 ...
 Backtrace:
-  at DelegateTarget.fail (src/DelegateCall.sol:7:43)
-  at DelegateCaller.delegateFail (src/DelegateCall.sol:26:91)
-  at BacktraceTest.testDelegateCallRevert (test/Backtrace.t.sol:77:56)
+  at DelegateTarget.fail (src/DelegateCall.sol:7:9)
+  at DelegateCaller.delegateFail (src/DelegateCall.sol:26:9)
+  at BacktraceTest.testDelegateCallRevert (test/Backtrace.t.sol:77:9)
 
 [FAIL: Failed at internal level 3] testInternalCallChain() ([GAS])
 ...
 Backtrace:
-  at BacktraceTest.testInternalCallChain (test/Backtrace.t.sol:72:54)
+  at BacktraceTest.testInternalCallChain (test/Backtrace.t.sol:72:9)
 
 [FAIL: Failed at chain level 3] testInternalCallsSameSource() ([GAS])
 ...
 Backtrace:
-  at NestedCalls.callChain1 (src/NestedCalls.sol:25:51)
-  at BacktraceTest.testInternalCallsSameSource (test/Backtrace.t.sol:55:61)
+  at NestedCalls.callChain1 (src/NestedCalls.sol:25:9)
+  at BacktraceTest.testInternalCallsSameSource (test/Backtrace.t.sol:55:9)
 
 [FAIL: Maximum depth reached] testNestedCalls() ([GAS])
 ...
 Backtrace:
-  at NestedCalls.nestedCall (src/NestedCalls.sol:11:46)
-  at NestedCalls.nestedCall (src/NestedCalls.sol:13:19)
-  at NestedCalls.nestedCall (src/NestedCalls.sol:13:19)
-  at NestedCalls.nestedCall (src/NestedCalls.sol:13:19)
-  at NestedCalls.nestedCall (src/NestedCalls.sol:13:19)
-  at BacktraceTest.testNestedCalls (test/Backtrace.t.sol:50:49)
+  at NestedCalls.nestedCall (src/NestedCalls.sol:11:13)
+  at NestedCalls.nestedCall (src/NestedCalls.sol:13:9)
+  at NestedCalls.nestedCall (src/NestedCalls.sol:13:9)
+  at NestedCalls.nestedCall (src/NestedCalls.sol:13:9)
+  at NestedCalls.nestedCall (src/NestedCalls.sol:13:9)
+  at BacktraceTest.testNestedCalls (test/Backtrace.t.sol:50:9)
 
 [FAIL: Value must be greater than zero] testRequireFail() ([GAS])
 ...
 Backtrace:
-  at SimpleRevert.doRequire (src/SimpleRevert.sol:11:61)
-  at BacktraceTest.testRequireFail (test/Backtrace.t.sol:35:49)
+  at SimpleRevert.doRequire (src/SimpleRevert.sol:11:9)
+  at BacktraceTest.testRequireFail (test/Backtrace.t.sol:35:9)
 
 [FAIL: Simple revert message] testSimpleRevert() ([GAS])
 ...
 Backtrace:
-  at SimpleRevert.doRevert (src/SimpleRevert.sol:7:67)
-  at BacktraceTest.testSimpleRevert (test/Backtrace.t.sol:30:50)
+  at SimpleRevert.doRevert (src/SimpleRevert.sol:7:9)
+  at BacktraceTest.testSimpleRevert (test/Backtrace.t.sol:30:9)
 
 [FAIL: Static compute failed] testStaticCallRequire() ([GAS])
 ...
 Backtrace:
-  at StaticTarget.compute (src/StaticCall.sol:11:77)
-  at StaticCaller.staticCompute (src/StaticCall.sol:30:124)
-  at BacktraceTest.testStaticCallRequire (test/Backtrace.t.sol:92:60)
+  at StaticTarget.compute (src/StaticCall.sol:11:9)
+  at StaticCaller.staticCompute (src/StaticCall.sol:30:9)
+  at BacktraceTest.testStaticCallRequire (test/Backtrace.t.sol:92:9)
 
 [FAIL: Static call reverted] testStaticCallRevert() ([GAS])
 ...
 Backtrace:
-  at StaticTarget.viewFail (src/StaticCall.sol:7:47)
-  at StaticCaller.staticCallFail (src/StaticCall.sol:25:93)
-  at BacktraceTest.testStaticCallRevert (test/Backtrace.t.sol:87:59)
+  at StaticTarget.viewFail (src/StaticCall.sol:7:9)
+  at StaticCaller.staticCallFail (src/StaticCall.sol:25:9)
+  at BacktraceTest.testStaticCallRevert (test/Backtrace.t.sol:87:9)
 
 Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
@@ -175,14 +175,14 @@ Ran 2 tests for test/BacktraceTest.t.sol:BacktraceTest
 [FAIL: Helper revert] testHelperRevert() ([GAS])
 ...
 Backtrace:
-  at HelperContract.doRevert (src/HelperContract.sol:11:47)
-  at BacktraceTest.testHelperRevert (test/BacktraceTest.t.sol:23:50)
+  at HelperContract.doRevert (src/HelperContract.sol:11:9)
+  at BacktraceTest.testHelperRevert (test/BacktraceTest.t.sol:23:9)
 
 [FAIL: Test failure] testSimpleRevert() ([GAS])
 ...
 Backtrace:
-  at SimpleRevert.doRevert (src/SimpleRevert.sol:7:67)
-  at BacktraceTest.testSimpleRevert (test/BacktraceTest.t.sol:19:50)
+  at SimpleRevert.doRevert (src/SimpleRevert.sol:7:9)
+  at BacktraceTest.testSimpleRevert (test/BacktraceTest.t.sol:19:9)
 
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
@@ -249,14 +249,14 @@ Ran 2 tests for test/BacktraceTest.t.sol:BacktraceTest
 [FAIL: Helper revert] testHelperRevert() ([GAS])
 ...
 Backtrace:
-  at HelperContract.doRevert (src/HelperContract.sol:11:47)
-  at BacktraceTest.testHelperRevert (test/BacktraceTest.t.sol:25:50)
+  at HelperContract.doRevert (src/HelperContract.sol:11:9)
+  at BacktraceTest.testHelperRevert (test/BacktraceTest.t.sol:25:9)
 
 [FAIL: Test failure] testSimpleRevert() ([GAS])
 ...
 Backtrace:
-  at SimpleRevert.doRevert (src/SimpleRevert.sol:8:56)
-  at BacktraceTest.testSimpleRevert (test/BacktraceTest.t.sol:21:43)
+  at SimpleRevert.doRevert (src/SimpleRevert.sol:8:9)
+  at BacktraceTest.testSimpleRevert (test/BacktraceTest.t.sol:21:9)
 
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
@@ -401,29 +401,29 @@ Ran 4 tests for test/MultipleLibraryBacktrace.t.sol:MultipleLibraryBacktraceTest
 [FAIL: FirstLibError()] testAllLibrariesFirstFails() ([GAS])
 ...
 Backtrace:
-  at MultipleLibraryConsumer.useAllLibraries (src/libraries/MultipleLibraries.sol:10:42)
-  at MultipleLibraryBacktraceTest.testAllLibrariesFirstFails (test/MultipleLibraryBacktrace.t.sol:31:60)
+  at MultipleLibraryConsumer.useAllLibraries (src/libraries/MultipleLibraries.sol:10:20)
+  at MultipleLibraryBacktraceTest.testAllLibrariesFirstFails (test/MultipleLibraryBacktrace.t.sol:31:9)
 
 [FAIL: FirstLibError()] testFirstLibraryError() ([GAS])
 Traces:
 ...
 Backtrace:
-  at MultipleLibraryConsumer.useFirstLib (src/libraries/MultipleLibraries.sol:10:42)
-  at MultipleLibraryBacktraceTest.testFirstLibraryError (test/MultipleLibraryBacktrace.t.sol:16:55)
+  at MultipleLibraryConsumer.useFirstLib (src/libraries/MultipleLibraries.sol:10:20)
+  at MultipleLibraryBacktraceTest.testFirstLibraryError (test/MultipleLibraryBacktrace.t.sol:16:9)
 
 [FAIL: SecondLibError()] testSecondLibraryError() ([GAS])
 Traces:
 ...
 Backtrace:
-  at MultipleLibraryConsumer.useSecondLib (src/libraries/MultipleLibraries.sol:26:41)
-  at MultipleLibraryBacktraceTest.testSecondLibraryError (test/MultipleLibraryBacktrace.t.sol:21:56)
+  at MultipleLibraryConsumer.useSecondLib (src/libraries/MultipleLibraries.sol:26:20)
+  at MultipleLibraryBacktraceTest.testSecondLibraryError (test/MultipleLibraryBacktrace.t.sol:21:9)
 
 [FAIL: ThirdLibError()] testThirdLibraryError() ([GAS])
 Traces:
 ...
 Backtrace:
-  at MultipleLibraryConsumer.useThirdLib (src/libraries/MultipleLibraries.sol:42:42)
-  at MultipleLibraryBacktraceTest.testThirdLibraryError (test/MultipleLibraryBacktrace.t.sol:26:55)
+  at MultipleLibraryConsumer.useThirdLib (src/libraries/MultipleLibraries.sol:42:20)
+  at MultipleLibraryBacktraceTest.testThirdLibraryError (test/MultipleLibraryBacktrace.t.sol:26:9)
 
 Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 
@@ -454,42 +454,42 @@ forgetest!(test_fork_backtrace, |prj, cmd| {
 [SOLC_VERSION] [ELAPSED]
 ...
 Ran 5 tests for test/ForkBacktrace.t.sol:ForkBacktraceTest
-[FAIL: USDC transfer failed] testDirectOnChainRevert() ([GAS])
+[FAIL: USDC transfer failed] testDirectOnChainRevert() (block: [..]) ([GAS])
 ...
 Backtrace:
   at 0x43506849D7C04F9138D1A2050bbF3A0c054402dd.transfer
   at 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48.transfer
-  at ForkBacktraceTest.testDirectOnChainRevert (test/ForkBacktrace.t.sol:36:126)
+  at ForkBacktraceTest.testDirectOnChainRevert (test/ForkBacktrace.t.sol:36:9)
 
-[FAIL: ERC20: transfer amount exceeds balance] testNestedFailure() ([GAS])
+[FAIL: ERC20: transfer amount exceeds balance] testNestedFailure() (block: [..]) ([GAS])
 ...
 Backtrace:
   at 0x43506849D7C04F9138D1A2050bbF3A0c054402dd.transfer
   at 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48.transfer
-  at ForkedERC20Wrapper.nestedFailure (src/ForkedERC20Wrapper.sol:14:89)
-  at ForkBacktraceTest.testNestedFailure (test/ForkBacktrace.t.sol:30:51)
+  at ForkedERC20Wrapper.nestedFailure (src/ForkedERC20Wrapper.sol:14:9)
+  at ForkBacktraceTest.testNestedFailure (test/ForkBacktrace.t.sol:30:9)
 
-[FAIL: Account has zero USDC balance] testRequireNonZeroBalance() ([GAS])
+[FAIL: Account has zero USDC balance] testRequireNonZeroBalance() (block: [..]) ([GAS])
 ...
 Backtrace:
-  at ForkedERC20Wrapper.requireNonZeroBalance (src/ForkedERC20Wrapper.sol:23:68)
-  at ForkBacktraceTest.testRequireNonZeroBalance (test/ForkBacktrace.t.sol:26:64)
+  at ForkedERC20Wrapper.requireNonZeroBalance (src/ForkedERC20Wrapper.sol:23:9)
+  at ForkBacktraceTest.testRequireNonZeroBalance (test/ForkBacktrace.t.sol:26:9)
 
-[FAIL: ERC20: transfer amount exceeds allowance] testTransferFromWithoutApproval() ([GAS])
+[FAIL: ERC20: transfer amount exceeds allowance] testTransferFromWithoutApproval() (block: [..]) ([GAS])
 ...
 Backtrace:
   at 0x43506849D7C04F9138D1A2050bbF3A0c054402dd.transferFrom
   at 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48.transferFrom
-  at ForkedERC20Wrapper.transferFromWithoutApproval (src/ForkedERC20Wrapper.sol:18:101)
-  at ForkBacktraceTest.testTransferFromWithoutApproval (test/ForkBacktrace.t.sol:22:65)
+  at ForkedERC20Wrapper.transferFromWithoutApproval (src/ForkedERC20Wrapper.sol:18:9)
+  at ForkBacktraceTest.testTransferFromWithoutApproval (test/ForkBacktrace.t.sol:22:9)
 
-[FAIL: ERC20: transfer amount exceeds balance] testTransferWithoutBalance() ([GAS])
+[FAIL: ERC20: transfer amount exceeds balance] testTransferWithoutBalance() (block: [..]) ([GAS])
 ...
 Backtrace:
   at 0x43506849D7C04F9138D1A2050bbF3A0c054402dd.transfer
   at 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48.transfer
-  at ForkedERC20Wrapper.transferWithoutBalance (src/ForkedERC20Wrapper.sol:14:89)
-  at ForkBacktraceTest.testTransferWithoutBalance (test/ForkBacktrace.t.sol:18:60)
+  at ForkedERC20Wrapper.transferWithoutBalance (src/ForkedERC20Wrapper.sol:14:9)
+  at ForkBacktraceTest.testTransferWithoutBalance (test/ForkBacktrace.t.sol:18:9)
 
 Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 ...
@@ -511,13 +511,13 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
 No files changed, compilation skipped
 ...
 Ran 1 test for test/ForkBacktrace.t.sol:ForkBacktraceTest
-[FAIL: ERC20: transfer amount exceeds allowance] testTransferFromWithoutApproval() ([GAS])
+[FAIL: ERC20: transfer amount exceeds allowance] testTransferFromWithoutApproval() (block: [..]) ([GAS])
 ...
 Backtrace:
   at FiatTokenV2_2.transferFrom
   at FiatTokenProxy.fallback
-  at ForkedERC20Wrapper.transferFromWithoutApproval (src/ForkedERC20Wrapper.sol:18:101)
-  at ForkBacktraceTest.testTransferFromWithoutApproval (test/ForkBacktrace.t.sol:22:65)
+  at ForkedERC20Wrapper.transferFromWithoutApproval (src/ForkedERC20Wrapper.sol:18:9)
+  at ForkBacktraceTest.testTransferFromWithoutApproval (test/ForkBacktrace.t.sol:22:9)
 ...
 "#]]);
 });

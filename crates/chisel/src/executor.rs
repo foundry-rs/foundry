@@ -2,7 +2,10 @@
 //!
 //! This module contains the execution logic for the [SessionSource].
 
-use crate::prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper};
+use crate::{
+    prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper},
+    source::CachedBackend,
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
 use alloy_primitives::{Address, B256, U256, hex};
@@ -12,12 +15,13 @@ use foundry_evm::{
     backend::Backend,
     core::evm::{BlockEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     decode::decode_console_logs,
-    executors::ExecutorBuilder,
     inspectors::CheatsConfig,
-    traces::TraceMode,
+    opts::{ExecutionSpecContext, resolve_execution_spec},
+    traces::TraceRequirements,
 };
 use solar::{
-    ast::{ElementaryType, LitKind, StrKind, UnOpKind},
+    ast::{ElementaryType, LitKind, StmtKind as AstStmtKind, StrKind, UnOpKind, yul},
+    interface::Session,
     sema::{
         hir::{Event, Expr, ExprKind, StmtKind},
         ty::{Gcx, Ty, TyKind},
@@ -25,6 +29,67 @@ use solar::{
 };
 use std::ops::ControlFlow;
 use yansi::Paint;
+
+/// Result of inspecting a Solidity snippet.
+#[derive(Debug)]
+pub struct InspectResult {
+    /// Whether the input was fully handled by inspection.
+    pub control_flow: ControlFlow<()>,
+    /// The formatted value to display, if any.
+    pub formatted_output: Option<String>,
+    /// An expression that recreates the inspected value, if any.
+    pub last_result: Option<String>,
+    /// Input to execute and persist after inspection, if it differs from the original input.
+    pub replay_input: Option<String>,
+}
+
+impl InspectResult {
+    const fn empty(control_flow: ControlFlow<()>) -> Self {
+        Self { control_flow, formatted_output: None, last_result: None, replay_input: None }
+    }
+}
+
+struct YulInspection {
+    inspector_input: String,
+    replay_input: String,
+}
+
+fn yul_inspection(input: &str, session_source: &str) -> Option<YulInspection> {
+    let sess = Session::builder().with_buffer_emitter(Default::default()).build();
+    sess.enter_sequential(|| {
+        let arena = solar::ast::Arena::new();
+        let mut parser = solar::parse::Parser::from_source_code(
+            &sess,
+            &arena,
+            "ChiselInput.sol".to_string().into(),
+            input,
+        )
+        .ok()?;
+        let stmt = parser.parse_stmt().map_err(|err| err.emit()).ok()?;
+        if !parser.token.is_eof() {
+            return None;
+        }
+        let AstStmtKind::Assembly(assembly) = &stmt.kind else { return None };
+        let last = assembly.block.stmts.last()?;
+        let yul::StmtKind::Expr(expr) = &last.kind else { return None };
+
+        let expr_range = sess.source_map().span_to_source(expr.span).ok()?.data;
+        let expression = input.get(expr_range.clone())?;
+        let result_var = std::iter::once("__chisel_yul_result".to_string())
+            .chain((1..).map(|suffix| format!("__chisel_yul_result_{suffix}")))
+            .find(|name| !input.contains(name) && !session_source.contains(name))?;
+
+        let mut assembly = input.to_string();
+        assembly.replace_range(expr_range.clone(), &format!("{result_var} := {expression}"));
+        let inspector_input = format!(
+            "uint256 {result_var}; {assembly}\nbytes memory inspectoor = abi.encode({result_var});"
+        );
+
+        let mut replay_input = input.to_string();
+        replay_input.replace_range(expr_range, &format!("pop({expression})"));
+        Some(YulInspection { inspector_input, replay_input })
+    })
+}
 
 /// Executor implementation for [SessionSource]
 impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
@@ -56,16 +121,26 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     ///
     /// ### Returns
     ///
-    /// If the input is valid `Ok((continue, formatted_output))` where:
-    /// - `continue` is true if the input should be appended to the source
-    /// - `formatted_output` is the formatted value, if any
-    pub async fn inspect(&self, input: &str) -> Result<(ControlFlow<()>, Option<String>)> {
+    /// If the input is valid, returns its [`InspectResult`].
+    pub async fn inspect(&self, input: &str) -> Result<InspectResult> {
         let line = format!("bytes memory inspectoor = abi.encode({input});");
-        let mut source = match self.clone_with_new_line(line) {
-            Ok((source, _)) => source,
+        let (mut source, replay_input) = match self.clone_with_new_line(line) {
+            Ok((source, _)) => (source, None),
             Err(err) => {
                 debug!(%err, "failed to build new source for inspection");
-                return Ok((ControlFlow::Continue(()), None));
+                let Some(inspection) = yul_inspection(input, &self.to_repl_source()) else {
+                    return Ok(InspectResult::empty(ControlFlow::Continue(())));
+                };
+                if self
+                    .clone_with_new_line(input.to_string())
+                    .is_ok_and(|(source, _)| source.build().is_ok())
+                {
+                    return Ok(InspectResult::empty(ControlFlow::Continue(())));
+                }
+                let Ok((source, _)) = self.clone_with_new_line(inspection.inspector_input) else {
+                    return Ok(InspectResult::empty(ControlFlow::Continue(())));
+                };
+                (source, Some(inspection.replay_input))
             }
         };
 
@@ -77,13 +152,33 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             Ok(res) => (res, None),
             Err(err) => {
                 debug!(?err, %input, "execution failed");
+                let should_execute = self
+                    .clone_with_new_line(input.to_string())
+                    .ok()
+                    .and_then(|(source, do_execute)| {
+                        if !do_execute {
+                            return None;
+                        }
+                        source.build().ok().map(|output| {
+                            output.enter(|output| {
+                                let body = output.run_func_body();
+                                let Some(last) = body.last() else { return false };
+                                let StmtKind::Expr(expr) = last.kind else { return false };
+                                should_continue(expr)
+                            })
+                        })
+                    })
+                    .unwrap_or(false);
+                if should_execute {
+                    return Ok(InspectResult::empty(ControlFlow::Continue(())));
+                }
                 match source_without_inspector.execute().await {
                     Ok(res) => (res, Some(err)),
                     Err(_) => {
                         if self.config.foundry_config.verbosity >= 3 {
                             sh_err!("Could not inspect: {err}")?;
                         }
-                        return Ok((ControlFlow::Continue(()), None));
+                        return Ok(InspectResult::empty(ControlFlow::Continue(())));
                     }
                 }
             }
@@ -98,7 +193,12 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                 output.get_event(input).map(|eid| format_event_definition(gcx, gcx.hir.event(eid)))
             });
             if let Some(formatted_event) = formatted_event {
-                return Ok((ControlFlow::Break(()), Some(formatted_event?)));
+                return Ok(InspectResult {
+                    control_flow: ControlFlow::Break(()),
+                    formatted_output: Some(formatted_event?),
+                    last_result: None,
+                    replay_input: None,
+                });
             }
 
             // we were unable to check the event
@@ -107,7 +207,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             }
 
             debug!(%err, %input, "failed abi encode input");
-            return Ok((ControlFlow::Break(()), None));
+            return Ok(InspectResult::empty(ControlFlow::Break(())));
         }
         drop(source_without_inspector);
 
@@ -151,7 +251,7 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
         });
 
         let Some((cont, ty)) = res_ty else {
-            return Ok((ControlFlow::Continue(()), None));
+            return Ok(InspectResult::empty(ControlFlow::Continue(())));
         };
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
@@ -165,42 +265,81 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
             memory.get(offset..offset + len)
         })();
         let Some(data) = data else {
-            eyre::bail!("Failed to inspect last expression: could not retrieve data from memory")
+            eyre::bail!("Failed to inspect last expression: could not retrieve data from memory");
         };
+        let last_result = format!("abi.decode(hex\"{}\", ({ty}))", hex::encode(data));
         let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
-        let c = if cont { ControlFlow::Continue(()) } else { ControlFlow::Break(()) };
-        Ok((c, Some(format_token(token))))
+        let c = if cont || replay_input.is_some() {
+            ControlFlow::Continue(())
+        } else {
+            ControlFlow::Break(())
+        };
+        Ok(InspectResult {
+            control_flow: c,
+            formatted_output: Some(format_token(token)),
+            last_result: Some(last_result),
+            replay_input,
+        })
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner<FEN>> {
-        let (evm_env, tx_env, fork_block) =
-            self.config.evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
-
-        let backend = match self.config.backend.clone() {
-            Some(backend) => backend,
+        let (mut evm_env, tx_env, backend, resolved_fork) = match self.config.cached_backend.clone()
+        {
+            Some(CachedBackend { backend, resolved_fork }) => {
+                let (evm_env, tx_env) = self
+                    .config
+                    .evm_opts
+                    .env_with_resolved_fork::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>(
+                        resolved_fork.as_ref(),
+                    )
+                    .await?;
+                (evm_env, tx_env, backend, resolved_fork)
+            }
             None => {
-                let fork = self.config.evm_opts.get_fork(
+                let (evm_env, tx_env, resolved_fork) = self
+                    .config
+                    .evm_opts
+                    .env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
+                    .await?;
+                let fork = self.config.evm_opts.get_fork_resolved(
                     &self.config.foundry_config,
                     evm_env.cfg_env.chain_id,
-                    fork_block,
+                    resolved_fork.as_ref(),
                 );
                 let backend = Backend::spawn(fork)?;
-                self.config.backend = Some(backend.clone());
-                backend
+                self.config.cached_backend = Some(CachedBackend {
+                    backend: backend.clone(),
+                    resolved_fork: resolved_fork.clone(),
+                });
+                (evm_env, tx_env, backend, resolved_fork)
             }
         };
+        let fork_context = resolved_fork.as_ref().map(|fork| fork.context());
+        let fork_chain_id = fork_context.map(|context| context.source_chain_id);
+        let fork_hardfork = fork_context.and_then(|context| context.hardfork);
+        self.config.source_chain_id = fork_chain_id;
+        self.config.resolved_hardfork = resolve_execution_spec(
+            &self.config.foundry_config,
+            self.config.evm_opts.networks,
+            &mut evm_env,
+            ExecutionSpecContext::local_or_fork(fork_chain_id, fork_hardfork),
+            None,
+            None,
+        );
 
-        let executor = ExecutorBuilder::default()
+        let executor = self
+            .config
+            .executor_builder
+            .clone()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.foundry_config.live_logs)
                     .chisel_state(final_pc)
-                    .trace_mode(TraceMode::Call)
+                    .trace_requirements(TraceRequirements::none().with_calls(true))
                     .cheatcodes(
                         CheatsConfig::new(
                             &self.config.foundry_config,
                             self.config.evm_opts.clone(),
-                            None,
                             None,
                             None,
                             false,
@@ -209,9 +348,8 @@ impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
                     )
             })
             .gas_limit(self.config.evm_opts.gas_limit())
-            .spec_id(self.config.foundry_config.evm_spec_id::<SpecFor<FEN>>())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
-            .build(evm_env, tx_env, backend);
+            .build(evm_env, tx_env, backend, self.config.evm_opts.networks);
 
         Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }
@@ -259,17 +397,20 @@ fn format_token(token: DynSolValue) -> String {
         DynSolValue::Bool(b) => {
             format!("Type: {}\n└ Value: {}", "bool".red(), b.cyan())
         }
-        DynSolValue::String(_) | DynSolValue::Bytes(_) => {
-            let hex = hex::encode(token.abi_encode());
-            let s = token.as_str();
+        DynSolValue::Bytes(bytes) => {
             format!(
-                "Type: {}\n{}├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
-                if s.is_some() { "string" } else { "dynamic bytes" }.red(),
-                if let Some(s) = s {
-                    format!("├ UTF-8: {}\n", s.cyan())
-                } else {
-                    String::default()
-                },
+                "Type: {}\n└ Data: {}",
+                "dynamic bytes".red(),
+                hex::encode_prefixed(bytes).cyan()
+            )
+        }
+        token @ DynSolValue::String(_) => {
+            let hex = hex::encode(token.abi_encode());
+            let s = token.as_str().expect("matched string value");
+            format!(
+                "Type: {}\n├ UTF-8: {}\n├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
+                "string".red(),
+                s.cyan(),
                 "[0x00:0x20]".yellow(),
                 format!("0x{}", &hex[64..128]).cyan(),
                 "[0x20:..]".yellow(),
@@ -381,6 +522,8 @@ fn should_continue(expr: &Expr<'_>) -> bool {
     match &expr.kind {
         // assignments and compound assignments
         ExprKind::Assign(_, _, _) => true,
+        // Delete expressions.
+        ExprKind::Delete(_) => true,
         // ++/-- pre/post operations
         ExprKind::Unary(op, _) => matches!(
             op.kind,
@@ -491,12 +634,79 @@ fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::source::SessionSourceConfig;
     use foundry_compilers::{error::SolcError, solc::Solc};
-    use foundry_evm::core::evm::EthEvmNetwork;
+    use foundry_config::Config;
+    #[cfg(feature = "monad")]
+    use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
+    use foundry_evm::{core::evm::EthEvmNetwork, executors::ExecutorBuilder, opts::EvmOpts};
+    use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
     use solar::sema::Compiler;
     use std::sync::Mutex;
 
     type TestSessionSource = SessionSource<EthEvmNetwork>;
+
+    async fn assert_celo_transfer_precompile(config: SessionSourceConfig<EthEvmNetwork>) {
+        let mut source = SessionSource::<EthEvmNetwork>::new(config).unwrap();
+        let mut runner = source.build_runner(0).await.unwrap();
+        let from = Address::with_last_byte(1);
+        let to = Address::with_last_byte(2);
+        let amount = U256::from(4);
+        runner.executor.set_balance(from, U256::from(10)).unwrap();
+        runner.executor.set_balance(to, U256::from(1)).unwrap();
+
+        let mut input = vec![0u8; 96];
+        input[12..32].copy_from_slice(from.as_slice());
+        input[44..64].copy_from_slice(to.as_slice());
+        input[64..96].copy_from_slice(&amount.to_be_bytes::<32>());
+        let result = runner
+            .executor
+            .transact_raw(Address::ZERO, CELO_TRANSFER_ADDRESS, input.into(), U256::ZERO)
+            .unwrap();
+
+        assert!(!result.reverted);
+        assert_eq!(runner.executor.get_balance(from).unwrap(), U256::from(6));
+        assert_eq!(runner.executor.get_balance(to).unwrap(), U256::from(5));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn celo_network_reaches_fresh_and_restored_runners() {
+        let networks = NetworkConfigs::with_celo();
+        let mut evm_opts = EvmOpts { networks, ..Default::default() };
+        evm_opts.env.gas_limit = 30_000_000u64.into();
+        let config = SessionSourceConfig::<EthEvmNetwork> {
+            foundry_config: Config { networks, ..Default::default() },
+            evm_opts,
+            ..Default::default()
+        };
+
+        assert_celo_transfer_precompile(config.clone()).await;
+
+        let encoded = serde_json::to_string(&config).unwrap();
+        let mut restored =
+            serde_json::from_str::<SessionSourceConfig<EthEvmNetwork>>(&encoded).unwrap();
+        restored.initialize_local_context();
+        assert_celo_transfer_precompile(restored).await;
+    }
+
+    #[cfg(feature = "monad")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn chisel_runner_uses_dispatched_monad_tooling() {
+        let networks = NetworkConfigs::with_monad();
+        let mut source = SessionSource::<MonadEvmNetwork>::new(SessionSourceConfig {
+            foundry_config: Config { networks, ..Default::default() },
+            evm_opts: EvmOpts { networks, ..Default::default() },
+            executor_builder: ExecutorBuilder::<MonadEvmNetwork>::new(),
+            ..Default::default()
+        })
+        .unwrap();
+
+        let runner = source.build_runner(0).await.unwrap();
+        assert_eq!(
+            runner.executor.inspector().extra_cheatcode_addresses(),
+            &[MONAD_CHEATCODE_ADDRESS]
+        );
+    }
 
     #[test]
     fn test_expressions() {
@@ -819,8 +1029,7 @@ mod tests {
         *s = new_source.clone();
 
         let src = new_source.to_repl_source();
-        let mut opts = solar::interface::config::Opts::default();
-        opts.unstable.typeck = true;
+        let opts = solar::interface::config::CompileOpts::default();
         let sess = solar::interface::Session::builder()
             .opts(opts)
             .with_buffer_emitter(Default::default())

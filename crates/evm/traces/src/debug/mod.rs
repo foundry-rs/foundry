@@ -102,10 +102,6 @@ impl<'a> DebugStepsWalker<'a> {
         self.src_map(self.current_step - 1)
     }
 
-    fn current_src_map(&self) -> Option<(SourceElement, &SourceData)> {
-        self.src_map(self.current_step)
-    }
-
     fn is_same_loc(&self, step: usize, other: usize) -> bool {
         let Some((loc, _)) = self.src_map(step) else {
             return false;
@@ -128,7 +124,7 @@ impl<'a> DebugStepsWalker<'a> {
             return;
         }
 
-        let Some((source_element, source)) = self.current_src_map() else {
+        let Some((source_element, source)) = self.src_map(self.current_step) else {
             return;
         };
 

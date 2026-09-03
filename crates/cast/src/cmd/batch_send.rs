@@ -6,7 +6,10 @@
 
 use crate::{
     call_spec::CallSpec,
-    cmd::send::{cast_send, cast_send_with_access_key},
+    cmd::{
+        auth::confirm_auth_rpc_disclosure_during_build,
+        send::{cast_send, cast_send_with_tempo_wallet},
+    },
     tempo,
     tx::{self, CastTxBuilder, SendTxOpts},
 };
@@ -44,6 +47,10 @@ pub struct BatchSendArgs {
     #[command(flatten)]
     pub tx: TransactionOpts,
 
+    /// Skip the EIP-7702 authorization disclosure confirmation.
+    #[arg(long)]
+    pub force: bool,
+
     /// Send via `eth_sendTransaction` using the `--from` argument or $ETH_FROM as sender
     #[arg(long, requires = "from")]
     pub unlocked: bool,
@@ -51,7 +58,7 @@ pub struct BatchSendArgs {
 
 impl BatchSendArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { calls, send_tx, mut tx, unlocked } = self;
+        let Self { calls, send_tx, mut tx, force, unlocked } = self;
         let has_session = tx.tempo.session_id()?.is_some();
         // Tempo sessions must sign with the session key; these modes route signing through a
         // node-managed account or browser wallet instead.
@@ -79,23 +86,15 @@ impl BatchSendArgs {
             provider.client().set_poll_interval(Duration::from_secs(interval))
         }
 
-        // Resolve signer to detect keychain mode. Tempo sessions are resolved after chain lookup
-        // so they can fail closed on wrong-chain session use.
-        let (mut signer, mut tempo_access_key) =
-            if has_session { (None, None) } else { send_tx.eth.wallet.maybe_signer().await? };
-
         // Parse all call specs
         let call_specs: Vec<CallSpec> =
             calls.iter().map(|s| CallSpec::parse(s)).collect::<Result<Vec<_>>>()?;
 
         // Get chain for parsing function args
         let chain = utils::get_chain(config.chain, &provider).await?;
-        if has_session
-            && let Some(session) =
-                tx.tempo.session_signer_for_wallet(&send_tx.eth.wallet, chain.id())?
-        {
-            (signer, tempo_access_key) = (Some(session.signer), Some(session.access_key));
-        }
+        let (signer, tempo_access_key) =
+            tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id())
+                .await?;
 
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
         let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
@@ -119,9 +118,9 @@ impl BatchSendArgs {
         sh_status!("Building batch transaction with {} call(s)...", tempo_calls.len())?;
         tempo::print_expires(expires_at)?;
 
-        // Preserve key_id for modes that do not call build_with_access_key, such as unlocked.
+        // Preserve key_id for modes that do not call build_with_tempo_wallet, such as unlocked.
         if let Some(ref access_key) = tempo_access_key {
-            tx.tempo.key_id = Some(access_key.key_address);
+            tx.tempo.key_id = Some(access_key.key_id()?);
         }
 
         // Build transaction request with calls
@@ -141,6 +140,9 @@ impl BatchSendArgs {
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
 
         if unlocked {
+            if !confirm_auth_rpc_disclosure_during_build(&builder, config.sender, force)? {
+                return Ok(());
+            }
             let (tx, _) = builder.build(config.sender).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             cast_send(
@@ -157,33 +159,38 @@ impl BatchSendArgs {
             .await
             .map(drop)
         } else {
-            let signer = match signer {
-                Some(s) => s,
-                None => send_tx.eth.wallet.signer().await?,
-            };
-
             if let Some(ref access_key) = tempo_access_key {
-                let (tx_request, _) =
-                    builder.build_with_access_key(access_key.wallet_address, access_key).await?;
+                if !confirm_auth_rpc_disclosure_during_build(&builder, access_key.account(), force)?
+                {
+                    return Ok(());
+                }
+                let (tx_request, _, prepared) = builder.build_with_tempo_wallet(access_key).await?;
                 maybe_print_resolved_lane(
                     resolved_lane.as_ref(),
                     tx_request.nonce().unwrap_or_default(),
                 )?;
-                cast_send_with_access_key(
+                cast_send_with_tempo_wallet(
                     &provider,
                     tx_request,
-                    &signer,
-                    access_key,
+                    &prepared,
                     Some(chain),
                     None,
                     send_tx.cast_async,
+                    send_tx.sync,
                     send_tx.confirmations,
                     timeout,
                     !config.eth_rpc_curl,
                 )
                 .await?;
             } else {
+                let signer = match signer {
+                    Some(s) => s,
+                    None => send_tx.eth.wallet.signer().await?,
+                };
                 tx::validate_from_address(send_tx.eth.wallet.from, Signer::address(&signer))?;
+                if !confirm_auth_rpc_disclosure_during_build(&builder, &signer, force)? {
+                    return Ok(());
+                }
                 let (tx_request, _) = builder.build(&signer).await?;
                 maybe_print_resolved_lane(
                     resolved_lane.as_ref(),

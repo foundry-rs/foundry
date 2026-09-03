@@ -199,7 +199,7 @@ impl SignaturesIdentifier {
 
     /// Creates a new `SignaturesIdentifier` from the global configuration.
     pub fn from_config(config: &Config) -> Result<Self> {
-        Self::new(config.offline)
+        Self::new(config.offline || config.tracing.external_identification_timeout == 0)
     }
 
     /// Creates an offline `SignaturesIdentifier` with the default cache directory and local ABIs.
@@ -341,20 +341,25 @@ impl SignaturesIdentifier {
         trace!(target: "evm::traces", ?selectors, "identifying selectors");
 
         let mut cache_r = self.0.cache.read().await;
-        if let Some(client) = &self.0.client {
-            let query =
-                selectors.iter().copied().filter(|v| !cache_r.contains_key(v)).collect::<Vec<_>>();
-            if !query.is_empty() {
-                drop(cache_r);
-                let mut cache_w = self.0.cache.write().await;
-                if let Ok(res) = client.decode_selectors(&query).await {
-                    for (selector, signatures) in std::iter::zip(query, res) {
-                        cache_w.signatures.insert(selector, signatures.into_iter().next());
-                    }
+        if let Some(client) = &self.0.client
+            && selectors.iter().any(|selector| !cache_r.contains_key(selector))
+        {
+            drop(cache_r);
+            let mut cache_w = self.0.cache.write().await;
+            let query = selectors
+                .iter()
+                .copied()
+                .filter(|selector| !cache_w.contains_key(selector))
+                .collect::<Vec<_>>();
+            if !query.is_empty()
+                && let Ok(res) = client.decode_selectors(&query).await
+            {
+                for (selector, signatures) in std::iter::zip(query, res) {
+                    cache_w.signatures.insert(selector, signatures.into_iter().next());
                 }
-                drop(cache_w);
-                cache_r = self.0.cache.read().await;
             }
+            drop(cache_w);
+            cache_r = self.0.cache.read().await;
         }
         selectors.iter().map(|selector| cache_r.get(selector).unwrap_or_default()).collect()
     }
@@ -392,6 +397,16 @@ impl Drop for SignaturesIdentifierInner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_external_identification_timeout_disables_client() {
+        let mut config = Config::default();
+        config.tracing.external_identification_timeout = 0;
+
+        let identifier = SignaturesIdentifier::from_config(&config).unwrap();
+
+        assert!(identifier.0.client.is_none());
+    }
 
     #[test]
     fn unknown_signatures_not_persisted_to_disk() {

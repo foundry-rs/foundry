@@ -20,12 +20,6 @@ use data::{collect_preprocessor_data, create_deploy_helpers};
 mod deps;
 use deps::{PreprocessorDependencies, remove_bytecode_dependencies};
 
-/// Returns the range of the given span in the source map.
-#[track_caller]
-fn span_to_range(source_map: &SourceMap, span: Span) -> Range<usize> {
-    source_map.span_to_range(span).unwrap()
-}
-
 /// Preprocessor that replaces static bytecode linking in tests and scripts (`new Contract`) with
 /// dynamic linkage through (`Vm.create*`).
 ///
@@ -130,4 +124,10 @@ impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
         let paths = paths.clone().with_language::<SolcLanguage>();
         self.preprocess(solc, input, &paths, mocks)
     }
+}
+
+/// Returns the range of the given span in the source map.
+#[track_caller]
+fn span_to_range(source_map: &SourceMap, span: Span) -> Range<usize> {
+    source_map.span_to_range(span).unwrap()
 }

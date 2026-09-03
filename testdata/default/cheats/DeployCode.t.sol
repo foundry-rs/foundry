@@ -47,6 +47,13 @@ contract DeployCodeTest is Test {
         assertEq(addrDefault.code, addrDeployCode.code);
     }
 
+    function testDeployCodeWithRemapping() public {
+        address addrDefault = address(new TestContract());
+        address addrDeployCode = vm.deployCode("@cheats/DeployCode.t.sol:TestContract");
+
+        assertEq(addrDefault.code, addrDeployCode.code);
+    }
+
     function testDeployCodeWithArgs() public {
         address withNew = address(new TestContractWithArgs(1, 2));
         TestContractWithArgs withDeployCode =

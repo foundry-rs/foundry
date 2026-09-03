@@ -43,6 +43,22 @@ contract NonReentrantNotFirst {
     receive() external payable nonReentrant onlyOwner {}
 }
 
+contract FallbackReceiveNonReentrantNotFirst {
+    modifier nonReentrant() {
+        _;
+    }
+
+    modifier onlyOwner() {
+        _;
+    }
+
+    receive() external payable onlyOwner nonReentrant { //~WARN: `nonReentrant` should be the first modifier
+    }
+
+    fallback() external payable onlyOwner nonReentrant { //~WARN: `nonReentrant` should be the first modifier
+    }
+}
+
 contract BaseReentrancyGuard {
     modifier nonReentrant() {
         _;

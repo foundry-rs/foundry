@@ -15,11 +15,11 @@ use foundry_wallets as _;
 
 pub mod args;
 pub mod cmd;
-pub mod diagnostic;
-pub mod introspect;
 pub mod opts;
 
 pub mod coverage;
+
+pub mod brutalizer;
 
 pub mod gas_report;
 
@@ -36,6 +36,7 @@ pub use runner::ContractRunner;
 mod progress;
 pub mod result;
 mod symbolic_minimizer;
+mod symbolic_regression;
 
 // TODO: remove
 pub use foundry_common::traits::TestFilter;

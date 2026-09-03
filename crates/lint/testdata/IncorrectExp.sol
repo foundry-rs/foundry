@@ -1,3 +1,4 @@
+//@compile-flags: --only-lint incorrect-exp
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
@@ -47,7 +48,7 @@ contract IncorrectExp {
         d = 0xff ^ 0x0f; // hex xor: legitimate bit manipulation
         e = x ^ 1; // a variable operand, not two literals
         f = 2 ** 64; // actual exponentiation
-        g = id(10) ^ 18; // a non-cast call, not a literal: must not be unwrapped
+        g = (id(10) ^ 18) + id(0); // a non-cast call, not a literal: must not be unwrapped
         h = 1e1 ^ 18; // scientific notation base (1e1 evaluates to 10): not a plain integer literal
         i = 10 ^ 1e1; // scientific notation exponent: not a plain integer literal
         j = bytes32(uint256(2)) ^ bytes32(uint256(64)); // bytesN xor: not an integer cast

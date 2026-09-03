@@ -1,4 +1,4 @@
-use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
+use crate::sol::SolLint;
 
 mod unwrapped_modifier_logic;
 use unwrapped_modifier_logic::UNWRAPPED_MODIFIER_LOGIC;

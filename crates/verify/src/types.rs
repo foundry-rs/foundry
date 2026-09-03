@@ -20,7 +20,9 @@ impl FromStr for VerificationType {
         match s {
             "full" => Ok(Self::Full),
             "partial" => Ok(Self::Partial),
-            _ => eyre::bail!("Invalid verification type"),
+            _ => {
+                eyre::bail!("Invalid verification type");
+            }
         }
     }
 }

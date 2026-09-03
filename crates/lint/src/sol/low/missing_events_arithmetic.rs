@@ -145,10 +145,6 @@ impl WriteState {
     fn record_write(&mut self, write: StateWrite) {
         self.pending_writes.push(write);
     }
-
-    fn record_event(&mut self) {
-        self.pending_writes.clear();
-    }
 }
 
 #[derive(Default)]
@@ -334,7 +330,7 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
             }
             StmtKind::Emit(expr) => {
                 self.analyze_expr(expr, &mut state);
-                state.record_event();
+                state.pending_writes.clear();
                 WriteFlow::fallthrough(state)
             }
             StmtKind::Return(expr) => {
