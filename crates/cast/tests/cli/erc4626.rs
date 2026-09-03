@@ -2,7 +2,7 @@
 
 use alloy_primitives::U256;
 use anvil::{NodeConfig, NodeHandle};
-use foundry_test_utils::{rpc::next_http_archive_rpc_url, util::OutputExt};
+use foundry_test_utils::{rpc::next_http_archive_rpc_url, str, util::OutputExt};
 
 mod anvil_const {
     pub const PK1: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -72,6 +72,26 @@ fn assert_read_surface(
     }
 }
 
+fn assert_inspection_surface(
+    cmd: &mut foundry_test_utils::TestCommand,
+    vault: &ProductionVault,
+    rpc: &str,
+) {
+    for (command, args) in
+        [("info", Vec::new()), ("position", vec![anvil_const::ADDR1]), ("check", Vec::new())]
+    {
+        let output = cmd
+            .cast_fuse()
+            .args(["erc4626", command, vault.address])
+            .args(args)
+            .args(["--rpc-url", rpc])
+            .assert_success()
+            .get_output()
+            .stdout_lossy();
+        assert!(!output.trim().is_empty(), "{} {command} returned no output", vault.project);
+    }
+}
+
 fn read_amount(
     cmd: &mut foundry_test_utils::TestCommand,
     command: &str,
@@ -106,6 +126,15 @@ fn read_erc20_balance(
 }
 
 fn deploy_test_vault(cmd: &mut foundry_test_utils::TestCommand, rpc: &str, private_key: &str) {
+    deploy_test_contract(cmd, rpc, private_key, "TestVault");
+}
+
+fn deploy_test_contract(
+    cmd: &mut foundry_test_utils::TestCommand,
+    rpc: &str,
+    private_key: &str,
+    contract: &str,
+) {
     cmd.args([
         "create",
         "--private-key",
@@ -113,7 +142,7 @@ fn deploy_test_vault(cmd: &mut foundry_test_utils::TestCommand, rpc: &str, priva
         "--rpc-url",
         rpc,
         "--broadcast",
-        "src/TestVault.sol:TestVault",
+        &format!("src/TestVault.sol:{contract}"),
     ])
     .assert_success();
 }
@@ -280,6 +309,218 @@ forgetest_async!(erc4626_complete_synchronous_interface, |prj, cmd| {
         U256::from(100)
     );
     assert_eq!(read_erc20_balance(&mut cmd, &asset, anvil_const::ADDR2, &rpc), U256::from(50));
+
+    cmd.cast_fuse()
+        .args(["erc4626", "info", anvil_const::VAULT, "--human", "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(format!(
+            "Vault                {}\n\
+             Name                 Test Vault\n\
+             Symbol               TV\n\
+             Decimals             18\n\
+             Asset                {asset}\n\
+             Asset name           Test Vault Asset\n\
+             Asset symbol         TVA\n\
+             Asset decimals       18\n\
+             Total assets         0.000000000000000100 TVA\n\
+             Total supply         0.000000000000000100 TV\n\
+             Assets per share     1 TVA\n\
+             Shares per asset     1 TV\n",
+            anvil_const::VAULT
+        ));
+
+    cmd.cast_fuse()
+        .args(["erc4626", "info", anvil_const::VAULT, "--json", "--rpc-url", &rpc])
+        .assert_json_stdout(format!(
+            r#"{{
+                "schema_version": 1,
+                "success": true,
+                "data": {{
+                    "vault": "{}",
+                    "name": "Test Vault",
+                    "symbol": "TV",
+                    "decimals": 18,
+                    "asset": "{asset}",
+                    "asset_name": "Test Vault Asset",
+                    "asset_symbol": "TVA",
+                    "asset_decimals": 18,
+                    "total_assets": {{
+                        "raw": "100",
+                        "formatted": "0.000000000000000100"
+                    }},
+                    "total_supply": {{
+                        "raw": "100",
+                        "formatted": "0.000000000000000100"
+                    }},
+                    "assets_per_share": {{ "raw": "1000000000000000000", "formatted": "1" }},
+                    "shares_per_asset": {{ "raw": "1000000000000000000", "formatted": "1" }}
+                }},
+                "errors": [],
+                "warnings": []
+            }}"#,
+            anvil_const::VAULT
+        ));
+
+    cmd.cast_fuse()
+        .args([
+            "erc4626",
+            "position",
+            anvil_const::VAULT,
+            anvil_const::ADDR1,
+            "--json",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_json_stdout(format!(
+            r#"{{
+                "schema_version": 1,
+                "success": true,
+                "data": {{
+                    "vault": "{}",
+                    "owner": "{}",
+                    "asset": "{asset}",
+                    "share_symbol": "TV",
+                    "share_decimals": 18,
+                    "asset_symbol": "TVA",
+                    "asset_decimals": 18,
+                    "share_balance": {{
+                        "raw": "100",
+                        "formatted": "0.000000000000000100"
+                    }},
+                    "assets_equivalent": {{
+                        "raw": "100",
+                        "formatted": "0.000000000000000100"
+                    }},
+                    "max_withdraw": {{ "raw": "0", "formatted": "0" }},
+                    "max_redeem": {{ "raw": "0", "formatted": "0" }}
+                }},
+                "errors": [],
+                "warnings": [
+                    {{
+                        "level": "warning",
+                        "code": "erc4626_zero_max_withdraw",
+                        "message": "Vault reported zero from maxWithdraw even though the owner has shares; liquidity, gates, withdrawal queues, or a conservative implementation may prevent the base ERC-4626 exit."
+                    }},
+                    {{
+                        "level": "warning",
+                        "code": "erc4626_zero_max_redeem",
+                        "message": "Vault reported zero from maxRedeem even though the owner has shares; liquidity, gates, withdrawal queues, or a conservative implementation may prevent the base ERC-4626 exit."
+                    }}
+                ]
+            }}"#,
+            anvil_const::VAULT,
+            anvil_const::ADDR1
+        ));
+
+    cmd.cast_fuse()
+        .args(["erc4626", "check", anvil_const::VAULT, "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(format!(
+            "Vault                {}\n\
+             Account              0x0000000000000000000000000000000000000000\n\
+             Note: This probes read-call behavior only; it does not prove state-changing selector coverage or semantic ERC-4626 compliance.\n\
+             PASS contract code            contract bytecode is present\n\
+             PASS asset()                  returned {asset}\n\
+             PASS asset contract           underlying asset bytecode is present\n\
+             PASS asset balanceOf(address) call succeeded\n\
+             PASS totalAssets()            call succeeded\n\
+             PASS totalSupply()            call succeeded\n\
+             PASS balanceOf(address)       call succeeded\n\
+             PASS allowance(address,address) call succeeded\n\
+             PASS convertToShares(0)       returned zero\n\
+             PASS convertToAssets(0)       returned zero\n\
+             PASS maxDeposit(address)      call succeeded\n\
+             PASS previewDeposit(0)        returned zero\n\
+             PASS maxMint(address)         call succeeded\n\
+             PASS previewMint(0)           returned zero\n\
+             PASS maxWithdraw(address)     call succeeded\n\
+             PASS previewWithdraw(0)       returned zero\n\
+             PASS maxRedeem(address)       call succeeded\n\
+             PASS previewRedeem(0)         returned zero\n\
+             PASS name()                   call succeeded\n\
+             PASS symbol()                 call succeeded\n\
+             PASS decimals()               call succeeded\n\
+             Summary: 21 passed, 0 warnings, 0 failed\n",
+            anvil_const::VAULT
+        ));
+});
+
+forgetest_async!(erc4626_check_warns_for_known_extensions, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source("TestVault.sol", include_str!("../fixtures/TestVault.sol"));
+    deploy_test_contract(&mut cmd, &rpc, anvil_const::PK1, "TestAsyncVault");
+
+    cmd.cast_fuse()
+        .args(["erc4626", "check", anvil_const::VAULT, "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Vault                0x5FbDB2315678afecb367f032d93F642f64180aa3
+Account              0x0000000000000000000000000000000000000000
+Note: This probes read-call behavior only; it does not prove state-changing selector coverage or semantic ERC-4626 compliance.
+PASS contract code            contract bytecode is present
+WARN asset()                  returned the ERC-7535 native-asset sentinel
+PASS totalAssets()            call succeeded
+PASS totalSupply()            call succeeded
+PASS balanceOf(address)       call succeeded
+PASS allowance(address,address) call succeeded
+PASS convertToShares(0)       returned zero
+PASS convertToAssets(0)       returned zero
+PASS maxDeposit(address)      call succeeded
+WARN previewDeposit(0)        reverted as required by advertised asynchronous ERC-7540 deposit support
+PASS maxMint(address)         call succeeded
+WARN previewMint(0)           reverted as required by advertised asynchronous ERC-7540 deposit support
+PASS maxWithdraw(address)     call succeeded
+WARN previewWithdraw(0)       reverted as required by advertised asynchronous ERC-7540 redeem support
+PASS maxRedeem(address)       call succeeded
+WARN previewRedeem(0)         reverted as required by advertised asynchronous ERC-7540 redeem support
+PASS name()                   call succeeded
+PASS symbol()                 call succeeded
+PASS decimals()               call succeeded
+Summary: 14 passed, 5 warnings, 0 failed
+
+"#]]);
+});
+
+forgetest_async!(erc4626_check_fails_for_missing_interface, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_source("TestVault.sol", include_str!("../fixtures/TestVault.sol"));
+    deploy_test_contract(&mut cmd, &rpc, anvil_const::PK1, "TestInvalidVault");
+
+    cmd.cast_fuse()
+        .args(["erc4626", "check", anvil_const::VAULT, "--rpc-url", &rpc])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+Vault                0x5FbDB2315678afecb367f032d93F642f64180aa3
+Account              0x0000000000000000000000000000000000000000
+Note: This probes read-call behavior only; it does not prove state-changing selector coverage or semantic ERC-4626 compliance.
+PASS contract code            contract bytecode is present
+FAIL asset()                  call failed or returned incompatible data
+FAIL totalAssets()            call failed or returned incompatible data
+FAIL totalSupply()            call failed or returned incompatible data
+FAIL balanceOf(address)       call failed or returned incompatible data
+FAIL allowance(address,address) call failed or returned incompatible data
+FAIL convertToShares(0)       call failed or returned incompatible data
+FAIL convertToAssets(0)       call failed or returned incompatible data
+FAIL maxDeposit(address)      call failed or returned incompatible data
+FAIL previewDeposit(0)        call failed or returned incompatible data without advertised ERC-7540 support
+FAIL maxMint(address)         call failed or returned incompatible data
+FAIL previewMint(0)           call failed or returned incompatible data without advertised ERC-7540 support
+FAIL maxWithdraw(address)     call failed or returned incompatible data
+FAIL previewWithdraw(0)       call failed or returned incompatible data without advertised ERC-7540 support
+FAIL maxRedeem(address)       call failed or returned incompatible data
+FAIL previewRedeem(0)         call failed or returned incompatible data without advertised ERC-7540 support
+WARN name()                   optional ERC-20 metadata is unavailable
+WARN symbol()                 optional ERC-20 metadata is unavailable
+WARN decimals()               optional ERC-20 metadata is unavailable
+Summary: 1 passed, 3 warnings, 15 failed
+
+"#]]);
 });
 
 casttest!(erc4626_fork_reads_multiple_production_vaults, async |_prj, cmd| {
@@ -291,6 +532,7 @@ casttest!(erc4626_fork_reads_multiple_production_vaults, async |_prj, cmd| {
 
     for vault in PRODUCTION_VAULTS {
         assert_read_surface(&mut cmd, vault, &rpc);
+        assert_inspection_surface(&mut cmd, vault, &rpc);
     }
 });
 
@@ -302,4 +544,5 @@ casttest!(flaky_erc4626_fork_reads_tempo_vault, async |_prj, cmd| {
     let rpc = handle.http_endpoint();
 
     assert_read_surface(&mut cmd, &TEMPO_VAULT, &rpc);
+    assert_inspection_surface(&mut cmd, &TEMPO_VAULT, &rpc);
 });

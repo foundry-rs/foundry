@@ -1,24 +1,29 @@
 use std::str::FromStr;
 
 use crate::{
+    SimpleCast,
     cmd::send::SendTxArgs,
     format_uint_exp,
     tx::{SendTxOpts, TxParams},
 };
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
-use alloy_primitives::{Address, U256, address, hex};
+use alloy_primitives::{Address, FixedBytes, U256, address, hex};
+use alloy_provider::Provider;
 use alloy_sol_types::{SolCall, sol};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    json::{print_json_success, print_scalar},
+    json::{JsonMessage, print_json_success, print_json_success_with_warnings, print_scalar},
     opts::RpcOpts,
     utils::{LoadConfig, get_provider},
 };
 use foundry_common::shell;
+use serde::Serialize;
 
 const NATIVE_ASSET: Address = address!("EeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE");
+const ERC7540_ASYNC_DEPOSIT_INTERFACE: FixedBytes<4> = FixedBytes::new([0xce, 0x3b, 0xbe, 0x50]);
+const ERC7540_ASYNC_REDEEM_INTERFACE: FixedBytes<4> = FixedBytes::new([0x62, 0x0e, 0xe8, 0xe4]);
 
 sol! {
     #[sol(rpc)]
@@ -44,13 +49,89 @@ sol! {
             external
             returns (uint256 assets);
 
+        function name() external view returns (string);
+        function symbol() external view returns (string);
+        function decimals() external view returns (uint8);
+        function totalSupply() external view returns (uint256 shares);
         function balanceOf(address owner) external view returns (uint256 shares);
+        function allowance(address owner, address spender) external view returns (uint256 shares);
+    }
+
+    #[sol(rpc)]
+    interface IERC20Metadata {
+        function name() external view returns (string);
+        function symbol() external view returns (string);
+        function decimals() external view returns (uint8);
+        function balanceOf(address owner) external view returns (uint256 amount);
+    }
+
+    #[sol(rpc)]
+    interface IERC165 {
+        function supportsInterface(bytes4 interfaceId) external view returns (bool);
     }
 }
 
 /// Interact with synchronous ERC-4626 tokenized vaults.
 #[derive(Debug, Parser, Clone)]
 pub enum Erc4626Subcommand {
+    /// Show vault, asset, and exchange-rate information.
+    Info {
+        /// The ERC-4626 vault contract address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        vault: NameOrAddress,
+
+        /// Use formatted token amounts in text output.
+        #[arg(long)]
+        human: bool,
+
+        /// The block height to query at.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Show an account's shares, asset value, and withdrawal limits.
+    Position {
+        /// The ERC-4626 vault contract address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        vault: NameOrAddress,
+
+        /// The owner of the vault shares.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        owner: NameOrAddress,
+
+        /// Use formatted token amounts in text output.
+        #[arg(long)]
+        human: bool,
+
+        /// The block height to query at.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
+    /// Probe synchronous ERC-4626 interface compatibility.
+    Check {
+        /// The ERC-4626 vault contract address.
+        #[arg(value_parser = NameOrAddress::from_str)]
+        vault: NameOrAddress,
+
+        /// The account used for limit and balance probes.
+        #[arg(long, value_parser = NameOrAddress::from_str)]
+        account: Option<NameOrAddress>,
+
+        /// The block height to query at.
+        #[arg(long, short = 'B')]
+        block: Option<BlockId>,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
     /// Query the vault's underlying asset token.
     Asset {
         /// The ERC-4626 vault contract address.
@@ -342,9 +423,100 @@ pub enum Erc4626Subcommand {
     },
 }
 
+#[derive(Debug, Serialize)]
+struct TokenAmount {
+    raw: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    formatted: Option<String>,
+}
+
+impl TokenAmount {
+    fn new(value: U256, decimals: Option<u8>) -> Self {
+        Self {
+            raw: value.to_string(),
+            formatted: decimals
+                .and_then(|decimals| SimpleCast::format_units(&value.to_string(), decimals).ok()),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct VaultInfo {
+    vault: String,
+    name: Option<String>,
+    symbol: Option<String>,
+    decimals: Option<u8>,
+    asset: String,
+    asset_name: Option<String>,
+    asset_symbol: Option<String>,
+    asset_decimals: Option<u8>,
+    total_assets: TokenAmount,
+    total_supply: TokenAmount,
+    assets_per_share: Option<TokenAmount>,
+    shares_per_asset: Option<TokenAmount>,
+}
+
+#[derive(Debug, Serialize)]
+struct VaultPosition {
+    vault: String,
+    owner: String,
+    asset: String,
+    share_symbol: Option<String>,
+    share_decimals: Option<u8>,
+    asset_symbol: Option<String>,
+    asset_decimals: Option<u8>,
+    share_balance: TokenAmount,
+    assets_equivalent: TokenAmount,
+    max_withdraw: TokenAmount,
+    max_redeem: TokenAmount,
+}
+
+#[derive(Debug)]
+struct VaultWarning {
+    code: &'static str,
+    message: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum CheckStatus {
+    Pass,
+    Warn,
+    Fail,
+}
+
+#[derive(Debug, Serialize)]
+struct CompatibilityCheck {
+    name: String,
+    status: CheckStatus,
+    detail: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CompatibilityReport {
+    vault: String,
+    account: String,
+    read_compatible: bool,
+    disclaimer: &'static str,
+    passed: usize,
+    warnings: usize,
+    failed: usize,
+    checks: Vec<CompatibilityCheck>,
+}
+
+const CHECK_DISCLAIMER: &str = "This probes read-call behavior only; it does not prove state-changing selector coverage or \
+     semantic ERC-4626 compliance.";
+
 impl Erc4626Subcommand {
     pub async fn run(self) -> Result<()> {
         match self {
+            Self::Info { vault, human, block, rpc } => show_info(vault, human, block, rpc).await,
+            Self::Position { vault, owner, human, block, rpc } => {
+                show_position(vault, owner, human, block, rpc).await
+            }
+            Self::Check { vault, account, block, rpc } => {
+                check_compatibility(vault, account, block, rpc).await
+            }
             Self::Asset { vault, block, rpc } => {
                 let config = rpc.load_config()?;
                 let provider = get_provider(&config)?;
@@ -555,6 +727,617 @@ impl Erc4626Subcommand {
     }
 }
 
+async fn show_info(
+    vault: NameOrAddress,
+    human: bool,
+    block: Option<BlockId>,
+    rpc: RpcOpts,
+) -> Result<()> {
+    let config = rpc.load_config()?;
+    let provider = get_provider(&config)?;
+    let vault = vault.resolve(&provider).await?;
+    let block = block.unwrap_or_default();
+    let contract = IERC4626::new(vault, &provider);
+
+    let name_call = contract.name().block(block);
+    let symbol_call = contract.symbol().block(block);
+    let decimals_call = contract.decimals().block(block);
+    let asset_call = contract.asset().block(block);
+    let total_assets_call = contract.totalAssets().block(block);
+    let total_supply_call = contract.totalSupply().block(block);
+    let (name, symbol, decimals, asset, total_assets, total_supply) = tokio::join!(
+        name_call.call(),
+        symbol_call.call(),
+        decimals_call.call(),
+        asset_call.call(),
+        total_assets_call.call(),
+        total_supply_call.call(),
+    );
+
+    let asset = asset.wrap_err("asset() call failed")?;
+    let total_assets = total_assets.wrap_err("totalAssets() call failed")?;
+    let total_supply = total_supply.wrap_err("totalSupply() call failed")?;
+    let name = name.ok();
+    let symbol = symbol.ok();
+    let decimals = decimals.ok();
+
+    let mut warnings = Vec::new();
+    let (asset_name, asset_symbol, asset_decimals) = if asset == NATIVE_ASSET {
+        warnings.push(native_asset_warning());
+        (None, None, None)
+    } else {
+        let asset_contract = IERC20Metadata::new(asset, &provider);
+        let name_call = asset_contract.name().block(block);
+        let symbol_call = asset_contract.symbol().block(block);
+        let decimals_call = asset_contract.decimals().block(block);
+        let (name, symbol, decimals) =
+            tokio::join!(name_call.call(), symbol_call.call(), decimals_call.call());
+        (name.ok(), symbol.ok(), decimals.ok())
+    };
+
+    let assets_per_share = if let Some(unit) = decimals.and_then(decimal_unit) {
+        contract
+            .convertToAssets(unit)
+            .block(block)
+            .call()
+            .await
+            .ok()
+            .map(|value| TokenAmount::new(value, asset_decimals))
+    } else {
+        None
+    };
+    let shares_per_asset = if let Some(unit) = asset_decimals.and_then(decimal_unit) {
+        contract
+            .convertToShares(unit)
+            .block(block)
+            .call()
+            .await
+            .ok()
+            .map(|value| TokenAmount::new(value, decimals))
+    } else {
+        None
+    };
+
+    print_info(
+        VaultInfo {
+            vault: vault.to_string(),
+            name,
+            symbol,
+            decimals,
+            asset: asset.to_string(),
+            asset_name,
+            asset_symbol,
+            asset_decimals,
+            total_assets: TokenAmount::new(total_assets, asset_decimals),
+            total_supply: TokenAmount::new(total_supply, decimals),
+            assets_per_share,
+            shares_per_asset,
+        },
+        human,
+        warnings,
+    )
+}
+
+async fn show_position(
+    vault: NameOrAddress,
+    owner: NameOrAddress,
+    human: bool,
+    block: Option<BlockId>,
+    rpc: RpcOpts,
+) -> Result<()> {
+    let config = rpc.load_config()?;
+    let provider = get_provider(&config)?;
+    let vault = vault.resolve(&provider).await?;
+    let owner = owner.resolve(&provider).await?;
+    let block = block.unwrap_or_default();
+    let contract = IERC4626::new(vault, &provider);
+
+    let asset_call = contract.asset().block(block);
+    let symbol_call = contract.symbol().block(block);
+    let decimals_call = contract.decimals().block(block);
+    let balance_call = contract.balanceOf(owner).block(block);
+    let max_withdraw_call = contract.maxWithdraw(owner).block(block);
+    let max_redeem_call = contract.maxRedeem(owner).block(block);
+    let (asset, share_symbol, share_decimals, share_balance, max_withdraw, max_redeem) = tokio::join!(
+        asset_call.call(),
+        symbol_call.call(),
+        decimals_call.call(),
+        balance_call.call(),
+        max_withdraw_call.call(),
+        max_redeem_call.call(),
+    );
+
+    let asset = asset.wrap_err("asset() call failed")?;
+    let share_balance = share_balance.wrap_err("balanceOf() call failed")?;
+    let max_withdraw = max_withdraw.wrap_err("maxWithdraw() call failed")?;
+    let max_redeem = max_redeem.wrap_err("maxRedeem() call failed")?;
+    let share_symbol = share_symbol.ok();
+    let share_decimals = share_decimals.ok();
+    let assets_equivalent = contract
+        .convertToAssets(share_balance)
+        .block(block)
+        .call()
+        .await
+        .wrap_err("convertToAssets() call failed")?;
+
+    let mut warnings = Vec::new();
+    let (asset_symbol, asset_decimals) = if asset == NATIVE_ASSET {
+        warnings.push(native_asset_warning());
+        (None, None)
+    } else {
+        let asset_contract = IERC20Metadata::new(asset, &provider);
+        let symbol_call = asset_contract.symbol().block(block);
+        let decimals_call = asset_contract.decimals().block(block);
+        let (symbol, decimals) = tokio::join!(symbol_call.call(), decimals_call.call());
+        (symbol.ok(), decimals.ok())
+    };
+
+    if !share_balance.is_zero() {
+        if max_withdraw.is_zero() {
+            warnings.push(zero_exit_warning("maxWithdraw"));
+        }
+        if max_redeem.is_zero() {
+            warnings.push(zero_exit_warning("maxRedeem"));
+        }
+    }
+
+    print_position(
+        VaultPosition {
+            vault: vault.to_string(),
+            owner: owner.to_string(),
+            asset: asset.to_string(),
+            share_symbol,
+            share_decimals,
+            asset_symbol,
+            asset_decimals,
+            share_balance: TokenAmount::new(share_balance, share_decimals),
+            assets_equivalent: TokenAmount::new(assets_equivalent, asset_decimals),
+            max_withdraw: TokenAmount::new(max_withdraw, asset_decimals),
+            max_redeem: TokenAmount::new(max_redeem, share_decimals),
+        },
+        human,
+        warnings,
+    )
+}
+
+async fn check_compatibility(
+    vault: NameOrAddress,
+    account: Option<NameOrAddress>,
+    block: Option<BlockId>,
+    rpc: RpcOpts,
+) -> Result<()> {
+    let config = rpc.load_config()?;
+    let provider = get_provider(&config)?;
+    let vault = vault.resolve(&provider).await?;
+    let account = match account {
+        Some(account) => account.resolve(&provider).await?,
+        None => Address::ZERO,
+    };
+    let block = block.unwrap_or_default();
+    let contract = IERC4626::new(vault, &provider);
+
+    let code_call = provider.get_code_at(vault).block_id(block);
+    let asset_call = contract.asset().block(block);
+    let total_assets_call = contract.totalAssets().block(block);
+    let convert_to_shares_call = contract.convertToShares(U256::ZERO).block(block);
+    let convert_to_assets_call = contract.convertToAssets(U256::ZERO).block(block);
+    let max_deposit_call = contract.maxDeposit(account).block(block);
+    let preview_deposit_call = contract.previewDeposit(U256::ZERO).block(block);
+    let max_mint_call = contract.maxMint(account).block(block);
+    let preview_mint_call = contract.previewMint(U256::ZERO).block(block);
+    let max_withdraw_call = contract.maxWithdraw(account).block(block);
+    let preview_withdraw_call = contract.previewWithdraw(U256::ZERO).block(block);
+    let max_redeem_call = contract.maxRedeem(account).block(block);
+    let preview_redeem_call = contract.previewRedeem(U256::ZERO).block(block);
+    let name_call = contract.name().block(block);
+    let symbol_call = contract.symbol().block(block);
+    let decimals_call = contract.decimals().block(block);
+    let total_supply_call = contract.totalSupply().block(block);
+    let balance_call = contract.balanceOf(account).block(block);
+    let allowance_call = contract.allowance(account, vault).block(block);
+    let erc165 = IERC165::new(vault, &provider);
+    let async_deposit_call = erc165.supportsInterface(ERC7540_ASYNC_DEPOSIT_INTERFACE).block(block);
+    let async_redeem_call = erc165.supportsInterface(ERC7540_ASYNC_REDEEM_INTERFACE).block(block);
+    let (
+        code,
+        asset,
+        total_assets,
+        convert_to_shares,
+        convert_to_assets,
+        max_deposit,
+        preview_deposit,
+        max_mint,
+        preview_mint,
+        max_withdraw,
+        preview_withdraw,
+        max_redeem,
+        preview_redeem,
+        name,
+        symbol,
+        decimals,
+        total_supply,
+        balance,
+        allowance,
+        async_deposit,
+        async_redeem,
+    ) = tokio::join!(
+        code_call,
+        asset_call.call(),
+        total_assets_call.call(),
+        convert_to_shares_call.call(),
+        convert_to_assets_call.call(),
+        max_deposit_call.call(),
+        preview_deposit_call.call(),
+        max_mint_call.call(),
+        preview_mint_call.call(),
+        max_withdraw_call.call(),
+        preview_withdraw_call.call(),
+        max_redeem_call.call(),
+        preview_redeem_call.call(),
+        name_call.call(),
+        symbol_call.call(),
+        decimals_call.call(),
+        total_supply_call.call(),
+        balance_call.call(),
+        allowance_call.call(),
+        async_deposit_call.call(),
+        async_redeem_call.call(),
+    );
+    let async_deposit = async_deposit.unwrap_or(false);
+    let async_redeem = async_redeem.unwrap_or(false);
+
+    let mut checks = Vec::new();
+    match code {
+        Ok(code) if !code.is_empty() => push_check(
+            &mut checks,
+            "contract code",
+            CheckStatus::Pass,
+            "contract bytecode is present",
+        ),
+        Ok(_) => push_check(
+            &mut checks,
+            "contract code",
+            CheckStatus::Fail,
+            "no contract bytecode was found",
+        ),
+        Err(_) => push_check(
+            &mut checks,
+            "contract code",
+            CheckStatus::Fail,
+            "contract bytecode could not be read",
+        ),
+    }
+
+    if let Ok(asset) = asset {
+        if asset.is_zero() {
+            push_check(&mut checks, "asset()", CheckStatus::Fail, "returned the zero address");
+        } else if asset == NATIVE_ASSET {
+            push_check(
+                &mut checks,
+                "asset()",
+                CheckStatus::Warn,
+                "returned the ERC-7535 native-asset sentinel",
+            );
+        } else {
+            push_check(&mut checks, "asset()", CheckStatus::Pass, format!("returned {asset}"));
+            match provider.get_code_at(asset).block_id(block).await {
+                Ok(code) if !code.is_empty() => push_check(
+                    &mut checks,
+                    "asset contract",
+                    CheckStatus::Pass,
+                    "underlying asset bytecode is present",
+                ),
+                Ok(_) => push_check(
+                    &mut checks,
+                    "asset contract",
+                    CheckStatus::Warn,
+                    "underlying asset has no bytecode and may be a system contract or precompile",
+                ),
+                Err(_) => push_check(
+                    &mut checks,
+                    "asset contract",
+                    CheckStatus::Warn,
+                    "underlying asset bytecode could not be read",
+                ),
+            }
+            record_required(
+                &mut checks,
+                "asset balanceOf(address)",
+                IERC20Metadata::new(asset, &provider).balanceOf(vault).block(block).call().await,
+            );
+        }
+    } else {
+        push_check(
+            &mut checks,
+            "asset()",
+            CheckStatus::Fail,
+            "call failed or returned incompatible data",
+        );
+    }
+
+    record_required(&mut checks, "totalAssets()", total_assets);
+    record_required(&mut checks, "totalSupply()", total_supply);
+    record_required(&mut checks, "balanceOf(address)", balance);
+    record_required(&mut checks, "allowance(address,address)", allowance);
+    record_zero_conversion(&mut checks, "convertToShares(0)", convert_to_shares);
+    record_zero_conversion(&mut checks, "convertToAssets(0)", convert_to_assets);
+    record_required(&mut checks, "maxDeposit(address)", max_deposit);
+    record_preview(&mut checks, "previewDeposit(0)", "deposit", async_deposit, preview_deposit);
+    record_required(&mut checks, "maxMint(address)", max_mint);
+    record_preview(&mut checks, "previewMint(0)", "deposit", async_deposit, preview_mint);
+    record_required(&mut checks, "maxWithdraw(address)", max_withdraw);
+    record_preview(&mut checks, "previewWithdraw(0)", "redeem", async_redeem, preview_withdraw);
+    record_required(&mut checks, "maxRedeem(address)", max_redeem);
+    record_preview(&mut checks, "previewRedeem(0)", "redeem", async_redeem, preview_redeem);
+    record_optional(&mut checks, "name()", name);
+    record_optional(&mut checks, "symbol()", symbol);
+    record_optional(&mut checks, "decimals()", decimals);
+
+    let passed = checks.iter().filter(|check| matches!(check.status, CheckStatus::Pass)).count();
+    let warnings = checks.iter().filter(|check| matches!(check.status, CheckStatus::Warn)).count();
+    let failed = checks.iter().filter(|check| matches!(check.status, CheckStatus::Fail)).count();
+    let report = CompatibilityReport {
+        vault: vault.to_string(),
+        account: account.to_string(),
+        read_compatible: failed == 0,
+        disclaimer: CHECK_DISCLAIMER,
+        passed,
+        warnings,
+        failed,
+        checks,
+    };
+    print_compatibility_report(&report)?;
+
+    if failed > 0 {
+        eyre::bail!("vault failed {failed} ERC-4626 compatibility probe(s)")
+    }
+    Ok(())
+}
+
+fn print_info(info: VaultInfo, human: bool, warnings: Vec<VaultWarning>) -> Result<()> {
+    if shell::is_json() {
+        return print_json_with_warnings(info, warnings);
+    }
+
+    print_warnings(&warnings)?;
+    print_field("Vault", &info.vault)?;
+    print_field("Name", optional_text(&info.name))?;
+    print_field("Symbol", optional_text(&info.symbol))?;
+    print_field("Decimals", optional_number(info.decimals))?;
+    print_field("Asset", &info.asset)?;
+    print_field("Asset name", optional_text(&info.asset_name))?;
+    print_field("Asset symbol", optional_text(&info.asset_symbol))?;
+    print_field("Asset decimals", optional_number(info.asset_decimals))?;
+    print_field(
+        "Total assets",
+        display_amount(&info.total_assets, human, info.asset_symbol.as_deref()),
+    )?;
+    print_field("Total supply", display_amount(&info.total_supply, human, info.symbol.as_deref()))?;
+    print_field(
+        "Assets per share",
+        display_optional_amount(
+            info.assets_per_share.as_ref(),
+            human,
+            info.asset_symbol.as_deref(),
+        ),
+    )?;
+    print_field(
+        "Shares per asset",
+        display_optional_amount(info.shares_per_asset.as_ref(), human, info.symbol.as_deref()),
+    )
+}
+
+fn print_position(position: VaultPosition, human: bool, warnings: Vec<VaultWarning>) -> Result<()> {
+    if shell::is_json() {
+        return print_json_with_warnings(position, warnings);
+    }
+
+    print_warnings(&warnings)?;
+    print_field("Vault", &position.vault)?;
+    print_field("Owner", &position.owner)?;
+    print_field("Asset", &position.asset)?;
+    print_field("Share symbol", optional_text(&position.share_symbol))?;
+    print_field("Share decimals", optional_number(position.share_decimals))?;
+    print_field("Asset symbol", optional_text(&position.asset_symbol))?;
+    print_field("Asset decimals", optional_number(position.asset_decimals))?;
+    print_field(
+        "Share balance",
+        display_amount(&position.share_balance, human, position.share_symbol.as_deref()),
+    )?;
+    print_field(
+        "Assets equivalent",
+        display_amount(&position.assets_equivalent, human, position.asset_symbol.as_deref()),
+    )?;
+    print_field(
+        "Max withdraw",
+        display_amount(&position.max_withdraw, human, position.asset_symbol.as_deref()),
+    )?;
+    print_field(
+        "Max redeem",
+        display_amount(&position.max_redeem, human, position.share_symbol.as_deref()),
+    )
+}
+
+fn print_compatibility_report(report: &CompatibilityReport) -> Result<()> {
+    if shell::is_json() {
+        return print_json_success(report);
+    }
+
+    print_field("Vault", &report.vault)?;
+    print_field("Account", &report.account)?;
+    sh_println!("Note: {}", report.disclaimer)?;
+    for check in &report.checks {
+        let status = match check.status {
+            CheckStatus::Pass => "PASS",
+            CheckStatus::Warn => "WARN",
+            CheckStatus::Fail => "FAIL",
+        };
+        sh_println!("{status:<4} {:<24} {}", check.name, check.detail)?;
+    }
+    sh_println!(
+        "Summary: {} passed, {} warnings, {} failed",
+        report.passed,
+        report.warnings,
+        report.failed
+    )
+}
+
+fn print_field(label: &str, value: impl std::fmt::Display) -> Result<()> {
+    sh_println!("{label:<20} {value}")
+}
+
+fn print_json_with_warnings<T: Serialize>(value: T, warnings: Vec<VaultWarning>) -> Result<()> {
+    if warnings.is_empty() {
+        print_json_success(value)
+    } else {
+        print_json_success_with_warnings(
+            value,
+            warnings
+                .into_iter()
+                .map(|warning| JsonMessage::warning(warning.code, warning.message))
+                .collect(),
+        )
+    }
+}
+
+fn print_warnings(warnings: &[VaultWarning]) -> Result<()> {
+    for warning in warnings {
+        sh_warn!("{}", warning.message)?;
+    }
+    Ok(())
+}
+
+fn optional_text(value: &Option<String>) -> &str {
+    value.as_deref().unwrap_or("<unavailable>")
+}
+
+fn optional_number(value: Option<u8>) -> String {
+    value.map_or_else(|| "<unavailable>".to_string(), |value| value.to_string())
+}
+
+fn display_amount(amount: &TokenAmount, human: bool, symbol: Option<&str>) -> String {
+    if !human {
+        return amount.raw.clone();
+    }
+    let Some(formatted) = &amount.formatted else { return amount.raw.clone() };
+    match symbol.filter(|symbol| !symbol.is_empty()) {
+        Some(symbol) => format!("{formatted} {symbol}"),
+        None => formatted.clone(),
+    }
+}
+
+fn display_optional_amount(
+    amount: Option<&TokenAmount>,
+    human: bool,
+    symbol: Option<&str>,
+) -> String {
+    amount
+        .map_or_else(|| "<unavailable>".to_string(), |amount| display_amount(amount, human, symbol))
+}
+
+fn decimal_unit(decimals: u8) -> Option<U256> {
+    (0..decimals).try_fold(U256::ONE, |unit, _| unit.checked_mul(U256::from(10)))
+}
+
+fn push_check(
+    checks: &mut Vec<CompatibilityCheck>,
+    name: impl Into<String>,
+    status: CheckStatus,
+    detail: impl Into<String>,
+) {
+    checks.push(CompatibilityCheck { name: name.into(), status, detail: detail.into() });
+}
+
+fn record_required<T, E>(
+    checks: &mut Vec<CompatibilityCheck>,
+    name: &str,
+    result: std::result::Result<T, E>,
+) {
+    let (status, detail) = if result.is_ok() {
+        (CheckStatus::Pass, "call succeeded")
+    } else {
+        (CheckStatus::Fail, "call failed or returned incompatible data")
+    };
+    push_check(checks, name, status, detail);
+}
+
+fn record_optional<T, E>(
+    checks: &mut Vec<CompatibilityCheck>,
+    name: &str,
+    result: std::result::Result<T, E>,
+) {
+    let (status, detail) = if result.is_ok() {
+        (CheckStatus::Pass, "call succeeded")
+    } else {
+        (CheckStatus::Warn, "optional ERC-20 metadata is unavailable")
+    };
+    push_check(checks, name, status, detail);
+}
+
+fn record_zero_conversion<E>(
+    checks: &mut Vec<CompatibilityCheck>,
+    name: &str,
+    result: std::result::Result<U256, E>,
+) {
+    match result {
+        Ok(value) if value.is_zero() => {
+            push_check(checks, name, CheckStatus::Pass, "returned zero")
+        }
+        Ok(value) => push_check(
+            checks,
+            name,
+            CheckStatus::Warn,
+            format!("returned {value}; zero input normally converts to zero"),
+        ),
+        Err(_) => {
+            push_check(checks, name, CheckStatus::Fail, "call failed or returned incompatible data")
+        }
+    }
+}
+
+fn record_preview<E>(
+    checks: &mut Vec<CompatibilityCheck>,
+    name: &str,
+    request_kind: &str,
+    async_supported: bool,
+    result: std::result::Result<U256, E>,
+) {
+    match result {
+        Ok(_) if async_supported => push_check(
+            checks,
+            name,
+            CheckStatus::Warn,
+            format!(
+                "vault advertises asynchronous ERC-7540 {request_kind} support, which requires \
+                 this preview to revert"
+            ),
+        ),
+        Ok(value) if value.is_zero() => {
+            push_check(checks, name, CheckStatus::Pass, "returned zero")
+        }
+        Ok(value) => push_check(
+            checks,
+            name,
+            CheckStatus::Warn,
+            format!("returned {value}; a zero-amount preview normally returns zero"),
+        ),
+        Err(_) if async_supported => push_check(
+            checks,
+            name,
+            CheckStatus::Warn,
+            format!(
+                "reverted as required by advertised asynchronous ERC-7540 {request_kind} support"
+            ),
+        ),
+        Err(_) => push_check(
+            checks,
+            name,
+            CheckStatus::Fail,
+            "call failed or returned incompatible data without advertised ERC-7540 support",
+        ),
+    }
+}
+
 fn print_amount(amount: U256) -> Result<()> {
     if shell::is_json() {
         print_json_success(amount.to_string())
@@ -574,20 +1357,38 @@ fn warn_if_zero_entry_max(method: &str, amount: U256) -> Result<()> {
 }
 
 fn warn_if_zero_exit_max(method: &str) -> Result<()> {
-    sh_warn!(
-        "Vault reported zero from {method} even though the owner has shares; liquidity, gates, \
-         withdrawal queues, or a conservative implementation may prevent the base ERC-4626 exit."
-    )
+    sh_warn!("{}", zero_exit_warning(method).message)
 }
 
 fn warn_if_native_asset(asset: Address) -> Result<()> {
     if asset == NATIVE_ASSET {
-        sh_warn!(
-            "Vault uses the ERC-7535 native-asset sentinel; base ERC-4626 write commands do not \
-             attach native value, so use `cast send --value` when the vault requires it."
-        )?;
+        sh_warn!("{}", native_asset_warning().message)?;
     }
     Ok(())
+}
+
+fn zero_exit_warning(method: &str) -> VaultWarning {
+    VaultWarning {
+        code: match method {
+            "maxWithdraw" => "erc4626_zero_max_withdraw",
+            "maxRedeem" => "erc4626_zero_max_redeem",
+            _ => "erc4626_zero_exit_max",
+        },
+        message: format!(
+            "Vault reported zero from {method} even though the owner has shares; liquidity, \
+             gates, withdrawal queues, or a conservative implementation may prevent the base \
+             ERC-4626 exit."
+        ),
+    }
+}
+
+fn native_asset_warning() -> VaultWarning {
+    VaultWarning {
+        code: "erc4626_native_asset",
+        message: "Vault uses the ERC-7535 native-asset sentinel; base ERC-4626 write commands do \
+                  not attach native value, so use `cast send --value` when the vault requires it."
+            .to_string(),
+    }
 }
 
 async fn prepare_write(
