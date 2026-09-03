@@ -286,6 +286,36 @@ note[mixed-case-function]: function names should use mixedCase
 nothing to lint
 
 "#]]);
+
+    // Check config again, ignoring a directory via the documented `dir/**` glob form
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec![],
+            ignore: vec!["src/**".into()],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
+nothing to lint
+
+"#]]);
+
+    // Check config again, ignoring a bare directory path
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec![],
+            ignore: vec!["src".into()],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq(str![[r#"
+nothing to lint
+
+"#]]);
 });
 
 forgetest!(inline_config_suppresses_lint_in_inherited_source, |prj, cmd| {

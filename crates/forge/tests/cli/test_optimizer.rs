@@ -1,5 +1,8 @@
 //! Tests for commands using the preprocessed cache.
 
+use foundry_compilers::artifacts::EvmVersion;
+use foundry_config::{CompilationRestrictions, SettingsOverrides};
+
 #[cfg(unix)]
 forgetest_init!(abi_commands_reuse_preprocessed_cache, |prj, cmd| {
     use foundry_test_utils::util::OutputExt;
@@ -169,6 +172,61 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     ]]);
 });
 
+// <https://github.com/foundry-rs/foundry/issues/16529>
+forgetest_init!(filtered_tests_preserve_compilation_restrictions, |prj, cmd| {
+    prj.wipe_contracts();
+    prj.add_lib(
+        "dep/src/Clz.sol",
+        r#"
+library Clz {
+    function msb(uint128 bitmap) internal pure returns (uint256 res) {
+        assembly {
+            res := sub(255, clz(bitmap))
+        }
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "Root.sol",
+        r#"
+import "../lib/dep/src/Clz.sol";
+
+contract Root {
+    function msb(uint128 bitmap) external pure returns (uint256) {
+        return Clz.msb(bitmap);
+    }
+}
+"#,
+    );
+    prj.add_test("RootTest.sol", "contract RootTest { function testFoo() public pure {} }");
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Prague;
+        config.additional_compiler_profiles = vec![SettingsOverrides {
+            name: "osaka".to_string(),
+            via_ir: None,
+            evm_version: Some(EvmVersion::Osaka),
+            optimizer: None,
+            optimizer_runs: None,
+            bytecode_hash: None,
+        }];
+        config.compilation_restrictions = vec![CompilationRestrictions {
+            paths: "src/Root.sol".parse().unwrap(),
+            version: None,
+            via_ir: None,
+            bytecode_hash: None,
+            min_optimizer_runs: None,
+            optimizer_runs: None,
+            max_optimizer_runs: None,
+            min_evm_version: None,
+            evm_version: Some(EvmVersion::Osaka),
+            max_evm_version: None,
+        }];
+    });
+
+    cmd.args(["test", "--match-path", "test/RootTest.sol"]).assert_success();
+});
+
 forgetest_init!(filtered_tests_support_overlapping_source_roots, |prj, cmd| {
     prj.update_config(|config| config.script = ".".into());
     prj.add_source("SourceFixture.sol", "contract SourceFixture {}");
@@ -262,6 +320,77 @@ No files changed, compilation skipped
 ...
 Compiling 21 files with [..]
 ...
+
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16468>
+forgetest_init!(unchecked_artifacts_support_dynamic_linking, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.unchecked_cheatcode_artifacts = true;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+library Math {
+    function double(uint256 x) public pure returns (uint256) {
+        return x * 2;
+    }
+}
+
+contract Counter {
+    uint256 public number;
+
+    constructor(uint256 number_) {
+        number = Math.double(number_);
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "nested/Counter.sol",
+        r#"
+library Math {
+    function triple(uint256 x) public pure returns (uint256) {
+        return x * 3;
+    }
+}
+
+contract Counter {
+    uint256 public number;
+
+    constructor(uint256 number_) {
+        number = Math.triple(number_);
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter as DoubleCounter} from "../src/Counter.sol";
+import {Counter as TripleCounter} from "../src/nested/Counter.sol";
+
+contract CounterTest is Test {
+    function testNew() public {
+        DoubleCounter doubleCounter = new DoubleCounter(21);
+        TripleCounter tripleCounter = new TripleCounter(21);
+        assertEq(doubleCounter.number(), 42);
+        assertEq(tripleCounter.number(), 63);
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--match-test", "testNew"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] testNew() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
@@ -1997,6 +2126,48 @@ contract TargetTest is Test {
     );
 
     cmd.args(["build"]).assert_success();
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16487>
+forgetest_init!(preprocess_custom_layout_contract, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.solc = Some(foundry_config::SolcReq::Version(semver::Version::new(0, 8, 35)));
+    });
+
+    prj.add_source(
+        "Target.sol",
+        r#"
+contract Target layout at erc7201("test.Target") {
+    uint256 public value;
+
+    constructor(uint256 value_) {
+        value = value_;
+    }
+}
+        "#,
+    );
+
+    prj.add_test(
+        "Target.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Target} from "../src/Target.sol";
+
+contract TargetTest is Test {
+    function testDirectNew() public {
+        Target target = new Target(42);
+        assertEq(target.value(), 42);
+    }
+
+    function targetCreationCode() public view returns (bytes memory) {
+        return type(Target).creationCode;
+    }
+}
+        "#,
+    );
+
+    cmd.args(["test"]).assert_success();
 });
 
 // Test that `type(Contract).creationCode` keeps native pure semantics when dynamic linking is

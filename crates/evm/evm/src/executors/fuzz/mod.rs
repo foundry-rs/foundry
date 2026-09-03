@@ -34,6 +34,7 @@ use proptest::test_runner::{RngAlgorithm, TestCaseError, TestRng, TestRunner};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde_json::json;
 use std::{
+    path::PathBuf,
     sync::{
         Arc, OnceLock,
         atomic::{AtomicU32, Ordering},
@@ -199,6 +200,8 @@ pub struct FuzzedExecutor<FEN: FoundryEvmNetwork> {
     config: FuzzConfig,
     /// The persisted counterexample to be replayed, if any.
     persisted_failure: Option<BaseCounterExample>,
+    /// An existing corpus to replay before persisting into the configured corpus directory.
+    corpus_replay_dir: Option<PathBuf>,
     /// The number of parallel workers.
     num_workers: usize,
 }
@@ -211,6 +214,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         sender: Address,
         config: FuzzConfig,
         persisted_failure: Option<BaseCounterExample>,
+        corpus_replay_dir: Option<PathBuf>,
     ) -> Self {
         let run_limit = if config.run.is_some() { 1 } else { config.runs };
         let max_workers = if run_limit == 0 {
@@ -221,7 +225,15 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             Ord::max(1, run_limit / MIN_RUNS_PER_WORKER)
         };
         let num_workers = Ord::min(rayon::current_num_threads(), max_workers as usize);
-        Self { executor_f: executor, runner, sender, config, persisted_failure, num_workers }
+        Self {
+            executor_f: executor,
+            runner,
+            sender,
+            config,
+            persisted_failure,
+            corpus_replay_dir,
+            num_workers,
+        }
     }
 
     /// Fuzzes the provided function, assuming it is available at the contract at `address`
@@ -339,7 +351,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             self.config.fail_on_revert,
             address,
             call.reverter,
-            self.executor_f.inspector().networks.extra_cheatcode_addresses(),
+            self.executor_f.inspector().extra_cheatcode_addresses(),
         ) || self.executor_f.is_raw_call_mut_success(address, &mut call, false);
 
         let mut result = FuzzTestResult {
@@ -444,18 +456,28 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
-        let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
-        // `new_coverage` is only meaningful when edge coverage is collected; otherwise
-        // `merge_edge_coverage` always returns `false`, so record it as unknown for frontiers.
-        let frontier_new_coverage =
-            self.config.corpus.collect_edge_coverage().then_some(new_coverage);
-        frontier_recorder.capture_stateless_call(fuzz_run, &tx, &cmp_values, frontier_new_coverage);
-        coverage_metrics.process_inputs(
-            std::slice::from_ref(&tx),
-            &[cmp_values],
-            new_coverage,
-            None,
-        );
+        if call.skip_reason().is_some() {
+            // Account for the attempted corpus mutation without retaining or crediting the input.
+            coverage_metrics.process_inputs(&[], &[], false, None);
+        } else {
+            let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
+            // `new_coverage` is only meaningful when edge coverage is collected; otherwise
+            // `merge_edge_coverage` always returns `false`, so record it as unknown for frontiers.
+            let frontier_new_coverage =
+                self.config.corpus.collect_edge_coverage().then_some(new_coverage);
+            frontier_recorder.capture_stateless_call(
+                fuzz_run,
+                &tx,
+                &cmp_values,
+                frontier_new_coverage,
+            );
+            coverage_metrics.process_inputs(
+                std::slice::from_ref(&tx),
+                &[cmp_values],
+                new_coverage,
+                None,
+            );
+        }
 
         let (breakpoints, deprecated_cheatcodes) =
             call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| {
@@ -468,7 +490,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             self.config.fail_on_revert,
             address,
             call.reverter,
-            state.0.inspector().networks.extra_cheatcode_addresses(),
+            state.0.inspector().extra_cheatcode_addresses(),
         ) || state.0.is_raw_call_mut_success(address, &mut call, false);
 
         if success {
@@ -682,6 +704,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             worker_id,
             self.config.corpus.clone(),
             generator,
+            self.corpus_replay_dir.as_deref(),
             // Master worker replays the persisted corpus using the executor
             (worker_id == 0).then_some(&self.executor_f),
             replay_target,

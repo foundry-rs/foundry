@@ -8,7 +8,7 @@ use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{Config, FoundryHardfork, TracingConfig};
 use foundry_debugger::Debugger;
 use foundry_evm::{
-    hardforks::{ExecutionSpec, TempoHardfork},
+    hardforks::TempoHardfork,
     opts::ForkEndpointIdentity,
     traces::{
         CallTraceDecoderBuilder, DebugTraceIdentifier,
@@ -81,29 +81,24 @@ pub(crate) async fn handle_traces(
         (None, ContractSources::default())
     };
 
-    let resolved_hardfork = hardfork.or(config.hardfork);
     let execution_network = networks.execution_network();
-    let tempo_hardfork = resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork);
-    let is_tempo = execution_network.is_tempo();
+    let mut resolved_hardfork = hardfork
+        .or(config.hardfork)
+        .filter(|hardfork| hardfork.namespace() == execution_network.hardfork_namespace());
+    if resolved_hardfork.is_none() && execution_network.is_tempo() {
+        resolved_hardfork = Some(config.evm_spec_id::<TempoHardfork>().into());
+    }
     #[cfg(feature = "monad")]
-    let is_monad = execution_network.is_monad();
-    #[cfg(feature = "monad")]
-    let monad_hardfork =
-        resolved_hardfork.and_then(foundry_evm::hardforks::MonadHardfork::from_foundry_hardfork);
+    if resolved_hardfork.is_none() && execution_network.is_monad() {
+        resolved_hardfork =
+            Some(config.evm_spec_id::<foundry_evm::hardforks::MonadHardfork>().into());
+    }
     let mut builder = CallTraceDecoderBuilder::new()
         .with_tracing_config(tracing)
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
         .with_networks(networks)
         .with_chain_id(Some(chain.id()))
-        .with_tempo_hardfork(
-            tempo_hardfork.or_else(|| is_tempo.then(|| config.evm_spec_id::<TempoHardfork>())),
-        );
-    #[cfg(feature = "monad")]
-    {
-        builder = builder.with_monad_hardfork(monad_hardfork.or_else(|| {
-            is_monad.then(|| config.evm_spec_id::<foundry_evm::hardforks::MonadHardfork>())
-        }));
-    }
+        .with_hardfork(resolved_hardfork);
     let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);

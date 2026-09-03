@@ -85,7 +85,8 @@ fn assert_read_commands_work(cmd: &mut TestCommand, network: &Network) {
         );
     }
 
-    let Some((tx_block, tx_hash)) = find_transaction(cmd, network, scan_from) else {
+    let found = find_transaction(cmd, network, scan_from).unwrap_or_else(|err| panic!("{err}"));
+    let Some((tx_block, tx_hash)) = found else {
         eprintln!(
             "skipping {} transaction checks: no transaction in the {BLOCK_SCAN_DEPTH} blocks \
              before {scan_from}",
@@ -116,10 +117,12 @@ fn assert_read_commands_work(cmd: &mut TestCommand, network: &Network) {
         network.name
     );
 
-    let Some(account) = tx.get("to").and_then(|to| to.as_str()).filter(|to| *to != "null") else {
-        eprintln!("skipping {} account checks: {tx_hash} is a contract creation", network.name);
-        return;
-    };
+    // The sender is present for calls and contract creations alike, so the account reads below
+    // stay unconditional; `to` is null for a creation and would skip them.
+    let account = tx
+        .get("from")
+        .and_then(|from| from.as_str())
+        .unwrap_or_else(|| panic!("{}: transaction {tx_hash} has no sender", network.name));
 
     // State reads at the block the transaction landed in, which is also an archive-depth probe:
     // an endpoint that ignores the block tag still answers, so this asserts shape, not history.
@@ -231,23 +234,30 @@ fn block(
 
 /// Walks back from `latest` looking for a block holding a transaction, returning its block number
 /// and hash.
+///
+/// Reachability is already established by the time this runs, so a block that will not decode is
+/// the breakage this module guards and is reported as an error. `Ok(None)` is reserved for blocks
+/// that decoded and genuinely held no transactions.
 fn find_transaction(
     cmd: &mut TestCommand,
     network: &Network,
     latest: u64,
-) -> Option<(u64, String)> {
+) -> Result<Option<(u64, String)>, String> {
     for number in (latest.saturating_sub(BLOCK_SCAN_DEPTH)..=latest).rev() {
-        let Some(block) = block(cmd, network, number, false) else { continue };
-        let hash = block
+        let Some(block) = block(cmd, network, number, false) else {
+            return Err(format!("{}: could not decode block {number}", network.name));
+        };
+        let transactions = block
             .get("transactions")
             .and_then(|txs| txs.as_array())
-            .and_then(|txs| txs.first())
-            .and_then(|tx| tx.as_str());
-        if let Some(hash) = hash {
-            return Some((number, hash.to_string()));
-        }
+            .ok_or_else(|| format!("{}: block {number} has no transaction array", network.name))?;
+        let Some(first) = transactions.first() else { continue };
+        let hash = first.as_str().ok_or_else(|| {
+            format!("{}: block {number} lists a transaction that is not a hash", network.name)
+        })?;
+        return Ok(Some((number, hash.to_string())));
     }
-    None
+    Ok(None)
 }
 
 /// Runs a `cast` subcommand with `--json` and parses its output, returning `None` on any failure.

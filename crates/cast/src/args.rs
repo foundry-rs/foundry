@@ -5,8 +5,9 @@ use crate::{
     traces::identifier::SignaturesIdentifier,
     tx::CastTxSender,
 };
+use alloy_consensus::Typed2718;
 use alloy_dyn_abi::{ErrorExt, EventExt};
-use alloy_eips::eip7702::SignedAuthorization;
+use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_ens::{ProviderEnsExt, namehash};
 use alloy_network::{Ethereum, eip2718::Decodable2718};
 use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
@@ -727,28 +728,65 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
             let is_raw = raw || field.as_ref().is_some_and(|f| f == "raw");
-            let output = match network {
-                #[cfg(feature = "optimism")]
-                Some(NetworkVariant::Optimism) => {
-                    let provider = ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
+            let output = if is_raw || lane {
+                let encoded = match network {
+                    #[cfg(feature = "optimism")]
+                    Some(NetworkVariant::Optimism) => {
+                        let provider =
+                            ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
+                        let tx =
+                            Cast::new(&provider).transaction_response(tx_hash, from, nonce).await?;
+                        tx.as_ref().encoded_2718().into()
+                    }
+                    Some(NetworkVariant::Tempo) => {
+                        let provider =
+                            ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                        let tx =
+                            Cast::new(&provider).transaction_response(tx_hash, from, nonce).await?;
+                        tx.as_ref().encoded_2718().into()
+                    }
+                    _ => {
+                        let provider = utils::get_provider(&config)?;
+                        let tx =
+                            Cast::new(&provider).transaction_response(tx_hash, from, nonce).await?;
+                        FoundryTxEnvelope::encode_rpc_2718(&tx).wrap_err_with(|| {
+                            format!("Cannot EIP-2718 encode transaction type 0x{:x}", tx.ty())
+                        })?
+                    }
+                };
 
-                    Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
-                        .await?
+                if lane {
+                    FoundryTxEnvelope::decode_2718(&mut encoded.as_ref())
+                        .wrap_err("failed to decode transaction for lane classification")?;
+                    format_lane_classification(&classify_payment_lane(&encoded))?
+                } else {
+                    format!("0x{}", hex::encode(encoded))
                 }
-                Some(NetworkVariant::Tempo) => {
-                    let provider =
-                        ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-                    Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
-                        .await?
-                }
-                // Ethereum (default) or no --raw flag
-                _ => {
-                    let provider = utils::get_provider(&config)?;
-                    Cast::new(&provider)
-                        .transaction(tx_hash, from, nonce, field, is_raw, to_request, lane)
-                        .await?
+            } else {
+                match network {
+                    #[cfg(feature = "optimism")]
+                    Some(NetworkVariant::Optimism) => {
+                        let provider =
+                            ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
+
+                        Cast::new(&provider)
+                            .transaction(tx_hash, from, nonce, field, false, to_request, false)
+                            .await?
+                    }
+                    Some(NetworkVariant::Tempo) => {
+                        let provider =
+                            ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+                        Cast::new(&provider)
+                            .transaction(tx_hash, from, nonce, field, false, to_request, false)
+                            .await?
+                    }
+                    // Ethereum (default) or no --raw flag
+                    _ => {
+                        let provider = utils::get_provider(&config)?;
+                        Cast::new(&provider)
+                            .transaction(tx_hash, from, nonce, field, false, to_request, false)
+                            .await?
+                    }
                 }
             };
             print_json_value_or_scalar(output)?;
@@ -943,6 +981,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             cmd.execute()?;
         }
         CastSubcommand::Wallet { command } => command.run().await?,
+        CastSubcommand::Safe { command } => command.run().await?,
         CastSubcommand::Completions { shell } => {
             generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
         }

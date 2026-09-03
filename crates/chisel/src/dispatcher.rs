@@ -16,7 +16,6 @@ use foundry_config::{Chain, Config, RpcEndpointUrl};
 use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
-    hardforks::{ExecutionSpec, TempoHardfork},
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
@@ -111,7 +110,7 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
     }
 
     /// Dispatches an input as a command via [Self::dispatch_command] or as a Solidity snippet.
-    pub async fn dispatch(&mut self, mut input: &str) -> Result<ControlFlow<()>> {
+    pub async fn dispatch(&mut self, input: &str) -> Result<ControlFlow<()>> {
         if let Some(command) = input.strip_prefix(COMMAND_LEADER) {
             return match ChiselCommand::parse(command) {
                 Ok(cmd) => self.dispatch_command(cmd).await,
@@ -121,6 +120,11 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             };
         }
 
+        self.dispatch_solidity(input).await
+    }
+
+    /// Dispatches an input as Solidity without interpreting Chisel commands.
+    pub(crate) async fn dispatch_solidity(&mut self, mut input: &str) -> Result<ControlFlow<()>> {
         input = input.trim();
         let (only_trivia, new_input) = preprocess(input, self.last_result.as_deref())?;
         input = &*new_input;
@@ -177,22 +181,14 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         let chain_id = session_config.source_chain_id.map(Chain::from);
         let resolved_hardfork = session_config.resolved_hardfork;
 
-        #[cfg_attr(not(feature = "monad"), allow(unused_mut))]
-        let mut builder = CallTraceDecoderBuilder::new()
+        let builder = CallTraceDecoderBuilder::new()
             .with_labels(result.labeled_addresses.clone())
             .with_signature_identifier(SignaturesIdentifier::from_config(
                 &session_config.foundry_config,
             )?)
             .with_networks(session_config.foundry_config.networks)
             .with_chain_id(chain_id.map(|c| c.id()))
-            .with_tempo_hardfork(resolved_hardfork.and_then(TempoHardfork::from_foundry_hardfork));
-        #[cfg(feature = "monad")]
-        {
-            builder = builder.with_monad_hardfork(
-                resolved_hardfork
-                    .and_then(foundry_evm::hardforks::MonadHardfork::from_foundry_hardfork),
-            );
-        }
+            .with_hardfork(resolved_hardfork);
         let mut decoder = builder.build();
 
         let mut identifier =
@@ -339,9 +335,10 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             sh_println!("{}", "Saved current session!".green())?;
         }
 
+        let executor_builder = self.session.source.config.executor_builder.clone();
         let mut new_session = match id {
-            "latest" => ChiselSession::<FEN>::latest(),
-            id => ChiselSession::<FEN>::load(id),
+            "latest" => ChiselSession::<FEN>::latest(executor_builder),
+            id => ChiselSession::<FEN>::load(id, executor_builder),
         }
         .wrap_err("failed to load session")?;
 
@@ -350,6 +347,8 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             &new_session.source.config.foundry_config,
             id,
         )?;
+        new_session.source.config.foundry_config.force =
+            self.session.source.config.foundry_config.force;
         new_session.source.config.initialize_local_context();
         new_session.source.build()?;
         self.session = new_session;

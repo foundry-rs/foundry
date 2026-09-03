@@ -27,7 +27,7 @@ use foundry_config::{
         error::Kind::InvalidType,
         value::{Dict, Map, Value},
     },
-    filter::expand_globs,
+    filter::{expand_globs, is_ignored_path},
 };
 use serde::Serialize;
 use solar::{
@@ -205,8 +205,7 @@ impl BuildArgs {
                     if let Some(files) = files {
                         return files.iter().any(|file| &curr_dir.join(file) == p);
                     }
-                    skip.is_match(p)
-                        && !(ignored.contains(p) || ignored.contains(&curr_dir.join(p)))
+                    skip.is_match(p) && !is_ignored_path(p, &ignored, &curr_dir)
                 })
                 .collect::<Vec<_>>();
 

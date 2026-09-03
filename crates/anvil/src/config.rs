@@ -1382,6 +1382,10 @@ impl NodeConfig {
             base_fee_params,
             tempo_hardfork,
         );
+        #[cfg(feature = "optimism")]
+        if self.networks.is_optimism() {
+            fees.set_optimism_hardfork(self.get_hardfork());
+        }
 
         let (db, fork, fork_transaction_replay) =
             if let Some(eth_rpc_url) = self.fork_urls.first().cloned() {
@@ -1435,18 +1439,9 @@ impl NodeConfig {
             .as_ref()
             .and_then(|fork| fork.config.read().hardfork)
             .unwrap_or_else(|| self.get_hardfork());
-        let mut decoder_builder =
-            CallTraceDecoderBuilder::new().with_networks(self.networks).with_tempo_hardfork(
-                self.networks.is_tempo().then(|| TempoHardfork::from(active_hardfork)),
-            );
-        #[cfg(feature = "monad")]
-        {
-            decoder_builder = decoder_builder.with_monad_hardfork(
-                self.networks
-                    .is_monad()
-                    .then(|| foundry_evm::hardfork::MonadHardfork::from(active_hardfork)),
-            );
-        }
+        let mut decoder_builder = CallTraceDecoderBuilder::new()
+            .with_networks(self.networks)
+            .with_hardfork(Some(self.networks.executed_hardfork(active_hardfork)));
         if self.print_traces {
             // if traces should get printed we configure the decoder with the signatures cache
             if let Ok(identifier) = SignaturesIdentifier::new(false) {
@@ -1959,22 +1954,15 @@ latest block number: {latest_block}"
         let effective_network =
             self.networks.resolved_network().unwrap_or(NetworkVariant::Ethereum);
         let endpoint_matches_execution = fork_identity.network == Some(effective_network);
-        let inferred_hardfork = if endpoint_matches_execution {
-            fork_identity
-                .hardfork
-                .filter(|hardfork| hardfork.namespace() == effective_network.hardfork_namespace())
-                .or_else(|| {
-                    FoundryHardfork::from_chain_and_timestamp(
-                        source_chain_id,
-                        block.header.timestamp(),
-                    )
-                    .filter(|hardfork| {
-                        hardfork.namespace() == effective_network.hardfork_namespace()
-                    })
-                })
-        } else {
-            None
-        };
+        let source_hardfork = fork_identity.hardfork.or_else(|| {
+            FoundryHardfork::from_chain_and_timestamp(source_chain_id, block.header.timestamp())
+        });
+        let inferred_hardfork = source_hardfork.filter(|hardfork| {
+            endpoint_matches_execution
+                && hardfork.namespace() == effective_network.hardfork_namespace()
+        });
+        let source_may_omit_blob_fields = source_hardfork
+            .map_or(self.hardfork.is_some(), |hardfork| SpecId::from(hardfork) < SpecId::CANCUN);
         let fork_hardfork = self.hardfork.or(inferred_hardfork);
         let effective_hardfork = fork_hardfork.unwrap_or_else(|| self.get_hardfork());
         let effective_spec = SpecId::from(effective_hardfork);
@@ -1984,6 +1972,10 @@ latest block number: {latest_block}"
             self.networks.base_fee_params(block.header.timestamp()),
             self.networks.is_tempo().then(|| TempoHardfork::from(effective_hardfork)),
         );
+        #[cfg(feature = "optimism")]
+        if self.networks.is_optimism() {
+            fees.set_optimism_base_fee_rules(block.header.extra_data());
+        }
 
         // if not set explicitly we use the base fee of the latest block
         self.base_fee = fork_overrides.base_fee.or_else(|| block.header.base_fee_per_gas());
@@ -1993,8 +1985,7 @@ latest block number: {latest_block}"
             // This is the base fee of the current block, but we need the base fee of the next
             // block.
             fees.set_base_fee(base_fee);
-            let next_block_base_fee =
-                fees.get_next_block_base_fee_per_gas(block.header.gas_used(), gas_limit, base_fee);
+            let next_block_base_fee = fees.get_next_block_base_fee_from_header(&block.header);
             fees.set_base_fee(next_block_base_fee);
         } else {
             fees.set_base_fee(self.get_base_fee());
@@ -2007,18 +1998,25 @@ latest block number: {latest_block}"
         fees.set_blob_params(blob_params);
         let blob_update_fraction = blob_params.update_fraction as u64;
         let blob_excess_gas = block.header.excess_blob_gas().or_else(|| {
-            // Polygon enables Cancun EVM features without EIP-4844, so Bor headers omit the blob
-            // fields. REVM still requires a valid blob environment for the Cancun spec; zero is
-            // the neutral excess-gas value.
-            (effective_spec >= SpecId::CANCUN && Chain::from_id(source_chain_id).is_polygon())
-                .then_some(0)
+            // Pre-Cancun headers, Polygon Bor headers, and Arbitrum Nitro headers omit the blob
+            // fields. REVM still requires a valid blob environment when executing with the Cancun
+            // spec; zero is the neutral excess-gas value. On Nitro this makes `BLOBBASEFEE` return
+            // `1`, although Nitro rejects the opcode; matching that requires Arbitrum-specific EVM
+            // handling.
+            (effective_spec >= SpecId::CANCUN
+                && ((source_may_omit_blob_fields && block.header.blob_gas_used().is_none())
+                    || Chain::from_id(source_chain_id).is_polygon()
+                    || Chain::from_id(source_chain_id).is_arbitrum()))
+            .then_some(0)
         });
         evm_env.block_env.blob_excess_gas_and_price =
             blob_excess_gas.map(|excess| BlobExcessGasAndPrice::new(excess, blob_update_fraction));
         let next_block_blob_excess_gas = blob_excess_gas.map_or(0, |excess| {
-            fees.get_next_block_blob_excess_gas(
+            self.networks.next_block_blob_excess_gas(
+                blob_params,
                 excess,
                 block.header.blob_gas_used().unwrap_or_default(),
+                block.header.base_fee_per_gas().unwrap_or_default(),
             )
         });
         fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
