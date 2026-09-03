@@ -34,27 +34,28 @@ impl<N: Network> ScriptTransactionBuilder<N> {
         create2_deployer: Address,
     ) -> Result<()> {
         if let Some(to) = self.transaction.transaction.to() {
-            if to == create2_deployer {
-                if let Some(input) = self.transaction.transaction.input() {
-                    if input.len() >= 32 {
-                        let (salt, init_code) = input.split_at(32);
+            self.transaction.call_kind = CallKind::Call;
+            self.transaction.contract_address = Some(to);
 
-                        self.set_create(
-                            true,
-                            create2_deployer.create2_from_code(B256::from_slice(salt), init_code),
-                            local_contracts,
-                        )?;
-                    } else {
-                        warn!(
-                            "Skipping CREATE2 decoding for call to deployer {create2_deployer}: input length {} is shorter than the 32-byte salt prefix",
-                            input.len()
-                        );
-                    }
+            if to == create2_deployer {
+                if let Some(input) = self.transaction.transaction.input()
+                    && input.len() >= 32
+                {
+                    let (salt, init_code) = input.split_at(32);
+
+                    self.set_create(
+                        true,
+                        create2_deployer.create2_from_code(B256::from_slice(salt), init_code),
+                        local_contracts,
+                    )?;
+                } else {
+                    let input_len =
+                        self.transaction.transaction.input().map_or(0, |input| input.len());
+                    sh_warn!(
+                        "Skipping CREATE2 decoding for call to deployer {create2_deployer}: input length {input_len} is shorter than the 32-byte salt prefix"
+                    )?;
                 }
             } else {
-                self.transaction.call_kind = CallKind::Call;
-                self.transaction.contract_address = Some(to);
-
                 let Some(data) = self.transaction.transaction.input() else { return Ok(()) };
 
                 if data.len() < SELECTOR_LEN {
@@ -201,34 +202,44 @@ mod tests {
     use alloy_primitives::{Bytes, address};
     use alloy_rpc_types::TransactionRequest;
 
-    fn set_call_with_create2_input_len(input_len: usize) {
+    fn call_to_create2_deployer(input: Option<Bytes>) -> TransactionWithMetadata<Ethereum> {
         let create2_deployer = address!("0000000000000000000000000000000000001234");
-        let transaction = TransactionRequest::default()
+        let mut transaction = TransactionRequest::default()
             .with_from(Address::repeat_byte(0x11))
             .with_to(create2_deployer)
-            .with_nonce(0)
-            .with_input(Bytes::from(vec![0xab; input_len]));
+            .with_nonce(0);
+        if let Some(input) = input {
+            transaction = transaction.with_input(input);
+        }
         let mut builder = ScriptTransactionBuilder::<Ethereum>::new(
             TransactionMaybeSigned::new(transaction),
             "http://localhost:8545".to_string(),
         );
         let decoder = CallTraceDecoder::new();
         builder.set_call(&BTreeMap::new(), decoder, create2_deployer).unwrap();
+        builder.build()
     }
 
     #[test]
-    fn set_call_does_not_panic_on_short_create2_input() {
-        // Input shorter than the 32-byte salt prefix must not panic.
-        set_call_with_create2_input_len(0);
-        set_call_with_create2_input_len(4);
-        set_call_with_create2_input_len(31);
+    fn short_create2_input_is_classified_as_call() {
+        let create2_deployer = address!("0000000000000000000000000000000000001234");
+        for input in [None, Some(Bytes::new()), Some(Bytes::from(vec![0xab; 31]))] {
+            let transaction = call_to_create2_deployer(input);
+            assert_eq!(transaction.call_kind, CallKind::Call);
+            assert_eq!(transaction.contract_address, Some(create2_deployer));
+        }
     }
 
     #[test]
-    fn set_call_handles_exact_and_over_length_create2_input() {
-        // Exactly 32 bytes (empty init_code) and just past it must both succeed.
-        set_call_with_create2_input_len(32);
-        set_call_with_create2_input_len(33);
+    fn valid_create2_input_is_classified_as_create2() {
+        let create2_deployer = address!("0000000000000000000000000000000000001234");
+        for input in [Bytes::from(vec![0xab; 32]), Bytes::from(vec![0xab; 33])] {
+            let expected = create2_deployer
+                .create2_from_code(B256::repeat_byte(0xab), input.get(32..).unwrap());
+            let transaction = call_to_create2_deployer(Some(input));
+            assert_eq!(transaction.call_kind, CallKind::Create2);
+            assert_eq!(transaction.contract_address, Some(expected));
+        }
     }
 }
 

@@ -186,13 +186,7 @@ impl VerifyBundle {
         libraries: &[String],
         evm_version: EvmVersion,
     ) -> Option<VerifyArgs> {
-        let Some(init_code) = data.get(create2_offset..) else {
-            warn!(
-                "Skipping verification for CREATE2 transaction: data length {} is shorter than the CREATE2 offset {create2_offset}",
-                data.len()
-            );
-            return None;
-        };
+        let init_code = data.get(create2_offset..)?;
         for (artifact, contract) in self.known_contracts.iter() {
             let Some(bytecode) = contract.bytecode() else { continue };
             // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
@@ -463,8 +457,18 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
                 continue;
             };
             let receipt = &mut sequence.receipts[receipt_index];
+            let malformed_create2 =
+                tx.is_create2() && tx.tx().input().is_none_or(|data| data.len() < 32);
+            if malformed_create2 {
+                let input_len = tx.tx().input().map_or(0, |data| data.len());
+                let _ = sh_warn!(
+                    "Skipping verification for CREATE2 transaction {tx_hash}: input length {input_len} is shorter than the 32-byte salt prefix."
+                );
+            }
+
             // create2 hash offset
-            let offset = if tx.is_create2()
+            let offset = if !malformed_create2
+                && tx.is_create2()
                 && let Some(contract_address) = tx.contract_address
             {
                 receipt.set_contract_address(contract_address);
@@ -474,7 +478,9 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
             };
 
             // Verify contract created directly from the transaction
-            if let (Some(address), Some(data)) = (receipt.contract_address(), tx.tx().input()) {
+            if !malformed_create2
+                && let (Some(address), Some(data)) = (receipt.contract_address(), tx.tx().input())
+            {
                 match verify.get_verify_args(
                     address,
                     offset,
@@ -690,16 +696,33 @@ mod tests {
     #[test]
     fn truncated_create2_data_is_unverifiable() {
         let bytecode = Bytes::from_static(&[0x60, 0x00]);
-        let verify = bundle_with_bytecode(bytecode.clone());
+        let verify = bundle_with_bytecode(bytecode);
         let address = Address::ZERO;
 
-        for data in [Bytes::new(), Bytes::from(vec![0; 31]), Bytes::from(vec![0; 32])] {
+        for data in [Bytes::new(), Bytes::from(vec![0; 31])] {
             assert!(
                 verify.get_verify_args(address, 32, &data, &[], EvmVersion::London).is_none(),
                 "truncated data should not produce verification args"
             );
         }
+    }
 
+    #[test]
+    fn salt_only_create2_data_is_unverifiable() {
+        let verify = bundle_with_bytecode(Bytes::from_static(&[0x60, 0x00]));
+        let address = Address::ZERO;
+        let salt_only = Bytes::from(vec![0; 32]);
+        assert!(
+            verify.get_verify_args(address, 32, &salt_only, &[], EvmVersion::London).is_none(),
+            "valid salt-only data should not match non-empty bytecode"
+        );
+    }
+
+    #[test]
+    fn valid_create2_data_produces_verification_args() {
+        let bytecode = Bytes::from_static(&[0x60, 0x00]);
+        let verify = bundle_with_bytecode(bytecode.clone());
+        let address = Address::ZERO;
         let mut data = vec![0; 32];
         data.extend_from_slice(&bytecode);
         data.extend_from_slice(&[0xaa, 0xbb]);
