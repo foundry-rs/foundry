@@ -190,13 +190,13 @@ impl<N: Network> From<TransactionWithMetadata<N>> for ScriptTransactionBuilder<N
 }
 
 #[cfg(test)]
-mod create2_tests {
+mod tests {
     use super::*;
     use alloy_network::Ethereum;
     use alloy_primitives::{Bytes, address};
     use alloy_rpc_types::TransactionRequest;
 
-    fn call_create2_deployer(input_len: usize) {
+    fn set_call_with_create2_input_len(input_len: usize) {
         let create2_deployer = address!("0000000000000000000000000000000000001234");
         let transaction = TransactionRequest::default()
             .with_from(Address::repeat_byte(0x11))
@@ -214,21 +214,21 @@ mod create2_tests {
     #[test]
     fn set_call_does_not_panic_on_short_create2_input() {
         // Input shorter than the 32-byte salt prefix must not panic.
-        call_create2_deployer(0);
-        call_create2_deployer(4);
-        call_create2_deployer(31);
+        set_call_with_create2_input_len(0);
+        set_call_with_create2_input_len(4);
+        set_call_with_create2_input_len(31);
     }
 
     #[test]
     fn set_call_handles_exact_and_over_length_create2_input() {
         // Exactly 32 bytes (empty init_code) and just past it must both succeed.
-        call_create2_deployer(32);
-        call_create2_deployer(33);
+        set_call_with_create2_input_len(32);
+        set_call_with_create2_input_len(33);
     }
 }
 
 #[cfg(all(test, feature = "monad"))]
-mod tests {
+mod monad_tests {
     use super::*;
     use alloy_network::Ethereum;
     use alloy_primitives::{Bytes, address, keccak256};
