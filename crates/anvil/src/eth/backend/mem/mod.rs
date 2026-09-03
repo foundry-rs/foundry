@@ -7210,9 +7210,9 @@ where
 
         // Cancun specific
         let excess_blob_gas = block.header.excess_blob_gas();
-        let blob_gas_price =
-            alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
         let blob_gas_used = transaction.blob_gas_used();
+        let blob_gas_price = blob_gas_used
+            .map(|_| alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default()));
 
         let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
 
@@ -7235,7 +7235,7 @@ where
             block_hash: Some(block_hash),
             from: info.from,
             to: info.to,
-            blob_gas_price: Some(blob_gas_price),
+            blob_gas_price,
             blob_gas_used,
         };
 
