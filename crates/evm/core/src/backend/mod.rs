@@ -25,7 +25,7 @@ use alloy_primitives::{Address, B256, ChainId, TxKind, U256, keccak256, map::Add
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
-use foundry_evm_networks::{NetworkConfigs, inject_chain_precompiles};
+use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile};
 pub use foundry_fork_db::{
     BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta,
 };
@@ -3260,7 +3260,7 @@ fn inject_replay_precompiles(
     timestamp: u64,
 ) {
     networks.inject_precompiles(precompiles);
-    inject_chain_precompiles(precompiles, chain_id, timestamp);
+    apply_bsc_p256_precompile(precompiles, chain_id, timestamp);
 }
 
 #[cfg(test)]

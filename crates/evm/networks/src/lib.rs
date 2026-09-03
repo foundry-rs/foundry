@@ -870,8 +870,8 @@ impl NetworkConfigs {
     }
 }
 
-/// Injects chain-specific precompiles active at the given timestamp.
-pub fn inject_chain_precompiles(
+/// Applies the BSC P256 precompile active at the given timestamp.
+pub fn apply_bsc_p256_precompile(
     precompiles: &mut PrecompilesMap,
     chain_id: ChainId,
     timestamp: u64,
@@ -1484,7 +1484,7 @@ mod tests {
     fn removes_bsc_p256_before_haber() {
         let mut precompiles = PrecompilesMap::from_static(Precompiles::osaka());
         assert!(precompiles.get(&BSC_P256_ADDRESS).is_some());
-        inject_chain_precompiles(
+        apply_bsc_p256_precompile(
             &mut precompiles,
             BSC_MAINNET_CHAIN_ID,
             BSC_MAINNET_HABER_TIMESTAMP - 1,
