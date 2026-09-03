@@ -688,14 +688,6 @@ impl TUIContext<'_> {
         f.render_widget(paragraph, area);
     }
 
-    /// Computes the exclusive end of a `[offset, offset + len)` buffer region, saturating to
-    /// `usize::MAX` rather than overflowing. `offset`/`len` come from `get_buffer_accesses`,
-    /// which itself saturates a raw `U256` stack value via `saturating_to()` - so `usize::MAX`
-    /// is a legitimate input here, not just a theoretical one.
-    const fn saturating_region_end(offset: usize, len: usize) -> usize {
-        offset.saturating_add(len)
-    }
-
     fn draw_buffer(&self, f: &mut Frame<'_>, area: Rect) {
         let call = self.debug_call();
         let step = self.current_step();
@@ -772,7 +764,7 @@ impl TUIContext<'_> {
                     let mut end = None;
                     let idx = i * 32 + j;
                     if let (Some(offset), Some(len), Some(color)) = (offset, len, color) {
-                        let offset_end = Self::saturating_region_end(offset, len);
+                        let offset_end = offset.saturating_add(len);
                         end = Some(offset_end);
                         if (offset..offset_end).contains(&idx) {
                             // [offset, offset + len) is the memory region to be colored.
@@ -783,7 +775,7 @@ impl TUIContext<'_> {
                     }
                     if let (Some(write_offset), Some(write_size)) = (write_offset, write_size) {
                         // check for overlap with read region
-                        let write_end = Self::saturating_region_end(write_offset, write_size);
+                        let write_end = write_offset.saturating_add(write_size);
                         if let Some(read_end) = end {
                             let read_start = offset.unwrap();
                             if (write_offset..write_end).contains(&read_end) {
@@ -1604,22 +1596,6 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(screen.contains("Memory (max expansion: 0 bytes)"));
-    }
-
-    #[test]
-    fn saturating_region_end_handles_normal_and_saturated_inputs() {
-        // Normal case: exact sum.
-        assert_eq!(TUIContext::saturating_region_end(0, 32), 32);
-        assert_eq!(TUIContext::saturating_region_end(100, 50), 150);
-        // usize::MAX is a legitimate input (get_buffer_accesses saturates a raw U256 stack value
-        // via saturating_to()) for BOTH the read region (offset + len) and the write region
-        // (write_offset + write_size) - this directly covers the write-region branch that
-        // `draw_buffer_does_not_overflow_on_saturated_stack_offsets` below cannot reach, since
-        // there is no way to construct a non-empty `step.memory` in this test module
-        // (`RecordedMemory`'s content constructor is crate-private to revm-inspectors).
-        assert_eq!(TUIContext::saturating_region_end(usize::MAX, 1), usize::MAX);
-        assert_eq!(TUIContext::saturating_region_end(usize::MAX, usize::MAX), usize::MAX);
-        assert_eq!(TUIContext::saturating_region_end(1, usize::MAX), usize::MAX);
     }
 
     #[test]
