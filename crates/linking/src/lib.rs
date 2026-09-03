@@ -382,7 +382,7 @@ impl<'a> Linker<'a> {
                 });
             }
             let Some(address) = configured.first().copied() else { continue };
-            let canonical = libraries.libs.entry(file.clone()).or_default();
+            let canonical = libraries.libs.entry(file).or_default();
             if exact {
                 canonical.insert(name, address.to_checksum(None));
             } else {
