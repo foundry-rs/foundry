@@ -33,6 +33,7 @@ pub mod creation_code;
 #[cfg(feature = "optimism")]
 pub mod da_estimate;
 pub mod erc20;
+pub mod erc4626;
 pub mod estimate;
 pub mod events;
 pub mod find_block;
