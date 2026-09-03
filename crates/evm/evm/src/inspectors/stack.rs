@@ -358,10 +358,14 @@ pub struct InnerContextData {
     locally_created_accounts: AddressHashSet,
 }
 
+/// Gas accounting carried across an isolated frame's synthetic transaction boundary.
 struct IsolatedGas {
+    /// Regular execution gas available to the isolated frame.
     regular_limit: u64,
+    /// State gas reservoir available to the isolated frame.
     reservoir: u64,
-    precharged_state: u64,
+    /// State gas already charged by the outer opcode.
+    precharged_state: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1020,9 +1024,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         // outer opcode.
         let regular_gas_limit = regular_limit.saturating_add(initial_gas);
         ecx.cfg_env_mut().tx_gas_limit_cap = Some(regular_gas_limit);
-        ecx.tx_mut().set_gas_limit(
-            regular_gas_limit.saturating_add(reservoir).saturating_add(precharged_state),
-        );
+        let mut tx_gas_limit = regular_gas_limit.saturating_add(reservoir);
+        if let Some(precharged_state) = precharged_state {
+            tx_gas_limit = tx_gas_limit.saturating_add(precharged_state);
+        }
+        ecx.tx_mut().set_gas_limit(tx_gas_limit);
 
         // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
         // exceed block gas limit.
@@ -1163,8 +1169,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         };
 
         let transaction_gas = res.result.gas();
-        let state_gas_used =
-            transaction_gas.block_state_gas_used().saturating_sub(precharged_state);
+        let mut state_gas_used = transaction_gas.block_state_gas_used();
+        if let Some(precharged_state) = precharged_state {
+            state_gas_used = state_gas_used.saturating_sub(precharged_state);
+        }
         if state_gas_used == 0 {
             let mut snapshot_gas = Gas::new(regular_limit);
             let _ = snapshot_gas.record_regular_cost(transaction_gas.tx_gas_used());
@@ -1723,11 +1731,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 // Isolate CALLs
                 CallScheme::Call => {
                     let input = call.input.bytes(ecx);
-                    let precharged_state = if call.charged_new_account_state_gas {
-                        ecx.cfg().gas_params().new_account_state_gas()
-                    } else {
-                        0
-                    };
+                    let precharged_state = call
+                        .charged_new_account_state_gas
+                        .then_some(ecx.cfg().gas_params().new_account_state_gas());
                     let (result, _, was_precompile_called) = self.transact_inner(
                         ecx,
                         TxKind::Call(call.target_address),
@@ -1888,11 +1894,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 .evm_state()
                 .get(&create.caller())
                 .map(|acc| create.caller().create(acc.info.nonce));
-            let precharged_state = if create.charged_create_state_gas() {
-                ecx.cfg().gas_params().create_state_gas()
-            } else {
-                0
-            };
+            let precharged_state = create
+                .charged_create_state_gas()
+                .then_some(ecx.cfg().gas_params().create_state_gas());
 
             let (result, address, _) = self.transact_inner(
                 ecx,
