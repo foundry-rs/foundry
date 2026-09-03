@@ -44,7 +44,7 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
-        if !func.kind.is_function()
+        if matches!(func.kind, hir::FunctionKind::Constructor)
             || matches!(
                 func.state_mutability,
                 ast::StateMutability::Pure | ast::StateMutability::View

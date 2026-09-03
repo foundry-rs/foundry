@@ -733,6 +733,44 @@ contract ArbitrarySendErc20 {
         } while (false);
         token.transferFrom(x, to, a);
     }
+
+    // -- MODIFIER BODY SINKS --
+
+    modifier pullBad(address from, address to, uint256 a) {
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        _;
+    }
+
+    function modifierSinkBad(address from, address to, uint256 a) public pullBad(from, to, a) {}
+
+    modifier guardedPullOk(address from, address to, uint256 a) {
+        require(from == msg.sender, "auth");
+        token.transferFrom(from, to, a);
+        _;
+    }
+
+    function modifierGuardedSinkOk(address from, address to, uint256 a) public guardedPullOk(from, to, a) {}
+
+    modifier pullBeforeGuardBad(address from, address to, uint256 a) {
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        require(from == msg.sender, "auth");
+        _;
+    }
+
+    function modifierSinkBeforeGuardBad(address from, address to, uint256 a)
+        public
+        pullBeforeGuardBad(from, to, a)
+    {}
+
+    // -- FALLBACK / RECEIVE SINKS --
+    // `Fallback`/`Receive` are no longer excluded (only `Constructor` is); an unsafe sink
+    // reachable through either is a real finding, same as in an ordinary function.
+
+    fallback(bytes calldata data) external returns (bytes memory) {
+        address from = abi.decode(data, (address));
+        token.transferFrom(from, msg.sender, 1); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        return "";
+    }
 }
 
 // Struct / array / mapping receivers.

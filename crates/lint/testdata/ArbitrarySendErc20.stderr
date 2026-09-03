@@ -345,6 +345,30 @@ LL │ …     token.transferFrom(x, to, a);
 warning[arbitrary-send-erc20]: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
    ╭▸ ROOT/testdata/ArbitrarySendErc20.sol:LL:CC
    │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20
+
+warning[arbitrary-send-erc20]: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+   ╭▸ ROOT/testdata/ArbitrarySendErc20.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20
+
+warning[arbitrary-send-erc20]: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+   ╭▸ ROOT/testdata/ArbitrarySendErc20.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, msg.sender, 1);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20
+
+warning[arbitrary-send-erc20]: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+   ╭▸ ROOT/testdata/ArbitrarySendErc20.sol:LL:CC
+   │
 LL │ …     cfg.token.transferFrom(from, to, a);
    │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
