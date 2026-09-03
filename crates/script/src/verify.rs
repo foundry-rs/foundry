@@ -192,8 +192,7 @@ impl VerifyBundle {
             // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
             // of the transaction
             if init_code.starts_with(bytecode) {
-                let Some(constructor_args) = init_code.get(bytecode.len()..) else { continue };
-                let constructor_args = constructor_args.to_vec();
+                let constructor_args = init_code[bytecode.len()..].to_vec();
 
                 if artifact.source.extension().is_some_and(|e| e.to_str() == Some("vy")) {
                     warn!("Skipping verification of Vyper contract: {}", artifact.name);
