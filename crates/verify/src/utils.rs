@@ -287,8 +287,7 @@ pub fn check_and_encode_args(
             args.len()
         );
     }
-    encode_args(&constructor.inputs, &args)
-        .map(|args| DynSolValue::Tuple(args).abi_encode_params())
+    encode_args(&constructor.inputs, &args).map(|args| DynSolValue::Tuple(args).abi_encode_params())
 }
 
 pub fn validate_encoded_constructor_args(
