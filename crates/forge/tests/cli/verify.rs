@@ -533,7 +533,7 @@ forgetest_init!(can_validate_verifier_settings, |prj, cmd| {
     prj.initialize_default_contracts();
     // Build the project to create the cache.
     cmd.forge_fuse().arg("build").assert_success();
-    // Use the explicit chain ID so validation does not depend on the public Lisk RPC endpoint.
+    // Use the explicit chain ID so validation does not depend on a public RPC endpoint.
     // No verifier URL.
     cmd.forge_fuse()
         .args([
@@ -542,12 +542,12 @@ forgetest_init!(can_validate_verifier_settings, |prj, cmd| {
             "4202",
             "--verifier",
             "blockscout",
-            "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             "src/Counter.sol:Counter",
         ])
         .assert_failure()
         .stderr_eq(str![[r#"
-Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
+Start verifying contract `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` deployed on 4202
 Error: No verifier URL specified for verifier blockscout
 
 "#]]);
@@ -560,12 +560,12 @@ Error: No verifier URL specified for verifier blockscout
             "4202",
             "--verifier",
             "etherscan",
-            "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             "src/Counter.sol:Counter",
         ])
         .assert_failure()
         .stderr_eq(str![[r#"
-Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
+Start verifying contract `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` deployed on 4202
 Error: No known Etherscan API URL for chain `4202`. To fix this, please:
 1. Specify a `url` when using Etherscan verifier
 2. Verify the chain `4202` is correct
@@ -580,17 +580,17 @@ Error: No known Etherscan API URL for chain `4202`. To fix this, please:
             "--verifier",
             "blockscout",
             "--verifier-url",
-            "https://sepolia-blockscout.lisk.com/api",
-            "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+            "https://eth.blockscout.com/api",
+            "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
             "src/Counter.sol:Counter",
         ])
         .assert_success()
         .stdout_eq(str![""])
         .stderr_eq(str![[r#"
-Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
+Start verifying contract `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` deployed on 4202
 
 Verifying on blockscout...
-Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.
+Contract [src/Counter.sol:Counter] "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" is already verified. Skipping verification.
 
 "#]]);
 
@@ -606,17 +606,17 @@ Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" 
         "--verifier",
         "blockscout",
         "--verifier-url",
-        "https://sepolia-blockscout.lisk.com/api",
-        "0x19b248616E4964f43F611b5871CE1250f360E9d3",
+        "https://eth.blockscout.com/api",
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
         "src/Counter.sol:Counter",
     ])
     .assert_success()
     .stdout_eq(str![""])
     .stderr_eq(str![[r#"
-Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
+Start verifying contract `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` deployed on 4202
 
 Verifying on blockscout...
-Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.
+Contract [src/Counter.sol:Counter] "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" is already verified. Skipping verification.
 
 "#]]);
 });
