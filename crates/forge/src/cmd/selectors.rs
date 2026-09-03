@@ -307,7 +307,7 @@ impl SelectorsSubcommands {
                 for (contract, artifact) in artifacts.by_ref() {
                     let abi = artifact.abi.ok_or_else(|| eyre::eyre!("Unable to fetch abi"))?;
 
-                    let contract_selectors = selectors.entry(contract.clone()).or_default();
+                    let contract_selectors = selectors.entry(contract).or_default();
 
                     for func in abi.functions() {
                         let sig = func.signature();

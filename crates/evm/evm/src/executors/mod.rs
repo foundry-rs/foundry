@@ -2048,7 +2048,7 @@ mod tests {
             false,
             target,
             Some(MONAD_CHEATCODE_ADDRESS),
-            NetworkConfigs::with_monad().extra_cheatcode_addresses(),
+            &[MONAD_CHEATCODE_ADDRESS],
         ));
     }
 

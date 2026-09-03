@@ -13,7 +13,7 @@ use foundry_config::{
     lint::{LintSpecificConfig, Severity},
 };
 use solar::{
-    ast::{self as ast},
+    ast,
     interface::{
         ColorChoice, Session,
         diagnostics::{HumanEmitter, JsonEmitter, Level, SilentEmitter},

@@ -59,13 +59,15 @@ use foundry_config::{
     fs_permissions::FsAccessPermission,
 };
 use foundry_debugger::{Debugger, DebuggerLayout};
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
-    executors::ShowmapDomain,
+    executors::{ExecutorBuilder, ShowmapDomain},
     fork::ResolvedFork,
     fuzz::{BaseCounterExample, BasicTxDetails, CounterExample},
     opts::EvmOpts,
@@ -2609,6 +2611,7 @@ impl TestArgs {
     }
 
     /// Build the test runner and execute tests for a specific network type.
+    #[allow(clippy::too_many_arguments)]
     async fn build_and_run_tests<FEN: FoundryEvmNetwork>(
         &self,
         config: Config,
@@ -2617,6 +2620,7 @@ impl TestArgs {
         filter: &mut ProjectPathsAwareFilter,
         execution: TestExecutionOptions,
         resolved_fork: Option<&ResolvedFork>,
+        executor_builder: ExecutorBuilder<FEN>,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
         let (evm_env, tx_env, fork) = if let Some(fork) = resolved_fork {
@@ -2654,7 +2658,7 @@ impl TestArgs {
             .with_fuzz_input(execution.fuzz_input)
             .with_symbolic_artifact_replay(execution.replay_symbolic_artifact)
             .with_create2_deployer_available(create2_deployer_available)
-            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
+            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts, executor_builder)?;
 
         let libraries = runner.libraries.clone();
         let outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
@@ -2667,6 +2671,7 @@ impl TestArgs {
         evm_opts: EvmOpts,
         output: &ProjectCompileOutput,
         options: FuzzMinimizeNetworkPassOptions,
+        executor_builder: ExecutorBuilder<FEN>,
     ) -> eyre::Result<MultiContractRunner<FEN>> {
         let (evm_env, tx_env, fork) =
             evm_opts.env_resolved::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
@@ -2689,7 +2694,7 @@ impl TestArgs {
             .with_fuzz_only(self.fuzz_only.is_enabled())
             .with_fuzz_failure_replay(self.fuzz_failure_replay)
             .with_create2_deployer_available(create2_deployer_available)
-            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)
+            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts, executor_builder)
     }
 
     /// Dispatches `build_and_run_tests` to the correct network type based on `evm_opts.networks`.
@@ -2713,18 +2718,20 @@ impl TestArgs {
                     filter,
                     execution,
                     resolved_fork,
+                    ExecutorBuilder::<TempoEvmNetwork>::new(),
                 )
                 .await
             }
             #[cfg(feature = "monad")]
             NetworkDispatchKind::Monad => {
-                self.build_and_run_tests::<foundry_evm::core::evm::MonadEvmNetwork>(
+                self.build_and_run_tests::<MonadEvmNetwork>(
                     config,
                     evm_opts,
                     output,
                     filter,
                     execution,
                     resolved_fork,
+                    ExecutorBuilder::<MonadEvmNetwork>::new(),
                 )
                 .await
             }
@@ -2737,6 +2744,7 @@ impl TestArgs {
                     filter,
                     execution,
                     resolved_fork,
+                    ExecutorBuilder::<OpEvmNetwork>::new(),
                 )
                 .await
             }
@@ -2748,6 +2756,7 @@ impl TestArgs {
                     filter,
                     execution,
                     resolved_fork,
+                    ExecutorBuilder::<EthEvmNetwork>::new(),
                 )
                 .await
             }
@@ -2765,23 +2774,45 @@ impl TestArgs {
     ) -> eyre::Result<FuzzMinimizeReplayPass> {
         match network_dispatch_kind(dispatch_opts) {
             NetworkDispatchKind::Tempo => self
-                .build_fuzz_minimize_runner::<TempoEvmNetwork>(config, evm_opts, output, options)
+                .build_fuzz_minimize_runner::<TempoEvmNetwork>(
+                    config,
+                    evm_opts,
+                    output,
+                    options,
+                    ExecutorBuilder::<TempoEvmNetwork>::new(),
+                )
                 .await
                 .map(|runner| fuzz_minimize_replay(runner, filter)),
             #[cfg(feature = "monad")]
             NetworkDispatchKind::Monad => self
-                .build_fuzz_minimize_runner::<foundry_evm::core::evm::MonadEvmNetwork>(
-                    config, evm_opts, output, options,
+                .build_fuzz_minimize_runner::<MonadEvmNetwork>(
+                    config,
+                    evm_opts,
+                    output,
+                    options,
+                    ExecutorBuilder::<MonadEvmNetwork>::new(),
                 )
                 .await
                 .map(|runner| fuzz_minimize_replay(runner, filter)),
             #[cfg(feature = "optimism")]
             NetworkDispatchKind::Optimism => self
-                .build_fuzz_minimize_runner::<OpEvmNetwork>(config, evm_opts, output, options)
+                .build_fuzz_minimize_runner::<OpEvmNetwork>(
+                    config,
+                    evm_opts,
+                    output,
+                    options,
+                    ExecutorBuilder::<OpEvmNetwork>::new(),
+                )
                 .await
                 .map(|runner| fuzz_minimize_replay(runner, filter)),
             NetworkDispatchKind::Eth => self
-                .build_fuzz_minimize_runner::<EthEvmNetwork>(config, evm_opts, output, options)
+                .build_fuzz_minimize_runner::<EthEvmNetwork>(
+                    config,
+                    evm_opts,
+                    output,
+                    options,
+                    ExecutorBuilder::<EthEvmNetwork>::new(),
+                )
                 .await
                 .map(|runner| fuzz_minimize_replay(runner, filter)),
         }
@@ -2979,6 +3010,7 @@ impl TestArgs {
         let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
         let resolved_hardfork = runner.tcfg.hardfork;
         let networks = runner.tcfg.evm_opts.networks;
+        let extra_cheatcode_addresses = runner.tcfg.executor_builder.extra_cheatcode_addresses();
         let decode_internal = runner.decode_internal != InternalTraceMode::None;
 
         // Run tests in a streaming fashion.
@@ -3025,7 +3057,7 @@ impl TestArgs {
                 config.gas_reports.clone(),
                 config.gas_reports_ignore.clone(),
                 config.gas_reports_include_tests,
-                config.networks.extra_cheatcode_addresses().iter().copied(),
+                extra_cheatcode_addresses.iter().copied(),
             )
         });
 
