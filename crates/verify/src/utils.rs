@@ -673,11 +673,8 @@ mod tests {
 
         let encoded = check_and_encode_args(&artifact, vec!["hi".to_string()]).unwrap();
 
-        // Ground truth from `cast abi-encode "constructor(string)" "hi"`. The leading 0x20 here
-        // is the offset to the string payload, which a correct top-level-params encoding always
-        // has; `DynSolValue::abi_encode()` additionally wrapped the whole tuple in a synthetic
-        // 1-element sequence, prepending a SECOND, spurious 0x20 outer-tuple offset before this
-        // one - that extra word, not this one, is what `abi_encode_params()` removes.
+        // Constructor arguments are encoded as top-level ABI parameters, so the first word is the
+        // offset to the string payload.
         let expected = alloy_primitives::hex!(
             "0000000000000000000000000000000000000000000000000000000000000020"
             "0000000000000000000000000000000000000000000000000000000000000002"
