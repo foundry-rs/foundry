@@ -41,12 +41,14 @@ use anvil::{
 use axum::{Json, Router, routing::post};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
+use foundry_evm::hardfork::OpHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
     self, next_http_rpc_endpoint, next_rpc_endpoint, spawn_rpc_proxy_internal_error_after,
     spawn_rpc_proxy_method_not_found_before, spawn_rpc_proxy_rejecting_method_after,
     spawn_rpc_proxy_rejecting_method_when_enabled,
+    spawn_rpc_proxy_retyping_first_block_transaction,
 };
 use futures::StreamExt;
 use revm::{
@@ -235,6 +237,80 @@ async fn test_fork_retries_when_anvil_node_info_becomes_available() {
         spawn_rpc_proxy_method_not_found_before(origin.http_endpoint(), "anvil_nodeInfo", 1).await;
 
     try_spawn(NodeConfig::test().with_eth_rpc_url(Some(fork_url))).await.unwrap();
+}
+
+// A replayed block holds only the transactions anvil executed, so a skipped one must not leave a
+// gap in the indices storage keys receipts by. The proxy stands in for Arbitrum, which opens every
+// block with a system transaction anvil cannot execute.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_transaction_hash_replay_skips_unsupported_prefix() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    origin_api.anvil_set_auto_mine(false).await.unwrap();
+    let origin_provider = origin_handle.http_provider();
+    // Distinct senders, because Arbitrum's system transactions do not consume a user nonce.
+    let senders =
+        origin_handle.dev_wallets().take(2).map(|wallet| wallet.address()).collect::<Vec<_>>();
+
+    let skipped = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(senders[0])
+                .to(Address::random())
+                .value(U256::from(1))
+                .nonce(0),
+        ))
+        .await
+        .unwrap();
+    let target = origin_provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .from(senders[1])
+                .to(Address::random())
+                .value(U256::from(2))
+                .nonce(0),
+        ))
+        .await
+        .unwrap();
+    let target_hash = *target.tx_hash();
+    origin_api.mine_one().await.unwrap();
+
+    let fork_url = spawn_rpc_proxy_retyping_first_block_transaction(
+        origin_handle.http_endpoint(),
+        // `ArbitrumInternalTx`.
+        "0x6a",
+    )
+    .await;
+    let (fork_api, fork_handle) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(fork_url))
+            .with_fork_transaction_hash(Some(target_hash))
+            .with_no_mining(true),
+    )
+    .await;
+    let fork_provider = fork_handle.http_provider();
+
+    // Only the target survives the prefix, so it takes index 0 in the replayed block.
+    let replayed =
+        fork_api.block_by_number_full(BlockNumberOrTag::Number(1)).await.unwrap().unwrap();
+    assert_eq!(
+        replayed
+            .transactions
+            .as_transactions()
+            .unwrap()
+            .iter()
+            .map(|tx| tx.tx_hash())
+            .collect::<Vec<_>>(),
+        vec![target_hash]
+    );
+
+    // Receipt lookups index into that block, so a stale index panics instead of answering.
+    let receipt = fork_provider.get_transaction_receipt(target_hash).await.unwrap().unwrap();
+    assert_eq!(receipt.transaction_index(), Some(0));
+    assert_eq!(
+        fork_provider.get_block_receipts(BlockId::number(1)).await.unwrap().unwrap().len(),
+        1
+    );
+    assert!(fork_api.backend.mined_transaction_by_hash(*skipped.tx_hash()).is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -2273,6 +2349,36 @@ async fn test_block_receipts() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_pending_block_receipts_do_not_return_fork_head_receipts() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+    origin_api
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+
+    let (fork_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+
+    let latest_receipts = fork_api.block_receipts(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(latest_receipts.len(), 1);
+
+    let pending_block =
+        fork_api.block_by_number_full(BlockNumberOrTag::Pending).await.unwrap().unwrap();
+    assert_eq!(pending_block.header.number, 2);
+    assert!(pending_block.transactions.is_empty());
+
+    let pending_receipts = fork_api.block_receipts(BlockId::pending()).await.unwrap().unwrap();
+    assert!(pending_receipts.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_override_fork_chain_id() {
     let chain_id_override = 5u64;
     let (_api, handle) = spawn(
@@ -3366,6 +3472,35 @@ async fn spawn_rpc_proxy_with_blob_header_fields(
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     format!("http://{address}")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_optimism_fork_keeps_excess_blob_gas_zero_after_mining() {
+    // Base Jovian stores the DA footprint in `blobGasUsed`, but OP Stack clients keep
+    // `excessBlobGas` at zero because the chain does not support EIP-4844 blobs. This captured
+    // footprint is from Base mainnet block 50_729_760.
+    let (_, origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Base as u64))
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_hardfork(Some(OpHardfork::Jovian.into())),
+    )
+    .await;
+    let fork_url =
+        spawn_rpc_proxy_with_blob_header_fields(origin.http_endpoint(), Some(0x2e_b434), Some(0))
+            .await;
+    let (api, _) = spawn(
+        NodeConfig::test().with_eth_rpc_url(Some(fork_url)).with_fork_block_number(Some(0u64)),
+    )
+    .await;
+
+    api.mine_one().await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    assert_eq!(block.header.excess_blob_gas, Some(0));
+    let next_blob_fee = api.excess_blob_gas_and_price().unwrap().unwrap();
+    assert_eq!(next_blob_fee.excess_blob_gas, 0);
+    assert_eq!(next_blob_fee.blob_gasprice, 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]

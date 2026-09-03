@@ -16,7 +16,7 @@ use crate::{
 };
 use alloy_consensus::{BlockHeader, Typed2718};
 use alloy_eips::BlockNumHash;
-use alloy_evm::{Evm, EvmEnv, EvmFactory};
+use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_genesis::GenesisAccount;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, TransactionResponse,
@@ -603,6 +603,9 @@ pub trait DatabaseExt<F: FoundryEvmFactory>:
 #[must_use]
 pub struct Backend<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Active network configuration.
+    // TODO(monad-fen-dispatch): Remove this post-dispatch configuration. Extract Monad replay and
+    // fork positioning into concrete Monad code, and pass family-neutral chain data directly to
+    // ordinary block/environment updates.
     networks: NetworkConfigs,
     /// The access point for managing forks
     forks: MultiFork<AnyNetwork, SpecFor<FEN>, BlockEnvFor<FEN>>,
@@ -1744,7 +1747,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                     let chain_context = context.transaction(*index);
                     let mut evm =
                         factory.create_evm_with_context(replay_db, evm_env.clone(), chain_context);
-                    networks.inject_chain_precompiles(evm.precompiles_mut(), chain_id, timestamp);
+                    inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
                     trace!(tx=?tx.tx_hash(), "committing transaction");
                     let result = if *is_system {
                         #[cfg(feature = "monad")]
@@ -1768,7 +1771,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
                 }
             } else {
                 let mut evm = factory.create_evm(replay_db, evm_env);
-                networks.inject_chain_precompiles(evm.precompiles_mut(), chain_id, timestamp);
+                inject_replay_precompiles(networks, evm.precompiles_mut(), chain_id, timestamp);
                 for (_, tx, tx_env, is_system) in &txs_to_replay {
                     trace!(tx=?tx.tx_hash(), "committing transaction");
                     let result = if *is_system {
@@ -3250,6 +3253,16 @@ fn apply_state_changeset<N: Network, B: ForkBlockEnv>(
     Ok(())
 }
 
+fn inject_replay_precompiles(
+    networks: NetworkConfigs,
+    precompiles: &mut PrecompilesMap,
+    chain_id: ChainId,
+    timestamp: u64,
+) {
+    networks.inject_precompiles(precompiles);
+    networks.inject_chain_precompiles(precompiles, chain_id, timestamp);
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -3258,6 +3271,7 @@ mod tests {
     use crate::{
         backend::{Backend, DatabaseExt, ForkPosition},
         evm::EthEvmNetwork,
+        fork::CreateFork,
         opts::EvmOpts,
     };
     use alloy_consensus::transaction::Recovered;
@@ -3265,16 +3279,19 @@ mod tests {
     use alloy_evm::EvmEnv;
     use alloy_network::{
         AnyHeader, AnyNetwork, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope,
-        AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction,
+        AnyTxType, TransactionBuilder, UnknownTxEnvelope, UnknownTypedTransaction,
     };
     use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256, map::AddressSet};
     use alloy_provider::{Provider, ProviderBuilder, mock::Asserter};
-    use alloy_rpc_types::{Block, BlockTransactions, Transaction as RpcTransaction};
+    use alloy_rpc_types::{
+        Block, BlockTransactions, Transaction as RpcTransaction, TransactionRequest,
+    };
     use alloy_serde::WithOtherFields;
+    use alloy_sol_types::SolValue;
     use anvil::{NodeConfig, spawn};
     use foundry_common::{SYSTEM_TRANSACTION_TYPE, provider::get_http_provider};
     use foundry_config::{Config, NamedChain};
-    use foundry_evm_networks::NetworkConfigs;
+    use foundry_evm_networks::{NetworkConfigs, celo::transfer::CELO_TRANSFER_ADDRESS};
     use foundry_fork_db::{
         SharedBackend,
         cache::{BlockchainDb, BlockchainDbMeta},
@@ -3472,6 +3489,73 @@ mod tests {
                 .is_none()
         );
         assert!(Backend::<EthEvmNetwork>::replay_tx_env(&transaction(0xff)).is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn celo_transaction_hash_fork_replays_transfer_precompile() {
+        let networks = NetworkConfigs::with_celo();
+        let (api, handle) = spawn(
+            NodeConfig::test().with_chain_id(Some(NamedChain::Celo as u64)).with_networks(networks),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let sender = provider.get_accounts().await.unwrap()[0];
+        let recipient = Address::with_last_byte(0x99);
+        let transfer_amount = U256::from(1_000);
+        let target_amount = U256::from(1);
+        let nonce = provider.get_transaction_count(sender).await.unwrap();
+        let gas_price = provider.get_gas_price().await.unwrap();
+
+        api.anvil_set_auto_mine(false).await.unwrap();
+        api.send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(CELO_TRANSFER_ADDRESS)
+                .with_nonce(nonce)
+                .with_gas_limit(100_000)
+                .with_gas_price(gas_price)
+                .with_input(Bytes::from((sender, recipient, transfer_amount).abi_encode())),
+        ))
+        .await
+        .unwrap();
+        let target_hash = api
+            .send_transaction(WithOtherFields::new(
+                TransactionRequest::default()
+                    .with_from(sender)
+                    .with_to(recipient)
+                    .with_nonce(nonce + 1)
+                    .with_gas_limit(21_000)
+                    .with_gas_price(gas_price)
+                    .with_value(target_amount),
+            ))
+            .await
+            .unwrap();
+        api.mine_one().await.unwrap();
+
+        assert_eq!(provider.get_balance(recipient).await.unwrap(), transfer_amount + target_amount);
+
+        let endpoint = handle.http_endpoint();
+        let fork_block_number = provider.get_block_number().await.unwrap();
+        let evm_opts = EvmOpts {
+            fork_url: Some(endpoint.clone()),
+            fork_block_number: Some(fork_block_number),
+            networks,
+            ..Default::default()
+        };
+        let fork = CreateFork { url: endpoint, enable_caching: false, evm_opts, resolved: None };
+        let mut backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        backend.set_networks(networks);
+
+        let fork_id = backend.create_fork_at_transaction(fork, target_hash).unwrap();
+        let fork = backend.inner.get_fork_by_id(fork_id).unwrap();
+        assert!(matches!(
+            fork.position,
+            ForkPosition::BeforeTransaction { transaction_index: 1, .. }
+        ));
+        assert_eq!(
+            fork.db.basic_ref(recipient).unwrap().unwrap_or_default().balance,
+            transfer_amount
+        );
     }
 
     #[test]

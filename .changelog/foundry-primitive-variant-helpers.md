@@ -2,4 +2,4 @@
 foundry-primitives: minor
 ---
 
-Added inherent variant predicate helpers to Foundry primitive transaction, receipt, and header types.
+Added inherent variant predicate helpers for standard Foundry transaction types.

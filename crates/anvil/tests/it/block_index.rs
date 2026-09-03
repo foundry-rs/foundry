@@ -108,6 +108,54 @@ async fn raw_transaction_by_block_and_index_matches_by_hash() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn pending_transaction_by_block_number_and_index() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let sender = wallet.address();
+    let signer: EthereumWallet = wallet.into();
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let pending = provider
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default()
+                .with_from(sender)
+                .with_to(Address::repeat_byte(0x11))
+                .with_value(U256::from(1)),
+        ))
+        .await
+        .unwrap()
+        .register()
+        .await
+        .unwrap();
+    let tx_hash = *pending.tx_hash();
+
+    let tx: Option<Value> = provider
+        .client()
+        .request(
+            "eth_getTransactionByBlockNumberAndIndex",
+            (BlockNumberOrTag::Pending, Index::from(0)),
+        )
+        .await
+        .unwrap();
+    let tx = tx.expect("expected a pending transaction at index 0");
+    assert_eq!(tx["hash"].as_str().unwrap().parse::<B256>().unwrap(), tx_hash);
+
+    let expected: Option<Bytes> =
+        provider.client().request("eth_getRawTransactionByHash", (tx_hash,)).await.unwrap();
+    let expected = expected.expect("expected a raw pending transaction");
+    let raw: Option<Bytes> = provider
+        .client()
+        .request(
+            "eth_getRawTransactionByBlockNumberAndIndex",
+            (BlockNumberOrTag::Pending, Index::from(0)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(raw, Some(expected));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn uncle_endpoints_report_no_uncles() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();

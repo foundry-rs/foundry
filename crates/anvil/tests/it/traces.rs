@@ -8,7 +8,7 @@ use crate::{
 use alloy_eips::BlockId;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{
-    Address, Bytes, U256,
+    Address, B256, Bytes, U256,
     hex::{self, FromHex},
 };
 use alloy_provider::{
@@ -834,6 +834,20 @@ async fn test_debug_trace_transaction_reports_transaction_gas() {
         .unwrap();
     let GethTrace::CallTracer(call_frame) = call_trace else { unreachable!("expected call trace") };
     assert_eq!(call_frame.gas_used, U256::from(second_receipt.gas_used));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_debug_trace_transaction_rejects_unknown_hash() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let error = handle
+        .http_provider()
+        .debug_trace_transaction(B256::ZERO, GethDebugTracingOptions::default())
+        .await
+        .unwrap_err();
+    let error = error.as_error_resp().unwrap();
+
+    assert_eq!(error.code, -32001);
+    assert_eq!(error.message, "transaction not found");
 }
 
 #[tokio::test(flavor = "multi_thread")]

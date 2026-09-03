@@ -9,10 +9,6 @@ impl NetworkConfigs {
         Self { network: Some(NetworkVariant::Optimism), optimism: true, ..Default::default() }
     }
 
-    pub const fn is_optimism(&self) -> bool {
-        if let Some(network) = self.resolved_network() { network.is_optimism() } else { false }
-    }
-
     /// Optimism-specific base fee parameters, picking Canyon vs pre-Canyon based on `timestamp`.
     pub(crate) fn op_base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
         let op_hardforks = OpChainHardforks::op_mainnet();

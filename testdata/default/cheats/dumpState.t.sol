@@ -36,7 +36,20 @@ contract DeploymentOrderHelper {
     }
 }
 
+/// forge-config: default.fs_permissions = [{ access = "write", path = "./"}]
+contract DumpStateFoundryTomlTest is Test {
+    function testDumpStateRejectsFoundryToml() public {
+        vm._expectCheatcodeRevert("access to `foundry.toml` is not allowed");
+        vm.dumpState("foundry.toml");
+    }
+}
+
 contract DumpStateTest is Test {
+    function testDumpStateRespectsFsPermissions() public {
+        vm._expectCheatcodeRevert("the path dump-state.json is not allowed to be accessed for write operations");
+        vm.dumpState("dump-state.json");
+    }
+
     function testDumpStateCheatAccount() public {
         // Path to temporary file that is deleted after the test
         string memory path = string.concat(vm.projectRoot(), "/fixtures/Json/test_dump_state_cheat.json");

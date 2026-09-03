@@ -343,7 +343,8 @@ impl<N: Network> Backend<N> {
         evm.ctx_mut().chain = transaction_context;
         self.inject_precompiles(evm.precompiles_mut(), evm_env);
 
-        let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, None);
+        let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id, None)
+            .with_max_blob_gas_per_block(gas_config.max_blob_gas_per_block);
         executor
             .apply_pre_execution_changes()
             .map_err(|err| BlockchainError::Internal(err.to_string()))?;

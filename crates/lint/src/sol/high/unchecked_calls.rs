@@ -9,10 +9,7 @@ use crate::{
 };
 use solar::{
     ast::{Expr, ExprKind, ItemFunction, Stmt, StmtKind, visit::Visit},
-    sema::{
-        Gcx,
-        hir::{self},
-    },
+    sema::{Gcx, hir},
 };
 use std::ops::ControlFlow;
 

@@ -119,11 +119,19 @@ pub async fn parse_code_output(
     }
 
     let args_size = constructor.inputs.len() * 32;
+    let split = bytecode.len().checked_sub(args_size).ok_or_else(|| {
+        eyre!(
+            "Invalid creation bytecode length: have {} bytes, need at least {} for {} constructor inputs",
+            bytecode.len(),
+            args_size,
+            constructor.inputs.len()
+        )
+    })?;
 
     let bytecode = if without_args {
-        Bytes::from(bytecode[..bytecode.len() - args_size].to_vec())
+        Bytes::from(bytecode[..split].to_vec())
     } else if only_args {
-        Bytes::from(bytecode[bytecode.len() - args_size..].to_vec())
+        Bytes::from(bytecode[split..].to_vec())
     } else {
         unreachable!();
     };
@@ -174,4 +182,38 @@ pub async fn fetch_creation_code_from_etherscan(
     };
 
     Ok(bytecode)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[tokio::test]
+    async fn rejects_creation_code_shorter_than_constructor_head() {
+        let mut abi = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            abi,
+            r#"{{"abi":[{{"type":"constructor","inputs":[{{"name":"value","type":"uint256"}}]}}]}}"#
+        )
+        .unwrap();
+
+        for (without_args, only_args) in [(true, false), (false, true)] {
+            let err = parse_code_output(
+                Bytes::from(vec![0; 31]),
+                Address::ZERO,
+                &Config::default(),
+                abi.path().to_str(),
+                without_args,
+                only_args,
+            )
+            .await
+            .unwrap_err();
+
+            assert_eq!(
+                err.to_string(),
+                "Invalid creation bytecode length: have 31 bytes, need at least 32 for 1 constructor inputs"
+            );
+        }
+    }
 }

@@ -3251,7 +3251,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             fuzz_config.fail_on_revert,
             self.address,
             raw_call_result.reverter,
-            self.executor.inspector().networks.extra_cheatcode_addresses(),
+            self.executor.inspector().extra_cheatcode_addresses(),
         ) || self.executor.is_raw_call_success(
             self.address,
             Cow::Borrowed(&raw_call_result.state_changeset),
@@ -4618,7 +4618,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         counterexample: secondary_counterexample,
                         artifact,
                         minimization,
-                        persisted_path: persisted_failure.clone(),
+                        persisted_path: persisted_failure,
                         is_anchor: false,
                     });
                 }

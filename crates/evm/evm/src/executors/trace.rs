@@ -22,7 +22,10 @@ pub struct TracingExecutor<FEN: FoundryEvmNetwork> {
 }
 
 impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
+    /// Creates a tracing executor from tooling resolved by concrete network dispatch.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
+        builder: ExecutorBuilder<FEN>,
         env: (EvmEnvFor<FEN>, TxEnvFor<FEN>),
         fork: CreateFork,
         version: Option<EvmVersion>,
@@ -34,7 +37,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         let db = Backend::spawn(Some(fork))?;
         // configures a bare version of the evm executor: no cheatcode and log_collector inspector
         // is enabled, tracing will be enabled only for the targeted transaction
-        let mut executor = ExecutorBuilder::default()
+        let mut executor = builder
             .inspectors(|stack| {
                 stack.trace_requirements(trace_requirements).create2_deployer(create2_deployer)
             })
