@@ -24,7 +24,8 @@ pub(crate) use memory::*;
 pub(crate) use precompiles::*;
 pub use solver::PortfolioDiagnostics;
 pub(crate) use solver::{
-    SmtLibSubprocessSolver, SymbolicSolver, solver_portfolio_availability_warning,
+    BranchFeasibility, SmtLibSubprocessSolver, SymbolicSolver,
+    solver_portfolio_availability_warning,
 };
 #[cfg(test)]
 pub(crate) use solver::{

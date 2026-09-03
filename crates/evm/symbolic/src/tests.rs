@@ -4997,29 +4997,77 @@ fn model_uses_validated_hard_arithmetic_fallback_cache() {
 
 #[cfg(unix)]
 #[test]
-fn is_sat_hard_arithmetic_without_witness_still_honors_solver_unsat() {
+fn ousd_shaped_division_without_witness_defers_then_honors_solver_unsat() {
     let mut cx = SymCx::new();
-    let marker = portfolio_test_marker("hard-arith-is-sat-unsat");
+    let marker = portfolio_test_marker("ousd-hard-arith-is-sat-unsat");
     let commands = vec![counted_solver_command(&marker, "unsat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
-    let x = SymExpr::var(&mut cx, "x");
-    let y = SymExpr::var(&mut cx, "y");
-    let zero = SymExpr::zero(&mut cx);
-    let x_is_zero = SymBoolExpr::eq(&mut cx, x.clone(), zero);
-    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x, y);
-    let one = SymExpr::one(&mut cx);
-    let product_eq_one = SymBoolExpr::eq(&mut cx, product, one);
-    let constraints = vec![x_is_zero, product_eq_one];
+    let credits = SymExpr::var(&mut cx, "credit_balances_account");
+    let scale = SymExpr::constant(&mut cx, U256::from(1_000_000_000_000_000_000u64));
+    let credits_per_token = SymExpr::constant(&mut cx, U256::from(2_000_000_000_000_000_000u64));
+    let uint128_max = SymExpr::constant(&mut cx, U256::from(u128::MAX));
+    let scaled = SymExpr::binop(&mut cx, SymBinOp::Mul, credits.clone(), scale);
+    let balance = SymExpr::binop(&mut cx, SymBinOp::UDiv, scaled, credits_per_token);
+    let constraints = vec![
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, credits.clone(), uint128_max),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, balance, credits),
+    ];
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
 
     assert!(hard_arith_fallback_model(&cx, &normalized).is_none());
+    assert_eq!(
+        solver
+            .branch_feasibility_with_replayable_storage(
+                &mut cx,
+                &constraints,
+                &SymbolicVars::default(),
+            )
+            .unwrap(),
+        BranchFeasibility::NeedsSolver
+    );
+    assert_eq!(solver.stats().smt_queries, 0);
+    assert_eq!(counted_solver_invocations(&marker), 0);
     assert!(!solver.is_sat(&mut cx, &constraints).unwrap());
 
     let stats = solver.stats();
-    assert_eq!(stats.solver_queries, 1);
-    assert_eq!(stats.sat_queries, 1);
+    assert_eq!(stats.solver_queries, 2);
+    assert_eq!(stats.sat_queries, 2);
     assert_eq!(stats.sat_cache_hits, 0);
     assert_eq!(solver.heuristic_witnesses(), 0);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn feasible_path_selection_drains_easy_paths_before_deferred_hard_arithmetic() {
+    let marker = portfolio_test_marker("hard-arith-deferred-path");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+    executor.solver = Box::new(SmtLibSubprocessSolver::new(Ok(commands), None, 3, false));
+
+    let x = SymExpr::var(&mut executor.cx, "x");
+    let y = SymExpr::var(&mut executor.cx, "y");
+    let zero = SymExpr::zero(&mut executor.cx);
+    let mut hard = empty_state(&mut executor.cx);
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, x.clone(), zero));
+    let product = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x, y);
+    let one = SymExpr::one(&mut executor.cx);
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product, one));
+    hard.defer_feasibility_check();
+
+    let mut easy = empty_state(&mut executor.cx);
+    easy.constraints.push(SymBoolExpr::constant(&mut executor.cx, true));
+    easy.defer_feasibility_check();
+    let mut paths = VecDeque::from([hard, easy]);
+    let mut deferred_paths = VecDeque::new();
+
+    assert!(executor.pop_next_feasible_path(&mut paths, &mut deferred_paths).unwrap().is_some());
+    assert_eq!(deferred_paths.len(), 1);
+    assert!(executor.deadline.is_none());
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    assert!(executor.pop_next_feasible_path(&mut paths, &mut deferred_paths).unwrap().is_none());
+    assert!(executor.deadline.is_some());
     assert_eq!(counted_solver_invocations(&marker), 1);
     let _ = std::fs::remove_file(&marker);
 }
