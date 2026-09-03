@@ -35,16 +35,21 @@ impl<N: Network> ScriptTransactionBuilder<N> {
     ) -> Result<()> {
         if let Some(to) = self.transaction.transaction.to() {
             if to == create2_deployer {
-                if let Some(input) = self.transaction.transaction.input()
-                    && input.len() >= 32
-                {
-                    let (salt, init_code) = input.split_at(32);
+                if let Some(input) = self.transaction.transaction.input() {
+                    if input.len() >= 32 {
+                        let (salt, init_code) = input.split_at(32);
 
-                    self.set_create(
-                        true,
-                        create2_deployer.create2_from_code(B256::from_slice(salt), init_code),
-                        local_contracts,
-                    )?;
+                        self.set_create(
+                            true,
+                            create2_deployer.create2_from_code(B256::from_slice(salt), init_code),
+                            local_contracts,
+                        )?;
+                    } else {
+                        warn!(
+                            "Skipping CREATE2 decoding for call to deployer {create2_deployer}: input length {} is shorter than the 32-byte salt prefix",
+                            input.len()
+                        );
+                    }
                 }
             } else {
                 self.transaction.call_kind = CallKind::Call;
@@ -203,7 +208,7 @@ mod tests {
             .with_to(create2_deployer)
             .with_nonce(0)
             .with_input(Bytes::from(vec![0xab; input_len]));
-        let mut builder: ScriptTransactionBuilder<Ethereum> = ScriptTransactionBuilder::new(
+        let mut builder = ScriptTransactionBuilder::<Ethereum>::new(
             TransactionMaybeSigned::new(transaction),
             "http://localhost:8545".to_string(),
         );

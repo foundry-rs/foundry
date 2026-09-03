@@ -1352,11 +1352,14 @@ impl Cheatcode for executeTransactionCall {
         // Resolve the limit through the active EVM's concrete `Cfg` implementation. Replace the
         // unlimited code-size override used for test contracts with the user-configured value so
         // it does not implicitly make the initcode limit unlimited as well.
-        let code_size_limit = ccx.ecx.cfg_env().limit_contract_code_size;
-        let configured_code_size_limit = ccx.state.config.evm_opts.env.code_size_limit;
-        ccx.ecx.cfg_env_mut().limit_contract_code_size = configured_code_size_limit;
-        let initcode_size_limit = ccx.ecx.cfg().max_initcode_size();
-        ccx.ecx.cfg_env_mut().limit_contract_code_size = code_size_limit;
+        let initcode_size_limit = {
+            let code_size_limit = ccx.ecx.cfg_env().limit_contract_code_size;
+            let configured_code_size_limit = ccx.state.config.evm_opts.env.code_size_limit;
+            ccx.ecx.cfg_env_mut().limit_contract_code_size = configured_code_size_limit;
+            let initcode_size_limit = ccx.ecx.cfg().max_initcode_size();
+            ccx.ecx.cfg_env_mut().limit_contract_code_size = code_size_limit;
+            initcode_size_limit
+        };
         ccx.ecx.cfg_env_mut().limit_contract_initcode_size = Some(initcode_size_limit);
 
         // Reset the tx gas limit cap so revm applies the spec-defined default (EIP-7825).

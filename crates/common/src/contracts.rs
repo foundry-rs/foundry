@@ -14,6 +14,7 @@ use foundry_compilers::{
     },
     utils::canonicalized,
 };
+use itertools::Itertools;
 use std::{
     collections::BTreeMap,
     ops::Deref,
@@ -52,22 +53,18 @@ impl BytecodeData {
 /// Sorts and merges overlapping or adjacent byte ranges.
 fn normalize_offsets(offsets: &mut Vec<Offsets>) {
     offsets.sort_by_key(|o| o.start);
-
-    let mut merged: Vec<Offsets> = Vec::with_capacity(offsets.len());
-    for offset in offsets.drain(..) {
-        if let Some(last) = merged.last_mut() {
-            let last_end = last.start as u64 + last.length as u64;
-            if offset.start as u64 <= last_end {
-                let this_end = offset.start as u64 + offset.length as u64;
-                if this_end > last_end {
-                    last.length = (this_end - last.start as u64) as u32;
-                }
-                continue;
+    *offsets = offsets
+        .drain(..)
+        .coalesce(|a, b| {
+            let a_end = a.start as u64 + a.length as u64;
+            if b.start as u64 <= a_end {
+                let end = a_end.max(b.start as u64 + b.length as u64);
+                Ok(Offsets { start: a.start, length: (end - a.start as u64) as u32 })
+            } else {
+                Err((a, b))
             }
-        }
-        merged.push(offset);
-    }
-    *offsets = merged;
+        })
+        .collect();
 }
 
 impl From<CompactBytecode> for BytecodeData {

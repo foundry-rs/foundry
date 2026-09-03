@@ -186,7 +186,13 @@ impl VerifyBundle {
         libraries: &[String],
         evm_version: EvmVersion,
     ) -> Option<VerifyArgs> {
-        let init_code = data.get(create2_offset..)?;
+        let Some(init_code) = data.get(create2_offset..) else {
+            warn!(
+                "Skipping verification for CREATE2 transaction: data length {} is shorter than the CREATE2 offset {create2_offset}",
+                data.len()
+            );
+            return None;
+        };
         for (artifact, contract) in self.known_contracts.iter() {
             let Some(bytecode) = contract.bytecode() else { continue };
             // If it's a CREATE2, the tx.data comes with a 32-byte salt in the beginning
