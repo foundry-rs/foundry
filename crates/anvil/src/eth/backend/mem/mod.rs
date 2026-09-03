@@ -142,7 +142,7 @@ use foundry_evm::{
         get_blob_params_by_hardfork,
     },
 };
-use foundry_evm_networks::{NetworkConfigs, arbitrum};
+use foundry_evm_networks::{NetworkConfigs, arbitrum, inject_chain_precompiles};
 #[cfg(feature = "optimism")]
 use foundry_primitives::get_deposit_tx_parts;
 use foundry_primitives::{
@@ -1352,7 +1352,7 @@ impl<N: Network> Backend<N> {
             PrecompilesMap::from_static(Precompiles::new(PrecompileSpecId::from_spec_id(spec_id)));
         let chain_id = self.protocol_chain_id();
         let timestamp = self.evm_env.read().block_env.timestamp.saturating_to();
-        self.networks.inject_chain_precompiles(&mut precompiles, chain_id, timestamp);
+        inject_chain_precompiles(&mut precompiles, chain_id, timestamp);
 
         let mut precompiles_map = BTreeMap::<String, Address>::default();
         for address in precompiles.addresses() {
@@ -2232,7 +2232,7 @@ impl<N: Network> Backend<N> {
 
     fn inject_configured_precompiles(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
         self.networks.inject_precompiles(precompiles);
-        self.networks.inject_chain_precompiles(
+        inject_chain_precompiles(
             precompiles,
             self.protocol_chain_id(),
             evm_env.block_env.timestamp.saturating_to(),

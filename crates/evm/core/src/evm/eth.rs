@@ -1,6 +1,7 @@
 use alloy_evm::{
     EthEvm, EthEvmFactory, Evm, EvmEnv, EvmFactory, eth::EthEvmContext, precompiles::PrecompilesMap,
 };
+use foundry_evm_networks::inject_chain_precompiles;
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
@@ -58,7 +59,7 @@ impl FoundryEvmFactory for EthEvmFactory {
         eth_evm.cfg.tx_chain_id_check = true;
         let networks = eth_evm.inspector().get_networks();
         networks.inject_precompiles(eth_evm.precompiles_mut());
-        networks.inject_chain_precompiles(eth_evm.precompiles_mut(), chain_id, timestamp);
+        inject_chain_precompiles(eth_evm.precompiles_mut(), chain_id, timestamp);
         eth_evm
     }
 

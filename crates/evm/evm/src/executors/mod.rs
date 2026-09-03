@@ -2014,7 +2014,7 @@ mod tests {
     use foundry_config::Config;
     #[cfg(feature = "monad")]
     use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
-    use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
+    use foundry_evm_core::{constants::MAGIC_SKIP, evm::TempoEvmNetwork, opts::EvmOpts};
     use foundry_evm_traces::InternalTraceMode;
     use revm::context::TxEnv;
     use std::{sync::mpsc, thread};
@@ -2073,6 +2073,25 @@ mod tests {
         assert!(monad.inspector().networks.is_monad());
         assert!(monad.backend().networks().is_monad());
         assert!(monad.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
+    }
+
+    #[test]
+    fn tempo_labels_follow_concrete_builder() {
+        let ethereum = ExecutorBuilder::<EthEvmNetwork>::new().build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            Backend::spawn(None).unwrap(),
+            NetworkConfigs::with_tempo(),
+        );
+        assert!(ethereum.inspector().tempo_labels.is_none());
+
+        let tempo = ExecutorBuilder::<TempoEvmNetwork>::new().build(
+            EvmEnvFor::<TempoEvmNetwork>::default(),
+            TxEnvFor::<TempoEvmNetwork>::default(),
+            Backend::spawn(None).unwrap(),
+            NetworkConfigs::default(),
+        );
+        assert!(tempo.inspector().tempo_labels.is_some());
     }
 
     #[test]

@@ -52,8 +52,8 @@ pub mod utils;
 
 /// Foundry-specific inspector methods, decoupled from any particular EVM context type.
 ///
-/// This trait holds Foundry-specific extensions (create2 factory, console logging,
-/// network config, deployer address). It has no `Inspector<CTX>` supertrait so it can
+/// This trait holds Foundry-specific extensions (create2 factory, console logging, temporary Celo
+/// configuration, deployer address). It has no `Inspector<CTX>` supertrait so it can
 /// be used in generic code with `I: FoundryInspectorExt + Inspector<CTX>`.
 #[auto_impl(&mut, Box)]
 pub trait InspectorExt {
@@ -70,7 +70,7 @@ pub trait InspectorExt {
         let _ = msg;
     }
 
-    /// Returns configured networks.
+    /// Returns configuration retained for Celo precompile support.
     fn get_networks(&self) -> NetworkConfigs {
         NetworkConfigs::default()
     }

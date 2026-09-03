@@ -791,23 +791,6 @@ impl NetworkConfigs {
         }
     }
 
-    /// Injects chain-specific precompiles active at the given timestamp.
-    pub fn inject_chain_precompiles(
-        self,
-        precompiles: &mut PrecompilesMap,
-        chain_id: ChainId,
-        timestamp: u64,
-    ) {
-        let Some(p256verify) = bsc_p256_precompile(chain_id, timestamp) else { return };
-        precompiles.apply_precompile(&BSC_P256_ADDRESS, move |_| {
-            p256verify.map(|p256verify| {
-                DynPrecompile::new(p256verify.id().clone(), move |input| {
-                    p256verify.execute(input.data, input.gas, input.reservoir)
-                })
-            })
-        });
-    }
-
     /// Returns precompile labels for configured networks at the given hardfork, to be used in
     /// traces.
     pub fn precompiles_label(self, hardfork: Option<FoundryHardfork>) -> AddressHashMap<String> {
@@ -885,6 +868,22 @@ impl NetworkConfigs {
         }
         precompiles
     }
+}
+
+/// Injects chain-specific precompiles active at the given timestamp.
+pub fn inject_chain_precompiles(
+    precompiles: &mut PrecompilesMap,
+    chain_id: ChainId,
+    timestamp: u64,
+) {
+    let Some(p256verify) = bsc_p256_precompile(chain_id, timestamp) else { return };
+    precompiles.apply_precompile(&BSC_P256_ADDRESS, move |_| {
+        p256verify.map(|p256verify| {
+            DynPrecompile::new(p256verify.id().clone(), move |input| {
+                p256verify.execute(input.data, input.gas, input.reservoir)
+            })
+        })
+    });
 }
 
 impl From<NetworkVariant> for NetworkConfigs {
@@ -1485,7 +1484,7 @@ mod tests {
     fn removes_bsc_p256_before_haber() {
         let mut precompiles = PrecompilesMap::from_static(Precompiles::osaka());
         assert!(precompiles.get(&BSC_P256_ADDRESS).is_some());
-        NetworkConfigs::default().inject_chain_precompiles(
+        inject_chain_precompiles(
             &mut precompiles,
             BSC_MAINNET_CHAIN_ID,
             BSC_MAINNET_HABER_TIMESTAMP - 1,
