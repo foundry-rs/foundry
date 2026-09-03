@@ -2,4 +2,4 @@
 forge-script: patch
 ---
 
-Avoid panics when verifying scripts with truncated CREATE2 broadcast data.
+Avoid panics in script verification and CREATE2 deployer calls with truncated data.
