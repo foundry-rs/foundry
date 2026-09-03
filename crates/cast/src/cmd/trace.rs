@@ -1,14 +1,15 @@
-use alloy_eips::Encodable2718;
+use alloy_consensus::Typed2718;
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::hex;
 use alloy_provider::ext::TraceApi;
 use clap::Parser;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::RpcOpts,
     utils::{self, LoadConfig},
 };
 use foundry_common::stdin;
+use foundry_primitives::FoundryTxEnvelope;
 
 /// CLI arguments for `cast trace`.
 #[derive(Debug, Parser)]
@@ -54,7 +55,11 @@ impl TraceArgs {
                 hex::decode(trimmed.strip_prefix("0x").unwrap_or(trimmed))?
             } else if is_json {
                 let tx: AnyRpcTransaction = serde_json::from_str(trimmed)?;
-                tx.as_ref().encoded_2718().clone()
+                FoundryTxEnvelope::encode_rpc_2718(&tx)
+                    .wrap_err_with(|| {
+                        format!("Cannot EIP-2718 encode transaction type 0x{:x}", tx.ty())
+                    })?
+                    .to_vec()
             } else {
                 hex::decode(trimmed)?
             };
