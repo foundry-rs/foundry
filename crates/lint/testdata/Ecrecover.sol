@@ -17,6 +17,14 @@ contract Ecrecover {
     bytes32 private storedS;
     address private storedSigner;
 
+    struct Sig {
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+    }
+
+    Sig private storedSig;
+
     function mutateStoredS(bytes32 replacement) internal {
         storedS = replacement;
     }
@@ -706,6 +714,60 @@ contract Ecrecover {
         bytes32 s
     ) external pure returns (address) {
         return helper.ecrecover(hash, v, r, s);
+    }
+
+    function structMemberGuarded(bytes32 hash, Sig memory sig) external pure returns (address) {
+        require(uint256(sig.s) <= HALF_ORDER);
+        return ecrecover(hash, sig.v, sig.r, sig.s);
+    }
+
+    function structMemberUnguarded(bytes32 hash, Sig memory sig) external pure returns (address) {
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function structMemberReassigned(
+        bytes32 hash,
+        Sig memory sig,
+        Sig memory other
+    ) external pure returns (address) {
+        require(uint256(sig.s) <= HALF_ORDER);
+        sig = other;
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function structFieldReassigned(
+        bytes32 hash,
+        Sig memory sig,
+        bytes32 replacement
+    ) external pure returns (address) {
+        require(uint256(sig.s) <= HALF_ORDER);
+        sig.s = replacement;
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function stateStructMemberGuarded(bytes32 hash) external view returns (address) {
+        require(uint256(storedSig.s) <= HALF_ORDER);
+        return ecrecover(hash, storedSig.v, storedSig.r, storedSig.s);
+    }
+
+    function structMemberIncrementInvalidates(
+        bytes32 hash,
+        Sig memory sig
+    ) external pure returns (address) {
+        require(uint256(sig.s) <= HALF_ORDER);
+        sig.s++;
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function structMemberTupleAssignInvalidates(
+        bytes32 hash,
+        Sig memory sig,
+        bytes32 replacement,
+        uint8 newV
+    ) external pure returns (address) {
+        require(uint256(sig.s) <= HALF_ORDER);
+        (sig.s, sig.v) = (replacement, newV);
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
     }
 }
 
