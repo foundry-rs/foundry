@@ -14,8 +14,8 @@ use crate::{
                 AnvilBlockExecutor, BlockExecutionKind, EthereumBlockTransitions,
                 ExecutedPoolTransactions, FoundryReceiptBuilder, PoolTransactionHooks,
                 PoolTxGasConfig, apply_ethereum_post_execution_changes,
-                apply_ethereum_pre_execution_changes, build_tx_env_for_pending,
-                execute_pool_transaction, execute_pool_transactions,
+                apply_ethereum_pre_execution_changes, block_blob_gas_limit,
+                build_tx_env_for_pending, execute_pool_transaction, execute_pool_transactions,
             },
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
@@ -1421,12 +1421,19 @@ impl<N: Network> Backend<N> {
     }
 
     #[cfg(feature = "optimism")]
-    fn is_optimism_jovian_at_header<H: BlockHeader>(&self, header: &H) -> bool {
+    fn is_optimism_jovian_at_header<H: BlockHeader>(
+        &self,
+        header: &H,
+        decoded: Option<bool>,
+    ) -> bool {
         if !self.is_optimism() {
             return false;
         }
+        if let Some(jovian) = decoded {
+            return jovian;
+        }
         if !header.extra_data().is_empty() {
-            return self.fees.is_optimism_jovian_header(header);
+            return false;
         }
         let hardfork = if self.get_fork().is_some() {
             FoundryHardfork::from_chain_and_timestamp(self.protocol_chain_id(), header.timestamp())
@@ -1438,7 +1445,11 @@ impl<N: Network> Backend<N> {
     }
 
     #[cfg(not(feature = "optimism"))]
-    fn is_optimism_jovian_at_header<H: BlockHeader>(&self, _header: &H) -> bool {
+    fn is_optimism_jovian_at_header<H: BlockHeader>(
+        &self,
+        _header: &H,
+        _decoded: Option<bool>,
+    ) -> bool {
         false
     }
 
@@ -5255,6 +5266,9 @@ where
                 if let Some(block_number) = arbitrum_rpc_block_number {
                     self.inject_arbitrum_precompile_at_block($evm.precompiles_mut(), block_number);
                 }
+                // Replay re-executes an already-valid historical prefix, so it does not apply the
+                // local EIP-4844 budget. Jovian still uses the source block's gas limit as its DA
+                // budget through `set_optimism_hardfork` below.
                 let mut executor = AnvilBlockExecutor::new(
                     $evm,
                     parent_hash,
@@ -6911,7 +6925,7 @@ where
             return Ok(fork.debug_trace_transaction(hash, opts).await?);
         }
 
-        Ok(GethTrace::Default(Default::default()))
+        Err(BlockchainError::TransactionNotFound)
     }
 
     /// Returns geth-style traces for all transactions in an RLP-encoded block.
@@ -7257,6 +7271,33 @@ where
         MinedTransactionReceipt { inner, out: info.out.clone() }
     }
 
+    /// Executes the pending block and returns its transaction receipts.
+    pub async fn pending_block_receipts(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+    ) -> Vec<FoundryTxReceipt> {
+        let BlockInfo { block, transactions, receipts } =
+            self.pending_block(pool_transactions).await;
+        let block_hash = block.header.hash_slow();
+        let mut pending_receipts = Vec::with_capacity(receipts.len());
+        let mut next_log_index = 0;
+
+        for (info, receipt) in transactions.iter().zip(receipts) {
+            let log_count = receipt.logs().len();
+            let receipt = self.build_mined_transaction_receipt(
+                info,
+                receipt,
+                block_hash,
+                &block,
+                next_log_index,
+            );
+            pending_receipts.push(receipt.inner);
+            next_log_index += log_count;
+        }
+
+        pending_receipts
+    }
+
     /// Returns the blocks receipts for the given number
     pub async fn block_receipts(
         &self,
@@ -7504,7 +7545,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         }
 
         let next_fees = selected_header.as_ref().map(|header| {
-            let next_block_base_fee = self.fees.get_next_block_base_fee_from_header(header);
+            let parent_fees = self.fees.get_parent_header_fees(header);
             let next_block_excess_blob_gas = self.networks.next_block_blob_excess_gas(
                 self.fees.blob_params(),
                 header.excess_blob_gas().unwrap_or_default(),
@@ -7518,8 +7559,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                     header.timestamp,
                 ),
             );
-            let base_fee_extra_data = self.fees.base_fee_extra_data_from_header(header);
-            (next_block_base_fee, blob_excess_gas_and_price, base_fee_extra_data)
+            (parent_fees, blob_excess_gas_and_price)
         });
 
         let historical_states = state.historical_states.take();
@@ -7551,16 +7591,12 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         if let Some(block_env) = block_env {
             self.evm_env.write().block_env = block_env;
         }
-        if let Some((next_block_base_fee, blob_excess_gas_and_price, base_fee_extra_data)) =
-            next_fees
-        {
-            #[cfg(not(feature = "optimism"))]
-            let _ = base_fee_extra_data;
+        if let Some((parent_fees, blob_excess_gas_and_price)) = next_fees {
             #[cfg(feature = "optimism")]
             if self.is_optimism() {
-                self.fees.set_optimism_base_fee_rules(&base_fee_extra_data);
+                self.fees.set_optimism_base_fee_rules(&parent_fees.extra_data);
             }
-            self.fees.set_base_fee(next_block_base_fee);
+            self.fees.set_base_fee(parent_fees.base_fee);
             self.fees.set_blob_excess_gas_and_price(blob_excess_gas_and_price);
         }
 
@@ -7996,11 +8032,11 @@ impl Backend<FoundryNetwork> {
                     } else {
                         0
                     };
-                    let max_blob_gas = if optimism_jovian {
-                        block_env.gas_limit
-                    } else {
-                        blob_params.max_blob_gas_per_block()
-                    };
+                    let max_blob_gas = block_blob_gas_limit(
+                        optimism_jovian,
+                        block_env.gas_limit,
+                        blob_params.max_blob_gas_per_block(),
+                    );
                     if !optimism_jovian
                         && block_blob_gas_used.saturating_add(request_blob_gas_used) > max_blob_gas
                     {
@@ -8447,9 +8483,9 @@ impl Backend<FoundryNetwork> {
             Some(BlockRequest::Pending(pool_transactions)) => {
                 self.with_pending_block(pool_transactions, |state, block| {
                     let header = &block.block.header;
-                    let base_fee = self.fees.calculate_next_block_base_fee_from_header(header);
-                    let base_fee_extra_data = self.fees.base_fee_extra_data_from_header(header);
-                    let optimism_jovian = self.is_optimism_jovian_at_header(header);
+                    let parent_fees = self.fees.calculate_parent_header_fees(header);
+                    let optimism_jovian =
+                        self.is_optimism_jovian_at_header(header, parent_fees.optimism_jovian);
                     let monad_context = self.active_monad_context_before_mined_transaction(
                         &block.block,
                         block.block.body.transactions.len(),
@@ -8466,12 +8502,12 @@ impl Backend<FoundryNetwork> {
                         header.number(),
                         header.timestamp(),
                         header.hash_slow(),
-                        base_fee,
+                        parent_fees.base_fee,
                         monad_context,
                         header.base_fee_per_gas().unwrap_or_default(),
                         header.excess_blob_gas().unwrap_or_default(),
                         header.blob_gas_used().unwrap_or_default(),
-                        base_fee_extra_data,
+                        parent_fees.extra_data,
                         optimism_jovian,
                     )
                 })
@@ -8490,11 +8526,11 @@ impl Backend<FoundryNetwork> {
                 let base_number = base_block.header.number();
                 let base_timestamp = base_block.header.timestamp();
                 let base_hash = base_block.header.hash;
-                let base_fee =
-                    self.fees.calculate_next_block_base_fee_from_header(&base_block.header.inner);
-                let base_fee_extra_data =
-                    self.fees.base_fee_extra_data_from_header(&base_block.header.inner);
-                let optimism_jovian = self.is_optimism_jovian_at_header(&base_block.header.inner);
+                let parent_fees = self.fees.calculate_parent_header_fees(&base_block.header.inner);
+                let optimism_jovian = self.is_optimism_jovian_at_header(
+                    &base_block.header.inner,
+                    parent_fees.optimism_jovian,
+                );
 
                 #[cfg(feature = "monad")]
                 let monad_context = if self.is_monad() {
@@ -8512,12 +8548,12 @@ impl Backend<FoundryNetwork> {
                         base_number,
                         base_timestamp,
                         base_hash,
-                        base_fee,
+                        parent_fees.base_fee,
                         monad_context,
                         base_block.header.base_fee_per_gas().unwrap_or_default(),
                         base_block.header.excess_blob_gas().unwrap_or_default(),
                         base_block.header.blob_gas_used().unwrap_or_default(),
-                        base_fee_extra_data,
+                        parent_fees.extra_data,
                         optimism_jovian,
                     )
                 })
