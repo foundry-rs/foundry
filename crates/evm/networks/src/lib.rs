@@ -47,9 +47,6 @@ use tempo_contracts::precompiles::{
 /// The Monad cheatcode handler address.
 pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");
 
-#[cfg(feature = "monad")]
-const MONAD_CHEATCODE_ADDRESSES: &[Address] = &[MONAD_CHEATCODE_ADDRESS];
-
 pub mod arbitrum;
 pub mod celo;
 
@@ -497,15 +494,6 @@ impl NetworkConfigs {
             return MonadHardfork::from(hardfork).into();
         }
         hardfork
-    }
-
-    /// Returns additional cheatcode contract addresses for the active network.
-    pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
-        #[cfg(feature = "monad")]
-        if self.is_monad() {
-            return MONAD_CHEATCODE_ADDRESSES;
-        }
-        &[]
     }
 
     pub const fn is_celo(&self) -> bool {
@@ -1614,7 +1602,6 @@ mod tests {
         let cfg = NetworkConfigs::with_monad();
         assert_eq!(cfg.active_network_name(), Some("monad"));
         assert!(cfg.is_monad());
-        assert_eq!(cfg.extra_cheatcode_addresses(), &[MONAD_CHEATCODE_ADDRESS]);
     }
 
     #[test]
@@ -1631,7 +1618,6 @@ mod tests {
         let cfg = NetworkConfigs::default();
         assert_eq!(cfg.active_network_name(), None);
         assert!(!cfg.is_optimism());
-        assert!(cfg.extra_cheatcode_addresses().is_empty());
     }
 
     // --- Serde round-trip ---

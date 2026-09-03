@@ -1,4 +1,5 @@
 use crate::{executors::Executor, inspectors::InspectorStackBuilder};
+use alloy_primitives::Address;
 #[cfg(feature = "optimism")]
 use foundry_evm_core::evm::OpEvmNetwork;
 use foundry_evm_core::{
@@ -16,7 +17,9 @@ use revm::context::{Block, Transaction};
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`].
 ///
-/// By default, the [`Executor`] will be configured with an empty [`InspectorStack`].
+/// By default, the [`Executor`] will be configured with an empty [`InspectorStack`] and no
+/// network-specific tooling. Command dispatch should use the concrete FEN's inherent `new`
+/// constructor so any required tooling is selected there.
 ///
 /// [`Cheatcodes`]: super::Cheatcodes
 /// [`InspectorStack`]: super::InspectorStack
@@ -45,14 +48,10 @@ impl<FEN: FoundryEvmNetwork> Default for ExecutorBuilder<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
-    /// Creates a builder that temporarily resolves additional cheatcode addresses from network
-    /// configuration.
-    #[doc(hidden)]
+    /// Returns additional cheatcode addresses selected for this executor.
     #[inline]
-    pub fn legacy_network_config() -> Self {
-        let mut this = Self::default();
-        this.stack.extra_cheatcode_addresses = None;
-        this
+    pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
+        self.stack.extra_cheatcode_addresses
     }
 
     /// Modify the inspector stack.

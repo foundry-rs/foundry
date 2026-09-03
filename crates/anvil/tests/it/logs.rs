@@ -1,7 +1,7 @@
 //! log/event related tests
 
 use crate::{
-    abi::SimpleStorage::{self},
+    abi::SimpleStorage,
     utils::{http_provider_with_signer, ws_provider_with_signer},
 };
 use alloy_network::EthereumWallet;

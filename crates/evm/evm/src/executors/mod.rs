@@ -2,10 +2,6 @@
 //!
 //! Used for running tests, scripts, and interacting with the inner backend which holds the state.
 
-// TODO: The individual executors in this module should be moved into the respective crates, and the
-// `Executor` struct should be accessed using a trait defined in `foundry-evm-core` instead of
-// the concrete `Executor` type.
-
 use crate::inspectors::{
     Cheatcodes, CmpOperands, EdgeCoverage, EdgeIndexMap, InspectorData, InspectorStack,
     cheatcodes::BroadcastableTransactions,
@@ -2048,7 +2044,7 @@ mod tests {
             false,
             target,
             Some(MONAD_CHEATCODE_ADDRESS),
-            NetworkConfigs::with_monad().extra_cheatcode_addresses(),
+            &[MONAD_CHEATCODE_ADDRESS],
         ));
     }
 

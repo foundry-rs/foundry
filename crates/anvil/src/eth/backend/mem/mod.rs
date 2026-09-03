@@ -6925,7 +6925,7 @@ where
             return Ok(fork.debug_trace_transaction(hash, opts).await?);
         }
 
-        Ok(GethTrace::Default(Default::default()))
+        Err(BlockchainError::TransactionNotFound)
     }
 
     /// Returns geth-style traces for all transactions in an RLP-encoded block.
@@ -7269,6 +7269,33 @@ where
             }
         }
         MinedTransactionReceipt { inner, out: info.out.clone() }
+    }
+
+    /// Executes the pending block and returns its transaction receipts.
+    pub async fn pending_block_receipts(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+    ) -> Vec<FoundryTxReceipt> {
+        let BlockInfo { block, transactions, receipts } =
+            self.pending_block(pool_transactions).await;
+        let block_hash = block.header.hash_slow();
+        let mut pending_receipts = Vec::with_capacity(receipts.len());
+        let mut next_log_index = 0;
+
+        for (info, receipt) in transactions.iter().zip(receipts) {
+            let log_count = receipt.logs().len();
+            let receipt = self.build_mined_transaction_receipt(
+                info,
+                receipt,
+                block_hash,
+                &block,
+                next_log_index,
+            );
+            pending_receipts.push(receipt.inner);
+            next_log_index += log_count;
+        }
+
+        pending_receipts
     }
 
     /// Returns the blocks receipts for the given number

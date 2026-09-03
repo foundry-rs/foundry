@@ -2708,11 +2708,12 @@ impl EthApi<FoundryNetwork> {
         block_number: BlockNumber,
     ) -> Result<Option<U256>> {
         node_info!("eth_getBlockTransactionCountByNumber");
-        let block_request = self.block_request(Some(block_number.into())).await?;
-        if let BlockRequest::Pending(txs) = block_request {
+        if block_number == BlockNumber::Pending {
+            let txs = self.pool.ready_transactions().collect();
             let block = self.backend.pending_block(txs).await;
             return Ok(Some(U256::from(block.block.body.transactions.len())));
         }
+
         let block = self.backend.block_by_number(block_number).await?;
         let txs = block.map(|b| match b.transactions() {
             BlockTransactions::Full(txs) => U256::from(txs.len()),
@@ -3656,6 +3657,14 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getBlockReceipts`
     pub async fn block_receipts(&self, number: BlockId) -> Result<Option<Vec<FoundryTxReceipt>>> {
         node_info!("eth_getBlockReceipts");
+        if number == BlockId::pending() {
+            let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
+            if transactions.is_empty() {
+                return Ok(Some(Vec::new()));
+            }
+            return Ok(Some(self.backend.pending_block_receipts(transactions).await));
+        }
+
         self.backend.block_receipts(number).await
     }
 

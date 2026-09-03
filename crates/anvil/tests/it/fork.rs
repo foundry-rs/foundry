@@ -2349,6 +2349,36 @@ async fn test_block_receipts() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_pending_block_receipts_do_not_return_fork_head_receipts() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+    origin_api
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+
+    let (fork_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+
+    let latest_receipts = fork_api.block_receipts(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(latest_receipts.len(), 1);
+
+    let pending_block =
+        fork_api.block_by_number_full(BlockNumberOrTag::Pending).await.unwrap().unwrap();
+    assert_eq!(pending_block.header.number, 2);
+    assert!(pending_block.transactions.is_empty());
+
+    let pending_receipts = fork_api.block_receipts(BlockId::pending()).await.unwrap().unwrap();
+    assert!(pending_receipts.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_override_fork_chain_id() {
     let chain_id_override = 5u64;
     let (_api, handle) = spawn(

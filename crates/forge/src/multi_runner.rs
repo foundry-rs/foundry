@@ -496,6 +496,8 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
 
     /// EVM configuration.
     pub evm_opts: EvmOpts,
+    /// Executor construction selected by concrete network dispatch.
+    pub executor_builder: ExecutorBuilder<FEN>,
     /// EVM environment.
     pub evm_env: EvmEnvFor<FEN>,
     /// Transaction environment.
@@ -621,8 +623,8 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         );
         cheats_config.isolate = self.isolation;
         let cheats_config = Arc::new(cheats_config);
-        // TODO(monad-fen-dispatch): Select the concrete builder at Forge network dispatch.
-        ExecutorBuilder::legacy_network_config()
+        self.executor_builder
+            .clone()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)
@@ -838,6 +840,7 @@ impl MultiContractRunnerBuilder {
         mut evm_env: EvmEnvFor<FEN>,
         tx_env: TxEnvFor<FEN>,
         evm_opts: EvmOpts,
+        executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<MultiContractRunner<FEN>> {
         let root = &self.config.root;
         let contracts = output
@@ -1017,6 +1020,7 @@ impl MultiContractRunnerBuilder {
 
             tcfg: TestRunnerConfig {
                 evm_opts,
+                executor_builder,
                 evm_env,
                 tx_env,
                 spec_id,
