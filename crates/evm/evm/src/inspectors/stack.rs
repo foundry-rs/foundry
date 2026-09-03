@@ -33,7 +33,7 @@ use revm::{
         Block, Cfg, ContextTr, JournalTr, Transaction, TransactionType,
         result::{EVMError, ExecutionResult, Output},
     },
-    context_interface::{CreateScheme, cfg::gas_params::Eip2780TxInfo},
+    context_interface::CreateScheme,
     handler::FrameResult,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
@@ -50,7 +50,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::executors::{EarlyExit, EvmExecutionCancellation};
+use crate::executors::{EarlyExit, EvmExecutionCancellation, calculate_stipend};
 
 #[derive(Clone, Debug)]
 #[must_use = "builders do nothing unless you call `build` on them"]
@@ -1014,16 +1014,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         ecx.tx_mut().set_kind(kind);
         ecx.tx_mut().set_data(input);
         ecx.tx_mut().set_value(value);
-        let eip2780 = ecx.cfg().is_amsterdam_eip2780_enabled().then(|| Eip2780TxInfo {
-            value,
-            is_self_transfer: matches!(kind, TxKind::Call(to) if to == caller),
-        });
-        let initial_gas = revm::interpreter::gas::calculate_initial_tx_gas_for_tx(
-            ecx.tx(),
-            ecx.cfg().spec().into(),
-            eip2780,
-        )
-        .initial_total_gas();
+        let initial_gas = calculate_stipend(ecx.tx(), ecx.cfg());
         // Preserve the frame's regular gas and reservoir across the synthetic transaction
         // boundary. The extra state gas offsets the account-creation charge already paid by the
         // outer opcode.
