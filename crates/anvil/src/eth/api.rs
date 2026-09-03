@@ -2537,6 +2537,10 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<HashMap<Address, Vec<B256>>> {
         node_info!("eth_getStorageValues");
 
+        if requests.is_empty() {
+            return Err(RpcError::invalid_params("empty request").into());
+        }
+
         let total_slots: usize = requests.values().map(|s| s.len()).sum();
         if total_slots > 1024 {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
