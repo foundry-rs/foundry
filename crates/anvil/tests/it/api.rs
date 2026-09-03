@@ -44,6 +44,20 @@ async fn can_get_block_number() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn unknown_block_transaction_count_is_none() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let count: Option<U256> = provider
+        .client()
+        .request("eth_getBlockTransactionCountByNumber", (BlockNumberOrTag::Number(1),))
+        .await
+        .unwrap();
+
+    assert!(count.is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_dev_get_balance() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
