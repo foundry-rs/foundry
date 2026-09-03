@@ -14,8 +14,8 @@ use crate::{
                 AnvilBlockExecutor, BlockExecutionKind, EthereumBlockTransitions,
                 ExecutedPoolTransactions, FoundryReceiptBuilder, PoolTransactionHooks,
                 PoolTxGasConfig, apply_ethereum_post_execution_changes,
-                apply_ethereum_pre_execution_changes, build_tx_env_for_pending,
-                execute_pool_transaction, execute_pool_transactions,
+                apply_ethereum_pre_execution_changes, block_blob_gas_limit,
+                build_tx_env_for_pending, execute_pool_transaction, execute_pool_transactions,
             },
             fork::{ClientFork, ForkEndpointIdentity},
             genesis::GenesisConfig,
@@ -120,6 +120,8 @@ use anvil_rpc::error::{ErrorCode, RpcError};
 use chrono::Datelike;
 use eyre::{Context, Result};
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
 use foundry_evm::{
     backend::{BlockchainDb, DatabaseError, DatabaseResult, RevertStateSnapshotAction},
     constants::{DEFAULT_CREATE2_DEPLOYER, DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE},
@@ -1418,6 +1420,39 @@ impl<N: Network> Backend<N> {
         get_blob_params_by_hardfork(configured_hardfork)
     }
 
+    #[cfg(feature = "optimism")]
+    fn is_optimism_jovian_at_header<H: BlockHeader>(
+        &self,
+        header: &H,
+        decoded: Option<bool>,
+    ) -> bool {
+        if !self.is_optimism() {
+            return false;
+        }
+        if let Some(jovian) = decoded {
+            return jovian;
+        }
+        if !header.extra_data().is_empty() {
+            return false;
+        }
+        let hardfork = if self.get_fork().is_some() {
+            FoundryHardfork::from_chain_and_timestamp(self.protocol_chain_id(), header.timestamp())
+                .unwrap_or_else(|| self.hardfork())
+        } else {
+            self.hardfork()
+        };
+        OpHardfork::from(hardfork) >= OpHardfork::Jovian
+    }
+
+    #[cfg(not(feature = "optimism"))]
+    fn is_optimism_jovian_at_header<H: BlockHeader>(
+        &self,
+        _header: &H,
+        _decoded: Option<bool>,
+    ) -> bool {
+        false
+    }
+
     /// Returns an error if EIP1559 is not active (pre Berlin)
     pub fn ensure_eip1559_active(&self) -> Result<(), BlockchainError> {
         if self.is_eip1559() {
@@ -2626,7 +2661,12 @@ impl<N: Network> Backend<N> {
             ) => {{
                 self.inject_precompiles($evm.precompiles_mut(), evm_env);
                 let mut executor =
-                    AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions);
+                    AnvilBlockExecutor::new($evm, parent_hash, spec_id, ethereum_transitions)
+                        .with_max_blob_gas_per_block(gas_config.max_blob_gas_per_block);
+                #[cfg(feature = "optimism")]
+                if self.is_optimism() {
+                    executor.set_optimism_hardfork(hardfork);
+                }
                 executor
                     .apply_pre_execution_changes()
                     .map_err(|err| BlockchainError::Internal(err.to_string()))?;
@@ -4576,6 +4616,10 @@ impl<N: Network> Backend<N> {
             self.networks.base_fee_params(genesis_timestamp),
             local_tempo_hardfork,
         );
+        #[cfg(feature = "optimism")]
+        if self.networks.is_optimism() {
+            staged_fees.set_optimism_hardfork(local_hardfork);
+        }
         staged_fees.set_blob_params(local_blob_params);
         staged_fees.set_blob_excess_gas_and_price(local_blob_excess_gas_and_price);
 
@@ -5150,14 +5194,16 @@ where
         self.time.reset(timestamp);
         self.time.set_next_block_timestamp(next_timestamp)?;
 
-        let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-            header.gas_used,
-            header.gas_limit,
-            header.base_fee_per_gas.unwrap_or_default(),
-        );
-        let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
+        #[cfg(feature = "optimism")]
+        if self.is_optimism() {
+            self.fees.set_optimism_base_fee_rules(header.extra_data());
+        }
+        let next_block_base_fee = self.fees.get_next_block_base_fee_from_header(&header);
+        let next_block_excess_blob_gas = self.networks.next_block_blob_excess_gas(
+            self.fees.blob_params(),
             header.excess_blob_gas.unwrap_or_default(),
             header.blob_gas_used.unwrap_or_default(),
+            header.base_fee_per_gas.unwrap_or_default(),
         );
         self.fees.set_base_fee(next_block_base_fee);
         self.fees.set_blob_excess_gas_and_price(BlobExcessGasAndPrice::new(
@@ -5220,6 +5266,9 @@ where
                 if let Some(block_number) = arbitrum_rpc_block_number {
                     self.inject_arbitrum_precompile_at_block($evm.precompiles_mut(), block_number);
                 }
+                // Replay re-executes an already-valid historical prefix, so it does not apply the
+                // local EIP-4844 budget. Jovian still uses the source block's gas limit as its DA
+                // budget through `set_optimism_hardfork` below.
                 let mut executor = AnvilBlockExecutor::new(
                     $evm,
                     parent_hash,
@@ -5227,6 +5276,10 @@ where
                     ethereum_transitions,
                 )
                 .with_state_changes();
+                #[cfg(feature = "optimism")]
+                if self.is_optimism() {
+                    executor.set_optimism_hardfork(hardfork);
+                }
                 executor
                     .apply_pre_execution_changes()
                     .wrap_err("failed to apply replay block-start transitions")?;
@@ -5305,7 +5358,7 @@ where
             gas_limit: evm_env.block_env.gas_limit,
             gas_used: block_result.gas_used,
             timestamp: evm_env.block_env.timestamp.saturating_to(),
-            extra_data: Default::default(),
+            extra_data: self.fees.base_fee_extra_data(),
             mix_hash: evm_env.block_env.prevrandao.unwrap_or_default(),
             nonce: Default::default(),
             base_fee_per_gas: (spec_id >= SpecId::LONDON).then_some(evm_env.block_env.basefee),
@@ -5551,14 +5604,12 @@ where
 
             (outcome, header, block_hash)
         };
-        let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-            header.gas_used,
-            header.gas_limit,
-            header.base_fee_per_gas.unwrap_or_default(),
-        );
-        let next_block_excess_blob_gas = self.fees.get_next_block_blob_excess_gas(
+        let next_block_base_fee = self.fees.get_next_block_base_fee_from_header(&header);
+        let next_block_excess_blob_gas = self.networks.next_block_blob_excess_gas(
+            self.fees.blob_params(),
             header.excess_blob_gas.unwrap_or_default(),
             header.blob_gas_used.unwrap_or_default(),
+            header.base_fee_per_gas.unwrap_or_default(),
         );
 
         // update next base fee
@@ -6874,7 +6925,7 @@ where
             return Ok(fork.debug_trace_transaction(hash, opts).await?);
         }
 
-        Ok(GethTrace::Default(Default::default()))
+        Err(BlockchainError::TransactionNotFound)
     }
 
     /// Returns geth-style traces for all transactions in an RLP-encoded block.
@@ -7220,6 +7271,33 @@ where
         MinedTransactionReceipt { inner, out: info.out.clone() }
     }
 
+    /// Executes the pending block and returns its transaction receipts.
+    pub async fn pending_block_receipts(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+    ) -> Vec<FoundryTxReceipt> {
+        let BlockInfo { block, transactions, receipts } =
+            self.pending_block(pool_transactions).await;
+        let block_hash = block.header.hash_slow();
+        let mut pending_receipts = Vec::with_capacity(receipts.len());
+        let mut next_log_index = 0;
+
+        for (info, receipt) in transactions.iter().zip(receipts) {
+            let log_count = receipt.logs().len();
+            let receipt = self.build_mined_transaction_receipt(
+                info,
+                receipt,
+                block_hash,
+                &block,
+                next_log_index,
+            );
+            pending_receipts.push(receipt.inner);
+            next_log_index += log_count;
+        }
+
+        pending_receipts
+    }
+
     /// Returns the blocks receipts for the given number
     pub async fn block_receipts(
         &self,
@@ -7467,17 +7545,13 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         }
 
         let next_fees = selected_header.as_ref().map(|header| {
-            let next_block_base_fee = self.fees.get_next_block_base_fee_per_gas(
-                header.gas_used(),
-                header.gas_limit(),
+            let parent_fees = self.fees.get_parent_header_fees(header);
+            let next_block_excess_blob_gas = self.networks.next_block_blob_excess_gas(
+                self.fees.blob_params(),
+                header.excess_blob_gas().unwrap_or_default(),
+                header.blob_gas_used().unwrap_or_default(),
                 header.base_fee_per_gas().unwrap_or_default(),
             );
-            let next_block_excess_blob_gas =
-                self.fees.blob_params().next_block_excess_blob_gas_osaka(
-                    header.excess_blob_gas().unwrap_or_default(),
-                    header.blob_gas_used().unwrap_or_default(),
-                    header.base_fee_per_gas().unwrap_or_default(),
-                );
             let blob_excess_gas_and_price = BlobExcessGasAndPrice::new(
                 next_block_excess_blob_gas,
                 get_blob_base_fee_update_fraction(
@@ -7485,7 +7559,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                     header.timestamp,
                 ),
             );
-            (next_block_base_fee, blob_excess_gas_and_price)
+            (parent_fees, blob_excess_gas_and_price)
         });
 
         let historical_states = state.historical_states.take();
@@ -7517,8 +7591,12 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         if let Some(block_env) = block_env {
             self.evm_env.write().block_env = block_env;
         }
-        if let Some((next_block_base_fee, blob_excess_gas_and_price)) = next_fees {
-            self.fees.set_base_fee(next_block_base_fee);
+        if let Some((parent_fees, blob_excess_gas_and_price)) = next_fees {
+            #[cfg(feature = "optimism")]
+            if self.is_optimism() {
+                self.fees.set_optimism_base_fee_rules(&parent_fees.extra_data);
+            }
+            self.fees.set_base_fee(parent_fees.base_fee);
             self.fees.set_blob_excess_gas_and_price(blob_excess_gas_and_price);
         }
 
@@ -7798,7 +7876,9 @@ impl Backend<FoundryNetwork> {
                            mut monad_context: Option<MonadReplayContext>,
                            base_base_fee_per_gas,
                            base_excess_blob_gas,
-                           base_blob_gas_used| {
+                           base_blob_gas_used,
+                           base_fee_extra_data: Bytes,
+                           optimism_jovian: bool| {
             let SimulatePayload {
                 block_state_calls,
                 trace_transfers,
@@ -7843,7 +7923,8 @@ impl Backend<FoundryNetwork> {
                     .unwrap_or_else(|| block_env.timestamp.saturating_to());
                 let blob_params = self.simulation_blob_params_at_timestamp(block_timestamp);
                 if is_cancun {
-                    let excess_blob_gas = blob_params.next_block_excess_blob_gas_osaka(
+                    let excess_blob_gas = self.networks.next_block_blob_excess_gas(
+                        blob_params,
                         parent_excess_blob_gas,
                         parent_blob_gas_used,
                         parent_base_fee_per_gas,
@@ -7944,15 +8025,21 @@ impl Backend<FoundryNetwork> {
                         request.trim_conflicting_keys();
                         request.populate_blob_hashes();
                     }
-                    let request_blob_gas_used = if is_ethereum_request {
+                    let request_blob_gas_used = if is_ethereum_request && !optimism_jovian {
                         u64::try_from(request.blob_versioned_hashes.as_ref().map_or(0, Vec::len))
                             .unwrap_or(u64::MAX)
                             .saturating_mul(DATA_GAS_PER_BLOB)
                     } else {
                         0
                     };
-                    let max_blob_gas = blob_params.max_blob_gas_per_block();
-                    if block_blob_gas_used.saturating_add(request_blob_gas_used) > max_blob_gas {
+                    let max_blob_gas = block_blob_gas_limit(
+                        optimism_jovian,
+                        block_env.gas_limit,
+                        blob_params.max_blob_gas_per_block(),
+                    );
+                    if !optimism_jovian
+                        && block_blob_gas_used.saturating_add(request_blob_gas_used) > max_blob_gas
+                    {
                         return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
                             "blob gas usage exceeds the limit of {max_blob_gas} gas per block."
                         ))));
@@ -8144,9 +8231,6 @@ impl Backend<FoundryNetwork> {
                         state.keys().copied(),
                     );
 
-                    // commit the transaction
-                    cache_db.commit(state);
-                    preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
                     rpc_gas_budget = rpc_gas_budget.saturating_sub(result.tx_gas_used());
                     cumulative_gas_used = cumulative_gas_used.saturating_add(result.tx_gas_used());
                     block_regular_gas_used = block_regular_gas_used
@@ -8174,6 +8258,28 @@ impl Backend<FoundryNetwork> {
                         )
                     };
                     let tx_hash = tx.as_ref().hash();
+                    #[cfg(feature = "optimism")]
+                    if optimism_jovian {
+                        let tx_blob_gas = crate::eth::backend::executor::optimism::blob_gas_used(
+                            &mut cache_db,
+                            tx.as_ref(),
+                            true,
+                        )
+                        .map_err(|err| BlockchainError::Internal(err.to_string()))?;
+                        if block_blob_gas_used.saturating_add(tx_blob_gas) > max_blob_gas {
+                            return Err(BlockchainError::RpcError(RpcError::invalid_params(
+                                format!(
+                                    "blob gas usage exceeds the limit of {max_blob_gas} gas per block."
+                                ),
+                            )));
+                        }
+                        block_blob_gas_used = block_blob_gas_used.saturating_add(tx_blob_gas);
+                    }
+
+                    // Commit after calculating the footprint so the scalar comes from pre-tx
+                    // state, matching the upstream OP block executor.
+                    cache_db.commit(state);
+                    preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
                     #[cfg(feature = "optimism")]
                     let receipt = if matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
                         crate::eth::backend::executor::optimism::build_simulated_deposit_receipt(
@@ -8302,7 +8408,7 @@ impl Backend<FoundryNetwork> {
                     gas_limit: block_env.gas_limit,
                     gas_used,
                     timestamp: block_env.timestamp.saturating_to(),
-                    extra_data: Default::default(),
+                    extra_data: base_fee_extra_data.clone(),
                     mix_hash: block_env.prevrandao.unwrap_or_default(),
                     nonce: Default::default(),
                     base_fee_per_gas: (spec_id >= SpecId::LONDON).then_some(block_env.basefee),
@@ -8360,11 +8466,7 @@ impl Backend<FoundryNetwork> {
                 inherited_block_env.gas_limit = block_env.gas_limit;
                 // Route through the fee manager so Tempo chains use their own base fee rules.
                 let header = &simulated_block.inner.header;
-                next_base_fee = self.fees.calculate_next_block_base_fee_per_gas(
-                    header.gas_used(),
-                    header.gas_limit(),
-                    header.base_fee_per_gas().unwrap_or_default(),
-                );
+                next_base_fee = self.fees.calculate_next_block_base_fee_from_header(&header.inner);
                 parent_base_fee_per_gas = header.base_fee_per_gas().unwrap_or_default();
                 parent_excess_blob_gas = header.excess_blob_gas().unwrap_or_default();
                 parent_blob_gas_used = header.blob_gas_used().unwrap_or_default();
@@ -8381,11 +8483,9 @@ impl Backend<FoundryNetwork> {
             Some(BlockRequest::Pending(pool_transactions)) => {
                 self.with_pending_block(pool_transactions, |state, block| {
                     let header = &block.block.header;
-                    let base_fee = self.fees.calculate_next_block_base_fee_per_gas(
-                        header.gas_used(),
-                        header.gas_limit(),
-                        header.base_fee_per_gas().unwrap_or_default(),
-                    );
+                    let parent_fees = self.fees.calculate_parent_header_fees(header);
+                    let optimism_jovian =
+                        self.is_optimism_jovian_at_header(header, parent_fees.optimism_jovian);
                     let monad_context = self.active_monad_context_before_mined_transaction(
                         &block.block,
                         block.block.body.transactions.len(),
@@ -8402,11 +8502,13 @@ impl Backend<FoundryNetwork> {
                         header.number(),
                         header.timestamp(),
                         header.hash_slow(),
-                        base_fee,
+                        parent_fees.base_fee,
                         monad_context,
                         header.base_fee_per_gas().unwrap_or_default(),
                         header.excess_blob_gas().unwrap_or_default(),
                         header.blob_gas_used().unwrap_or_default(),
+                        parent_fees.extra_data,
+                        optimism_jovian,
                     )
                 })
                 .await
@@ -8424,10 +8526,10 @@ impl Backend<FoundryNetwork> {
                 let base_number = base_block.header.number();
                 let base_timestamp = base_block.header.timestamp();
                 let base_hash = base_block.header.hash;
-                let base_fee = self.fees.calculate_next_block_base_fee_per_gas(
-                    base_block.header.gas_used(),
-                    base_block.header.gas_limit(),
-                    base_block.header.base_fee_per_gas().unwrap_or_default(),
+                let parent_fees = self.fees.calculate_parent_header_fees(&base_block.header.inner);
+                let optimism_jovian = self.is_optimism_jovian_at_header(
+                    &base_block.header.inner,
+                    parent_fees.optimism_jovian,
                 );
 
                 #[cfg(feature = "monad")]
@@ -8446,11 +8548,13 @@ impl Backend<FoundryNetwork> {
                         base_number,
                         base_timestamp,
                         base_hash,
-                        base_fee,
+                        parent_fees.base_fee,
                         monad_context,
                         base_block.header.base_fee_per_gas().unwrap_or_default(),
                         base_block.header.excess_blob_gas().unwrap_or_default(),
                         base_block.header.blob_gas_used().unwrap_or_default(),
+                        parent_fees.extra_data,
+                        optimism_jovian,
                     )
                 })
                 .await?

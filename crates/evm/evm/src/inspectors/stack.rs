@@ -93,6 +93,8 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     // family-neutral inspector inputs before selecting `FEN`, while Monad tooling is configured by
     // the concrete Monad construction path.
     pub networks: NetworkConfigs,
+    /// Explicitly resolved additional cheatcode addresses.
+    pub extra_cheatcode_addresses: &'static [Address],
     /// The wallets to set in the cheatcodes context.
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
@@ -114,6 +116,7 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             chisel_state: None,
             enable_isolation: false,
             networks: NetworkConfigs::default(),
+            extra_cheatcode_addresses: &[],
             wallets: None,
             create2_deployer: Default::default(),
         }
@@ -222,6 +225,13 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
+    /// Sets explicitly resolved additional cheatcode addresses.
+    #[inline]
+    pub const fn extra_cheatcode_addresses(mut self, addresses: &'static [Address]) -> Self {
+        self.extra_cheatcode_addresses = addresses;
+        self
+    }
+
     #[inline]
     pub const fn create2_deployer(mut self, create2_deployer: Address) -> Self {
         self.create2_deployer = create2_deployer;
@@ -245,14 +255,11 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             chisel_state,
             enable_isolation,
             networks,
+            extra_cheatcode_addresses,
             wallets,
             create2_deployer,
         } = self;
         let mut stack = InspectorStack::new();
-        // TODO(monad-fen-dispatch): This is the temporary resolution point for the staged cleanup.
-        // Move it to each command's initial FEN dispatch and pass only the resolved addresses here.
-        let extra_cheatcode_addresses = networks.extra_cheatcode_addresses();
-
         // inspectors
         if let Some(config) = cheatcodes {
             let mut cheatcodes = Cheatcodes::new(config);

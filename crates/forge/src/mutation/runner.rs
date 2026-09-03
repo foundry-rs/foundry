@@ -21,12 +21,15 @@ use eyre::Result;
 use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::{Config, InlineConfig};
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
+    executors::ExecutorBuilder,
     fork::ResolvedFork,
     opts::EvmOpts,
 };
@@ -632,17 +635,19 @@ fn compile_and_test(
             rerun_failures,
             selected_sources_relative,
             isolate,
+            ExecutorBuilder::<TempoEvmNetwork>::new(),
         )
     } else {
         #[cfg(feature = "monad")]
         if evm.opts.networks.is_monad() {
-            return compile_and_test_inner::<foundry_evm::core::evm::MonadEvmNetwork>(
+            return compile_and_test_inner::<MonadEvmNetwork>(
                 config,
                 evm,
                 filter_args,
                 rerun_failures,
                 selected_sources_relative,
                 isolate,
+                ExecutorBuilder::<MonadEvmNetwork>::new(),
             );
         }
         #[cfg(feature = "optimism")]
@@ -654,6 +659,7 @@ fn compile_and_test(
                 rerun_failures,
                 selected_sources_relative,
                 isolate,
+                ExecutorBuilder::<OpEvmNetwork>::new(),
             );
         }
         compile_and_test_inner::<EthEvmNetwork>(
@@ -663,6 +669,7 @@ fn compile_and_test(
             rerun_failures,
             selected_sources_relative,
             isolate,
+            ExecutorBuilder::<EthEvmNetwork>::new(),
         )
     }
 }
@@ -674,6 +681,7 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
     rerun_failures: Option<&[RerunFailure]>,
     selected_sources_relative: &[PathBuf],
     isolate: bool,
+    executor_builder: ExecutorBuilder<FEN>,
 ) -> Result<bool> {
     let evm_opts = &evm.opts;
     let resolved_fork = evm.resolved_fork.as_ref();
@@ -731,7 +739,13 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
             .enable_isolation(isolate)
             .fail_fast(true)
             .with_create2_deployer_available(evm.create2_deployer_available)
-            .build::<FEN, MultiCompiler>(&compile_output, evm_env, tx_env, evm_opts.clone())?;
+            .build::<FEN, MultiCompiler>(
+                &compile_output,
+                evm_env,
+                tx_env,
+                evm_opts.clone(),
+                executor_builder,
+            )?;
 
         runner.test_collect(&filter)
     })?;

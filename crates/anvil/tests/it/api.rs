@@ -311,6 +311,12 @@ async fn can_get_pending_block() {
     let block = provider.get_block(BlockId::pending()).full().await.unwrap().unwrap();
     assert_eq!(block.header.number, 1);
     assert_eq!(block.transactions.len(), 1);
+
+    let receipts = provider.get_block_receipts(BlockId::pending()).await.unwrap().unwrap();
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0].transaction_hash(), *pending.tx_hash());
+    assert_eq!(receipts[0].block_number(), Some(block.header.number));
+    assert_eq!(receipts[0].block_hash(), Some(block.header.hash));
 }
 
 #[tokio::test(flavor = "multi_thread")]
