@@ -3673,6 +3673,13 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getLogs`
     pub async fn logs(&self, filter: Filter) -> Result<Vec<Log>> {
         node_info!("eth_getLogs");
+        let best = self.backend.best_number();
+        let to_block =
+            self.backend.convert_block_number(filter.block_option.get_to_block().copied());
+        if to_block > best {
+            return Err(BlockchainError::BlockOutOfRange(best, to_block));
+        }
+
         self.backend.logs(filter).await
     }
 
