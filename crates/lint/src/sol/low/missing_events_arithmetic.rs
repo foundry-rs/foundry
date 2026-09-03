@@ -35,23 +35,41 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
             return;
         }
 
-        let candidate_vars: HashSet<_> =
-            contract.variables().filter(|&var_id| is_candidate_state_var(hir, var_id)).collect();
+        // If C3 linearization failed the linearized_bases list is incomplete;
+        // skip rather than produce unsound results.
+        if contract.linearization_failed() {
+            return;
+        }
+
+        // Collect candidate state variables from the whole inheritance chain
+        // (linearized_bases[0] is the contract itself), matching
+        // uninitialized_state_variables.rs's approach - state variables and
+        // protected entry points are commonly split across a base/derived
+        // pair (e.g. OZ-upgradeable-style storage layout contracts), and an
+        // own-declarations-only scan misses that pairing entirely.
+        let candidate_vars: HashSet<_> = contract
+            .linearized_bases
+            .iter()
+            .flat_map(|&cid| hir.contract(cid).variables())
+            .filter(|&var_id| is_candidate_state_var(hir, var_id))
+            .collect();
         if candidate_vars.is_empty() {
             return;
         }
 
         let mut protected_funcs = HashSet::new();
         let mut protected_entry_points = Vec::new();
-        for func_id in contract.all_functions() {
-            let func = hir.function(func_id);
-            if !is_external_function(func) || !is_protected(hir, func_id, func) {
-                continue;
-            }
+        for &cid in contract.linearized_bases {
+            for func_id in hir.contract(cid).all_functions() {
+                let func = hir.function(func_id);
+                if !is_external_function(func) || !is_protected(hir, func_id, func) {
+                    continue;
+                }
 
-            protected_funcs.insert(func_id);
-            if !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View) {
-                protected_entry_points.push(func_id);
+                protected_funcs.insert(func_id);
+                if !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View) {
+                    protected_entry_points.push(func_id);
+                }
             }
         }
         if protected_entry_points.is_empty() {
@@ -115,14 +133,16 @@ fn vars_used_in_unprotected_arithmetic<'hir>(
 ) -> HashSet<VariableId> {
     let mut used = HashSet::new();
 
-    for func_id in contract.all_functions() {
-        let func = hir.function(func_id);
-        if !is_external_function(func) || protected_funcs.contains(&func_id) {
-            continue;
-        }
+    for &cid in contract.linearized_bases {
+        for func_id in hir.contract(cid).all_functions() {
+            let func = hir.function(func_id);
+            if !is_external_function(func) || protected_funcs.contains(&func_id) {
+                continue;
+            }
 
-        let mut analyzer = ArithmeticUseAnalyzer::new(hir, candidate_vars);
-        used.extend(analyzer.analyze_entry_point(func_id));
+            let mut analyzer = ArithmeticUseAnalyzer::new(hir, candidate_vars);
+            used.extend(analyzer.analyze_entry_point(func_id));
+        }
     }
 
     used

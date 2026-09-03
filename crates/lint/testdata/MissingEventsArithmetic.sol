@@ -456,6 +456,33 @@ contract ReproAccessCheckTooBroad {
     }
 }
 
+// Regression: state variable declared in a base contract, protected entry
+// point and arithmetic-use function declared in the derived contract - a
+// storage-layout split ubiquitous in OZ-upgradeable-style contracts. Before
+// the inheritance-chain fix, visiting the derived contract found no
+// candidate state variables (they belong to the base) and returned early,
+// so the write in `increaseBaseRate` was never inspected at all.
+contract EventsArithmeticBase {
+    uint256 public baseRate;
+}
+
+contract EventsArithmeticDerived is EventsArithmeticBase {
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function increaseBaseRate(uint256 delta) external onlyOwner {
+        baseRate += delta; //~WARN: `baseRate` is changed without an event but is used in arithmetic
+    }
+
+    function baseRateQuote(uint256 amount) external view returns (uint256) {
+        return amount * baseRate;
+    }
+}
+
 contract ReproAccessNameCalleeResultIgnored {
     address public owner = msg.sender;
     uint256 public price;
