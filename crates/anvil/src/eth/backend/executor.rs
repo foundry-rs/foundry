@@ -436,7 +436,7 @@ where
         }
 
         #[cfg(feature = "optimism")]
-        let receipt = if tx_type == FoundryTxType::Deposit {
+        let receipt = if tx_type.is_deposit() {
             optimism::build_mined_deposit_receipt(result, &state, sender, self.gas_used)
         } else {
             self.receipt_builder.build_receipt(ReceiptBuilderCtx {
