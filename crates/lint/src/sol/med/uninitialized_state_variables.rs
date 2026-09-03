@@ -74,10 +74,7 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
             }
         }
 
-        // Local `storage` pointers that alias a candidate state variable (directly, or
-        // transitively through another alias), e.g. `Data storage p = someStateVar;`.
-        // Writes through such a local (`p.val = v`) are writes to the aliased state
-        // variable and must be attributed back to it.
+        // Possible state-variable targets of local storage pointers.
         let mut aliases: HashMap<VariableId, HashSet<VariableId>> = HashMap::new();
 
         // Walk every function in the inheritance chain.
@@ -269,9 +266,6 @@ fn collect_stmt_writes_checked<'hir>(
             if let Some(initializer) = hir.variable(*var_id).initializer {
                 collect_expr_writes_checked(hir, initializer, candidates, writes, bases, aliases)?;
 
-                // If this local is a `storage` pointer initialized from a candidate state
-                // variable (or from another already-known alias), record it so writes
-                // through the local later in this function attribute back correctly.
                 if hir.variable(*var_id).data_location == Some(DataLocation::Storage)
                     && let Some(target) = resolve_alias_targets(initializer, candidates, aliases)
                 {
@@ -301,12 +295,7 @@ fn collect_expr_writes_checked<'hir>(
 ) -> Result<(), ()> {
     match &expr.kind {
         ExprKind::Assign(lhs, _, rhs) => {
-            // A bare identifier `lhs` that is itself a known local storage-pointer alias
-            // is a pointer *reassignment* (`p = other;`) — it repoints `p`, it does not
-            // write through to whatever `p` previously aliased. Skip the generic lvalue
-            // write here; the retargeting below records the new alias instead. Any other
-            // lvalue shape (`someStateVar = x`, `p.val = x`, `p[i] = x`, ...) is a real
-            // write and still goes through the normal path.
+            // Reassigning a bare storage pointer repoints it rather than writing its target.
             let is_bare_alias_repoint = matches!(
                 &lhs.peel_parens().kind,
                 ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..])
@@ -318,11 +307,7 @@ fn collect_expr_writes_checked<'hir>(
             collect_expr_writes_checked(hir, lhs, candidates, writes, bases, aliases)?;
             collect_expr_writes_checked(hir, rhs, candidates, writes, bases, aliases)?;
 
-            // Reassigning a local `storage` pointer (whether previously aliased or not,
-            // e.g. a `storage` parameter aliased for the first time via assignment) must
-            // (re)target the alias, or writes through `p` afterward would misattribute to
-            // a stale target instead of the new one. If the new target can't be resolved,
-            // drop any stale mapping rather than keep attributing to the old one.
+            // Replace the alias target, dropping stale targets when the RHS is unresolved.
             if let ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) = &lhs.peel_parens().kind
                 && !candidates.contains(id)
                 && hir.variable(*id).data_location == Some(DataLocation::Storage)
@@ -548,10 +533,7 @@ fn mark_storage_args<'hir>(
     }
 }
 
-/// Peels index/slice/member wrappers to find the root identifier of a storage-pointer
-/// initializer expression, resolving it against known state-variable candidates or
-/// previously-registered aliases (so chained aliasing, e.g. `Data storage q = p;` where
-/// `p` itself aliases a state variable, still resolves back to the original state var).
+/// Resolves a storage pointer to its possible state-variable targets.
 fn resolve_alias_targets(
     expr: &Expr<'_>,
     candidates: &HashSet<VariableId>,

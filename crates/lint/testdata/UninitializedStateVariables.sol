@@ -420,11 +420,6 @@ contract SuperNonStorageChild is SuperNonStorageBase {
     function init() external { super._init(slot); }
 }
 
-// ── Local storage pointer: aliasing a state var and writing through it ───────
-// `Data storage p = slot; p.val = v;` is the standard gas-saving idiom of
-// caching a storage slot in a local pointer instead of repeated field lookups.
-// The write through `p` must be attributed back to `slot`.
-
 contract StoragePointerAlias {
     struct Data { uint256 val; }
     Data public slot;
@@ -438,10 +433,6 @@ contract StoragePointerAlias {
         return slot.val;
     }
 }
-
-// ── Local storage pointer: chained aliasing ───────────────────────────────────
-// `q` aliases `p`, which aliases `slot`; the write through `q` must still
-// resolve back to `slot`.
 
 contract StoragePointerChainedAlias {
     struct Data { uint256 val; }
@@ -458,10 +449,6 @@ contract StoragePointerChainedAlias {
     }
 }
 
-// ── Local storage pointer: declared but never used to write ──────────────────
-// A local storage pointer that is only read through must NOT suppress a
-// genuine warning — aliasing alone is not a write.
-
 contract StoragePointerReadOnly {
     struct Data { uint256 val; }
     Data public slot; //~WARN: state variable is read but never written
@@ -471,10 +458,6 @@ contract StoragePointerReadOnly {
         return p.val;
     }
 }
-
-// ── Local storage pointer to an array element, then indexed write ────────────
-// `items[i]` is a storage pointer to a struct; writing a field through it
-// must attribute back to the array state variable.
 
 contract StoragePointerArrayElement {
     struct Data { uint256 val; }
@@ -493,11 +476,6 @@ contract StoragePointerArrayElement {
         return items[i].val;
     }
 }
-
-// ── Local storage pointer: reassigned mid-function to a different state var ──
-// `p` initially aliases `slotA`, then is reassigned to alias `slotB`; the
-// write through `p` after the reassignment must attribute to `slotB`, not
-// the stale `slotA` target.
 
 contract StoragePointerReassigned {
     struct Data { uint256 val; }
@@ -519,10 +497,6 @@ contract StoragePointerReassigned {
     }
 }
 
-// ── Local storage pointer: conditional reassignment ──────────────────────────
-// After the join, `p` may still point to `slotA` or may point to `slotB`.
-// The write through it therefore makes both state variables potentially written.
-
 contract StoragePointerConditionallyReassigned {
     struct Data { uint256 val; }
     Data public slotA;
@@ -542,9 +516,6 @@ contract StoragePointerConditionallyReassigned {
         return slotB.val;
     }
 }
-
-// ── Local storage pointer: reassignment in a potentially empty loop ─────────
-// The loop may execute zero times, so the post-loop write may target either slot.
 
 contract StoragePointerReassignedInLoop {
     struct Data { uint256 val; }
