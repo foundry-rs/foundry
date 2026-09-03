@@ -6,7 +6,7 @@ use foundry_common::provider::{
     ProviderBuilder,
     fee::{ResolvedEip1559Fees, estimate_eip1559_fees},
 };
-use foundry_config::{Chain, Eip1559FeeEstimatePreset};
+use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
 use std::{ops::Deref, sync::Arc};
 
 /// Contains a map of RPC urls to single instances of [`ProviderInfo`].
@@ -28,11 +28,12 @@ impl<N: Network> ProvidersManager<N> {
         chain: Option<u64>,
         is_legacy: bool,
         fee_estimate: Eip1559FeeEstimatePreset,
+        config: &Config,
     ) -> Result<&ProviderInfo<N>> {
         Ok(match self.inner.entry(rpc.to_string()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
-                let info = ProviderInfo::new(rpc, chain, is_legacy, fee_estimate).await?;
+                let info = ProviderInfo::new(rpc, chain, is_legacy, fee_estimate, config).await?;
                 entry.insert(info)
             }
         })
@@ -68,8 +69,9 @@ impl<N: Network> ProviderInfo<N> {
         chain: Option<u64>,
         mut is_legacy: bool,
         fee_estimate: Eip1559FeeEstimatePreset,
+        config: &Config,
     ) -> Result<Self> {
-        let provider = Arc::new(ProviderBuilder::new(rpc).build()?);
+        let provider = Arc::new(ProviderBuilder::from_config_with_url(config, rpc)?.build()?);
         let chain = match chain {
             Some(chain) => chain,
             None => provider.get_chain_id().await?,
