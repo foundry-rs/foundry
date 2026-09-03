@@ -3144,6 +3144,22 @@ interface Vm {
     #[cheatcode(group = Crypto)]
     function publicKeyP256(uint256 privateKey) external pure returns (uint256 publicKeyX, uint256 publicKeyY);
 
+    /// Converts the secp256k1 affine point `(pointX, pointY)` to projective coordinates.
+    /// The point at infinity is converted from `(0, 0)` to `(0, 1, 0)`.
+    #[cheatcode(group = Crypto)]
+    function ecAffineToProjective(uint256 pointX, uint256 pointY)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY, uint256 resultZ);
+
+    /// Converts the secp256k1 projective point `(pointX, pointY, pointZ)` to affine coordinates.
+    /// The point at infinity is converted from `(0, y, 0)` for any non-zero `y` to `(0, 0)`.
+    #[cheatcode(group = Crypto)]
+    function ecProjectiveToAffine(uint256 pointX, uint256 pointY, uint256 pointZ)
+        external
+        pure
+        returns (uint256 resultX, uint256 resultY);
+
     /// Adds the secp256k1 affine points `point1 = (pointX1, pointY1)` and
     /// `point2 = (pointX2, pointY2)`.
     /// The point at infinity is represented as `(0, 0)`.

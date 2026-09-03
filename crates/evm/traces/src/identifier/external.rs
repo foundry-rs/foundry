@@ -534,7 +534,10 @@ struct SourcifyFetcher {
 impl SourcifyFetcher {
     fn new(chain: Chain) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .user_agent(foundry_common::DEFAULT_USER_AGENT)
+                .build()
+                .expect("Client::builder() with static config cannot fail"),
             url: format!("https://sourcify.dev/server/v2/contract/{}", chain.id()),
             invalid_api_key: AtomicBool::new(false),
         }

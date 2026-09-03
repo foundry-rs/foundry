@@ -279,7 +279,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ) -> Self {
         inspector.networks(networks);
         backend.set_networks(networks);
-        let extra_cheatcode_addresses = networks.extra_cheatcode_addresses();
+        let extra_cheatcode_addresses = inspector.extra_cheatcode_addresses();
         backend.extend_persistent_accounts(extra_cheatcode_addresses.iter().copied());
 
         // Need to create a non-empty contract on the cheatcodes address so `extcodesize` checks
@@ -2012,6 +2012,8 @@ mod tests {
         Vm::{blobhashesCall, mockCallRevert_1Call, revertToStateCall, snapshotStateCall},
     };
     use foundry_config::Config;
+    #[cfg(feature = "monad")]
+    use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
     use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
     use foundry_evm_traces::InternalTraceMode;
     use revm::context::TxEnv;
@@ -2041,49 +2043,36 @@ mod tests {
     fn network_cheatcode_revert_handling_is_monad_specific() {
         let target = Address::from([0x11; 20]);
 
-        assert!(should_ignore_revert(
-            false,
-            target,
-            Some(foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS),
-            &[]
-        ));
+        assert!(should_ignore_revert(false, target, Some(MONAD_CHEATCODE_ADDRESS), &[]));
         assert!(!should_ignore_revert(
             false,
             target,
-            Some(foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS),
-            NetworkConfigs::with_monad().extra_cheatcode_addresses(),
+            Some(MONAD_CHEATCODE_ADDRESS),
+            &[MONAD_CHEATCODE_ADDRESS],
         ));
     }
 
     #[cfg(feature = "monad")]
     #[test]
-    fn executor_networks_follow_explicit_configuration() {
-        let ethereum = ExecutorBuilder::<EthEvmNetwork>::default().build(
+    fn executor_tooling_follows_concrete_builder() {
+        let ethereum = ExecutorBuilder::<EthEvmNetwork>::new().build(
             EvmEnvFor::<EthEvmNetwork>::default(),
             TxEnvFor::<EthEvmNetwork>::default(),
             Backend::spawn(None).unwrap(),
-            NetworkConfigs::default(),
+            NetworkConfigs::with_monad(),
         );
-        assert!(!ethereum.backend().networks().is_monad());
-        assert!(
-            !ethereum
-                .backend()
-                .is_persistent(&foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS)
-        );
+        assert!(ethereum.backend().networks().is_monad());
+        assert!(!ethereum.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
 
-        let monad = ExecutorBuilder::<foundry_evm_core::evm::MonadEvmNetwork>::default()
-            .inspectors(|stack| stack.networks(NetworkConfigs::default()))
-            .build(
-                EvmEnvFor::<foundry_evm_core::evm::MonadEvmNetwork>::default(),
-                TxEnvFor::<foundry_evm_core::evm::MonadEvmNetwork>::default(),
-                Backend::spawn(None).unwrap(),
-                NetworkConfigs::with_monad(),
-            );
+        let monad = ExecutorBuilder::<MonadEvmNetwork>::new().build(
+            EvmEnvFor::<MonadEvmNetwork>::default(),
+            TxEnvFor::<MonadEvmNetwork>::default(),
+            Backend::spawn(None).unwrap(),
+            NetworkConfigs::with_monad(),
+        );
         assert!(monad.inspector().networks.is_monad());
         assert!(monad.backend().networks().is_monad());
-        assert!(
-            monad.backend().is_persistent(&foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS)
-        );
+        assert!(monad.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
     }
 
     #[test]
