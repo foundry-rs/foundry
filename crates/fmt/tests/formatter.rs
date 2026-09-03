@@ -56,7 +56,7 @@ fn chained_named_call_layout_ignores_source_spacing() {
         let source = |expr| format!("contract C {{ function f() external {{ {expr} }} }}");
         assert_eq!(
             format(&source(compact), path, config.clone()),
-            format(&source(spaced), path, config.clone()),
+            format(&source(spaced), path, config),
         );
     }
 }
