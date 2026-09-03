@@ -4451,6 +4451,26 @@
     },
     {
       "func": {
+        "id": "ecAffineToProjective",
+        "description": "Converts the secp256k1 affine point `(pointX, pointY)` to projective coordinates.\nThe point at infinity is converted from `(0, 0)` to `(0, 1, 0)`.",
+        "declaration": "function ecAffineToProjective(uint256 pointX, uint256 pointY) external pure returns (uint256 resultX, uint256 resultY, uint256 resultZ);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecAffineToProjective(uint256,uint256)",
+        "selector": "0xc1290181",
+        "selectorBytes": [
+          193,
+          41,
+          1,
+          129
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
         "id": "ecMulAffine",
         "description": "Multiplies the secp256k1 affine point `(pointX, pointY)` by `scalar`.\nThe scalar is reduced modulo the secp256k1 group order.\nThe point at infinity is represented as `(0, 0)`.",
         "declaration": "function ecMulAffine(uint256 pointX, uint256 pointY, uint256 scalar) external pure returns (uint256 resultX, uint256 resultY);",
@@ -4483,6 +4503,26 @@
           22,
           97,
           252
+        ]
+      },
+      "group": "crypto",
+      "status": "stable",
+      "safety": "safe"
+    },
+    {
+      "func": {
+        "id": "ecProjectiveToAffine",
+        "description": "Converts the secp256k1 projective point `(pointX, pointY, pointZ)` to affine coordinates.\nThe point at infinity is converted from `(0, y, 0)` for any non-zero `y` to `(0, 0)`.",
+        "declaration": "function ecProjectiveToAffine(uint256 pointX, uint256 pointY, uint256 pointZ) external pure returns (uint256 resultX, uint256 resultY);",
+        "visibility": "external",
+        "mutability": "pure",
+        "signature": "ecProjectiveToAffine(uint256,uint256,uint256)",
+        "selector": "0xe6be5995",
+        "selectorBytes": [
+          230,
+          190,
+          89,
+          149
         ]
       },
       "group": "crypto",

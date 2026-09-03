@@ -45,7 +45,7 @@ use foundry_evm::{
             TxEnvFor,
         },
     },
-    executors::{EvmError, TracingExecutor},
+    executors::{EvmError, ExecutorBuilder, TracingExecutor},
     opts::{EvmOpts, ForkEndpointIdentity},
     utils::apply_chain_specific_tx_replay_env_changes_for_chain,
 };
@@ -256,6 +256,7 @@ impl VerifyBytecodeArgs {
                     endpoint_identity,
                     network_was_inferred,
                     replay_block_transactions::<EthEvmNetwork>,
+                    ExecutorBuilder::<EthEvmNetwork>::new(),
                 )
                 .await
             }
@@ -266,6 +267,7 @@ impl VerifyBytecodeArgs {
                     endpoint_identity,
                     network_was_inferred,
                     replay_block_transactions::<OpEvmNetwork>,
+                    ExecutorBuilder::<OpEvmNetwork>::new(),
                 )
                 .await
             }
@@ -275,6 +277,7 @@ impl VerifyBytecodeArgs {
                     endpoint_identity,
                     network_was_inferred,
                     replay_block_transactions::<TempoEvmNetwork>,
+                    ExecutorBuilder::<TempoEvmNetwork>::new(),
                 )
                 .await
             }
@@ -285,6 +288,7 @@ impl VerifyBytecodeArgs {
                     endpoint_identity,
                     network_was_inferred,
                     replay_monad_block_transactions,
+                    ExecutorBuilder::<MonadEvmNetwork>::new(),
                 )
                 .await
             }
@@ -297,6 +301,7 @@ impl VerifyBytecodeArgs {
         endpoint_identity: Option<ForkEndpointIdentity>,
         network_was_inferred: bool,
         replay_block: ReplayBlockFn<FEN>,
+        executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<()>
     where
         FEN: FoundryEvmNetwork,
@@ -527,6 +532,7 @@ impl VerifyBytecodeArgs {
                 deploy_block,
                 deploy_block_info.as_ref(),
                 evm_opts,
+                executor_builder.clone(),
             )
             .await?;
             Self::ensure_endpoint_identity_unchanged(&config, endpoint_identity.as_ref()).await?;
@@ -821,6 +827,7 @@ impl VerifyBytecodeArgs {
                 simulation_block,
                 block.as_ref(),
                 evm_opts,
+                executor_builder,
             )
             .await?;
             Self::ensure_endpoint_identity_unchanged(&config, endpoint_identity.as_ref()).await?;

@@ -2,4 +2,4 @@
 forge: minor
 ---
 
-Added cheatcodes for secp256k1 point addition and scalar multiplication in affine and projective coordinates.
+Added cheatcodes for converting secp256k1 points between affine and projective coordinates.

@@ -41,6 +41,7 @@ use anvil::{
 use axum::{Json, Router, routing::post};
 use foundry_common::provider::get_http_provider;
 use foundry_config::Config;
+use foundry_evm::hardfork::OpHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::{FoundryNetwork, FoundryReceiptEnvelope};
 use foundry_test_utils::rpc::{
@@ -2348,6 +2349,36 @@ async fn test_block_receipts() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_pending_block_receipts_do_not_return_fork_head_receipts() {
+    let (origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+    let sender = origin_handle.dev_wallets().next().unwrap().address();
+    origin_api
+        .send_transaction(WithOtherFields::new(
+            TransactionRequest::default().from(sender).to(Address::random()).value(U256::from(1)),
+        ))
+        .await
+        .unwrap();
+
+    let (fork_api, _) = spawn(
+        NodeConfig::test()
+            .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
+            .with_fork_block_number(Some(1u64)),
+    )
+    .await;
+
+    let latest_receipts = fork_api.block_receipts(BlockId::latest()).await.unwrap().unwrap();
+    assert_eq!(latest_receipts.len(), 1);
+
+    let pending_block =
+        fork_api.block_by_number_full(BlockNumberOrTag::Pending).await.unwrap().unwrap();
+    assert_eq!(pending_block.header.number, 2);
+    assert!(pending_block.transactions.is_empty());
+
+    let pending_receipts = fork_api.block_receipts(BlockId::pending()).await.unwrap().unwrap();
+    assert!(pending_receipts.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_override_fork_chain_id() {
     let chain_id_override = 5u64;
     let (_api, handle) = spawn(
@@ -3441,6 +3472,35 @@ async fn spawn_rpc_proxy_with_blob_header_fields(
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     format!("http://{address}")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_optimism_fork_keeps_excess_blob_gas_zero_after_mining() {
+    // Base Jovian stores the DA footprint in `blobGasUsed`, but OP Stack clients keep
+    // `excessBlobGas` at zero because the chain does not support EIP-4844 blobs. This captured
+    // footprint is from Base mainnet block 50_729_760.
+    let (_, origin) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(NamedChain::Base as u64))
+            .with_networks(NetworkConfigs::with_optimism())
+            .with_hardfork(Some(OpHardfork::Jovian.into())),
+    )
+    .await;
+    let fork_url =
+        spawn_rpc_proxy_with_blob_header_fields(origin.http_endpoint(), Some(0x2e_b434), Some(0))
+            .await;
+    let (api, _) = spawn(
+        NodeConfig::test().with_eth_rpc_url(Some(fork_url)).with_fork_block_number(Some(0u64)),
+    )
+    .await;
+
+    api.mine_one().await.unwrap();
+    let block = api.block_by_number(BlockNumberOrTag::Latest).await.unwrap().unwrap();
+
+    assert_eq!(block.header.excess_blob_gas, Some(0));
+    let next_blob_fee = api.excess_blob_gas_and_price().unwrap().unwrap();
+    assert_eq!(next_blob_fee.excess_blob_gas, 0);
+    assert_eq!(next_blob_fee.blob_gasprice, 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]
