@@ -740,6 +740,8 @@ fn normalize_cmp_for_solver(
 pub(super) struct ConstraintContext {
     upper_bounds: HashMap<SymExpr, U256>,
     lower_bounds: HashMap<SymExpr, U256>,
+    exact_values: HashMap<SymExpr, U256>,
+    conflicting_exact_values: HashSet<SymExpr>,
 }
 
 #[derive(Clone, Copy)]
@@ -781,6 +783,7 @@ impl ConstraintContext {
     ) -> Self {
         let mut context = Self::default();
         for constraint in constraints.clone() {
+            context.record_exact_value_constraint(constraint);
             context.record_upper_bound_constraint(constraint);
             context.record_lower_bound_constraint(constraint);
         }
@@ -809,7 +812,7 @@ impl ConstraintContext {
 
     /// Conservatively identifies every conjunct that path facts may rewrite to `true`.
     fn could_contextually_disappear(expr: &SymBoolExpr) -> bool {
-        match expr.kind() {
+        let root_candidate = match expr.kind() {
             SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) => {
                 Self::mul_div_identity_operands(left, right).is_some()
                     || Self::mul_div_identity_operands(right, left).is_some()
@@ -822,10 +825,20 @@ impl ConstraintContext {
             SymBoolExprKind::Const(_) | SymBoolExprKind::Cmp(_, _, _) | SymBoolExprKind::And(_) => {
                 false
             }
-        }
+        };
+        root_candidate
+            || expr.visit_bool(|word| {
+                Self::mul_div_operands(word).is_some() || Self::ceil_div_shape(word)
+            })
     }
 
     fn normalize_bool(&self, cx: &mut SymCx, expr: SymBoolExpr) -> SymBoolExpr {
+        let expr = if self.is_exact_value_constraint(&expr) {
+            expr
+        } else {
+            expr.fold_exprs(cx, &mut |cx, expr| self.normalize_word(cx, expr))
+        };
+        let expr = normalize_bool_for_solver(cx, expr);
         match expr.kind() {
             SymBoolExprKind::Not(value) if self.unsigned_bool_always_true(value) => {
                 SymBoolExpr::constant(cx, false)
@@ -872,6 +885,128 @@ impl ConstraintContext {
             }
             _ => expr,
         }
+    }
+
+    fn record_exact_value_constraint(&mut self, constraint: &SymBoolExpr) {
+        let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = constraint.kind() else { return };
+        let Some((expr, value)) = const_side_bound(left, right) else { return };
+        if !matches!(expr.kind(), SymExprKind::Var(_))
+            || self.conflicting_exact_values.contains(expr)
+        {
+            return;
+        }
+        if self.exact_values.get(expr).is_some_and(|current| *current != value) {
+            self.exact_values.remove(expr);
+            self.conflicting_exact_values.insert(expr.clone());
+        } else {
+            self.exact_values.insert(expr.clone(), value);
+        }
+    }
+
+    fn exact_value(&self, expr: &SymExpr) -> Option<U256> {
+        self.exact_values.get(expr).copied()
+    }
+
+    fn normalize_word(&self, cx: &mut SymCx, expr: SymExpr) -> SymExpr {
+        if let Some(value) = self.exact_value(&expr) {
+            return SymExpr::constant(cx, value);
+        }
+        if let SymExprKind::BinOp(SymBinOp::Or, left, right) = expr.kind()
+            && ((left.as_const() == Some(U256::from(1))
+                && right.normalized_bool_word_condition(cx).is_some())
+                || (right.as_const() == Some(U256::from(1))
+                    && left.normalized_bool_word_condition(cx).is_some()))
+        {
+            return SymExpr::one(cx);
+        }
+        if let Some((value, outer_factor)) = Self::constant_mul_operands(&expr)
+            && let Some((value, inner_factor)) = Self::constant_mul_operands(value)
+        {
+            let factor = SymExpr::constant(cx, inner_factor.wrapping_mul(outer_factor));
+            return SymExpr::binop(cx, SymBinOp::Mul, value.clone(), factor);
+        }
+        if let Some((value, factor)) = self.exact_ceil_div_factor(&expr) {
+            let factor = SymExpr::constant(cx, factor);
+            return SymExpr::binop(cx, SymBinOp::Mul, value.clone(), factor);
+        }
+        if let Some((value, factor)) = self.exact_scaled_div_factor(&expr) {
+            let factor = SymExpr::constant(cx, factor);
+            return SymExpr::binop(cx, SymBinOp::Mul, value.clone(), factor);
+        }
+        if let Some((denominator, other)) = Self::mul_div_operands(&expr)
+            && self.interval(denominator).is_some_and(|interval| !interval.min.is_zero())
+            && self.mul_cannot_overflow_256(denominator, other)
+        {
+            return other.clone();
+        }
+        expr
+    }
+
+    fn exact_ceil_div_factor<'a>(&self, expr: &'a SymExpr) -> Option<(&'a SymExpr, U256)> {
+        let (numerator, denominator) = expr.udiv_operands()?;
+        let denominator = denominator.as_const().filter(|value| !value.is_zero())?;
+        let SymExprKind::BinOp(SymBinOp::Sub, sum, one) = numerator.kind() else { return None };
+        if one.as_const() != Some(U256::from(1)) {
+            return None;
+        }
+        let SymExprKind::BinOp(SymBinOp::Add, product, rounding) = sum.kind() else { return None };
+        if rounding.as_const() != Some(denominator) {
+            return None;
+        }
+        let (value, multiplier) = Self::constant_mul_operands(product)?;
+        self.max_scaled_product(value, multiplier)?.checked_add(denominator)?;
+        let factor = multiplier.checked_div(denominator)?;
+        (multiplier % denominator).is_zero().then_some((value, factor))
+    }
+
+    fn ceil_div_shape(expr: &SymExpr) -> bool {
+        let Some((numerator, denominator)) = expr.udiv_operands() else { return false };
+        let Some(denominator) = denominator.as_const().filter(|value| !value.is_zero()) else {
+            return false;
+        };
+        matches!(
+            numerator.kind(),
+            SymExprKind::BinOp(SymBinOp::Sub, sum, one)
+                if one.as_const() == Some(U256::from(1))
+                    && matches!(
+                        sum.kind(),
+                        SymExprKind::BinOp(SymBinOp::Add, product, rounding)
+                            if rounding.as_const() == Some(denominator)
+                                && matches!(product.kind(), SymExprKind::BinOp(SymBinOp::Mul, _, _))
+                    )
+        )
+    }
+
+    fn exact_scaled_div_factor<'a>(&self, expr: &'a SymExpr) -> Option<(&'a SymExpr, U256)> {
+        let (numerator, denominator) = expr.udiv_operands()?;
+        let denominator = denominator.as_const().filter(|value| !value.is_zero())?;
+        let (value, multiplier) = Self::constant_mul_operands(numerator)?;
+        if !(multiplier % denominator).is_zero()
+            || self.max_scaled_product(value, multiplier).is_none()
+        {
+            return None;
+        }
+        Some((value, multiplier / denominator))
+    }
+
+    fn max_scaled_product(&self, value: &SymExpr, multiplier: U256) -> Option<U256> {
+        self.interval(value)?.max.checked_mul(multiplier)
+    }
+
+    fn constant_mul_operands(expr: &SymExpr) -> Option<(&SymExpr, U256)> {
+        let SymExprKind::BinOp(SymBinOp::Mul, left, right) = expr.kind() else { return None };
+        right
+            .as_const()
+            .map(|factor| (left, factor))
+            .or_else(|| left.as_const().map(|factor| (right, factor)))
+    }
+
+    fn is_exact_value_constraint(&self, constraint: &SymBoolExpr) -> bool {
+        let SymBoolExprKind::Cmp(SymCmpOp::Eq, left, right) = constraint.kind() else {
+            return false;
+        };
+        const_side_bound(left, right)
+            .is_some_and(|(expr, value)| self.exact_value(expr) == Some(value))
     }
 
     fn masked_eq_self_condition(&self, expr: &SymBoolExpr) -> bool {
@@ -1095,6 +1230,11 @@ impl ConstraintContext {
         quotient: &'a SymExpr,
         expected: &SymExpr,
     ) -> Option<(&'a SymExpr, &'a SymExpr)> {
+        let (denominator, other) = Self::mul_div_operands(quotient)?;
+        (other == expected).then_some((denominator, other))
+    }
+
+    fn mul_div_operands(quotient: &SymExpr) -> Option<(&SymExpr, &SymExpr)> {
         let (numerator, denominator) = quotient.udiv_operands()?;
         let SymExprKind::BinOp(SymBinOp::Mul, left, right) = numerator.kind() else {
             return None;
@@ -1106,7 +1246,7 @@ impl ConstraintContext {
         } else {
             return None;
         };
-        (other == expected).then_some((denominator, other))
+        Some((denominator, other))
     }
 
     fn interval(&self, expr: &SymExpr) -> Option<WordInterval> {
@@ -2107,6 +2247,118 @@ mod tests {
         }
 
         assert!(ConstraintContext::default().mul_cannot_overflow_256(&shared, &shared));
+    }
+
+    #[test]
+    fn contextual_normalization_substitutes_direct_exact_values() {
+        let mut cx = SymCx::new();
+        let denominator = SymExpr::var(&mut cx, "denominator");
+        let numerator = SymExpr::var(&mut cx, "numerator");
+        let scale = U256::from(1_000_000_000_000_000_000u64);
+        let scale_expr = SymExpr::constant(&mut cx, scale);
+        let fixed = SymBoolExpr::eq(&mut cx, denominator.clone(), scale_expr);
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, denominator);
+        let zero = SymExpr::zero(&mut cx);
+        let quotient_nonzero = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, quotient, zero);
+
+        let normalized =
+            normalize_constraints_for_solver(&mut cx, &[fixed.clone(), quotient_nonzero]);
+
+        assert!(normalized.contains(&fixed));
+        assert!(normalized.iter().any(|constraint| {
+            matches!(
+                constraint.kind(),
+                SymBoolExprKind::Cmp(SymCmpOp::Ule, left, _) if left.as_const() == Some(scale)
+            )
+        }));
+    }
+
+    #[test]
+    fn contextual_normalization_rewrites_bounded_mul_div_subexpressions() {
+        let mut cx = SymCx::new();
+        let value = SymExpr::var(&mut cx, "value");
+        let expected = SymExpr::var(&mut cx, "expected");
+        let scale = SymExpr::constant(&mut cx, U256::from(1_000_000_000_000_000_000u64));
+        let uint128_max = SymExpr::constant(&mut cx, U256::from(u128::MAX));
+        let bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, value.clone(), uint128_max);
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value, scale.clone());
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, scale);
+        let one = SymExpr::one(&mut cx);
+        let incremented = SymExpr::binop(&mut cx, SymBinOp::Add, quotient, one);
+        let comparison = SymBoolExpr::eq(&mut cx, incremented, expected);
+
+        let normalized = normalize_constraints_for_solver(&mut cx, &[bounded, comparison]);
+
+        assert!(!normalized.iter().any(|constraint| constraint.visit_bool(|expr| {
+            matches!(expr.kind(), SymExprKind::BinOp(SymBinOp::UDiv, _, _))
+        })));
+    }
+
+    #[test]
+    fn contextual_normalization_rewrites_exact_round_up_scale_conversion() {
+        let mut cx = SymCx::new();
+        let credits = SymExpr::var(&mut cx, "credits");
+        let uint128_max = SymExpr::constant(&mut cx, U256::from(u128::MAX));
+        let bounded = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, credits.clone(), uint128_max);
+        let scale = SymExpr::constant(&mut cx, U256::from(1_000_000_000_000_000_000u64));
+        let credits_per_token = SymExpr::constant(
+            &mut cx,
+            U256::from(1_000_000_000_000_000_000u64) * U256::from(1_000_000_000u64),
+        );
+        let product =
+            SymExpr::binop(&mut cx, SymBinOp::Mul, credits.clone(), credits_per_token.clone());
+        let rounded = SymExpr::binop(&mut cx, SymBinOp::Add, product, scale.clone());
+        let one = SymExpr::one(&mut cx);
+        let rounded = SymExpr::binop(&mut cx, SymBinOp::Sub, rounded, one);
+        let converted = SymExpr::binop(&mut cx, SymBinOp::UDiv, rounded, scale.clone());
+        let converted = SymExpr::binop(&mut cx, SymBinOp::Mul, converted, scale);
+        let converted = SymExpr::binop(&mut cx, SymBinOp::UDiv, converted, credits_per_token);
+        let round_trip = SymBoolExpr::eq(&mut cx, converted, credits);
+
+        let normalized = normalize_constraints_for_solver(&mut cx, &[bounded.clone(), round_trip]);
+
+        assert_eq!(normalized, vec![bounded]);
+    }
+
+    #[test]
+    fn contextual_normalization_keeps_wrapping_scaled_division() {
+        let mut cx = SymCx::new();
+        let value = SymExpr::var(&mut cx, "value");
+        let two = SymExpr::constant(&mut cx, U256::from(2));
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), two.clone());
+        let zero = SymExpr::zero(&mut cx);
+        let wrapped_product_is_zero = SymBoolExpr::eq(&mut cx, product.clone(), zero);
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, product, two);
+        let identity = SymBoolExpr::eq(&mut cx, quotient, value.clone());
+
+        let normalized =
+            normalize_constraints_for_solver(&mut cx, &[wrapped_product_is_zero, identity]);
+
+        let mut model = SymbolicModel::default();
+        assert!(value.assign_model_value(&mut model, U256::ONE << 255));
+        assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+    }
+
+    #[test]
+    fn contextual_normalization_keeps_wrapping_round_up_division() {
+        let mut cx = SymCx::new();
+        let value = SymExpr::var(&mut cx, "value");
+        let two = SymExpr::constant(&mut cx, U256::from(2));
+        let product = SymExpr::binop(&mut cx, SymBinOp::Mul, value.clone(), two.clone());
+        let sum = SymExpr::binop(&mut cx, SymBinOp::Add, product, two.clone());
+        let one = SymExpr::one(&mut cx);
+        let rounded = SymExpr::binop(&mut cx, SymBinOp::Sub, sum, one.clone());
+        let wrapped_numerator_is_bounded =
+            SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, rounded.clone(), one);
+        let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, rounded, two);
+        let identity = SymBoolExpr::eq(&mut cx, quotient, value.clone());
+
+        let normalized =
+            normalize_constraints_for_solver(&mut cx, &[wrapped_numerator_is_bounded, identity]);
+
+        let mut model = SymbolicModel::default();
+        assert!(value.assign_model_value(&mut model, U256::ONE << 255));
+        assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
     }
 
     #[test]

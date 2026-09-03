@@ -3654,14 +3654,15 @@ fn solver_does_not_use_mul_div_identity_to_bound_itself() {
     let y_is_zero = SymBoolExpr::eq(&mut cx, y, zero);
     let four = SymExpr::constant(&mut cx, U256::from(4));
     let x_is_four = SymBoolExpr::eq(&mut cx, x, four);
-    let constraints = vec![identity.clone(), quotient_matches_y, y_is_zero, x_is_four];
+    let constraints = vec![identity, quotient_matches_y, y_is_zero, x_is_four];
     let model =
         symbolic_model(&mut cx, [("x".to_string(), U256::from(4)), ("y".to_string(), U256::ZERO)]);
 
     assert!(constraints.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
 
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-    assert!(normalized.contains(&identity));
+    // The independent `x == 4` fact may reduce the wrapping identity to `false`, but the
+    // identity itself must not supply the bound that proves it.
     assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
 }
 
@@ -3685,8 +3686,8 @@ fn solver_does_not_use_mul_div_identities_to_bound_each_other() {
     let four = SymExpr::constant(&mut cx, U256::from(4));
     let a_is_four = SymBoolExpr::eq(&mut cx, a, four);
     let constraints = vec![
-        a_identity.clone(),
-        b_identity.clone(),
+        a_identity,
+        b_identity,
         a_matches_b,
         a_quotient_is_zero,
         b_quotient_is_zero,
@@ -3700,8 +3701,8 @@ fn solver_does_not_use_mul_div_identities_to_bound_each_other() {
     assert!(constraints.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
 
     let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
-    assert!(normalized.contains(&a_identity));
-    assert!(normalized.contains(&b_identity));
+    // Independent exact values may reduce these wrapping identities to `false`; neither
+    // identity may contribute bounds that make the batch satisfiable.
     assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
 }
 
@@ -5048,10 +5049,10 @@ fn feasible_path_selection_drains_easy_paths_before_deferred_hard_arithmetic() {
 
     let x = SymExpr::var(&mut executor.cx, "x");
     let y = SymExpr::var(&mut executor.cx, "y");
-    let zero = SymExpr::zero(&mut executor.cx);
     let mut hard = empty_state(&mut executor.cx);
-    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, x.clone(), zero));
     let product = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x, y);
+    let zero = SymExpr::zero(&mut executor.cx);
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product.clone(), zero));
     let one = SymExpr::one(&mut executor.cx);
     hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product, one));
     hard.defer_feasibility_check();
@@ -5312,7 +5313,9 @@ fn sat_cache_does_not_reuse_unsat_branch_complement_with_unsat_base() {
     assert_eq!(stats.solver_queries, 2);
     assert_eq!(stats.sat_queries, 2);
     assert_eq!(stats.sat_cache_hits, 0);
-    assert_eq!(counted_solver_invocations(&marker), 2);
+    // Exact-value propagation makes one contradictory branch local; the other still exercises
+    // the solver without reusing the unsatisfiable complement cache entry.
+    assert_eq!(counted_solver_invocations(&marker), 1);
     let _ = std::fs::remove_file(&marker);
 }
 
