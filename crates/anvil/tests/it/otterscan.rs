@@ -373,9 +373,6 @@ async fn ots_get_block_transactions() {
         assert!(result.receipts.len() <= page_size);
         let len = result.receipts.len();
         assert!(len <= page_size);
-        // `transaction_count` must reflect the WHOLE block (10 txs), not the page - it's used
-        // by consumers (e.g. Otterscan) to compute the total page count, and a page-sized value
-        // makes it look like there's never more than one page.
         assert_eq!(result.fullblock.transaction_count, 10);
 
         result.receipts.iter().enumerate().for_each(|(i, receipt)| {
