@@ -479,8 +479,8 @@ forgetest!(bind_single_file_crate_and_module_match, |prj, cmd| {
     );
 });
 
-// https://github.com/foundry-rs/foundry/issues - `$` is valid in Solidity identifiers but not
-// in Rust ones; `forge bind` used to panic instead of sanitizing it.
+// `$` is valid in Solidity identifiers but not Rust identifiers; `forge bind` used to panic
+// instead of sanitizing it.
 forgetest!(bind_dollar_sign_in_contract_name, |prj, cmd| {
     prj.add_source(
         "Foo.sol",
