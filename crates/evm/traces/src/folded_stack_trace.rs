@@ -105,9 +105,7 @@ impl EvmFoldedStackTraceBuilder {
         if let Some(decoded_step) = &step.decoded {
             match decoded_step.as_ref() {
                 DecodedTraceStep::InternalCall(decoded_internal_call, step_end_idx) => {
-                    // `resetGasMetering` (a real cheatcode) can make exit gas_remaining higher than
-                    // entry gas_remaining for an internal-call frame; saturate rather than
-                    // underflow into a near-u64::MAX garbage value (or panic in debug builds).
+                    // Gas metering resets can increase the remaining gas across an internal call.
                     let gas_used =
                         step.gas_remaining.saturating_sub(steps[*step_end_idx].gas_remaining);
                     self.fst.enter(decoded_internal_call.func_name.clone(), gas_used);
@@ -387,9 +385,7 @@ mod tests {
 
     #[test]
     fn folded_stack_trace_saturates_internal_call_gas_on_reset_metering() {
-        // `vm.resetGasMetering()` can make the exit step's gas_remaining higher than the
-        // entry step's for an internal-call frame. Regression test for the raw subtraction
-        // that used to underflow to a near-u64::MAX value (or panic in debug builds).
+        // Model an internal call whose gas meter resets before returning.
         let mut arena = CallTraceArena::default();
         let root = &mut arena.nodes_mut()[0];
         root.trace.gas_used = 100;
