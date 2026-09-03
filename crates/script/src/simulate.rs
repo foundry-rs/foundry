@@ -384,6 +384,7 @@ mod tests {
     use foundry_config::Config;
     use foundry_evm::{
         core::{evm::MonadEvmNetwork, opts::EvmOpts},
+        executors::ExecutorBuilder,
         hardforks::MonadHardfork,
     };
     use foundry_evm_networks::NetworkConfigs;
@@ -419,6 +420,7 @@ mod tests {
         let script_config = ScriptConfig::<MonadEvmNetwork>::new(
             Config::default(),
             evm_opts,
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             Some(0),
@@ -509,6 +511,7 @@ mod tests {
                 networks: NetworkConfigs::with_monad(),
                 ..Default::default()
             },
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             Some(0),
@@ -564,6 +567,7 @@ mod tests {
         let script_config = ScriptConfig::<MonadEvmNetwork>::new(
             Config::default(),
             EvmOpts { fork_url: Some(monad.http_endpoint()), ..Default::default() },
+            ExecutorBuilder::<MonadEvmNetwork>::new(),
             false,
             TempoOpts::default(),
             Some(0),
@@ -810,7 +814,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                     });
                     if let Some((base_fee, priority_fee)) = &fee_breakdown {
                         json["estimated_max_fee_per_gas"] =
-                            serde_json::Value::from(estimated_gas_price.clone());
+                            serde_json::Value::from(estimated_gas_price);
                         json["estimated_base_fee_per_gas"] =
                             serde_json::Value::from(base_fee.clone());
                         json["estimated_max_priority_fee_per_gas"] =
