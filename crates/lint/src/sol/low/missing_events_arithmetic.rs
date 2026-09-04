@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use solar::{
-    ast::{ContractKind, StateMutability, Visibility},
+    ast::{ContractKind, StateMutability},
     interface::{Span, kw, sym},
     sema::hir::{
         self, BinOpKind, ElementaryType, ExprKind, FunctionId, ItemId, Res, StmtKind, TypeKind,
@@ -24,29 +24,20 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
-    fn check_contract(
+    fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
+        gcx: solar::sema::Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
-        contract: &'hir hir::Contract<'hir>,
+        contract_id: hir::ContractId,
     ) {
-        if contract.kind != ContractKind::Contract {
+        let contract = hir.contract(contract_id);
+        if contract.kind != ContractKind::Contract || contract.linearization_failed() {
             return;
         }
 
-        // If C3 linearization failed the linearized_bases list is incomplete;
-        // skip rather than produce unsound results.
-        if contract.linearization_failed() {
-            return;
-        }
-
-        // Collect candidate state variables from the whole inheritance chain
-        // (linearized_bases[0] is the contract itself), matching
-        // uninitialized_state_variables.rs's approach - state variables and
-        // protected entry points are commonly split across a base/derived
-        // pair (e.g. OZ-upgradeable-style storage layout contracts), and an
-        // own-declarations-only scan misses that pairing entirely.
+        // State variables and their entry points are commonly split across a base/derived pair,
+        // so collect candidates from the whole inheritance chain.
         let candidate_vars: HashSet<_> = contract
             .linearized_bases
             .iter()
@@ -57,27 +48,34 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
             return;
         }
 
+        // The externally reachable functions, with overridden base implementations resolved to
+        // the most derived one.
+        let entry_points: Vec<_> =
+            gcx.interface_functions(contract_id).all().iter().map(|func| func.id).collect();
+
         let mut protected_funcs = HashSet::new();
         let mut protected_entry_points = Vec::new();
-        for &cid in contract.linearized_bases {
-            for func_id in hir.contract(cid).all_functions() {
-                let func = hir.function(func_id);
-                if !is_external_function(func) || !is_protected(hir, func_id, func) {
-                    continue;
-                }
+        for &func_id in &entry_points {
+            let func = hir.function(func_id);
+            if !is_protected(hir, func_id, func) {
+                continue;
+            }
 
-                protected_funcs.insert(func_id);
-                if !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View) {
-                    protected_entry_points.push(func_id);
-                }
+            protected_funcs.insert(func_id);
+            if !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View) {
+                protected_entry_points.push(func_id);
             }
         }
         if protected_entry_points.is_empty() {
             return;
         }
 
-        let arithmetic_vars =
-            vars_used_in_unprotected_arithmetic(hir, contract, &candidate_vars, &protected_funcs);
+        let arithmetic_vars = vars_used_in_unprotected_arithmetic(
+            hir,
+            &entry_points,
+            &candidate_vars,
+            &protected_funcs,
+        );
         if arithmetic_vars.is_empty() {
             return;
         }
@@ -118,31 +116,21 @@ fn is_candidate_state_var(hir: &hir::Hir<'_>, var_id: VariableId) -> bool {
         )
 }
 
-fn is_external_function(func: &hir::Function<'_>) -> bool {
-    func.kind.is_function()
-        && matches!(func.visibility, Visibility::Public | Visibility::External)
-        && !func.is_constructor()
-        && !func.is_special()
-}
-
 fn vars_used_in_unprotected_arithmetic<'hir>(
     hir: &'hir hir::Hir<'hir>,
-    contract: &hir::Contract<'hir>,
+    entry_points: &[FunctionId],
     candidate_vars: &HashSet<VariableId>,
     protected_funcs: &HashSet<FunctionId>,
 ) -> HashSet<VariableId> {
     let mut used = HashSet::new();
 
-    for &cid in contract.linearized_bases {
-        for func_id in hir.contract(cid).all_functions() {
-            let func = hir.function(func_id);
-            if !is_external_function(func) || protected_funcs.contains(&func_id) {
-                continue;
-            }
-
-            let mut analyzer = ArithmeticUseAnalyzer::new(hir, candidate_vars);
-            used.extend(analyzer.analyze_entry_point(func_id));
+    for &func_id in entry_points {
+        if protected_funcs.contains(&func_id) {
+            continue;
         }
+
+        let mut analyzer = ArithmeticUseAnalyzer::new(hir, candidate_vars);
+        used.extend(analyzer.analyze_entry_point(func_id));
     }
 
     used

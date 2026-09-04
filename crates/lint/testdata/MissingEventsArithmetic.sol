@@ -456,12 +456,8 @@ contract ReproAccessCheckTooBroad {
     }
 }
 
-// Regression: state variable declared in a base contract, protected entry
-// point and arithmetic-use function declared in the derived contract - a
-// storage-layout split ubiquitous in OZ-upgradeable-style contracts. Before
-// the inheritance-chain fix, visiting the derived contract found no
-// candidate state variables (they belong to the base) and returned early,
-// so the write in `increaseBaseRate` was never inspected at all.
+// Regression: state variable declared in a base contract, protected entry point and
+// arithmetic use declared in the derived contract.
 contract EventsArithmeticBase {
     uint256 public baseRate;
 }
@@ -480,6 +476,35 @@ contract EventsArithmeticDerived is EventsArithmeticBase {
 
     function baseRateQuote(uint256 amount) external view returns (uint256) {
         return amount * baseRate;
+    }
+}
+
+// Regression: an overridden base implementation is not an entry point of the derived
+// contract, so its write must not be reported when the override emits an event.
+abstract contract EventsArithmeticOverrideBase {
+    uint256 public fee;
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function setFee(uint256 newFee) external virtual onlyOwner {
+        fee = newFee;
+    }
+
+    function quote(uint256 amount) external view returns (uint256) {
+        return amount * fee;
+    }
+}
+
+contract EventsArithmeticOverrideDerived is EventsArithmeticOverrideBase {
+    event FeeUpdated(uint256 fee);
+
+    function setFee(uint256 newFee) external override onlyOwner {
+        fee = newFee;
+        emit FeeUpdated(newFee);
     }
 }
 
