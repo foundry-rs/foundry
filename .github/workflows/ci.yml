@@ -267,6 +267,7 @@ jobs:
       - no-default-features
       - touch-id-link
       - typos
+      - shellcheck
       - github-scripts
       - clippy
       - rustfmt

@@ -55,27 +55,6 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
-
-      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
-
-      - name: Setup Foundry
-        env:
-          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          GITHUB_WORKSPACE: ${{ github.workspace }}
-        run: |
-          ./.github/scripts/setup-foundryup.sh
-          printf '%s\n' "$GITHUB_WORKSPACE/.foundry/bin" >> "$GITHUB_PATH"
-
-      - name: Build benchmark binary
-        run: cargo build --locked --release --bin foundry-bench
-
-      - name: Install hyperfine
-        run: |
-          curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
-          sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
-          rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
-
       # When 'local' is requested, build origin/master from source in a separate
       # worktree and benchmark it as the baseline (labelled 'master') against
       # this branch (labelled 'local'). This compares against master itself, not
@@ -111,9 +90,28 @@ jobs:
 
       - name: Enforce baseline Cargo dependency cooldown
         if: steps.prep.outputs.is_source_comparison == 'true'
-        uses: tempoxyz/gh-actions/actions/cargo-cooldown@216431dd18ebe7c199654e6c310ed99570ddcc33 # main
-        with:
-          working-directory: ../foundry-baseline
+        run: ./.github/scripts/check-cargo-cooldown.sh ../foundry-baseline
+
+      - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      - name: Setup Foundry
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: |
+          ./.github/scripts/setup-foundryup.sh
+          printf '%s\n' "$GITHUB_WORKSPACE/.foundry/bin" >> "$GITHUB_PATH"
+
+      - name: Build benchmark binary
+        run: cargo build --locked --release --bin foundry-bench
+
+      - name: Install hyperfine
+        run: |
+          curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
+          rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
 
       - name: Run forge test benchmarks
         env:

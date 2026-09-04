@@ -10,6 +10,7 @@ jobs:
   check:
     name: Reject newly published crates
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       RUSTC_WRAPPER: ""
     steps:
@@ -18,8 +19,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust toolchain
-        uses: tempoxyz/gh-actions/vendor/dtolnay/rust-toolchain@216431dd18ebe7c199654e6c310ed99570ddcc33 # main
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
       - name: Enforce Cargo dependency cooldown
-        uses: tempoxyz/gh-actions/actions/cargo-cooldown@216431dd18ebe7c199654e6c310ed99570ddcc33 # main
+        run: ./.github/scripts/check-cargo-cooldown.sh

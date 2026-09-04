@@ -17,7 +17,8 @@ RUN set -eux; \
     echo "${SHA256}  /tmp/cargo-binstall.tgz" | sha256sum -c -; \
     tar -xzf /tmp/cargo-binstall.tgz -C /usr/local/cargo/bin cargo-binstall; \
     rm /tmp/cargo-binstall.tgz
-RUN cargo binstall -y cargo-chef sccache
+RUN cargo binstall --locked --disable-telemetry --disable-strategies quick-install -y \
+    cargo-chef@0.1.78 sccache@0.17.0
 
 # Prepare the cargo-chef recipe.
 FROM chef AS planner
