@@ -10,7 +10,6 @@ mod incorrect_using_for;
 mod inline_assembly;
 mod interface_naming;
 mod internal_function_used_once;
-mod literal_instead_of_constant;
 mod low_level_calls;
 mod missing_inheritance;
 mod mixed_case;
@@ -54,7 +53,6 @@ register_lints!(
     event_fields: (EventFields, early, (EVENT_FIELDS));
     todo: (TodoComment, early, (TODO_COMMENT));
     unused_error: (UnusedError, project, (UNUSED_ERROR));
-    literal_instead_of_constant: (LiteralInsteadOfConstant, late, (LITERAL_INSTEAD_OF_CONSTANT));
     function_init_state: (FunctionInitState, late, (FUNCTION_INIT_STATE));
     internal_function_used_once: (InternalFunctionUsedOnce, project, (INTERNAL_FUNCTION_USED_ONCE));
     cyclomatic_complexity: (CyclomaticComplexity, late, (CYCLOMATIC_COMPLEXITY));
