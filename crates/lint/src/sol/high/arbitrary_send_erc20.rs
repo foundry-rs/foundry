@@ -1342,8 +1342,8 @@ fn seed_internal_callsite_facts<'hir>(
     }
 }
 
-/// Internal functions and modifiers are only reachable from within the contract hierarchy, so
-/// their parameters can be proven safe from their invocation sites.
+/// Internal functions and modifiers are only reachable from contracts in the compilation unit, so
+/// their parameters can be proven safe from the invocation sites seen there.
 const fn is_internal_callsite_seed_candidate(func: &hir::Function<'_>) -> bool {
     let internal_only = matches!(func.kind, hir::FunctionKind::Modifier)
         || (func.kind.is_function()
