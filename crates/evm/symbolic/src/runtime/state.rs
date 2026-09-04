@@ -212,6 +212,13 @@ impl PathState {
         child
     }
 
+    pub(crate) fn external_call_child(&self, frame: CallFrame) -> Self {
+        let mut child = self.child(frame);
+        child.expected_revert = None;
+        child.assume_no_revert_next_call = None;
+        child
+    }
+
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
         let mut child = self.child(frame);
         child.storage_hook_active = true;
