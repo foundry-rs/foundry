@@ -233,23 +233,13 @@ impl SymMemory {
         } else {
             let size = Self::size_after_access_word(cx, offset.clone(), 32);
             self.expand_to(cx, size);
-            self.load_word_dynamic(cx, &offset)
+            // Delegate to `read_bytes_offset`'s dynamic-offset path rather than
+            // maintaining a separate implementation here: it already assembles a
+            // dynamic read out of `byte_dynamic_with_delta`, which is the single
+            // place responsible for staying sound with respect to writes whose
+            // own offset is genuinely symbolic (see that function's doc comment).
+            Ok(self.read_bytes_offset(cx, offset, 32).word_at(cx, 0))
         }
-    }
-
-    fn load_word_dynamic(
-        &self,
-        cx: &mut SymCx,
-        offset: &SymExpr,
-    ) -> Result<SymExpr, SymbolicError> {
-        let mut result = SymExpr::zero(cx);
-        for candidate in (0..self.materialized_size).rev() {
-            let candidate_expr = SymExpr::constant(cx, U256::from(candidate));
-            let condition = SymBoolExpr::eq(cx, offset.clone(), candidate_expr);
-            let word = self.load_word(cx, candidate)?;
-            result = SymExpr::ite(cx, condition, word, result);
-        }
-        Ok(result)
     }
 
     pub(crate) fn read_concrete(
@@ -439,18 +429,80 @@ impl SymMemory {
         result
     }
 
+    /// Resolves the byte at logical position `offset + delta` for a
+    /// dynamic (non-constant) `offset`.
+    ///
+    /// `store_symbolic_bytes` records writes without extending
+    /// `materialized_size`, including writes whose offsets are
+    /// constant-evaluable but not literal constants. Therefore,
+    /// `materialized_size` does not automatically bound every recorded
+    /// write; a write recorded via `store_symbolic_bytes` can land at a
+    /// position the candidate enumeration below never reaches, and would
+    /// silently read back as zero instead of its stored value.
+    ///
+    /// When every recorded write's full extent is provably within
+    /// `materialized_size`, that bound is a correct bound and the
+    /// enumeration below (unchanged from before) is sound. Only when at
+    /// least one write falls outside that guarantee do we fall back to
+    /// folding every write directly
+    /// against the (symbolic) read target, mirroring `byte()`'s own
+    /// technique -- which already handles a symbolic write offset soundly,
+    /// just for a *concrete* read target -- generalized to a symbolic one.
+    /// This full fold is deliberately not combined with the bounded
+    /// enumeration: doing so would require re-deriving cross-write
+    /// insertion-order priority by hand, and get it wrong for two writes
+    /// that could alias at solve time.
+    ///
+    /// The bound check below is deliberately `write.concrete_offset()`
+    /// (`offset.eval()`, full evaluation) *combined with* a checked
+    /// `offset + len <= materialized_size` extent check -- not
+    /// `concrete_offset().is_some()` alone. `materialized_size` is only
+    /// ever bumped by `store_bytes` (reached when the store dispatch's
+    /// `offset.as_const()` succeeds) and, separately, by
+    /// `store_symbolic_sized_bytes` when its own `offset.eval()` succeeds.
+    /// A write can land in `store_symbolic_bytes` (no bump, ever) because
+    /// `as_const()` -- a shallow single-node check -- failed on an offset
+    /// expression that `eval()` -- full recursive evaluation -- can still
+    /// resolve to a constant. `concrete_offset()` uses `eval()`, so such a
+    /// write reports as "concrete" here even though `materialized_size`
+    /// was never extended to cover it. Requiring the full extent to fit
+    /// inside the current bound (not just the offset to be evaluable)
+    /// catches exactly that mismatch and routes it to the safe fold-every-
+    /// write fallback instead of silently reading back zero.
     pub(crate) fn byte_dynamic_with_delta(
         &self,
         cx: &mut SymCx,
         offset: &SymExpr,
         delta: usize,
     ) -> SymExpr {
+        let materialized_size = self.materialized_size;
+        let all_writes_bounded = self.symbolic_writes.iter().all(|write| {
+            write
+                .concrete_offset()
+                .and_then(|write_offset| write_offset.checked_add(write.bytes.len()))
+                .is_some_and(|end| end <= materialized_size)
+        });
+
+        if all_writes_bounded {
+            let mut result = SymExpr::zero(cx);
+            for candidate in (delta..self.materialized_size).rev() {
+                let candidate_expr = SymExpr::constant(cx, U256::from(candidate - delta));
+                let condition = SymBoolExpr::eq(cx, offset.clone(), candidate_expr);
+                let byte = self.byte(cx, candidate);
+                result = SymExpr::ite(cx, condition, byte, result);
+            }
+            return result;
+        }
+
+        let target = SymExpr::add_const(cx, offset.clone(), U256::from(delta));
         let mut result = SymExpr::zero(cx);
-        for candidate in (delta..self.materialized_size).rev() {
-            let candidate_expr = SymExpr::constant(cx, U256::from(candidate - delta));
-            let condition = SymBoolExpr::eq(cx, offset.clone(), candidate_expr);
-            let byte = self.byte(cx, candidate);
-            result = SymExpr::ite(cx, condition, byte, result);
+        for write in &self.symbolic_writes {
+            for idx in 0..write.bytes.len() {
+                let write_offset = SymExpr::add_const(cx, write.offset.clone(), U256::from(idx));
+                let condition = SymBoolExpr::eq(cx, write_offset, target.clone());
+                let byte = write.bytes.byte(cx, idx);
+                result = SymExpr::ite(cx, condition, byte, result);
+            }
         }
         result
     }
