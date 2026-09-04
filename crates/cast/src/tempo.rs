@@ -2,17 +2,23 @@
 
 use crate::tx::fill_transaction_gas_fees;
 use alloy_network::{Ethereum, Network, TransactionBuilder};
+use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_rpc_client::BuiltInConnectionString;
 use alloy_transport::{BoxTransport, TransportConnect, TransportError};
 use eyre::Result;
 use foundry_cli::{
     json::print_json_success,
-    opts::{EthereumOpts, TempoOpts},
+    opts::{EthereumOpts, RpcOpts, TempoOpts},
     utils::{LoadConfig, get_chain},
 };
-use foundry_common::{provider::ProviderBuilder, shell};
-use foundry_config::{Chain, Eip1559FeeEstimatePreset};
+use foundry_common::{
+    FoundryTransactionBuilder,
+    provider::{ProviderBuilder, RetryProvider},
+    shell,
+    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
+};
+use foundry_config::{Chain, Config, Eip1559FeeEstimatePreset};
 use foundry_wallets::{TempoAccountsWallet, WalletOpts, WalletSigner};
 use serde_json::Value;
 use std::str::FromStr;
@@ -21,7 +27,78 @@ use tempo_alloy::{
     transport::{RelayConnector, SponsorshipMode},
 };
 
-pub use foundry_common::tempo::{TempoSponsor, TempoSponsorPreview, resolve_tempo_sponsor_signer};
+pub use foundry_common::tempo::TempoSponsor;
+
+/// Loads the config for `rpc` and builds a Tempo provider from it.
+pub(crate) fn tempo_provider(rpc: &RpcOpts) -> Result<(Config, RetryProvider<TempoNetwork>)> {
+    let config = rpc.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    Ok((config, provider))
+}
+
+/// Resolves the sponsored fee token and attaches the sponsor signature preview for `payer`.
+pub(crate) async fn attach_sponsor<N>(
+    sponsor: &TempoSponsor,
+    provider: Option<&dyn Provider<N>>,
+    chain: Chain,
+    tx: &mut N::TransactionRequest,
+    payer: Address,
+) -> Result<()>
+where
+    N: Network,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+{
+    sponsor.resolve_and_set_fee_token(provider, Some(chain), tx).await?;
+    sponsor.attach_and_print::<N>(tx, payer).await?;
+    Ok(())
+}
+
+/// Attaches the fee payment to a built transaction: the sponsor signature when a sponsor is
+/// configured, otherwise the resolved fee token for `payer` (printing it when it was resolved).
+pub(crate) async fn apply_fee_payment<N, P>(
+    sponsor: Option<&TempoSponsor>,
+    provider: Option<&P>,
+    chain: Chain,
+    tx: &mut N::TransactionRequest,
+    payer: Address,
+) -> Result<()>
+where
+    N: Network,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    P: Provider<N>,
+{
+    let dyn_provider = provider.map(|p| p as &dyn Provider<N>);
+    if let Some(sponsor) = sponsor {
+        attach_sponsor(sponsor, dyn_provider, chain, tx, payer).await
+    } else {
+        let fee_token =
+            resolve_and_set_fee_token(dyn_provider, Some(chain), tx, Some(payer)).await?;
+        maybe_print_fee_token(provider, fee_token).await
+    }
+}
+
+/// Prints the sponsor hash of a built transaction, resolving the fee token for `fee_payer` first
+/// when one is configured. Used by `--tempo.print-sponsor-hash`.
+pub(crate) async fn print_sponsor_hash<N>(
+    provider: Option<&dyn Provider<N>>,
+    chain: Chain,
+    tx: &mut N::TransactionRequest,
+    from: Address,
+    fee_payer: Option<Address>,
+) -> Result<()>
+where
+    N: Network,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+{
+    if fee_payer.is_some() {
+        resolve_and_set_fee_token(provider, Some(chain), tx, fee_payer).await?;
+    }
+    let hash = tx
+        .compute_sponsor_hash(from)
+        .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))?;
+    sh_println!("{hash:?}")?;
+    Ok(())
+}
 
 /// Prints a command result: the raw payload in JSON mode, the human rendering otherwise.
 pub(crate) fn print_payload<F>(payload: Value, human: F) -> Result<()>

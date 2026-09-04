@@ -223,6 +223,21 @@ pub(crate) fn validate_authorizations(
     Ok(())
 }
 
+/// Resolves the sending signer, falling back to the wallet options, and validates it against an
+/// explicit `--from`.
+pub(crate) async fn resolve_send_signer(
+    pre_resolved: Option<WalletSigner>,
+    eth: &EthereumOpts,
+) -> Result<(WalletSigner, Address)> {
+    let signer = match pre_resolved {
+        Some(signer) => signer,
+        None => eth.wallet.signer().await?,
+    };
+    let from = signer.address();
+    validate_from_address(eth.wallet.from, from)?;
+    Ok((signer, from))
+}
+
 /// Prevents a misconfigured hwlib from sending a transaction that defies user-specified --from
 pub fn validate_from_address(
     specified_from: Option<Address>,
