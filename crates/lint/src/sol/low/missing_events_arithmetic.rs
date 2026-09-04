@@ -4,14 +4,13 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            branch_always_exits, builtins, function_ids, is_builtin, is_msg_sender,
-            is_require_or_assert, lhs_local_var, state_lhs_vars, underlying_var,
+            builtins, function_ids, is_protected, lhs_local_var, state_lhs_vars, underlying_var,
         },
     },
 };
 use solar::{
     ast::{ContractKind, StateMutability, Visibility},
-    interface::{Span, kw, sym},
+    interface::Span,
     sema::{
         builtins::Builtin,
         hir::{
@@ -22,7 +21,6 @@ use solar::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    iter,
     ops::ControlFlow,
 };
 
@@ -139,185 +137,6 @@ const fn is_arithmetic_op(kind: BinOpKind) -> bool {
 
 const fn is_inc_dec_op(kind: UnOpKind) -> bool {
     matches!(kind, UnOpKind::PreInc | UnOpKind::PostInc | UnOpKind::PreDec | UnOpKind::PostDec)
-}
-
-/// Runs `f` on every top-level expression (statement expressions, conditions, initializers, ...)
-/// reachable from the visited statements, stopping when `f` returns `true`.
-struct ExprVisitor<'hir, F> {
-    hir: &'hir hir::Hir<'hir>,
-    f: F,
-}
-
-impl<'hir, F: FnMut(&'hir Expr<'hir>) -> bool> Visit<'hir> for ExprVisitor<'hir, F> {
-    type BreakValue = ();
-
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
-    }
-
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
-        if (self.f)(expr) { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
-    }
-}
-
-// --- Access-control detection -----------------------------------------------------------------
-
-/// True when the function or one of its modifiers contains a dominating access check.
-fn is_protected<'hir>(hir: &'hir hir::Hir<'hir>, func_id: FunctionId) -> bool {
-    let func = hir.function(func_id);
-    func.modifiers
-        .iter()
-        .filter_map(|modifier| modifier.id.as_function())
-        .chain(iter::once(func_id))
-        .any(|id| has_access_guard(hir, id, &mut HashSet::new()))
-}
-
-/// Whether the top-level statements of `func_id` contain an access check. Bodyless declarations
-/// (interface functions, virtual modifiers) fall back to a name heuristic.
-fn has_access_guard<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    func_id: FunctionId,
-    seen: &mut HashSet<FunctionId>,
-) -> bool {
-    if !seen.insert(func_id) {
-        return false;
-    }
-    let func = hir.function(func_id);
-    match func.body {
-        Some(body) => body.stmts.iter().any(|stmt| stmt_is_access_guard(hir, stmt, seen)),
-        None => {
-            func.returns.is_empty()
-                && func.name.is_some_and(|name| name_looks_like_access_control(name.as_str()))
-        }
-    }
-}
-
-fn stmt_is_access_guard<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    stmt: &hir::Stmt<'_>,
-    seen: &mut HashSet<FunctionId>,
-) -> bool {
-    match stmt.kind {
-        StmtKind::If(cond, then_stmt, else_stmt) => match access_check_polarity(hir, cond) {
-            Some(false) => branch_always_exits(then_stmt),
-            Some(true) => else_stmt.is_some_and(branch_always_exits),
-            None => false,
-        },
-        StmtKind::Expr(expr) => match &expr.peel_parens().kind {
-            ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
-                let cond = args.exprs().next();
-                cond.is_some_and(|cond| access_check_polarity(hir, cond) == Some(true))
-            }
-            ExprKind::Call(callee, ..) => {
-                function_ids(callee).any(|id| has_access_guard(hir, id, seen))
-            }
-            _ => false,
-        },
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-            block.stmts.iter().any(|stmt| stmt_is_access_guard(hir, stmt, seen))
-        }
-        _ => false,
-    }
-}
-
-/// `Some(true)` when `expr` holding means the caller is authorized, `Some(false)` when it means
-/// the caller is *not* authorized, `None` when `expr` is not an access check.
-fn access_check_polarity<'hir>(hir: &'hir hir::Hir<'hir>, expr: &Expr<'_>) -> Option<bool> {
-    match &expr.peel_parens().kind {
-        ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => {
-            access_check_polarity(hir, inner).map(|polarity| !polarity)
-        }
-        ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
-            // `a && b` is authorized as soon as one side is; `a || b` is unauthorized as soon as
-            // one side is. The opposite polarity needs both sides.
-            let dominant = op.kind == BinOpKind::And;
-            let (lhs, rhs) = (access_check_polarity(hir, lhs), access_check_polarity(hir, rhs));
-            if lhs == Some(dominant) || rhs == Some(dominant) {
-                Some(dominant)
-            } else if lhs == Some(!dominant) && rhs == Some(!dominant) {
-                Some(!dominant)
-            } else {
-                None
-            }
-        }
-        ExprKind::Binary(lhs, op, rhs)
-            if matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne)
-                && (compares_sender_to_authority(hir, lhs, rhs)
-                    || compares_sender_to_authority(hir, rhs, lhs)) =>
-        {
-            Some(op.kind == BinOpKind::Eq)
-        }
-        _ => compares_sender_to_authority(hir, expr, expr).then_some(true),
-    }
-}
-
-/// `sender` reads `msg.sender`/`tx.origin` (possibly through a helper) and `authority` reads
-/// state or calls a user function other than a sender accessor.
-fn compares_sender_to_authority<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    sender: &Expr<'_>,
-    authority: &Expr<'_>,
-) -> bool {
-    expr_reads_sender(hir, sender, &mut HashSet::new())
-        && authority
-            .visit(&mut |e| {
-                let is_authority = match &e.kind {
-                    ExprKind::Call(callee, ..) => function_ids(callee).any(|id| {
-                        hir.function(id).name.is_some_and(|name| {
-                            !matches!(
-                                name.as_str().to_ascii_lowercase().as_str(),
-                                "_msgsender" | "msgsender" | "sender"
-                            )
-                        })
-                    }),
-                    _ => underlying_var(e).is_some_and(|v| hir.variable(v).kind.is_state()),
-                };
-                if is_authority { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
-            })
-            .is_break()
-}
-
-fn expr_reads_sender<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    expr: &Expr<'_>,
-    seen: &mut HashSet<FunctionId>,
-) -> bool {
-    expr.visit(&mut |e| {
-        let reads = is_sender_member(e)
-            || matches!(&e.kind, ExprKind::Call(callee, ..)
-                if function_ids(callee).any(|id| function_reads_sender(hir, id, seen)));
-        if reads { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
-    })
-    .is_break()
-}
-
-fn function_reads_sender<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    func_id: FunctionId,
-    seen: &mut HashSet<FunctionId>,
-) -> bool {
-    if !seen.insert(func_id) {
-        return false;
-    }
-    let mut visitor = ExprVisitor { hir, f: |expr| expr_reads_sender(hir, expr, seen) };
-    hir.function(func_id)
-        .body
-        .is_some_and(|body| body.stmts.iter().any(|stmt| visitor.visit_stmt(stmt).is_break()))
-}
-
-/// `msg.sender` or `tx.origin`.
-fn is_sender_member(expr: &Expr<'_>) -> bool {
-    is_msg_sender(expr)
-        || matches!(&expr.peel_parens().kind, ExprKind::Member(base, name)
-            if name.name == kw::Origin && is_builtin(base, sym::tx))
-}
-
-fn name_looks_like_access_control(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    matches!(lower.as_str(), "auth" | "requiresauth" | "restricted")
-        || ["onlyowner", "onlyrole", "checkowner", "_checkowner", "checkrole", "_checkrole"]
-            .iter()
-            .any(|prefix| lower.starts_with(prefix))
 }
 
 // --- Arithmetic uses --------------------------------------------------------------------------

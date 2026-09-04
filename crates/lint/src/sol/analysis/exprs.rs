@@ -39,6 +39,13 @@ pub fn is_msg_sender(expr: &Expr<'_>) -> bool {
         if name.name == sym::sender && is_builtin(base, sym::msg))
 }
 
+/// `msg.sender` or `tx.origin`.
+pub fn is_sender_member(expr: &Expr<'_>) -> bool {
+    is_msg_sender(expr)
+        || matches!(&expr.peel_parens().kind, ExprKind::Member(base, name)
+            if name.name == kw::Origin && is_builtin(base, sym::tx))
+}
+
 /// True if `callee` resolves to the builtin `require` or `assert`.
 pub fn is_require_or_assert(callee: &Expr<'_>) -> bool {
     is_builtin(callee, sym::require) || is_builtin(callee, sym::assert)
@@ -228,7 +235,7 @@ pub const fn is_inc_dec(op: UnOpKind) -> bool {
 }
 
 /// The lvalue written by an assignment, `delete` or increment/decrement expression.
-pub fn write_target<'hir>(expr: &'hir Expr<'hir>) -> Option<&'hir Expr<'hir>> {
+pub const fn write_target<'hir>(expr: &'hir Expr<'hir>) -> Option<&'hir Expr<'hir>> {
     match &expr.kind {
         ExprKind::Assign(target, ..) | ExprKind::Delete(target) => Some(target),
         ExprKind::Unary(op, target) if is_inc_dec(op.kind) => Some(target),

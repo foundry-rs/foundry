@@ -3,8 +3,56 @@
 use super::is_exit_call;
 use solar::{
     ast::FunctionKind,
-    sema::hir::{self, FunctionId, LoopSource, Stmt, StmtKind},
+    sema::hir::{self, Expr, FunctionId, LoopSource, Stmt, StmtKind, Visit},
 };
+use std::ops::ControlFlow;
+
+/// Runs `f` on every statement (pre-order, nested ones included) until it breaks.
+struct StmtVisitor<'hir, F> {
+    hir: &'hir hir::Hir<'hir>,
+    f: F,
+}
+
+impl<'hir, F: FnMut(&'hir Stmt<'hir>) -> ControlFlow<()>> Visit<'hir> for StmtVisitor<'hir, F> {
+    type BreakValue = ();
+
+    fn hir(&self) -> &'hir hir::Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<()> {
+        (self.f)(stmt)?;
+        self.walk_stmt(stmt)
+    }
+}
+
+/// Runs `f` on every statement of `stmts` and their nested statements (pre-order) until it breaks.
+pub fn visit_stmts<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    stmts: impl IntoIterator<Item = &'hir Stmt<'hir>>,
+    f: impl FnMut(&'hir Stmt<'hir>) -> ControlFlow<()>,
+) -> ControlFlow<()> {
+    let mut visitor = StmtVisitor { hir, f };
+    stmts.into_iter().try_for_each(|stmt| visitor.visit_stmt(stmt))
+}
+
+/// The expression directly owned by `stmt` (nested statements excluded).
+pub fn stmt_expr<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    stmt: &'hir Stmt<'hir>,
+) -> Option<&'hir Expr<'hir>> {
+    match stmt.kind {
+        StmtKind::DeclSingle(var_id) => hir.variable(var_id).initializer,
+        StmtKind::DeclMulti(_, expr)
+        | StmtKind::Expr(expr)
+        | StmtKind::Emit(expr)
+        | StmtKind::Revert(expr)
+        | StmtKind::Return(Some(expr))
+        | StmtKind::If(expr, ..) => Some(expr),
+        StmtKind::Try(try_stmt) => Some(&try_stmt.expr),
+        _ => None,
+    }
+}
 
 /// True when executing `stmt` provably prevents control from continuing past it: `return`,
 /// `revert`, `selfdestruct`, `require(false, ..)` / `assert(false)`, a block containing any such
