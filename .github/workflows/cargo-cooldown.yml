@@ -23,4 +23,6 @@ jobs:
         with:
           toolchain: stable
       - name: Enforce Cargo dependency cooldown
-        run: ./.github/scripts/check-cargo-cooldown.sh
+        uses: tempoxyz/gh-actions/actions/cargo-cooldown@0aa93238d85fd085d7901320b670cc6adb7a02f3 # main
+        with:
+          strict-project-config: true

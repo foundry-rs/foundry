@@ -90,7 +90,12 @@ jobs:
 
       - name: Enforce baseline Cargo dependency cooldown
         if: steps.prep.outputs.is_source_comparison == 'true'
-        run: ./.github/scripts/check-cargo-cooldown.sh ../foundry-baseline
+        uses: tempoxyz/gh-actions/actions/cargo-cooldown@0aa93238d85fd085d7901320b670cc6adb7a02f3 # main
+        env:
+          RUSTC_WRAPPER: ""
+        with:
+          strict-project-config: true
+          working-directory: ../foundry-baseline
 
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
 
