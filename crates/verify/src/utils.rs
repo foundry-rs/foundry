@@ -385,7 +385,6 @@ where
     let tx_env = fork.tx_env.clone();
     let executor = fork.into_executor(
         executor_builder,
-        None,
         TraceRequirements::none().with_calls(true),
         create2_deployer,
         None,

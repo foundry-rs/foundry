@@ -2,10 +2,13 @@ use alloy_consensus::BlockHeader;
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
+#[cfg(feature = "monad")]
+use alloy_rpc_types::BlockNumberOrTag;
+use alloy_rpc_types::BlockTransactions;
 use eyre::{Result, WrapErr};
-use foundry_evm_networks::NetworkConfigs;
 
+#[cfg(feature = "monad")]
+use super::MonadEvmNetwork;
 use super::{BlockResponseFor, ChainFor, FoundryEvmNetwork, TxEnvFor};
 use crate::FoundryChain;
 
@@ -91,31 +94,29 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
     }
 }
 
-/// Builds context for a synthetic transaction executed on top of `block_number`.
-pub async fn context_for_child_transaction<FEN, P>(
+/// Builds Monad context for a synthetic transaction executed on top of `block_number`.
+#[cfg(feature = "monad")]
+pub async fn monad_context_for_child_transaction<P>(
     provider: &P,
     block_number: u64,
-    tx: &TxEnvFor<FEN>,
-    networks: NetworkConfigs,
-) -> Result<ChainFor<FEN>>
+    tx: &TxEnvFor<MonadEvmNetwork>,
+) -> Result<ChainFor<MonadEvmNetwork>>
 where
-    FEN: FoundryEvmNetwork,
-    P: Provider<FEN::Network>,
+    P: Provider<<MonadEvmNetwork as FoundryEvmNetwork>::Network>,
 {
-    if !networks.is_monad() {
-        return Ok(ChainFor::<FEN>::for_transaction(tx));
-    }
-
     let block = provider
         .get_block(BlockNumberOrTag::Number(block_number).into())
         .full()
         .await?
         .ok_or_else(|| eyre::eyre!("block {block_number} not found while building EVM context"))?;
-    let parent = fetch_parent::<FEN, P>(provider, &block).await?;
-    let current = transaction_envs::<FEN>(&block)?;
-    let parent = parent.as_ref().map(transaction_envs::<FEN>).transpose()?.unwrap_or_default();
+    let parent = fetch_parent::<MonadEvmNetwork, P>(provider, &block).await?;
+    let current = transaction_envs::<MonadEvmNetwork>(&block)?;
+    let parent =
+        parent.as_ref().map(transaction_envs::<MonadEvmNetwork>).transpose()?.unwrap_or_default();
 
-    Ok(BlockContext::<FEN>::new(Vec::new(), parent, current).into_child().next_transaction(tx))
+    Ok(BlockContext::<MonadEvmNetwork>::new(Vec::new(), parent, current)
+        .into_child()
+        .next_transaction(tx))
 }
 
 async fn fetch_parent<FEN, P>(

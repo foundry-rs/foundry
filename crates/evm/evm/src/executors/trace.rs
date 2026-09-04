@@ -60,7 +60,6 @@ impl<FEN: FoundryEvmNetwork> TracingFork<FEN> {
     pub fn into_executor(
         self,
         builder: ExecutorBuilder<FEN>,
-        version: Option<EvmVersion>,
         trace_requirements: TraceRequirements,
         create2_deployer: Address,
         state_overrides: Option<StateOverride>,
@@ -69,7 +68,7 @@ impl<FEN: FoundryEvmNetwork> TracingFork<FEN> {
             builder,
             (self.evm_env, self.tx_env),
             self.fork,
-            version,
+            None,
             trace_requirements,
             self.context.networks(),
             create2_deployer,

@@ -539,7 +539,6 @@ impl RunArgs {
         let mut evm_env = fork.evm_env.clone();
         let mut executor = fork.into_executor(
             executor_builder,
-            evm_version,
             TraceRequirements::none(),
             create2_deployer,
             None,
