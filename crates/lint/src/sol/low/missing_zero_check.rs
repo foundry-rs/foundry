@@ -88,7 +88,7 @@ struct Analyzer<'hir> {
     taint: HashMap<VariableId, HashSet<VariableId>>,
     /// Source parameters that reached a sink.
     sinks: HashSet<VariableId>,
-    /// Source parameters proven non-zero by a `require`/`assert`/`if` predicate seen so far.
+    /// Source parameters proven non-zero so far.
     guarded: HashSet<VariableId>,
     sink_depth: u32,
 }
@@ -110,63 +110,42 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    /// Guards added while visiting `stmts`, leaving `self.guarded` untouched.
+    /// Visits `stmts` without letting their guards escape.
     fn scoped_guards(&mut self, stmts: &'hir [hir::Stmt<'hir>]) -> HashSet<VariableId> {
         let baseline = self.guarded.clone();
         self.visit_stmts(stmts);
-        let added = &self.guarded - &baseline;
-        self.guarded = baseline;
-        added
+        std::mem::replace(&mut self.guarded, baseline)
     }
 
-    /// Taint sources proven non-zero by `pred` (negated by De Morgan when `negate`), isolated
-    /// from `self.guarded` so the caller decides whether/where the facts apply.
-    fn cond_facts(&mut self, pred: &'hir hir::Expr<'hir>, negate: bool) -> HashSet<VariableId> {
-        let baseline = self.guarded.clone();
-        self.add_zero_guards(pred, negate);
-        let added = &self.guarded - &baseline;
-        self.guarded = baseline;
-        added
-    }
-
-    /// Records taint sources proven non-zero by `pred`. `negate` flips the polarity (used for
-    /// the branch where a predicate is known to be false), swapping `==`/`!=` and `&&`/`||` by
-    /// De Morgan's law. Only a direct `<var> != 0`-shaped comparison (either operand order, only
-    /// established from the true side of the checked polarity) counts as a guard - merely
-    /// mentioning a variable inside a predicate does not.
-    fn add_zero_guards(&mut self, pred: &'hir hir::Expr<'hir>, negate: bool) {
+    /// Sources proven non-zero when `pred` evaluates to `!negate`.
+    fn nonzero_facts(&self, pred: &'hir hir::Expr<'hir>, negate: bool) -> HashSet<VariableId> {
+        let nonzero_cmp = if negate { BinOpKind::Eq } else { BinOpKind::Ne };
         match &pred.peel_parens().kind {
             ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => {
-                self.add_zero_guards(inner, !negate)
+                self.nonzero_facts(inner, !negate)
             }
-            ExprKind::Binary(lhs, op, rhs) => {
-                let (ne, and, or) = if negate {
-                    (BinOpKind::Eq, BinOpKind::Or, BinOpKind::And)
+            ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
+                let lhs = self.nonzero_facts(lhs, negate);
+                let rhs = self.nonzero_facts(rhs, negate);
+                if matches!((op.kind, negate), (BinOpKind::And, false) | (BinOpKind::Or, true)) {
+                    &lhs | &rhs
                 } else {
-                    (BinOpKind::Ne, BinOpKind::And, BinOpKind::Or)
-                };
-                if op.kind == and {
-                    self.add_zero_guards(lhs, negate);
-                    self.add_zero_guards(rhs, negate);
-                } else if op.kind == or {
-                    // Only facts established on both disjuncts hold unconditionally.
-                    let before = self.guarded.clone();
-                    self.add_zero_guards(lhs, negate);
-                    let after_lhs = std::mem::replace(&mut self.guarded, before);
-                    self.add_zero_guards(rhs, negate);
-                    self.guarded = &after_lhs & &self.guarded;
-                } else if op.kind == ne {
-                    for (probe, other) in [(lhs, rhs), (rhs, lhs)] {
-                        if is_zero_value(other)
-                            && let Some(srcs) =
-                                underlying_var(probe).and_then(|v| self.taint.get(&v))
-                        {
-                            self.guarded.extend(srcs.iter().copied());
-                        }
-                    }
+                    &lhs & &rhs
                 }
             }
-            _ => {}
+            ExprKind::Binary(lhs, op, rhs) if op.kind == nonzero_cmp => {
+                let mut facts = HashSet::new();
+                for (candidate, zero) in [(lhs, rhs), (rhs, lhs)] {
+                    if is_zero_value(zero)
+                        && let Some(sources) =
+                            underlying_var(candidate).and_then(|v| self.taint.get(&v))
+                    {
+                        facts.extend(sources);
+                    }
+                }
+                facts
+            }
+            _ => HashSet::new(),
         }
     }
 
@@ -203,40 +182,28 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
     fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
         match stmt.kind {
             StmtKind::If(cond, then, else_) => {
-                // Still walk the condition itself for embedded sinks, e.g. `if (target.call(..))`.
                 let _ = self.visit_expr(cond);
-
-                // Facts the condition establishes on its true side (valid inside `then`, or
-                // after the `if` if `else` always exits) and its false side (valid inside
-                // `else`, or after the `if` if `then` always exits).
-                let cond_true = self.cond_facts(cond, false);
-                let cond_false = self.cond_facts(cond, true);
                 let baseline = self.guarded.clone();
 
-                // Make the condition's own facts visible to sinks inside each branch itself
-                // (e.g. `if (to != address(0)) { to.transfer(amt); }`), not just to code after
-                // the `if`.
-                self.guarded = &baseline | &cond_true;
-                let then_added = &self.scoped_guards(slice::from_ref(then)) | &cond_true;
-
-                self.guarded = &baseline | &cond_false;
-                let else_added =
-                    &else_.map(|e| self.scoped_guards(slice::from_ref(e))).unwrap_or_default()
-                        | &cond_false;
+                self.guarded.extend(self.nonzero_facts(cond, false));
+                let then_guards = self.scoped_guards(slice::from_ref(then));
 
                 self.guarded = baseline;
+                self.guarded.extend(self.nonzero_facts(cond, true));
+                let else_guards = else_
+                    .map(|e| self.scoped_guards(slice::from_ref(e)))
+                    .unwrap_or_else(|| self.guarded.clone());
 
                 // A guard in an exiting branch holds for everything after the `if`; otherwise it
                 // must hold on both branches.
                 let then_exits = branch_always_exits(then);
                 let else_exits = else_.is_some_and(branch_always_exits);
-                let to_add: HashSet<_> = match (then_exits, else_exits) {
-                    (true, true) => &then_added | &else_added,
-                    (true, false) => else_added,
-                    (false, true) => then_added,
-                    (false, false) => &then_added & &else_added,
+                self.guarded = match (then_exits, else_exits) {
+                    (true, true) => &then_guards | &else_guards,
+                    (true, false) => else_guards,
+                    (false, true) => then_guards,
+                    (false, false) => &then_guards & &else_guards,
                 };
-                self.guarded.extend(to_add);
                 return ControlFlow::Continue(());
             }
             // Loop bodies may execute zero times, so guards inside must not persist.
@@ -268,8 +235,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
                 let mut iter = args.exprs();
                 if let Some(cond) = iter.next() {
-                    self.add_zero_guards(cond, false);
-                    // Still walk the condition for embedded sinks, e.g. `require(target.call(..))`.
+                    self.guarded.extend(self.nonzero_facts(cond, false));
                     let _ = self.visit_expr(cond);
                 }
                 for rest in iter {
@@ -301,8 +267,6 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                     self.propagate(local, rhs);
                 }
             }
-            // Identifier reads inside an active sink context are candidate findings, unless
-            // already proven non-zero by a real guard.
             ExprKind::Ident(_) => {
                 if self.sink_depth > 0
                     && let Some(srcs) = underlying_var(expr).and_then(|v| self.taint.get(&v))

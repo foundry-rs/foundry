@@ -149,9 +149,6 @@ contract MissingZeroCheck {
         owner = a;
     }
 
-    // A `require` mentioning the parameter is not itself a zero-address check: none of the
-    // following four actually compare `newOwner`/`to` against zero, so all four must still flag.
-
     function guardNotAgainstZeroSelf(address newOwner) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
         require(newOwner != address(this));
         owner = newOwner;
@@ -172,8 +169,6 @@ contract MissingZeroCheck {
         to.transfer(amt);
     }
 
-    // An arbitrary single-argument call is not a zero-preserving cast: its return value cannot
-    // be assumed zero just because its own argument is a zero literal.
     function guardViaArbitraryCallNotCast(address newOwner) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
         require(newOwner != lookup(0));
         owner = newOwner;
@@ -183,10 +178,23 @@ contract MissingZeroCheck {
         return owner;
     }
 
-    // Bitwise complement does not preserve zero-ness (`~uint160(0)` is the max address, not zero).
     function guardViaBitwiseNotNotZero(address newOwner) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
         require(newOwner != address(~uint160(0)));
         owner = newOwner;
+    }
+
+    function guardRequiresZero(address newOwner) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        require(newOwner == address(0));
+        owner = newOwner;
+    }
+
+    function guardOnOneDisjunct(address newOwner, bool flag) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        require(newOwner != address(0) || flag);
+        owner = newOwner;
+    }
+
+    function sinkInZeroBranch(address newOwner) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        if (newOwner == address(0)) owner = newOwner;
     }
 
     // SHOULD PASS:
@@ -309,16 +317,18 @@ contract MissingZeroCheck {
         owner = a;
     }
 
-    // Negated compound guard: De Morgan's law turns `!(a == 0 || b == 0)` into `a != 0 && b != 0`.
     function setOwnerNegatedOrGuard(address a, address b) external {
         require(!(a == address(0) || b == address(0)));
         owner = a;
         recipient = payable(b);
     }
 
-    // A real zero-check survives being conjoined with an unrelated condition.
     function setOwnerRealCheckPlusUnrelated(address newOwner, uint256 amt) external {
         require(amt > 0 && newOwner != address(0));
         owner = newOwner;
+    }
+
+    function sinkInNonzeroBranch(address newOwner) external {
+        if (newOwner != address(0)) owner = newOwner;
     }
 }

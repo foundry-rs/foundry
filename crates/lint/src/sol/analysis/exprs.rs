@@ -56,10 +56,7 @@ pub fn is_revert_call(expr: &Expr<'_>) -> bool {
     matches!(&expr.peel_parens().kind, ExprKind::Call(callee, ..) if is_builtin(callee, kw::Revert))
 }
 
-/// `0`, `false`, `address(0)`, `payable(0)`, `-0`, and elementary-type casts thereof (e.g.
-/// `uint160(0)`, `bytes32(0)`). Deliberately does NOT recurse into an arbitrary call (its return
-/// value cannot be assumed zero just because its argument is) or a non-negation unary operator
-/// (`~0` is not zero).
+/// A literal zero/false or an elementary cast or arithmetic negation of one.
 pub fn is_zero_value(expr: &Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Lit(lit) => match &lit.kind {
@@ -68,7 +65,7 @@ pub fn is_zero_value(expr: &Expr<'_>) -> bool {
             LitKind::Bool(value) => !value,
             _ => false,
         },
-        ExprKind::Call(callee, args, _) if is_elementary_type_cast(callee) => {
+        ExprKind::Call(callee, args, _) if cast_type(callee).is_some() => {
             let mut exprs = args.exprs();
             exprs.len() == 1 && exprs.next().is_some_and(is_zero_value)
         }
@@ -76,15 +73,6 @@ pub fn is_zero_value(expr: &Expr<'_>) -> bool {
         ExprKind::Unary(op, inner) if op.kind == UnOpKind::Neg => is_zero_value(inner),
         _ => false,
     }
-}
-
-/// `<Type>(...)` where `<Type>` is a built-in elementary type (`address`, `uintN`, `intN`,
-/// `bytesN`, `bool`, `string`), as opposed to an arbitrary function/contract call.
-fn is_elementary_type_cast(callee: &Expr<'_>) -> bool {
-    matches!(
-        &callee.peel_parens().kind,
-        ExprKind::Type(hir::Type { kind: TypeKind::Elementary(_), .. })
-    )
 }
 
 /// `revert(...)`, `selfdestruct(...)`, `require(false, ...)` or `assert(false)`.
