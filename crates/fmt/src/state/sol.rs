@@ -2010,11 +2010,7 @@ impl<'ast> State<'_, 'ast> {
     }
 
     /// Like [`Self::print_stmt`], but bounds the statement's own trailing-comment scan by
-    /// `next_pos` instead of scanning unbounded. Every caller other than a `for`-loop's init
-    /// clause prints one statement per line, where an unbounded scan is harmless because
-    /// nothing else follows on that line. A `for`-loop's init clause is different: it shares
-    /// its source line with the condition/increment clauses that get printed afterwards, so an
-    /// unbounded scan can swallow those clauses into the comment (see `print_for_stmt`).
+    /// `next_pos` instead of scanning unbounded.
     fn print_stmt_bound(&mut self, stmt: &'ast ast::Stmt<'ast>, next_pos: Option<BytePos>) {
         let ast::Stmt { ref docs, span, ref kind } = *stmt;
         self.print_docs(docs);
