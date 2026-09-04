@@ -32,7 +32,7 @@ impl<'hir> LateLintPass<'hir> for CacheArrayLength {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        _hir: &'hir hir::Hir<'hir>,
         stmt: &'hir Stmt<'hir>,
     ) {
         let StmtKind::Loop(block, LoopSource::For | LoopSource::ForWithUpdate) = &stmt.kind else {
@@ -55,7 +55,7 @@ impl<'hir> LateLintPass<'hir> for CacheArrayLength {
             return;
         }
 
-        let mut facts = LoopFacts { gcx, hir, written: Vec::new(), skip: false };
+        let mut facts = LoopFacts { gcx, written: Vec::new(), skip: false };
         let _ = facts.visit_stmt(stmt);
         if facts.skip {
             return;
@@ -105,7 +105,6 @@ fn collect_length_reads<'hir>(
 /// calls that may mutate state.
 struct LoopFacts<'hir> {
     gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
     written: Vec<VariableId>,
     skip: bool,
 }
@@ -114,7 +113,7 @@ impl<'hir> hir::Visit<'hir> for LoopFacts<'hir> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
@@ -127,7 +126,7 @@ impl<'hir> hir::Visit<'hir> for LoopFacts<'hir> {
                 for_each_lhs_var(inner, &mut |v| self.written.push(v));
             }
             ExprKind::Call(callee, ..) => {
-                self.skip |= call_may_mutate_state(self.gcx, self.hir, callee);
+                self.skip |= call_may_mutate_state(self.gcx, callee);
             }
             _ => {}
         }
@@ -136,16 +135,12 @@ impl<'hir> hir::Visit<'hir> for LoopFacts<'hir> {
 }
 
 /// Whether a call may write storage; array `push`/`pop` count since they change the length.
-fn call_may_mutate_state<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
-    callee: &'hir Expr<'hir>,
-) -> bool {
+fn call_may_mutate_state<'hir>(gcx: Gcx<'hir>, callee: &'hir Expr<'hir>) -> bool {
     let callee = callee.peel_parens();
     match &callee.kind {
         ExprKind::Type(_) => false,
         ExprKind::Ident(_) => {
-            function_ids(callee).next().is_none_or(|f| hir.function(f).mutates_state())
+            function_ids(callee).next().is_none_or(|f| gcx.hir.function(f).mutates_state())
         }
         ExprKind::Member(base, member)
             if matches!(member.name, sym::push | kw::Pop) && is_array_like(gcx, base) =>

@@ -21,10 +21,10 @@ impl<'hir> LateLintPass<'hir> for CostlyLoop {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
+        _hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
-        let mut finder = LoopWriteFinder { ctx, gcx, hir, loop_depth: 0 };
+        let mut finder = LoopWriteFinder { ctx, gcx, loop_depth: 0 };
         let _ = finder.visit_function(func);
     }
 }
@@ -32,7 +32,6 @@ impl<'hir> LateLintPass<'hir> for CostlyLoop {
 struct LoopWriteFinder<'a, 'hir> {
     ctx: &'a LintContext<'a, 'a>,
     gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
     loop_depth: u32,
 }
 
@@ -40,7 +39,7 @@ impl<'hir> hir::Visit<'hir> for LoopWriteFinder<'_, 'hir> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'hir Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
@@ -58,7 +57,7 @@ impl<'hir> hir::Visit<'hir> for LoopWriteFinder<'_, 'hir> {
                 ExprKind::Unary(op, inner) if op.kind.has_side_effects() => Some(inner),
                 _ => None,
             };
-            if lvalue.is_some_and(|lvalue| lvalue_is_state_var(self.gcx, self.hir, lvalue)) {
+            if lvalue.is_some_and(|lvalue| lvalue_is_state_var(self.gcx, lvalue)) {
                 self.ctx.emit(&COSTLY_LOOP, expr.span);
             }
         }
@@ -70,13 +69,13 @@ impl<'hir> hir::Visit<'hir> for LoopWriteFinder<'_, 'hir> {
 ///
 /// Peels through index accesses, member accesses, and slices to find a state variable or an
 /// expression that returns a storage reference.
-fn lvalue_is_state_var(gcx: Gcx<'_>, hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+fn lvalue_is_state_var(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     let expr = expr.peel_parens();
     match &expr.kind {
         ExprKind::Ident(reses) => reses
             .iter()
             .find_map(Res::as_variable)
-            .is_some_and(|id| hir.variable(id).is_state_variable()),
+            .is_some_and(|id| gcx.hir.variable(id).is_state_variable()),
         ExprKind::Call(callee, ..) => {
             gcx.resolved_builtin(callee) == Some(Builtin::ArrayPush0)
                 || gcx
@@ -86,8 +85,8 @@ fn lvalue_is_state_var(gcx: Gcx<'_>, hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
         ExprKind::Index(base, _)
         | ExprKind::Slice(base, _, _)
         | ExprKind::Member(base, _)
-        | ExprKind::Payable(base) => lvalue_is_state_var(gcx, hir, base),
-        ExprKind::Tuple(exprs) => exprs.iter().flatten().any(|e| lvalue_is_state_var(gcx, hir, e)),
+        | ExprKind::Payable(base) => lvalue_is_state_var(gcx, base),
+        ExprKind::Tuple(exprs) => exprs.iter().flatten().any(|e| lvalue_is_state_var(gcx, e)),
         _ => false,
     }
 }
