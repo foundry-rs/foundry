@@ -19,9 +19,8 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{self, LoadConfig, resolve_lane},
+    utils::{self, resolve_lane},
 };
-use foundry_common::provider::ProviderBuilder;
 use std::time::Duration;
 use tempo_alloy::TempoNetwork;
 
@@ -67,8 +66,7 @@ impl BatchSendArgs {
 
         let expires_at = tx.tempo.resolve_expires();
 
-        let config = send_tx.eth.load_config()?;
-        let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+        let (config, provider) = tempo::tempo_provider(&send_tx.eth)?;
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
         let lane = resolved_lane.as_ref();
 

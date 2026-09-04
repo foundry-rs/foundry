@@ -1,3 +1,4 @@
+use crate::cmd::rpc_provider;
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, B256, Signature, U256, hex};
@@ -13,8 +14,6 @@ use eyre::{Context, Result};
 use foundry_cli::{
     json::{print_json_success, print_scalar},
     opts::RpcOpts,
-    utils,
-    utils::LoadConfig,
 };
 use foundry_common::{errors::FsPathError, fs, sh_println, shell};
 use foundry_config::Config;
@@ -585,7 +584,7 @@ impl WalletSubcommands {
                 }
             }
             Self::SignAuth { rpc, nonce, chain, force, wallet, address, self_broadcast } => {
-                let provider = utils::get_provider(&rpc.load_config()?)?;
+                let provider = rpc_provider(&rpc)?;
                 let chain_id = match chain {
                     Some(chain) => chain.id(),
                     None => provider.get_chain_id().await?,

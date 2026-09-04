@@ -1,12 +1,14 @@
 use crate::{
     cmd::{
         auth::confirm_and_build,
+        print_json_or,
         send::{SendOptions, cast_send},
-        tempo_policy_args::{
-            SelectorArg, parse_period, parse_scope, parse_selector_arg, parse_selector_bytes,
-        },
+        tempo_policy_args::{parse_period, parse_scope, parse_selector_bytes},
     },
-    tempo::{apply_fee_payment, print_expires, sponsor_hash, tempo_provider},
+    tempo::{
+        apply_fee_payment, is_tempo_hardfork_active, print_expires, require_hardfork, sponsor_hash,
+        tempo_provider,
+    },
     tx::{CastTxBuilder, SendTxOpts, SenderKind},
 };
 use alloy_consensus::BlockHeader;
@@ -17,17 +19,16 @@ use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_rpc_types::BlockId;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
-use alloy_transport::TransportError;
 use chrono::DateTime;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     json::{print_json_object, print_json_success},
     opts::{RpcOpts, TempoOpts, TransactionOpts},
-    utils::{LoadConfig, parse_fee_token_address, resolve_lane},
+    utils::{LoadConfig, now, parse_fee_token_address, resolve_lane},
 };
 use foundry_common::{
-    provider::{ProviderBuilder, is_rpc_method_not_found},
+    provider::ProviderBuilder,
     sh_warn, shell,
     tempo::{
         self, AccountsStoreView, KeyType, read_tempo_accounts_store, tempo_accounts_store_path,
@@ -39,10 +40,7 @@ use foundry_wallets::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{
-    fmt::Display,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{fmt::Display, time::Duration};
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, DEFAULT_FEE_TOKEN,
@@ -124,8 +122,8 @@ pub enum KeychainSubcommand {
 
         /// Function selector for the TIP-1011 scope check (hex `0x12345678`,
         /// known shorthand like `transfer`, or full signature like `foo(uint256)`).
-        #[arg(long, value_parser = parse_selector_arg, requires = "to")]
-        selector: Option<SelectorArg>,
+        #[arg(long, value_parser = parse_selector_bytes, requires = "to")]
+        selector: Option<[u8; 4]>,
 
         /// Recipient address for the TIP-1011 scope check (per-selector recipient list).
         #[arg(long, value_name = "ADDRESS", requires = "selector")]
@@ -518,8 +516,8 @@ pub enum KeychainPolicySubcommand {
         target: Address,
 
         /// Function selector, full signature, or known TIP-20 shorthand.
-        #[arg(long, value_parser = parse_selector_arg)]
-        selector: SelectorArg,
+        #[arg(long, value_parser = parse_selector_bytes)]
+        selector: [u8; 4],
 
         /// Optional recipient/spender restrictions for selector calls.
         #[arg(long, value_delimiter = ',')]
@@ -732,15 +730,7 @@ impl KeychainSubcommand {
                 let fee_token = fee_token.or(tempo.fee_token).unwrap_or(DEFAULT_FEE_TOKEN);
                 let mut doctor = Doctor::new(root_account, key_address, fee_token);
                 doctor
-                    .run(
-                        key_address,
-                        root_account,
-                        to,
-                        selector.map(SelectorArg::into_bytes),
-                        recipient,
-                        &mut tempo,
-                        rpc,
-                    )
+                    .run(key_address, root_account, to, selector, recipient, &mut tempo, rpc)
                     .await;
                 doctor.finish()
             }
@@ -932,7 +922,7 @@ impl KeychainPolicySubcommand {
                     key_address,
                     root_account,
                     target,
-                    selector.into_bytes(),
+                    selector,
                     recipients,
                     tx,
                     send_tx,
@@ -972,28 +962,6 @@ impl KeychainPolicySubcommand {
             }
         }
     }
-}
-
-/// Prints `json` pretty-printed (un-enveloped) in JSON mode, `plain` otherwise.
-fn print_json_or(json: Value, plain: impl Display) -> Result<()> {
-    if shell::is_json() {
-        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
-    } else {
-        sh_println!("{plain}")?;
-    }
-    Ok(())
-}
-
-/// Fails with `message` unless `hardfork` is active on the RPC.
-async fn require_hardfork<P: Provider<TempoNetwork>>(
-    provider: &P,
-    hardfork: TempoHardfork,
-    message: &str,
-) -> Result<()> {
-    if !is_tempo_hardfork_active(provider, hardfork).await? {
-        eyre::bail!("{message}");
-    }
-    Ok(())
 }
 
 /// `cast keychain list` / `cast keychain show <wallet_address>` — display Tempo Accounts store
@@ -1150,7 +1118,7 @@ async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) 
     sh_println!("Signature Type: {signature_type}")?;
     sh_println!("Key ID:         {}", info.keyId)?;
     let expiry = format_expiry(info.expiry);
-    if info.expiry != u64::MAX && info.expiry <= now_secs() {
+    if info.expiry != u64::MAX && info.expiry <= now().as_secs() {
         sh_println!("Expiry:         {expiry} ({})", "expired".red())?;
     } else {
         sh_println!("Expiry:         {expiry}")?;
@@ -2992,8 +2960,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     let tempo_sponsor =
         if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
 
-    let config = send_tx.eth.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let (config, provider) = tempo_provider(&send_tx.eth)?;
     if let Some(interval) = send_tx.poll_interval {
         provider.client().set_poll_interval(Duration::from_secs(interval));
     }
@@ -3078,63 +3045,6 @@ fn ensure_root_sender(actual: Address, expected: Option<Address>, what: &str) ->
         );
     }
     Ok(())
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AnvilNodeInfo {
-    hard_fork: Option<String>,
-    network: Option<String>,
-}
-
-pub(crate) async fn is_tempo_hardfork_active<P: Provider<TempoNetwork>>(
-    provider: &P,
-    hardfork: TempoHardfork,
-) -> Result<bool> {
-    match provider.is_hardfork_active(hardfork).await {
-        Ok(active) => Ok(active),
-        Err(err) if is_rpc_method_not_found(&err) => {
-            match anvil_tempo_hardfork_active(provider, hardfork).await {
-                Ok(Some(active)) => Ok(active),
-                _ => Err(err.into()),
-            }
-        }
-        Err(err) => Err(err.into()),
-    }
-}
-
-/// Fails early with `requirement` when a Tempo precompile is not active yet: a pre-fork call
-/// would succeed as a silent no-op instead of reverting. Prefers the hardfork query and falls
-/// back to checking the precompile's code when the RPC lacks the method.
-pub(crate) async fn ensure_tempo_precompile_active<P: Provider<TempoNetwork>>(
-    provider: &P,
-    hardfork: TempoHardfork,
-    precompile: Address,
-    requirement: &str,
-) -> Result<()> {
-    let active = match is_tempo_hardfork_active(provider, hardfork).await {
-        Ok(active) => active,
-        Err(_) => !provider.get_code_at(precompile).await?.is_empty(),
-    };
-    eyre::ensure!(active, "{requirement}");
-    Ok(())
-}
-
-async fn anvil_tempo_hardfork_active<P: Provider<TempoNetwork>>(
-    provider: &P,
-    hardfork: TempoHardfork,
-) -> Result<Option<bool>, TransportError> {
-    let info = provider.raw_request::<_, AnvilNodeInfo>("anvil_nodeInfo".into(), ()).await?;
-    Ok(active_from_anvil_node_info(&info, hardfork))
-}
-
-fn active_from_anvil_node_info(info: &AnvilNodeInfo, hardfork: TempoHardfork) -> Option<bool> {
-    (info.network.as_deref() == Some("tempo")).then(|| {
-        info.hard_fork
-            .as_deref()
-            .and_then(|active_hardfork| active_hardfork.parse::<TempoHardfork>().ok())
-            .is_some_and(|active_hardfork| active_hardfork >= hardfork)
-    })
 }
 
 /// Resolves the root account of `key_address` and its local Accounts store entry, if any.
@@ -3363,12 +3273,8 @@ fn format_timestamp_iso(timestamp: u64) -> String {
     format_utc(timestamp, "%Y-%m-%dT%H:%M:%SZ")
 }
 
-fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
-}
-
 fn format_relative_timestamp(timestamp: u64) -> String {
-    format_relative_timestamp_from(timestamp, now_secs())
+    format_relative_timestamp_from(timestamp, now().as_secs())
 }
 
 fn format_relative_timestamp_from(timestamp: u64, now: u64) -> String {
@@ -3586,23 +3492,6 @@ mod tests {
         let mut wildcard = scope(PATH_USD_ADDRESS, vec![]);
         assert!(!add_selector_rule_to_scope(&mut wildcard, rule(transfer, vec![])));
         assert!(wildcard.selectorRules.is_empty());
-    }
-
-    #[test]
-    fn active_from_anvil_node_info_requires_tempo_network() {
-        let info = |network: &str, hard_fork: &str| AnvilNodeInfo {
-            network: Some(network.to_string()),
-            hard_fork: Some(hard_fork.to_string()),
-        };
-        let tempo_t3 = info("tempo", "T3");
-        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T2), Some(true));
-        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T3), Some(true));
-        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T4), Some(false));
-        assert_eq!(
-            active_from_anvil_node_info(&info("tempo", "T11"), TempoHardfork::T11),
-            Some(true)
-        );
-        assert_eq!(active_from_anvil_node_info(&info("ethereum", "T3"), TempoHardfork::T3), None);
     }
 
     #[test]

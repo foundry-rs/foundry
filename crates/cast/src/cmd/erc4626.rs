@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use crate::{
     SimpleCast,
-    cmd::{erc20::print_amount, send::SendTxArgs},
+    cmd::{erc20::print_amount, rpc_provider, send::SendTxArgs},
     tx::{SendTxOpts, TxParams},
 };
 use alloy_eips::BlockId;
@@ -18,7 +18,6 @@ use foundry_cli::{
         JsonError, JsonMessage, print_json_success, print_json_success_with_warnings, print_scalar,
     },
     opts::RpcOpts,
-    utils::{LoadConfig, get_provider},
 };
 use foundry_common::{provider::RetryProvider, shell};
 use serde::Serialize;
@@ -622,7 +621,7 @@ impl Erc4626Subcommand {
 type Vault = IERC4626::IERC4626Instance<RetryProvider, AnyNetwork>;
 
 async fn vault_at(rpc: &RpcOpts, vault: NameOrAddress) -> Result<(RetryProvider, Vault)> {
-    let provider = get_provider(&rpc.load_config()?)?;
+    let provider = rpc_provider(rpc)?;
     let vault = vault.resolve(&provider).await?;
     Ok((provider.clone(), IERC4626::new(vault, provider)))
 }

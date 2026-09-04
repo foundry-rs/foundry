@@ -1,13 +1,11 @@
+use crate::cmd::rpc_provider;
 use alloy_consensus::Typed2718;
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::hex;
 use alloy_provider::ext::TraceApi;
 use clap::Parser;
 use eyre::{Result, WrapErr};
-use foundry_cli::{
-    opts::RpcOpts,
-    utils::{self, LoadConfig},
-};
+use foundry_cli::opts::RpcOpts;
 use foundry_common::stdin;
 use foundry_primitives::FoundryTxEnvelope;
 
@@ -41,8 +39,7 @@ pub struct TraceArgs {
 
 impl TraceArgs {
     pub async fn run(self) -> Result<()> {
-        let config = self.rpc.load_config()?;
-        let provider = utils::get_provider(&config)?;
+        let provider = rpc_provider(&self.rpc)?;
         let input = stdin::unwrap_line(self.tx)?;
 
         let result = if self.raw {

@@ -1,6 +1,6 @@
 use crate::{
     Cast, SimpleCast,
-    cmd::erc20::IERC20,
+    cmd::{erc20::IERC20, rpc_provider},
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
     tx::CastTxSender,
@@ -843,11 +843,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
     };
 
     Ok(())
-}
-
-/// Loads the config for `rpc` and builds the default provider from it.
-fn rpc_provider(rpc: &RpcOpts) -> Result<RetryProvider> {
-    utils::get_provider(&rpc.load_config()?)
 }
 
 /// Builds the default provider for `rpc` and resolves `who` against it.

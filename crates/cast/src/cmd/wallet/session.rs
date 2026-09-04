@@ -6,7 +6,7 @@ use clap::{Args, Parser};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::{TEMPO_SESSION_ID_ENV, TransactionOpts},
-    utils::{LoadConfig, parse_fee_token_address},
+    utils::{LoadConfig, now, parse_fee_token_address},
 };
 use foundry_common::{
     provider::ProviderBuilder,
@@ -21,7 +21,6 @@ use serde_json::json;
 use std::{
     num::NonZeroU64,
     process::{Command, ExitStatus},
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::IAccountKeychain;
@@ -33,10 +32,12 @@ use crate::{
         keychain::{
             KeychainTxOutcome, resolve_keychain_root_signer, send_keychain_tx_with_root_signer,
         },
+        print_json_or,
         tempo_policy_args::{
             parse_period, parse_scope as parse_policy_scope, parse_selector_bytes,
         },
     },
+    tempo,
     tx::SendTxOpts,
 };
 
@@ -488,11 +489,7 @@ async fn create(
     );
     upsert_session_entry(entry)?;
 
-    if shell::is_json() {
-        sh_println!("{}", serde_json::to_string_pretty(&json)?)
-    } else {
-        sh_println!("{prose}")
-    }
+    print_json_or(json, prose)
 }
 
 /// How to treat a session key that was never provisioned on-chain when revoking it.
@@ -526,8 +523,7 @@ async fn revoke(
         eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
     }
 
-    let config = send_tx.eth.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let (_, provider) = tempo::tempo_provider(&send_tx.eth)?;
     let rpc_chain_id = provider.get_chain_id().await?;
     if rpc_chain_id != entry.chain_id {
         eyre::bail!(
@@ -670,11 +666,8 @@ async fn build_session_entry(
     let signer = resolve_root_signer(wallet, root_account, chain_id).await?;
     let session_key = GeneratedSessionKey::random();
     let session_id = B256::random();
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context("system time is before UNIX_EPOCH")?
-        .as_secs();
-    let expiry = now
+    let now_secs = now().as_secs();
+    let expiry = now_secs
         .checked_add(expires)
         .ok_or_else(|| eyre::eyre!("session expiry overflows the unix timestamp range"))?;
     let expiry =
@@ -689,7 +682,7 @@ async fn build_session_entry(
         scope,
         spend_limits,
     };
-    let prepared = request.prepare(now)?;
+    let prepared = request.prepare(now_secs)?;
     let signature = signer.sign_hash(&prepared.authorization.signature_hash()).await?;
     let signed_authorization =
         prepared.authorization.clone().into_signed(PrimitiveSignature::Secp256k1(signature));

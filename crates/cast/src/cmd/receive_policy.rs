@@ -1,9 +1,6 @@
 use crate::{
-    cmd::{
-        keychain::ensure_tempo_precompile_active, tip20::send_tip20_transaction,
-        tip403::policy_type_label,
-    },
-    tempo::{print_payload, tempo_provider},
+    cmd::{rpc_provider, tip20::send_tip20_transaction, tip403::policy_type_label},
+    tempo::{ensure_tempo_precompile_active, print_payload, tempo_provider},
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
@@ -11,10 +8,7 @@ use alloy_primitives::{Address, Bytes, U256, keccak256};
 use alloy_sol_types::{SolCall, SolValue};
 use clap::{Parser, Subcommand};
 use eyre::{Result, WrapErr, ensure};
-use foundry_cli::{
-    opts::RpcOpts,
-    utils::{LoadConfig, get_provider},
-};
+use foundry_cli::opts::RpcOpts;
 use foundry_common::provider::RetryProvider;
 use foundry_evm::hardfork::TempoHardfork;
 use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
@@ -248,8 +242,7 @@ async fn set(
 }
 
 async fn get(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = get_provider(&config)?;
+    let provider = rpc_provider(&rpc)?;
     let account = account.resolve(&provider).await?;
     let registry = ITIP403Registry::new(TIP403_REGISTRY_ADDRESS, provider);
     let policy = registry.receivePolicy(account).call().await?;
@@ -292,8 +285,7 @@ async fn validate(
     receiver: NameOrAddress,
     rpc: RpcOpts,
 ) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = get_provider(&config)?;
+    let provider = rpc_provider(&rpc)?;
     let token = token.resolve(&provider).await?;
     let sender = sender.resolve(&provider).await?;
     let receiver = receiver.resolve(&provider).await?;
@@ -365,8 +357,7 @@ fn decode_receipt(receipt: Bytes) -> Result<()> {
 }
 
 async fn receipt_balance(receipt: Bytes, rpc: RpcOpts) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = get_provider(&config)?;
+    let provider = rpc_provider(&rpc)?;
     let guard = IReceivePolicyGuard::new(RECEIVE_POLICY_GUARD_ADDRESS, provider);
     let amount = guard.balanceOf(receipt.clone()).call().await?;
     let decoded = decode_claim_receipt(&receipt)?;
@@ -418,8 +409,7 @@ async fn recovery_warning(
         return Ok(None);
     }
 
-    let config = rpc.load_config()?;
-    let provider = get_provider(&config)?;
+    let provider = rpc_provider(rpc)?;
     let registry = ITIP403Registry::new(TIP403_REGISTRY_ADDRESS, provider);
     let mut blocked = Vec::new();
     for address in TEMPO_PRECOMPILE_ADDRESSES {

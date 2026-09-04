@@ -11,12 +11,17 @@ use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use eyre::Result;
-use foundry_cli::{json::print_scalar, utils::load_config_from_provider};
-use foundry_common::shell;
+use foundry_cli::{
+    json::print_scalar,
+    opts::RpcOpts,
+    utils::{LoadConfig, get_provider, load_config_from_provider},
+};
+use foundry_common::{provider::RetryProvider, shell};
 use foundry_config::{Config, figment::Figment};
 use foundry_evm::opts::EvmOpts;
 use futures::StreamExt;
 use serde::Serialize;
+use serde_json::Value;
 use std::fmt::Display;
 
 /// Loads Cast's config and applies its normalized network to the EVM options.
@@ -25,6 +30,21 @@ pub(crate) fn load_cast_config_and_evm_opts(figment: Figment) -> Result<(Box<Con
     let mut evm_opts = figment.extract::<EvmOpts>()?;
     evm_opts.networks = config.networks;
     Ok((config, evm_opts))
+}
+
+/// Loads the config for `rpc` and builds the default provider from it.
+pub(crate) fn rpc_provider(rpc: &RpcOpts) -> Result<RetryProvider> {
+    get_provider(&rpc.load_config()?)
+}
+
+/// Prints `json` pretty-printed (un-enveloped) in JSON mode, `plain` otherwise.
+pub(crate) fn print_json_or(json: Value, plain: impl Display) -> Result<()> {
+    if shell::is_json() {
+        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
+    } else {
+        sh_println!("{plain}")?;
+    }
+    Ok(())
 }
 
 /// Prints the primary result of a command: a JSON envelope in `--json` mode, otherwise a raw line

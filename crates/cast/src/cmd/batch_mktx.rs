@@ -20,9 +20,9 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{self, LoadConfig, resolve_lane},
+    utils::{self, resolve_lane},
 };
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::FoundryTransactionBuilder;
 use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast batch-mktx`.
@@ -72,8 +72,7 @@ impl BatchMakeTxArgs {
             eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --ethsign");
         }
 
-        let config = eth.load_config()?;
-        let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+        let (config, provider) = tempo::tempo_provider(&eth)?;
         // The provider is not consulted for fee tokens in `--curl` mode.
         let fee_provider = (!config.eth_rpc_curl).then_some(&provider);
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;

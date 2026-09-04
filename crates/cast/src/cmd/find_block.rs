@@ -1,12 +1,8 @@
-use crate::Cast;
+use crate::{Cast, cmd::rpc_provider};
 use alloy_provider::Provider;
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{
-    json::print_scalar,
-    opts::RpcOpts,
-    utils::{self, LoadConfig},
-};
+use foundry_cli::{json::print_scalar, opts::RpcOpts};
 use futures::join;
 
 /// CLI arguments for `cast find-block`.
@@ -42,7 +38,7 @@ fn interpolate_block(
 impl FindBlockArgs {
     pub async fn run(self) -> Result<()> {
         let Self { timestamp: ts_target, rpc } = self;
-        let provider = utils::get_provider(&rpc.load_config()?)?;
+        let provider = rpc_provider(&rpc)?;
 
         let last_block_num = provider.get_block_number().await?;
         let cast_provider = Cast::new(provider);

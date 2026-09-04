@@ -6,16 +6,6 @@ use tempo_contracts::precompiles::IAccountKeychain::{CallScope, SelectorRule};
 // `cast wallet session`. Keeping it here avoids duplicating parsing behavior
 // or making wallet-session commands depend on the larger keychain command module.
 
-/// Parsed selector argument used by policy-editing commands.
-#[derive(Debug, Clone, Copy)]
-pub struct SelectorArg([u8; 4]);
-
-impl SelectorArg {
-    pub(crate) const fn into_bytes(self) -> [u8; 4] {
-        self.0
-    }
-}
-
 /// Parse a selector string into 4-byte selector bytes.
 ///
 /// Accepts 4-byte hex (`0xd09de08a`), a full signature
@@ -50,11 +40,6 @@ pub(crate) fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
             .map(|func| func.selector().into())
             .map_err(|e| format!("invalid function signature '{sig}': {e}"))
     }
-}
-
-/// Parse a selector string into a named selector argument.
-pub(crate) fn parse_selector_arg(s: &str) -> Result<SelectorArg, String> {
-    parse_selector_bytes(s).map(SelectorArg)
 }
 
 /// Parse a `TARGET[:SELECTORS[@RECIPIENTS]]` scope string.

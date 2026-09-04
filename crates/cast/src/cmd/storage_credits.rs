@@ -1,6 +1,6 @@
 use crate::{
-    cmd::{keychain::ensure_tempo_precompile_active, tip20::send_tip20_transaction},
-    tempo::{print_payload, tempo_provider},
+    cmd::tip20::send_tip20_transaction,
+    tempo::{ensure_tempo_precompile_active, print_payload, tempo_provider},
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;

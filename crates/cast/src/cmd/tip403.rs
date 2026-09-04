@@ -1,5 +1,5 @@
 use crate::{
-    cmd::tip20::send_tip20_transaction,
+    cmd::{rpc_provider, tip20::send_tip20_transaction},
     tempo::print_payload,
     tx::{SendTxOpts, TxParams},
 };
@@ -8,10 +8,7 @@ use alloy_primitives::Address;
 use alloy_sol_types::SolCall;
 use clap::{Parser, ValueEnum};
 use eyre::Result;
-use foundry_cli::{
-    opts::RpcOpts,
-    utils::{LoadConfig, get_provider},
-};
+use foundry_cli::opts::RpcOpts;
 use serde_json::json;
 use std::str::FromStr;
 use tempo_contracts::precompiles::{ITIP403Registry, TIP403_REGISTRY_ADDRESS};
@@ -145,7 +142,7 @@ async fn create(
     send_tx: SendTxOpts,
     tx: TxParams,
 ) -> Result<()> {
-    let provider = get_provider(&send_tx.eth.rpc.load_config()?)?;
+    let provider = rpc_provider(&send_tx.eth.rpc)?;
     let admin = admin.resolve(&provider).await?;
 
     let mut members = Vec::with_capacity(accounts.len());
@@ -176,7 +173,7 @@ async fn create(
 
 async fn modify(kind: PolicyKind, args: MembershipArgs) -> Result<()> {
     let MembershipArgs { action, policy_id, account, send_tx, tx } = args;
-    let provider = get_provider(&send_tx.eth.rpc.load_config()?)?;
+    let provider = rpc_provider(&send_tx.eth.rpc)?;
     let account = account.resolve(&provider).await?;
     warn_if_virtual(account)?;
 
@@ -199,7 +196,7 @@ async fn modify(kind: PolicyKind, args: MembershipArgs) -> Result<()> {
 }
 
 async fn info(policy_id: u64, rpc: RpcOpts) -> Result<()> {
-    let provider = get_provider(&rpc.load_config()?)?;
+    let provider = rpc_provider(&rpc)?;
     let registry = ITIP403Registry::new(TIP403_REGISTRY_ADDRESS, provider);
     let builtin = match policy_id {
         0 => Some("reject-all"),
@@ -240,7 +237,7 @@ async fn check(
     role: Option<PolicyRole>,
     rpc: RpcOpts,
 ) -> Result<()> {
-    let provider = get_provider(&rpc.load_config()?)?;
+    let provider = rpc_provider(&rpc)?;
     let address = address.resolve(&provider).await?;
     let registry = ITIP403Registry::new(TIP403_REGISTRY_ADDRESS, provider);
     let (role_label, authorized) = match role {

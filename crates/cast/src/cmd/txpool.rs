@@ -1,11 +1,8 @@
+use crate::cmd::rpc_provider;
 use alloy_primitives::Address;
 use alloy_provider::ext::TxPoolApi;
 use clap::Parser;
-use foundry_cli::{
-    json::print_json_object,
-    opts::RpcOpts,
-    utils::{self, LoadConfig},
-};
+use foundry_cli::{json::print_json_object, opts::RpcOpts};
 
 /// CLI arguments for `cast tx-pool`.
 #[derive(Debug, Parser, Clone)]
@@ -43,7 +40,7 @@ impl TxPoolSubcommands {
             | Self::Inspect { args }
             | Self::Status { args } => args,
         };
-        let provider = utils::get_provider(&args.load_config()?)?;
+        let provider = rpc_provider(args)?;
         match self {
             Self::Content { .. } => print_json_object(provider.txpool_content().await?),
             Self::ContentFrom { from, .. } => {

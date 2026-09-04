@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use crate::{
-    cmd::{call_overrides::CallOverrideOpts, send::SendTxArgs},
+    cmd::{call_overrides::CallOverrideOpts, rpc_provider, send::SendTxArgs},
     format_uint_exp,
     tx::{SendTxOpts, TxParams},
 };
@@ -15,7 +15,6 @@ use eyre::Result;
 use foundry_cli::{
     json::{print_json_success, print_scalar},
     opts::RpcOpts,
-    utils::{LoadConfig, get_provider},
 };
 use foundry_common::{provider::RetryProvider, shell};
 
@@ -287,13 +286,13 @@ async fn token_at(
     rpc: &RpcOpts,
     token: NameOrAddress,
 ) -> Result<(RetryProvider, IERC20::IERC20Instance<RetryProvider, AnyNetwork>)> {
-    let provider = get_provider(&rpc.load_config()?)?;
+    let provider = rpc_provider(rpc)?;
     let token = token.resolve(&provider).await?;
     Ok((provider.clone(), IERC20::new(token, provider)))
 }
 
 async fn resolve(rpc: &RpcOpts, account: NameOrAddress) -> Result<Address> {
-    Ok(account.resolve(&get_provider(&rpc.load_config()?)?).await?)
+    Ok(account.resolve(&rpc_provider(rpc)?).await?)
 }
 
 async fn send(
