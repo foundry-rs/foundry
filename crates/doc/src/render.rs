@@ -897,11 +897,12 @@ fn italicize_dev(content: &str) -> String {
     if trimmed.is_empty() { String::new() } else { format!("<i>\n\n{trimmed}\n\n</i>") }
 }
 
-/// Byte ranges that MDX parses as code. An HTML entity would render literally inside these ranges,
-/// so neutralization skips them. If malformed MDX cannot be parsed, returning no ranges favors
-/// neutralizing possible ESM over preserving an invalid code example byte-for-byte.
-fn code_regions(text: &str) -> Vec<Range<usize>> {
-    let Ok(tree) = to_mdast(text, &ParseOptions::mdx()) else { return Vec::new() };
+/// Byte ranges that Markdown parses as code under `options`. An HTML entity would render literally
+/// inside these ranges, so neutralization skips them. If malformed MDX cannot be parsed, returning
+/// no ranges favors neutralizing possible ESM over preserving an invalid code example
+/// byte-for-byte.
+pub(crate) fn code_regions(text: &str, options: &ParseOptions) -> Vec<Range<usize>> {
+    let Ok(tree) = to_mdast(text, options) else { return Vec::new() };
     let mut regions = Vec::new();
     collect_code_regions(&tree, &mut regions);
     regions
@@ -948,7 +949,11 @@ fn logical_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
 }
 
 /// Check a position against sorted, merged ranges while advancing monotonically.
-fn region_contains(regions: &[Range<usize>], cursor: &mut usize, position: usize) -> bool {
+pub(crate) fn region_contains(
+    regions: &[Range<usize>],
+    cursor: &mut usize,
+    position: usize,
+) -> bool {
     while regions.get(*cursor).is_some_and(|region| region.end <= position) {
         *cursor += 1;
     }
@@ -962,7 +967,7 @@ fn region_contains(regions: &[Range<usize>], cursor: &mut usize, position: usize
 /// code span or fenced code block is left untouched (see `code_regions`): the entity would render
 /// literally and corrupt the example, and MDX would not execute it there.
 fn neutralize_esm(text: &str) -> String {
-    let regions = code_regions(text);
+    let regions = code_regions(text, &ParseOptions::mdx());
     let mut region_cursor = 0;
     let mut copied = 0;
     let mut out = String::with_capacity(text.len());

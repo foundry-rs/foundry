@@ -3,13 +3,16 @@
 //! Generates `vocs.config.ts`, `pages/index.mdx`, `package.json`, and `.gitignore`
 //! from the emitted MDX pages.
 
-use crate::utils::{git_raw_url, git_source_url};
+use crate::{
+    render::{code_regions, region_contains},
+    utils::{git_raw_url, git_source_url},
+};
 use foundry_config::DocConfig;
+use markdown::ParseOptions;
 use path_slash::PathExt;
 use std::{
     collections::HashMap,
     fs,
-    ops::Range,
     path::{Component, Path, PathBuf},
 };
 
@@ -318,39 +321,6 @@ fn build_source_to_url(pages: &[PathBuf]) -> SourceToUrl {
     map
 }
 
-/// Fence-open/close detection for a single markdown line, shared by
-/// `escape_mdx_outside_code_fences` and `code_regions` so both agree on what
-/// counts as "inside a code fence".
-struct FenceState {
-    marker: char,
-    len: usize,
-}
-
-impl FenceState {
-    /// If `trimmed` (a line with leading whitespace stripped) opens a code
-    /// fence, return the state to track until it closes.
-    fn opens(trimmed: &str) -> Option<Self> {
-        let marker = trimmed.chars().next()?;
-        if !matches!(marker, '`' | '~') {
-            return None;
-        }
-        let len = trimmed.chars().take_while(|&ch| ch == marker).count();
-        if len < 3 || marker == '`' && trimmed[len..].contains('`') {
-            return None;
-        }
-        Some(Self { marker, len })
-    }
-
-    /// Whether `trimmed` closes this fence (a line of `>= len` fence markers
-    /// and nothing else).
-    fn closes(&self, trimmed: &str) -> bool {
-        // Fence markers are ASCII, so their character count is also the byte index.
-        let marker_len = trimmed.chars().take_while(|&ch| ch == self.marker).count();
-        let suffix = &trimmed[marker_len..];
-        marker_len >= self.len && suffix.trim().is_empty()
-    }
-}
-
 /// Escape MDX-sensitive characters (`{` and `<`) in plain-text regions of a
 /// Markdown document, leaving fenced code blocks (` ``` ` or `~~~`) untouched.
 ///
@@ -358,17 +328,35 @@ impl FenceState {
 /// HTML-like tokens like `<TOKEN>` would be interpreted as MDX expressions/JSX
 /// and break `vocs dev` / `vocs build`.
 fn escape_mdx_outside_code_fences(text: &str) -> String {
+    struct Fence {
+        marker: char,
+        len: usize,
+    }
+
     let mut out = String::with_capacity(text.len());
-    let mut fence: Option<FenceState> = None;
+    let mut fence: Option<Fence> = None;
     for line in text.split_inclusive('\n') {
         let trimmed = line.trim_start();
         if let Some(open) = fence.as_ref() {
             out.push_str(line);
-            if open.closes(trimmed) {
+            let marker_len = trimmed.chars().take_while(|&ch| ch == open.marker).count();
+            // Fence markers are ASCII, so their character count is also the byte index.
+            let suffix = &trimmed[marker_len..];
+            if marker_len >= open.len && suffix.trim().is_empty() {
                 fence = None;
             }
         } else {
-            if let Some(opening) = FenceState::opens(trimmed) {
+            let opening = trimmed.chars().next().and_then(|marker| {
+                if !matches!(marker, '`' | '~') {
+                    return None;
+                }
+                let len = trimmed.chars().take_while(|&ch| ch == marker).count();
+                if len < 3 || marker == '`' && trimmed[len..].contains('`') {
+                    return None;
+                }
+                Some(Fence { marker, len })
+            });
+            if let Some(opening) = opening {
                 fence = Some(opening);
                 out.push_str(line);
                 continue;
@@ -408,66 +396,6 @@ fn escape_mdx_outside_code_fences(text: &str) -> String {
     out
 }
 
-/// Byte ranges of `text` that sit inside a code fence or an inline code span.
-fn code_regions(text: &str) -> Vec<Range<usize>> {
-    let mut regions = Vec::new();
-    let mut fence: Option<FenceState> = None;
-    let mut offset = 0usize;
-    for line in text.split_inclusive('\n') {
-        let line_start = offset;
-        offset += line.len();
-        let trimmed = line.trim_start();
-
-        if let Some(open) = fence.as_ref() {
-            regions.push(line_start..offset);
-            if open.closes(trimmed) {
-                fence = None;
-            }
-            continue;
-        }
-        if let Some(opening) = FenceState::opens(trimmed) {
-            fence = Some(opening);
-            regions.push(line_start..offset);
-            continue;
-        }
-
-        // Inline code spans within this line, mirroring the tick pairing in
-        // `escape_mdx_outside_code_fences`.
-        let mut pending_ticks = 0usize;
-        let mut inline_code_ticks = 0usize;
-        let mut span_start: Option<usize> = None;
-        let mut pos = line_start;
-        for ch in line.chars() {
-            let ch_len = ch.len_utf8();
-            if ch == '`' {
-                pending_ticks += 1;
-                pos += ch_len;
-                continue;
-            }
-            if pending_ticks > 0 {
-                if inline_code_ticks == 0 {
-                    inline_code_ticks = pending_ticks;
-                    span_start = Some(pos - pending_ticks);
-                } else if inline_code_ticks == pending_ticks {
-                    inline_code_ticks = 0;
-                    if let Some(start) = span_start.take() {
-                        regions.push(start..pos);
-                    }
-                }
-                pending_ticks = 0;
-            }
-            pos += ch_len;
-        }
-        // An unterminated inline span extends to the end of the line.
-        if inline_code_ticks > 0
-            && let Some(start) = span_start
-        {
-            regions.push(start..offset);
-        }
-    }
-    regions
-}
-
 /// Rewrite inline `[text](url)` markdown links in the homepage:
 /// * `.sol` paths that resolve to a known page → vocs URL.
 /// * Any other relative path under `root` → `{repo}/blob/{commit}/...`.
@@ -481,7 +409,10 @@ fn rewrite_homepage_links(
     repo: Option<&str>,
     commit: Option<&str>,
 ) -> String {
-    let code_regions = code_regions(text);
+    // The README is plain GitHub-flavored Markdown at this point, so parse it as such rather than
+    // as MDX, which may fail on unescaped `{`/`<` and would leave every region unprotected.
+    let code_regions = code_regions(text, &ParseOptions::gfm());
+    let mut region_cursor = 0;
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     let mut consumed = 0usize;
@@ -491,7 +422,7 @@ fn rewrite_homepage_links(
         rest = &rest[open + 2..];
         consumed += open + 2;
         // Solidity syntax like `new address[](2)` inside code is not a link.
-        if code_regions.iter().any(|region| region.contains(&abs_open)) {
+        if region_contains(&code_regions, &mut region_cursor, abs_open) {
             continue;
         }
         // Scan the URL, counting parens so we don't split on `(` / `)` inside it.
@@ -780,6 +711,10 @@ function deploy() external {
 ```
 
 Also uses `new address[](2)` inline, then links [Contrib](./CONTRIBUTING.md).
+
+A lone ` backtick is not a code span: [Logo](./img/logo.png).
+
+    address[] memory indented = new address[](2);
 ";
         let expected = "\
 See [Foo](/src/contract.Foo) for details.
@@ -791,6 +726,10 @@ function deploy() external {
 ```
 
 Also uses `new address[](2)` inline, then links [Contrib](https://github.com/x/y/blob/abc123/CONTRIBUTING.md).
+
+A lone ` backtick is not a code span: [Logo](https://github.com/x/y/raw/abc123/img/logo.png).
+
+    address[] memory indented = new address[](2);
 ";
         let out = rewrite_homepage_links(input, root, root, &map, repo, commit);
         assert_eq!(out, expected);
