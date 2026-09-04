@@ -300,9 +300,9 @@ fn function_reads_sender<'hir>(
         return false;
     }
     let mut visitor = ExprVisitor { hir, f: |expr| expr_reads_sender(hir, expr, seen) };
-    hir.function(func_id).body.is_some_and(|body| {
-        body.stmts.iter().any(|stmt| visitor.visit_stmt(stmt).is_break())
-    })
+    hir.function(func_id)
+        .body
+        .is_some_and(|body| body.stmts.iter().any(|stmt| visitor.visit_stmt(stmt).is_break()))
 }
 
 /// `msg.sender` or `tx.origin`.
@@ -542,10 +542,8 @@ struct WriteAnalyzer<'a, 'hir> {
 impl<'hir> WriteAnalyzer<'_, 'hir> {
     fn analyze_entry_point(&mut self, func_id: FunctionId) -> Vec<StateWrite> {
         let func = self.hir.function(func_id);
-        let state = WriteState {
-            dynamic: func.parameters.iter().copied().collect(),
-            writes: Vec::new(),
-        };
+        let state =
+            WriteState { dynamic: func.parameters.iter().copied().collect(), writes: Vec::new() };
         let mut state = self.analyze_function(func_id, state).merged();
         // Modifier code after `_` runs once the body finished, innermost modifier first, and may
         // still emit for the body's writes.

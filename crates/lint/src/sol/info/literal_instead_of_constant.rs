@@ -122,8 +122,10 @@ impl<'hir> Visit<'hir> for LiteralCollector<'hir> {
     }
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        let is_shift = |op: &hir::BinOp| matches!(op.kind, BinOpKind::Shl | BinOpKind::Shr | BinOpKind::Sar);
-        let is_value_changing = |op: &hir::UnOp| matches!(op.kind, UnOpKind::Neg | UnOpKind::BitNot);
+        let is_shift =
+            |op: &hir::BinOp| matches!(op.kind, BinOpKind::Shl | BinOpKind::Shr | BinOpKind::Sar);
+        let is_value_changing =
+            |op: &hir::UnOp| matches!(op.kind, UnOpKind::Neg | UnOpKind::BitNot);
         match &expr.kind {
             // A bare literal indexing an array-like value (`arr[3]`) is positional, not a
             // magic value; a mapping key (`m[500]`) is configuration data and counts.
@@ -134,12 +136,18 @@ impl<'hir> Visit<'hir> for LiteralCollector<'hir> {
                         self.gcx.type_of_expr(base.peel_parens().id).map(|ty| ty.peel_refs().kind),
                         Some(TyKind::Mapping(..))
                     );
-                    if is_mapping { let _ = self.visit_expr(index); } else { self.visit_unless_bare_lit(index); }
+                    if is_mapping {
+                        let _ = self.visit_expr(index);
+                    } else {
+                        self.visit_unless_bare_lit(index);
+                    }
                 }
             }
             // A bare literal shift amount (`x << 128`, `acc >>= 128`) and bare slice bounds
             // (`d[555:600]`) are structural too: slices only exist on array-like values.
-            ExprKind::Binary(lhs, op, rhs) | ExprKind::Assign(lhs, Some(op), rhs) if is_shift(op) => {
+            ExprKind::Binary(lhs, op, rhs) | ExprKind::Assign(lhs, Some(op), rhs)
+                if is_shift(op) =>
+            {
                 let _ = self.visit_expr(lhs);
                 self.visit_unless_bare_lit(rhs);
             }
@@ -149,18 +157,20 @@ impl<'hir> Visit<'hir> for LiteralCollector<'hir> {
                     self.visit_unless_bare_lit(bound);
                 }
             }
-            ExprKind::Unary(op, operand) if is_value_changing(op) => match &operand.peel_parens().kind {
-                // `-5` / `~5`: record the operator-qualified value without descending into the
-                // operand, which would re-record the bare magnitude.
-                ExprKind::Lit(lit) => self.record_lit(lit, expr.span, Some(op.kind)),
-                // A nested unary over a literal (`-(-5)`, `~~5`) folds to a value that is
-                // neither this operator's nor the bare literal's; canonicalizing it is not
-                // worth it, so the chain is skipped rather than miss-keyed. A non-literal
-                // operand deeper down (`-(-(x + 500))`) still records its own literals.
-                ExprKind::Unary(inner, inner_operand)
-                    if is_value_changing(inner) && is_lit(inner_operand) => {}
-                _ => return self.walk_expr(expr),
-            },
+            ExprKind::Unary(op, operand) if is_value_changing(op) => {
+                match &operand.peel_parens().kind {
+                    // `-5` / `~5`: record the operator-qualified value without descending into the
+                    // operand, which would re-record the bare magnitude.
+                    ExprKind::Lit(lit) => self.record_lit(lit, expr.span, Some(op.kind)),
+                    // A nested unary over a literal (`-(-5)`, `~~5`) folds to a value that is
+                    // neither this operator's nor the bare literal's; canonicalizing it is not
+                    // worth it, so the chain is skipped rather than miss-keyed. A non-literal
+                    // operand deeper down (`-(-(x + 500))`) still records its own literals.
+                    ExprKind::Unary(inner, inner_operand)
+                        if is_value_changing(inner) && is_lit(inner_operand) => {}
+                    _ => return self.walk_expr(expr),
+                }
+            }
             ExprKind::Lit(lit) => self.record_lit(lit, lit.span, None),
             _ => return self.walk_expr(expr),
         }

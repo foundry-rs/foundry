@@ -4,8 +4,7 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            arg_for_param, branch_always_exits, count_placeholders, for_each_lhs_var,
-            function_ids,
+            arg_for_param, branch_always_exits, count_placeholders, for_each_lhs_var, function_ids,
             helper_cache::{DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache},
             is_address_cast, is_address_like, is_builtin, is_require_or_assert, lhs_local_var,
             state_lhs_vars, stmts_before_placeholder, tuple_elems, unique,
@@ -191,7 +190,9 @@ impl FlowState {
         let stale_locals = self
             .balance_local_paths
             .iter()
-            .filter(|(_, paths)| paths.iter().any(|path| paths_compatible(path, &self.path_predicates)))
+            .filter(|(_, paths)| {
+                paths.iter().any(|path| paths_compatible(path, &self.path_predicates))
+            })
             .map(|(var_id, _)| *var_id)
             .collect::<BTreeSet<_>>();
         if !stale_locals.is_empty() {
@@ -488,7 +489,10 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     && else_stmt.is_none_or(|e| self.analyze_stmt(e, placeholder, &mut else_state));
                 join_branches(
                     state,
-                    [then_falls_through.then_some(then_state), else_falls_through.then_some(else_state)],
+                    [
+                        then_falls_through.then_some(then_state),
+                        else_falls_through.then_some(else_state),
+                    ],
                 )
             }
             StmtKind::Try(try_stmt) => {
@@ -505,7 +509,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 join_branches(state, clauses)
             }
             StmtKind::Placeholder => {
-                let Some((modifiers, index, body, balance_guard)) = placeholder else { return true };
+                let Some((modifiers, index, body, balance_guard)) = placeholder else {
+                    return true;
+                };
                 if let Some(lock_var) = balance_guard {
                     state.invalidated_balance_guards.remove(&lock_var);
                     self.active_balance_guards.push(lock_var);
@@ -536,7 +542,10 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         let predicate =
             self.reentrancy_balance_enabled.then(|| path_predicate(self.hir, cond)).flatten();
         let Some((predicate, value)) = predicate else { return (true, true) };
-        (then_state.constrain_path((predicate, value)), else_state.constrain_path((predicate, !value)))
+        (
+            then_state.constrain_path((predicate, value)),
+            else_state.constrain_path((predicate, !value)),
+        )
     }
 
     fn analyze_expr(&mut self, expr: &'hir Expr<'hir>, state: &mut FlowState) {
@@ -557,9 +566,10 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 }
                 if self.reentrancy_balance_enabled {
                     let targets = match tuple_elems(lhs) {
-                        Some(elems) => {
-                            elems.iter().map(|e| e.and_then(|e| lhs_local_var(self.hir, e))).collect()
-                        }
+                        Some(elems) => elems
+                            .iter()
+                            .map(|e| e.and_then(|e| lhs_local_var(self.hir, e)))
+                            .collect(),
                         None => vec![lhs_local_var(self.hir, lhs)],
                     };
                     self.bind_locals(state, &targets, rhs, op.is_some());
@@ -783,7 +793,13 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 self.record_return(None, &after);
             }
             returns = self.return_collectors.pop().expect("return collector is active").1;
-            remap_return_paths(self.hir, func_id, func.parameters, &parameter_predicates, &mut returns);
+            remap_return_paths(
+                self.hir,
+                func_id,
+                func.parameters,
+                &parameter_predicates,
+                &mut returns,
+            );
         }
         self.clear_function_locals(func_id, &mut after);
         if self.balance_only_analysis {
@@ -796,7 +812,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 
     /// Internal functions a call through `callee` may reach, following function-typed locals.
-    fn internal_callees(&self, callee: &'hir Expr<'hir>, state: &FlowState) -> BTreeSet<FunctionId> {
+    fn internal_callees(
+        &self,
+        callee: &'hir Expr<'hir>,
+        state: &FlowState,
+    ) -> BTreeSet<FunctionId> {
         if let Some(targets) =
             lhs_local_var(self.hir, callee).and_then(|v| state.internal_function_targets.get(&v))
         {
@@ -829,8 +849,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 
     fn analyze_with_only_balance<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
-        let saved =
-            (self.reentrancy_eth_enabled, self.reentrancy_no_eth_enabled, self.balance_only_analysis);
+        let saved = (
+            self.reentrancy_eth_enabled,
+            self.reentrancy_no_eth_enabled,
+            self.balance_only_analysis,
+        );
         (self.reentrancy_eth_enabled, self.reentrancy_no_eth_enabled, self.balance_only_analysis) =
             (false, false, true);
         let result = f(self);
@@ -987,7 +1010,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         for (var_id, value) in targets.iter().zip(values) {
             let Some(var_id) = *var_id else { continue };
             self.set_balance_local(state, var_id, &value, reads_old_value);
-            let paths = if reads_old_value { PathAlternatives::new() } else { value.self_address_paths };
+            let paths =
+                if reads_old_value { PathAlternatives::new() } else { value.self_address_paths };
             self.set_self_address_paths(state, var_id, paths);
         }
     }
@@ -1015,7 +1039,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         let mut balance_paths = value.balance_paths.clone();
         let mut stale_comparisons = value.stale_comparisons.clone();
         if reads_old_value {
-            balance_paths.extend(state.balance_local_paths.get(&var_id).into_iter().flatten().cloned());
+            balance_paths
+                .extend(state.balance_local_paths.get(&var_id).into_iter().flatten().cloned());
             stale_comparisons
                 .extend(state.balance_comparison_locals.get(&var_id).into_iter().flatten());
         }
@@ -1061,7 +1086,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             self_address_paths: self.self_address_path(expr, state),
             stale_calls: pending
                 .iter()
-                .filter(|(span, call)| self.expr_depends_on_balance(expr, **span, call, true, state))
+                .filter(|(span, call)| {
+                    self.expr_depends_on_balance(expr, **span, call, true, state)
+                })
                 .map(|(span, _)| *span)
                 .collect(),
             stale_comparisons: pending
@@ -1167,7 +1194,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         match &expr.kind {
             ExprKind::Ident(reses) => reses.iter().filter_map(Res::as_variable).any(|v| {
                 let is_stale = call.stale_locals.contains(&v);
-                if stale { is_stale } else { !is_stale && state.balance_local_paths.contains_key(&v) }
+                if stale {
+                    is_stale
+                } else {
+                    !is_stale && state.balance_local_paths.contains_key(&v)
+                }
             }),
             ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => recurse(inner),
             ExprKind::Binary(lhs, _, rhs) => recurse(lhs) || recurse(rhs),
@@ -1654,7 +1685,8 @@ fn stmt_rejects_lock_value(
     lock_var: VariableId,
     entered: Operand,
 ) -> bool {
-    let eval = |cond| match const_value(hir, cond, Some((lock_var, entered)), &mut BTreeSet::new()) {
+    let eval = |cond| match const_value(hir, cond, Some((lock_var, entered)), &mut BTreeSet::new())
+    {
         Some(Operand::Boolean(value)) => Some(value),
         _ => None,
     };

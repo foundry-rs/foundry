@@ -15,8 +15,8 @@ use solar::{
         builtins::Builtin,
         eval::ConstValue,
         hir::{
-            self, Expr, ExprId, ExprKind, ItemId, LoopSource, Res, StateMutability, Stmt,
-            StmtKind, TypeKind, VariableId, Visit,
+            self, Expr, ExprId, ExprKind, ItemId, LoopSource, Res, StateMutability, Stmt, StmtKind,
+            TypeKind, VariableId, Visit,
         },
         ty::TyKind,
     },
@@ -449,9 +449,7 @@ impl<'hir> Analyzer<'hir> {
             ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => {
                 self.add_facts(inner, !negate);
             }
-            ExprKind::Binary(lhs, op, rhs)
-                if matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
-            {
+            ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
                 let is_and = op.kind == BinOpKind::And;
                 // A constant operand either decides the result or defers to the other operand.
                 for (side, other) in [(lhs, rhs), (rhs, lhs)] {
@@ -654,9 +652,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                     self.use_value(value);
                 }
             }
-            ExprKind::Binary(lhs, op, rhs)
-                if matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
-            {
+            ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
                 let _ = self.visit_expr(lhs);
                 let run_rhs = |this: &mut Self| {
                     let _ = this.visit_expr(rhs);

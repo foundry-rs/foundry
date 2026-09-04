@@ -38,7 +38,9 @@ impl<'ast> EarlyLintPass<'ast> for MultiContractFilePass {
             .items
             .iter()
             .filter_map(|item| match &item.kind {
-                ast::ItemKind::Contract(c) if !self.config.is_exempted(&c.kind) => Some(c.name.span),
+                ast::ItemKind::Contract(c) if !self.config.is_exempted(&c.kind) => {
+                    Some(c.name.span)
+                }
                 _ => None,
             })
             .collect();

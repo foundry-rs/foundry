@@ -359,8 +359,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 // branches drop their state.
                 self.expr_aborted = cond_aborted || (then_aborted && else_aborted);
                 if !(then_aborted && else_aborted) {
-                    *tainted =
-                        (!then_aborted && then_tainted) || (!else_aborted && else_tainted);
+                    *tainted = (!then_aborted && then_tainted) || (!else_aborted && else_tainted);
                 }
             }
             _ => for_each_child(expr, &mut |child| self.analyze_expr(child, tainted)),
@@ -392,8 +391,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         // Diagnostics inside a helper entered clean are left to the helper's own pass, which
         // avoids duplicate reports across callers.
         let suppress = self.suppress_inline_reports || !*tainted;
-        let key =
-            InlineCallKey { func_id, external_call_seen: *tainted, suppress_inline_reports: suppress };
+        let key = InlineCallKey {
+            func_id,
+            external_call_seen: *tainted,
+            suppress_inline_reports: suppress,
+        };
         if self.inline_cache.is_in_progress(&key) {
             return;
         }

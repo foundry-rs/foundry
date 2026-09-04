@@ -111,7 +111,9 @@ impl<'gcx> hir::Visit<'gcx> for UsedErrorCollector<'gcx> {
                         MemberScope::Contract(contract_id) => {
                             self.used.extend(hir.contract(contract_id).items.iter().filter_map(
                                 |item| match item {
-                                    hir::ItemId::Error(id) if hir.error(*id).name.name == member.name => {
+                                    hir::ItemId::Error(id)
+                                        if hir.error(*id).name.name == member.name =>
+                                    {
                                         Some(*id)
                                     }
                                     _ => None,

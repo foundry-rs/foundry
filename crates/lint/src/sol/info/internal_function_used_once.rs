@@ -60,7 +60,8 @@ impl<'ast> ProjectLintPass<'ast> for InternalFunctionUsedOnce {
             .copied()
             .collect();
 
-        let mut counter = ReferenceCounter { gcx, current: None, callee: None, refs: HashMap::new() };
+        let mut counter =
+            ReferenceCounter { gcx, current: None, callee: None, refs: HashMap::new() };
         for source_id in hir.source_ids() {
             let _ = counter.visit_nested_source(source_id);
         }

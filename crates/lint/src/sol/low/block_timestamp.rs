@@ -12,7 +12,9 @@ use solar::{
     sema::{
         Gcx, Hir,
         builtins::Builtin,
-        hir::{BinOpKind, Expr, ExprKind, Function, FunctionId, Res, Stmt, StmtKind, VariableId, Visit},
+        hir::{
+            BinOpKind, Expr, ExprKind, Function, FunctionId, Res, Stmt, StmtKind, VariableId, Visit,
+        },
     },
 };
 use std::{collections::HashSet, convert::Infallible, ops::ControlFlow};
@@ -173,7 +175,9 @@ impl<'hir> Visit<'hir> for Checker<'_, '_, '_, 'hir> {
                     }
                 }
             }
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::AssemblyBlock(block) => {
+            StmtKind::Block(block)
+            | StmtKind::UncheckedBlock(block)
+            | StmtKind::AssemblyBlock(block) => {
                 self.block(block.stmts);
             }
             // Only the arms control can continue past contribute their aliases.
@@ -184,9 +188,11 @@ impl<'hir> Visit<'hir> for Checker<'_, '_, '_, 'hir> {
                     let _ = s.visit_stmt(then_stmt);
                 });
                 match else_stmt {
-                    Some(else_stmt) => self.arm(&mut merged, std::slice::from_ref(*else_stmt), |s| {
-                        let _ = s.visit_stmt(else_stmt);
-                    }),
+                    Some(else_stmt) => {
+                        self.arm(&mut merged, std::slice::from_ref(*else_stmt), |s| {
+                            let _ = s.visit_stmt(else_stmt);
+                        })
+                    }
                     None => merged.extend(self.aliases.iter().copied()),
                 }
                 self.aliases = merged;
@@ -227,7 +233,8 @@ impl<'hir> Visit<'hir> for Checker<'_, '_, '_, 'hir> {
                     let is_source = self.is_source_value(rhs) || self.is_source_value(lhs);
                     self.bind(lhs, is_source);
                 } else if let Some(elems) = tuple_elems(lhs) {
-                    for (elem, is_source) in elems.iter().zip(self.source_values(rhs, elems.len())) {
+                    for (elem, is_source) in elems.iter().zip(self.source_values(rhs, elems.len()))
+                    {
                         if let Some(elem) = elem {
                             self.bind(elem, is_source);
                         }
@@ -291,7 +298,12 @@ fn any_subexpr<'hir>(
 const fn is_cmp(kind: BinOpKind) -> bool {
     matches!(
         kind,
-        BinOpKind::Lt | BinOpKind::Le | BinOpKind::Gt | BinOpKind::Ge | BinOpKind::Eq | BinOpKind::Ne
+        BinOpKind::Lt
+            | BinOpKind::Le
+            | BinOpKind::Gt
+            | BinOpKind::Ge
+            | BinOpKind::Eq
+            | BinOpKind::Ne
     )
 }
 

@@ -2,7 +2,9 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        naming::{check_mixed_case as check_mixed_case_pure, check_screaming_snake_case, emit_rename},
+        naming::{
+            check_mixed_case as check_mixed_case_pure, check_screaming_snake_case, emit_rename,
+        },
     },
 };
 use foundry_config::lint::LintSpecificConfig;

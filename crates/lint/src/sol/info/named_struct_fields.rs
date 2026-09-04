@@ -42,7 +42,11 @@ impl<'hir> LateLintPass<'hir> for NamedStructFields {
                 .iter()
                 .zip(*args)
                 .map(|(field, arg)| {
-                    Some(format!("{}: {}", hir.variable(*field).name?, ctx.span_to_snippet(arg.span)?))
+                    Some(format!(
+                        "{}: {}",
+                        hir.variable(*field).name?,
+                        ctx.span_to_snippet(arg.span)?
+                    ))
                 })
                 .collect::<Option<Vec<_>>>()?;
             Some(format!("{}({{ {} }})", ctx.span_to_snippet(*span)?, assignments.join(", ")))

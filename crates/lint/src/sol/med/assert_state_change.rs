@@ -4,8 +4,8 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            for_each_lhs_var, function_ids, is_address_like, is_builtin,
-            receiver_contract_id, resolved_function, ty_contract_id,
+            for_each_lhs_var, function_ids, is_address_like, is_builtin, receiver_contract_id,
+            resolved_function, ty_contract_id,
         },
     },
 };
@@ -42,7 +42,11 @@ impl<'hir> LateLintPass<'hir> for AssertStateChange {
         for arg in args.exprs() {
             // Point the diagnostic at the first sub-expression that mutates state.
             if let ControlFlow::Break(span) = arg.visit(&mut |e| {
-                if is_state_change(gcx, e) { ControlFlow::Break(e.span) } else { ControlFlow::Continue(()) }
+                if is_state_change(gcx, e) {
+                    ControlFlow::Break(e.span)
+                } else {
+                    ControlFlow::Continue(())
+                }
             }) {
                 ctx.emit_with_msg(
                     &ASSERT_STATE_CHANGE,
@@ -83,10 +87,14 @@ fn is_mutating_call<'hir>(gcx: Gcx<'hir>, callee: &Expr<'hir>, args: &CallArgs<'
         // `arr.push(..)` / `arr.pop()` on a storage array or `bytes`. The type check keeps
         // contract methods that happen to be named push/pop out of this heuristic.
         if matches!(method.name, sym::push | kw::Pop)
-            && gcx.type_of_expr(base.peel_parens().id).is_some_and(|ty| matches!(
-                ty.peel_refs().kind,
-                TyKind::DynArray(_) | TyKind::Array(..) | TyKind::Elementary(ElementaryType::Bytes)
-            ))
+            && gcx.type_of_expr(base.peel_parens().id).is_some_and(|ty| {
+                matches!(
+                    ty.peel_refs().kind,
+                    TyKind::DynArray(_)
+                        | TyKind::Array(..)
+                        | TyKind::Elementary(ElementaryType::Bytes)
+                )
+            })
             && is_storage_lvalue(hir, base)
         {
             return true;

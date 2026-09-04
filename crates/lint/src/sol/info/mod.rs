@@ -1,5 +1,31 @@
 use crate::sol::SolLint;
 
+mod boolean_cst;
+mod boolean_equal;
+mod cyclomatic_complexity;
+mod event_fields;
+mod function_init_state;
+mod imports;
+mod incorrect_using_for;
+mod inline_assembly;
+mod interface_naming;
+mod internal_function_used_once;
+mod literal_instead_of_constant;
+mod low_level_calls;
+mod missing_inheritance;
+mod mixed_case;
+mod modifier_used_only_once;
+mod multi_contract_file;
+mod named_struct_fields;
+mod pascal_case;
+mod pragma_directive;
+mod redundant_base_constructor_call;
+mod screaming_snake_case;
+mod todo;
+mod too_many_digits;
+mod unsafe_cheatcodes;
+mod unused_error;
+
 register_lints!(
     boolean_cst: (BooleanCst, early, (BOOLEAN_CST));
     boolean_equal: (BooleanEqual, early, (BOOLEAN_EQUAL));

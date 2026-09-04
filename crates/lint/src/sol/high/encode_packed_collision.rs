@@ -56,7 +56,9 @@ fn is_dynamic_arg<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
         ExprKind::Lit(_) => is_str_lit(expr),
         // Ternary: dynamic when both branches are dynamic. Handled here so that literal branches
         // (which have no checked type) are correctly identified as dynamic.
-        ExprKind::Ternary(_, then, else_) => is_dynamic_arg(gcx, then) && is_dynamic_arg(gcx, else_),
+        ExprKind::Ternary(_, then, else_) => {
+            is_dynamic_arg(gcx, then) && is_dynamic_arg(gcx, else_)
+        }
         _ => expr_ty(gcx, expr).is_some_and(|ty| ty.peel_refs().is_dynamically_sized()),
     }
 }

@@ -38,7 +38,8 @@ impl<'hir> LateLintPass<'hir> for CacheArrayLength {
         let StmtKind::Loop(block, LoopSource::For | LoopSource::ForWithUpdate) = &stmt.kind else {
             return;
         };
-        // `for (init; cond; update) body` lowers to `loop { if (cond) { body; update } else break }`.
+        // `for (init; cond; update) body` lowers to `loop { if (cond) { body; update } else break
+        // }`.
         let Some(Stmt { kind: StmtKind::If(condition, _, Some(else_stmt)), .. }) =
             block.stmts.first()
         else {
@@ -160,7 +161,10 @@ fn call_may_mutate_state<'hir>(
 
 fn is_array_like<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
     gcx.type_of_expr(expr.peel_parens().id).is_some_and(|ty| {
-        matches!(ty.peel_refs().kind, TyKind::DynArray(_) | TyKind::Elementary(ElementaryType::Bytes))
+        matches!(
+            ty.peel_refs().kind,
+            TyKind::DynArray(_) | TyKind::Elementary(ElementaryType::Bytes)
+        )
     })
 }
 

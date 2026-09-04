@@ -743,12 +743,10 @@ fn event_mentions_state_var(hir: &hir::Hir<'_>, event_id: EventId, var_id: Varia
 
     let event = hir.event(event_id);
     let param_names = event.parameters.iter().filter_map(|&p| hir.variable(p).name);
-    iter::once(event.name)
-        .chain(param_names)
-        .any(|name| {
-            let name = normalize(name.as_str());
-            keywords.iter().any(|keyword| !keyword.is_empty() && name.contains(keyword))
-        })
+    iter::once(event.name).chain(param_names).any(|name| {
+        let name = normalize(name.as_str());
+        keywords.iter().any(|keyword| !keyword.is_empty() && name.contains(keyword))
+    })
 }
 
 fn normalize(name: &str) -> String {

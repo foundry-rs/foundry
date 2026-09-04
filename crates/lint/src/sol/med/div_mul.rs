@@ -131,9 +131,9 @@ fn check_stmt<'hir>(
             check_branches(ctx, hir, switch.cases.iter().map(|c| c.body), tainted);
             true
         }
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::AssemblyBlock(block) => {
-            check_block(ctx, hir, *block, tainted)
-        }
+        StmtKind::Block(block)
+        | StmtKind::UncheckedBlock(block)
+        | StmtKind::AssemblyBlock(block) => check_block(ctx, hir, *block, tainted),
         StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => true,
     }
 }
@@ -151,7 +151,9 @@ fn check_expr<'hir>(
             match op.map(|op| op.kind) {
                 None => match tuple_elems(lhs) {
                     Some(elems) => {
-                        for (lhs, is_tainted) in elems.iter().zip(rhs_taints(rhs, elems.len(), tainted)) {
+                        for (lhs, is_tainted) in
+                            elems.iter().zip(rhs_taints(rhs, elems.len(), tainted))
+                        {
                             if let Some(lhs) = lhs {
                                 set_lhs_taint(hir, lhs, is_tainted, tainted);
                             }
@@ -272,7 +274,9 @@ fn set_taint(hir: &Hir<'_>, var_id: VariableId, is_tainted: bool, tainted: &mut 
 fn is_division_or_tainted(expr: &Expr<'_>, tainted: &Tainted) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Binary(_, op, _) => op.kind == BinOpKind::Div,
-        ExprKind::Ident(reses) => reses.iter().filter_map(Res::as_variable).any(|v| tainted.contains(&v)),
+        ExprKind::Ident(reses) => {
+            reses.iter().filter_map(Res::as_variable).any(|v| tainted.contains(&v))
+        }
         ExprKind::Call(..) => is_yul_call(expr, &[Builtin::YulDiv, Builtin::YulSdiv]),
         ExprKind::YulMember(inner, _) => is_division_or_tainted(inner, tainted),
         _ => false,

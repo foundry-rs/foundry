@@ -1,7 +1,10 @@
 use super::IncorrectStrictEquality;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::{is_address_like, referenced_item}},
+    sol::{
+        Severity, SolLint,
+        analysis::{is_address_like, referenced_item},
+    },
 };
 use solar::{
     ast::BinOpKind,
@@ -53,9 +56,7 @@ impl<'hir> LateLintPass<'hir> for IncorrectStrictEquality {
 /// method), skipping static library calls to avoid internal helpers of the same name.
 fn is_externally_influenced<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
     match &expr.peel_parens().kind {
-        ExprKind::Member(base, member) => {
-            member.name == kw::Balance && is_address_like(gcx, base)
-        }
+        ExprKind::Member(base, member) => member.name == kw::Balance && is_address_like(gcx, base),
         ExprKind::Call(callee, ..) => {
             matches!(&callee.peel_parens().kind, ExprKind::Member(base, m)
                 if m.as_str() == "balanceOf"

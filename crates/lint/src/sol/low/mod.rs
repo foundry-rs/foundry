@@ -1,6 +1,21 @@
 use crate::sol::SolLint;
 
+mod block_timestamp;
+mod calls_loop;
+mod delegatecall_loop;
+mod deprecated_oz_function;
+mod empty_block;
+mod inconsistent_type_names;
+mod incorrect_modifier;
+mod missing_events_access_control;
+mod missing_events_arithmetic;
+mod missing_zero_check;
+mod msg_value_loop;
 mod payable_loop;
+mod reentrancy_events;
+mod require_revert_in_loop;
+mod return_bomb;
+mod solmate_safe_transfer_lib;
 
 register_lints!(
     block_timestamp: (BlockTimestamp, late, (BLOCK_TIMESTAMP));

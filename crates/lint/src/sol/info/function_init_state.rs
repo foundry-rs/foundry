@@ -42,8 +42,13 @@ impl<'hir> LateLintPass<'hir> for FunctionInitState {
                 && !variable.is_constant()
                 && let Some(initializer) = variable.initializer
             {
-                let mut finder =
-                    ImpureRefFinder { gcx, source: contract.source, contract: id, callee: None, found: false };
+                let mut finder = ImpureRefFinder {
+                    gcx,
+                    source: contract.source,
+                    contract: id,
+                    callee: None,
+                    found: false,
+                };
                 let _ = finder.visit_expr(initializer);
                 if finder.found {
                     ctx.emit(&FUNCTION_INIT_STATE, variable.span);
@@ -125,10 +130,14 @@ impl ImpureRefFinder<'_> {
             for &base_id in hir.contract(contract_id).linearized_bases {
                 for &item_id in hir.contract(base_id).items {
                     match item_id {
-                        ItemId::Variable(id) if hir.variable(id).name.is_some_and(|n| n.name == member) => {
+                        ItemId::Variable(id)
+                            if hir.variable(id).name.is_some_and(|n| n.name == member) =>
+                        {
                             self.judge_variable(id)
                         }
-                        ItemId::Function(id) if hir.function(id).name.is_some_and(|n| n.name == member) => {
+                        ItemId::Function(id)
+                            if hir.function(id).name.is_some_and(|n| n.name == member) =>
+                        {
                             self.judge_function(id)
                         }
                         _ => {}

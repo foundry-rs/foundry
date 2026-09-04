@@ -42,7 +42,8 @@ fn check_lit(ctx: &LintContext, lit: &Lit<'_>) {
     let hex = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X"));
     // Match Slither's detector: skip only address-shaped hex constants, not all hex constants
     // (long padded masks/selectors are still hard to review), and scientific notation (`1e18`).
-    let is_hex_address = hex.is_some_and(|h| h.len() == 40 && h.bytes().all(|b| b.is_ascii_hexdigit()));
+    let is_hex_address =
+        hex.is_some_and(|h| h.len() == 40 && h.bytes().all(|b| b.is_ascii_hexdigit()));
     let is_scientific = hex.is_none() && s.contains(['e', 'E']);
     // 5+ consecutive zeros in the literal as written. Underscores are preserved, so
     // `1_000_000` passes while `1_000000` is flagged.

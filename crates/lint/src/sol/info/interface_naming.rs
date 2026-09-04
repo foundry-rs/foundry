@@ -34,7 +34,9 @@ impl<'ast> EarlyLintPass<'ast> for InterfaceFileNaming {
             _ => None,
         });
         if let Some(first) = contracts.next()
-            && std::iter::once(first).chain(contracts).all(|c| c.kind == ast::ContractKind::Interface)
+            && std::iter::once(first)
+                .chain(contracts)
+                .all(|c| c.kind == ast::ContractKind::Interface)
             && let Some(file_name) = file_name(ctx, unit)
             && !file_name.starts_with('I')
         {
@@ -43,7 +45,8 @@ impl<'ast> EarlyLintPass<'ast> for InterfaceFileNaming {
     }
 
     fn check_item_contract(&mut self, ctx: &LintContext, contract: &'ast ast::ItemContract<'ast>) {
-        if contract.kind == ast::ContractKind::Interface && !contract.name.as_str().starts_with('I') {
+        if contract.kind == ast::ContractKind::Interface && !contract.name.as_str().starts_with('I')
+        {
             ctx.emit(&INTERFACE_NAMING, contract.name.span);
         }
     }

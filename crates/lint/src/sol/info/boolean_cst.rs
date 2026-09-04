@@ -10,7 +10,9 @@ declare_forge_lint!(BOOLEAN_CST, Severity::Med, "boolean-cst", "misuse of a bool
 impl<'ast> EarlyLintPass<'ast> for BooleanCst {
     fn check_stmt(&mut self, ctx: &LintContext, stmt: &'ast Stmt<'ast>) {
         match &stmt.kind {
-            StmtKind::If(cond, ..) | StmtKind::DoWhile(_, cond) | StmtKind::For { cond: Some(cond), .. } => {
+            StmtKind::If(cond, ..)
+            | StmtKind::DoWhile(_, cond)
+            | StmtKind::For { cond: Some(cond), .. } => {
                 check_expr(ctx, cond, false);
             }
             // `while (true)` is the idiomatic infinite loop.

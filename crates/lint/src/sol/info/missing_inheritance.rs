@@ -56,7 +56,8 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
                 if !sels.is_empty() {
                     candidates.push(cid);
                 }
-            } else if !contract.kind.is_library() && input_source_idx.contains_key(&contract.source) {
+            } else if !contract.kind.is_library() && input_source_idx.contains_key(&contract.source)
+            {
                 targets.push(cid);
             }
             selectors.insert(cid, sels);
@@ -92,7 +93,10 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
             // tie-break by (span, name), then drop any candidate whose selector set is a
             // subset/superset of a kept one.
             intended.sort_by(|&a, &b| {
-                selectors[&b].len().cmp(&selectors[&a].len()).then_with(|| sort_key(a).cmp(&sort_key(b)))
+                selectors[&b]
+                    .len()
+                    .cmp(&selectors[&a].len())
+                    .then_with(|| sort_key(a).cmp(&sort_key(b)))
             });
             let mut kept: Vec<ContractId> = Vec::new();
             for iid in intended {

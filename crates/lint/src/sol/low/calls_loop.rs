@@ -59,8 +59,10 @@ fn classify<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>) -> Option<ExternalCall> {
         return Some(ExternalCall::Opaque);
     }
     let ExprKind::Member(base, member) = &callee.kind else { return None };
-    if matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall | sym::send | sym::transfer)
-        && is_address_like(gcx, base)
+    if matches!(
+        member.name,
+        kw::Call | kw::Delegatecall | kw::Staticcall | sym::send | sym::transfer
+    ) && is_address_like(gcx, base)
     {
         let external =
             if member.name == kw::Staticcall { ExternalCall::Static } else { ExternalCall::Opaque };

@@ -471,9 +471,10 @@ impl<'hir> Analyzer<'hir> {
         let (Some(token), Some(owner)) = (sink.token, underlying_var(sink.from)) else {
             return false;
         };
-        self.state
-            .permits
-            .contains(&PermitRecord { token: self.canonical_key(token), owner: self.canonical(owner) })
+        self.state.permits.contains(&PermitRecord {
+            token: self.canonical_key(token),
+            owner: self.canonical(owner),
+        })
     }
 
     /// `expr` is `amount + fee` (either order), or a local bound to that sum.
@@ -566,8 +567,9 @@ impl<'hir> Analyzer<'hir> {
                 for (i, clause) in t.clauses.iter().enumerate() {
                     self.state = if i == 0 { after_call.clone() } else { before.clone() };
                     if self.visit_stmts(clause.block.stmts) {
-                        joined =
-                            Some(joined.map_or_else(|| self.state.clone(), |j| j.meet(&self.state)));
+                        joined = Some(
+                            joined.map_or_else(|| self.state.clone(), |j| j.meet(&self.state)),
+                        );
                     }
                 }
                 let falls = joined.is_some();
@@ -611,9 +613,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
         match &expr.kind {
             // `rhs` may not execute: its facts and writes survive only if they also hold without
             // it, while `lhs` facts flow into `rhs`. Sinks in `rhs` are still reported.
-            ExprKind::Binary(lhs, op, rhs)
-                if matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
-            {
+            ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
                 let _ = self.visit_expr(lhs);
                 let skipped = self.state.clone();
                 self.add_facts(lhs, op.kind == BinOpKind::Or);
@@ -693,7 +693,8 @@ fn origin_matches(
                 reses.iter().filter_map(Res::as_variable).any(|v| vars.contains(&v))
             }
             ExprKind::Ternary(_, t, f) => {
-                origin_matches(hir, t, depth, vars, base) && origin_matches(hir, f, depth, vars, base)
+                origin_matches(hir, t, depth, vars, base)
+                    && origin_matches(hir, f, depth, vars, base)
             }
             ExprKind::Call(callee, args, _) if depth > 0 && args.exprs().next().is_none() => {
                 function_ids(callee).any(|fid| {
@@ -930,8 +931,7 @@ impl<'hir> CallsiteCollector<'hir> {
         if !is_internal_only(f) {
             return;
         }
-        let call_args =
-            f.parameters.iter().map(|&p| arg_for_param(self.hir, f, p, args)).collect();
+        let call_args = f.parameters.iter().map(|&p| arg_for_param(self.hir, f, p, args)).collect();
         let entry =
             self.out.entry(fid).or_insert_with(|| Some(vec![(true, true); f.parameters.len()]));
         let (Some(facts), Some(call_args)) = (entry.as_mut(), call_args) else {

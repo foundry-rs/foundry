@@ -180,7 +180,10 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
                 };
                 match call.op {
                     SetOp::At => {
-                        if call.index.and_then(Expr::as_variable).is_some_and(|i| cadence.contains(&i))
+                        if call
+                            .index
+                            .and_then(Expr::as_variable)
+                            .is_some_and(|i| cadence.contains(&i))
                         {
                             iterated.push(call.set);
                         }
@@ -194,9 +197,9 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
         }
         for (removed, span) in removes {
             // Two readable paths name the same set exactly when equal; an unreadable one may.
-            let corrupts = iterated
-                .iter()
-                .any(|iterated| removed.as_ref().zip(iterated.as_ref()).is_none_or(|(a, b)| a == b));
+            let corrupts = iterated.iter().any(|iterated| {
+                removed.as_ref().zip(iterated.as_ref()).is_none_or(|(a, b)| a == b)
+            });
             if corrupts {
                 self.ctx.emit(&ENUMERABLE_LOOP_REMOVAL, span);
             }
@@ -382,7 +385,11 @@ fn literal_bool(expr: &Expr<'_>) -> Option<bool> {
 /// The variables a statement list writes through expressions, nested loops included:
 /// assignments (tuple targets included), increments, decrements and deletes. Member and indexed
 /// targets do not write their base variable.
-fn collect_writes<'hir>(hir: &'hir Hir<'hir>, stmts: &'hir [Stmt<'hir>], out: &mut Vec<VariableId>) {
+fn collect_writes<'hir>(
+    hir: &'hir Hir<'hir>,
+    stmts: &'hir [Stmt<'hir>],
+    out: &mut Vec<VariableId>,
+) {
     fn lvalue_variables(expr: &Expr<'_>, out: &mut Vec<VariableId>) {
         match &expr.peel_parens().kind {
             ExprKind::Ident(reses) => out.extend(reses.iter().filter_map(Res::as_variable)),
@@ -396,7 +403,9 @@ fn collect_writes<'hir>(hir: &'hir Hir<'hir>, stmts: &'hir [Stmt<'hir>], out: &m
         hir,
         prune_unreachable: false,
         f: |expr: &Expr<'_>| match &expr.kind {
-            ExprKind::Assign(target, ..) | ExprKind::Delete(target) => lvalue_variables(target, out),
+            ExprKind::Assign(target, ..) | ExprKind::Delete(target) => {
+                lvalue_variables(target, out)
+            }
             ExprKind::Unary(op, target)
                 if matches!(
                     op.kind,
@@ -548,7 +557,11 @@ fn nth_argument<'hir>(
 
 /// Whether `receiver` is a value of a struct declared in a library (or contract) named
 /// `EnumerableSet`, which tells the bound method form apart from the library-qualified form.
-fn is_enumerable_set_value<'hir>(gcx: Gcx<'hir>, hir: &'hir Hir<'hir>, receiver: &Expr<'_>) -> bool {
+fn is_enumerable_set_value<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    receiver: &Expr<'_>,
+) -> bool {
     let Some(ty) = gcx.type_of_expr(receiver.peel_parens().id) else { return false };
     let TyKind::Struct(id) = ty.peel_refs().kind else { return false };
     hir.strukt(id).contract.is_some_and(|c| hir.contract(c).name.as_str() == "EnumerableSet")

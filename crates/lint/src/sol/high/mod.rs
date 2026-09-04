@@ -1,5 +1,19 @@
 use crate::sol::SolLint;
 
+mod arbitrary_send_erc20;
+mod arbitrary_send_eth;
+mod controlled_delegatecall;
+mod encode_packed_collision;
+mod enumerable_loop_removal;
+mod function_selector_collision;
+mod incorrect_exp;
+mod incorrect_shift;
+mod protected_vars;
+mod reentrancy;
+mod rtlo;
+mod unchecked_calls;
+mod unprotected_initializer;
+
 register_lints!(
     arbitrary_send_erc20:
         (ArbitrarySendErc20, late, (ARBITRARY_SEND_ERC20, ARBITRARY_SEND_ERC20_PERMIT));

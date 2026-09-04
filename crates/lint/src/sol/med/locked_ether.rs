@@ -61,7 +61,8 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
         // Explore the runtime entries and, transitively, the helpers and modifiers they reach.
         // Constructor bodies are excluded so their exits don't count.
         let mut visited = HashSet::new();
-        let mut checker = SendChecker { gcx, hir, bases: contract.linearized_bases, worklist: entries };
+        let mut checker =
+            SendChecker { gcx, hir, bases: contract.linearized_bases, worklist: entries };
         while let Some(fid) = checker.worklist.pop() {
             let func = hir.function(fid);
             // Any ETH movement inside an always-reverting function rolls back.

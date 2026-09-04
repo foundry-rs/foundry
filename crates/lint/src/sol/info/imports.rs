@@ -121,10 +121,7 @@ impl<'ast> Visit<'ast> for UsedSymbols<'ast> {
         self.walk_ty(ty)
     }
 
-    fn visit_doc_comment(
-        &mut self,
-        cmnt: &'ast ast::DocComment,
-    ) -> ControlFlow<Self::BreakValue> {
+    fn visit_doc_comment(&mut self, cmnt: &'ast ast::DocComment) -> ControlFlow<Self::BreakValue> {
         if let Ok(snip) = self.source_map.span_to_snippet(cmnt.span) {
             for line in snip.lines() {
                 if let Some((_, relevant)) = line.split_once("@inheritdoc") {

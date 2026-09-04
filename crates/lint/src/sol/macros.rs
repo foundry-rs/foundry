@@ -22,7 +22,8 @@ macro_rules! declare_forge_lint {
 /// Declares the lint modules of a severity group and registers their passes.
 ///
 /// Each entry is `module: (PassStruct, early|late|project, (LINT, ...) [, constructor]), ...;`.
-/// The macro declares `mod module;`, glob-imports it, generates the `PassStruct` marker types,
+/// The macro glob-imports each module (which the caller declares with `mod`, so that rustfmt
+/// still discovers the files), generates the `PassStruct` marker types,
 /// the `REGISTERED_LINTS` slice and a `register_lints` function that adds every pass to Solar's
 /// registry. A constructor, when given, receives the lint-specific configuration.
 #[macro_export]
@@ -47,7 +48,6 @@ macro_rules! register_lints {
 
     ( $( $module:ident: $( ($pass:ident, $kind:ident, ($($lint:ident),* $(,)?) $(, $ctor:expr)?) ),+ $(,)? ; )* ) => {
         $(
-            mod $module;
             use $module::*;
 
             $(

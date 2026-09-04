@@ -20,9 +20,9 @@ use solar::{
         Gcx,
         builtins::Builtin,
         hir::{
-            self, CallArgs, CallArgsKind, ContractId, ContractKind, ElementaryType, Expr,
-            ExprKind, FunctionId, FunctionKind, Hir, ItemId, LoopSource, Modifier, Res, Stmt,
-            StmtKind, TypeKind, Variable, VariableId, Visit,
+            self, CallArgs, CallArgsKind, ContractId, ContractKind, ElementaryType, Expr, ExprKind,
+            FunctionId, FunctionKind, Hir, ItemId, LoopSource, Modifier, Res, Stmt, StmtKind,
+            TypeKind, Variable, VariableId, Visit,
         },
         ty::TyKind,
     },
@@ -316,7 +316,9 @@ impl<'hir> Analyzer<'hir> {
                 for clause in t.clauses {
                     self.state = outer.clone();
                     if self.visit_stmts(clause.block.stmts) {
-                        joined = Some(joined.map_or_else(|| self.state.clone(), |j| j.meet(&self.state)));
+                        joined = Some(
+                            joined.map_or_else(|| self.state.clone(), |j| j.meet(&self.state)),
+                        );
                     }
                 }
                 let falls = joined.is_some();
@@ -358,9 +360,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
         match &expr.kind {
             // `rhs` may not execute: its facts and writes survive only if they also hold without
             // it, while `lhs` facts flow into `rhs`.
-            ExprKind::Binary(lhs, op, rhs)
-                if matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
-            {
+            ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
                 let _ = self.visit_expr(lhs);
                 let skipped = self.state.clone();
                 self.add_facts(lhs, op.kind == BinOpKind::Or);
@@ -520,9 +520,8 @@ impl<'hir> CallerGuards<'hir> {
     /// True when modifier `m` reverts unless `msg.sender` is a trusted principal.
     fn modifier_restricts(&mut self, m: &Modifier<'_>) -> bool {
         let ItemId::Function(fid) = m.id else { return false };
-        modifier_prefix(self.hir, fid).is_some_and(|prefix| {
-            prefix.into_iter().any(|s| self.stmt_restricts(s))
-        })
+        modifier_prefix(self.hir, fid)
+            .is_some_and(|prefix| prefix.into_iter().any(|s| self.stmt_restricts(s)))
     }
 
     fn stmt_restricts(&mut self, stmt: &'hir Stmt<'hir>) -> bool {
@@ -615,7 +614,8 @@ impl<'hir> CallerGuards<'hir> {
             }),
             ExprKind::Member(base, _) => self.is_trusted_principal(base, depth),
             ExprKind::Index(base, idx) => {
-                self.is_trusted_principal(base, depth) && idx.is_none_or(|i| index_is_static(self.hir, i))
+                self.is_trusted_principal(base, depth)
+                    && idx.is_none_or(|i| index_is_static(self.hir, i))
             }
             ExprKind::Call(callee, args, _) => {
                 depth > 0
@@ -979,16 +979,18 @@ fn index_is_static(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
         | ExprKind::Index(..)
         | ExprKind::Ternary(..)
         | ExprKind::Tuple([Some(_)]) => ControlFlow::Continue(()),
-        ExprKind::Ident(reses) if reses.iter().all(|r| match r {
-            Res::Item(ItemId::Variable(v)) => hir.variable(*v).kind.is_state(),
-            Res::Builtin(_) => false,
-            _ => true,
-        }) =>
+        ExprKind::Ident(reses)
+            if reses.iter().all(|r| match r {
+                Res::Item(ItemId::Variable(v)) => hir.variable(*v).kind.is_state(),
+                Res::Builtin(_) => false,
+                _ => true,
+            }) =>
         {
             ControlFlow::Continue(())
         }
         ExprKind::Call(callee, ..)
-            if matches!(callee.peel_parens().kind, ExprKind::Type(_)) || is_contract_cast(callee) =>
+            if matches!(callee.peel_parens().kind, ExprKind::Type(_))
+                || is_contract_cast(callee) =>
         {
             ControlFlow::Continue(())
         }

@@ -72,11 +72,7 @@ impl<'ast> Visit<'ast> for PredictableSourceFinder {
                 if is_ident(base, sym::block)
                     && matches!(
                         member.name,
-                        kw::Timestamp
-                            | kw::Number
-                            | kw::Coinbase
-                            | kw::Prevrandao
-                            | kw::Difficulty
+                        kw::Timestamp | kw::Number | kw::Coinbase | kw::Prevrandao | kw::Difficulty
                     ) =>
             {
                 ControlFlow::Break(())

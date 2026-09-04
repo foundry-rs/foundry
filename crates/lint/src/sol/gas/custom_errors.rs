@@ -17,8 +17,7 @@ declare_forge_lint!(
 
 impl<'ast> EarlyLintPass<'ast> for CustomErrors {
     fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
-        let ExprKind::Call(callee, CallArgs { kind: CallArgsKind::Unnamed(args), .. }) =
-            &expr.kind
+        let ExprKind::Call(callee, CallArgs { kind: CallArgsKind::Unnamed(args), .. }) = &expr.kind
         else {
             return;
         };

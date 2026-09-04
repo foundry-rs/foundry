@@ -11,7 +11,9 @@ use solar::{
     interface::{data_structures::Never, kw, sym},
     sema::{
         Gcx,
-        hir::{self, Expr, ExprKind, ItemId, Res, Stmt, StmtKind, TypeKind, VariableId, Visit as _},
+        hir::{
+            self, Expr, ExprKind, ItemId, Res, Stmt, StmtKind, TypeKind, VariableId, Visit as _,
+        },
     },
 };
 use std::{collections::HashSet, ops::ControlFlow};
@@ -48,18 +50,17 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
 
         // Constants accept any elementary type (value types plus `string`/`bytes`) and contract
         // types, which is the broader filter and covers both lints.
-        let candidates = contract
-            .linearized_bases
-            .iter()
-            .flat_map(|&id| hir.contract(id).variables())
-            .filter(|&id| {
-                let var = hir.variable(id);
-                var.mutability.is_none()
-                    && matches!(
-                        var.ty.kind,
-                        TypeKind::Elementary(_) | TypeKind::Custom(ItemId::Contract(_))
-                    )
-            });
+        let candidates =
+            contract.linearized_bases.iter().flat_map(|&id| hir.contract(id).variables()).filter(
+                |&id| {
+                    let var = hir.variable(id);
+                    var.mutability.is_none()
+                        && matches!(
+                            var.ty.kind,
+                            TypeKind::Elementary(_) | TypeKind::Custom(ItemId::Contract(_))
+                        )
+                },
+            );
         let functions = contract
             .linearized_bases
             .iter()
@@ -86,8 +87,11 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
         let mut constructor_writes = WriteCollector { hir, writes: HashSet::new() };
         let mut runtime_writes = WriteCollector { hir, writes: HashSet::new() };
         for function in functions {
-            let collector =
-                if function.is_constructor() { &mut constructor_writes } else { &mut runtime_writes };
+            let collector = if function.is_constructor() {
+                &mut constructor_writes
+            } else {
+                &mut runtime_writes
+            };
             let _ = collector.visit_function(function);
         }
 
@@ -125,7 +129,9 @@ fn has_assembly_or_unknown(stmt: &Stmt<'_>) -> bool {
         StmtKind::Block(b) | StmtKind::UncheckedBlock(b) | StmtKind::Loop(b, _) => {
             b.stmts.iter().any(has_assembly_or_unknown)
         }
-        StmtKind::If(_, t, e) => has_assembly_or_unknown(t) || e.is_some_and(has_assembly_or_unknown),
+        StmtKind::If(_, t, e) => {
+            has_assembly_or_unknown(t) || e.is_some_and(has_assembly_or_unknown)
+        }
         StmtKind::Try(t) => {
             t.clauses.iter().any(|c| c.block.stmts.iter().any(has_assembly_or_unknown))
         }

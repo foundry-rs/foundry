@@ -1,5 +1,15 @@
 use crate::sol::SolLint;
 
+mod cache_array_length;
+mod costly_loop;
+mod custom_errors;
+mod external_function;
+mod immutable;
+mod keccak;
+mod unused_state_variables;
+mod var_read_using_this;
+mod write_after_write;
+
 register_lints!(
     keccak: (AsmKeccak256, late, (ASM_KECCAK256));
     cache_array_length: (CacheArrayLength, late, (CACHE_ARRAY_LENGTH));

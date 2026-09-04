@@ -77,7 +77,9 @@ impl<'hir> Visit<'hir> for DecisionCounter<'hir> {
             StmtKind::Try(stmt_try) => stmt_try.clauses.len().saturating_sub(1),
             // Each non-default case of a Yul switch is a branch; the `default` clause
             // (`constant == None`) opens no decision of its own.
-            StmtKind::Switch(switch) => switch.cases.iter().filter(|c| c.constant.is_some()).count(),
+            StmtKind::Switch(switch) => {
+                switch.cases.iter().filter(|c| c.constant.is_some()).count()
+            }
             _ => 0,
         };
         self.walk_stmt(stmt)

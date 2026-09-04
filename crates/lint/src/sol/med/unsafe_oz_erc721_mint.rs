@@ -456,7 +456,10 @@ impl<'hir> Cx<'hir> {
                 Some(SelectorEncoding::Literal | SelectorEncoding::Integer(_)),
                 Some(SelectorEncoding::Integer(32..) | SelectorEncoding::FixedBytes(4))
             ) | (Some(SelectorEncoding::FixedBytes(4)), Some(SelectorEncoding::Integer(32)))
-                | (Some(SelectorEncoding::FixedBytes(4..)), Some(SelectorEncoding::FixedBytes(4..)))
+                | (
+                    Some(SelectorEncoding::FixedBytes(4..)),
+                    Some(SelectorEncoding::FixedBytes(4..))
+                )
         )
     }
 
@@ -1105,9 +1108,13 @@ impl<'hir> GuardWalker<'_, 'hir> {
                     // whatever is pending.
                     let delegations = self.delegations;
                     if !walk.future_coverage.is_covered()
-                        && cx.any_in_stmts(slice::from_ref(stmt), |_| false, |expr| {
-                            cx.resolved_callee(expr).is_some_and(|id| delegations.contains(&id))
-                        })
+                        && cx.any_in_stmts(
+                            slice::from_ref(stmt),
+                            |_| false,
+                            |expr| {
+                                cx.resolved_callee(expr).is_some_and(|id| delegations.contains(&id))
+                            },
+                        )
                     {
                         walk.pending = true;
                     }

@@ -1,13 +1,19 @@
 use super::UninitializedLocal;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::{branch_always_exits, for_each_lhs_var}},
+    sol::{
+        Severity, SolLint,
+        analysis::{branch_always_exits, for_each_lhs_var},
+    },
 };
 use solar::{
     interface::{Span, data_structures::Never},
     sema::{
         Gcx, Hir,
-        hir::{Expr, ExprKind, Function, LoopSource, Res, Stmt, StmtKind, TypeKind, VarKind, VariableId, Visit},
+        hir::{
+            Expr, ExprKind, Function, LoopSource, Res, Stmt, StmtKind, TypeKind, VarKind,
+            VariableId, Visit,
+        },
     },
 };
 use std::{
@@ -147,8 +153,10 @@ impl<'hir> Visit<'hir> for Checker<'hir> {
                 self.visit_expr(target)
             }
             ExprKind::Ident(reses) => {
-                if let Some(vid) =
-                    reses.iter().filter_map(Res::as_variable).find(|v| self.uninitialized.contains(v))
+                if let Some(vid) = reses
+                    .iter()
+                    .filter_map(Res::as_variable)
+                    .find(|v| self.uninitialized.contains(v))
                 {
                     self.findings.entry(vid).or_insert(expr.span);
                 }

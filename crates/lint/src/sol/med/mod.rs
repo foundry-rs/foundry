@@ -1,5 +1,25 @@
 use crate::sol::SolLint;
 
+mod assert_state_change;
+mod dangerous_unary_operator;
+mod div_mul;
+mod ecrecover;
+mod incorrect_erc20_interface;
+mod incorrect_erc721_interface;
+mod incorrect_strict_equality;
+mod locked_ether;
+mod mapping_deletion;
+mod non_reentrant_not_first;
+mod tautological_compare;
+mod tautology;
+mod tx_origin;
+mod uninitialized_local;
+mod uninitialized_state_variables;
+mod unsafe_oz_erc721_mint;
+mod unsafe_typecast;
+mod unused_return;
+mod weak_prng;
+
 register_lints!(
     assert_state_change: (AssertStateChange, late, (ASSERT_STATE_CHANGE));
     dangerous_unary_operator: (DangerousUnaryOperator, early, (DANGEROUS_UNARY_OPERATOR));

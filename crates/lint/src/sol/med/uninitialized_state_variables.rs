@@ -43,8 +43,7 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
         // Every read and write in the whole inheritance chain (`linearized_bases[0]` is the
         // contract itself) determines whether a variable is ever written.
         let bases = contract.linearized_bases;
-        let mut collector =
-            Collector { hir, bases, read: HashSet::new(), written: HashSet::new() };
+        let mut collector = Collector { hir, bases, read: HashSet::new(), written: HashSet::new() };
         // Inline assembly can write storage directly; bail out conservatively.
         if bases.iter().any(|&cid| collector.visit_contract_items(hir.contract(cid)).is_break()) {
             return;
@@ -140,15 +139,13 @@ impl<'hir> Collector<'hir> {
                     self.bases.get(1..).unwrap_or_default().to_vec()
                 } else {
                     match &base.peel_parens().kind {
-                        ExprKind::Ident(reses) => {
-                            reses
+                        ExprKind::Ident(reses) => reses
                             .iter()
                             .filter_map(|r| match r {
                                 Res::Item(ItemId::Contract(cid)) => Some(*cid),
                                 _ => None,
                             })
-                            .collect()
-                        }
+                            .collect(),
                         _ => Vec::new(),
                     }
                 };
