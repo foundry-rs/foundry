@@ -4,6 +4,7 @@ use crate::{
         Severity, SolLint,
         naming::{
             check_mixed_case as check_mixed_case_pure, check_screaming_snake_case, emit_rename,
+            has_acronym_exception,
         },
     },
 };
@@ -75,13 +76,9 @@ fn check_mixed_case(s: &str, is_fn: bool, allowed_patterns: &[String]) -> Option
     if is_fn && ["test", "invariant_", "statefulFuzz"].iter().any(|prefix| s.starts_with(prefix)) {
         return None;
     }
-    let splits_validly = |pattern: &String| {
-        let Some((pre, post)) = s.split_once(pattern.as_str()) else { return false };
-        let post = post.trim_start_matches(|c: char| c.is_numeric());
+    if has_acronym_exception(s, allowed_patterns, |pre| {
         pre == heck::AsLowerCamelCase(pre).to_string()
-            && post == heck::AsUpperCamelCase(post).to_string()
-    };
-    if allowed_patterns.iter().any(splits_validly) {
+    }) {
         return None;
     }
     check_mixed_case_pure(s)

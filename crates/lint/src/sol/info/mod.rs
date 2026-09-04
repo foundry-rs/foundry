@@ -29,7 +29,7 @@ mod unused_error;
 register_lints!(
     boolean_cst: (BooleanCst, early, (BOOLEAN_CST));
     boolean_equal: (BooleanEqual, early, (BOOLEAN_EQUAL));
-    pascal_case: (PascalCaseStruct, early, (PASCAL_CASE_STRUCT));
+    pascal_case: (PascalCaseStruct, early, (PASCAL_CASE_STRUCT), PascalCaseStructPass::new);
     screaming_snake_case: (
         ScreamingSnakeCase,
         early,

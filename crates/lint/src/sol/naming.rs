@@ -11,7 +11,7 @@ use solar::interface::{Span, diagnostics::Applicability};
 
 /// `Some(suggestion)` if `s` is not `PascalCase`.
 pub fn check_pascal_case(s: &str) -> Option<String> {
-    suggest(s, heck::AsPascalCase(s).to_string())
+    suggest(s, preserve_underscores(s, heck::AsPascalCase(s).to_string()))
 }
 
 /// `Some(suggestion)` if `s` is not `SCREAMING_SNAKE_CASE`.
@@ -23,6 +23,19 @@ pub fn check_screaming_snake_case(s: &str) -> Option<String> {
 /// exceptions (test-prefixes, allowed patterns, ...) live in the lint.
 pub fn check_mixed_case(s: &str) -> Option<String> {
     suggest(s, preserve_underscores(s, heck::AsLowerCamelCase(s).to_string()))
+}
+
+/// True if `s` is `<pre><pattern><digits><post>` for one of the configured acronym `patterns`
+/// (e.g. `ERC` in `rescueERC20Tokens`), where `pre` satisfies `pre_is_valid` and `post` is
+/// `UpperCamelCase`. One preserved leading or trailing underscore is tolerated.
+pub fn has_acronym_exception(s: &str, patterns: &[String], pre_is_valid: fn(&str) -> bool) -> bool {
+    patterns.iter().any(|pattern| {
+        let Some((pre, post)) = s.split_once(pattern.as_str()) else { return false };
+        let pre = pre.strip_prefix('_').unwrap_or(pre);
+        let post = post.trim_start_matches(|c: char| c.is_numeric());
+        let post = post.strip_suffix('_').unwrap_or(post);
+        pre_is_valid(pre) && post == heck::AsUpperCamelCase(post).to_string()
+    })
 }
 
 /// Emits `lint` at `span` with a machine-applicable rename to `expected`.

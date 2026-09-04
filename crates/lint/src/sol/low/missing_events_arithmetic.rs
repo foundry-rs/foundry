@@ -4,18 +4,20 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            builtins, function_ids, is_protected, lhs_local_var, state_lhs_vars, underlying_var,
+            builtins, dispatched_function, is_protected, lhs_local_var, state_lhs_vars,
+            underlying_var,
         },
     },
 };
 use solar::{
-    ast::{ContractKind, StateMutability, Visibility},
+    ast::{ContractKind, StateMutability},
     interface::Span,
     sema::{
+        Gcx,
         builtins::Builtin,
         hir::{
-            self, BinOpKind, ElementaryType, Expr, ExprKind, FunctionId, StmtKind, TypeKind,
-            UnOpKind, VariableId, Visit,
+            self, BinOpKind, ContractId, ElementaryType, Expr, ExprKind, FunctionId, StmtKind,
+            TypeKind, UnOpKind, VariableId, Visit,
         },
     },
 };
@@ -32,19 +34,24 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
-    fn check_contract(
+    fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
+        gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
-        contract: &'hir hir::Contract<'hir>,
+        contract_id: ContractId,
     ) {
-        if contract.kind != ContractKind::Contract {
+        let contract = hir.contract(contract_id);
+        if contract.kind != ContractKind::Contract || contract.linearization_failed() {
             return;
         }
 
+        // State variables and their entry points are commonly split across a base/derived pair,
+        // so candidates come from the whole inheritance chain.
         let candidates: HashSet<_> = contract
-            .variables()
+            .linearized_bases
+            .iter()
+            .flat_map(|&cid| hir.contract(cid).variables())
             .filter(|&id| {
                 let var = hir.variable(id);
                 var.kind.is_state()
@@ -60,9 +67,13 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
             return;
         }
 
-        let (protected, unprotected): (Vec<_>, Vec<_>) = contract
-            .all_functions()
-            .filter(|&id| is_external_function(hir.function(id)))
+        // The externally reachable functions, with overridden base implementations resolved to
+        // the most derived one.
+        let (protected, unprotected): (Vec<_>, Vec<_>) = gcx
+            .interface_functions(contract_id)
+            .all()
+            .iter()
+            .map(|func| func.id)
             .partition(|&id| is_protected(hir, id));
         let entry_points: Vec<_> = protected
             .into_iter()
@@ -79,7 +90,9 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
 
         // Candidates that flow into arithmetic reachable from an unprotected function.
         let mut uses = UseAnalyzer {
+            gcx,
             hir,
+            contract_id,
             targets: &candidates,
             mode: Mode::Uses,
             taint: HashMap::new(),
@@ -96,7 +109,13 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
         }
 
         for func_id in entry_points {
-            let mut analyzer = WriteAnalyzer { hir, targets: &uses.used, call_stack: Vec::new() };
+            let mut analyzer = WriteAnalyzer {
+                gcx,
+                hir,
+                contract_id,
+                targets: &uses.used,
+                call_stack: Vec::new(),
+            };
             let mut emitted = HashSet::new();
             for write in analyzer.analyze_entry_point(func_id) {
                 if !emitted.insert(write.var_id) {
@@ -114,13 +133,6 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
             }
         }
     }
-}
-
-fn is_external_function(func: &hir::Function<'_>) -> bool {
-    func.kind.is_function()
-        && matches!(func.visibility, Visibility::Public | Visibility::External)
-        && !func.is_constructor()
-        && !func.is_special()
 }
 
 const fn is_arithmetic_op(kind: BinOpKind) -> bool {
@@ -151,7 +163,9 @@ enum Mode {
 
 /// Finds target state variables that flow into arithmetic, following locals and internal calls.
 struct UseAnalyzer<'a, 'hir> {
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
+    contract_id: ContractId,
     targets: &'a HashSet<VariableId>,
     mode: Mode,
     /// Target state variables each local may currently hold.
@@ -208,10 +222,10 @@ impl<'hir> UseAnalyzer<'_, 'hir> {
                     out.extend(sources);
                 }
             }
-            if let ExprKind::Call(callee, args, _) = &e.kind {
-                for callee_id in function_ids(callee) {
-                    out.extend(self.return_sources(callee_id, args));
-                }
+            if let ExprKind::Call(callee, args, _) = &e.kind
+                && let Some(callee_id) = dispatched_function(self.gcx, self.contract_id, callee)
+            {
+                out.extend(self.return_sources(callee_id, args));
             }
             ControlFlow::<()>::Continue(())
         });
@@ -287,7 +301,7 @@ impl<'hir> Visit<'hir> for UseAnalyzer<'_, 'hir> {
             }
             ExprKind::Call(callee, args, _) if self.mode == Mode::Uses => {
                 self.walk_expr(expr)?;
-                for callee_id in function_ids(callee) {
+                if let Some(callee_id) = dispatched_function(self.gcx, self.contract_id, callee) {
                     self.analyze_call(callee_id, args);
                 }
                 return ControlFlow::Continue(());
@@ -353,7 +367,9 @@ impl Flow {
 
 /// Collects writes to target variables that no later `emit` on the same path covers.
 struct WriteAnalyzer<'a, 'hir> {
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
+    contract_id: ContractId,
     targets: &'a HashSet<VariableId>,
     call_stack: Vec<FunctionId>,
 }
@@ -476,7 +492,8 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
                     self.record_writes(state, inner);
                 }
                 ExprKind::Call(callee, args, _) => {
-                    for callee_id in function_ids(callee) {
+                    if let Some(callee_id) = dispatched_function(self.gcx, self.contract_id, callee)
+                    {
                         self.analyze_call(callee_id, args, state);
                     }
                 }

@@ -180,6 +180,34 @@ pub fn resolved_function(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<FunctionId> {
     gcx.type_of_expr(expr.peel_parens().id)?.function_id()
 }
 
+/// The function an internal call made from within `contract_id` dispatches to: a virtual call
+/// resolves to the most derived override, `super.f` to the next base implementation, and a
+/// qualified `Base.f` to that declaration exactly. `None` for external and unresolved callees.
+pub fn dispatched_function(
+    gcx: Gcx<'_>,
+    contract_id: hir::ContractId,
+    callee: &Expr<'_>,
+) -> Option<FunctionId> {
+    let callee = callee.peel_parens();
+    let function_id = gcx.resolved_callee(callee.id)?.res.as_function()?;
+    match &callee.kind {
+        ExprKind::Member(base, _) => {
+            let solar::sema::ty::TyKind::Type(ty) = gcx.type_of_expr(base.id)?.kind else {
+                return None;
+            };
+            match ty.kind {
+                solar::sema::ty::TyKind::Contract(_) => Some(function_id),
+                solar::sema::ty::TyKind::Super(defining) => {
+                    Some(gcx.resolve_super_function(contract_id, defining, function_id))
+                }
+                _ => None,
+            }
+        }
+        ExprKind::Ident(_) => Some(gcx.resolve_virtual_function(contract_id, function_id)),
+        _ => None,
+    }
+}
+
 /// All functions a bare identifier callee may resolve to (syntactic, overload-agnostic).
 pub fn function_ids<'a>(callee: &'a Expr<'a>) -> impl Iterator<Item = FunctionId> + 'a {
     let reses: &[Res] = match &callee.peel_parens().kind {

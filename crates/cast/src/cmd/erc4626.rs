@@ -24,6 +24,8 @@ use foundry_common::shell;
 use serde::Serialize;
 
 const NATIVE_ASSET: Address = address!("EeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE");
+/// ERC-7535 asset quantities are denominated in wei.
+const NATIVE_ASSET_DECIMALS: u8 = 18;
 const ERC7540_ASYNC_DEPOSIT_INTERFACE: FixedBytes<4> = FixedBytes::new([0xce, 0x3b, 0xbe, 0x50]);
 const ERC7540_ASYNC_REDEEM_INTERFACE: FixedBytes<4> = FixedBytes::new([0x62, 0x0e, 0xe8, 0xe4]);
 
@@ -766,7 +768,7 @@ async fn show_info(
     let mut warnings = Vec::new();
     let (asset_name, asset_symbol, asset_decimals) = if asset == NATIVE_ASSET {
         warnings.push(native_asset_warning());
-        (None, None, None)
+        (None, None, Some(NATIVE_ASSET_DECIMALS))
     } else {
         let asset_contract = IERC20Metadata::new(asset, &provider);
         let name_call = asset_contract.name().block(block);
@@ -865,7 +867,7 @@ async fn show_position(
     let mut warnings = Vec::new();
     let (asset_symbol, asset_decimals) = if asset == NATIVE_ASSET {
         warnings.push(native_asset_warning());
-        (None, None)
+        (None, Some(NATIVE_ASSET_DECIMALS))
     } else {
         let asset_contract = IERC20Metadata::new(asset, &provider);
         let symbol_call = asset_contract.symbol().block(block);
@@ -1071,9 +1073,9 @@ async fn check_compatibility(
     record_preview(&mut checks, "previewWithdraw(0)", "redeem", async_redeem, preview_withdraw);
     record_required(&mut checks, "maxRedeem(address)", max_redeem);
     record_preview(&mut checks, "previewRedeem(0)", "redeem", async_redeem, preview_redeem);
-    record_optional(&mut checks, "name()", name);
-    record_optional(&mut checks, "symbol()", symbol);
-    record_optional(&mut checks, "decimals()", decimals);
+    record_required(&mut checks, "name()", name);
+    record_required(&mut checks, "symbol()", symbol);
+    record_required(&mut checks, "decimals()", decimals);
 
     let passed = checks.iter().filter(|check| matches!(check.status, CheckStatus::Pass)).count();
     let warnings = checks.iter().filter(|check| matches!(check.status, CheckStatus::Warn)).count();
@@ -1266,19 +1268,6 @@ fn record_required<T, E>(
         (CheckStatus::Pass, "call succeeded")
     } else {
         (CheckStatus::Fail, "call failed or returned incompatible data")
-    };
-    push_check(checks, name, status, detail);
-}
-
-fn record_optional<T, E>(
-    checks: &mut Vec<CompatibilityCheck>,
-    name: &str,
-    result: std::result::Result<T, E>,
-) {
-    let (status, detail) = if result.is_ok() {
-        (CheckStatus::Pass, "call succeeded")
-    } else {
-        (CheckStatus::Warn, "optional ERC-20 metadata is unavailable")
     };
     push_check(checks, name, status, detail);
 }
