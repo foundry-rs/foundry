@@ -62,8 +62,8 @@ impl<'hir> LateLintPass<'hir> for AssertStateChange {
 
 fn is_state_change<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
     match &expr.kind {
-        ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => is_storage_lvalue(&gcx.hir, lhs),
-        ExprKind::Unary(op, lhs) => op.kind.has_side_effects() && is_storage_lvalue(&gcx.hir, lhs),
+        ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => is_storage_lvalue(gcx, lhs),
+        ExprKind::Unary(op, lhs) => op.kind.has_side_effects() && is_storage_lvalue(gcx, lhs),
         ExprKind::Call(callee, args, _) => is_mutating_call(gcx, callee, args),
         _ => false,
     }
@@ -71,10 +71,10 @@ fn is_state_change<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
 
 /// True if the lvalue is rooted in contract storage: a state variable or a local declared
 /// `storage`, which aliases contract storage.
-fn is_storage_lvalue(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+fn is_storage_lvalue(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     let mut found = false;
     for_each_lhs_var(expr, &mut |v| {
-        let v = hir.variable(v);
+        let v = gcx.hir.variable(v);
         found |= v.is_state_variable() || v.data_location == Some(DataLocation::Storage);
     });
     found
@@ -95,7 +95,7 @@ fn is_mutating_call<'hir>(gcx: Gcx<'hir>, callee: &Expr<'hir>, args: &CallArgs<'
                         | TyKind::Elementary(ElementaryType::Bytes)
                 )
             })
-            && is_storage_lvalue(hir, base)
+            && is_storage_lvalue(gcx, base)
         {
             return true;
         }

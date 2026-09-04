@@ -40,7 +40,7 @@ impl<'hir> LateLintPass<'hir> for UnsafeOzErc721Mint {
         hir: &'hir Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
-        let cx = Cx { gcx, hir };
+        let cx = Cx { gcx };
         // Only the canonical OZ `_safeMint` wrapper is exempt: it legitimately calls `_mint`
         // next to its receiver check. A user-defined `_safeMint` override stays analyzed, since
         // it can call `_mint` directly without any check.
@@ -90,14 +90,13 @@ type Call<'hir> = (FunctionId, &'hir CallArgs<'hir>, Span);
 #[derive(Clone, Copy)]
 struct Cx<'hir> {
     gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
 }
 
 impl<'hir> Cx<'hir> {
     /// Whether an internal/private function is reached from a user `_mint` override of a
     /// derived contract, making it part of the mint primitive rather than a call site.
     fn is_override_delegation_helper(self, function: &'hir hir::Function<'hir>) -> bool {
-        let hir = self.hir;
+        let hir = &self.gcx.hir;
         if !is_internal(function) || (function.override_ && named(function, "_mint")) {
             return false;
         }
@@ -132,10 +131,10 @@ impl<'hir> Cx<'hir> {
             return false;
         }
         seen.push(function_id);
-        let Some(body) = self.hir.function(function_id).body else { return false };
+        let Some(body) = self.gcx.hir.function(function_id).body else { return false };
         self.calls(body.stmts).iter().any(|&(callee, ..)| {
             callee == target
-                || (is_internal(self.hir.function(callee))
+                || (is_internal(self.gcx.hir.function(callee))
                     && self.function_reaches(callee, target, seen))
         })
     }
@@ -157,7 +156,7 @@ impl<'hir> Cx<'hir> {
             return None;
         }
         seen.push(function_id);
-        let hir = self.hir;
+        let hir = &self.gcx.hir;
         let function = hir.function(function_id);
         let is_mint = named(function, "_mint");
         if !(is_mint || (helper && is_internal(function))) {
@@ -233,7 +232,7 @@ impl<'hir> Cx<'hir> {
         let mut token_consistent = true;
         for &&(callee, args, _) in &delegations {
             let minted = self.arg(callee, args, 1).and_then(underlying_var);
-            match minted.filter(|&minted| keeps_its_value(hir, minted)) {
+            match minted.filter(|&minted| keeps_its_value(self.gcx, minted)) {
                 Some(minted) => {
                     token_consistent &= token.is_none_or(|token| token == minted);
                     token = Some(minted);
@@ -309,7 +308,7 @@ impl<'hir> Cx<'hir> {
         stmt_matches: impl FnMut(&'hir Stmt<'hir>) -> bool,
         expr_matches: impl FnMut(&'hir Expr<'hir>) -> bool,
     ) -> bool {
-        let mut finder = Finder { hir: self.hir, stmt_matches, expr_matches };
+        let mut finder = Finder { gcx: self.gcx, stmt_matches, expr_matches };
         stmts.iter().any(|stmt| finder.visit_stmt(stmt).is_break())
     }
 
@@ -318,7 +317,7 @@ impl<'hir> Cx<'hir> {
         expr: &'hir Expr<'hir>,
         expr_matches: impl FnMut(&'hir Expr<'hir>) -> bool,
     ) -> bool {
-        Finder { hir: self.hir, stmt_matches: |_| false, expr_matches }.visit_expr(expr).is_break()
+        Finder { gcx: self.gcx, stmt_matches: |_| false, expr_matches }.visit_expr(expr).is_break()
     }
 
     /// Every resolved call in a subtree, in source order.
@@ -378,8 +377,8 @@ impl<'hir> Cx<'hir> {
         args: &'hir CallArgs<'hir>,
         index: usize,
     ) -> Option<&'hir Expr<'hir>> {
-        let function = self.hir.function(function_id);
-        arg_for_param(self.hir, function, *function.parameters.get(index)?, args)
+        let function = self.gcx.hir.function(function_id);
+        arg_for_param(&self.gcx.hir, function, *function.parameters.get(index)?, args)
     }
 
     /// Whether a resolved declaration is the ERC721 receiver hook: the exact name, the exact
@@ -388,7 +387,7 @@ impl<'hir> Cx<'hir> {
     /// different selector, and an attached library or free function runs in the minting
     /// contract without any external call.
     fn is_receiver_hook(self, function_id: FunctionId) -> bool {
-        let hir = self.hir;
+        let hir = &self.gcx.hir;
         let function = hir.function(function_id);
         let Some(contract) = function.contract else { return false };
         let &[from, to, id, data] = function.parameters else { return false };
@@ -428,7 +427,7 @@ impl<'hir> Cx<'hir> {
             }
             // A constant is worth what it holds.
             ExprKind::Ident(reses) => reses.iter().filter_map(Res::as_variable).any(|vid| {
-                let variable = self.hir.variable(vid);
+                let variable = self.gcx.hir.variable(vid);
                 variable.is_constant()
                     && variable.initializer.is_some_and(|init| self.is_received_selector(init))
             }),
@@ -546,7 +545,7 @@ impl<'hir> Cx<'hir> {
             return false;
         }
         seen.push(function_id);
-        let function = self.hir.function(function_id);
+        let function = self.gcx.hir.function(function_id);
         let in_modifiers = function.modifiers.iter().any(|modifier| {
             matches!(modifier.id, ItemId::Function(id)
                 if self.callable_contains_frame_ending_assembly(id, seen))
@@ -625,7 +624,8 @@ impl<'hir> Cx<'hir> {
         }) {
             return false;
         }
-        match self.resolved_internal_callee(expr).filter(|&id| !self.hir.function(id).virtual_) {
+        match self.resolved_internal_callee(expr).filter(|&id| !self.gcx.hir.function(id).virtual_)
+        {
             Some(id) => self.callable_may_change_account_code(id, seen),
             None => true,
         }
@@ -643,7 +643,7 @@ impl<'hir> Cx<'hir> {
             return false;
         }
         seen.push(function_id);
-        let function = self.hir.function(function_id);
+        let function = self.gcx.hir.function(function_id);
         let may_change = function.modifiers.iter().any(|modifier| {
             modifier.args.exprs().any(|arg| self.expr_may_change_account_code(arg, &[], &[], seen))
         }) || function.modifiers.iter().any(|modifier| {
@@ -665,7 +665,7 @@ impl<'hir> Cx<'hir> {
         recipient: VariableId,
         token: VariableId,
     ) -> Option<(VariableId, VariableId)> {
-        let parameters = self.hir.function(function_id).parameters;
+        let parameters = self.gcx.hir.function(function_id).parameters;
         let bound_to = |var| {
             parameters
                 .iter()
@@ -692,7 +692,7 @@ impl<'hir> Cx<'hir> {
             return GuardCoverage::None;
         }
         seen.push(function_id);
-        let function = self.hir.function(function_id);
+        let function = self.gcx.hir.function(function_id);
         // A `virtual` callee may be replaced by an override that drops the guard, and a helper
         // carrying modifiers is not credited until their expansion is modeled: one may skip the
         // placeholder and let the helper return without ever running its body. The caller
@@ -747,7 +747,7 @@ impl<'hir> Cx<'hir> {
         token: VariableId,
         seed: GuardCoverage,
     ) -> GuardWalk {
-        let hir = self.hir;
+        let hir = &self.gcx.hir;
         let mut state = GuardWalk { coverage: seed, future_coverage: seed, ..GuardWalk::default() };
         let body_bypass = function
             .body
@@ -829,7 +829,7 @@ impl<'hir> Cx<'hir> {
 
 /// Breaks out of a subtree at the first statement or expression matching a predicate.
 struct Finder<'hir, S, E> {
-    hir: &'hir Hir<'hir>,
+    gcx: Gcx<'hir>,
     stmt_matches: S,
     expr_matches: E,
 }
@@ -842,7 +842,7 @@ where
     type BreakValue = ();
 
     fn hir(&self) -> &'hir Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<()> {
@@ -1316,8 +1316,8 @@ const fn is_assembly(stmt: &Stmt<'_>) -> bool {
 /// Whether the variable cannot change between the delegation and the callback guard. An
 /// intervening call can reenter and mutate a state variable after the mint reads it but before
 /// the guard does. A local, a parameter, a `constant` or an `immutable` cannot be moved that way.
-fn keeps_its_value(hir: &Hir<'_>, variable: VariableId) -> bool {
-    let variable = hir.variable(variable);
+fn keeps_its_value(gcx: Gcx<'_>, variable: VariableId) -> bool {
+    let variable = gcx.hir.variable(variable);
     !variable.kind.is_state() || variable.mutability.is_some()
 }
 

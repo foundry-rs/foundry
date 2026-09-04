@@ -49,7 +49,7 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
 
         let receives = |fid: FunctionId| {
             let func = hir.function(fid);
-            func.state_mutability == StateMutability::Payable && !always_reverts(hir, func)
+            func.state_mutability == StateMutability::Payable && !always_reverts(gcx, func)
         };
         // Runtime entries and the constructor are separate inflow channels: only the leaf's own
         // constructor receives deployment value, and it has no runtime exit path.
@@ -61,12 +61,11 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
         // Explore the runtime entries and, transitively, the helpers and modifiers they reach.
         // Constructor bodies are excluded so their exits don't count.
         let mut visited = HashSet::new();
-        let mut checker =
-            SendChecker { gcx, hir, bases: contract.linearized_bases, worklist: entries };
+        let mut checker = SendChecker { gcx, bases: contract.linearized_bases, worklist: entries };
         while let Some(fid) = checker.worklist.pop() {
             let func = hir.function(fid);
             // Any ETH movement inside an always-reverting function rolls back.
-            if !visited.insert(fid) || always_reverts(hir, func) {
+            if !visited.insert(fid) || always_reverts(gcx, func) {
                 continue;
             }
             for modifier in func.modifiers {
@@ -88,13 +87,13 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
 
 /// True if invoking `func` always reverts, through its body or an attached modifier (one that
 /// reverts before its first `_` or after its last one).
-fn always_reverts(hir: &hir::Hir<'_>, func: &hir::Function<'_>) -> bool {
+fn always_reverts(gcx: Gcx<'_>, func: &hir::Function<'_>) -> bool {
     let reverts = |stmts: &[hir::Stmt<'_>]| {
         !block_outcome(Block { span: Span::DUMMY, stmts }).can_skip_placeholder()
     };
     func.body.is_some_and(|body| reverts(body.stmts))
         || func.modifiers.iter().any(|m| {
-            let Some(body) = m.id.as_function().and_then(|id| hir.function(id).body) else {
+            let Some(body) = m.id.as_function().and_then(|id| gcx.hir.function(id).body) else {
                 return false;
             };
             let is_placeholder = |s: &hir::Stmt<'_>| matches!(s.kind, StmtKind::Placeholder);
@@ -134,7 +133,6 @@ fn runtime_dispatch_surface<'hir>(gcx: Gcx<'hir>, bases: &[ContractId]) -> Vec<F
 /// resolved callees for transitive exploration by the outer worklist loop.
 struct SendChecker<'hir> {
     gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
     /// Linearization of the linted contract, which resolves virtual dispatch.
     bases: &'hir [ContractId],
     worklist: Vec<FunctionId>,
@@ -145,7 +143,7 @@ impl SendChecker<'_> {
     /// parameter types)`. Functions not inheritable from it (free functions, library helpers,
     /// private functions, constructors and modifiers) are returned as-is.
     fn resolve_virtual(&self, fid: FunctionId) -> FunctionId {
-        let func = self.hir.function(fid);
+        let func = self.gcx.hir.function(fid);
         if !func.contract.is_some_and(|origin| self.bases.contains(&origin))
             || func.visibility == Visibility::Private
             || func.kind != FunctionKind::Function
@@ -156,9 +154,9 @@ impl SendChecker<'_> {
         let params = self.gcx.item_parameter_types(fid);
         self.bases
             .iter()
-            .flat_map(|&cid| self.hir.contract(cid).functions())
+            .flat_map(|&cid| self.gcx.hir.contract(cid).functions())
             .find(|&candidate| {
-                let c = self.hir.function(candidate);
+                let c = self.gcx.hir.function(candidate);
                 c.name.is_some_and(|n| n.name == name.name)
                     && self.gcx.item_parameter_types(candidate) == params
             })
@@ -170,7 +168,7 @@ impl<'hir> Visit<'hir> for SendChecker<'hir> {
     type BreakValue = ();
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     /// Inline assembly can contain ETH-sending opcodes (`call`, `selfdestruct`, ...): bail
@@ -198,7 +196,7 @@ impl<'hir> Visit<'hir> for SendChecker<'hir> {
                 }
                 // Function-typed variable: the bound target is unknown, treat the call as opaque.
                 Some(Res::Item(ItemId::Variable(id)))
-                    if matches!(self.hir.variable(id).ty.kind, TypeKind::Function(_)) =>
+                    if matches!(self.gcx.hir.variable(id).ty.kind, TypeKind::Function(_)) =>
                 {
                     return ControlFlow::Break(());
                 }

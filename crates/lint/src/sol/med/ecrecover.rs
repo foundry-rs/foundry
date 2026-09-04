@@ -43,13 +43,12 @@ impl<'hir> LateLintPass<'hir> for Ecrecover {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        _hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
         let Some(body) = func.body else { return };
         let mut analyzer = Analyzer {
             gcx,
-            hir,
             returns: func.returns,
             state: FlowState::default(),
             next_value: 0,
@@ -159,7 +158,6 @@ type Signature<'hir> = &'hir Expr<'hir>;
 
 struct Analyzer<'hir> {
     gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
     returns: &'hir [VariableId],
     state: FlowState,
     next_value: u32,
@@ -305,7 +303,7 @@ impl<'hir> Analyzer<'hir> {
             .filter_map(var_of)
             .filter(|&var| {
                 matches!(
-                    self.hir.variable(var).data_location,
+                    self.gcx.hir.variable(var).data_location,
                     Some(hir::DataLocation::Memory | hir::DataLocation::Storage)
                 )
             })
@@ -313,7 +311,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     fn is_local(&self, var: VariableId) -> bool {
-        self.hir.variable(var).is_local_variable()
+        self.gcx.hir.variable(var).is_local_variable()
     }
 
     /// The call expression and signature argument of a builtin `ecrecover` call.
@@ -438,7 +436,7 @@ impl<'hir> Analyzer<'hir> {
 
     /// The data location through which `var` may alias other variables.
     fn aliasable_location(&self, var: VariableId) -> Option<hir::DataLocation> {
-        let var = self.hir.variable(var);
+        let var = self.gcx.hir.variable(var);
         if var.kind.is_state() && var.mutability.is_none() {
             return Some(hir::DataLocation::Storage);
         }
@@ -539,7 +537,7 @@ impl<'hir> Analyzer<'hir> {
     /// have written.
     fn invalidate_mutable_state(&mut self) {
         for var in self.state.tracked_vars() {
-            let variable = self.hir.variable(var);
+            let variable = self.gcx.hir.variable(var);
             if (variable.kind.is_state() && variable.mutability.is_none())
                 || variable.data_location == Some(hir::DataLocation::Storage)
             {
@@ -683,7 +681,7 @@ impl<'hir> Analyzer<'hir> {
                 false
             }
             StmtKind::DeclSingle(var) => {
-                let init = self.hir.variable(*var).initializer;
+                let init = self.gcx.hir.variable(*var).initializer;
                 self.store(&[(Some(ValueKey::Var(*var)), init)], init);
                 true
             }
@@ -768,7 +766,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
@@ -834,7 +832,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             }
             ExprKind::Call(callee, args, _) => {
                 let _ = self.walk_expr(expr);
-                if call_may_mutate_state(self.gcx, self.hir, callee) {
+                if call_may_mutate_state(self.gcx, callee) {
                     self.invalidate_mutable_state();
                 }
                 for var in self.reference_args(callee, args) {
@@ -862,14 +860,14 @@ impl<'hir> Visit<'hir> for SideEffects<'_, 'hir> {
     type BreakValue = ();
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.0.hir
+        &self.0.gcx.hir
     }
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
         match &expr.kind {
             ExprKind::Assign(..) | ExprKind::Delete(_) => ControlFlow::Break(()),
             ExprKind::Unary(op, _) if is_inc_dec(op.kind) => ControlFlow::Break(()),
-            ExprKind::Call(callee, ..) if call_may_mutate_state(self.0.gcx, self.0.hir, callee) => {
+            ExprKind::Call(callee, ..) if call_may_mutate_state(self.0.gcx, callee) => {
                 ControlFlow::Break(())
             }
             ExprKind::Ternary(cond, then, otherwise) => {
@@ -952,7 +950,7 @@ const fn reverse_comparison(op: BinOpKind) -> BinOpKind {
     }
 }
 
-fn call_may_mutate_state(gcx: Gcx<'_>, hir: &hir::Hir<'_>, callee: &Expr<'_>) -> bool {
+fn call_may_mutate_state(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
     let callee = callee.peel_parens();
     if matches!(callee.kind, ExprKind::Type(_)) {
         return false;
@@ -966,7 +964,7 @@ fn call_may_mutate_state(gcx: Gcx<'_>, hir: &hir::Hir<'_>, callee: &Expr<'_>) ->
         ExprKind::Ident(reses) => !reses.iter().all(|res| match res {
             Res::Builtin(_) => true,
             Res::Item(ItemId::Function(id)) => {
-                hir.function(*id).state_mutability <= StateMutability::View
+                gcx.hir.function(*id).state_mutability <= StateMutability::View
             }
             _ => false,
         }),

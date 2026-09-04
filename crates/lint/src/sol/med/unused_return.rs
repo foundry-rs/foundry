@@ -23,7 +23,7 @@ impl<'hir> LateLintPass<'hir> for UnusedReturn {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
+        _hir: &'hir Hir<'hir>,
         stmt: &'hir Stmt<'hir>,
     ) {
         let (call, span) = match &stmt.kind {
@@ -41,7 +41,7 @@ impl<'hir> LateLintPass<'hir> for UnusedReturn {
             }
             _ => return,
         };
-        if is_unused_return_call(gcx, hir, call) {
+        if is_unused_return_call(gcx, call) {
             ctx.emit(&UNUSED_RETURN, span);
         }
     }
@@ -50,7 +50,8 @@ impl<'hir> LateLintPass<'hir> for UnusedReturn {
 /// True if `expr` is a member call on a contract whose every candidate function (same name and
 /// arity) has return values, excluding ERC20 `transfer`/`transferFrom` (covered by
 /// `erc20-unchecked-transfer`).
-fn is_unused_return_call<'hir>(gcx: Gcx<'hir>, hir: &Hir<'hir>, expr: &Expr<'hir>) -> bool {
+fn is_unused_return_call<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
+    let hir = &gcx.hir;
     let ExprKind::Call(callee, args, ..) = &expr.peel_parens().kind else { return false };
     let ExprKind::Member(receiver, name) = &callee.peel_parens().kind else { return false };
     let Some(cid) = receiver_contract_id(gcx, receiver) else { return false };
