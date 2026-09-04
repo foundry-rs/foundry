@@ -2559,14 +2559,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 );
                 let call_trace =
                     SymbolicCallTrace::test_result_traces(raw_call_result.traces.is_some());
-                let base_counterexample = BaseCounterExample::from_fuzz_call(
-                    calldata,
-                    args,
-                    raw_call_result.traces.clone(),
-                );
                 if success {
+                    // The solver model is not a user-facing counterexample until replay confirms
+                    // it, so report the mismatch as an incomplete run instead.
                     self.result.extend(raw_call_result);
                     let reason = "symbolic counterexample did not replay".to_string();
+                    let display_reason = format!(
+                        "incomplete symbolic execution ({:?}): {reason}",
+                        SymbolicStopReason::Error
+                    );
                     let symbolic_result = attach_imported_symbolic_corpus_seeds(
                         &corpus_seed_metadata,
                         SymbolicResult::incomplete(
@@ -2574,20 +2575,23 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             SymbolicStopReason::Error,
                             reason.clone(),
                             stats,
-                            SymbolicReplayMetadata::mismatch(reason.clone()),
+                            SymbolicReplayMetadata::mismatch(reason),
                             call_trace,
                             Some(symbolic_counterexample),
                         ),
                     );
-                    let counterexample = CounterExample::Single(base_counterexample);
                     self.result.symbolic_result(
                         TestStatus::Failure,
-                        Some(reason),
-                        Some(counterexample),
+                        Some(display_reason),
+                        None,
                         symbolic_result,
                     );
                 } else {
-                    let original_base_counterexample = base_counterexample;
+                    let original_base_counterexample = BaseCounterExample::from_fuzz_call(
+                        calldata,
+                        args,
+                        raw_call_result.traces.clone(),
+                    );
                     let original_call = SymbolicCounterexampleCall::from_base_counterexample(
                         &original_base_counterexample,
                         self.sender,
