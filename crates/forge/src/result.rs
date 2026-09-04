@@ -552,15 +552,7 @@ pub struct SymbolicResult {
 impl SymbolicResult {
     /// Creates a symbolic pass result.
     pub fn pass(config: &SymbolicConfig, stats: SymbolicStats) -> Self {
-        Self::new(
-            SymbolicResultStatus::Pass,
-            config,
-            stats,
-            None,
-            SymbolicReplayMetadata::not_required(),
-            SymbolicCallTrace::none(),
-            None,
-        )
+        Self::base(config, stats)
     }
 
     /// Creates a symbolic counterexample result that concrete replay confirmed.
@@ -570,15 +562,10 @@ impl SymbolicResult {
         call_trace: SymbolicCallTrace,
         counterexample: SymbolicCounterexample,
     ) -> Self {
-        Self::new(
-            SymbolicResultStatus::FailCounterexample,
-            config,
-            stats,
-            None,
-            SymbolicReplayMetadata::confirmed(),
-            call_trace,
-            Some(counterexample),
-        )
+        Self {
+            counterexample: Some(counterexample),
+            ..Self::fail_counterexample_sequence(config, stats, call_trace)
+        }
     }
 
     /// Creates a symbolic sequence counterexample result that concrete replay confirmed.
@@ -587,15 +574,12 @@ impl SymbolicResult {
         stats: SymbolicStats,
         call_trace: SymbolicCallTrace,
     ) -> Self {
-        Self::new(
-            SymbolicResultStatus::FailCounterexample,
-            config,
-            stats,
-            None,
-            SymbolicReplayMetadata::confirmed(),
+        Self {
+            status: SymbolicResultStatus::FailCounterexample,
+            replay: SymbolicReplayMetadata::confirmed(),
             call_trace,
-            None,
-        )
+            ..Self::base(config, stats)
+        }
     }
 
     /// Creates an incomplete symbolic result.
@@ -608,30 +592,22 @@ impl SymbolicResult {
         call_trace: SymbolicCallTrace,
         counterexample: Option<SymbolicCounterexample>,
     ) -> Self {
-        Self::new(
-            SymbolicResultStatus::Incomplete,
-            config,
-            stats,
-            Some(SymbolicIncomplete::new(kind, reason)),
+        Self {
+            status: SymbolicResultStatus::Incomplete,
+            incomplete: Some(SymbolicIncomplete::new(kind, reason)),
             replay,
             call_trace,
             counterexample,
-        )
+            ..Self::base(config, stats)
+        }
     }
 
-    fn new(
-        status: SymbolicResultStatus,
-        config: &SymbolicConfig,
-        stats: SymbolicStats,
-        incomplete: Option<SymbolicIncomplete>,
-        replay: SymbolicReplayMetadata,
-        call_trace: SymbolicCallTrace,
-        counterexample: Option<SymbolicCounterexample>,
-    ) -> Self {
+    /// A passing result carrying the run's bounds, solver metadata and assumptions.
+    fn base(config: &SymbolicConfig, stats: SymbolicStats) -> Self {
         Self {
             schema_version: SYMBOLIC_RESULT_SCHEMA_VERSION,
-            status,
-            incomplete,
+            status: SymbolicResultStatus::Pass,
+            incomplete: None,
             bounds: SymbolicBounds::from_config(config),
             solver: SymbolicSolverMetadata {
                 name: config.solver.clone(),
@@ -640,9 +616,9 @@ impl SymbolicResult {
                 stats,
             },
             assumptions: SymbolicAssumption::default_assumptions(),
-            call_trace,
-            replay,
-            counterexample,
+            call_trace: SymbolicCallTrace::none(),
+            replay: SymbolicReplayMetadata::not_required(),
+            counterexample: None,
             corpus_seeds: None,
             artifact: None,
             minimization: None,
