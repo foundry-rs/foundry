@@ -436,11 +436,9 @@ impl<'gcx> DelegateTargetCollector<'gcx> {
         *paths = vec![PathState { selector_filter: SelectorFilter::default(), modified_inputs }];
     }
 
-    /// One iteration of a lowered `for (; cond; update) body`, which is `if (cond) { body; update }
-    /// else break` (or just `{ body; update }` without a condition). Returns the back-edge paths
-    /// and the loop-exit paths.
     /// One iteration of a `for` loop with an update statement: `if (cond) { body } else break`
-    /// followed by the update, which `continue` also reaches.
+    /// followed by the update, which `continue` also reaches. Returns the back-edge paths and the
+    /// loop-exit paths.
     fn visit_for_iteration(
         &mut self,
         block: &hir::Block<'gcx>,

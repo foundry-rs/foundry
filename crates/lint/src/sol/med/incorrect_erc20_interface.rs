@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{Severity, SolLint, analysis::is_elementary},
 };
-use solar::sema::hir;
+use solar::sema::{Gcx, hir};
 
 declare_forge_lint!(
     INCORRECT_ERC20_INTERFACE,
@@ -26,7 +26,7 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectERC20Interface {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: solar::sema::Gcx<'gcx>,
+        gcx: Gcx<'gcx>,
         contract: &'gcx hir::Contract<'gcx>,
     ) {
         let inherits = |names: &[&str]| {
