@@ -5,12 +5,14 @@ use crate::{
 };
 use solar::{
     ast::DataLocation,
+    interface::data_structures::Never,
     sema::{
         Gcx, Hir,
         builtins::Builtin,
-        hir::{Block, Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind},
+        hir::{self, Expr, ExprKind, Function, Res, Stmt, StmtKind, Visit as _},
     },
 };
+use std::ops::ControlFlow;
 
 declare_forge_lint!(COSTLY_LOOP, Severity::Gas, "costly-loop", "storage write inside a loop");
 
@@ -22,149 +24,45 @@ impl<'hir> LateLintPass<'hir> for CostlyLoop {
         hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
-        if let Some(body) = func.body {
-            check_block(ctx, gcx, hir, body, 0);
-        }
+        let mut finder = LoopWriteFinder { ctx, gcx, hir, loop_depth: 0 };
+        let _ = finder.visit_function(func);
     }
 }
 
-fn check_block<'hir>(
-    ctx: &LintContext,
+struct LoopWriteFinder<'a, 'hir> {
+    ctx: &'a LintContext<'a, 'a>,
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
-    block: Block<'hir>,
     loop_depth: u32,
-) {
-    for stmt in block.stmts {
-        check_stmt(ctx, gcx, hir, stmt, loop_depth);
-    }
 }
 
-fn check_stmt<'hir>(
-    ctx: &LintContext,
-    gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
-    stmt: &'hir Stmt<'hir>,
-    loop_depth: u32,
-) {
-    match &stmt.kind {
-        StmtKind::Loop(block, _) => check_block(ctx, gcx, hir, *block, loop_depth + 1),
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            check_block(ctx, gcx, hir, *block, loop_depth);
-        }
-        StmtKind::If(_, then_stmt, else_stmt) => {
-            check_stmt(ctx, gcx, hir, then_stmt, loop_depth);
-            if let Some(else_stmt) = else_stmt {
-                check_stmt(ctx, gcx, hir, else_stmt, loop_depth);
-            }
-        }
-        StmtKind::Try(stmt_try) => {
-            for clause in stmt_try.clauses {
-                check_block(ctx, gcx, hir, clause.block, loop_depth);
-            }
-        }
-        StmtKind::Expr(expr) if loop_depth > 0 => {
-            check_expr_for_writes(ctx, gcx, hir, expr);
-        }
-        StmtKind::DeclSingle(var_id) if loop_depth > 0 => {
-            if let Some(init) = hir.variable(*var_id).initializer {
-                check_expr_for_writes(ctx, gcx, hir, init);
-            }
-        }
-        StmtKind::DeclMulti(_, expr) if loop_depth > 0 => {
-            check_expr_for_writes(ctx, gcx, hir, expr);
-        }
-        StmtKind::Return(Some(expr)) if loop_depth > 0 => {
-            check_expr_for_writes(ctx, gcx, hir, expr);
-        }
-        StmtKind::Emit(expr) | StmtKind::Revert(expr) if loop_depth > 0 => {
-            check_expr_for_writes(ctx, gcx, hir, expr);
-        }
-        _ => {}
-    }
-}
+impl<'hir> hir::Visit<'hir> for LoopWriteFinder<'_, 'hir> {
+    type BreakValue = Never;
 
-fn check_expr_for_writes<'hir>(
-    ctx: &LintContext,
-    gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
-    expr: &'hir Expr<'hir>,
-) {
-    match &expr.kind {
-        ExprKind::Assign(lhs, _, rhs) => {
-            if lvalue_is_state_var(gcx, hir, lhs) {
-                ctx.emit(&COSTLY_LOOP, expr.span);
-            }
-            check_expr_for_writes(ctx, gcx, hir, lhs);
-            check_expr_for_writes(ctx, gcx, hir, rhs);
-        }
-        ExprKind::Unary(op, inner) => {
-            if op.kind.has_side_effects() && lvalue_is_state_var(gcx, hir, inner) {
-                ctx.emit(&COSTLY_LOOP, expr.span);
-            }
-            check_expr_for_writes(ctx, gcx, hir, inner);
-        }
-        ExprKind::Delete(inner) => {
-            if lvalue_is_state_var(gcx, hir, inner) {
-                ctx.emit(&COSTLY_LOOP, expr.span);
-            }
-            check_expr_for_writes(ctx, gcx, hir, inner);
-        }
-        ExprKind::Binary(lhs, _, rhs) => {
-            check_expr_for_writes(ctx, gcx, hir, lhs);
-            check_expr_for_writes(ctx, gcx, hir, rhs);
-        }
-        ExprKind::Ternary(cond, then_expr, else_expr) => {
-            check_expr_for_writes(ctx, gcx, hir, cond);
-            check_expr_for_writes(ctx, gcx, hir, then_expr);
-            check_expr_for_writes(ctx, gcx, hir, else_expr);
-        }
-        ExprKind::Call(callee, args, named_args) => {
-            check_expr_for_writes(ctx, gcx, hir, callee);
-            for arg in args.exprs() {
-                check_expr_for_writes(ctx, gcx, hir, arg);
-            }
-            if let Some(named_args) = named_args {
-                for arg in named_args.args {
-                    check_expr_for_writes(ctx, gcx, hir, &arg.value);
-                }
+    fn hir(&self) -> &'hir Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+        let is_loop = matches!(stmt.kind, StmtKind::Loop(..));
+        self.loop_depth += is_loop as u32;
+        let flow = self.walk_stmt(stmt);
+        self.loop_depth -= is_loop as u32;
+        flow
+    }
+
+    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        if self.loop_depth > 0 {
+            let lvalue = match &expr.kind {
+                ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => Some(lhs),
+                ExprKind::Unary(op, inner) if op.kind.has_side_effects() => Some(inner),
+                _ => None,
+            };
+            if lvalue.is_some_and(|lvalue| lvalue_is_state_var(self.gcx, self.hir, lvalue)) {
+                self.ctx.emit(&COSTLY_LOOP, expr.span);
             }
         }
-        ExprKind::Index(base, index) => {
-            check_expr_for_writes(ctx, gcx, hir, base);
-            if let Some(index) = index {
-                check_expr_for_writes(ctx, gcx, hir, index);
-            }
-        }
-        ExprKind::Slice(base, start, end) => {
-            check_expr_for_writes(ctx, gcx, hir, base);
-            if let Some(start) = start {
-                check_expr_for_writes(ctx, gcx, hir, start);
-            }
-            if let Some(end) = end {
-                check_expr_for_writes(ctx, gcx, hir, end);
-            }
-        }
-        ExprKind::Member(base, _) | ExprKind::Payable(base) => {
-            check_expr_for_writes(ctx, gcx, hir, base);
-        }
-        ExprKind::Tuple(exprs) => {
-            for e in exprs.iter().flatten() {
-                check_expr_for_writes(ctx, gcx, hir, e);
-            }
-        }
-        ExprKind::Array(exprs) => {
-            for e in *exprs {
-                check_expr_for_writes(ctx, gcx, hir, e);
-            }
-        }
-        ExprKind::Ident(_)
-        | ExprKind::Lit(_)
-        | ExprKind::New(_)
-        | ExprKind::TypeCall(_)
-        | ExprKind::Type(_)
-        | ExprKind::YulMember(..)
-        | ExprKind::Err(_) => {}
+        self.walk_expr(expr)
     }
 }
 
@@ -173,14 +71,16 @@ fn check_expr_for_writes<'hir>(
 /// Peels through index accesses, member accesses, and slices to find a state variable or an
 /// expression that returns a storage reference.
 fn lvalue_is_state_var(gcx: Gcx<'_>, hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
-            hir.variable(*id).is_state_variable()
-        }
+    let expr = expr.peel_parens();
+    match &expr.kind {
+        ExprKind::Ident(reses) => reses
+            .iter()
+            .find_map(Res::as_variable)
+            .is_some_and(|id| hir.variable(id).is_state_variable()),
         ExprKind::Call(callee, ..) => {
             gcx.resolved_builtin(callee) == Some(Builtin::ArrayPush0)
                 || gcx
-                    .type_of_expr(expr.peel_parens().id)
+                    .type_of_expr(expr.id)
                     .is_some_and(|ty| ty.loc() == Some(DataLocation::Storage))
         }
         ExprKind::Index(base, _)
