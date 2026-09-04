@@ -1,7 +1,7 @@
 use super::EnumerableLoopRemoval;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::primitives::branch_always_exits},
+    sol::{Severity, SolLint, analysis::branch_always_exits},
 };
 use alloy_primitives::U256;
 use solar::{

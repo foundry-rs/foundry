@@ -1,7 +1,7 @@
 use super::IncorrectERC20Interface;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::interface::is_elementary},
+    sol::{Severity, SolLint, analysis::is_elementary},
 };
 use solar::sema::hir;
 

@@ -7,7 +7,7 @@
 use super::ProtectedVars;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::primitives::branch_always_exits},
+    sol::{Severity, SolLint, analysis::branch_always_exits},
 };
 use solar::{
     ast::{BinOpKind, ContractKind, DataLocation, ElementaryType, FunctionKind, Visibility},

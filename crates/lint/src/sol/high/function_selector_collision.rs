@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::primitives::{branch_always_exits, is_require_or_assert},
+        analysis::{branch_always_exits, is_require_or_assert},
     },
 };
 use alloy_primitives::Selector;

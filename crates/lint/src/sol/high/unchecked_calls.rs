@@ -3,8 +3,7 @@ use crate::{
     linter::{EarlyLintPass, LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::interface::{is_elementary, receiver_contract_id},
-        calls::is_low_level_call,
+        analysis::{is_elementary, is_low_level_call, receiver_contract_id},
     },
 };
 use solar::{
@@ -38,13 +37,13 @@ impl<'hir> LateLintPass<'hir> for UncheckedTransferERC20 {
     fn check_stmt(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
+        gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         stmt: &'hir hir::Stmt<'hir>,
     ) {
         // Only expression statements can contain unchecked transfers.
         if let hir::StmtKind::Expr(expr) = &stmt.kind
-            && is_erc20_transfer_call(hir, expr)
+            && is_erc20_transfer_call(gcx, hir, expr)
         {
             ctx.emit(&ERC20_UNCHECKED_TRANSFER, expr.span);
         }
@@ -56,7 +55,11 @@ impl<'hir> LateLintPass<'hir> for UncheckedTransferERC20 {
 /// * `function transferFrom(address from, address to, uint256 amount) external returns bool;`
 ///
 /// Validates the method name, the params (count + types), and the returns (count + types).
-fn is_erc20_transfer_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+fn is_erc20_transfer_call<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &hir::Hir<'hir>,
+    expr: &hir::Expr<'hir>,
+) -> bool {
     // Ensure the expression is a call to a contract member function.
     let hir::ExprKind::Call(
         hir::Expr { kind: hir::ExprKind::Member(contract_expr, func_ident), .. },
@@ -75,7 +78,7 @@ fn is_erc20_transfer_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
         _ => return false,
     };
 
-    let Some(cid) = receiver_contract_id(hir, contract_expr) else { return false };
+    let Some(cid) = receiver_contract_id(gcx, contract_expr) else { return false };
 
     // Try to find a function in the contract that matches the expected signature.
     hir.contract_item_ids(cid).any(|item| {

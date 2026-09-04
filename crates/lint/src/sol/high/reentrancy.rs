@@ -4,8 +4,9 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
+            branch_always_exits,
             helper_cache::{DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache},
-            primitives::{branch_always_exits, is_require_or_assert},
+            is_require_or_assert,
         },
     },
 };

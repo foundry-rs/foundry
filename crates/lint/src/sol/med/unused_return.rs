@@ -1,7 +1,7 @@
 use super::UnusedReturn;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::interface::receiver_contract_id},
+    sol::{Severity, SolLint, analysis::receiver_contract_id},
 };
 use solar::sema::{
     Gcx, Hir,
@@ -19,18 +19,19 @@ impl<'hir> LateLintPass<'hir> for UnusedReturn {
     fn check_stmt(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
+        gcx: Gcx<'hir>,
         hir: &'hir Hir<'hir>,
         stmt: &'hir Stmt<'hir>,
     ) {
         match &stmt.kind {
             StmtKind::Expr(expr)
-                if is_unused_return_call(hir, expr) || is_ignored_tuple_assignment(hir, expr) =>
+                if is_unused_return_call(gcx, hir, expr)
+                    || is_ignored_tuple_assignment(gcx, hir, expr) =>
             {
                 ctx.emit(&UNUSED_RETURN, expr.span);
             }
             StmtKind::DeclMulti(vars, expr)
-                if vars.iter().any(Option::is_none) && is_unused_return_call(hir, expr) =>
+                if vars.iter().any(Option::is_none) && is_unused_return_call(gcx, hir, expr) =>
             {
                 ctx.emit(&UNUSED_RETURN, expr.span);
             }
@@ -39,15 +40,15 @@ impl<'hir> LateLintPass<'hir> for UnusedReturn {
     }
 }
 
-fn is_ignored_tuple_assignment(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+fn is_ignored_tuple_assignment<'hir>(gcx: Gcx<'hir>, hir: &Hir<'hir>, expr: &Expr<'hir>) -> bool {
     let ExprKind::Assign(lhs, None, rhs) = &expr.peel_parens().kind else { return false };
     matches!(&lhs.peel_parens().kind, ExprKind::Tuple(elems) if elems.iter().any(Option::is_none))
-        && is_unused_return_call(hir, rhs)
+        && is_unused_return_call(gcx, hir, rhs)
 }
 
 /// Returns true if `expr` is a member call on a contract whose resolved function has return
 /// values, excluding ERC20 `transfer`/`transferFrom` (covered by `erc20-unchecked-transfer`).
-fn is_unused_return_call(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+fn is_unused_return_call<'hir>(gcx: Gcx<'hir>, hir: &Hir<'hir>, expr: &Expr<'hir>) -> bool {
     let is_type = |var_id: VariableId, type_str: &str| {
         matches!(
             &hir.variable(var_id).ty.kind,
@@ -63,7 +64,7 @@ fn is_unused_return_call(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
     // Arity from either positional or named args.
     let arity = call_args.kind.len();
 
-    let Some(cid) = receiver_contract_id(hir, contract_expr) else { return false };
+    let Some(cid) = receiver_contract_id(gcx, contract_expr) else { return false };
 
     let mut has_candidate = false;
     for item in hir.contract_item_ids(cid) {

@@ -1,7 +1,7 @@
 use super::UnsafeOzErc721Mint;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::primitives::is_require_or_assert},
+    sol::{Severity, SolLint, analysis::is_require_or_assert},
 };
 use alloy_primitives::U256;
 use solar::{

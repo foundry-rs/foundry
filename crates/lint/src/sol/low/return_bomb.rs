@@ -1,7 +1,7 @@
 use super::ReturnBomb;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, calls::is_call_with_gas_limit},
+    sol::{Severity, SolLint, analysis::is_call_with_gas_limit},
 };
 use solar::{
     ast::ElementaryType,

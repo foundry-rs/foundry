@@ -1,7 +1,7 @@
 use super::LowLevelCalls;
 use crate::{
     linter::{EarlyLintPass, LintContext},
-    sol::{Severity, SolLint, calls::is_low_level_call},
+    sol::{Severity, SolLint, analysis::is_low_level_call},
 };
 use solar::ast::{Expr, ItemFunction, visit::Visit};
 use std::ops::ControlFlow;

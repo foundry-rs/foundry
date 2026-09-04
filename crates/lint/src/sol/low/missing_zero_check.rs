@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::primitives::{
+        analysis::{
             address_call_receiver, branch_always_exits, is_address_type, is_require_or_assert,
         },
     },
