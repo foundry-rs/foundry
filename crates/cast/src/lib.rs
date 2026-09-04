@@ -1868,7 +1868,6 @@ impl SimpleCast {
     /// ```
     pub fn pad(s: &str, right: bool, len: usize) -> Result<String> {
         let s = strip_0x(s);
-        // Convert the byte length to a supported dynamic format width.
         let hex_len = len
             .checked_mul(2)
             .filter(|&h| h <= u16::MAX as usize)
