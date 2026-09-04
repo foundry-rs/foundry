@@ -92,8 +92,9 @@ type PathAlternatives = BTreeSet<PathPredicates>;
 struct FlowState {
     /// State variables read so far.
     state_reads: BTreeSet<VariableId>,
-    /// Reentrant calls made after a state read, awaiting a later write to that state.
-    pending_calls: Vec<PendingCall>,
+    /// Reentrant calls made after a state read, with the state read before each, awaiting a
+    /// later write to that state.
+    pending_calls: BTreeMap<(Span, ReentrantCallKind), BTreeSet<VariableId>>,
     /// Internal functions a function-typed local may point to.
     internal_function_targets: BTreeMap<VariableId, BTreeSet<FunctionId>>,
     /// Locals holding `address(this)`, with the path predicates under which they do.
@@ -103,23 +104,16 @@ struct FlowState {
     /// Locals holding a comparison against a balance made stale by the given calls.
     balance_comparison_locals: BTreeMap<VariableId, BTreeSet<Span>>,
     /// External calls after which cached balance locals are stale.
-    pending_balance_calls: Vec<PendingBalanceCall>,
+    pending_balance_calls: BTreeMap<Span, PendingBalanceCall>,
     /// Reentrancy-guard locks written or bypassed while active.
     invalidated_balance_guards: BTreeSet<VariableId>,
     /// Boolean facts known to hold on this path.
     path_predicates: PathPredicates,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct PendingCall {
-    span: Span,
-    kind: ReentrantCallKind,
-    state_reads: BTreeSet<VariableId>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// Balance locals made stale by an external call, and the predicates under which it was made.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 struct PendingBalanceCall {
-    span: Span,
     stale_locals: BTreeSet<VariableId>,
     paths: PathAlternatives,
 }
@@ -149,7 +143,7 @@ enum Operand {
     Boolean(bool),
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 enum ReentrantCallKind {
     Eth,
     NoEth,
@@ -186,24 +180,10 @@ impl BalanceValue {
     }
 }
 
-/// Which balance an operand of a comparison is asked to depend on, relative to a pending call.
-#[derive(Clone, Copy, Debug)]
-enum BalanceQuery {
-    Current(Span),
-    Stale(Span),
-}
-
 impl FlowState {
     fn push_call(&mut self, span: Span, kind: ReentrantCallKind) {
         if !self.state_reads.is_empty() {
-            self.add_call(PendingCall { span, kind, state_reads: self.state_reads.clone() });
-        }
-    }
-
-    fn add_call(&mut self, call: PendingCall) {
-        match self.pending_calls.iter_mut().find(|c| c.span == call.span && c.kind == call.kind) {
-            Some(existing) => existing.state_reads.extend(call.state_reads),
-            None => self.pending_calls.push(call),
+            self.pending_calls.entry((span, kind)).or_default().extend(&self.state_reads);
         }
     }
 
@@ -215,26 +195,15 @@ impl FlowState {
             .map(|(var_id, _)| *var_id)
             .collect::<BTreeSet<_>>();
         if !stale_locals.is_empty() {
-            let paths = BTreeSet::from([self.path_predicates.clone()]);
-            self.add_balance_call(PendingBalanceCall { span, stale_locals, paths });
-        }
-    }
-
-    fn add_balance_call(&mut self, call: PendingBalanceCall) {
-        match self.pending_balance_calls.iter_mut().find(|c| c.span == call.span) {
-            Some(existing) => {
-                existing.stale_locals.extend(call.stale_locals);
-                existing.paths.extend(call.paths);
-            }
-            None => self.pending_balance_calls.push(call),
+            let call = self.pending_balance_calls.entry(span).or_default();
+            call.stale_locals.extend(stale_locals);
+            call.paths.insert(self.path_predicates.clone());
         }
     }
 
     fn merge(&mut self, other: &Self) {
         self.state_reads.extend(&other.state_reads);
-        for call in &other.pending_calls {
-            self.add_call(call.clone());
-        }
+        merge_maps(&mut self.pending_calls, &other.pending_calls);
         self.merge_balance(other);
     }
 
@@ -244,13 +213,15 @@ impl FlowState {
         merge_maps(&mut self.balance_local_paths, &other.balance_local_paths);
         merge_maps(&mut self.balance_comparison_locals, &other.balance_comparison_locals);
         self.invalidated_balance_guards.extend(&other.invalidated_balance_guards);
-        for call in &other.pending_balance_calls {
-            self.add_balance_call(call.clone());
+        for (span, other_call) in &other.pending_balance_calls {
+            let call = self.pending_balance_calls.entry(*span).or_default();
+            call.stale_locals.extend(&other_call.stale_locals);
+            call.paths.extend(other_call.paths.iter().cloned());
         }
     }
 
     fn balance_only(&self) -> Self {
-        Self { state_reads: BTreeSet::new(), pending_calls: Vec::new(), ..self.clone() }
+        Self { state_reads: BTreeSet::new(), pending_calls: BTreeMap::new(), ..self.clone() }
     }
 
     /// Records that `predicate` holds; returns `false` if that contradicts a known fact.
@@ -600,8 +571,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 if let Some(var_id) = lhs_local_var(self.hir, inner) {
                     state.internal_function_targets.remove(&var_id);
                     if self.reentrancy_balance_enabled {
-                        self.set_balance_local(state, var_id, &BalanceValue::default(), false);
-                        self.set_self_address_paths(state, var_id, PathAlternatives::new());
+                        self.clear_local(state, var_id);
                     }
                 }
             }
@@ -914,14 +884,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 
     fn emit_pending_calls(&mut self, state: &FlowState, written_vars: &[VariableId]) {
-        for call in &state.pending_calls {
-            let Some(var_id) = written_vars.iter().find(|v| call.state_reads.contains(v)) else {
-                continue;
-            };
-            if !self.emitted.insert(call.span) {
+        for (&(span, kind), reads) in &state.pending_calls {
+            let Some(var_id) = written_vars.iter().find(|v| reads.contains(v)) else { continue };
+            if !self.emitted.insert(span) {
                 continue;
             }
-            let (lint, what) = match call.kind {
+            let (lint, what) = match kind {
                 ReentrantCallKind::Eth => (&REENTRANCY_ETH, "uncapped ETH transfer"),
                 ReentrantCallKind::NoEth => (&REENTRANCY_NO_ETH, "external call"),
             };
@@ -930,35 +898,33 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 .variable(*var_id)
                 .name
                 .map_or_else(|| "state".to_string(), |name| name.to_string());
-            self.ctx.emit_with_msg(
-                lint,
-                call.span,
-                format!("{what} can be reentered before `{name}` is updated"),
-            );
+            let msg = format!("{what} can be reentered before `{name}` is updated");
+            self.ctx.emit_with_msg(lint, span, msg);
         }
     }
 
     /// Reports pending balance calls whose stale balance `guard` compares against.
     fn emit_balance_calls(&mut self, guard: &'hir Expr<'hir>, state: &FlowState) {
-        for call in &state.pending_balance_calls {
-            if !self.emitted_balance.contains(&call.span)
-                && self.guard_has_stale_balance_comparison(guard, call, state)
+        for (&span, call) in &state.pending_balance_calls {
+            if !self.emitted_balance.contains(&span)
+                && self.guard_has_stale_balance_comparison(guard, span, call, state)
             {
-                self.ctx.emit(&REENTRANCY_BALANCE, call.span);
-                self.emitted_balance.insert(call.span);
+                self.ctx.emit(&REENTRANCY_BALANCE, span);
+                self.emitted_balance.insert(span);
             }
         }
     }
 
-    /// True if `expr` compares a balance read before `call` against one read after it.
+    /// True if `expr` compares a balance read before the pending `call` against one read after.
     fn guard_has_stale_balance_comparison(
         &self,
         expr: &'hir Expr<'hir>,
+        span: Span,
         call: &PendingBalanceCall,
         state: &FlowState,
     ) -> bool {
         let expr = expr.peel_parens();
-        let recurse = |e, s| self.guard_has_stale_balance_comparison(e, call, s);
+        let recurse = |e, s| self.guard_has_stale_balance_comparison(e, span, call, s);
         match &expr.kind {
             ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
                 if recurse(lhs, state) {
@@ -978,18 +944,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                         | BinOpKind::Eq
                         | BinOpKind::Ne
                 );
-                let current_locals = state
-                    .balance_local_paths
-                    .keys()
-                    .filter(|v| !call.stale_locals.contains(v))
-                    .copied()
-                    .collect::<BTreeSet<_>>();
-                let depends = |e, locals, query| self.expr_depends_on_balance(e, locals, query, state);
+                let depends = |e, stale| self.expr_depends_on_balance(e, span, call, stale, state);
                 (is_comparison
-                    && [(lhs, rhs), (rhs, lhs)].into_iter().any(|(current, stale)| {
-                        depends(current, &current_locals, BalanceQuery::Current(call.span))
-                            && depends(stale, &call.stale_locals, BalanceQuery::Stale(call.span))
-                    }))
+                    && [(lhs, rhs), (rhs, lhs)]
+                        .into_iter()
+                        .any(|(current, stale)| depends(current, false) && depends(stale, true)))
                     || recurse(lhs, state)
                     || recurse(rhs, state)
             }
@@ -1000,14 +959,14 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             ExprKind::Call(..) => match cast_args(expr) {
                 Some(args) => args.exprs().any(|arg| recurse(arg, state)),
                 None => self.call_balance_values.get(&expr.span).is_some_and(|values| {
-                    values.iter().any(|value| value.stale_comparisons.contains(&call.span))
+                    values.iter().any(|value| value.stale_comparisons.contains(&span))
                 }),
             },
             ExprKind::Ident(reses) => reses.iter().filter_map(Res::as_variable).any(|var_id| {
                 state
                     .balance_comparison_locals
                     .get(&var_id)
-                    .is_some_and(|calls| calls.contains(&call.span))
+                    .is_some_and(|calls| calls.contains(&span))
             }),
             _ => false,
         }
@@ -1060,8 +1019,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             stale_comparisons
                 .extend(state.balance_comparison_locals.get(&var_id).into_iter().flatten());
         }
-        for call in &mut state.pending_balance_calls {
-            if value.stale_calls.contains(&call.span)
+        for (span, call) in &mut state.pending_balance_calls {
+            if value.stale_calls.contains(span)
                 || (reads_old_value && call.stale_locals.contains(&var_id))
             {
                 call.stale_locals.insert(var_id);
@@ -1102,16 +1061,15 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             self_address_paths: self.self_address_path(expr, state),
             stale_calls: pending
                 .iter()
-                .filter(|call| {
-                    let query = BalanceQuery::Stale(call.span);
-                    self.expr_depends_on_balance(expr, &call.stale_locals, query, state)
-                })
-                .map(|call| call.span)
+                .filter(|(span, call)| self.expr_depends_on_balance(expr, **span, call, true, state))
+                .map(|(span, _)| *span)
                 .collect(),
             stale_comparisons: pending
                 .iter()
-                .filter(|call| self.guard_has_stale_balance_comparison(expr, call, state))
-                .map(|call| call.span)
+                .filter(|(span, call)| {
+                    self.guard_has_stale_balance_comparison(expr, **span, call, state)
+                })
+                .map(|(span, _)| *span)
                 .collect(),
         }
     }
@@ -1187,35 +1145,30 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         }
     }
 
-    /// True if `expr` reads the balance `query` refers to, directly or through `locals`.
+    /// True if `expr` reads the contract balance as it was before the pending `call` (`stale`)
+    /// or as it is after it, directly or through a local.
     fn expr_depends_on_balance(
         &self,
         expr: &'hir Expr<'hir>,
-        locals: &BTreeSet<VariableId>,
-        query: BalanceQuery,
+        span: Span,
+        call: &PendingBalanceCall,
+        stale: bool,
         state: &FlowState,
     ) -> bool {
         let expr = expr.peel_parens();
         let self_balance = self.self_balance_paths(expr, state);
         if !self_balance.is_empty() {
-            return match query {
-                BalanceQuery::Current(call) => state
-                    .pending_balance_calls
+            return !stale
+                && self_balance
                     .iter()
-                    .find(|pending| pending.span == call)
-                    .is_some_and(|pending| {
-                        self_balance.iter().any(|lhs| {
-                            pending.paths.iter().any(|rhs| paths_compatible(lhs, rhs))
-                        })
-                    }),
-                BalanceQuery::Stale(_) => false,
-            };
+                    .any(|lhs| call.paths.iter().any(|rhs| paths_compatible(lhs, rhs)));
         }
-        let recurse = |e| self.expr_depends_on_balance(e, locals, query, state);
+        let recurse = |e| self.expr_depends_on_balance(e, span, call, stale, state);
         match &expr.kind {
-            ExprKind::Ident(reses) => {
-                reses.iter().filter_map(Res::as_variable).any(|v| locals.contains(&v))
-            }
+            ExprKind::Ident(reses) => reses.iter().filter_map(Res::as_variable).any(|v| {
+                let is_stale = call.stale_locals.contains(&v);
+                if stale { is_stale } else { !is_stale && state.balance_local_paths.contains_key(&v) }
+            }),
             ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => recurse(inner),
             ExprKind::Binary(lhs, _, rhs) => recurse(lhs) || recurse(rhs),
             ExprKind::Ternary(cond, true_expr, false_expr) => {
@@ -1224,11 +1177,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             ExprKind::Call(..) => match cast_args(expr) {
                 Some(args) => args.exprs().any(recurse),
                 None => self.call_balance_values.get(&expr.span).is_some_and(|values| {
-                    values.iter().any(|value| match query {
-                        BalanceQuery::Current(call) => {
-                            !value.balance_paths.is_empty() && !value.stale_calls.contains(&call)
-                        }
-                        BalanceQuery::Stale(call) => value.stale_calls.contains(&call),
+                    values.iter().any(|value| {
+                        let is_stale = value.stale_calls.contains(&span);
+                        if stale { is_stale } else { !is_stale && !value.balance_paths.is_empty() }
                     })
                 }),
             },
@@ -1246,20 +1197,17 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         if !self.reentrancy_balance_enabled {
             return;
         }
-        let values = func
-            .parameters
-            .iter()
-            .map(|&param| {
-                let value = arg_for_param(self.hir, func, param, args)
-                    .map(|arg| self.balance_dependency(arg, state))
-                    .unwrap_or_default();
-                (param, value)
-            })
-            .collect::<Vec<_>>();
-        for (param, value) in values {
-            self.set_balance_local(state, param, &value, false);
-            self.set_self_address_paths(state, param, value.self_address_paths);
+        for &param in func.parameters {
+            match arg_for_param(self.hir, func, param, args) {
+                Some(arg) => self.bind_locals(state, &[Some(param)], arg, false),
+                None => self.clear_local(state, param),
+            }
         }
+    }
+
+    fn clear_local(&self, state: &mut FlowState, var_id: VariableId) {
+        self.set_balance_local(state, var_id, &BalanceValue::default(), false);
+        self.set_self_address_paths(state, var_id, PathAlternatives::new());
     }
 
     /// Accumulates the values returned by `return expr;` (or the named return variables when
@@ -1294,8 +1242,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             stale_calls: state
                 .pending_balance_calls
                 .iter()
-                .filter(|call| call.stale_locals.contains(&var_id))
-                .map(|call| call.span)
+                .filter(|(_, call)| call.stale_locals.contains(&var_id))
+                .map(|(span, _)| *span)
                 .collect(),
             stale_comparisons: state
                 .balance_comparison_locals
@@ -1313,7 +1261,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         state.balance_local_paths.retain(|v, _| !owned(*v));
         state.balance_comparison_locals.retain(|v, _| !owned(*v));
         state.path_predicates.retain(|predicate, _| !predicate.mentions(&owned));
-        for call in &mut state.pending_balance_calls {
+        for call in state.pending_balance_calls.values_mut() {
             call.stale_locals.retain(|v| !owned(*v));
         }
     }
@@ -1557,7 +1505,7 @@ fn forget_path_predicates(state: &mut FlowState, var_id: VariableId) {
     };
     state.balance_local_paths.values_mut().for_each(strip);
     state.self_address_local_paths.values_mut().for_each(strip);
-    state.pending_balance_calls.iter_mut().for_each(|call| strip(&mut call.paths));
+    state.pending_balance_calls.values_mut().for_each(|call| strip(&mut call.paths));
 }
 
 /// Arguments of a plain type conversion such as `uint256(x)` or `address(x)`.
