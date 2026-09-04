@@ -152,7 +152,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
             .flat_map(move |(id, c)| {
-                matcher.test_functions(id, &c.abi, |_, _, kind| kind.is_any_test())
+                matcher.test_functions(id.identifier(), &c.abi, |_, _, kind| kind.is_any_test())
             })
     }
 
@@ -178,7 +178,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         let mut out = BTreeMap::<_, BTreeMap<_, _>>::new();
         for (id, c) in self.matching_contracts(filter) {
             let tests = matcher
-                .test_functions(id, &c.abi, |contract_id, func, kind| {
+                .test_functions(id.identifier(), &c.abi, |contract_id, func, kind| {
                     (!fuzz_only
                         || matches!(
                             kind,
@@ -1007,13 +1007,12 @@ impl<'a> TestFunctionMatcher<'a> {
 
     /// Returns the functions of `abi` accepted by `keep`, which is given the contract identifier,
     /// the function and its classification.
-    fn test_functions<'b>(
+    pub(crate) fn test_functions(
         self,
-        id: &ArtifactId,
-        abi: &'b JsonAbi,
+        contract_id: String,
+        abi: &JsonAbi,
         mut keep: impl FnMut(&str, &Function, TestFunctionKind) -> bool,
-    ) -> impl Iterator<Item = &'b Function> {
-        let contract_id = id.identifier();
+    ) -> impl Iterator<Item = &Function> {
         let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
         abi.functions().filter(move |func| {
             let kind = self.test_function_kind(&contract_id, func, generated_symbolic_regression);
@@ -1028,7 +1027,7 @@ impl<'a> TestFunctionMatcher<'a> {
         id: &ArtifactId,
         abi: &'b JsonAbi,
     ) -> impl Iterator<Item = &'b Function> {
-        self.test_functions(id, abi, move |contract_id, func, kind| {
+        self.test_functions(id.identifier(), abi, move |contract_id, func, kind| {
             filter.matches_test_function_kind_in_contract(contract_id, func, kind)
         })
     }

@@ -844,18 +844,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         filter: &dyn TestFilter,
         test_matcher: &TestFunctionMatcher<'_>,
     ) -> Vec<&'a Function> {
-        let generated_symbolic_regression =
-            is_generated_symbolic_regression_contract(&self.contract.abi);
-        self.contract
-            .abi
-            .functions()
-            .filter(|func| {
-                test_matcher.matches_test_function(
-                    filter,
-                    self.name,
-                    func,
-                    generated_symbolic_regression,
-                ) && self.function_matches_network_pass(func)
+        test_matcher
+            .test_functions(self.name.to_string(), &self.contract.abi, |contract_id, func, kind| {
+                filter.matches_test_function_kind_in_contract(contract_id, func, kind)
+                    && self.function_matches_network_pass(func)
             })
             .collect()
     }
