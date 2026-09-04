@@ -6,7 +6,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{function_ids, is_address_like, is_builtin},
+        analysis::{is_address_like, is_builtin},
     },
 };
 use solar::{
@@ -31,8 +31,8 @@ impl<'hir> LateLintPass<'hir> for CallsLoop {
     ) {
         for_each_loop_item(gcx, hir, func, false, |item| {
             if let LoopItem::Expr(expr) = item
-                && let ExprKind::Call(callee, args, _) = &expr.kind
-                && is_external_call(gcx, hir, callee, args.len())
+                && let ExprKind::Call(callee, ..) = &expr.kind
+                && is_external_call(gcx, callee)
             {
                 ctx.emit(&CALLS_LOOP, expr.span);
             }
@@ -78,25 +78,14 @@ fn classify<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>) -> Option<ExternalCall> {
 }
 
 /// True if calling `callee` interacts with another contract (or deploys one).
-pub(super) fn is_external_call<'gcx>(
-    gcx: Gcx<'gcx>,
-    _hir: &'gcx Hir<'gcx>,
-    callee: &Expr<'gcx>,
-    _explicit_arg_count: usize,
-) -> bool {
+pub(super) fn is_external_call<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>) -> bool {
     classify(gcx, callee).is_some()
 }
 
 /// Like [`is_external_call`], but excludes calls that cannot affect log ordering or observable
 /// state: `staticcall` and high-level `view`/`pure` callees (including `this.*`). Unknown
 /// callees are conservatively treated as state-mutating.
-pub(super) fn is_state_mutating_external_call<'gcx>(
-    gcx: Gcx<'gcx>,
-    _hir: &'gcx Hir<'gcx>,
-    callee: &Expr<'gcx>,
-    _explicit_arg_count: usize,
-    _enclosing_contract: Option<ContractId>,
-) -> bool {
+pub(super) fn is_state_mutating_external_call<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>) -> bool {
     match classify(gcx, callee) {
         Some(ExternalCall::Opaque) => true,
         Some(ExternalCall::Member(mutability)) => {
@@ -104,17 +93,6 @@ pub(super) fn is_state_mutating_external_call<'gcx>(
         }
         Some(ExternalCall::Static) | None => false,
     }
-}
-
-/// Non-external functions a bare identifier callee may resolve to.
-pub(super) fn resolved_internal_function_ids<'hir>(
-    hir: &'hir Hir<'hir>,
-    callee: &'hir Expr<'hir>,
-) -> impl Iterator<Item = FunctionId> + 'hir {
-    function_ids(callee).filter(move |&id| {
-        let func = hir.function(id);
-        func.kind.is_function() && func.visibility != Visibility::External
-    })
 }
 
 /// The base-chain function `super.<member>(..)` dispatches to from `enclosing_contract`: the first

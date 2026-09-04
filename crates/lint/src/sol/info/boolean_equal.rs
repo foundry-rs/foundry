@@ -1,10 +1,10 @@
 use super::BooleanEqual;
 use crate::{
     linter::{EarlyLintPass, LintContext, Suggestion},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::ast_bool_literal},
 };
 use solar::{
-    ast::{BinOpKind, Expr, ExprKind, Lit, LitKind},
+    ast::{BinOpKind, Expr, ExprKind},
     interface::diagnostics::Applicability,
 };
 
@@ -21,7 +21,7 @@ impl<'ast> EarlyLintPass<'ast> for BooleanEqual {
         if !matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne) {
             return;
         }
-        let simplified = match (bool_literal(left), bool_literal(right)) {
+        let simplified = match (ast_bool_literal(left), ast_bool_literal(right)) {
             (None, None) => return,
             (Some(_), Some(_)) => None,
             (Some(constant), None) => simplify(ctx, right, op.kind, constant),
@@ -36,13 +36,6 @@ impl<'ast> EarlyLintPass<'ast> for BooleanEqual {
             ),
             None => ctx.emit(&BOOLEAN_EQUAL, expr.span),
         }
-    }
-}
-
-fn bool_literal(expr: &Expr<'_>) -> Option<bool> {
-    match &expr.peel_parens().kind {
-        ExprKind::Lit(Lit { kind: LitKind::Bool(value), .. }, _) => Some(*value),
-        _ => None,
     }
 }
 

@@ -5,9 +5,9 @@ use crate::{
         Severity, SolLint,
         analysis::{
             arg_for_param, branch_always_exits, count_placeholders, do_while_user_stmts,
-            expr_is_address, function_ids, is_address_like_cast, is_loop_termination_if,
-            is_require_or_assert, stmts_before_placeholder, stmts_break_or_continue, tuple_elems,
-            unique,
+            expr_is_address, function_ids, has_side_effect, is_address_like_cast,
+            is_loop_termination_if, is_require_or_assert, stmts_before_placeholder,
+            stmts_break_or_continue, tuple_elems, unique, var_is_address_like,
         },
     },
 };
@@ -418,22 +418,6 @@ fn is_cast(callee: &Expr<'_>) -> bool {
                 ..
             })
         )
-}
-
-const fn var_is_address_like(var: &hir::Variable<'_>) -> bool {
-    matches!(
-        var.ty.kind,
-        TypeKind::Elementary(ElementaryType::Address(_)) | TypeKind::Custom(ItemId::Contract(_))
-    )
-}
-
-fn has_side_effect(expr: &Expr<'_>) -> bool {
-    expr.visit(&mut |expr| match &expr.kind {
-        ExprKind::Assign(..) | ExprKind::Delete(_) => ControlFlow::Break(()),
-        ExprKind::Unary(op, _) if op.kind.has_side_effects() => ControlFlow::Break(()),
-        _ => ControlFlow::Continue(()),
-    })
-    .is_break()
 }
 
 /// The expression returned by a non-virtual, non-overriding, parameterless helper whose body is a

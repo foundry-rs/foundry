@@ -4,15 +4,16 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            arg_for_param, for_each_lhs_var, is_address_type, is_builtin, is_literal_false,
-            is_require_or_assert, resolved_function, underlying_var, unique,
+            OPENZEPPELIN_ROOTS, arg_for_param, for_each_lhs_var, is_address_type, is_builtin,
+            is_literal_false, is_require_or_assert, resolved_function, source_in_package,
+            underlying_var, unique,
         },
     },
 };
 use alloy_primitives::U256;
 use solar::{
     ast::{ElementaryType, LitKind, StateMutability, Visibility},
-    interface::{Span, kw, source_map::FileName},
+    interface::{Span, kw},
     sema::{
         Gcx,
         hir::{
@@ -45,7 +46,7 @@ impl<'hir> LateLintPass<'hir> for UnsafeOzErc721Mint {
         // it can call `_mint` directly without any check.
         if named(func, "_safeMint")
             && func.contract.is_some_and(|id| is_canonical_erc721(hir.contract(id).name.as_str()))
-            && is_openzeppelin_source(hir, func.source)
+            && source_in_package(hir, func.source, OPENZEPPELIN_ROOTS)
         {
             return;
         }
@@ -167,7 +168,7 @@ impl<'hir> Cx<'hir> {
             return None;
         }
         let canonical = is_canonical_erc721(contract.name.as_str())
-            && is_openzeppelin_source(hir, function.source);
+            && source_in_package(hir, function.source, OPENZEPPELIN_ROOTS);
         if canonical && named(function, "_safeMint") {
             return None;
         }
@@ -1287,22 +1288,6 @@ enum SelectorEncoding {
 
 /// The ERC721 answer meaning the recipient accepts the token, `onERC721Received`'s selector.
 const ERC721_RECEIVED: u64 = 0x150b_7a02;
-
-/// The package-root directory names of the OpenZeppelin distributions: the npm scope and the
-/// git-submodule roots. Provenance is judged against a full path component so a same-name
-/// contract under a merely-substring path such as `src/not-openzeppelin/` is not recognized.
-const OPENZEPPELIN_PACKAGE_ROOTS: [&str; 3] =
-    ["@openzeppelin", "openzeppelin-contracts", "openzeppelin-contracts-upgradeable"];
-
-fn is_openzeppelin_source(hir: &Hir<'_>, source_id: hir::SourceId) -> bool {
-    match &hir.source(source_id).file.name {
-        FileName::Real(path) => path.components().any(|component| {
-            matches!(component, std::path::Component::Normal(name)
-                if OPENZEPPELIN_PACKAGE_ROOTS.iter().any(|root| name.eq_ignore_ascii_case(root)))
-        }),
-        _ => false,
-    }
-}
 
 /// The OpenZeppelin contracts whose `_mint` skips the receiver check. `ERC721` and
 /// `ERC721Upgradeable` declare the unchecked `_mint`; in the v4 line, `ERC721Consecutive` and

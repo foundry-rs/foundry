@@ -4,12 +4,12 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            arg_for_param, branch_always_exits, builtins, count_placeholders, expr_is_address,
-            expr_ty, function_ids,
-            helper_cache::{DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache},
-            is_address_like_cast, is_address_self, is_builtin, is_contract_cast, is_literal_zero,
-            is_msg_sender, is_require_or_assert, referenced_item, stmts_before_placeholder,
-            tuple_elems, underlying_var, unique,
+            DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache, arg_for_param,
+            branch_always_exits, builtins, callee_fids, callee_no_arg_returns, expr_is_address,
+            expr_ty, function_ids, function_no_arg_returns, is_address_like_cast, is_address_self,
+            is_builtin, is_contract_cast, is_literal_zero, is_msg_sender, is_require_or_assert,
+            modifier_prefix, referenced_item, tuple_elems, underlying_var, unique,
+            var_is_address_like,
         },
     },
 };
@@ -21,8 +21,8 @@ use solar::{
         builtins::Builtin,
         hir::{
             self, CallArgs, CallArgsKind, ContractId, ContractKind, ElementaryType, Expr, ExprKind,
-            FunctionId, FunctionKind, Hir, ItemId, LoopSource, Modifier, Res, Stmt, StmtKind,
-            TypeKind, Variable, VariableId, Visit,
+            FunctionId, Hir, ItemId, LoopSource, Modifier, Res, Stmt, StmtKind, TypeKind, Variable,
+            VariableId, Visit,
         },
         ty::TyKind,
     },
@@ -485,18 +485,6 @@ fn arg<'hir>(args: &'hir CallArgs<'hir>, pos: usize, names: &[&str]) -> Option<&
     }
 }
 
-/// Statements before the unique `_;` of modifier `fid`, when it is reached unconditionally.
-fn modifier_prefix<'hir>(hir: &'hir Hir<'hir>, fid: FunctionId) -> Option<Vec<&'hir Stmt<'hir>>> {
-    let modifier = hir.function(fid);
-    let body = modifier.body.filter(|_| matches!(modifier.kind, FunctionKind::Modifier))?;
-    if count_placeholders(body.stmts) != 1 {
-        return None;
-    }
-    let mut prefix = Vec::new();
-    stmts_before_placeholder(body.stmts, &mut prefix)?;
-    Some(prefix)
-}
-
 /// Recognises guards that restrict `msg.sender` to a deploy-time-fixed principal, backed by a
 /// memoised analysis of which state variables may alias `address(this)`.
 struct CallerGuards<'hir> {
@@ -888,54 +876,6 @@ fn invoked_function(hir: &Hir<'_>, m: &Modifier<'_>) -> Option<FunctionId> {
     }
 }
 
-/// Functions a callee may name: every overload of a bare identifier, or a library-static `Lib.f`.
-fn callee_fids(hir: &Hir<'_>, callee: &Expr<'_>) -> Vec<FunctionId> {
-    match &callee.peel_parens().kind {
-        ExprKind::Member(base, member) => match referenced_item(base) {
-            Some(ItemId::Contract(cid)) if hir.contract(cid).kind == ContractKind::Library => hir
-                .contract(cid)
-                .functions()
-                .filter(|f| hir.function(*f).name.is_some_and(|n| n.name == member.name))
-                .collect(),
-            _ => Vec::new(),
-        },
-        _ => function_ids(callee).collect(),
-    }
-}
-
-/// True when `callee` names a zero-parameter function whose body returns an expression matching
-/// `pred`.
-fn callee_no_arg_returns<'hir>(
-    hir: &'hir Hir<'hir>,
-    callee: &'hir Expr<'hir>,
-    mut pred: impl FnMut(&'hir Expr<'hir>) -> bool,
-) -> bool {
-    callee_fids(hir, callee).into_iter().any(|fid| function_no_arg_returns(hir, fid, &mut pred))
-}
-
-/// True when `fid` takes no parameters and its body is `return e;` or `namedRet = e;` (optionally
-/// followed by a bare `return;`) with `pred(e)`.
-fn function_no_arg_returns<'hir>(
-    hir: &'hir Hir<'hir>,
-    fid: FunctionId,
-    pred: &mut impl FnMut(&'hir Expr<'hir>) -> bool,
-) -> bool {
-    let f = hir.function(fid);
-    let Some(body) = f.body else { return false };
-    let stmts = match body.stmts {
-        [rest @ .., last] if matches!(last.kind, StmtKind::Return(None)) => rest,
-        stmts => stmts,
-    };
-    let [stmt] = stmts else { return false };
-    f.parameters.is_empty()
-        && match &stmt.kind {
-            StmtKind::Return(Some(e)) => pred(e),
-            StmtKind::Expr(e) => matches!(&e.peel_parens().kind, ExprKind::Assign(lhs, None, rhs)
-                if f.returns.len() == 1 && underlying_var(lhs) == Some(f.returns[0]) && pred(rhs)),
-            _ => false,
-        }
-}
-
 /// Argument returned verbatim (modulo casts) by an identity helper call `id(x)` / `Lib.id(x)`.
 fn identity_helper_arg<'hir>(
     hir: &'hir Hir<'hir>,
@@ -1055,14 +995,6 @@ fn is_numeric_cast(callee: &Expr<'_>) -> bool {
 fn is_trusted_literal(expr: &Expr<'_>) -> bool {
     matches!(&expr.kind, ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Address(_)))
         || is_literal_zero(expr)
-}
-
-/// `address` / `address payable` or a contract / interface type.
-const fn var_is_address_like(var: &Variable<'_>) -> bool {
-    matches!(
-        var.ty.kind,
-        TypeKind::Elementary(ElementaryType::Address(_)) | TypeKind::Custom(ItemId::Contract(_))
-    )
 }
 
 fn expr_is_function<'hir>(gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) -> bool {

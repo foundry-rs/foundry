@@ -1,13 +1,13 @@
 use super::TautologicalCompare;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::cast_type},
 };
 use solar::{
     ast::{BinOpKind, Lit, LitKind},
     sema::{
         Gcx,
-        hir::{self, ElementaryType, Expr, ExprKind, TypeKind},
+        hir::{self, Expr, ExprKind},
         ty::TyKind,
     },
 };
@@ -72,7 +72,7 @@ fn exprs_equal<'hir>(a: &Expr<'hir>, b: &Expr<'hir>) -> bool {
         // Only casts to the *same* elementary type are pure conversions: `uint256(x) == uint8(x)`
         // is not tautological because the narrower cast can truncate.
         (ExprKind::Call(ca, args_a, _), ExprKind::Call(cb, args_b, _)) => {
-            matches!((cast_elem_type(ca), cast_elem_type(cb)), (Some(ea), Some(eb)) if ea == eb)
+            matches!((cast_type(ca), cast_type(cb)), (Some(ea), Some(eb)) if ea == eb)
                 && args_a.len() == 1
                 && args_b.len() == 1
                 && args_a.exprs().zip(args_b.exprs()).all(|(ia, ib)| exprs_equal(ia, ib))
@@ -85,13 +85,6 @@ fn exprs_equal<'hir>(a: &Expr<'hir>, b: &Expr<'hir>) -> bool {
             exprs_equal(ca, cb) && exprs_equal(ta, tb) && exprs_equal(fa, fb)
         }
         _ => false,
-    }
-}
-
-fn cast_elem_type<'a>(callee: &'a Expr<'_>) -> Option<&'a ElementaryType> {
-    match &callee.peel_parens().kind {
-        ExprKind::Type(hir::Type { kind: TypeKind::Elementary(e), .. }) => Some(e),
-        _ => None,
     }
 }
 

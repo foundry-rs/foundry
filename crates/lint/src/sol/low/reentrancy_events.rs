@@ -1,17 +1,14 @@
 use super::{
     ReentrancyEvents,
-    calls_loop::{
-        is_state_mutating_external_call, resolved_internal_function_ids,
-        resolved_super_function_ids,
-    },
+    calls_loop::{is_state_mutating_external_call, resolved_super_function_ids},
 };
 use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
         analysis::{
-            helper_cache::{DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache},
-            is_exit_call,
+            DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache, for_each_child, is_exit_call,
+            resolved_internal_function_ids,
         },
     },
 };
@@ -317,13 +314,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         match &expr.kind {
             ExprKind::Call(callee, args, _) => {
                 for_each_child(expr, &mut |child| self.analyze_expr(child, tainted));
-                if is_state_mutating_external_call(
-                    self.gcx,
-                    self.hir,
-                    callee,
-                    args.len(),
-                    self.enclosing_contract,
-                ) {
+                if is_state_mutating_external_call(self.gcx, callee) {
                     *tainted = true;
                 }
                 // Follow internal helpers and `super` dispatch so their external calls taint the
@@ -509,56 +500,10 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             return true;
         }
         let ExprKind::Call(callee, args, _) = &expr.kind else { return false };
-        is_state_mutating_external_call(
-            self.gcx,
-            self.hir,
-            callee,
-            args.len(),
-            self.enclosing_contract,
-        ) || self
-            .callees(callee, args.len())
-            .into_iter()
-            .any(|id| self.helper_may_reach_external_call(id, seen))
-    }
-}
-
-/// Calls `f` on every direct sub-expression of `expr`, in evaluation order.
-fn for_each_child<'hir>(expr: &'hir Expr<'hir>, f: &mut impl FnMut(&'hir Expr<'hir>)) {
-    match &expr.kind {
-        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-            f(lhs);
-            f(rhs);
-        }
-        ExprKind::Unary(_, inner)
-        | ExprKind::Delete(inner)
-        | ExprKind::Member(inner, _)
-        | ExprKind::Payable(inner) => f(inner),
-        ExprKind::Call(callee, args, opts) => {
-            f(callee);
-            opts.iter().flat_map(|opts| opts.args).for_each(|opt| f(&opt.value));
-            args.exprs().for_each(f);
-        }
-        ExprKind::Index(base, index) => {
-            f(base);
-            index.iter().copied().for_each(f);
-        }
-        ExprKind::Slice(base, start, end) => {
-            f(base);
-            [*start, *end].into_iter().flatten().for_each(f);
-        }
-        ExprKind::Ternary(cond, true_expr, false_expr) => {
-            f(cond);
-            f(true_expr);
-            f(false_expr);
-        }
-        ExprKind::Array(exprs) => exprs.iter().for_each(f),
-        ExprKind::Tuple(exprs) => exprs.iter().flatten().copied().for_each(f),
-        ExprKind::Ident(_)
-        | ExprKind::Lit(_)
-        | ExprKind::New(_)
-        | ExprKind::TypeCall(_)
-        | ExprKind::Type(_)
-        | ExprKind::YulMember(..)
-        | ExprKind::Err(_) => {}
+        is_state_mutating_external_call(self.gcx, callee)
+            || self
+                .callees(callee, args.len())
+                .into_iter()
+                .any(|id| self.helper_may_reach_external_call(id, seen))
     }
 }

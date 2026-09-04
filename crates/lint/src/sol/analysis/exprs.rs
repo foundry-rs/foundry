@@ -1,17 +1,18 @@
 //! Expression-shape probes over Solar HIR (and a few AST-level ones).
 
 use solar::{
-    ast::{self, LitKind},
+    ast::{self, LitKind, UnOpKind},
     interface::{Symbol, kw, sym},
     sema::{
         Gcx,
         builtins::Builtin,
         hir::{
-            self, CallArgs, ElementaryType, Expr, ExprKind, FunctionId, ItemId, Res, TypeKind,
-            VariableId,
+            self, CallArgs, ContractKind, ElementaryType, Expr, ExprKind, FunctionId, ItemId, Res,
+            TypeKind, VariableId,
         },
     },
 };
+use std::ops::ControlFlow;
 
 /// True if `expr` (through parens) is an identifier resolving to the given builtin name.
 pub fn is_builtin(expr: &Expr<'_>, name: Symbol) -> bool {
@@ -219,4 +220,167 @@ pub const fn is_low_level_call(expr: &ast::Expr<'_>) -> bool {
         }
     }
     false
+}
+
+/// `++x`, `x++`, `--x` or `x--`.
+pub const fn is_inc_dec(op: UnOpKind) -> bool {
+    matches!(op, UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec)
+}
+
+/// The elementary type an explicit cast head `T(...)` converts to.
+pub fn cast_type(callee: &Expr<'_>) -> Option<ElementaryType> {
+    match &callee.peel_parens().kind {
+        ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) => Some(*ty),
+        _ => None,
+    }
+}
+
+/// `address` / `address payable` or a contract/interface type.
+pub const fn var_is_address_like(var: &hir::Variable<'_>) -> bool {
+    matches!(
+        var.ty.kind,
+        TypeKind::Elementary(ElementaryType::Address(_)) | TypeKind::Custom(ItemId::Contract(_))
+    )
+}
+
+/// AST-level boolean literal, through parens.
+pub fn ast_bool_literal(expr: &ast::Expr<'_>) -> Option<bool> {
+    match &expr.peel_parens().kind {
+        ast::ExprKind::Lit(ast::Lit { kind: LitKind::Bool(value), .. }, _) => Some(*value),
+        _ => None,
+    }
+}
+
+/// Calls `f` on every direct sub-expression of `expr`, in evaluation order.
+pub fn for_each_child<'hir>(expr: &'hir Expr<'hir>, f: &mut impl FnMut(&'hir Expr<'hir>)) {
+    match &expr.kind {
+        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
+            f(lhs);
+            f(rhs);
+        }
+        ExprKind::Unary(_, inner)
+        | ExprKind::Delete(inner)
+        | ExprKind::Member(inner, _)
+        | ExprKind::Payable(inner) => f(inner),
+        ExprKind::Call(callee, args, opts) => {
+            f(callee);
+            opts.iter().flat_map(|opts| opts.args).for_each(|opt| f(&opt.value));
+            args.exprs().for_each(f);
+        }
+        ExprKind::Index(base, index) => {
+            f(base);
+            index.iter().copied().for_each(f);
+        }
+        ExprKind::Slice(base, start, end) => {
+            f(base);
+            [*start, *end].into_iter().flatten().for_each(f);
+        }
+        ExprKind::Ternary(cond, true_expr, false_expr) => {
+            f(cond);
+            f(true_expr);
+            f(false_expr);
+        }
+        ExprKind::Array(exprs) => exprs.iter().for_each(f),
+        ExprKind::Tuple(exprs) => exprs.iter().flatten().copied().for_each(f),
+        ExprKind::Ident(_)
+        | ExprKind::Lit(_)
+        | ExprKind::New(_)
+        | ExprKind::TypeCall(_)
+        | ExprKind::Type(_)
+        | ExprKind::YulMember(..)
+        | ExprKind::Err(_) => {}
+    }
+}
+
+/// True if `pred` holds for `expr` or any of its sub-expressions.
+pub fn any_subexpr(expr: &Expr<'_>, mut pred: impl FnMut(&Expr<'_>) -> bool) -> bool {
+    expr.visit(&mut |e| if pred(e) { ControlFlow::Break(()) } else { ControlFlow::Continue(()) })
+        .is_break()
+}
+
+/// True if evaluating `expr` performs an assignment, `delete` or increment/decrement.
+pub fn has_side_effect(expr: &Expr<'_>) -> bool {
+    any_subexpr(expr, |e| match &e.kind {
+        ExprKind::Assign(..) | ExprKind::Delete(_) => true,
+        ExprKind::Unary(op, _) => is_inc_dec(op.kind),
+        _ => false,
+    })
+}
+
+/// Functions a callee may name: every overload of a bare identifier, or a library-static `Lib.f`.
+pub fn callee_fids(hir: &hir::Hir<'_>, callee: &Expr<'_>) -> Vec<FunctionId> {
+    match &callee.peel_parens().kind {
+        ExprKind::Member(base, member) => match referenced_item(base) {
+            Some(ItemId::Contract(cid)) if hir.contract(cid).kind == ContractKind::Library => hir
+                .contract(cid)
+                .functions()
+                .filter(|f| hir.function(*f).name.is_some_and(|n| n.name == member.name))
+                .collect(),
+            _ => Vec::new(),
+        },
+        _ => function_ids(callee).collect(),
+    }
+}
+
+/// Non-external functions a bare identifier callee may resolve to.
+pub fn resolved_internal_function_ids<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    callee: &'hir Expr<'hir>,
+) -> impl Iterator<Item = FunctionId> + 'hir {
+    function_ids(callee).filter(move |&id| {
+        let func = hir.function(id);
+        func.kind.is_function() && func.visibility != ast::Visibility::External
+    })
+}
+
+/// True when `callee` names a zero-parameter function whose body returns an expression matching
+/// `pred`.
+pub fn callee_no_arg_returns<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    callee: &'hir Expr<'hir>,
+    mut pred: impl FnMut(&'hir Expr<'hir>) -> bool,
+) -> bool {
+    callee_fids(hir, callee).into_iter().any(|fid| function_no_arg_returns(hir, fid, &mut pred))
+}
+
+/// True when `fid` takes no parameters and its body is `return e;` or `namedRet = e;` (optionally
+/// followed by a bare `return;`) with `pred(e)`.
+pub fn function_no_arg_returns<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    fid: FunctionId,
+    pred: &mut impl FnMut(&'hir Expr<'hir>) -> bool,
+) -> bool {
+    let f = hir.function(fid);
+    let Some(body) = f.body else { return false };
+    let stmts = match body.stmts {
+        [rest @ .., last] if matches!(last.kind, hir::StmtKind::Return(None)) => rest,
+        stmts => stmts,
+    };
+    let [stmt] = stmts else { return false };
+    f.parameters.is_empty()
+        && match &stmt.kind {
+            hir::StmtKind::Return(Some(e)) => pred(e),
+            hir::StmtKind::Expr(e) => {
+                matches!(&e.peel_parens().kind, ExprKind::Assign(lhs, None, rhs)
+                if f.returns.len() == 1 && underlying_var(lhs) == Some(f.returns[0]) && pred(rhs))
+            }
+            _ => false,
+        }
+}
+
+/// Package-root directory names of the OpenZeppelin distributions (npm scope and git submodules).
+pub const OPENZEPPELIN_ROOTS: &[&str] =
+    &["@openzeppelin", "openzeppelin-contracts", "openzeppelin-contracts-upgradeable"];
+
+/// True if the source file of `source_id` lives under one of the given package-root directory
+/// names (matched as whole, case-insensitive path components).
+pub fn source_in_package(hir: &hir::Hir<'_>, source_id: hir::SourceId, roots: &[&str]) -> bool {
+    let solar::interface::source_map::FileName::Real(path) = &hir.source(source_id).file.name
+    else {
+        return false;
+    };
+    path.components().any(|component| {
+        matches!(component, std::path::Component::Normal(name)
+            if roots.iter().any(|root| name.eq_ignore_ascii_case(root)))
+    })
 }

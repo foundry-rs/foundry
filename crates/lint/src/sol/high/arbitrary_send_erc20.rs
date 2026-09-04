@@ -4,9 +4,9 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            arg_for_param, branch_always_exits, count_placeholders, expr_is_address, function_ids,
+            arg_for_param, branch_always_exits, expr_is_address, function_ids,
             is_address_like_cast, is_address_self, is_address_type, is_elementary, is_msg_sender,
-            is_require_or_assert, receiver_contract_id, state_lhs_vars, stmts_before_placeholder,
+            is_require_or_assert, modifier_prefix, receiver_contract_id, state_lhs_vars,
             tuple_elems, underlying_var,
         },
     },
@@ -66,7 +66,9 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
         let Some(body) = func.body else { return };
         // A modifier prefix that always exits makes the body unreachable.
         if func.modifiers.iter().any(|m| {
-            modifier_prefix(hir, m).is_some_and(|(_, p)| p.iter().any(|s| branch_always_exits(s)))
+            m.id.as_function()
+                .and_then(|fid| modifier_prefix(hir, fid))
+                .is_some_and(|p| p.iter().any(|s| branch_always_exits(s)))
         }) {
             return;
         }
@@ -254,7 +256,9 @@ impl<'hir> Analyzer<'hir> {
     /// Hoists `require(param == msg.sender | address(this))` guards from the prefix of modifier
     /// `m` onto the caller's argument variables.
     fn hoist_modifier_facts(&mut self, m: &'hir Modifier<'hir>) {
-        let Some((modifier, prefix)) = modifier_prefix(self.hir, m) else { return };
+        let Some(fid) = m.id.as_function() else { return };
+        let Some(prefix) = modifier_prefix(self.hir, fid) else { return };
+        let modifier = self.hir.function(fid);
         let mut a = Self::new(self.gcx, self.hir, self.has_solady_lib);
         for stmt in prefix {
             a.stmt(stmt);
@@ -812,23 +816,6 @@ fn match_sink<'hir>(
         return Some(Sink { from: a[1], to: a[2], amount: a[3], token: token_key(a[0]) });
     }
     None
-}
-
-/// The modifier function invoked by `m` and the statements before its unique `_;`, when that is
-/// reached unconditionally.
-fn modifier_prefix<'hir>(
-    hir: &'hir Hir<'hir>,
-    m: &Modifier<'_>,
-) -> Option<(&'hir hir::Function<'hir>, Vec<&'hir Stmt<'hir>>)> {
-    let ItemId::Function(fid) = m.id else { return None };
-    let modifier = hir.function(fid);
-    let body = modifier.body.filter(|_| matches!(modifier.kind, FunctionKind::Modifier))?;
-    if count_placeholders(body.stmts) != 1 {
-        return None;
-    }
-    let mut prefix = Vec::new();
-    stmts_before_placeholder(body.stmts, &mut prefix)?;
-    Some((modifier, prefix))
 }
 
 /// State variables written by `fid` or by the internal functions it calls (one level deep).

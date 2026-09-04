@@ -1,7 +1,10 @@
 //! Statement-shape probes over Solar HIR.
 
 use super::is_exit_call;
-use solar::sema::hir::{LoopSource, Stmt, StmtKind};
+use solar::{
+    ast::FunctionKind,
+    sema::hir::{self, FunctionId, LoopSource, Stmt, StmtKind},
+};
 
 /// True when executing `stmt` provably prevents control from continuing past it: `return`,
 /// `revert`, `selfdestruct`, `require(false, ..)` / `assert(false)`, a block containing any such
@@ -105,4 +108,20 @@ pub fn stmts_break_or_continue(stmts: &[Stmt<'_>]) -> bool {
         StmtKind::Try(t) => t.clauses.iter().any(|c| stmts_break_or_continue(c.block.stmts)),
         _ => false,
     })
+}
+
+/// The statements a modifier runs before its unique `_;`, when that placeholder is reached
+/// unconditionally. `None` for non-modifiers, bodiless modifiers and conditional placeholders.
+pub fn modifier_prefix<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    fid: FunctionId,
+) -> Option<Vec<&'hir Stmt<'hir>>> {
+    let modifier = hir.function(fid);
+    let body = modifier.body.filter(|_| modifier.kind == FunctionKind::Modifier)?;
+    if count_placeholders(body.stmts) != 1 {
+        return None;
+    }
+    let mut prefix = Vec::new();
+    stmts_before_placeholder(body.stmts, &mut prefix)?;
+    Some(prefix)
 }

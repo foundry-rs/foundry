@@ -3,7 +3,9 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{branch_always_exits, builtins, function_ids, is_builtin, tuple_elems},
+        analysis::{
+            any_subexpr, branch_always_exits, builtins, function_ids, is_builtin, tuple_elems,
+        },
     },
 };
 use solar::{
@@ -44,7 +46,7 @@ impl<'hir> LateLintPass<'hir> for BlockTimestamp {
             .filter(|&id| {
                 let helper = hir.function(id);
                 matches!(helper.visibility, Visibility::Internal | Visibility::Private)
-                    && helper.body.is_some_and(|body| returns_timestamp(hir, body.stmts))
+                    && helper.body.is_some_and(|body| returns_timestamp(body.stmts))
             })
             .collect();
         Checker { ctx, hir, helpers, aliases: HashSet::new() }.block(body.stmts);
@@ -269,30 +271,8 @@ impl<'hir> Visit<'hir> for Checker<'_, '_, '_, 'hir> {
 impl<'hir> Checker<'_, '_, '_, 'hir> {
     /// True if `expr` or any subexpression is a timestamp source.
     fn contains_source(&self, expr: &'hir Expr<'hir>) -> bool {
-        any_subexpr(self.hir, expr, |e| self.is_source(e))
+        any_subexpr(expr, |e| self.is_source(e))
     }
-}
-
-/// True if `pred` holds for `expr` or any of its subexpressions.
-fn any_subexpr<'hir>(
-    hir: &'hir Hir<'hir>,
-    expr: &'hir Expr<'hir>,
-    pred: impl FnMut(&'hir Expr<'hir>) -> bool,
-) -> bool {
-    struct Finder<'hir, P> {
-        hir: &'hir Hir<'hir>,
-        pred: P,
-    }
-    impl<'hir, P: FnMut(&'hir Expr<'hir>) -> bool> Visit<'hir> for Finder<'hir, P> {
-        type BreakValue = ();
-        fn hir(&self) -> &'hir Hir<'hir> {
-            self.hir
-        }
-        fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
-            if (self.pred)(expr) { ControlFlow::Break(()) } else { self.walk_expr(expr) }
-        }
-    }
-    Finder { hir, pred }.visit_expr(expr).is_break()
 }
 
 const fn is_cmp(kind: BinOpKind) -> bool {
@@ -315,15 +295,13 @@ fn is_block_timestamp(expr: &Expr<'_>) -> bool {
 }
 
 /// True if a `return` reachable through plain blocks and `if` arms mentions `block.timestamp`.
-fn returns_timestamp<'hir>(hir: &'hir Hir<'hir>, stmts: &'hir [Stmt<'hir>]) -> bool {
+fn returns_timestamp(stmts: &[Stmt<'_>]) -> bool {
     stmts.iter().any(|stmt| match &stmt.kind {
-        StmtKind::Return(Some(expr)) => any_subexpr(hir, expr, is_block_timestamp),
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            returns_timestamp(hir, block.stmts)
-        }
+        StmtKind::Return(Some(expr)) => any_subexpr(expr, is_block_timestamp),
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => returns_timestamp(block.stmts),
         StmtKind::If(_, then_stmt, else_stmt) => {
-            returns_timestamp(hir, std::slice::from_ref(*then_stmt))
-                || else_stmt.is_some_and(|e| returns_timestamp(hir, std::slice::from_ref(e)))
+            returns_timestamp(std::slice::from_ref(*then_stmt))
+                || else_stmt.is_some_and(|e| returns_timestamp(std::slice::from_ref(e)))
         }
         _ => false,
     })

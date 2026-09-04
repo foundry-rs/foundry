@@ -1,16 +1,15 @@
 use super::DeprecatedOzFunction;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::resolved_function},
-};
-use solar::{
-    interface::source_map::FileName,
-    sema::{
-        Gcx,
-        hir::{self, Expr, ExprKind, FunctionId, Hir},
+    sol::{
+        Severity, SolLint,
+        analysis::{OPENZEPPELIN_ROOTS, resolved_function, source_in_package},
     },
 };
-use std::path::Component;
+use solar::sema::{
+    Gcx,
+    hir::{Expr, ExprKind, FunctionId, Hir},
+};
 
 declare_forge_lint!(
     DEPRECATED_OZ_FUNCTION,
@@ -47,7 +46,7 @@ impl<'hir> LateLintPass<'hir> for DeprecatedOzFunction {
 fn is_deprecated_oz(hir: &Hir<'_>, function_id: FunctionId) -> bool {
     let function = hir.function(function_id);
     let (Some(name), Some(contract_id)) = (function.name, function.contract) else { return false };
-    if !is_openzeppelin_source(hir, function.source) {
+    if !source_in_package(hir, function.source, OPENZEPPELIN_ROOTS) {
         return false;
     }
     let contract = hir.contract(contract_id);
@@ -56,18 +55,4 @@ fn is_deprecated_oz(hir: &Hir<'_>, function_id: FunctionId) -> bool {
         ("safeApprove", true, "SafeERC20" | "SafeERC20Upgradeable")
             | ("_setupRole", false, "AccessControl" | "AccessControlUpgradeable")
     )
-}
-
-/// Whether a source file belongs to an OpenZeppelin package, judged by a full path component
-/// against the package roots (the npm scope and the git-submodule directories). Matching a
-/// whole component rather than a substring keeps a same-name local declaration under a
-/// misleading path such as `src/not-openzeppelin/` from being recognized.
-fn is_openzeppelin_source(hir: &Hir<'_>, source_id: hir::SourceId) -> bool {
-    const PACKAGE_ROOTS: [&str; 3] =
-        ["@openzeppelin", "openzeppelin-contracts", "openzeppelin-contracts-upgradeable"];
-    let FileName::Real(path) = &hir.source(source_id).file.name else { return false };
-    path.components().any(|component| {
-        matches!(component, Component::Normal(name)
-            if PACKAGE_ROOTS.iter().any(|root| name.eq_ignore_ascii_case(root)))
-    })
 }

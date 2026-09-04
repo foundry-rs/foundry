@@ -4,10 +4,10 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            arg_for_param, branch_always_exits, count_placeholders, for_each_lhs_var, function_ids,
-            helper_cache::{DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache},
-            is_address_cast, is_address_like, is_builtin, is_require_or_assert, lhs_local_var,
-            state_lhs_vars, stmts_before_placeholder, tuple_elems, unique,
+            DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache, arg_for_param,
+            branch_always_exits, count_placeholders, for_each_child, for_each_lhs_var,
+            function_ids, is_address_cast, is_address_like, is_builtin, is_require_or_assert,
+            lhs_local_var, state_lhs_vars, stmts_before_placeholder, tuple_elems, unique,
         },
     },
 };
@@ -1357,47 +1357,6 @@ fn collect_internal_calls(gcx: Gcx<'_>, expr: &Expr<'_>, calls: &mut BTreeSet<Fu
         calls.extend(static_internal_callee(gcx, callee));
     }
     for_each_child(expr, &mut |child| collect_internal_calls(gcx, child, calls));
-}
-
-/// Calls `f` on every direct sub-expression of `expr`, in evaluation order.
-fn for_each_child<'hir>(expr: &'hir Expr<'hir>, f: &mut impl FnMut(&'hir Expr<'hir>)) {
-    match &expr.kind {
-        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-            f(lhs);
-            f(rhs);
-        }
-        ExprKind::Unary(_, inner)
-        | ExprKind::Delete(inner)
-        | ExprKind::Member(inner, _)
-        | ExprKind::Payable(inner) => f(inner),
-        ExprKind::Call(callee, args, opts) => {
-            f(callee);
-            opts.iter().flat_map(|opts| opts.args).for_each(|opt| f(&opt.value));
-            args.exprs().for_each(f);
-        }
-        ExprKind::Index(base, index) => {
-            f(base);
-            index.iter().copied().for_each(f);
-        }
-        ExprKind::Slice(base, start, end) => {
-            f(base);
-            [*start, *end].into_iter().flatten().for_each(f);
-        }
-        ExprKind::Ternary(cond, true_expr, false_expr) => {
-            f(cond);
-            f(true_expr);
-            f(false_expr);
-        }
-        ExprKind::Array(exprs) => exprs.iter().for_each(f),
-        ExprKind::Tuple(exprs) => exprs.iter().flatten().copied().for_each(f),
-        ExprKind::Ident(_)
-        | ExprKind::Lit(_)
-        | ExprKind::New(_)
-        | ExprKind::TypeCall(_)
-        | ExprKind::Type(_)
-        | ExprKind::YulMember(..)
-        | ExprKind::Err(_) => {}
-    }
 }
 
 /// Internal function statically named by `callee`: a bare identifier or `super.f`.

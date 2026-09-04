@@ -1,13 +1,13 @@
 use super::UnsafeTypecast;
 use crate::{
     linter::{LateLintPass, LintContext, Suggestion},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::cast_type},
 };
 use solar::{
     ast::{BinOpKind, LitKind, StrKind},
     sema::{
         Gcx,
-        hir::{self, ElementaryType, ExprKind, TypeKind},
+        hir::{self, ElementaryType, ExprKind},
         ty::TyKind,
     },
 };
@@ -47,14 +47,6 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
                 );
             }
         }
-    }
-}
-
-/// The elementary type `callee` casts to, if it is a `Type(value)` cast head.
-const fn cast_type(callee: &hir::Expr<'_>) -> Option<ElementaryType> {
-    match &callee.kind {
-        ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) => Some(*ty),
-        _ => None,
     }
 }
 

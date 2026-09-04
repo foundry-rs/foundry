@@ -1,7 +1,7 @@
 use super::TypeBasedTautology;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::cast_type},
 };
 use alloy_primitives::U256;
 use solar::{
@@ -184,13 +184,6 @@ fn elem_type_of(hir: &hir::Hir<'_>, expr: &Expr<'_>) -> Option<ElementaryType> {
             _ => None,
         },
         ExprKind::Call(callee, ..) => cast_type(callee),
-        _ => None,
-    }
-}
-
-const fn cast_type(callee: &Expr<'_>) -> Option<ElementaryType> {
-    match &callee.kind {
-        ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) => Some(*ty),
         _ => None,
     }
 }

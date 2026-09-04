@@ -1,16 +1,15 @@
 use super::SolmateSafeTransferLib;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::resolved_function},
-};
-use solar::{
-    interface::source_map::FileName,
-    sema::{
-        Gcx,
-        hir::{Expr, ExprKind, FunctionId, Hir},
+    sol::{
+        Severity, SolLint,
+        analysis::{resolved_function, source_in_package},
     },
 };
-use std::path::Component;
+use solar::sema::{
+    Gcx,
+    hir::{Expr, ExprKind, FunctionId, Hir},
+};
 
 declare_forge_lint!(
     SOLMATE_SAFE_TRANSFER_LIB,
@@ -50,12 +49,9 @@ impl<'hir> LateLintPass<'hir> for SolmateSafeTransferLib {
 fn is_unchecked_token_op(hir: &Hir<'_>, function_id: FunctionId) -> bool {
     let function = hir.function(function_id);
     let (Some(name), Some(contract_id)) = (function.name, function.contract) else { return false };
-    let FileName::Real(path) = &hir.source(function.source).file.name else { return false };
     let contract = hir.contract(contract_id);
     matches!(name.as_str(), "safeTransfer" | "safeTransferFrom" | "safeApprove")
         && contract.kind.is_library()
         && contract.name.as_str() == "SafeTransferLib"
-        && path.components().any(|component| {
-            matches!(component, Component::Normal(name) if name.eq_ignore_ascii_case("solmate"))
-        })
+        && source_in_package(hir, function.source, &["solmate"])
 }
