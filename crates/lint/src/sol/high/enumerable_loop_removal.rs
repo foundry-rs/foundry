@@ -39,11 +39,11 @@ impl<'hir> LateLintPass<'hir> for EnumerableLoopRemoval {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
+        _hir: &'hir Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
         if let Some(body) = func.body {
-            LoopFinder { gcx, hir, ctx, bindings: Vec::new() }.walk_body(body.stmts);
+            LoopFinder { gcx, ctx, bindings: Vec::new() }.walk_body(body.stmts);
         }
     }
 }
@@ -54,7 +54,6 @@ impl<'hir> LateLintPass<'hir> for EnumerableLoopRemoval {
 /// runs rather than against every binding of the function.
 struct LoopFinder<'ctx, 's, 'c, 'hir> {
     gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
     ctx: &'ctx LintContext<'s, 'c>,
     /// What each local `storage` reference names where the walk stands, the latest entry
     /// winning; `None` once a write leaves it without one answer (a conditional branch, a loop
@@ -126,14 +125,15 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
     /// right-hand side reads does not reach back into this binding).
     fn apply_bindings(&mut self, stmt: &'hir Stmt<'hir>) {
         self.poison_writes(std::slice::from_ref(stmt));
+        let hir = &self.gcx.hir;
         let bindings = &mut self.bindings;
         let mut bind = |var: VariableId, value: &Expr<'_>| {
-            let path = set_path(self.hir, value, bindings, &mut Vec::new());
+            let path = set_path(hir, value, bindings, &mut Vec::new());
             bindings.push((var, path));
         };
         match &stmt.kind {
             StmtKind::DeclSingle(var) => {
-                if let Some(init) = self.hir.variable(*var).initializer {
+                if let Some(init) = hir.variable(*var).initializer {
                     bind(*var, init);
                 }
             }
@@ -153,7 +153,7 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
     /// Marks everything the statements write as no longer naming one thing.
     fn poison_writes(&mut self, stmts: &'hir [Stmt<'hir>]) {
         let mut written = Vec::new();
-        collect_writes(self.hir, stmts, &mut written);
+        collect_writes(&self.gcx.hir, stmts, &mut written);
         self.bindings.extend(written.into_iter().map(|var| (var, None)));
     }
 
@@ -165,17 +165,16 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
         if !body_is_straight_line(body) {
             return;
         }
-        let cadence = ascending_cadence(self.hir, body);
+        let cadence = ascending_cadence(&self.gcx.hir, body);
         if cadence.is_empty() {
             return;
         }
         let (mut iterated, mut removes) = (Vec::new(), Vec::new());
         let mut calls = ExprWalker {
-            hir: self.hir,
+            hir: &self.gcx.hir,
             prune_unreachable: true,
             f: |expr: &'hir Expr<'hir>| {
-                let Some(call) = enumerable_set_call(self.gcx, self.hir, &self.bindings, expr)
-                else {
+                let Some(call) = enumerable_set_call(self.gcx, &self.bindings, expr) else {
                     return;
                 };
                 match call.op {
@@ -432,10 +431,10 @@ struct SetCall<'hir> {
 /// is identified only by its kind and exact `EnumerableSet` name, not its source or behavior.
 fn enumerable_set_call<'hir>(
     gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
     bindings: &Bindings,
     expr: &'hir Expr<'hir>,
 ) -> Option<SetCall<'hir>> {
+    let hir = &gcx.hir;
     let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
     let function_id = resolved_function(gcx, callee)?;
     let function = hir.function(function_id);
@@ -451,7 +450,7 @@ fn enumerable_set_call<'hir>(
     // The set operand is the bound receiver in the method form and the first argument in the
     // library-qualified form; the index of `at` sits right after it.
     let (set_expr, index_arg) = match &callee.peel_parens().kind {
-        ExprKind::Member(receiver, _) if is_enumerable_set_value(gcx, hir, receiver) => {
+        ExprKind::Member(receiver, _) if is_enumerable_set_value(gcx, receiver) => {
             (Some(&**receiver), 0)
         }
         _ => (nth_argument(hir, function_id, args, 0, 0), 1),
@@ -548,11 +547,8 @@ fn nth_argument<'hir>(
 
 /// Whether `receiver` is a value of a struct declared in a library (or contract) named
 /// `EnumerableSet`, which tells the bound method form apart from the library-qualified form.
-fn is_enumerable_set_value<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
-    receiver: &Expr<'_>,
-) -> bool {
+fn is_enumerable_set_value(gcx: Gcx<'_>, receiver: &Expr<'_>) -> bool {
+    let hir = &gcx.hir;
     let Some(ty) = gcx.type_of_expr(receiver.peel_parens().id) else { return false };
     let TyKind::Struct(id) = ty.peel_refs().kind else { return false };
     hir.strukt(id).contract.is_some_and(|c| hir.contract(c).name.as_str() == "EnumerableSet")

@@ -46,7 +46,7 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
             bases.iter().any(|&cid| hir.contract(cid).name.as_str() == "Initializable")
                 || entries.iter().any(|&fid| has_initializer_modifier(hir, hir.function(fid)));
         let locked = bases.iter().filter_map(|&cid| hir.contract(cid).ctor).any(|ctor| {
-            reaches(hir, bases, ctor, |expr| {
+            reaches(gcx, bases, ctor, |expr| {
                 let ExprKind::Call(callee, ..) = &expr.kind else { return false };
                 callees(hir, callee, bases).into_iter().any(|fid| {
                     let func = hir.function(fid);
@@ -57,7 +57,7 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
         });
         let destructive = entries.iter().any(|&fid| {
             !has_modifier_named(hir, hir.function(fid), "onlyProxy")
-                && reaches(hir, bases, fid, is_destructive_call)
+                && reaches(gcx, bases, fid, is_destructive_call)
         });
         if !upgradeable || locked || !destructive {
             return;
@@ -69,7 +69,7 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
                 && !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
                 && has_initializer_modifier(hir, func)
                 && !has_modifier_named(hir, func, "onlyProxy")
-                && reaches(hir, bases, fid, |expr| writes_state(gcx, expr))
+                && reaches(gcx, bases, fid, |expr| writes_state(gcx, expr))
             {
                 ctx.emit(&UNPROTECTED_INITIALIZER, func.name.map_or(func.span, |name| name.span));
             }
@@ -93,16 +93,16 @@ fn has_modifier_named(hir: &hir::Hir<'_>, func: &hir::Function<'_>, name: &str) 
 /// True if `hit` matches an expression in `fid`'s body or, transitively, in the body of any
 /// internal function it calls.
 fn reaches<'hir>(
-    hir: &'hir hir::Hir<'hir>,
+    gcx: Gcx<'hir>,
     bases: &'hir [ContractId],
     fid: FunctionId,
     hit: impl FnMut(&'hir Expr<'hir>) -> bool,
 ) -> bool {
-    Reach { hir, bases, stack: Vec::new(), hit }.visit_function_body(fid).is_break()
+    Reach { gcx, bases, stack: Vec::new(), hit }.visit_function_body(fid).is_break()
 }
 
 struct Reach<'hir, F> {
-    hir: &'hir hir::Hir<'hir>,
+    gcx: Gcx<'hir>,
     bases: &'hir [ContractId],
     stack: Vec<FunctionId>,
     hit: F,
@@ -113,7 +113,9 @@ impl<'hir, F: FnMut(&'hir Expr<'hir>) -> bool> Reach<'hir, F> {
         if self.stack.contains(&fid) {
             return ControlFlow::Continue(());
         }
-        let Some(body) = self.hir.function(fid).body else { return ControlFlow::Continue(()) };
+        let Some(body) = self.gcx.hir.function(fid).body else {
+            return ControlFlow::Continue(());
+        };
         self.stack.push(fid);
         let flow = body.stmts.iter().try_for_each(|stmt| self.visit_stmt(stmt));
         self.stack.pop();
@@ -125,7 +127,7 @@ impl<'hir, F: FnMut(&'hir Expr<'hir>) -> bool> Visit<'hir> for Reach<'hir, F> {
     type BreakValue = ();
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
@@ -133,7 +135,7 @@ impl<'hir, F: FnMut(&'hir Expr<'hir>) -> bool> Visit<'hir> for Reach<'hir, F> {
             return ControlFlow::Break(());
         }
         if let ExprKind::Call(callee, ..) = &expr.kind {
-            for fid in callees(self.hir, callee, self.bases) {
+            for fid in callees(&self.gcx.hir, callee, self.bases) {
                 self.visit_function_body(fid)?;
             }
         }

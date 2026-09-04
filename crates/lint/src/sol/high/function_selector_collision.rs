@@ -55,7 +55,6 @@ impl<'hir> LateLintPass<'hir> for FunctionSelectorCollision {
 
         let mut collector = DelegateTargetCollector {
             gcx,
-            hir,
             current_inputs: Vec::new(),
             paths: vec![PathState::default()],
             placeholder: None,
@@ -221,7 +220,6 @@ fn dedup(paths: &mut Vec<PathState>) {
 
 struct DelegateTargetCollector<'hir> {
     gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
     /// Full-calldata inputs visible in the block being visited.
     current_inputs: Vec<CalldataInput>,
     /// Live path states; empty means the current point is unreachable.
@@ -236,6 +234,7 @@ struct DelegateTargetCollector<'hir> {
 
 impl<'hir> DelegateTargetCollector<'hir> {
     fn visit_modifier_chain(&mut self, cont: Continuation<'hir>) {
+        let hir = &self.gcx.hir;
         let previous_inputs =
             std::mem::replace(&mut self.current_inputs, cont.body_input.into_iter().collect());
         if let Some(invocation) = cont.modifiers.get(cont.index) {
@@ -243,9 +242,9 @@ impl<'hir> DelegateTargetCollector<'hir> {
                 let _ = self.visit_expr(arg);
             }
             if let Some(modifier_id) = invocation.id.as_function()
-                && let Some(modifier_body) = self.hir.function(modifier_id).body
+                && let Some(modifier_body) = hir.function(modifier_id).body
             {
-                let modifier = self.hir.function(modifier_id);
+                let modifier = hir.function(modifier_id);
                 let params: Vec<_> = modifier
                     .parameters
                     .iter()
@@ -255,7 +254,7 @@ impl<'hir> DelegateTargetCollector<'hir> {
                 let bindings: Vec<_> = params
                     .iter()
                     .filter_map(|&param| {
-                        let arg = arg_for_param(self.hir, modifier, param.var, &invocation.args)?;
+                        let arg = arg_for_param(hir, modifier, param.var, &invocation.args)?;
                         Some((param, full_calldata_source(arg, &self.current_inputs)?))
                     })
                     .collect();
@@ -548,7 +547,7 @@ impl<'hir> Visit<'hir> for DelegateTargetCollector<'hir> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {

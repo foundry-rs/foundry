@@ -62,7 +62,7 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendEth {
         let Some(body) = func.body else { return };
 
         // Modifier arguments are evaluated by the caller before any modifier guard runs.
-        let mut args = Analyzer::new(gcx, hir);
+        let mut args = Analyzer::new(gcx);
         for arg in func.modifiers.iter().flat_map(|m| m.args.exprs()) {
             let _ = args.visit_expr(arg);
         }
@@ -70,7 +70,7 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendEth {
             ctx.emit(&ARBITRARY_SEND_ETH, span);
         }
 
-        let mut a = Analyzer::new(gcx, hir);
+        let mut a = Analyzer::new(gcx);
         for m in func.modifiers {
             a.hoist_modifier_facts(m);
         }
@@ -103,7 +103,6 @@ impl State {
 
 struct Analyzer<'hir> {
     gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
     guards: CallerGuards<'hir>,
     state: State,
     /// States at `break`/`continue` of each enclosing loop, innermost last.
@@ -114,11 +113,10 @@ struct Analyzer<'hir> {
 }
 
 impl<'hir> Analyzer<'hir> {
-    fn new(gcx: Gcx<'hir>, hir: &'hir Hir<'hir>) -> Self {
+    fn new(gcx: Gcx<'hir>) -> Self {
         Self {
             gcx,
-            hir,
-            guards: CallerGuards::new(gcx, hir),
+            guards: CallerGuards::new(gcx),
             state: State::default(),
             loop_exits: Vec::new(),
             written: HashSet::new(),
@@ -129,10 +127,11 @@ impl<'hir> Analyzer<'hir> {
     /// Hoists `require(param == msg.sender)`-style guards from the prefix of modifier `m` onto
     /// the caller's argument variables.
     fn hoist_modifier_facts(&mut self, m: &'hir Modifier<'hir>) {
+        let hir = &self.gcx.hir;
         let ItemId::Function(fid) = m.id else { return };
-        let Some(prefix) = modifier_prefix(self.hir, fid) else { return };
-        let modifier = self.hir.function(fid);
-        let mut a = Self::new(self.gcx, self.hir);
+        let Some(prefix) = modifier_prefix(hir, fid) else { return };
+        let modifier = hir.function(fid);
+        let mut a = Self::new(self.gcx);
         for stmt in prefix {
             a.stmt(stmt);
         }
@@ -140,7 +139,7 @@ impl<'hir> Analyzer<'hir> {
             if a.state.safe_vars.contains(&param)
                 && !a.written.contains(&param)
                 && let Some(caller) =
-                    arg_for_param(self.hir, modifier, param, &m.args).and_then(underlying_var)
+                    arg_for_param(hir, modifier, param, &m.args).and_then(underlying_var)
                 && self.is_safe_target(caller)
             {
                 self.state.safe_vars.insert(caller);
@@ -174,14 +173,16 @@ impl<'hir> Analyzer<'hir> {
             ExprKind::Call(callee, args, _) => {
                 depth > 0
                     && args.exprs().next().is_none()
-                    && callee_no_arg_returns(self.hir, callee, |e| self.is_safe_inner(e, depth - 1))
+                    && callee_no_arg_returns(&self.gcx.hir, callee, |e| {
+                        self.is_safe_inner(e, depth - 1)
+                    })
             }
             _ => false,
         }
     }
 
     fn is_safe_var(&self, v: VariableId) -> bool {
-        let var = self.hir.variable(v);
+        let var = self.gcx.hir.variable(v);
         self.state.safe_vars.contains(&v)
             || (var.kind.is_state() && (var.is_immutable() || var.is_constant()))
     }
@@ -189,7 +190,7 @@ impl<'hir> Analyzer<'hir> {
     /// Only locals and `immutable`/`constant` state can carry a safe-fact: mutable storage may be
     /// rewritten between the check and the sink.
     fn is_safe_target(&self, v: VariableId) -> bool {
-        let var = self.hir.variable(v);
+        let var = self.gcx.hir.variable(v);
         !var.kind.is_state() || var.is_immutable() || var.is_constant()
     }
 
@@ -197,7 +198,7 @@ impl<'hir> Analyzer<'hir> {
     fn assign_var(&mut self, target: VariableId, rhs: Option<&'hir Expr<'hir>>) {
         self.written.insert(target);
         self.state.safe_vars.remove(&target);
-        if !self.hir.variable(target).kind.is_state() && rhs.is_some_and(|r| self.is_safe(r)) {
+        if !self.gcx.hir.variable(target).kind.is_state() && rhs.is_some_and(|r| self.is_safe(r)) {
             self.state.safe_vars.insert(target);
         }
     }
@@ -326,7 +327,7 @@ impl<'hir> Analyzer<'hir> {
                 return falls;
             }
             StmtKind::DeclSingle(vid) => {
-                if let Some(init) = self.hir.variable(*vid).initializer {
+                if let Some(init) = self.gcx.hir.variable(*vid).initializer {
                     self.assign_var(*vid, Some(init));
                 }
             }
@@ -348,7 +349,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'hir Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
@@ -386,7 +387,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             }
             ExprKind::Call(..) => {
                 if !self.state.caller_restricted
-                    && let Some(dest) = match_sink(self.gcx, self.hir, expr)
+                    && let Some(dest) = match_sink(self.gcx, expr)
                     && !self.is_safe(dest)
                 {
                     self.hits.push(expr.span);
@@ -412,11 +413,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
 /// Destination of an ETH-sending call: `selfdestruct(x)`, `x.{call,send,transfer}`,
 /// `f{value: v}()`, `IFoo(x).f{value: v}()` and common OpenZeppelin/Solady helpers. Sends to
 /// `address(this)` or of a literal-zero amount are not sinks.
-fn match_sink<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
-    expr: &'hir Expr<'hir>,
-) -> Option<&'hir Expr<'hir>> {
+fn match_sink<'hir>(gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) -> Option<&'hir Expr<'hir>> {
     let ExprKind::Call(callee, args, opts) = &expr.kind else { return None };
     let callee = callee.peel_parens();
     if builtins(callee).any(|b| b == Builtin::Selfdestruct) {
@@ -437,14 +434,13 @@ fn match_sink<'hir>(
     {
         return (!is_address_self(recv) && !is_literal_zero(args.exprs().next()?)).then_some(recv);
     }
-    match_eth_library_call(gcx, hir, recv, member.name.as_str(), args)
+    match_eth_library_call(gcx, recv, member.name.as_str(), args)
 }
 
 /// Destination of an OpenZeppelin `Address` / Solady `SafeTransferLib` ETH helper, called either
 /// statically (`Lib.f(to, ...)`) or via `using ... for address` (`to.f(...)`).
 fn match_eth_library_call<'hir>(
     gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
     recv: &'hir Expr<'hir>,
     name: &str,
     args: &'hir CallArgs<'hir>,
@@ -462,7 +458,7 @@ fn match_eth_library_call<'hir>(
     };
     let using = expr_is_address(gcx, recv);
     let is_lib = matches!(referenced_item(recv), Some(ItemId::Contract(cid))
-        if hir.contract(cid).kind == ContractKind::Library);
+        if gcx.hir.contract(cid).kind == ContractKind::Library);
     if (!using && !is_lib) || !arities.contains(&(args.len() + usize::from(using))) {
         return None;
     }
@@ -489,17 +485,15 @@ fn arg<'hir>(args: &'hir CallArgs<'hir>, pos: usize, names: &[&str]) -> Option<&
 /// memoised analysis of which state variables may alias `address(this)`.
 struct CallerGuards<'hir> {
     gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
     alias_cache: HelperAnalysisCache<(VariableId, u8), bool>,
     /// Functions currently being inlined, to stop recursion.
     stack: Vec<FunctionId>,
 }
 
 impl<'hir> CallerGuards<'hir> {
-    fn new(gcx: Gcx<'hir>, hir: &'hir Hir<'hir>) -> Self {
+    fn new(gcx: Gcx<'hir>) -> Self {
         Self {
             gcx,
-            hir,
             alias_cache: HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
             stack: Vec::new(),
         }
@@ -508,7 +502,7 @@ impl<'hir> CallerGuards<'hir> {
     /// True when modifier `m` reverts unless `msg.sender` is a trusted principal.
     fn modifier_restricts(&mut self, m: &Modifier<'_>) -> bool {
         let ItemId::Function(fid) = m.id else { return false };
-        modifier_prefix(self.hir, fid)
+        modifier_prefix(&self.gcx.hir, fid)
             .is_some_and(|prefix| prefix.into_iter().any(|s| self.stmt_restricts(s)))
     }
 
@@ -542,7 +536,7 @@ impl<'hir> CallerGuards<'hir> {
             if self.stack.contains(&fid) {
                 return false;
             }
-            let Some(body) = self.hir.function(fid).body else { return false };
+            let Some(body) = self.gcx.hir.function(fid).body else { return false };
             // A trailing bare `return;` is a normal exit and cannot bypass an earlier guard.
             let mut stmts = body.stmts;
             while let [rest @ .., last] = stmts
@@ -575,7 +569,7 @@ impl<'hir> CallerGuards<'hir> {
                     self.cond_restricts(lhs, holds) && self.cond_restricts(rhs, holds)
                 } else if op.kind == eq {
                     [(lhs, rhs), (rhs, lhs)].into_iter().any(|(a, b)| {
-                        is_msg_sender_like(self.hir, a, HELPER_DEPTH)
+                        is_msg_sender_like(&self.gcx.hir, a, HELPER_DEPTH)
                             && self.is_trusted_principal(b, HELPER_DEPTH)
                     })
                 } else {
@@ -597,18 +591,18 @@ impl<'hir> CallerGuards<'hir> {
         match &expr.kind {
             ExprKind::Lit(_) => is_trusted_literal(expr),
             ExprKind::Ident(reses) => reses.iter().filter_map(Res::as_variable).any(|v| {
-                self.hir.variable(v).kind.is_state()
+                self.gcx.hir.variable(v).kind.is_state()
                     && !self.state_var_aliases_self(v, SELF_ALIAS_DEPTH)
             }),
             ExprKind::Member(base, _) => self.is_trusted_principal(base, depth),
             ExprKind::Index(base, idx) => {
                 self.is_trusted_principal(base, depth)
-                    && idx.is_none_or(|i| index_is_static(self.hir, i))
+                    && idx.is_none_or(|i| index_is_static(&self.gcx.hir, i))
             }
             ExprKind::Call(callee, args, _) => {
                 depth > 0
                     && args.exprs().next().is_none()
-                    && callee_no_arg_returns(self.hir, callee, |e| {
+                    && callee_no_arg_returns(&self.gcx.hir, callee, |e| {
                         self.is_trusted_principal(e, depth - 1)
                     })
             }
@@ -619,7 +613,7 @@ impl<'hir> CallerGuards<'hir> {
     /// True when state variable `v` may hold `address(this)`: through its initializer or an
     /// assignment in any function of its contract or a derived contract.
     fn state_var_aliases_self(&mut self, v: VariableId, depth: u8) -> bool {
-        let var = self.hir.variable(v);
+        let var = self.gcx.hir.variable(v);
         if depth == 0 || !var.kind.is_state() {
             return false;
         }
@@ -631,7 +625,7 @@ impl<'hir> CallerGuards<'hir> {
             return false;
         }
         self.alias_cache.start(key);
-        let hir = self.hir;
+        let hir = &self.gcx.hir;
         let aliases = var
             .initializer
             .is_some_and(|init| self.rhs_carries_self(var, init, depth - 1, &HashSet::new()))
@@ -701,14 +695,14 @@ impl<'hir> CallerGuards<'hir> {
                 lhs_root_var(expr).is_some_and(|v| self.state_var_aliases_self(v, depth))
             }
             ExprKind::Call(callee, args, _) if args.exprs().next().is_none() => {
-                let hir = self.hir;
+                let hir = &self.gcx.hir;
                 callee_fids(hir, callee).into_iter().any(|fid| {
                     function_no_arg_returns(hir, fid, &mut |e| {
                         self.expr_resolves_to_self(e, depth - 1)
                     })
                 })
             }
-            ExprKind::Call(callee, args, _) => identity_helper_arg(self.hir, callee, args)
+            ExprKind::Call(callee, args, _) => identity_helper_arg(&self.gcx.hir, callee, args)
                 .is_some_and(|a| self.expr_resolves_to_self(a, depth - 1)),
             ExprKind::Ternary(_, t, f) => {
                 self.expr_resolves_to_self(t, depth - 1) || self.expr_resolves_to_self(f, depth - 1)
@@ -720,7 +714,7 @@ impl<'hir> CallerGuards<'hir> {
 
     /// Scans every function of `cid` for an assignment that may plant `address(this)` in `v`.
     fn contract_assigns_self(&mut self, cid: ContractId, v: VariableId, depth: u8) -> bool {
-        let hir = self.hir;
+        let hir = &self.gcx.hir;
         hir.contract(cid).all_functions().any(|fid| {
             let mut scan = SelfAssignScan {
                 guards: &mut *self,
@@ -754,7 +748,7 @@ impl<'hir> SelfAssignScan<'_, 'hir> {
     }
 
     fn note_local(&mut self, v: VariableId, rhs: &'hir Expr<'hir>) {
-        if !self.guards.hir.variable(v).kind.is_state() && self.may_contain_self(rhs) {
+        if !self.guards.gcx.hir.variable(v).kind.is_state() && self.may_contain_self(rhs) {
             self.locals.insert(v);
         }
     }
@@ -771,7 +765,7 @@ impl<'hir> SelfAssignScan<'_, 'hir> {
             }
         } else if let Some(v) = lhs_root_var(lhs) {
             if v == self.target {
-                let var = self.guards.hir.variable(v);
+                let var = self.guards.gcx.hir.variable(v);
                 self.found |= self.guards.rhs_carries_self(var, rhs, self.depth, &self.locals);
             } else {
                 self.note_local(v, rhs);
@@ -784,7 +778,7 @@ impl<'hir> SelfAssignScan<'_, 'hir> {
         if self.found || self.stack.len() >= HELPER_CALL_DEPTH || self.stack.contains(&fid) {
             return;
         }
-        let hir = self.guards.hir;
+        let hir = &self.guards.gcx.hir;
         let f = hir.function(fid);
         let Some(body) = f.body else { return };
         let saved = self.locals.clone();
@@ -813,7 +807,7 @@ impl<'hir> Visit<'hir> for SelfAssignScan<'_, 'hir> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'hir Hir<'hir> {
-        self.guards.hir
+        &self.guards.gcx.hir
     }
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
@@ -822,7 +816,7 @@ impl<'hir> Visit<'hir> for SelfAssignScan<'_, 'hir> {
         }
         match &stmt.kind {
             StmtKind::DeclSingle(vid) => {
-                if let Some(init) = self.guards.hir.variable(*vid).initializer {
+                if let Some(init) = self.guards.gcx.hir.variable(*vid).initializer {
                     self.note_local(*vid, init);
                 }
             }

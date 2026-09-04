@@ -39,13 +39,13 @@ impl<'hir> LateLintPass<'hir> for ControlledDelegatecall {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        _hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
         let Some(body) = func.body else { return };
-        let mut analyzer = Analyzer::new(gcx, hir);
+        let mut analyzer = Analyzer::new(gcx);
         for modifier in func.modifiers {
-            analyzer.safe_vars.extend(modifier_safe_vars(gcx, hir, modifier));
+            analyzer.safe_vars.extend(modifier_safe_vars(gcx, modifier));
         }
         let _ = analyzer.visit_stmts(body.stmts);
         for span in analyzer.hits {
@@ -59,7 +59,6 @@ impl<'hir> LateLintPass<'hir> for ControlledDelegatecall {
 /// `visit_stmt` breaks when control cannot fall through to the next statement.
 struct Analyzer<'hir> {
     gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
     safe_vars: HashSet<VariableId>,
     /// Every variable written during the walk.
     assigned: HashSet<VariableId>,
@@ -73,10 +72,9 @@ fn intersect(a: &HashSet<VariableId>, b: &HashSet<VariableId>) -> HashSet<Variab
 }
 
 impl<'hir> Analyzer<'hir> {
-    fn new(gcx: Gcx<'hir>, hir: &'hir hir::Hir<'hir>) -> Self {
+    fn new(gcx: Gcx<'hir>) -> Self {
         Self {
             gcx,
-            hir,
             safe_vars: HashSet::new(),
             assigned: HashSet::new(),
             loop_exits: Vec::new(),
@@ -102,7 +100,7 @@ impl<'hir> Analyzer<'hir> {
             ExprKind::Ident(reses) => reses.iter().any(|res| match res {
                 Res::Builtin(builtin) => builtin.name() == sym::this,
                 Res::Item(ItemId::Variable(vid)) => {
-                    let var = self.hir.variable(*vid);
+                    let var = self.gcx.hir.variable(*vid);
                     (var.is_constant() && var_is_address_like(var)) || self.safe_vars.contains(vid)
                 }
                 _ => false,
@@ -119,7 +117,7 @@ impl<'hir> Analyzer<'hir> {
             ExprKind::Call(callee, args, _) => {
                 depth > 0
                     && args.exprs().next().is_none()
-                    && no_arg_helper_return(self.hir, callee)
+                    && no_arg_helper_return(self.gcx, callee)
                         .is_some_and(|ret| self.is_trusted_target_inner(ret, depth - 1))
             }
             _ => false,
@@ -128,7 +126,7 @@ impl<'hir> Analyzer<'hir> {
 
     /// Local or constant address-like variable: the only kind a comparison can vouch for.
     fn is_trusted_fact_target(&self, var: VariableId) -> bool {
-        let variable = self.hir.variable(var);
+        let variable = self.gcx.hir.variable(var);
         (!variable.kind.is_state() || variable.is_constant()) && var_is_address_like(variable)
     }
 
@@ -136,7 +134,7 @@ impl<'hir> Analyzer<'hir> {
     fn assign(&mut self, var: VariableId, trusted: bool) {
         self.assigned.insert(var);
         self.safe_vars.remove(&var);
-        let variable = self.hir.variable(var);
+        let variable = self.gcx.hir.variable(var);
         if trusted && !variable.kind.is_state() && var_is_address_like(variable) {
             self.safe_vars.insert(var);
         }
@@ -248,7 +246,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
     type BreakValue = ();
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<()> {
@@ -321,7 +319,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 ControlFlow::Continue(())
             }
             StmtKind::DeclSingle(var) => {
-                let init = self.hir.variable(*var).initializer;
+                let init = self.gcx.hir.variable(*var).initializer;
                 self.assign(*var, init.is_some_and(|init| self.is_trusted_target(init)));
                 self.walk_stmt(stmt)
             }
@@ -423,11 +421,11 @@ fn is_cast(callee: &Expr<'_>) -> bool {
 /// The expression returned by a non-virtual, non-overriding, parameterless helper whose body is a
 /// single `return <expr>;` or `<ret> = <expr>;` (optionally followed by a bare `return;`).
 fn no_arg_helper_return<'hir>(
-    hir: &'hir hir::Hir<'hir>,
+    gcx: Gcx<'hir>,
     callee: &'hir Expr<'hir>,
 ) -> Option<&'hir Expr<'hir>> {
     let fid = unique(function_ids(callee))?;
-    let func = hir.function(fid);
+    let func = gcx.hir.function(fid);
     if func.virtual_ || func.override_ || !func.parameters.is_empty() {
         return None;
     }
@@ -455,9 +453,9 @@ fn no_arg_helper_return<'hir>(
 /// is bound to the variable, never reassigned in the prefix, and safe when `_` is reached.
 fn modifier_safe_vars<'hir>(
     gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
     invocation: &'hir hir::Modifier<'hir>,
 ) -> Vec<VariableId> {
+    let hir = &gcx.hir;
     let Some(fid) = invocation.id.as_function() else { return Vec::new() };
     let modifier = hir.function(fid);
     let Some(body) = modifier.body else { return Vec::new() };
@@ -480,7 +478,7 @@ fn modifier_safe_vars<'hir>(
         return Vec::new();
     }
 
-    let mut analyzer = Analyzer::new(gcx, hir);
+    let mut analyzer = Analyzer::new(gcx);
     let _ = prefix.iter().try_for_each(|stmt| analyzer.visit_stmt(stmt));
     bindings
         .into_iter()

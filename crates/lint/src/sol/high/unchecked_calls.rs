@@ -35,12 +35,12 @@ impl<'hir> LateLintPass<'hir> for UncheckedTransferERC20 {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        _hir: &'hir hir::Hir<'hir>,
         stmt: &'hir hir::Stmt<'hir>,
     ) {
         // Only expression statements can contain unchecked transfers.
         if let hir::StmtKind::Expr(expr) = &stmt.kind
-            && is_erc20_transfer_call(gcx, hir, expr)
+            && is_erc20_transfer_call(gcx, expr)
         {
             ctx.emit(&ERC20_UNCHECKED_TRANSFER, expr.span);
         }
@@ -50,11 +50,8 @@ impl<'hir> LateLintPass<'hir> for UncheckedTransferERC20 {
 /// Checks if an expression is a call to a contract member matching the ERC20 signature of
 /// * `function transfer(address to, uint256 amount) external returns (bool);`
 /// * `function transferFrom(address from, address to, uint256 amount) external returns (bool);`
-fn is_erc20_transfer_call<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &hir::Hir<'hir>,
-    expr: &hir::Expr<'hir>,
-) -> bool {
+fn is_erc20_transfer_call<'hir>(gcx: Gcx<'hir>, expr: &hir::Expr<'hir>) -> bool {
+    let hir = &gcx.hir;
     let hir::ExprKind::Call(callee, call_args, ..) = &expr.kind else { return false };
     let hir::ExprKind::Member(receiver, func_ident) = &callee.kind else { return false };
     let params: &[&str] = match (func_ident.as_str(), call_args.len()) {
