@@ -11,13 +11,7 @@ impl SymbolicExecutor {
     /// a fresh executor when a caller needs independent solver query accounting.
     pub fn new(config: SymbolicConfig) -> Self {
         let solver = SmtLibSubprocessSolver::from_config(&config);
-        Self {
-            config,
-            cx: SymCx::new(),
-            solver: Box::new(solver),
-            deferred_incomplete: None,
-            deadline: None,
-        }
+        Self { config, cx: SymCx::new(), solver, deferred_incomplete: None, deadline: None }
     }
 
     fn reset_run_state(&mut self, use_wall_clock_deadline: bool) {
