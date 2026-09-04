@@ -82,23 +82,27 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 info 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB --human \
-    ///         --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 info 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB --human \
+    ///     --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     Vault                0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB
-    ///     Name                 Steakhouse USDC
-    ///     Symbol               steakUSDC
-    ///     Decimals             18
-    ///     Asset                0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
-    ///     Asset name           USD Coin
-    ///     Asset symbol         USDC
-    ///     Asset decimals       6
-    ///     Total assets         95183395.377893 USDC
-    ///     Total supply         84037200.060143388288943211 steakUSDC
-    ///     Assets per share     1.132634 USDC
-    ///     Shares per asset     0.882897731163608580 steakUSDC
+    /// ```text
+    /// Vault                0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB
+    /// Name                 Steakhouse USDC
+    /// Symbol               steakUSDC
+    /// Decimals             18
+    /// Asset                0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+    /// Asset name           USD Coin
+    /// Asset symbol         USDC
+    /// Asset decimals       6
+    /// Total assets         95183395.377893 USDC
+    /// Total supply         84037200.060143388288943211 steakUSDC
+    /// Assets per share     1.132634 USDC
+    /// Shares per asset     0.882897731163608580 steakUSDC
+    /// ```
     #[command(verbatim_doc_comment)]
     Info {
         /// The ERC-4626 vault contract address.
@@ -121,23 +125,27 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 position 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         0x255c7705E8bb334dfCaE438197f7c4297988085A --human --block 25519075 \
-    ///         --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 position 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     0x255c7705E8bb334dfCaE438197f7c4297988085A --human --block 25519075 \
+    ///     --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     Vault                0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB
-    ///     Owner                0x255c7705e8BB334DfCae438197f7C4297988085a
-    ///     Asset                0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
-    ///     Share symbol         steakUSDC
-    ///     Share decimals       18
-    ///     Asset symbol         USDC
-    ///     Asset decimals       6
-    ///     Share balance        35733.949295544029939485 steakUSDC
-    ///     Assets equivalent    40473.486378 USDC
-    ///     Max withdraw         40473.486378 USDC
-    ///     Max redeem           35733.949295417417957447 steakUSDC
+    /// ```text
+    /// Vault                0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB
+    /// Owner                0x255c7705e8BB334DfCae438197f7C4297988085a
+    /// Asset                0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+    /// Share symbol         steakUSDC
+    /// Share decimals       18
+    /// Asset symbol         USDC
+    /// Asset decimals       6
+    /// Share balance        35733.949295544029939485 steakUSDC
+    /// Assets equivalent    40473.486378 USDC
+    /// Max withdraw         40473.486378 USDC
+    /// Max redeem           35733.949295417417957447 steakUSDC
+    /// ```
     #[command(verbatim_doc_comment)]
     Position {
         /// The ERC-4626 vault contract address.
@@ -164,9 +172,11 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 check 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         --account 0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
-    ///         --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 check 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     --account 0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
+    ///     --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
@@ -219,12 +229,16 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 asset 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 asset 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+    /// ```text
+    /// 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+    /// ```
     #[command(verbatim_doc_comment)]
     Asset {
         /// The ERC-4626 vault contract address.
@@ -243,12 +257,16 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 total-assets 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 total-assets 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     95183395377893 [9.518e13]
+    /// ```text
+    /// 95183395377893 [9.518e13]
+    /// ```
     #[command(verbatim_doc_comment)]
     TotalAssets {
         /// The ERC-4626 vault contract address.
@@ -267,12 +285,16 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 convert-to-shares 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         1000000 --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 convert-to-shares 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     1000000 --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     882897731163608580 [8.828e17]
+    /// ```text
+    /// 882897731163608580 [8.828e17]
+    /// ```
     #[command(verbatim_doc_comment)]
     ConvertToShares {
         /// The ERC-4626 vault contract address.
@@ -294,13 +316,17 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 convert-to-assets 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         1000000000000000000 --block 25519075 \
-    ///         --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 convert-to-assets 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     1000000000000000000 --block 25519075 \
+    ///     --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     1132634 [1.132e6]
+    /// ```text
+    /// 1132634 [1.132e6]
+    /// ```
     #[command(verbatim_doc_comment)]
     ConvertToAssets {
         /// The ERC-4626 vault contract address.
@@ -322,13 +348,17 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 max-deposit 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
-    ///         --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 max-deposit 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
+    ///     --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     1002934816604622098 [1.002e18]
+    /// ```text
+    /// 1002934816604622098 [1.002e18]
+    /// ```
     #[command(verbatim_doc_comment)]
     MaxDeposit {
         /// The ERC-4626 vault contract address.
@@ -351,12 +381,16 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 preview-deposit 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         1000000 --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 preview-deposit 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     1000000 --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     882897731163608580 [8.828e17]
+    /// ```text
+    /// 882897731163608580 [8.828e17]
+    /// ```
     #[command(verbatim_doc_comment)]
     PreviewDeposit {
         /// The ERC-4626 vault contract address.
@@ -380,12 +414,16 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 deposit 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         1000000 $ACCOUNT --private-key $PRIVATE_KEY --async --rpc-url $ETH_RPC_URL
+    /// ```text
+    /// $ cast erc4626 deposit 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     1000000 $ACCOUNT --private-key $PRIVATE_KEY --async --rpc-url $ETH_RPC_URL
+    /// ```
     ///
     /// Output:
     ///
-    ///     0x6f2a7e10f148a0ee81208cd8d7dee10cc33b5bdb739bfeef805dc68467e6db4e
+    /// ```text
+    /// 0x6f2a7e10f148a0ee81208cd8d7dee10cc33b5bdb739bfeef805dc68467e6db4e
+    /// ```
     #[command(verbatim_doc_comment)]
     Deposit {
         /// The ERC-4626 vault contract address.
@@ -410,13 +448,17 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 max-mint 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
-    ///         --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 max-mint 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
+    ///     --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     885488874085210715750045480687 [8.854e29]
+    /// ```text
+    /// 885488874085210715750045480687 [8.854e29]
+    /// ```
     #[command(verbatim_doc_comment)]
     MaxMint {
         /// The ERC-4626 vault contract address.
@@ -439,13 +481,17 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 preview-mint 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         1000000000000000000 --block 25519075 \
-    ///         --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 preview-mint 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     1000000000000000000 --block 25519075 \
+    ///     --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     1132635 [1.132e6]
+    /// ```text
+    /// 1132635 [1.132e6]
+    /// ```
     #[command(verbatim_doc_comment)]
     PreviewMint {
         /// The ERC-4626 vault contract address.
@@ -469,13 +515,17 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 mint 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         1000000000000000000 $ACCOUNT --private-key $PRIVATE_KEY --async \
-    ///         --rpc-url $ETH_RPC_URL
+    /// ```text
+    /// $ cast erc4626 mint 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     1000000000000000000 $ACCOUNT --private-key $PRIVATE_KEY --async \
+    ///     --rpc-url $ETH_RPC_URL
+    /// ```
     ///
     /// Output:
     ///
-    ///     0xa7c3b4e26a99e2cb422e2b36cffeae642a39f1d09f8f3454c9c2d4657ebb0491
+    /// ```text
+    /// 0xa7c3b4e26a99e2cb422e2b36cffeae642a39f1d09f8f3454c9c2d4657ebb0491
+    /// ```
     #[command(verbatim_doc_comment)]
     Mint {
         /// The ERC-4626 vault contract address.
@@ -500,13 +550,17 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 max-withdraw 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
-    ///         --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 max-withdraw 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
+    ///     --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     40473486378 [4.047e10]
+    /// ```text
+    /// 40473486378 [4.047e10]
+    /// ```
     #[command(verbatim_doc_comment)]
     MaxWithdraw {
         /// The ERC-4626 vault contract address.
@@ -529,12 +583,16 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 preview-withdraw 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         1000000 --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 preview-withdraw 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     1000000 --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     882897731163608581 [8.828e17]
+    /// ```text
+    /// 882897731163608581 [8.828e17]
+    /// ```
     #[command(verbatim_doc_comment)]
     PreviewWithdraw {
         /// The ERC-4626 vault contract address.
@@ -556,13 +614,17 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 withdraw 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         1000000 $ACCOUNT $ACCOUNT --private-key $PRIVATE_KEY --async \
-    ///         --rpc-url $ETH_RPC_URL
+    /// ```text
+    /// $ cast erc4626 withdraw 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     1000000 $ACCOUNT $ACCOUNT --private-key $PRIVATE_KEY --async \
+    ///     --rpc-url $ETH_RPC_URL
+    /// ```
     ///
     /// Output:
     ///
-    ///     0x6d6d70151151f30aa13bdb4082ea7fd3e531193eebdfbb356586284cd0e6a8a2
+    /// ```text
+    /// 0x6d6d70151151f30aa13bdb4082ea7fd3e531193eebdfbb356586284cd0e6a8a2
+    /// ```
     #[command(verbatim_doc_comment)]
     Withdraw {
         /// The ERC-4626 vault contract address.
@@ -591,13 +653,17 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 max-redeem 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
-    ///         --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 max-redeem 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
+    ///     --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     35733949295417417957447 [3.573e22]
+    /// ```text
+    /// 35733949295417417957447 [3.573e22]
+    /// ```
     #[command(verbatim_doc_comment)]
     MaxRedeem {
         /// The ERC-4626 vault contract address.
@@ -620,13 +686,17 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 preview-redeem 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         1000000000000000000 --block 25519075 \
-    ///         --rpc-url https://ethereum.reth.rs/rpc
+    /// ```text
+    /// $ cast erc4626 preview-redeem 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     1000000000000000000 --block 25519075 \
+    ///     --rpc-url https://ethereum.reth.rs/rpc
+    /// ```
     ///
     /// Output:
     ///
-    ///     1132634 [1.132e6]
+    /// ```text
+    /// 1132634 [1.132e6]
+    /// ```
     #[command(verbatim_doc_comment)]
     PreviewRedeem {
         /// The ERC-4626 vault contract address.
@@ -648,13 +718,17 @@ pub enum Erc4626Subcommand {
     ///
     /// Example:
     ///
-    ///     $ cast erc4626 redeem 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
-    ///         1000000000000000000 $ACCOUNT $ACCOUNT --private-key $PRIVATE_KEY --async \
-    ///         --rpc-url $ETH_RPC_URL
+    /// ```text
+    /// $ cast erc4626 redeem 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///     1000000000000000000 $ACCOUNT $ACCOUNT --private-key $PRIVATE_KEY --async \
+    ///     --rpc-url $ETH_RPC_URL
+    /// ```
     ///
     /// Output:
     ///
-    ///     0x304d463e4d33b462778a974d008cd1b9c4c109730ae6617d2815477b8aa7c03e
+    /// ```text
+    /// 0x304d463e4d33b462778a974d008cd1b9c4c109730ae6617d2815477b8aa7c03e
+    /// ```
     #[command(verbatim_doc_comment)]
     Redeem {
         /// The ERC-4626 vault contract address.
@@ -1689,13 +1763,13 @@ mod tests {
                 .unwrap_or_else(|| panic!("{} is missing long help", subcommand.get_name()))
                 .to_string();
             assert!(
-                help.contains("Example:\n\n    $ cast erc4626"),
-                "{} is missing an example command",
+                help.contains("Example:\n\n```text\n$ cast erc4626"),
+                "{} is missing a fenced example command",
                 subcommand.get_name()
             );
             assert!(
-                help.split_once("\n\nOutput:\n\n").is_some_and(|(_, output)| !output.is_empty()),
-                "{} is missing example output",
+                help.contains("\n\nOutput:\n\n```text\n"),
+                "{} is missing fenced example output",
                 subcommand.get_name()
             );
         }
