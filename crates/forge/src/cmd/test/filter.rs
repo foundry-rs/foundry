@@ -75,46 +75,49 @@ impl FilterArgs {
 
     /// Merges the set filter globs with the config's values
     pub fn merge_with_config(mut self, config: &Config) -> ProjectPathsAwareFilter {
-        if self.test_pattern.is_none() {
-            self.test_pattern = config.test_pattern.clone().map(Into::into);
-        }
-        if self.test_pattern_inverse.is_none() {
-            self.test_pattern_inverse = config.test_pattern_inverse.clone().map(Into::into);
-        }
-        if self.contract_pattern.is_none() {
-            self.contract_pattern = config.contract_pattern.clone().map(Into::into);
-        }
-        if self.contract_pattern_inverse.is_none() {
-            self.contract_pattern_inverse = config.contract_pattern_inverse.clone().map(Into::into);
-        }
-        if self.path_pattern.is_none() {
-            self.path_pattern = config.path_pattern.clone().map(Into::into);
-        }
-        if self.path_pattern_inverse.is_none() {
-            self.path_pattern_inverse = config.path_pattern_inverse.clone().map(Into::into);
-        }
-        if self.coverage_pattern_inverse.is_none() {
-            self.coverage_pattern_inverse = config.coverage_pattern_inverse.clone().map(Into::into);
-        }
+        let c = config;
+        self.test_pattern = self.test_pattern.or_else(|| c.test_pattern.clone().map(Into::into));
+        self.test_pattern_inverse =
+            self.test_pattern_inverse.or_else(|| c.test_pattern_inverse.clone().map(Into::into));
+        self.contract_pattern =
+            self.contract_pattern.or_else(|| c.contract_pattern.clone().map(Into::into));
+        self.contract_pattern_inverse = self
+            .contract_pattern_inverse
+            .or_else(|| c.contract_pattern_inverse.clone().map(Into::into));
+        self.path_pattern = self.path_pattern.or_else(|| c.path_pattern.clone().map(Into::into));
+        self.path_pattern_inverse =
+            self.path_pattern_inverse.or_else(|| c.path_pattern_inverse.clone().map(Into::into));
+        self.coverage_pattern_inverse = self
+            .coverage_pattern_inverse
+            .or_else(|| c.coverage_pattern_inverse.clone().map(Into::into));
         ProjectPathsAwareFilter {
             args_filter: self,
             paths: config.project_paths(),
             rerun_failures: None,
         }
     }
+
+    /// Returns all patterns as `(flag, pattern)` pairs.
+    fn patterns(&self) -> [(&'static str, Option<&str>); 7] {
+        [
+            ("match-test", self.test_pattern.as_ref().map(|r| r.as_str())),
+            ("no-match-test", self.test_pattern_inverse.as_ref().map(|r| r.as_str())),
+            ("match-contract", self.contract_pattern.as_ref().map(|r| r.as_str())),
+            ("no-match-contract", self.contract_pattern_inverse.as_ref().map(|r| r.as_str())),
+            ("match-path", self.path_pattern.as_ref().map(|g| g.as_str())),
+            ("no-match-path", self.path_pattern_inverse.as_ref().map(|g| g.as_str())),
+            ("no-match-coverage", self.coverage_pattern_inverse.as_ref().map(|r| r.as_str())),
+        ]
+    }
 }
 
 impl fmt::Debug for FilterArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FilterArgs")
-            .field("match-test", &self.test_pattern.as_ref().map(|r| r.as_str()))
-            .field("no-match-test", &self.test_pattern_inverse.as_ref().map(|r| r.as_str()))
-            .field("match-contract", &self.contract_pattern.as_ref().map(|r| r.as_str()))
-            .field("no-match-contract", &self.contract_pattern_inverse.as_ref().map(|r| r.as_str()))
-            .field("match-path", &self.path_pattern.as_ref().map(|g| g.as_str()))
-            .field("no-match-path", &self.path_pattern_inverse.as_ref().map(|g| g.as_str()))
-            .field("no-match-coverage", &self.coverage_pattern_inverse.as_ref().map(|g| g.as_str()))
-            .finish_non_exhaustive()
+        let mut s = f.debug_struct("FilterArgs");
+        for (name, pattern) in self.patterns() {
+            s.field(name, &pattern);
+        }
+        s.finish_non_exhaustive()
     }
 }
 
@@ -129,61 +132,27 @@ impl FileFilter for FilterArgs {
 
 impl TestFilter for FilterArgs {
     fn matches_test(&self, test_signature: &str) -> bool {
-        let mut ok = true;
-        if let Some(re) = &self.test_pattern {
-            ok = ok && re.is_match(test_signature);
-        }
-        if let Some(re) = &self.test_pattern_inverse {
-            ok = ok && !re.is_match(test_signature);
-        }
-        ok
+        self.test_pattern.as_ref().is_none_or(|re| re.is_match(test_signature))
+            && self.test_pattern_inverse.as_ref().is_none_or(|re| !re.is_match(test_signature))
     }
 
     fn matches_contract(&self, contract_name: &str) -> bool {
-        let mut ok = true;
-        if let Some(re) = &self.contract_pattern {
-            ok = ok && re.is_match(contract_name);
-        }
-        if let Some(re) = &self.contract_pattern_inverse {
-            ok = ok && !re.is_match(contract_name);
-        }
-        ok
+        self.contract_pattern.as_ref().is_none_or(|re| re.is_match(contract_name))
+            && self.contract_pattern_inverse.as_ref().is_none_or(|re| !re.is_match(contract_name))
     }
 
     fn matches_path(&self, path: &Path) -> bool {
-        let mut ok = true;
-        if let Some(re) = &self.path_pattern {
-            ok = ok && re.is_match(path);
-        }
-        if let Some(re) = &self.path_pattern_inverse {
-            ok = ok && !re.is_match(path);
-        }
-        ok
+        self.path_pattern.as_ref().is_none_or(|g| g.is_match(path))
+            && self.path_pattern_inverse.as_ref().is_none_or(|g| !g.is_match(path))
     }
 }
 
 impl fmt::Display for FilterArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(p) = &self.test_pattern {
-            writeln!(f, "\tmatch-test: `{}`", p.as_str())?;
-        }
-        if let Some(p) = &self.test_pattern_inverse {
-            writeln!(f, "\tno-match-test: `{}`", p.as_str())?;
-        }
-        if let Some(p) = &self.contract_pattern {
-            writeln!(f, "\tmatch-contract: `{}`", p.as_str())?;
-        }
-        if let Some(p) = &self.contract_pattern_inverse {
-            writeln!(f, "\tno-match-contract: `{}`", p.as_str())?;
-        }
-        if let Some(p) = &self.path_pattern {
-            writeln!(f, "\tmatch-path: `{}`", p.as_str())?;
-        }
-        if let Some(p) = &self.path_pattern_inverse {
-            writeln!(f, "\tno-match-path: `{}`", p.as_str())?;
-        }
-        if let Some(p) = &self.coverage_pattern_inverse {
-            writeln!(f, "\tno-match-coverage: `{}`", p.as_str())?;
+        for (name, pattern) in self.patterns() {
+            if let Some(pattern) = pattern {
+                writeln!(f, "\t{name}: `{pattern}`")?;
+            }
         }
         Ok(())
     }
@@ -232,11 +201,9 @@ impl ProjectPathsAwareFilter {
         if failure_contract == contract_id {
             return true;
         }
-
-        let Some((failure_path, failure_name)) = failure_contract.rsplit_once(':') else {
-            return false;
-        };
-        let Some((contract_path, contract_name)) = contract_id.rsplit_once(':') else {
+        let (Some((failure_path, failure_name)), Some((contract_path, contract_name))) =
+            (failure_contract.rsplit_once(':'), contract_id.rsplit_once(':'))
+        else {
             return false;
         };
         if failure_name != contract_name {
@@ -248,7 +215,6 @@ impl ProjectPathsAwareFilter {
             if let Ok(path) = path.strip_prefix(&self.paths.root) {
                 return path.to_path_buf();
             }
-
             if path.is_absolute()
                 && let Ok(root) = dunce::canonicalize(&self.paths.root)
                 && let Ok(path) = dunce::canonicalize(path)
@@ -256,10 +222,8 @@ impl ProjectPathsAwareFilter {
             {
                 return path.to_path_buf();
             }
-
             path.to_path_buf()
         };
-
         normalize(failure_path) == normalize(contract_path)
     }
 }
@@ -295,19 +259,16 @@ impl TestFilter for ProjectPathsAwareFilter {
         func: &Function,
         kind: TestFunctionKind,
     ) -> bool {
-        if let Some(failures) = &self.rerun_failures {
-            if !kind.is_any_test() || !self.args_filter.matches_test(&func.signature()) {
-                return false;
-            }
-            let signature = func.signature();
-            let name = signature.split('(').next().unwrap_or(&signature);
-            failures.iter().any(|failure| {
-                self.matches_rerun_contract(&failure.contract, contract_id)
-                    && (failure.test == signature || failure.test == name)
-            })
-        } else {
-            kind.is_any_test() && self.args_filter.matches_test(&func.signature())
+        let signature = func.signature();
+        if !kind.is_any_test() || !self.args_filter.matches_test(&signature) {
+            return false;
         }
+        let Some(failures) = &self.rerun_failures else { return true };
+        let name = signature.split('(').next().unwrap_or(&signature);
+        failures.iter().any(|failure| {
+            self.matches_rerun_contract(&failure.contract, contract_id)
+                && (failure.test == signature || failure.test == name)
+        })
     }
 }
 
