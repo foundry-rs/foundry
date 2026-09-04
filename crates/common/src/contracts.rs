@@ -49,6 +49,27 @@ impl BytecodeData {
     }
 }
 
+/// Sorts and merges overlapping or adjacent byte ranges.
+fn normalize_offsets(offsets: &mut Vec<Offsets>) {
+    offsets.sort_by_key(|o| o.start);
+
+    let mut merged: Vec<Offsets> = Vec::with_capacity(offsets.len());
+    for offset in offsets.drain(..) {
+        if let Some(last) = merged.last_mut() {
+            let last_end = last.start as u64 + last.length as u64;
+            if offset.start as u64 <= last_end {
+                let this_end = offset.start as u64 + offset.length as u64;
+                if this_end > last_end {
+                    last.length = (this_end - last.start as u64) as u32;
+                }
+                continue;
+            }
+        }
+        merged.push(offset);
+    }
+    *offsets = merged;
+}
+
 impl From<CompactBytecode> for BytecodeData {
     fn from(bytecode: CompactBytecode) -> Self {
         Self {
@@ -332,7 +353,8 @@ impl ContractsByArtifact {
                 });
             }
 
-            ignored.sort_by_key(|o| o.start);
+            // Merge ranges from independent sources before slicing between them.
+            normalize_offsets(&mut ignored);
 
             let mut left = 0;
             for offset in ignored {
@@ -693,6 +715,14 @@ mod tests {
     use semver::Version;
 
     fn deployed_artifact(name: &str, code: Bytes) -> (ArtifactId, CompactContractBytecode) {
+        deployed_artifact_with_immutables(name, code, Default::default())
+    }
+
+    fn deployed_artifact_with_immutables(
+        name: &str,
+        code: Bytes,
+        immutable_references: BTreeMap<String, Vec<Offsets>>,
+    ) -> (ArtifactId, CompactContractBytecode) {
         (
             ArtifactId {
                 path: format!("out/{name}.json").into(),
@@ -711,7 +741,7 @@ mod tests {
                         source_map: None,
                         link_references: Default::default(),
                     }),
-                    immutable_references: Default::default(),
+                    immutable_references,
                 }),
             },
         )
@@ -790,5 +820,63 @@ mod tests {
 
         assert!(contracts.find_by_deployed_code_exact(&deployed_code).is_some());
         assert!(contracts.find_by_deployed_code_exact_unique(&deployed_code).is_none());
+    }
+
+    /// Tests an immutable reference within a library call-protection prefix.
+    #[test]
+    fn find_by_deployed_code_exact_handles_overlapping_ignored_ranges() {
+        // Call-protection prefix covering [1, 21).
+        let mut code = vec![0x73u8];
+        code.extend(std::iter::repeat_n(0u8, 20));
+        // Bytes matched after the ignored range.
+        code.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        let code = Bytes::from(code);
+
+        // Immutable reference [5, 8) lies within [1, 21).
+        let immutable_references =
+            BTreeMap::from([("someImmutable".to_string(), vec![Offsets { start: 5, length: 3 }])]);
+
+        let contracts = ContractsByArtifact::new([deployed_artifact_with_immutables(
+            "LibWithEarlyImmutable",
+            code.clone(),
+            immutable_references,
+        )]);
+
+        // The overlap must not panic or prevent a match.
+        assert!(contracts.find_by_deployed_code_exact(&code).is_some());
+    }
+
+    #[test]
+    fn normalize_offsets_merges_overlaps_and_adjacency() {
+        // Contained overlap.
+        let mut offsets = vec![Offsets { start: 1, length: 20 }, Offsets { start: 5, length: 3 }];
+        normalize_offsets(&mut offsets);
+        assert_eq!(offsets, vec![Offsets { start: 1, length: 20 }]);
+
+        // Extending overlap.
+        let mut offsets = vec![Offsets { start: 1, length: 20 }, Offsets { start: 15, length: 15 }];
+        normalize_offsets(&mut offsets);
+        assert_eq!(offsets, vec![Offsets { start: 1, length: 29 }]);
+
+        // Adjacent ranges.
+        let mut offsets = vec![Offsets { start: 1, length: 20 }, Offsets { start: 21, length: 4 }];
+        normalize_offsets(&mut offsets);
+        assert_eq!(offsets, vec![Offsets { start: 1, length: 24 }]);
+
+        // Disjoint ranges.
+        let mut offsets = vec![Offsets { start: 1, length: 5 }, Offsets { start: 10, length: 5 }];
+        normalize_offsets(&mut offsets);
+        assert_eq!(
+            offsets,
+            vec![Offsets { start: 1, length: 5 }, Offsets { start: 10, length: 5 }]
+        );
+
+        // Unsorted ranges.
+        let mut offsets = vec![Offsets { start: 10, length: 5 }, Offsets { start: 1, length: 5 }];
+        normalize_offsets(&mut offsets);
+        assert_eq!(
+            offsets,
+            vec![Offsets { start: 1, length: 5 }, Offsets { start: 10, length: 5 }]
+        );
     }
 }

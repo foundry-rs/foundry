@@ -88,11 +88,11 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// In isolation mode all top-level calls are executed as a separate transaction in a separate
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
-    /// Networks with enabled features.
-    // TODO(monad-fen-dispatch): Remove this post-dispatch configuration. Callers must resolve
-    // family-neutral inspector inputs before selecting `FEN`, while Monad tooling is configured by
-    // the concrete Monad construction path.
+    /// Configuration retained for Celo precompile support.
+    // TODO(monad-fen-dispatch): Replace this residual with a concrete Celo execution owner.
     pub networks: NetworkConfigs,
+    /// Concrete Tempo label inspector selected by the Tempo executor builder.
+    tempo_labels: Option<Box<TempoLabels>>,
     /// Explicitly resolved additional cheatcode addresses.
     pub extra_cheatcode_addresses: &'static [Address],
     /// The wallets to set in the cheatcodes context.
@@ -116,6 +116,7 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             chisel_state: None,
             enable_isolation: false,
             networks: NetworkConfigs::default(),
+            tempo_labels: None,
             extra_cheatcode_addresses: &[],
             wallets: None,
             create2_deployer: Default::default(),
@@ -225,6 +226,13 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
+    /// Installs the Tempo label inspector.
+    #[inline]
+    pub(crate) fn tempo_labels(mut self, inspector: TempoLabels) -> Self {
+        self.tempo_labels = Some(Box::new(inspector));
+        self
+    }
+
     /// Sets explicitly resolved additional cheatcode addresses.
     #[inline]
     pub const fn extra_cheatcode_addresses(mut self, addresses: &'static [Address]) -> Self {
@@ -255,6 +263,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             chisel_state,
             enable_isolation,
             networks,
+            tempo_labels,
             extra_cheatcode_addresses,
             wallets,
             create2_deployer,
@@ -289,12 +298,9 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
         stack.enable_isolation(enable_isolation);
         stack.networks(networks);
+        stack.inner.tempo_labels = tempo_labels;
         stack.set_extra_cheatcode_addresses(extra_cheatcode_addresses);
         stack.set_create2_deployer(create2_deployer);
-
-        if networks.is_tempo() {
-            stack.inner.tempo_labels = Some(Box::default());
-        }
 
         // environment, must come after all of the inspectors
         if let Some(block) = block {
