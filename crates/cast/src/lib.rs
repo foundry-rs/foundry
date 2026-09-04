@@ -1458,7 +1458,12 @@ impl SimpleCast {
             let value_len = value_stripped.len();
             (sign, value_stripped, value_len)
         };
-        let decimals = NumberWithBase::parse_uint(decimals, None)?.number().to::<usize>();
+        let decimals_num = NumberWithBase::parse_uint(decimals, None)?.number();
+        let decimals: usize = decimals_num
+            .try_into()
+            .ok()
+            .filter(|&d: &usize| d <= u16::MAX as usize)
+            .ok_or_else(|| eyre::eyre!("decimals out of range: {decimals_num}"))?;
 
         let value = if decimals >= value_len {
             // Add "0." and pad with 0s
@@ -1863,7 +1868,10 @@ impl SimpleCast {
     /// ```
     pub fn pad(s: &str, right: bool, len: usize) -> Result<String> {
         let s = strip_0x(s);
-        let hex_len = len * 2;
+        let hex_len = len
+            .checked_mul(2)
+            .filter(|&h| h <= u16::MAX as usize)
+            .ok_or_else(|| eyre::eyre!("len out of range: {len}"))?;
 
         // Validate input
         if s.len() > hex_len {
@@ -3046,5 +3054,31 @@ mod tests {
             disassembled,
             "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n"
         );
+    }
+
+    #[test]
+    fn to_fixed_point_rejects_decimals_too_large_to_convert() {
+        assert!(Cast::to_fixed_point("10", "18446744073709551616").is_err());
+    }
+
+    #[test]
+    fn to_fixed_point_rejects_decimals_above_format_width_limit() {
+        assert!(Cast::to_fixed_point("12345", "70000").is_err());
+        assert!(Cast::to_fixed_point("12345", "65536").is_err());
+    }
+
+    #[test]
+    fn pad_rejects_len_above_format_width_limit() {
+        assert!(Cast::pad("abcd", false, 32768).is_err());
+        assert!(Cast::pad("abcd", false, usize::MAX).is_err());
+    }
+
+    #[test]
+    fn pad_and_to_fixed_point_still_work_for_valid_inputs() {
+        assert_eq!(
+            Cast::pad("abcd", false, 20).unwrap(),
+            "0x000000000000000000000000000000000000abcd"
+        );
+        assert_eq!(Cast::to_fixed_point("10", "2").unwrap(), "0.10");
     }
 }
