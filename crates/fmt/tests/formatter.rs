@@ -247,7 +247,6 @@ fmt_tests! {
     ErrorDefinition,
     EventDefinition,
     ForStatement,
-    ForStatementComments,
     FunctionCall,
     FunctionCallArgsStatement,
     FunctionDefinition,
