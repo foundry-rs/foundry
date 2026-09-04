@@ -51,6 +51,11 @@ impl SymbolicExecutor {
         self.deferred_incomplete.get_or_insert(DeferredIncomplete::SolverUnknown);
     }
 
+    /// Defers an incomplete result for a hard-arithmetic branch skipped by nested execution.
+    pub(super) fn defer_hard_arithmetic(&mut self) {
+        self.deferred_incomplete.get_or_insert(DeferredIncomplete::HardArithmetic);
+    }
+
     pub(super) fn is_sat_with_state(
         &mut self,
         state: &PathState,
@@ -86,6 +91,10 @@ impl SymbolicExecutor {
             DeferredIncomplete::SolverUnknown => {
                 Some((SymbolicStopReason::Timeout, "solver returned unknown".to_string()))
             }
+            DeferredIncomplete::HardArithmetic => Some((
+                SymbolicStopReason::Timeout,
+                "nested hard arithmetic branch requires deferred SMT solving".to_string(),
+            )),
         }
     }
 
@@ -250,7 +259,7 @@ impl SymbolicExecutor {
         let depth_limit = self.config.execution_depth() as usize;
 
         while let Some(mut state) =
-            self.pop_next_feasible_path(&mut worklist, &mut deferred_worklist)?
+            self.pop_next_feasible_path(&mut worklist, &mut deferred_worklist, true)?
         {
             if completed_paths >= path_limit {
                 debug!(completed_paths, path_limit, "symbolic path limit reached");

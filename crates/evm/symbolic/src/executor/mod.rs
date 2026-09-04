@@ -54,6 +54,7 @@ impl SymbolicExecutor {
         &mut self,
         paths: &mut VecDeque<PathState>,
         deferred_paths: &mut VecDeque<PathState>,
+        escalate_deferred: bool,
     ) -> Result<Option<PathState>, SymbolicError> {
         loop {
             while let Some(mut state) = self.pop_next_path(paths) {
@@ -67,6 +68,10 @@ impl SymbolicExecutor {
                         Ok(BranchFeasibility::Sat) => {}
                         Ok(BranchFeasibility::Unsat) => continue,
                         Ok(BranchFeasibility::NeedsSolver) => {
+                            if !escalate_deferred {
+                                self.defer_hard_arithmetic();
+                                continue;
+                            }
                             trace!("queued hard arithmetic branch for deferred SMT solving");
                             deferred_paths.push_back(state);
                             continue;

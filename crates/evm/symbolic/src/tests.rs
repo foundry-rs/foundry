@@ -5063,13 +5063,59 @@ fn feasible_path_selection_drains_easy_paths_before_deferred_hard_arithmetic() {
     let mut paths = VecDeque::from([hard, easy]);
     let mut deferred_paths = VecDeque::new();
 
-    assert!(executor.pop_next_feasible_path(&mut paths, &mut deferred_paths).unwrap().is_some());
+    assert!(
+        executor.pop_next_feasible_path(&mut paths, &mut deferred_paths, true).unwrap().is_some()
+    );
     assert_eq!(deferred_paths.len(), 1);
     assert!(executor.deadline.is_none());
     assert_eq!(counted_solver_invocations(&marker), 0);
-    assert!(executor.pop_next_feasible_path(&mut paths, &mut deferred_paths).unwrap().is_none());
+    assert!(
+        executor.pop_next_feasible_path(&mut paths, &mut deferred_paths, true).unwrap().is_none()
+    );
     assert!(executor.deadline.is_some());
     assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn nested_feasible_path_selection_skips_hard_arithmetic_without_escalating() {
+    let marker = portfolio_test_marker("hard-arith-root-owned-path");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut executor = SymbolicExecutor::new(SymbolicConfig::default());
+    executor.solver = Box::new(SmtLibSubprocessSolver::new(Ok(commands), None, 3, false));
+
+    let x = SymExpr::var(&mut executor.cx, "x");
+    let y = SymExpr::var(&mut executor.cx, "y");
+    let mut hard = empty_state(&mut executor.cx);
+    let product = SymExpr::binop(&mut executor.cx, SymBinOp::Mul, x, y);
+    let zero = SymExpr::zero(&mut executor.cx);
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product.clone(), zero));
+    let one = SymExpr::one(&mut executor.cx);
+    hard.constraints.push(SymBoolExpr::eq(&mut executor.cx, product, one));
+    hard.defer_feasibility_check();
+
+    let mut easy = empty_state(&mut executor.cx);
+    easy.constraints.push(SymBoolExpr::constant(&mut executor.cx, true));
+    easy.defer_feasibility_check();
+    let mut nested_paths = VecDeque::from([hard, easy]);
+    let mut deferred_paths = VecDeque::new();
+    assert!(
+        executor
+            .pop_next_feasible_path(&mut nested_paths, &mut deferred_paths, false)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        executor
+            .pop_next_feasible_path(&mut nested_paths, &mut deferred_paths, false)
+            .unwrap()
+            .is_none()
+    );
+
+    assert!(executor.deadline.is_none());
+    assert_eq!(counted_solver_invocations(&marker), 0);
+    assert!(matches!(executor.deferred_incomplete, Some(DeferredIncomplete::HardArithmetic)));
     let _ = std::fs::remove_file(&marker);
 }
 

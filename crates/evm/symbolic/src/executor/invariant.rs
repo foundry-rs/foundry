@@ -129,7 +129,7 @@ impl SymbolicExecutor {
         let depth_limit = self.config.execution_depth() as usize;
 
         while let Some(mut state) =
-            self.pop_next_feasible_path(&mut worklist, &mut deferred_worklist)?
+            self.pop_next_feasible_path(&mut worklist, &mut deferred_worklist, true)?
         {
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
