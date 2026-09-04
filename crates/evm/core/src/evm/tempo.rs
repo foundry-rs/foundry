@@ -65,8 +65,6 @@ impl FoundryEvmFactory for TempoEvmFactory {
             tempo_evm.cfg.tx_gas_limit_cap = spec.tx_gas_limit_cap();
         }
 
-        let networks = tempo_evm.inspector().get_networks();
-        networks.inject_precompiles(tempo_evm.precompiles_mut());
         // Re-extend Tempo precompiles, preserving shared non-creditable slots.
         let cfg = tempo_evm.cfg.clone();
         let non_creditable_slots = tempo_evm.non_creditable_slots();

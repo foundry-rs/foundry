@@ -12,6 +12,7 @@ on:
 jobs:
   update-tag:
     name: update forge-std tag
+    if: github.repository == 'foundry-rs/foundry'
     runs-on: ubuntu-latest
     permissions:
       contents: write
