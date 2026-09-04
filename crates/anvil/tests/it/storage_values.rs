@@ -164,24 +164,13 @@ async fn test_fork_storage_values_skips_upstream_for_local_state() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn storage_values_requires_an_explicit_block_parameter() {
+async fn storage_values_defaults_to_latest_block() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
 
-    // Like `eth_getStorageAt`, the trailing block parameter has to be present, even as `null`.
     let requests =
         HashMap::<Address, Vec<B256>>::from_iter([(Address::repeat_byte(0x07), vec![slot(0)])]);
-    let err = provider
-        .client()
-        .request::<_, HashMap<Address, Vec<B256>>>("eth_getStorageValues", (requests.clone(),))
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("expected tuple variant"), "unexpected error: {err}");
-
-    let values: HashMap<Address, Vec<B256>> = provider
-        .client()
-        .request("eth_getStorageValues", (requests, Option::<BlockId>::None))
-        .await
-        .unwrap();
+    let values: HashMap<Address, Vec<B256>> =
+        provider.client().request("eth_getStorageValues", (requests,)).await.unwrap();
     assert_eq!(values[&Address::repeat_byte(0x07)], vec![B256::ZERO]);
 }
