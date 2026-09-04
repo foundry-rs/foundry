@@ -231,8 +231,8 @@ impl<'hir> Cx<'hir> {
         let mut token = None;
         let mut token_consistent = true;
         for &&(callee, args, _) in &delegations {
-            match self.arg(callee, args, 1).and_then(underlying_var).filter(|&m| keeps_its_value(hir, m))
-            {
+            let minted = self.arg(callee, args, 1).and_then(underlying_var);
+            match minted.filter(|&minted| keeps_its_value(hir, minted)) {
                 Some(minted) => {
                     token_consistent &= token.is_none_or(|token| token == minted);
                     token = Some(minted);
@@ -292,8 +292,8 @@ impl<'hir> Cx<'hir> {
         };
         // A caller's code-less proof remains valid through this override only when no path can
         // change account code before reaching a delegated mint.
-        let preserves_code_length =
-            recipient.is_some_and(|recipient| guarded(recipient, recipient, GuardCoverage::CodeLess));
+        let preserves_code_length = recipient
+            .is_some_and(|recipient| guarded(recipient, recipient, GuardCoverage::CodeLess));
         Some(UnsafeMintTarget {
             preserves_recipient: targets_preserve_recipient && preserves(0),
             preserves_token: targets_preserve_token && preserves(1),
@@ -417,7 +417,8 @@ impl<'hir> Cx<'hir> {
             {
                 args.len() == 1
                     && args.exprs().next().is_some_and(|inner| {
-                        self.selector_cast_preserves(expr, inner) && self.is_received_selector(inner)
+                        self.selector_cast_preserves(expr, inner)
+                            && self.is_received_selector(inner)
                     })
             }
             ExprKind::Member(base, member) => {
@@ -665,7 +666,9 @@ impl<'hir> Cx<'hir> {
             parameters
                 .iter()
                 .enumerate()
-                .find(|&(index, _)| self.arg(function_id, args, index).and_then(underlying_var) == Some(var))
+                .find(|&(index, _)| {
+                    self.arg(function_id, args, index).and_then(underlying_var) == Some(var)
+                })
                 .map(|(_, &parameter)| parameter)
         };
         bound_to(recipient).zip(bound_to(token))
@@ -812,7 +815,11 @@ impl<'hir> Cx<'hir> {
         if has_tail_guard {
             state.cover(GuardCoverage::Callback, true);
         }
-        GuardWalk { coverage: state.coverage, future_coverage: state.future_coverage, ..GuardWalk::default() }
+        GuardWalk {
+            coverage: state.coverage,
+            future_coverage: state.future_coverage,
+            ..GuardWalk::default()
+        }
     }
 }
 
@@ -1031,8 +1038,8 @@ impl<'hir> GuardWalker<'_, 'hir> {
                     // The condition runs before either branch, so an assignment embedded in it,
                     // `if ((tokenId = tokenId + 1) > 0) {}`, retires coverage exactly as a bare
                     // assignment statement does, and prevents the comparison from covering.
-                    let condition_mutates =
-                        cx.expr_mutates_var(cond, self.recipient) || cx.expr_mutates_var(cond, self.token);
+                    let condition_mutates = cx.expr_mutates_var(cond, self.recipient)
+                        || cx.expr_mutates_var(cond, self.token);
                     if condition_mutates {
                         walk.retire();
                     }
@@ -1118,13 +1125,18 @@ impl<'hir> GuardWalker<'_, 'hir> {
 
     /// [`Cx::stmts_may_change_account_code`] for the walked delegations, over a statement or
     /// only the given expression of it.
-    fn may_change_account_code(&self, stmts: &'hir [Stmt<'hir>], expr: Option<&'hir Expr<'hir>>) -> bool {
+    fn may_change_account_code(
+        &self,
+        stmts: &'hir [Stmt<'hir>],
+        expr: Option<&'hir Expr<'hir>>,
+    ) -> bool {
         let (delegations, unstable) = (self.delegations, self.unstable_code_delegations);
+        let mut seen = Vec::new();
         match expr {
             Some(expr) => {
-                self.cx.expr_may_change_account_code(expr, delegations, unstable, &mut Vec::new())
+                self.cx.expr_may_change_account_code(expr, delegations, unstable, &mut seen)
             }
-            None => self.cx.stmts_may_change_account_code(stmts, delegations, unstable, &mut Vec::new()),
+            None => self.cx.stmts_may_change_account_code(stmts, delegations, unstable, &mut seen),
         }
     }
 

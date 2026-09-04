@@ -45,8 +45,8 @@ impl<'hir> LateLintPass<'hir> for IncorrectERC721Interface {
             vars.len() == expected.len()
                 && vars.iter().zip(expected).all(|(&id, &ty)| is_elementary(hir, id, ty))
         };
-        for func in contract.items.iter().filter_map(|id| id.as_function()).map(|id| hir.function(id))
-        {
+        let functions = contract.items.iter().filter_map(|id| id.as_function());
+        for func in functions.map(|id| hir.function(id)) {
             let Some(name) = func.name.filter(|_| func.kind.is_function()) else { continue };
             if ERC721_FUNCTIONS.iter().any(|(n, params, returns)| {
                 *n == name.as_str()

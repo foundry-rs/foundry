@@ -102,8 +102,11 @@ impl FlowState {
     }
 }
 
-/// A local variable written by an assignment, paired with the expression it receives.
+/// A variable written by an assignment, paired with the expression it receives.
 type Pair<'hir> = (Option<VariableId>, Option<&'hir Expr<'hir>>);
+
+/// The `s` argument of an `ecrecover` call.
+type Signature<'hir> = &'hir Expr<'hir>;
 
 struct Analyzer<'hir> {
     gcx: Gcx<'hir>,
@@ -208,11 +211,16 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// The call expression and signature argument of a builtin `ecrecover` call.
-    fn ecrecover_call(&self, expr: &'hir Expr<'hir>) -> Option<(&'hir Expr<'hir>, &'hir Expr<'hir>)> {
+    fn ecrecover_call(
+        &self,
+        expr: &'hir Expr<'hir>,
+    ) -> Option<(&'hir Expr<'hir>, Signature<'hir>)> {
         let expr = expr.peel_parens();
         let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
-        let is_ecrecover = self.gcx.resolved_builtin(callee.peel_parens()) == Some(Builtin::EcRecover);
-        (is_ecrecover && args.len() == 4).then_some(expr).zip(args.exprs().nth(3))
+        let callee = self.gcx.resolved_builtin(callee.peel_parens());
+        (callee == Some(Builtin::EcRecover) && args.len() == 4)
+            .then_some(expr)
+            .zip(args.exprs().nth(3))
     }
 
     fn pending_recovery(&self, expr: &'hir Expr<'hir>) -> Option<PendingRecovery> {
@@ -309,7 +317,12 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// Pairs every variable written by `lhs` with the expression it receives.
-    fn pairs(&self, lhs: &'hir Expr<'hir>, rhs: Option<&'hir Expr<'hir>>, out: &mut Vec<Pair<'hir>>) {
+    fn pairs(
+        &self,
+        lhs: &'hir Expr<'hir>,
+        rhs: Option<&'hir Expr<'hir>>,
+        out: &mut Vec<Pair<'hir>>,
+    ) {
         let Some(elems) = tuple_elems(lhs) else { return out.push((var_of(lhs), rhs)) };
         let rhs_elems = rhs.and_then(tuple_elems);
         for (i, lhs) in elems.iter().enumerate() {
@@ -433,7 +446,9 @@ impl<'hir> Analyzer<'hir> {
                     self.add_facts(if value { then } else { otherwise }, negate);
                 }
             }
-            ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => self.add_facts(inner, !negate),
+            ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => {
+                self.add_facts(inner, !negate);
+            }
             ExprKind::Binary(lhs, op, rhs)
                 if matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
             {
