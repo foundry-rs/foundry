@@ -78,7 +78,28 @@ sol! {
 /// Interact with synchronous ERC-4626 tokenized vaults.
 #[derive(Debug, Parser, Clone)]
 pub enum Erc4626Subcommand {
-    /// Show vault, asset, and exchange-rate information.
+    /// Show vault, asset, and exchange-rate information
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 info 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB --human \
+    ///         --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     Vault                0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB
+    ///     Name                 Steakhouse USDC
+    ///     Symbol               steakUSDC
+    ///     Decimals             18
+    ///     Asset                0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+    ///     Asset name           USD Coin
+    ///     Asset symbol         USDC
+    ///     Asset decimals       6
+    ///     Total assets         95183395.377893 USDC
+    ///     Total supply         84037200.060143388288943211 steakUSDC
+    ///     Assets per share     1.132634 USDC
+    ///     Shares per asset     0.882897731163608580 steakUSDC
+    #[command(verbatim_doc_comment)]
     Info {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -96,7 +117,28 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Show an account's shares, asset value, and withdrawal limits.
+    /// Show an account's shares, asset value, and withdrawal limits
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 position 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         0x255c7705E8bb334dfCaE438197f7c4297988085A --human --block 25519075 \
+    ///         --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     Vault                0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB
+    ///     Owner                0x255c7705e8BB334DfCae438197f7C4297988085a
+    ///     Asset                0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+    ///     Share symbol         steakUSDC
+    ///     Share decimals       18
+    ///     Asset symbol         USDC
+    ///     Asset decimals       6
+    ///     Share balance        35733.949295544029939485 steakUSDC
+    ///     Assets equivalent    40473.486378 USDC
+    ///     Max withdraw         40473.486378 USDC
+    ///     Max redeem           35733.949295417417957447 steakUSDC
+    #[command(verbatim_doc_comment)]
     Position {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -118,7 +160,44 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Probe synchronous ERC-4626 interface compatibility.
+    /// Probe synchronous ERC-4626 interface compatibility
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 check 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         --account 0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
+    ///         --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    /// ```text
+    /// Vault                0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB
+    /// Account              0x255c7705e8BB334DfCae438197f7C4297988085a
+    /// Note: This probes read-call behavior only; it does not prove state-changing selector coverage or semantic ERC-4626 compliance.
+    /// PASS contract code            contract bytecode is present
+    /// PASS asset()                  returned 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+    /// PASS asset contract           underlying asset bytecode is present
+    /// PASS asset balanceOf(address) call succeeded
+    /// PASS totalAssets()            call succeeded
+    /// PASS totalSupply()            call succeeded
+    /// PASS balanceOf(address)       call succeeded
+    /// PASS allowance(address,address) call succeeded
+    /// PASS convertToShares(0)       returned zero
+    /// PASS convertToAssets(0)       returned zero
+    /// PASS maxDeposit(address)      call succeeded
+    /// PASS previewDeposit(0)        returned zero
+    /// PASS maxMint(address)         call succeeded
+    /// PASS previewMint(0)           returned zero
+    /// PASS maxWithdraw(address)     call succeeded
+    /// PASS previewWithdraw(0)       returned zero
+    /// PASS maxRedeem(address)       call succeeded
+    /// PASS previewRedeem(0)         returned zero
+    /// PASS name()                   call succeeded
+    /// PASS symbol()                 call succeeded
+    /// PASS decimals()               call succeeded
+    /// Summary: 21 passed, 0 warnings, 0 failed
+    /// ```
+    #[command(verbatim_doc_comment)]
     Check {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -136,7 +215,17 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Query the vault's underlying asset token.
+    /// Query the vault's underlying asset token
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 asset 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
+    #[command(verbatim_doc_comment)]
     Asset {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -150,7 +239,17 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Query the total amount of underlying assets managed by the vault.
+    /// Query the total amount of underlying assets managed by the vault
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 total-assets 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     95183395377893 [9.518e13]
+    #[command(verbatim_doc_comment)]
     TotalAssets {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -164,7 +263,17 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Convert an asset amount to the corresponding share amount.
+    /// Convert an asset amount to the corresponding share amount
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 convert-to-shares 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         1000000 --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     882897731163608580 [8.828e17]
+    #[command(verbatim_doc_comment)]
     ConvertToShares {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -181,7 +290,18 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Convert a share amount to the corresponding asset amount.
+    /// Convert a share amount to the corresponding asset amount
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 convert-to-assets 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         1000000000000000000 --block 25519075 \
+    ///         --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     1132634 [1.132e6]
+    #[command(verbatim_doc_comment)]
     ConvertToAssets {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -198,7 +318,18 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Query the maximum assets that may be deposited for a receiver.
+    /// Query the maximum assets that may be deposited for a receiver
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 max-deposit 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
+    ///         --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     1002934816604622098 [1.002e18]
+    #[command(verbatim_doc_comment)]
     MaxDeposit {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -216,7 +347,17 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Preview the shares received by depositing an asset amount.
+    /// Preview the shares received by depositing an asset amount
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 preview-deposit 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         1000000 --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     882897731163608580 [8.828e17]
+    #[command(verbatim_doc_comment)]
     PreviewDeposit {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -233,7 +374,19 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Deposit assets into the vault.
+    /// Deposit assets into the vault
+    ///
+    /// The vault must have sufficient allowance to spend the underlying asset.
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 deposit 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         1000000 $ACCOUNT --private-key $PRIVATE_KEY --async --rpc-url $ETH_RPC_URL
+    ///
+    /// Output:
+    ///
+    ///     0x6f2a7e10f148a0ee81208cd8d7dee10cc33b5bdb739bfeef805dc68467e6db4e
+    #[command(verbatim_doc_comment)]
     Deposit {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -253,7 +406,18 @@ pub enum Erc4626Subcommand {
         tx: TxParams,
     },
 
-    /// Query the maximum shares that may be minted for a receiver.
+    /// Query the maximum shares that may be minted for a receiver
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 max-mint 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
+    ///         --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     885488874085210715750045480687 [8.854e29]
+    #[command(verbatim_doc_comment)]
     MaxMint {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -271,7 +435,18 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Preview the assets required to mint a share amount.
+    /// Preview the assets required to mint a share amount
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 preview-mint 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         1000000000000000000 --block 25519075 \
+    ///         --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     1132635 [1.132e6]
+    #[command(verbatim_doc_comment)]
     PreviewMint {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -288,7 +463,20 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Mint vault shares.
+    /// Mint vault shares
+    ///
+    /// The vault must have sufficient allowance to spend the underlying asset.
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 mint 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         1000000000000000000 $ACCOUNT --private-key $PRIVATE_KEY --async \
+    ///         --rpc-url $ETH_RPC_URL
+    ///
+    /// Output:
+    ///
+    ///     0xa7c3b4e26a99e2cb422e2b36cffeae642a39f1d09f8f3454c9c2d4657ebb0491
+    #[command(verbatim_doc_comment)]
     Mint {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -308,7 +496,18 @@ pub enum Erc4626Subcommand {
         tx: TxParams,
     },
 
-    /// Query the maximum assets that an owner may withdraw.
+    /// Query the maximum assets that an owner may withdraw
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 max-withdraw 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
+    ///         --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     40473486378 [4.047e10]
+    #[command(verbatim_doc_comment)]
     MaxWithdraw {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -326,7 +525,17 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Preview the shares burned to withdraw an asset amount.
+    /// Preview the shares burned to withdraw an asset amount
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 preview-withdraw 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         1000000 --block 25519075 --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     882897731163608581 [8.828e17]
+    #[command(verbatim_doc_comment)]
     PreviewWithdraw {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -343,7 +552,18 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Withdraw assets from the vault.
+    /// Withdraw assets from the vault
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 withdraw 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         1000000 $ACCOUNT $ACCOUNT --private-key $PRIVATE_KEY --async \
+    ///         --rpc-url $ETH_RPC_URL
+    ///
+    /// Output:
+    ///
+    ///     0x6d6d70151151f30aa13bdb4082ea7fd3e531193eebdfbb356586284cd0e6a8a2
+    #[command(verbatim_doc_comment)]
     Withdraw {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -367,7 +587,18 @@ pub enum Erc4626Subcommand {
         tx: TxParams,
     },
 
-    /// Query the maximum shares that an owner may redeem.
+    /// Query the maximum shares that an owner may redeem
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 max-redeem 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         0x255c7705E8bb334dfCaE438197f7c4297988085A --block 25519075 \
+    ///         --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     35733949295417417957447 [3.573e22]
+    #[command(verbatim_doc_comment)]
     MaxRedeem {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -385,7 +616,18 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Preview the assets received by redeeming a share amount.
+    /// Preview the assets received by redeeming a share amount
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 preview-redeem 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         1000000000000000000 --block 25519075 \
+    ///         --rpc-url https://ethereum.reth.rs/rpc
+    ///
+    /// Output:
+    ///
+    ///     1132634 [1.132e6]
+    #[command(verbatim_doc_comment)]
     PreviewRedeem {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -402,7 +644,18 @@ pub enum Erc4626Subcommand {
         rpc: RpcOpts,
     },
 
-    /// Redeem vault shares for assets.
+    /// Redeem vault shares for assets
+    ///
+    /// Example:
+    ///
+    ///     $ cast erc4626 redeem 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB \
+    ///         1000000000000000000 $ACCOUNT $ACCOUNT --private-key $PRIVATE_KEY --async \
+    ///         --rpc-url $ETH_RPC_URL
+    ///
+    /// Output:
+    ///
+    ///     0x304d463e4d33b462778a974d008cd1b9c4c109730ae6617d2815477b8aa7c03e
+    #[command(verbatim_doc_comment)]
     Redeem {
         /// The ERC-4626 vault contract address.
         #[arg(value_parser = NameOrAddress::from_str)]
@@ -1417,4 +1670,37 @@ async fn send_call<C: SolCall>(
 ) -> Result<()> {
     let data = hex::encode_prefixed(call.abi_encode());
     SendTxArgs::contract_call(vault, data, send_tx, tx).run().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn all_subcommands_document_example_output() {
+        let command = Erc4626Subcommand::command();
+        let subcommands = command.get_subcommands().collect::<Vec<_>>();
+        assert_eq!(subcommands.len(), 19);
+
+        for subcommand in subcommands {
+            let help = subcommand
+                .get_long_about()
+                .unwrap_or_else(|| panic!("{} is missing long help", subcommand.get_name()))
+                .to_string();
+            assert!(
+                help.contains("Example:\n\n    $ cast erc4626"),
+                "{} is missing an example command",
+                subcommand.get_name()
+            );
+            assert!(
+                help.split_once("\n\nOutput:\n\n").is_some_and(|(_, output)| !output.is_empty()),
+                "{} is missing example output",
+                subcommand.get_name()
+            );
+        }
+
+        let info = command.find_subcommand("info").unwrap().get_long_about().unwrap().to_string();
+        assert!(info.contains("--human"));
+    }
 }
