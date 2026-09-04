@@ -1,4 +1,3 @@
-
 use alloy_primitives::{Bytes, map::AddressHashMap};
 use foundry_cli::utils::{TraceResult, print_traces};
 use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler};
