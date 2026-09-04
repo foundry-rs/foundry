@@ -1,4 +1,4 @@
-use alloy_chains::Chain;
+
 use alloy_primitives::{Bytes, map::AddressHashMap};
 use foundry_cli::utils::{TraceResult, print_traces};
 use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler};
@@ -6,15 +6,14 @@ use foundry_compilers::artifacts::output_selection::ContractOutputSelection;
 use foundry_config::{Config, FoundryHardfork, TracingConfig};
 use foundry_debugger::Debugger;
 use foundry_evm::{
-    hardforks::TempoHardfork,
     opts::ForkEndpointIdentity,
     traces::{
-        CallTraceDecoderBuilder, DebugTraceIdentifier,
+        CallTraceDecoderBuilder, DebugTraceIdentifier, TraceContext,
         debug::ContractSources,
         identifier::{SignaturesIdentifier, TraceIdentifiers},
     },
 };
-use foundry_evm_networks::{NetworkConfigs, NetworkVariant};
+use foundry_evm_networks::NetworkVariant;
 
 pub(crate) fn select_remote_trace_hardfork(
     configured: Option<FoundryHardfork>,
@@ -56,17 +55,14 @@ pub(crate) fn ensure_remote_trace_context_unchanged(
 }
 
 /// labels the traces, conditionally prints them or opens the debugger
-#[expect(clippy::too_many_arguments)]
 pub(crate) async fn handle_traces(
     mut result: TraceResult,
     config: &Config,
-    chain: Chain,
+    context: TraceContext,
     contracts_bytecode: &AddressHashMap<Bytes>,
     tracing: &TracingConfig,
     with_local_artifacts: bool,
     debug: bool,
-    hardfork: Option<FoundryHardfork>,
-    networks: NetworkConfigs,
 ) -> eyre::Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
         // Status prose goes to stderr so `--json` output on stdout stays machine-readable.
@@ -94,25 +90,13 @@ pub(crate) async fn handle_traces(
         (None, ContractSources::default())
     };
 
-    let execution_network = networks.execution_network();
-    let mut resolved_hardfork = hardfork
-        .or(config.hardfork)
-        .filter(|hardfork| hardfork.namespace() == execution_network.hardfork_namespace());
-    if resolved_hardfork.is_none() && execution_network.is_tempo() {
-        resolved_hardfork = Some(config.evm_spec_id::<TempoHardfork>().into());
-    }
-    #[cfg(feature = "monad")]
-    if resolved_hardfork.is_none() && execution_network.is_monad() {
-        resolved_hardfork =
-            Some(config.evm_spec_id::<foundry_evm::hardforks::MonadHardfork>().into());
-    }
     let mut builder = CallTraceDecoderBuilder::new()
         .with_tracing_config(tracing)
         .with_signature_identifier(SignaturesIdentifier::from_config(config)?)
-        .with_networks(networks)
-        .with_chain_id(Some(chain.id()))
-        .with_hardfork(resolved_hardfork);
-    let mut identifier = TraceIdentifiers::new().with_external(config, Some(chain))?;
+        .with_networks(context.networks())
+        .with_chain_id(Some(context.chain().id()))
+        .with_hardfork(context.decoding_hardfork(config));
+    let mut identifier = TraceIdentifiers::new().with_external(config, Some(context.chain()))?;
     if let Some(contracts) = &known_contracts {
         builder = builder.with_known_contracts(contracts);
         identifier = identifier.with_local_and_bytecodes(contracts, contracts_bytecode);

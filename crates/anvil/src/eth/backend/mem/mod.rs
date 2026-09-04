@@ -46,7 +46,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
+    Blob, BlockBody, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
     TransactionEnvelope, TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, Typed2718,
     constants::EMPTY_WITHDRAWALS,
     proofs::{calculate_receipt_root, calculate_transaction_root},
@@ -60,6 +60,7 @@ use alloy_eips::{
     eip7685::EMPTY_REQUESTS_HASH,
     eip7840::BlobParams,
     eip7910::SystemContract,
+    eip7928::EMPTY_BLOCK_ACCESS_LIST_HASH,
 };
 use alloy_evm::{
     Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromTxWithEncoded,
@@ -68,6 +69,7 @@ use alloy_evm::{
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
 };
+use alloy_genesis::Genesis;
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     BlockResponse, Network, NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope,
@@ -111,7 +113,7 @@ use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_sol_types::SolCall;
-use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
+use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer, root::state_root_ref_unhashed};
 use anvil_core::eth::{
     block::{Block, BlockInfo, canonical_block, create_block},
     transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
@@ -3928,12 +3930,16 @@ impl<N: Network> Backend<N> {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
             Blockchain::forked(fork.block_number(), fork.block_hash(), fork.total_difficulty())
         } else {
-            let header = genesis_header(
-                &env.read(),
-                fees.is_eip1559().then(|| fees.base_fee()),
-                genesis.timestamp,
-                genesis.number,
-            );
+            let header = if let Some(genesis) = genesis.genesis_init.as_ref() {
+                genesis_json_header(genesis)
+            } else {
+                genesis_header(
+                    &env.read(),
+                    fees.is_eip1559().then(|| fees.base_fee()),
+                    genesis.timestamp,
+                    genesis.number,
+                )
+            };
             Blockchain::new(foundry_header(&networks, header))
         };
 
@@ -8426,6 +8432,16 @@ impl Backend<FoundryNetwork> {
                     ..Default::default()
                 };
                 let block_hash = header.hash_slow();
+                let withdrawals = (spec_id >= SpecId::SHANGHAI).then_some(Default::default());
+                let size = U256::from(
+                    BlockBody {
+                        transactions: transaction_envelopes,
+                        ommers: vec![],
+                        withdrawals: withdrawals.clone(),
+                    }
+                    .into_block(header.clone())
+                    .length(),
+                );
                 for (transaction_index, transaction) in transactions.iter_mut().enumerate() {
                     transaction.block_hash = Some(block_hash);
                     transaction.block_number = Some(header.number);
@@ -8437,11 +8453,11 @@ impl Backend<FoundryNetwork> {
                         hash: block_hash,
                         inner: header.into(),
                         total_difficulty: None,
-                        size: None,
+                        size: Some(size),
                     },
                     uncles: vec![],
                     transactions: BlockTransactions::Full(transactions),
-                    withdrawals: (spec_id >= SpecId::SHANGHAI).then_some(Default::default()),
+                    withdrawals,
                 };
 
                 if !return_full_transactions {
@@ -9425,6 +9441,44 @@ fn genesis_header(
         parent_beacon_block_root: (spec_id >= SpecId::CANCUN).then_some(Default::default()),
         withdrawals_root: (spec_id >= SpecId::SHANGHAI).then_some(EMPTY_WITHDRAWALS),
         requests_hash: (spec_id >= SpecId::PRAGUE).then_some(EMPTY_REQUESTS_HASH),
+        ..Default::default()
+    }
+}
+
+/// Creates an Ethereum header from a `genesis.json` configuration.
+fn genesis_json_header(genesis: &Genesis) -> Header {
+    let number = genesis.number.unwrap_or_default();
+    let timestamp = genesis.timestamp;
+    let is_london = genesis.config.is_london_active_at_block(number);
+    let is_shanghai = genesis.config.is_shanghai_active_at_block_and_timestamp(number, timestamp);
+    let is_cancun = genesis.config.is_cancun_active_at_block_and_timestamp(number, timestamp);
+    let is_prague = genesis.config.prague_time.is_some_and(|fork| fork <= timestamp);
+    let is_amsterdam = genesis.config.amsterdam_time.is_some_and(|fork| fork <= timestamp);
+
+    Header {
+        number,
+        parent_hash: genesis.parent_hash.unwrap_or_default(),
+        gas_limit: genesis.gas_limit,
+        difficulty: genesis.difficulty,
+        nonce: genesis.nonce.into(),
+        extra_data: genesis.extra_data.clone(),
+        state_root: state_root_ref_unhashed(&genesis.alloc),
+        timestamp,
+        mix_hash: genesis.mix_hash,
+        beneficiary: genesis.coinbase,
+        base_fee_per_gas: is_london.then(|| {
+            genesis
+                .base_fee_per_gas
+                .map(|fee| fee as u64)
+                .unwrap_or(crate::eth::fees::INITIAL_BASE_FEE)
+        }),
+        withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
+        parent_beacon_block_root: is_cancun.then_some(B256::ZERO),
+        blob_gas_used: is_cancun.then_some(genesis.blob_gas_used.unwrap_or_default()),
+        excess_blob_gas: is_cancun.then_some(genesis.excess_blob_gas.unwrap_or_default()),
+        requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
+        block_access_list_hash: is_amsterdam.then_some(EMPTY_BLOCK_ACCESS_LIST_HASH),
+        slot_number: is_amsterdam.then_some(genesis.slot_number.unwrap_or_default()),
         ..Default::default()
     }
 }

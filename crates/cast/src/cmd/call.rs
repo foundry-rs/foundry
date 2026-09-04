@@ -55,15 +55,14 @@ use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, context_for_child_transaction},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
     },
     executors::{ExecutorBuilder, TracingExecutor},
     opts::EvmOpts,
-    traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
+    traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
-use revm::context::Block;
 use std::str::FromStr;
 
 /// CLI arguments for `cast call`.
@@ -579,13 +578,11 @@ impl CallArgs {
             return handle_traces(
                 result,
                 &config,
-                chain,
+                TraceContext::new(chain, endpoint_identity.network_profile, resolved_hardfork),
                 &contracts_bytecode,
                 &tracing,
                 with_local_artifacts,
                 false,
-                resolved_hardfork,
-                endpoint_identity.network_profile,
             )
             .await;
         }
@@ -597,34 +594,22 @@ impl CallArgs {
             }
 
             let create2_deployer = evm_opts.create2_deployer;
-            let (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork) =
-                TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
-            let context_block_number = evm_env.block_env.number().saturating_to();
+            let mut fork = TracingExecutor::<FEN>::get_fork(&mut config, evm_opts).await?;
             // Modify settings usually set in eth_call while keeping execution gas bounded.
-            evm_env.cfg_env.disable_block_gas_limit = true;
-            evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
+            fork.evm_env.cfg_env.disable_block_gas_limit = true;
+            fork.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
 
             if let Some(block_overrides) = block_overrides {
                 if let Some(number) = block_overrides.number {
-                    evm_env.block_env.set_number(number.to());
+                    fork.evm_env.block_env.set_number(number.to());
                 }
                 if let Some(time) = block_overrides.time {
-                    evm_env.block_env.set_timestamp(U256::from(time));
+                    fork.evm_env.block_env.set_timestamp(U256::from(time));
                 }
             }
-            let resolved_hardfork = TracingExecutor::<FEN>::resolve_spec_for_chain(
-                &config,
-                networks,
-                chain.id(),
-                endpoint_hardfork,
-                &mut evm_env,
-                evm_version,
-            );
-            TracingExecutor::<FEN>::extend_precompile_labels(
-                &mut config,
-                networks,
-                resolved_hardfork,
-            );
+            fork.resolve_spec(&config, evm_version);
+            fork.extend_precompile_labels(&mut config);
+            let context = fork.context();
 
             let trace_requirements = TraceRequirements::none()
                 .with_calls(true)
@@ -635,13 +620,9 @@ impl CallArgs {
                     InternalTraceMode::None
                 })
                 .with_state_changes(tracing.verbosity > 4);
-            let mut executor = TracingExecutor::<FEN>::new(
+            let mut executor = fork.into_executor(
                 executor_builder,
-                (evm_env, tx_env),
-                fork,
-                None,
                 trace_requirements,
-                networks,
                 create2_deployer,
                 state_overrides,
             )?;
@@ -679,27 +660,13 @@ impl CallArgs {
                 env_tx.set_signed_authorization(auth);
             }
 
-            let mut context_tx = executor.tx_env().clone();
-            context_tx.set_caller(from);
-            context_tx.set_kind(tx_kind);
-            context_tx.set_data(input.clone());
-            context_tx.set_value(value);
-            let chain_context = context_for_child_transaction::<FEN, _>(
-                &provider,
-                context_block_number,
-                &context_tx,
-                networks,
-            )
-            .await?;
-
             let trace = match tx_kind {
                 TxKind::Create => {
-                    let deploy_result =
-                        executor.deploy_with_context(from, input, value, chain_context, None);
+                    let deploy_result = executor.deploy(from, input, value, None);
                     TraceResult::try_from(deploy_result)?
                 }
                 TxKind::Call(to) => TraceResult::from_raw(
-                    executor.transact_raw_with_context(from, to, input, value, chain_context)?,
+                    executor.transact_raw(from, to, input, value)?,
                     TraceKind::Execution,
                 ),
             };
@@ -708,13 +675,11 @@ impl CallArgs {
             return handle_traces(
                 trace,
                 &config,
-                chain,
+                context,
                 &contracts_bytecode,
                 &tracing,
                 with_local_artifacts,
                 debug,
-                resolved_hardfork,
-                networks,
             )
             .await;
         }

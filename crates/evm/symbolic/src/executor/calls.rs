@@ -1062,105 +1062,54 @@ impl SymbolicExecutor {
             child.origin_word = origin_word;
         }
         self.apply_call_value_transfer(executor, &mut child, kind, to, call_caller, value);
-        child.expected_revert = None;
-        child.assume_no_revert_next_call = None;
         let outcomes = self.execute_external_call(executor, child, &child_code, completed_paths)?;
         if outcomes.is_empty() {
             return Ok(StepOutcome::AssumeRejected);
         }
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
-        for mut outcome in outcomes {
-            let mut parent = state.clone();
-            parent.take_call_outcome_state(&mut outcome.state);
-
-            if let Some(assumption) = parent.assume_no_revert_next_call.take()
-                && matches!(outcome.status, CallStatus::Revert)
-                && self.assume_no_revert_rejects(
-                    &mut parent,
-                    &assumption,
-                    to,
-                    &outcome.state.frame.return_data,
-                )?
-            {
-                continue;
-            }
-
-            if let Some(mut expected) = parent.expected_revert.clone() {
-                match outcome.status {
-                    CallStatus::Success => {
-                        *state = parent;
-                        return Ok(StepOutcome::Failure);
-                    }
-                    CallStatus::Revert | CallStatus::Failure => {
-                        if !self.expected_revert_matches(
-                            &mut parent,
-                            &expected,
-                            to,
-                            &outcome.state.frame.return_data,
-                        )? {
-                            *state = parent;
-                            return Ok(StepOutcome::Failure);
-                        }
-                        if expected.consume_one() {
-                            parent.expected_revert = None;
-                        } else {
-                            parent.expected_revert = Some(expected);
-                        }
-                        parent.expected_calls = outcome.state.expected_calls;
-                        parent.expected_creates = outcome.state.expected_creates;
-                        parent.call_mocks = outcome.state.call_mocks;
-                        parent.function_mocks = outcome.state.function_mocks;
-                        parent.world = original_world.clone();
-                        parent.return_data = SymReturnData::empty(&mut self.cx);
-                        parent.copy_call_output_offset(
-                            &mut self.cx,
-                            out_offset.clone(),
-                            &out_size,
-                        )?;
-                        parent.stack.push(SymExpr::one(&mut self.cx))?;
-                        parents.push_back(parent);
-                        continue;
-                    }
-                }
-            }
-
-            parent.world = if matches!(outcome.status, CallStatus::Success) {
-                outcome.state.world
-            } else {
-                original_world.clone()
-            };
-            match outcome.status {
-                CallStatus::Success => {
-                    parent.block = outcome.state.block;
-                    parent.expected_emit = outcome.state.expected_emit;
-                    parent.expected_calls = outcome.state.expected_calls;
-                    parent.expected_creates = outcome.state.expected_creates;
-                    parent.call_mocks = outcome.state.call_mocks;
-                    parent.function_mocks = outcome.state.function_mocks;
-                }
-                CallStatus::Failure => {
+        for outcome in outcomes {
+            match self.join_call_outcome(state, outcome, to)? {
+                JoinedCallOutcome::Rejected => {}
+                JoinedCallOutcome::Failure(parent) => {
                     *state = parent;
                     return Ok(StepOutcome::Failure);
                 }
-                CallStatus::Revert => {}
+                JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
+                    parent.expected_calls = child.expected_calls;
+                    parent.expected_creates = child.expected_creates;
+                    parent.call_mocks = child.call_mocks;
+                    parent.function_mocks = child.function_mocks;
+                    parent.world = original_world.clone();
+                    parent.return_data = SymReturnData::empty(&mut self.cx);
+                    parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                    parent.stack.push(SymExpr::one(&mut self.cx))?;
+                    parents.push_back(parent);
+                }
+                JoinedCallOutcome::Success { mut parent, child } => {
+                    parent.world = child.world;
+                    parent.block = child.block;
+                    parent.expected_emit = child.expected_emit;
+                    parent.expected_calls = child.expected_calls;
+                    parent.expected_creates = child.expected_creates;
+                    parent.call_mocks = child.call_mocks;
+                    parent.function_mocks = child.function_mocks;
+                    parent.return_data = child.frame.return_data;
+                    parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                    parent.stack.push(SymExpr::one(&mut self.cx))?;
+                    parents.push_back(parent);
+                }
+                JoinedCallOutcome::Revert { mut parent, child } => {
+                    parent.world = original_world.clone();
+                    parent.return_data = child.frame.return_data;
+                    parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
+                    parent.stack.push(SymExpr::zero(&mut self.cx))?;
+                    parents.push_back(parent);
+                }
             }
-            parent.return_data = outcome.state.frame.return_data;
-            parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), &out_size)?;
-            let success = SymExpr::constant(
-                &mut self.cx,
-                U256::from(matches!(outcome.status, CallStatus::Success)),
-            );
-            parent.stack.push(success)?;
-            parents.push_back(parent);
         }
 
-        let Some(first) = self.pop_next_path(&mut parents) else {
-            return Ok(StepOutcome::AssumeRejected);
-        };
-        *state = first;
-        worklist.extend(parents);
-        Ok(StepOutcome::Continue)
+        Ok(self.resume_parent_paths(state, worklist, parents))
     }
 
     #[expect(clippy::too_many_arguments)]

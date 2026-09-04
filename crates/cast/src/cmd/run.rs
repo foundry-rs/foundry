@@ -8,7 +8,6 @@ use crate::{
         apply_chain_specific_tx_replay_env_changes_for_chain, block_env_from_header,
     },
 };
-use alloy_chains::Chain;
 use alloy_consensus::{BlockHeader, Transaction, transaction::SignerRecoverable};
 use alloy_eips::BlockNumHash;
 use alloy_network::{
@@ -57,7 +56,7 @@ use foundry_evm::{
     executors::{Executor, ExecutorBuilder, TracingExecutor},
     hardforks::FoundryHardfork,
     opts::EvmOpts,
-    traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
+    traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
 };
 use foundry_evm_networks::NetworkConfigs;
 use futures::TryFutureExt;
@@ -171,9 +170,7 @@ struct PreparedRun<FEN: FoundryEvmNetwork> {
     block: Option<AnyRpcBlock>,
     evm_env: EvmEnvFor<FEN>,
     executor: TracingExecutor<FEN>,
-    chain: Chain,
-    networks: NetworkConfigs,
-    resolved_hardfork: Option<FoundryHardfork>,
+    trace_context: TraceContext,
     prestate_applied: bool,
     #[cfg(feature = "monad")]
     monad: MonadPrepared,
@@ -374,7 +371,7 @@ impl RunArgs {
 
         // The remote node executed this trace, so its reported family is authoritative for
         // decoding even when the caller selected a compatible local EVM implementation.
-        let chain = Chain::from_id(endpoint_identity.source_chain_id);
+        let chain = alloy_chains::Chain::from_id(endpoint_identity.source_chain_id);
         let resolved_hardfork = resolve_remote_trace_hardfork(
             config.hardfork,
             &endpoint_identity,
@@ -400,13 +397,11 @@ impl RunArgs {
         handle_traces(
             result,
             &config,
-            chain,
+            TraceContext::new(chain, endpoint_identity.network_profile, resolved_hardfork),
             &contracts_bytecode,
             &tracing,
             with_local_artifacts,
             false,
-            resolved_hardfork,
-            endpoint_identity.network_profile,
         )
         .await
     }
@@ -431,31 +426,33 @@ impl RunArgs {
         config.fork_block_number = Some(tx_block_number - 1);
 
         let create2_deployer = evm_opts.create2_deployer;
-        let (block, (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork)) = tokio::try_join!(
+        let (block, mut fork) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
-            TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts)
+            TracingExecutor::<FEN>::get_fork(&mut config, evm_opts)
         )?;
+        let chain = fork.context().chain();
+        let networks = fork.context().networks();
 
         let mut evm_version = self.evm_version;
         // Mined transactions already passed the block gas limit check their chain applies, and
         // some chains admit transactions whose gas limit exceeds it: BSC validator transactions
         // carry a gas limit of `i64::MAX`. Re-applying the check can only reject a transaction
         // the chain accepted.
-        evm_env.cfg_env.disable_block_gas_limit = true;
+        fork.evm_env.cfg_env.disable_block_gas_limit = true;
 
         // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
         // Users can opt-in to enable these limits by setting `enable_tx_gas_limit` to true.
         if !self.enable_tx_gas_limit {
-            evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
+            fork.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
         }
 
-        evm_env.cfg_env.limit_contract_code_size = None;
-        evm_env.block_env.set_number(U256::from(tx_block_number));
+        fork.evm_env.cfg_env.limit_contract_code_size = None;
+        fork.evm_env.block_env.set_number(U256::from(tx_block_number));
 
         let mut parent_beacon_block_root = None;
         if let Some(block) = &block {
-            evm_env.block_env = block_env_from_header(block.header());
+            fork.evm_env.block_env = block_env_from_header(block.header());
             parent_beacon_block_root = block.header().parent_beacon_block_root();
 
             // Unless explicitly configured, resolve the correct spec for the block using the same
@@ -471,31 +468,23 @@ impl RunArgs {
                 evm_version = Some(EvmVersion::Cancun);
             }
             apply_chain_and_block_specific_env_changes_for_chain::<AnyNetwork, _, _>(
-                &mut evm_env,
+                &mut fork.evm_env,
                 block,
                 chain.id(),
                 config.networks,
             );
         }
-        let resolved_hardfork = TracingExecutor::<FEN>::resolve_spec_for_chain(
-            &config,
-            networks,
-            chain.id(),
-            endpoint_hardfork,
-            &mut evm_env,
-            evm_version,
-        );
-        TracingExecutor::<FEN>::extend_precompile_labels(&mut config, networks, resolved_hardfork);
+        fork.resolve_spec(&config, evm_version);
+        fork.extend_precompile_labels(&mut config);
 
-        apply_chain_specific_tx_replay_env_changes_for_chain(&mut evm_env, chain.id());
+        apply_chain_specific_tx_replay_env_changes_for_chain(&mut fork.evm_env, chain.id());
 
-        let mut executor = TracingExecutor::<FEN>::new(
+        let trace_context = fork.context();
+        let mut evm_env = fork.evm_env.clone();
+
+        let mut executor = fork.into_executor(
             executor_builder,
-            (evm_env.clone(), tx_env),
-            fork,
-            evm_version,
             TraceRequirements::none(),
-            networks,
             create2_deployer,
             None,
         )?;
@@ -550,9 +539,7 @@ impl RunArgs {
             block,
             evm_env,
             executor,
-            chain,
-            networks,
-            resolved_hardfork,
+            trace_context,
             prestate_applied,
             #[cfg(feature = "monad")]
             monad: MonadPrepared { tx_block_number, compute_units_per_second },
@@ -672,13 +659,11 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
         handle_traces(
             result,
             &self.config,
-            self.chain,
+            self.trace_context,
             &contracts_bytecode,
             &self.tracing,
             self.args.with_local_artifacts,
             self.args.debug,
-            self.resolved_hardfork,
-            self.networks,
         )
         .await
     }

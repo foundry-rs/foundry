@@ -209,6 +209,8 @@ impl PathState {
         // semantics unless the callee sets its own prank.
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
+        child.expected_revert = None;
+        child.assume_no_revert_next_call = None;
         child
     }
 
@@ -217,8 +219,6 @@ impl PathState {
         child.storage_hook_active = true;
         child.recorded_logs = None;
         child.access_record = None;
-        child.expected_revert = None;
-        child.assume_no_revert_next_call = None;
         child.expected_emit = None;
         child.expected_calls.clear();
         child.expected_creates.clear();
