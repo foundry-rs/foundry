@@ -13,6 +13,7 @@ use crate::cmd::{
     create2::Create2Args,
     creation_code::CreationCodeArgs,
     erc20::Erc20Subcommand,
+    erc4626::Erc4626Subcommand,
     estimate::EstimateArgs,
     events::EventsArgs,
     find_block::FindBlockArgs,
@@ -1377,6 +1378,13 @@ pub enum CastSubcommand {
     Erc20Token {
         #[command(subcommand)]
         command: Erc20Subcommand,
+    },
+
+    /// ERC-4626 tokenized vault operations.
+    #[command(name = "erc4626", visible_alias = "vault")]
+    Erc4626 {
+        #[command(subcommand)]
+        command: Erc4626Subcommand,
     },
 
     /// TIP-20 token operations (Tempo).
