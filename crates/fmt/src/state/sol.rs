@@ -2191,17 +2191,6 @@ impl<'ast> State<'_, 'ast> {
         self.s.cbox(0);
         match init {
             Some(init_stmt) => {
-                // Suppress the init clause's own trailing-comment scan entirely (bound the
-                // window to the clause's own end, so nothing after it can ever qualify as
-                // "trailing"). A `for`-loop header shares one source line across init,
-                // condition, and increment, so ANY comment printed with `trailing_no_break`
-                // partway through the header - not just one placed after the whole header -
-                // would swallow whatever gets printed next into itself (see
-                // `print_stmt_bound`'s doc comment). Leaving the comment unconsumed here means
-                // it stays in the comment stream and gets picked up correctly by the
-                // `print_comments(body.span.lo(), ..)` flush below, which runs after the full
-                // header (init, condition, increment, closing paren and brace) has already been
-                // printed - safe regardless of which part of the header the comment followed.
                 self.print_stmt_bound(init_stmt, Some(init_stmt.span.hi()));
             }
             None => self.print_word(";"),
