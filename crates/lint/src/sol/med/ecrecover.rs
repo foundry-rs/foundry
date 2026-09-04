@@ -70,7 +70,8 @@ impl<'hir> LateLintPass<'hir> for Ecrecover {
 /// variable is reassigned. Otherwise a guard on `sig.s` would survive `sig = other;`.
 ///
 /// Fields are keyed by their base variable only, so aliases of the same struct are tracked
-/// independently.
+/// independently: a write through one alias does not invalidate a guard recorded through another
+/// and can be missed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum ValueKey {
     Var(hir::VariableId),
@@ -204,7 +205,8 @@ impl<'hir> Analyzer<'hir> {
 
     fn join(&mut self, left: FlowState, right: FlowState) -> FlowState {
         // Keep the highest epoch so a field read after the join never reuses an identity that
-        // was reset in either branch.
+        // was reset in either branch. A field proven in both branches at different epochs is
+        // dropped by the intersection below, which over-warns rather than under-warns.
         let mut field_epoch = left.field_epoch.clone();
         for (var, epoch) in &right.field_epoch {
             field_epoch.entry(*var).and_modify(|e| *e = (*e).max(*epoch)).or_insert(*epoch);
@@ -604,7 +606,9 @@ impl<'hir> Analyzer<'hir> {
             .into_iter()
             .filter(|var| {
                 let var = self.hir.variable(*var);
-                var.kind.is_state() && !var.is_constant() && !var.is_immutable()
+                // Storage pointers alias mutable state.
+                (var.kind.is_state() && !var.is_constant() && !var.is_immutable())
+                    || var.data_location == Some(hir::DataLocation::Storage)
             })
             .collect();
         for var in vars {
@@ -829,6 +833,7 @@ impl<'hir> Analyzer<'hir> {
                     }
                 }
                 effects.mutable_state |= call_may_mutate_state(self.gcx, self.hir, callee);
+                effects.values.extend(reference_args(self.gcx, self.hir, callee, args));
             }
             ExprKind::Index(base, index) => {
                 self.add_expr_effects(base, effects);
@@ -1320,10 +1325,13 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
         }
 
         let result = self.walk_expr(expr);
-        if let ExprKind::Call(callee, _, _) = &expr.kind
-            && call_may_mutate_state(self.gcx, self.hir, callee)
-        {
-            self.invalidate_mutable_state();
+        if let ExprKind::Call(callee, args, _) = &expr.kind {
+            if call_may_mutate_state(self.gcx, self.hir, callee) {
+                self.invalidate_mutable_state();
+            }
+            for var in reference_args(self.gcx, self.hir, callee, args) {
+                self.invalidate_var(var);
+            }
         }
         if let Some(recovery) = self.pending_recovery(expr) {
             if self.deferred_calls.contains(&expr.peel_parens().id) {
@@ -1349,6 +1357,36 @@ fn underlying_var(expr: &hir::Expr<'_>) -> Option<hir::VariableId> {
         }
         _ => None,
     }
+}
+
+/// Memory and storage variables passed by reference to a user-defined function, including the
+/// receiver of a `using for` call, which the callee may write through.
+fn reference_args<'hir>(
+    gcx: Gcx<'hir>,
+    hir: &hir::Hir<'hir>,
+    callee: &'hir hir::Expr<'hir>,
+    args: &'hir hir::CallArgs<'hir>,
+) -> Vec<hir::VariableId> {
+    let callee = callee.peel_parens();
+    let Some(resolved) = gcx.resolved_callee(callee.id) else { return Vec::new() };
+    if !matches!(resolved.res, Res::Item(ItemId::Function(_))) {
+        return Vec::new();
+    }
+    let receiver = match &callee.kind {
+        ExprKind::Member(base, _) if resolved.attached => Some(*base),
+        _ => None,
+    };
+    receiver
+        .into_iter()
+        .chain(args.exprs())
+        .filter_map(underlying_var)
+        .filter(|&var| {
+            matches!(
+                hir.variable(var).data_location,
+                Some(hir::DataLocation::Memory | hir::DataLocation::Storage)
+            )
+        })
+        .collect()
 }
 
 fn collect_lhs_vars(expr: &hir::Expr<'_>, vars: &mut HashSet<hir::VariableId>) {

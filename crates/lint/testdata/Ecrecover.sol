@@ -782,6 +782,33 @@ contract Ecrecover {
             sig.s = replacement;
         }
     }
+
+    function normalizeSig(Sig memory sig) internal pure {
+        sig.s = bytes32(type(uint256).max);
+    }
+
+    function structMemberMutatedByCall(bytes32 hash, Sig memory sig) external pure returns (address) {
+        require(uint256(sig.s) <= HALF_ORDER);
+        normalizeSig(sig);
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function structMemberHashedOk(bytes32 hash, Sig memory sig) external pure returns (address) {
+        require(uint256(sig.s) <= HALF_ORDER);
+        bytes32 digest = keccak256(abi.encode(hash, sig.v));
+        return ecrecover(digest, sig.v, sig.r, sig.s);
+    }
+
+    function mutateStoredSig() internal {
+        storedSig.s = bytes32(type(uint256).max);
+    }
+
+    function storagePointerMutatedByCall(bytes32 hash) external returns (address) {
+        Sig storage sig = storedSig;
+        require(uint256(sig.s) <= HALF_ORDER);
+        mutateStoredSig();
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+    }
 }
 
 contract SameNameEcrecover {
