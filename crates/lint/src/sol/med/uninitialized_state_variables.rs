@@ -1,11 +1,14 @@
 use super::UninitializedStateVariables;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::is_builtin},
+    sol::{
+        Severity, SolLint,
+        analysis::{is_builtin, referenced_item, tuple_elems},
+    },
 };
 use solar::{
     ast::ContractKind,
-    interface::sym,
+    interface::{data_structures::Never, sym},
     sema::{
         Gcx, Hir,
         hir::{
@@ -14,7 +17,10 @@ use solar::{
         },
     },
 };
-use std::{collections::HashSet, ops::ControlFlow};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+};
 
 declare_forge_lint!(
     UNINITIALIZED_STATE_VARIABLES,
@@ -43,7 +49,13 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
         // Every read and write in the whole inheritance chain (`linearized_bases[0]` is the
         // contract itself) determines whether a variable is ever written.
         let bases = contract.linearized_bases;
-        let mut collector = Collector { hir, bases, read: HashSet::new(), written: HashSet::new() };
+        let mut collector = Collector {
+            hir,
+            bases,
+            read: HashSet::new(),
+            written: HashSet::new(),
+            aliases: HashMap::new(),
+        };
         // Inline assembly can write storage directly; bail out conservatively.
         if bases.iter().any(|&cid| collector.visit_contract_items(hir.contract(cid)).is_break()) {
             return;
@@ -69,7 +81,12 @@ struct Collector<'hir> {
     bases: &'hir [ContractId],
     read: HashSet<VariableId>,
     written: HashSet<VariableId>,
+    /// State variables each local `storage` pointer of the current function may reference.
+    aliases: Aliases,
 }
+
+/// Maps local `storage` pointers to the state variables they may reference.
+type Aliases = HashMap<VariableId, HashSet<VariableId>>;
 
 impl<'hir> Collector<'hir> {
     fn visit_contract_items(&mut self, contract: &'hir Contract<'hir>) -> ControlFlow<()> {
@@ -79,12 +96,15 @@ impl<'hir> Collector<'hir> {
     }
 
     /// Marks the variable at the root of an lvalue (through index/slice/member access and tuple
-    /// destructuring) as written.
+    /// destructuring) as written; a write through a `storage` pointer writes its targets.
     fn mark_written(&mut self, expr: &Expr<'_>) {
         match &expr.peel_parens().kind {
             ExprKind::Ident([Res::Item(id), ..]) => {
                 if let Some(id) = id.as_variable() {
                     self.written.insert(id);
+                    if let Some(targets) = self.aliases.get(&id) {
+                        self.written.extend(targets);
+                    }
                 }
             }
             ExprKind::Tuple(exprs) => exprs.iter().flatten().for_each(|e| self.mark_written(e)),
@@ -168,6 +188,12 @@ impl<'hir> Visit<'hir> for Collector<'hir> {
         self.hir
     }
 
+    fn visit_function(&mut self, func: &'hir Function<'hir>) -> ControlFlow<()> {
+        self.aliases = storage_aliases(self.hir, func);
+        func.modifiers.iter().try_for_each(|m| self.visit_modifier(m))?;
+        func.body.iter().flat_map(|body| body.stmts).try_for_each(|stmt| self.visit_stmt(stmt))
+    }
+
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<()> {
         match stmt.kind {
             StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => {
@@ -180,7 +206,11 @@ impl<'hir> Visit<'hir> for Collector<'hir> {
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
         match &expr.kind {
             ExprKind::Ident(reses) => self.read.extend(reses.iter().filter_map(Res::as_variable)),
-            ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => self.mark_written(lhs),
+            // Reassigning a bare storage pointer repoints it rather than writing its target.
+            ExprKind::Assign(lhs, ..) if !is_storage_pointer(self.hir, lhs) => {
+                self.mark_written(lhs)
+            }
+            ExprKind::Delete(lhs) => self.mark_written(lhs),
             ExprKind::Unary(op, lhs) if op.kind.has_side_effects() => self.mark_written(lhs),
             ExprKind::Call(callee, args, _) => {
                 // The receiver of a member call covers `push`/`pop` and `using for` library
@@ -194,4 +224,123 @@ impl<'hir> Visit<'hir> for Collector<'hir> {
         }
         self.walk_expr(expr)
     }
+}
+
+/// Collects, flow-insensitively, the state variables each local `storage` pointer declared in
+/// `func` may reference: every assignment contributes to the pointer's target set, and pointers
+/// assigned from other pointers are resolved transitively.
+fn storage_aliases<'hir>(hir: &'hir Hir<'hir>, func: &'hir Function<'hir>) -> Aliases {
+    struct Edges<'hir> {
+        hir: &'hir Hir<'hir>,
+        edges: HashMap<VariableId, HashSet<VariableId>>,
+    }
+
+    impl Edges<'_> {
+        /// Records `lhs = rhs`, matching tuple destructuring element-wise.
+        fn record(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>) {
+            match (tuple_elems(lhs), tuple_elems(rhs)) {
+                (Some(targets), Some(values)) => {
+                    for (target, value) in targets.iter().zip(values) {
+                        if let (Some(target), Some(value)) = (target, value) {
+                            self.record(target, value);
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(var) = referenced_item(lhs).and_then(|id| id.as_variable()) {
+                        self.record_var(var, rhs);
+                    }
+                }
+            }
+        }
+
+        fn record_var(&mut self, var: VariableId, rhs: &Expr<'_>) {
+            if is_local_storage_var(self.hir, var) {
+                root_vars(rhs, self.edges.entry(var).or_default());
+            }
+        }
+    }
+
+    impl<'hir> Visit<'hir> for Edges<'hir> {
+        type BreakValue = Never;
+
+        fn hir(&self) -> &'hir Hir<'hir> {
+            self.hir
+        }
+
+        fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
+            match &stmt.kind {
+                StmtKind::DeclSingle(var) => {
+                    if let Some(init) = self.hir.variable(*var).initializer {
+                        self.record_var(*var, init);
+                    }
+                }
+                StmtKind::DeclMulti(vars, init) => {
+                    for (var, value) in vars.iter().zip(tuple_elems(init).unwrap_or_default()) {
+                        if let (Some(var), Some(value)) = (var, value) {
+                            self.record_var(*var, value);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            self.walk_stmt(stmt)
+        }
+
+        fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+            if let ExprKind::Assign(lhs, None, rhs) = &expr.kind {
+                self.record(lhs, rhs);
+            }
+            self.walk_expr(expr)
+        }
+    }
+
+    let mut edges = Edges { hir, edges: HashMap::new() };
+    let _ = edges.visit_function(func);
+    let edges = edges.edges;
+    let mut aliases = Aliases::new();
+    for &pointer in edges.keys() {
+        let (mut targets, mut seen, mut stack) = (HashSet::new(), HashSet::new(), vec![pointer]);
+        while let Some(var) = stack.pop() {
+            if !seen.insert(var) {
+                continue;
+            }
+            if hir.variable(var).kind.is_state() {
+                targets.insert(var);
+            } else if let Some(roots) = edges.get(&var) {
+                stack.extend(roots);
+            }
+        }
+        if !targets.is_empty() {
+            aliases.insert(pointer, targets);
+        }
+    }
+    aliases
+}
+
+/// The variables an expression is rooted in, through indexing, member access and ternaries.
+fn root_vars(expr: &Expr<'_>, roots: &mut HashSet<VariableId>) {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident([Res::Item(id), ..]) => roots.extend(id.as_variable()),
+        ExprKind::Index(base, _) | ExprKind::Slice(base, ..) | ExprKind::Member(base, _) => {
+            root_vars(base, roots)
+        }
+        ExprKind::Ternary(_, then, otherwise) => {
+            root_vars(then, roots);
+            root_vars(otherwise, roots);
+        }
+        _ => {}
+    }
+}
+
+/// A bare local `storage` pointer.
+fn is_storage_pointer(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+    referenced_item(expr)
+        .and_then(|id| id.as_variable())
+        .is_some_and(|var| is_local_storage_var(hir, var))
+}
+
+fn is_local_storage_var(hir: &Hir<'_>, var: VariableId) -> bool {
+    let var = hir.variable(var);
+    !var.kind.is_state() && var.data_location == Some(DataLocation::Storage)
 }

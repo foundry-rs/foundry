@@ -9,7 +9,7 @@ use crate::{
 use alloy_primitives::{U256, uint};
 use solar::{
     ast::{BinOpKind, ElementaryType, UnOpKind},
-    interface::{Span, data_structures::Never},
+    interface::{Span, Symbol, data_structures::Never},
     sema::{
         Gcx,
         builtins::Builtin,
@@ -67,10 +67,30 @@ impl<'hir> LateLintPass<'hir> for Ecrecover {
     }
 }
 
-/// Symbolic identity of a value: a variable's incoming value or the result of an assignment.
+/// A tracked place: a whole variable, or a struct field reached from a variable (`sig.s`).
+///
+/// A field that is only ever read has no `values` entry and resolves to `ValueId::Initial(key)`,
+/// so the key carries an epoch that [`FlowState::set`] bumps whenever the whole base variable is
+/// reassigned; otherwise a guard on `sig.s` would survive `sig = other;`. Writes through memory
+/// or storage references also reset the fields of other variables in the same location.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum ValueKey {
+    Var(VariableId),
+    Field(VariableId, Symbol, u32),
+}
+
+impl ValueKey {
+    const fn var(self) -> VariableId {
+        match self {
+            Self::Var(var) | Self::Field(var, ..) => var,
+        }
+    }
+}
+
+/// Symbolic identity of a value: a place's incoming value or the result of an assignment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum ValueId {
-    Initial(VariableId),
+    Initial(ValueKey),
     Assigned(u32),
 }
 
@@ -83,15 +103,44 @@ struct PendingRecovery {
 
 #[derive(Clone, Default)]
 struct FlowState {
-    values: HashMap<VariableId, ValueId>,
+    values: HashMap<ValueKey, ValueId>,
     /// Values proven to be a canonical (low) `s`.
     low_s: HashSet<ValueId>,
     pending: HashMap<ValueId, Vec<PendingRecovery>>,
+    /// Current field epoch per variable, see [`ValueKey`].
+    field_epoch: HashMap<VariableId, u32>,
 }
 
 impl FlowState {
-    fn value(&self, var: VariableId) -> ValueId {
-        self.values.get(&var).copied().unwrap_or(ValueId::Initial(var))
+    fn value(&self, key: ValueKey) -> ValueId {
+        self.values.get(&key).copied().unwrap_or(ValueId::Initial(key))
+    }
+
+    fn field_key(&self, var: VariableId, field: Symbol) -> ValueKey {
+        ValueKey::Field(var, field, self.field_epoch.get(&var).copied().unwrap_or(0))
+    }
+
+    /// Sets the value of `key`. Setting a whole variable drops its tracked fields and starts a
+    /// new field epoch.
+    fn set(&mut self, key: ValueKey, value: ValueId) {
+        if let ValueKey::Var(var) = key {
+            self.reset_fields(var);
+        }
+        self.values.insert(key, value);
+    }
+
+    fn reset_fields(&mut self, var: VariableId) {
+        self.values.retain(|key, _| !matches!(key, ValueKey::Field(base, ..) if *base == var));
+        *self.field_epoch.entry(var).or_insert(0) += 1;
+    }
+
+    /// Variables with a tracked place or a proven initial value.
+    fn tracked_vars(&self) -> HashSet<VariableId> {
+        let initial = self.low_s.iter().filter_map(|value| match value {
+            ValueId::Initial(key) => Some(key.var()),
+            ValueId::Assigned(_) => None,
+        });
+        self.values.keys().map(|key| key.var()).chain(initial).collect()
     }
 
     fn add_pending(&mut self, value: ValueId, recovery: PendingRecovery) {
@@ -102,8 +151,8 @@ impl FlowState {
     }
 }
 
-/// A variable written by an assignment, paired with the expression it receives.
-type Pair<'hir> = (Option<VariableId>, Option<&'hir Expr<'hir>>);
+/// A place written by an assignment, paired with the expression it receives.
+type Pair<'hir> = (Option<ValueKey>, Option<&'hir Expr<'hir>>);
 
 /// The `s` argument of an `ecrecover` call.
 type Signature<'hir> = &'hir Expr<'hir>;
@@ -131,14 +180,22 @@ impl<'hir> Analyzer<'hir> {
     }
 
     fn join(&mut self, left: FlowState, right: FlowState) -> FlowState {
+        // Keep the highest epoch so a field read after the join never reuses an identity that
+        // was reset in either branch.
+        let mut field_epoch = left.field_epoch.clone();
+        for (var, epoch) in &right.field_epoch {
+            let entry = field_epoch.entry(*var).or_insert(0);
+            *entry = (*entry).max(*epoch);
+        }
         let mut joined = FlowState {
             low_s: left.low_s.intersection(&right.low_s).copied().collect(),
+            field_epoch,
             ..FlowState::default()
         };
         let mut merged = HashMap::new();
-        let vars: HashSet<_> = left.values.keys().chain(right.values.keys()).copied().collect();
-        for var in vars {
-            let (l, r) = (left.value(var), right.value(var));
+        let keys: HashSet<_> = left.values.keys().chain(right.values.keys()).copied().collect();
+        for key in keys {
+            let (l, r) = (left.value(key), right.value(key));
             let value = if l == r {
                 l
             } else {
@@ -148,7 +205,7 @@ impl<'hir> Analyzer<'hir> {
                 }
                 value
             };
-            joined.values.insert(var, value);
+            joined.values.insert(key, value);
             for recovery in left.pending.get(&l).into_iter().chain(right.pending.get(&r)).flatten()
             {
                 joined.add_pending(value, *recovery);
@@ -178,7 +235,7 @@ impl<'hir> Analyzer<'hir> {
 
     fn use_return_values(&mut self) {
         for &var in self.returns {
-            self.use_value(self.state.value(var));
+            self.use_value(self.state.value(ValueKey::Var(var)));
         }
     }
 
@@ -202,8 +259,57 @@ impl<'hir> Analyzer<'hir> {
     fn current_value(&self, expr: &Expr<'_>) -> Option<ValueId> {
         match &expr.peel_parens().kind {
             ExprKind::Assign(lhs, None, _) => self.current_value(lhs),
-            _ => var_of(expr).map(|var| self.state.value(var)),
+            _ => self.place_key(expr).map(|key| self.state.value(key)),
         }
+    }
+
+    /// The tracked place an expression denotes: a variable or a `var.field` member, through
+    /// parens and `uint256(..)`/`bytes32(..)` casts.
+    fn place_key(&self, expr: &Expr<'_>) -> Option<ValueKey> {
+        match &expr.peel_parens().kind {
+            ExprKind::Call(callee, args, _) if is_transparent_cast(callee) && args.len() == 1 => {
+                self.place_key(args.exprs().next()?)
+            }
+            ExprKind::Member(base, field) => {
+                var_of(base).map(|var| self.state.field_key(var, field.name))
+            }
+            _ => var_of(expr).map(ValueKey::Var),
+        }
+    }
+
+    /// Memory and storage variables passed by reference to an internal function (including the
+    /// receiver of a `using for` call), which the callee may write through.
+    fn reference_args(
+        &self,
+        callee: &'hir Expr<'hir>,
+        args: &'hir hir::CallArgs<'hir>,
+    ) -> Vec<VariableId> {
+        let callee = callee.peel_parens();
+        let Some(TyKind::Fn(function)) = self.gcx.type_of_expr(callee.id).map(|ty| ty.kind) else {
+            return Vec::new();
+        };
+        if !function.is_internal() {
+            return Vec::new();
+        }
+        let receiver = match &callee.kind {
+            ExprKind::Member(base, _)
+                if self.gcx.resolved_callee(callee.id).is_some_and(|c| c.attached) =>
+            {
+                Some(*base)
+            }
+            _ => None,
+        };
+        receiver
+            .into_iter()
+            .chain(args.exprs())
+            .filter_map(var_of)
+            .filter(|&var| {
+                matches!(
+                    self.hir.variable(var).data_location,
+                    Some(hir::DataLocation::Memory | hir::DataLocation::Storage)
+                )
+            })
+            .collect()
     }
 
     fn is_local(&self, var: VariableId) -> bool {
@@ -308,22 +414,46 @@ impl<'hir> Analyzer<'hir> {
         )
     }
 
-    fn assign(&mut self, var: VariableId, (value, low_s): (Option<ValueId>, bool)) {
+    fn assign(&mut self, key: ValueKey, (value, low_s): (Option<ValueId>, bool)) {
         let value = value.unwrap_or_else(|| self.fresh_value());
         if low_s {
             self.state.low_s.insert(value);
         }
-        self.state.values.insert(var, value);
+        if let ValueKey::Field(var, field, _) = key {
+            // Writing through a memory or storage reference may write any other variable of
+            // that location too.
+            if let Some(location) = self.aliasable_location(var) {
+                for other in self.state.tracked_vars() {
+                    if other != var && self.aliasable_location(other) == Some(location) {
+                        self.state.reset_fields(other);
+                    }
+                }
+            }
+            let key = self.state.field_key(var, field);
+            self.state.set(key, value);
+        } else {
+            self.state.set(key, value);
+        }
     }
 
-    /// Pairs every variable written by `lhs` with the expression it receives.
+    /// The data location through which `var` may alias other variables.
+    fn aliasable_location(&self, var: VariableId) -> Option<hir::DataLocation> {
+        let var = self.hir.variable(var);
+        if var.kind.is_state() && var.mutability.is_none() {
+            return Some(hir::DataLocation::Storage);
+        }
+        var.data_location
+            .filter(|loc| matches!(loc, hir::DataLocation::Memory | hir::DataLocation::Storage))
+    }
+
+    /// Pairs every place written by `lhs` with the expression it receives.
     fn pairs(
         &self,
         lhs: &'hir Expr<'hir>,
         rhs: Option<&'hir Expr<'hir>>,
         out: &mut Vec<Pair<'hir>>,
     ) {
-        let Some(elems) = tuple_elems(lhs) else { return out.push((var_of(lhs), rhs)) };
+        let Some(elems) = tuple_elems(lhs) else { return out.push((self.place_key(lhs), rhs)) };
         let rhs_elems = rhs.and_then(tuple_elems);
         for (i, lhs) in elems.iter().enumerate() {
             let rhs = rhs_elems.and_then(|elems| elems.get(i).copied().flatten());
@@ -337,9 +467,9 @@ impl<'hir> Analyzer<'hir> {
     /// Assigns every pair, reading all right-hand sides first so tuple swaps are exact.
     fn assign_pairs(&mut self, pairs: &[Pair<'hir>]) {
         let assigned: Vec<_> =
-            pairs.iter().filter_map(|(var, rhs)| Some(((*var)?, self.assigned(*rhs)))).collect();
-        for (var, assigned) in assigned {
-            self.assign(var, assigned);
+            pairs.iter().filter_map(|(key, rhs)| Some(((*key)?, self.assigned(*rhs)))).collect();
+        for (key, assigned) in assigned {
+            self.assign(key, assigned);
         }
     }
 
@@ -354,8 +484,8 @@ impl<'hir> Analyzer<'hir> {
     /// observes the result immediately.
     fn store(&mut self, pairs: &[Pair<'hir>], rhs: Option<&'hir Expr<'hir>>) {
         let mut calls = Vec::new();
-        for &(var, rhs) in pairs {
-            let local = var.filter(|var| self.is_local(*var));
+        for &(key, rhs) in pairs {
+            let local = key.filter(|key| self.is_local(key.var()));
             let mut result_calls = Vec::new();
             if let Some(rhs) = rhs {
                 self.result_calls(rhs, &mut result_calls);
@@ -368,7 +498,7 @@ impl<'hir> Analyzer<'hir> {
                 calls.push((call, local));
             }
         }
-        let local_target = matches!(pairs, [(Some(var), _)] if self.is_local(*var));
+        let local_target = matches!(pairs, [(Some(key), _)] if self.is_local(key.var()));
         if let Some(rhs) = rhs {
             match &rhs.peel_parens().kind {
                 ExprKind::Assign(lhs, None, inner) if local_target => self.store_expr(lhs, inner),
@@ -380,9 +510,9 @@ impl<'hir> Analyzer<'hir> {
             }
         }
         self.assign_pairs(pairs);
-        for (call, var) in calls {
-            if let (Some(var), Some(Some(recovery))) = (var, self.deferred.remove(&call)) {
-                let value = self.state.value(var);
+        for (call, key) in calls {
+            if let (Some(key), Some(Some(recovery))) = (key, self.deferred.remove(&call)) {
+                let value = self.state.value(key);
                 self.state.add_pending(value, recovery);
             }
         }
@@ -400,29 +530,21 @@ impl<'hir> Analyzer<'hir> {
             for elem in elems.iter().flatten() {
                 self.visit_lhs(elem);
             }
-        } else if var_of(lhs).is_none() {
+        } else if self.place_key(lhs).is_none() {
             let _ = self.visit_expr(lhs);
         }
     }
 
+    /// Forgets mutable state variables and storage pointers, which any state-mutating call may
+    /// have written.
     fn invalidate_mutable_state(&mut self) {
-        let initial = self.state.low_s.iter().filter_map(|value| match value {
-            ValueId::Initial(var) => Some(*var),
-            ValueId::Assigned(_) => None,
-        });
-        let vars: Vec<_> = self
-            .state
-            .values
-            .keys()
-            .copied()
-            .chain(initial)
-            .filter(|&var| {
-                let var = self.hir.variable(var);
-                var.kind.is_state() && var.mutability.is_none()
-            })
-            .collect();
-        for var in vars {
-            self.assign(var, (None, false));
+        for var in self.state.tracked_vars() {
+            let variable = self.hir.variable(var);
+            if (variable.kind.is_state() && variable.mutability.is_none())
+                || variable.data_location == Some(hir::DataLocation::Storage)
+            {
+                self.assign(ValueKey::Var(var), (None, false));
+            }
         }
     }
 
@@ -562,13 +684,17 @@ impl<'hir> Analyzer<'hir> {
             }
             StmtKind::DeclSingle(var) => {
                 let init = self.hir.variable(*var).initializer;
-                self.store(&[(Some(*var), init)], init);
+                self.store(&[(Some(ValueKey::Var(*var)), init)], init);
                 true
             }
             StmtKind::DeclMulti(vars, init) => {
                 let pairs: Vec<_> = match tuple_elems(init) {
-                    Some(elems) => vars.iter().zip(elems).map(|(var, rhs)| (*var, *rhs)).collect(),
-                    None => vars.iter().map(|var| (*var, None)).collect(),
+                    Some(elems) => vars
+                        .iter()
+                        .zip(elems)
+                        .map(|(var, rhs)| (var.map(ValueKey::Var), *rhs))
+                        .collect(),
+                    None => vars.iter().map(|var| (var.map(ValueKey::Var), None)).collect(),
                 };
                 self.store(&pairs, Some(init));
                 true
@@ -696,20 +822,23 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             }
             ExprKind::Delete(target) => {
                 self.visit_lhs(target);
-                if let Some(var) = var_of(target) {
-                    self.assign(var, (None, true));
+                if let Some(key) = self.place_key(target) {
+                    self.assign(key, (None, true));
                 }
             }
             ExprKind::Unary(op, target) if is_inc_dec(op.kind) => {
                 let _ = self.walk_expr(expr);
-                if let Some(var) = var_of(target) {
-                    self.assign(var, (None, false));
+                if let Some(key) = self.place_key(target) {
+                    self.assign(key, (None, false));
                 }
             }
-            ExprKind::Call(callee, ..) => {
+            ExprKind::Call(callee, args, _) => {
                 let _ = self.walk_expr(expr);
                 if call_may_mutate_state(self.gcx, self.hir, callee) {
                     self.invalidate_mutable_state();
+                }
+                for var in self.reference_args(callee, args) {
+                    self.assign(ValueKey::Var(var), (None, false));
                 }
                 if let Some(recovery) = self.pending_recovery(expr) {
                     match self.deferred.get_mut(&expr.id) {
