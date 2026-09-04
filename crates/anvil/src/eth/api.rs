@@ -1232,6 +1232,9 @@ impl<N: Network> EthApi<N> {
         {
             return Err(FeeHistoryError::InvalidRewardPercentiles.into());
         }
+        if block_count.is_zero() {
+            return Ok(FeeHistory::default());
+        }
 
         // max number of blocks in the requested range
 
