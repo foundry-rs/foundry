@@ -69,6 +69,7 @@ contract MixedCaseTest {
     // ERC is, by default, an allowed infix
     function rescueERC6909(address token, address to, uint256 tokenId, uint256 amount) public {}
     function ERC20DoSomething() public {}
+    function _rescueERC20() public {} // a preserved leading underscore keeps the exception
     function ERC20_DoSomething() public {} // invalid because of the underscore
     //~^NOTE: function names should use mixedCase
 

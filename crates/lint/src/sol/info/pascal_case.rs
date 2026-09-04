@@ -49,10 +49,11 @@ fn check_pascal_case(s: &str, allowed_patterns: &[String]) -> Option<String> {
             let (pre, post) = s.split_at(pos);
             let post = &post[pattern.len()..];
 
-            // Text on either side of the pattern must be valid PascalCase; digits may directly
-            // follow the pattern (`ERC20Data`).
+            // Text on either side of the pattern must be valid PascalCase, ignoring preserved
+            // leading/trailing underscores; digits may directly follow the pattern (`ERC20Data`).
+            let pre = pre.trim_start_matches('_');
             let is_pre_valid = pre == heck::AsUpperCamelCase(pre).to_string();
-            let post = post.trim_start_matches(|c: char| c.is_numeric());
+            let post = post.trim_start_matches(|c: char| c.is_numeric()).trim_end_matches('_');
             let is_post_valid = post == heck::AsUpperCamelCase(post).to_string();
             if is_pre_valid && is_post_valid {
                 return None;

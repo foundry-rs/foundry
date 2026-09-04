@@ -109,11 +109,14 @@ fn check_mixed_case(s: &str, is_fn: bool, allowed_patterns: &[String]) -> Option
             let (pre, post) = s.split_at(pos);
             let post = &post[pattern.len()..];
 
-            // Pre-pattern must be valid lowerCamelCase.
+            // Pre-pattern must be valid lowerCamelCase, ignoring a preserved leading underscore.
+            let pre = pre.trim_start_matches('_');
             let is_pre_valid = pre == heck::AsLowerCamelCase(pre).to_string();
 
-            // Post-pattern must be valid UpperCamelCase (allowing leading numbers).
-            let post_trimmed = post.trim_start_matches(|c: char| c.is_numeric());
+            // Post-pattern must be valid UpperCamelCase (allowing leading numbers), ignoring a
+            // preserved trailing underscore.
+            let post_trimmed =
+                post.trim_start_matches(|c: char| c.is_numeric()).trim_end_matches('_');
             let is_post_valid = post_trimmed == heck::AsUpperCamelCase(post_trimmed).to_string();
 
             if is_pre_valid && is_post_valid {

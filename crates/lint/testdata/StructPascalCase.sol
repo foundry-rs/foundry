@@ -17,7 +17,7 @@ contract StructPascalCaseTest {
         uint256 a;
     }
 
-    struct _pascalCase { //~NOTE: structs should use PascalCase
+    struct _otherCase { //~NOTE: structs should use PascalCase
         uint256 a;
     }
 
@@ -41,8 +41,16 @@ contract StructPascalCaseTest {
         uint256 a;
     }
 
-    // Configured acronym exception ("ERC") - not flagged.
+    // Configured acronym exception ("ERC") - not flagged, with or without preserved underscores.
     struct ERC20Data {
+        uint256 a;
+    }
+
+    struct _ERC20Data {
+        uint256 a;
+    }
+
+    struct ERC20Data_ {
         uint256 a;
     }
 }
