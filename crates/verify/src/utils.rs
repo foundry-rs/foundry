@@ -27,9 +27,9 @@ use foundry_config::{Config, FoundryHardfork};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
-        FoundryBlock as _, FoundryChain,
+        FoundryBlock as _,
         decode::RevertDecoder,
-        evm::{BlockContext, BlockEnvFor, ChainFor, EvmEnvFor, FoundryEvmNetwork, TxEnvFor},
+        evm::{BlockEnvFor, ChainFor, EvmEnvFor, FoundryEvmNetwork, TxEnvFor},
     },
     executors::{ExecutorBuilder, TracingExecutor},
     opts::EvmOpts,
@@ -494,19 +494,6 @@ where
     }
 }
 
-pub fn synthetic_deployment_context<FEN>(
-    block_context: Option<&BlockContext<FEN>>,
-    tx_env: &TxEnvFor<FEN>,
-) -> ChainFor<FEN>
-where
-    FEN: FoundryEvmNetwork,
-{
-    block_context.map_or_else(
-        || ChainFor::<FEN>::for_transaction(tx_env),
-        |context| context.clone().into_child().next_transaction(tx_env),
-    )
-}
-
 pub async fn get_runtime_codes<FEN>(
     executor: &mut TracingExecutor<FEN>,
     provider: &impl Provider<AnyNetwork>,
@@ -615,15 +602,6 @@ mod tests {
         env.cfg_env.chain_id = NamedChain::Monad as u64;
         env.block_env.set_timestamp(U256::from(timestamp));
         env
-    }
-
-    #[cfg(feature = "monad")]
-    fn monad_tx(caller: Address) -> TxEnvFor<foundry_evm::core::evm::MonadEvmNetwork> {
-        use foundry_evm::core::FoundryTransaction as _;
-
-        let mut tx = TxEnvFor::<foundry_evm::core::evm::MonadEvmNetwork>::default();
-        tx.set_caller(caller);
-        tx
     }
 
     #[test]
@@ -856,48 +834,6 @@ contract Broken {
         assert_eq!(env.cfg_env.spec, foundry_evm::hardforks::MonadHardfork::MonadEight);
         assert!(config.labels.values().any(|label| label == "Staking"));
         assert!(!config.labels.values().any(|label| label == "ReserveBalance"));
-    }
-
-    #[test]
-    #[cfg(feature = "monad")]
-    fn synthetic_monad_deployment_uses_child_block_context() {
-        let discarded_grandparent = Address::repeat_byte(0x11);
-        let child_grandparent = Address::repeat_byte(0x22);
-        let child_parent = Address::repeat_byte(0x33);
-        let synthetic_sender = Address::repeat_byte(0x44);
-        let context = BlockContext::<foundry_evm::core::evm::MonadEvmNetwork>::new(
-            vec![monad_tx(discarded_grandparent)],
-            vec![monad_tx(child_grandparent)],
-            vec![monad_tx(child_parent)],
-        );
-        let synthetic_tx = monad_tx(synthetic_sender);
-
-        let chain_context = synthetic_deployment_context::<foundry_evm::core::evm::MonadEvmNetwork>(
-            Some(&context),
-            &synthetic_tx,
-        );
-
-        assert!(chain_context.grandparent_senders_and_authorities.contains(&child_grandparent));
-        assert!(chain_context.parent_senders_and_authorities.contains(&child_parent));
-        assert_eq!(chain_context.current_block_senders, vec![synthetic_sender]);
-        assert_eq!(chain_context.current_tx_index, 0);
-    }
-
-    #[test]
-    #[cfg(feature = "monad")]
-    fn synthetic_monad_deployment_without_history_uses_chain_context() {
-        let synthetic_sender = Address::repeat_byte(0x44);
-        let synthetic_tx = monad_tx(synthetic_sender);
-
-        let chain_context = synthetic_deployment_context::<foundry_evm::core::evm::MonadEvmNetwork>(
-            None,
-            &synthetic_tx,
-        );
-
-        assert!(chain_context.grandparent_senders_and_authorities.is_empty());
-        assert!(chain_context.parent_senders_and_authorities.is_empty());
-        assert_eq!(chain_context.current_block_senders, vec![synthetic_sender]);
-        assert_eq!(chain_context.current_tx_index, 0);
     }
 
     #[test]
