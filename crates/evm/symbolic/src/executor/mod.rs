@@ -267,7 +267,7 @@ impl SymbolicExecutor {
     }
 
     fn successful_call_status(&self, kind: CallPathKind, state: &PathState) -> CallStatus {
-        if matches!(kind, CallPathKind::External) && state.storage_hook_active
+        if (matches!(kind, CallPathKind::External) && state.storage_hook_active)
             || state.expectations_satisfied()
         {
             CallStatus::Success
