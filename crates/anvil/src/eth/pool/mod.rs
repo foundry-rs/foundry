@@ -131,7 +131,9 @@ impl<T> Pool<T> {
         trace!(target: "txpool", "Dropping transaction: [{:?}]", tx);
         let removed = {
             let mut pool = self.inner.write();
-            pool.ready_transactions.remove_with_markers(vec![tx], None)
+            let mut removed = pool.ready_transactions.remove_with_markers(vec![tx], None);
+            removed.extend(pool.pending_transactions.remove(vec![tx]));
+            removed
         };
         trace!(target: "txpool", "Dropped transactions: {:?}", removed.iter().map(|tx| tx.hash()).collect::<Vec<_>>());
 
