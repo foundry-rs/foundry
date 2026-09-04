@@ -3,8 +3,7 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint, analysis::is_low_level_call},
 };
-use solar::ast::{Expr, ItemFunction, visit::Visit};
-use std::ops::ControlFlow;
+use solar::ast::Expr;
 
 declare_forge_lint!(
     LOW_LEVEL_CALLS,
@@ -14,25 +13,9 @@ declare_forge_lint!(
 );
 
 impl<'ast> EarlyLintPass<'ast> for LowLevelCalls {
-    fn check_item_function(&mut self, ctx: &LintContext, func: &'ast ItemFunction<'ast>) {
-        if let Some(body) = &func.body {
-            let mut checker = LowLevelCallsChecker { ctx };
-            let _ = checker.visit_block(body);
-        }
-    }
-}
-
-struct LowLevelCallsChecker<'a, 's> {
-    ctx: &'a LintContext<'s, 'a>,
-}
-
-impl<'ast> Visit<'ast> for LowLevelCallsChecker<'_, '_> {
-    type BreakValue = ();
-
-    fn visit_expr(&mut self, expr: &'ast Expr<'ast>) -> ControlFlow<Self::BreakValue> {
+    fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
         if is_low_level_call(expr) {
-            self.ctx.emit(&LOW_LEVEL_CALLS, expr.span);
+            ctx.emit(&LOW_LEVEL_CALLS, expr.span);
         }
-        self.walk_expr(expr)
     }
 }

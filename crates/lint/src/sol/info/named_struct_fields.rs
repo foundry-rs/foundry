@@ -1,11 +1,14 @@
-use solar::sema::{
-    Gcx,
-    hir::{CallArgs, CallArgsKind, Expr, ExprKind, ItemId, Res},
-};
-
+use super::NamedStructFields;
 use crate::{
     linter::{LateLintPass, LintContext, Suggestion},
-    sol::{Severity, SolLint, info::NamedStructFields},
+    sol::{Severity, SolLint},
+};
+use solar::{
+    interface::diagnostics::Applicability,
+    sema::{
+        Gcx,
+        hir::{CallArgs, CallArgsKind, Expr, ExprKind, Hir, ItemId, Res},
+    },
 };
 
 declare_forge_lint!(
@@ -20,8 +23,8 @@ impl<'hir> LateLintPass<'hir> for NamedStructFields {
         &mut self,
         ctx: &LintContext,
         _gcx: Gcx<'hir>,
-        hir: &'hir solar::sema::hir::Hir<'hir>,
-        expr: &'hir solar::sema::hir::Expr<'hir>,
+        hir: &'hir Hir<'hir>,
+        expr: &'hir Expr<'hir>,
     ) {
         let ExprKind::Call(
             Expr { kind: ExprKind::Ident([Res::Item(ItemId::Struct(struct_id))]), span, .. },
@@ -31,48 +34,27 @@ impl<'hir> LateLintPass<'hir> for NamedStructFields {
         else {
             return;
         };
-
-        let strukt = hir.strukt(*struct_id);
-        let fields = &strukt.fields;
-
-        // Basic sanity conditions for a consistent auto-fix
-        if fields.len() != args.len() || fields.is_empty() {
-            // Emit without suggestion
-            ctx.emit(&NAMED_STRUCT_FIELDS, expr.span);
-            return;
+        // A fix needs one argument per field and every snippet available; otherwise the
+        // diagnostic is emitted without a suggestion.
+        let fields = hir.strukt(*struct_id).fields;
+        let fix = (!fields.is_empty() && fields.len() == args.len()).then(|| {
+            let assignments = fields
+                .iter()
+                .zip(*args)
+                .map(|(field, arg)| {
+                    Some(format!("{}: {}", hir.variable(*field).name?, ctx.span_to_snippet(arg.span)?))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(format!("{}({{ {} }})", ctx.span_to_snippet(*span)?, assignments.join(", ")))
+        });
+        match fix.flatten() {
+            Some(fix) => ctx.emit_with_suggestion(
+                &NAMED_STRUCT_FIELDS,
+                expr.span,
+                Suggestion::fix(fix, Applicability::MachineApplicable)
+                    .with_desc("consider using named fields"),
+            ),
+            None => ctx.emit(&NAMED_STRUCT_FIELDS, expr.span),
         }
-
-        // Get struct name snippet and emit without suggestion if we can't get it
-        let Some(struct_name_snippet) = ctx.span_to_snippet(*span) else {
-            // Emit without suggestion if we can't get the struct name snippet
-            ctx.emit(&NAMED_STRUCT_FIELDS, expr.span);
-            return;
-        };
-
-        // Collect field names and corresponding argument source snippets
-        let mut field_assignments = Vec::new();
-        for (field_id, arg) in fields.iter().zip(args.iter()) {
-            let field = hir.variable(*field_id);
-
-            let Some((arg_snippet, field_name)) =
-                ctx.span_to_snippet(arg.span).zip(field.name.map(|n| n.to_string()))
-            else {
-                // Emit without suggestion if we can't get argument snippet
-                ctx.emit(&NAMED_STRUCT_FIELDS, expr.span);
-                return;
-            };
-
-            field_assignments.push(format!("{field_name}: {arg_snippet}"));
-        }
-
-        ctx.emit_with_suggestion(
-            &NAMED_STRUCT_FIELDS,
-            expr.span,
-            Suggestion::fix(
-                format!("{}({{ {} }})", struct_name_snippet, field_assignments.join(", ")),
-                solar::interface::diagnostics::Applicability::MachineApplicable,
-            )
-            .with_desc("consider using named fields"),
-        );
     }
 }

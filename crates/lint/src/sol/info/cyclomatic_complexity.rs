@@ -24,33 +24,28 @@ impl<'hir> LateLintPass<'hir> for CyclomaticComplexity {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
+        _gcx: Gcx<'hir>,
         hir: &'hir Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
-        let _ = gcx;
         // Modifier definitions are never reported, matching Slither which iterates only
         // declared and top-level functions. Yul helpers declared inside `assembly {}` DO
         // report: Slither scores them as functions of their own.
-        if matches!(func.kind, hir::FunctionKind::Modifier) {
+        if func.kind == hir::FunctionKind::Modifier || func.body.is_none() {
             return;
         }
-        if func.body.is_some() {
-            // Visiting the whole function rather than only the body statements also counts
-            // decision points in modifier-invocation and base-constructor call arguments.
-            let mut counter = DecisionCounter { hir, decisions: 0 };
-            let _ = counter.visit_function(func);
-            // For a structured program the complexity is one plus the decision points.
-            if counter.decisions + 1 > MAX_COMPLEXITY {
-                // A Yul helper's span starts at its name rather than a `function` keyword,
-                // so the name is the anchor there.
-                let span = if func.is_yul {
-                    func.name.map_or(func.span, |name| name.span)
-                } else {
-                    func.keyword_span()
-                };
-                ctx.emit(&CYCLOMATIC_COMPLEXITY, span);
-            }
+        // Visiting the whole function rather than only the body statements also counts
+        // decision points in modifier-invocation and base-constructor call arguments. For a
+        // structured program the complexity is one plus the decision points.
+        let mut counter = DecisionCounter { hir, decisions: 0 };
+        let _ = counter.visit_function(func);
+        if counter.decisions + 1 > MAX_COMPLEXITY {
+            // A Yul helper's span starts at its name rather than a `function` keyword.
+            let span = match func.name {
+                Some(name) if func.is_yul => name.span,
+                _ => func.keyword_span(),
+            };
+            ctx.emit(&CYCLOMATIC_COMPLEXITY, span);
         }
     }
 }
@@ -76,28 +71,21 @@ impl<'hir> Visit<'hir> for DecisionCounter<'hir> {
     }
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
-        match &stmt.kind {
-            // One decision per `if`, the loop conditions included (see above).
-            StmtKind::If(..) => self.decisions += 1,
+        self.decisions += match &stmt.kind {
+            StmtKind::If(..) => 1,
             // The first clause is the `returns` one; each `catch` clause is a branch.
-            StmtKind::Try(stmt_try) => {
-                self.decisions += stmt_try.clauses.len().saturating_sub(1);
-            }
-            // Each non-default case of a Yul switch is a branch; `cases` includes the
-            // `default` clause (`constant == None`), which opens no decision of its own.
-            StmtKind::Switch(switch) => {
-                self.decisions += switch.cases.iter().filter(|c| c.constant.is_some()).count();
-            }
-            _ => {}
-        }
+            StmtKind::Try(stmt_try) => stmt_try.clauses.len().saturating_sub(1),
+            // Each non-default case of a Yul switch is a branch; the `default` clause
+            // (`constant == None`) opens no decision of its own.
+            StmtKind::Switch(switch) => switch.cases.iter().filter(|c| c.constant.is_some()).count(),
+            _ => 0,
+        };
         self.walk_stmt(stmt)
     }
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
         // A ternary is an `if` in expression position.
-        if matches!(expr.kind, ExprKind::Ternary(..)) {
-            self.decisions += 1;
-        }
+        self.decisions += usize::from(matches!(expr.kind, ExprKind::Ternary(..)));
         self.walk_expr(expr)
     }
 }

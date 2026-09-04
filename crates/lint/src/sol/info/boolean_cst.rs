@@ -3,28 +3,20 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar::{
-    ast::{BinOp, BinOpKind, Expr, ExprKind, LitKind, Stmt, StmtKind, VariableDefinition},
-    interface::SpannedOption,
-};
+use solar::ast::{BinOpKind, Expr, ExprKind, Lit, LitKind, Stmt, StmtKind, VariableDefinition};
 
 declare_forge_lint!(BOOLEAN_CST, Severity::Med, "boolean-cst", "misuse of a boolean constant");
 
 impl<'ast> EarlyLintPass<'ast> for BooleanCst {
     fn check_stmt(&mut self, ctx: &LintContext, stmt: &'ast Stmt<'ast>) {
         match &stmt.kind {
-            StmtKind::If(cond, ..) | StmtKind::DoWhile(_, cond) => {
-                check_expr(ctx, cond, ExprContext::Condition { allow_bare_true: false });
+            StmtKind::If(cond, ..) | StmtKind::DoWhile(_, cond) | StmtKind::For { cond: Some(cond), .. } => {
+                check_expr(ctx, cond, false);
             }
-            StmtKind::While(cond, _) => {
-                check_expr(ctx, cond, ExprContext::Condition { allow_bare_true: true });
-            }
-            StmtKind::For { cond: Some(cond), .. } => {
-                check_expr(ctx, cond, ExprContext::Condition { allow_bare_true: false });
-            }
-            StmtKind::DeclMulti(_, expr) => check_allowed_bare_expr(ctx, expr),
-            StmtKind::Expr(expr) | StmtKind::Return(Some(expr)) => {
-                check_allowed_bare_expr(ctx, expr);
+            // `while (true)` is the idiomatic infinite loop.
+            StmtKind::While(cond, _) => check_expr(ctx, cond, bool_literal(cond) == Some(true)),
+            StmtKind::DeclMulti(_, expr) | StmtKind::Expr(expr) | StmtKind::Return(Some(expr)) => {
+                check_expr(ctx, expr, true);
             }
             _ => {}
         }
@@ -36,81 +28,49 @@ impl<'ast> EarlyLintPass<'ast> for BooleanCst {
         var: &'ast VariableDefinition<'ast>,
     ) {
         if let Some(initializer) = &var.initializer {
-            check_allowed_bare_expr(ctx, initializer);
+            check_expr(ctx, initializer, true);
         }
     }
 }
 
-#[derive(Clone, Copy)]
-enum ExprContext {
-    Condition { allow_bare_true: bool },
-    General,
-    AllowedBare,
-}
-
-fn check_allowed_bare_expr(ctx: &LintContext, expr: &Expr<'_>) {
-    let context =
-        if bool_literal(expr).is_some() { ExprContext::AllowedBare } else { ExprContext::General };
-    check_expr(ctx, expr, context);
-}
-
-fn check_expr(ctx: &LintContext, expr: &Expr<'_>, context: ExprContext) {
-    if let Some(value) = bool_literal(expr) {
-        match context {
-            ExprContext::AllowedBare => {}
-            ExprContext::Condition { allow_bare_true: true } if value => {}
-            ExprContext::Condition { .. } | ExprContext::General => {
-                ctx.emit(&BOOLEAN_CST, expr.span);
-            }
+/// Reports boolean literals in `expr` that are not `allow_bare` at the top level: a literal
+/// stored, returned or passed as an argument is fine, one combined into a larger expression or
+/// used as a condition is a misuse.
+fn check_expr(ctx: &LintContext, expr: &Expr<'_>, allow_bare: bool) {
+    if bool_literal(expr).is_some() {
+        if !allow_bare {
+            ctx.emit(&BOOLEAN_CST, expr.span);
         }
         return;
     }
-
     match &expr.kind {
-        ExprKind::Assign(_, _, rhs) => check_allowed_bare_expr(ctx, rhs),
-        ExprKind::Binary(left, op, right) => check_binary_expr(ctx, left, *op, right),
-        ExprKind::Call(_, args) => {
-            for arg in args.exprs() {
-                check_allowed_bare_expr(ctx, arg);
-            }
+        ExprKind::Assign(_, _, rhs) => check_expr(ctx, rhs, true),
+        // `x == true` is boolean-equal's business.
+        ExprKind::Binary(left, op, right)
+            if !(matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne)
+                && (bool_literal(left).is_some() || bool_literal(right).is_some())) =>
+        {
+            check_expr(ctx, left, false);
+            check_expr(ctx, right, false);
         }
-        ExprKind::Delete(expr) | ExprKind::Unary(_, expr) => {
-            check_expr(ctx, expr, ExprContext::General);
-        }
+        ExprKind::Call(_, args) => args.exprs().for_each(|arg| check_expr(ctx, arg, true)),
+        ExprKind::Delete(expr) | ExprKind::Unary(_, expr) => check_expr(ctx, expr, false),
         ExprKind::Ternary(cond, true_expr, false_expr) => {
-            check_expr(ctx, cond, ExprContext::Condition { allow_bare_true: false });
-            check_expr(ctx, true_expr, ExprContext::General);
-            check_expr(ctx, false_expr, ExprContext::General);
+            check_expr(ctx, cond, false);
+            check_expr(ctx, true_expr, false);
+            check_expr(ctx, false_expr, false);
         }
-        ExprKind::Tuple(exprs) => {
-            for opt_expr in exprs.iter() {
-                if let SpannedOption::Some(expr) = opt_expr.as_ref() {
-                    check_expr(ctx, expr, ExprContext::General);
-                }
-            }
-        }
+        ExprKind::Tuple(exprs) => exprs
+            .iter()
+            .filter_map(|expr| Option::from(expr.as_deref()))
+            .for_each(|expr| check_expr(ctx, expr, false)),
         _ => {}
     }
 }
 
-fn check_binary_expr(ctx: &LintContext, left: &Expr<'_>, op: BinOp, right: &Expr<'_>) {
-    if matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne)
-        && (bool_literal(left).is_some() || bool_literal(right).is_some())
-    {
-        return;
-    }
-
-    check_expr(ctx, left, ExprContext::General);
-    check_expr(ctx, right, ExprContext::General);
-}
-
 fn bool_literal(expr: &Expr<'_>) -> Option<bool> {
-    let expr = expr.peel_parens();
-    if let ExprKind::Lit(lit, _) = &expr.kind
-        && let LitKind::Bool(value) = lit.kind
-    {
-        Some(value)
-    } else {
-        None
+    match &expr.peel_parens().kind {
+        ExprKind::Lit(Lit { kind: LitKind::Bool(value), .. }, _) => Some(*value),
+        _ => None,
     }
 }
