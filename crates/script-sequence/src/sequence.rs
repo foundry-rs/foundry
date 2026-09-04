@@ -237,13 +237,6 @@ impl<N: Network> ScriptSequence<N> {
 
     /// Fills each transaction's sensitive metadata (currently just the RPC url) from the
     /// corresponding entry in `sensitive`.
-    ///
-    /// Errors instead of panicking if `sensitive` has a different number of entries than
-    /// `self.transactions` (either fewer OR more) - this can happen if the broadcast file and
-    /// its sensitive-cache counterpart are written out of sync (e.g. the process is interrupted
-    /// between the two separate writes in [`Self::save`], or a stale cache from a shorter prior
-    /// run is left behind). The length check runs up front, before any mutation, so a mismatch
-    /// never leaves `self.transactions` partially filled.
     pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) -> Result<()> {
         let transactions_len = self.transactions.len();
         let sensitive_len = sensitive.transactions.len();
