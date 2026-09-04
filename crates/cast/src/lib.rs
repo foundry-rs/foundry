@@ -1459,7 +1459,6 @@ impl SimpleCast {
             (sign, value_stripped, value_len)
         };
         let decimals_num = NumberWithBase::parse_uint(decimals, None)?.number();
-        // Dynamic format widths are limited to `u16::MAX`.
         let decimals: usize = decimals_num
             .try_into()
             .ok()
