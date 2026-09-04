@@ -94,6 +94,22 @@ pub fn is_address_like_cast(callee: &Expr<'_>) -> bool {
     is_address_cast(callee) || is_contract_cast(callee)
 }
 
+/// `uintN(..)` / `intN(..)` cast head at least as wide as `address` (20 bytes), or a `bytes(..)`
+/// cast head - the non-address-like casts that still legitimately wrap an underlying address
+/// value (e.g. `address(uint160(rawAddr))`). The width floor matters: peeling through a narrower
+/// cast (e.g. `uint8`) would treat a value-truncating round-trip as identity-preserving, which is
+/// unsound for any caller trying to prove two expressions reference the same value.
+pub fn is_numeric_or_bytes_cast(callee: &Expr<'_>) -> bool {
+    match &callee.peel_parens().kind {
+        ExprKind::Type(hir::Type {
+            kind: TypeKind::Elementary(ElementaryType::Int(size) | ElementaryType::UInt(size)),
+            ..
+        }) => size.bytes() >= 20,
+        ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ElementaryType::Bytes), .. }) => true,
+        _ => false,
+    }
+}
+
 /// `address(this)`, `payable(this)`, `IFoo(this)`, `IFoo(address(this))`, or bare `this`.
 pub fn is_address_self(expr: &Expr<'_>) -> bool {
     let expr = expr.peel_parens();
@@ -115,6 +131,26 @@ pub fn underlying_var(expr: &Expr<'_>) -> Option<VariableId> {
             args.exprs().next().and_then(underlying_var)
         }
         ExprKind::Payable(inner) => underlying_var(inner),
+        _ => None,
+    }
+}
+
+/// Like [`underlying_var`], but also looks through `uintN(x)`, `intN(x)` and `bytes(x)` cast
+/// heads. Only for callers that correlate two independently-cast references to the *same*
+/// address-typed variable (e.g. matching a `permit` owner against a later `transferFrom` `from`) -
+/// NOT a general-purpose replacement for `underlying_var`, since peeling an arbitrary numeric cast
+/// chain can silently accept a value-truncating round-trip (`uint160 -> uint8 -> uint160`) as if
+/// it were identity-preserving, which is exactly what a recipient/target-tracking lint like
+/// `unsafe-oz-erc721-mint` must NOT do.
+pub fn underlying_var_through_numeric_casts(expr: &Expr<'_>) -> Option<VariableId> {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(reses) => reses.iter().find_map(Res::as_variable),
+        ExprKind::Call(callee, args, _)
+            if is_address_like_cast(callee) || is_numeric_or_bytes_cast(callee) =>
+        {
+            args.exprs().next().and_then(underlying_var_through_numeric_casts)
+        }
+        ExprKind::Payable(inner) => underlying_var_through_numeric_casts(inner),
         _ => None,
     }
 }
