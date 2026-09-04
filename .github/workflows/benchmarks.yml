@@ -111,7 +111,7 @@ jobs:
 
       - name: Enforce baseline Cargo dependency cooldown
         if: steps.prep.outputs.is_source_comparison == 'true'
-        uses: tempoxyz/gh-actions/actions/cargo-cooldown@216431dd18ebe7c199654e6c310ed99570ddcc33 # gh-actions#98
+        uses: tempoxyz/gh-actions/actions/cargo-cooldown@216431dd18ebe7c199654e6c310ed99570ddcc33 # main
         with:
           working-directory: ../foundry-baseline
 
