@@ -55,9 +55,7 @@ impl TempoSubcommand {
         match self {
             Self::Login { chain_id, no_browser } => {
                 let mut cfg = EnsureAccessKeyConfig::from_env(chain_id);
-                if no_browser {
-                    cfg.no_browser = true;
-                }
+                cfg.no_browser |= no_browser;
                 let outcome = ensure_access_key(cfg).await?;
                 let _ = foundry_common::sh_status!(
                     "Authorized key {} for wallet {} on chain {}",
