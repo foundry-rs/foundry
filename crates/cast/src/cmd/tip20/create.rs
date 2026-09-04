@@ -1,5 +1,3 @@
-#![allow(clippy::too_many_arguments)]
-
 use crate::{
     cmd::confirm_continue,
     tempo::tempo_provider,
@@ -41,6 +39,7 @@ pub(crate) fn iso4217_warning_message(currency: &str) -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run(
     name: String,
     symbol: String,
