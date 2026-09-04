@@ -12,6 +12,7 @@ env:
 
 jobs:
   cargo-cooldown:
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     permissions:
       contents: read
     uses: ./.github/workflows/cargo-cooldown.yml
@@ -19,6 +20,7 @@ jobs:
   run-benchmarks:
     name: Run Nightly Benchmarks
     needs: cargo-cooldown
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: depot-ubuntu-24.04-32
     permissions:
       contents: read

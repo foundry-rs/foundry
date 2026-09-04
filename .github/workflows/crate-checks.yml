@@ -17,12 +17,14 @@ env:
 
 jobs:
   cargo-cooldown:
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     permissions:
       contents: read
     uses: ./.github/workflows/cargo-cooldown.yml
 
   crate-checks:
     needs: cargo-cooldown
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:

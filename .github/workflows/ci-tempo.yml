@@ -39,6 +39,7 @@ env:
 
 jobs:
   cargo-cooldown:
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     permissions:
       contents: read
     uses: ./.github/workflows/cargo-cooldown.yml
@@ -46,9 +47,10 @@ jobs:
   tempo-check:
     # Skip on PRs from forks and Dependabot, which cannot access the RPC secrets.
     if: |
-      github.event_name != 'pull_request' ||
+      (github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry') &&
+      (github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.user.login != 'dependabot[bot]')
+      github.event.pull_request.user.login != 'dependabot[bot]'))
     needs: cargo-cooldown
     runs-on: depot-ubuntu-latest-16
     timeout-minutes: 60
