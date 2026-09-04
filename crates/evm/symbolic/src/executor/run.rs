@@ -747,7 +747,7 @@ impl SymbolicExecutor {
     }
 
     /// Returns whether this run used a hard-arithmetic heuristic witness.
-    fn heuristic_witnesses_used_since(&self, baseline: usize) -> bool {
+    const fn heuristic_witnesses_used_since(&self, baseline: usize) -> bool {
         self.solver.heuristic_witnesses() > baseline
     }
 
