@@ -250,7 +250,7 @@ impl SmtLibSubprocessSolver {
     }
 
     /// Returns how many validated local hard-arithmetic witnesses this solver used.
-    pub(crate) fn heuristic_witnesses(&self) -> usize {
+    pub(crate) const fn heuristic_witnesses(&self) -> usize {
         self.heuristic_witnesses
     }
 
