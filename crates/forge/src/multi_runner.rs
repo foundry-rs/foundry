@@ -44,7 +44,7 @@ use std::{
     borrow::Borrow,
     collections::{BTreeMap, BTreeSet},
     ops::{Deref, DerefMut},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex, mpsc},
     time::Instant,
 };
@@ -138,18 +138,8 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = &'a Function> + 'b {
         let matcher = self.test_function_matcher();
-        self.matching_contracts(filter).flat_map(move |(id, c)| {
-            let identifier = id.identifier();
-            let generated_symbolic_regression = is_generated_symbolic_regression_contract(&c.abi);
-            c.abi.functions().filter(move |func| {
-                matcher.matches_test_function(
-                    filter,
-                    &identifier,
-                    func,
-                    generated_symbolic_regression,
-                )
-            })
-        })
+        self.matching_contracts(filter)
+            .flat_map(move |(id, c)| matcher.matching_test_functions(filter, id, &c.abi))
     }
 
     /// Returns an iterator over all test functions in contracts that match the filter.
@@ -162,14 +152,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
             .flat_map(move |(id, c)| {
-                let identifier = id.identifier();
-                let generated_symbolic_regression =
-                    is_generated_symbolic_regression_contract(&c.abi);
-                c.abi.functions().filter(move |func| {
-                    matcher
-                        .test_function_kind(&identifier, func, generated_symbolic_regression)
-                        .is_any_test()
-                })
+                matcher.test_functions(id, &c.abi, |_, _, kind| kind.is_any_test())
             })
     }
 
@@ -188,45 +171,30 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
     fn list_with(
         &self,
         filter: &dyn TestFilter,
-        format_test: impl Fn(&Function) -> String + Copy,
+        format_test: impl Fn(&Function) -> String,
     ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
         let matcher = self.test_function_matcher();
-        self.matching_contracts(filter)
-            .map(move |(id, c)| {
-                let source = id.source.as_path().display().to_string();
-                let name = id.name.clone();
-                let identifier = id.identifier();
-                let generated_symbolic_regression =
-                    is_generated_symbolic_regression_contract(&c.abi);
-                let tests = c
-                    .abi
-                    .functions()
-                    .filter(|func| {
-                        let kind = matcher.test_function_kind(
-                            &identifier,
-                            func,
-                            generated_symbolic_regression,
-                        );
-                        (!self.tcfg.fuzz_only
-                            || matches!(
-                                kind,
-                                TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
-                            ))
-                            && filter.matches_test_function_kind_in_contract(
-                                &identifier,
-                                func,
-                                kind,
-                            )
-                    })
-                    .map(format_test)
-                    .collect::<Vec<_>>();
-                (source, name, tests)
-            })
-            .filter(|(_, _, tests)| !tests.is_empty())
-            .fold(BTreeMap::new(), |mut acc, (source, name, tests)| {
-                acc.entry(source).or_default().insert(name, tests);
-                acc
-            })
+        let fuzz_only = self.tcfg.fuzz_only;
+        let mut out = BTreeMap::<_, BTreeMap<_, _>>::new();
+        for (id, c) in self.matching_contracts(filter) {
+            let tests = matcher
+                .test_functions(id, &c.abi, |contract_id, func, kind| {
+                    (!fuzz_only
+                        || matches!(
+                            kind,
+                            TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
+                        ))
+                        && filter.matches_test_function_kind_in_contract(contract_id, func, kind)
+                })
+                .map(&format_test)
+                .collect::<Vec<_>>();
+            if !tests.is_empty() {
+                out.entry(id.source.display().to_string())
+                    .or_default()
+                    .insert(id.name.clone(), tests);
+            }
+        }
+        out
     }
 
     /// Executes _all_ tests that match the given `filter`.
@@ -238,21 +206,9 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         &mut self,
         filter: &dyn TestFilter,
     ) -> Result<BTreeMap<String, SuiteResult>> {
-        Ok(self.test_iter(filter)?.collect())
-    }
-
-    /// Executes _all_ tests that match the given `filter`.
-    ///
-    /// The same as [`test`](Self::test), but returns the results instead of streaming them.
-    ///
-    /// Note that this method returns only when all tests have been executed.
-    pub fn test_iter(
-        &mut self,
-        filter: &dyn TestFilter,
-    ) -> Result<impl Iterator<Item = (String, SuiteResult)>> {
         let (tx, rx) = mpsc::channel();
         self.test(filter, tx, false)?;
-        Ok(rx.into_iter())
+        Ok(rx.into_iter().collect())
     }
 
     /// Executes _all_ tests that match the given `filter`.
@@ -275,12 +231,11 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
 
         let find_timer = Instant::now();
         let contracts = self.matching_contracts(filter).collect::<Vec<_>>();
-        let find_time = find_timer.elapsed();
         debug!(
             "Found {} test contracts out of {} in {:?}",
             contracts.len(),
             self.contracts.len(),
-            find_time,
+            find_timer.elapsed(),
         );
         let num_invariant_campaign_anchors = contracts
             .iter()
@@ -299,57 +254,43 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             })
             .sum();
 
-        if show_progress {
-            let tests_progress = TestsProgress::new(contracts.len(), rayon::current_num_threads());
-            // Collect test suite results to stream at the end of test run.
-            let results: Vec<(String, SuiteResult)> = contracts
-                .par_iter()
-                .map(|&(id, contract)| {
-                    let _guard = tokio_handle.enter();
-                    tests_progress.inner.lock().start_suite_progress(&id.identifier());
+        let progress = show_progress
+            .then(|| TestsProgress::new(contracts.len(), rayon::current_num_threads()));
+        let run_suite = |&(id, contract): &(&ArtifactId, &TestContract)| {
+            let _guard = tokio_handle.enter();
+            let identifier = id.identifier();
+            if let Some(progress) = &progress {
+                progress.inner.lock().start_suite_progress(&identifier);
+            }
+            let result = self.run_test_suite(
+                id,
+                contract,
+                &db,
+                filter,
+                ContractRunnerContext {
+                    progress: progress.as_ref(),
+                    tokio_handle: tokio_handle.clone(),
+                    num_invariant_campaign_anchors,
+                },
+            );
+            if let Some(progress) = &progress {
+                progress.inner.lock().end_suite_progress(&identifier, result.summary());
+            }
+            (identifier, result)
+        };
 
-                    let result = self.run_test_suite(
-                        id,
-                        contract,
-                        &db,
-                        filter,
-                        ContractRunnerContext {
-                            progress: Some(&tests_progress),
-                            tokio_handle: tokio_handle.clone(),
-                            num_invariant_campaign_anchors,
-                        },
-                    );
-
-                    tests_progress
-                        .inner
-                        .lock()
-                        .end_suite_progress(&id.identifier(), result.summary());
-
-                    (id.identifier(), result)
-                })
-                .collect();
-
-            tests_progress.inner.lock().clear();
-
-            for result in &results {
-                let _ = tx.send(result.to_owned());
+        if let Some(progress) = &progress {
+            // Collect test suite results to stream at the end of test run, once the progress bars
+            // have been cleared.
+            let results = contracts.par_iter().map(run_suite).collect::<Vec<_>>();
+            progress.inner.lock().clear();
+            for result in results {
+                let _ = tx.send(result);
             }
         } else {
-            contracts.par_iter().for_each(|&(id, contract)| {
-                let _guard = tokio_handle.enter();
-                let result = self.run_test_suite(
-                    id,
-                    contract,
-                    &db,
-                    filter,
-                    ContractRunnerContext {
-                        progress: None,
-                        tokio_handle: tokio_handle.clone(),
-                        num_invariant_campaign_anchors,
-                    },
-                );
-                let _ = tx.send((id.identifier(), result));
-            })
+            contracts.par_iter().for_each(|contract| {
+                let _ = tx.send(run_suite(contract));
+            });
         }
 
         Ok(())
@@ -370,8 +311,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             get_contract_name(&identifier)
         };
         let span = debug_span!("suite", name = %span_name);
-        let span_local = span.clone();
-        let _guard = span_local.enter();
+        let _guard = span.clone().entered();
 
         debug!("start executing all tests in contract");
 
@@ -563,25 +503,15 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         );
         self.spec_id = self.evm_env.cfg_env.spec;
         self.isolation = config.isolate;
-
-        // Specific to Forge, not present in config.
-        // self.line_coverage = N/A;
-        // self.debug = N/A;
-        // self.decode_internal = N/A;
-        // self.record_all_steps = N/A;
-
-        // TODO: self.evm_opts
+        // `line_coverage`, `debug`, `decode_internal` and `record_all_steps` are Forge-specific
+        // and not present in the config.
+        // TODO: `self.evm_opts` and `self.evm_env` are only partially reconfigured.
         self.evm_opts.always_use_create_2_factory = config.always_use_create_2_factory;
-
-        // TODO: self.env
-
         self.config = config;
     }
 
     /// Configures the given executor with this configuration.
     pub fn configure_executor(&self, executor: &mut Executor<FEN>) {
-        // TODO: See above
-
         debug_assert!(
             executor.backend().networks().has_same_execution_profile(&self.evm_opts.networks)
         );
@@ -589,7 +519,6 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
             executor.inspector().networks.has_same_execution_profile(&self.evm_opts.networks)
         );
         let inspector = executor.inspector_mut();
-        // inspector.set_env(&self.env);
         if let Some(cheatcodes) = inspector.cheatcodes.as_mut() {
             let mut config = cheatcodes.config.clone_with(&self.config, self.evm_opts.clone());
             config.isolate = self.isolation;
@@ -598,11 +527,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         inspector.tracing_requirements(self.trace_requirements());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
-        // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
-
-        // executor.env_mut().clone_from(&self.env);
         executor.set_spec_id(self.spec_id);
-        // executor.set_gas_limit(self.evm_opts.gas_limit());
         executor.set_legacy_assertions(self.config.legacy_assertions);
     }
 
@@ -712,16 +637,16 @@ impl MultiContractRunnerBuilder {
         Self {
             config,
             inline_config,
-            sender: Default::default(),
-            initial_balance: Default::default(),
-            fork: Default::default(),
+            sender: None,
+            initial_balance: U256::ZERO,
+            fork: None,
             fork_chain_id: None,
             fork_hardfork: None,
-            line_coverage: Default::default(),
-            debug: Default::default(),
-            isolation: Default::default(),
+            line_coverage: false,
+            debug: false,
+            isolation: false,
             decode_internal: Default::default(),
-            record_all_steps: Default::default(),
+            record_all_steps: false,
             fail_fast: false,
             multi_network: Default::default(),
             showmap: None,
@@ -741,11 +666,6 @@ impl MultiContractRunnerBuilder {
 
     pub fn with_showmap(mut self, showmap: Option<ShowmapConfig>) -> Self {
         self.showmap = showmap;
-        self
-    }
-
-    pub fn with_fuzz_minimize(mut self, fuzz_minimize: Option<FuzzMinimizeConfig>) -> Self {
-        self.fuzz_minimize = fuzz_minimize;
         self
     }
 
@@ -857,8 +777,7 @@ impl MultiContractRunnerBuilder {
         let revert_decoder = RevertDecoder::new().with_abis(abis);
 
         let configured_libraries = self.config.libraries_with_remappings()?;
-        let create2_deployer_available = self.create2_deployer_available(&evm_opts);
-        let create2 = if create2_deployer_available {
+        let create2 = if self.create2_deployer_available(&evm_opts) {
             match linker.link_with_create2_detailed(
                 configured_libraries.clone(),
                 evm_opts.create2_deployer,
@@ -879,18 +798,19 @@ impl MultiContractRunnerBuilder {
                 ..
             },
             library_deployment,
-        ) = if let Some(output) = create2 {
-            let deployment = if output.output.libs_to_deploy.is_empty() {
-                LibraryDeployment::Nonce
-            } else {
-                LibraryDeployment::Create2 {
-                    deployer: evm_opts.create2_deployer,
-                    salt: self.config.create2_library_salt,
-                }
-            };
-            (output, deployment)
-        } else {
-            (
+        ) = match create2 {
+            Some(output) => {
+                let deployment = if output.output.libs_to_deploy.is_empty() {
+                    LibraryDeployment::Nonce
+                } else {
+                    LibraryDeployment::Create2 {
+                        deployer: evm_opts.create2_deployer,
+                        salt: self.config.create2_library_salt,
+                    }
+                };
+                (output, deployment)
+            }
+            None => (
                 linker.link_with_nonce_or_address_detailed(
                     configured_libraries,
                     LIBRARY_DEPLOYER,
@@ -898,14 +818,14 @@ impl MultiContractRunnerBuilder {
                     linker.contracts.keys(),
                 )?,
                 LibraryDeployment::Nonce,
-            )
+            ),
         };
 
         let linked_contracts = linker
             .get_linked_artifacts_cow_with_artifact_libraries(&libraries, &artifact_libraries)?;
         let inline_config = self.inline_config;
 
-        // Create a mapping of name => (abi, deployment code, Vec<library deployment code>)
+        // Collect every deployable test contract: a test contract with a default constructor.
         let mut deployable_contracts = DeployableContracts::default();
         let test_matcher = TestFunctionMatcher::new(
             &self.config,
@@ -914,31 +834,25 @@ impl MultiContractRunnerBuilder {
         );
         let empty_filter = EmptyTestFilter::default();
         let resolver = Resolver::new(&linker);
-
         for (id, contract) in linked_contracts.iter() {
             let Some(abi) = contract.abi.as_ref() else { continue };
-
-            // if it's a test, link it and add to deployable contracts
-            if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
-                && test_matcher.matches_contract(&empty_filter, id, abi.borrow())
+            if abi.constructor.as_ref().is_some_and(|c| !c.inputs.is_empty())
+                || !test_matcher.matches_contract(&empty_filter, id, abi)
             {
-                linker.ensure_linked(contract, id)?;
-
-                let Some(bytecode) =
-                    contract.get_bytecode_bytes().map(|b| b.into_owned()).filter(|b| !b.is_empty())
-                else {
-                    continue;
-                };
-
-                let artifact_libraries = artifact_libraries.get(id).unwrap_or(&libraries);
-                let library_addresses =
-                    resolver.linked_library_addresses(id, artifact_libraries)?;
-
-                deployable_contracts.insert(
-                    id.clone(),
-                    TestContract { abi: abi.clone().into_owned(), bytecode, library_addresses },
-                );
+                continue;
             }
+            linker.ensure_linked(contract, id)?;
+            let Some(bytecode) =
+                contract.get_bytecode_bytes().map(|b| b.into_owned()).filter(|b| !b.is_empty())
+            else {
+                continue;
+            };
+            let artifact_libraries = artifact_libraries.get(id).unwrap_or(&libraries);
+            let library_addresses = resolver.linked_library_addresses(id, artifact_libraries)?;
+            deployable_contracts.insert(
+                id.clone(),
+                TestContract { abi: abi.clone().into_owned(), bytecode, library_addresses },
+            );
         }
 
         // Create known contracts from linked contracts and storage layout information (if any).
@@ -958,38 +872,36 @@ impl MultiContractRunnerBuilder {
 
         // Populate solar's global context by parsing and lowering the sources.
         let files: Vec<_> = output.output().sources.as_ref().keys().cloned().collect();
-
         analysis.enter_mut(|compiler| -> Result<()> {
             let mut pcx = compiler.parse();
             configure_pcx_from_compile_output(
                 &mut pcx,
                 &self.config,
                 output,
-                if files.is_empty() { None } else { Some(&files) },
+                (!files.is_empty()).then_some(&files),
             )?;
             pcx.parse();
             let _ = compiler.lower_asts();
             Ok(())
         })?;
-
         let analysis = Arc::new(analysis);
+
         // Enum variant counts used to constrain fuzzed enum inputs to valid values.
         let enum_bounds = EnumBounds::collect(&analysis);
-        let fuzz_max_literals = self.config.fuzz.dictionary.max_fuzz_dictionary_literals;
-        let invariant_max_literals = self.config.invariant.dictionary.max_fuzz_dictionary_literals;
-        let fuzz_literals = LiteralsDictionary::new(
-            Some(analysis.clone()),
-            Some(self.config.project_paths()),
-            fuzz_max_literals,
-        );
-        let invariant_literals = if invariant_max_literals == fuzz_max_literals {
-            fuzz_literals.clone()
-        } else {
+        let literals = |max_literals| {
             LiteralsDictionary::new(
                 Some(analysis.clone()),
                 Some(self.config.project_paths()),
-                invariant_max_literals,
+                max_literals,
             )
+        };
+        let fuzz_max_literals = self.config.fuzz.dictionary.max_fuzz_dictionary_literals;
+        let invariant_max_literals = self.config.invariant.dictionary.max_fuzz_dictionary_literals;
+        let fuzz_literals = literals(fuzz_max_literals);
+        let invariant_literals = if invariant_max_literals == fuzz_max_literals {
+            fuzz_literals.clone()
+        } else {
+            literals(invariant_max_literals)
         };
 
         let fork_chain_id = self.fork_chain_id.or_else(|| {
@@ -1093,18 +1005,32 @@ impl<'a> TestFunctionMatcher<'a> {
         )
     }
 
-    pub(crate) fn matches_test_function(
-        &self,
+    /// Returns the functions of `abi` accepted by `keep`, which is given the contract identifier,
+    /// the function and its classification.
+    fn test_functions<'b>(
+        self,
+        id: &ArtifactId,
+        abi: &'b JsonAbi,
+        mut keep: impl FnMut(&str, &Function, TestFunctionKind) -> bool,
+    ) -> impl Iterator<Item = &'b Function> {
+        let contract_id = id.identifier();
+        let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
+        abi.functions().filter(move |func| {
+            let kind = self.test_function_kind(&contract_id, func, generated_symbolic_regression);
+            keep(&contract_id, func, kind)
+        })
+    }
+
+    /// Returns the test functions of `abi` that match `filter`.
+    fn matching_test_functions<'b>(
+        self,
         filter: &dyn TestFilter,
-        contract_id: &str,
-        func: &Function,
-        generated_symbolic_regression: bool,
-    ) -> bool {
-        filter.matches_test_function_kind_in_contract(
-            contract_id,
-            func,
-            self.test_function_kind(contract_id, func, generated_symbolic_regression),
-        )
+        id: &ArtifactId,
+        abi: &'b JsonAbi,
+    ) -> impl Iterator<Item = &'b Function> {
+        self.test_functions(id, abi, move |contract_id, func, kind| {
+            filter.matches_test_function_kind_in_contract(contract_id, func, kind)
+        })
     }
 
     pub(crate) fn matches_contract(
@@ -1113,11 +1039,9 @@ impl<'a> TestFunctionMatcher<'a> {
         id: &ArtifactId,
         abi: &JsonAbi,
     ) -> bool {
-        let identifier = id.identifier();
-        let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
-        matches_contract(filter, &id.source, &id.name, &identifier, abi.functions(), |func| {
-            self.test_function_kind(&identifier, func, generated_symbolic_regression)
-        })
+        filter.matches_path(&id.source)
+            && filter.matches_contract(&id.name)
+            && self.matching_test_functions(filter, id, abi).next().is_some()
     }
 }
 
@@ -1125,29 +1049,9 @@ pub(crate) fn is_generated_symbolic_regression_contract(abi: &JsonAbi) -> bool {
     abi.functions().any(|func| func.name == SYMBOLIC_REGRESSION_MARKER && func.inputs.is_empty())
 }
 
-pub(crate) fn matches_contract(
-    filter: &dyn TestFilter,
-    path: &Path,
-    contract_name: &str,
-    contract_id: &str,
-    functions: impl IntoIterator<Item = impl std::borrow::Borrow<Function>>,
-    test_function_kind: impl Fn(&Function) -> TestFunctionKind,
-) -> bool {
-    (filter.matches_path(path) && filter.matches_contract(contract_name))
-        && functions.into_iter().any(|func| {
-            let func = func.borrow();
-            filter.matches_test_function_kind_in_contract(
-                contract_id,
-                func,
-                test_function_kind(func),
-            )
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_common::TestFunctionExt;
 
     fn abi_with_functions(functions: &[&str]) -> JsonAbi {
         let mut abi = JsonAbi::new();
@@ -1156,20 +1060,6 @@ mod tests {
             abi.functions.entry(function.name.clone()).or_default().push(function);
         }
         abi
-    }
-
-    #[test]
-    fn matches_contract_uses_provided_function_kind() {
-        let filter = EmptyTestFilter::default();
-        let path = Path::new("test/Symbolic.t.sol");
-        let func = Function::parse("checkFilteredCompile(uint256)").unwrap();
-
-        assert!(matches_contract(&filter, path, "Symbolic", "Symbolic", [func.clone()], |_| {
-            TestFunctionKind::SymbolicTest
-        },));
-        assert!(!matches_contract(&filter, path, "Symbolic", "Symbolic", [func], |func| {
-            func.test_function_kind()
-        }));
     }
 
     #[test]

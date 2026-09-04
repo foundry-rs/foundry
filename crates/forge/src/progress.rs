@@ -1,8 +1,12 @@
+//! Progress bars for the test run.
+
 use alloy_primitives::map::HashMap;
 use chrono::Utc;
-use indicatif::{MultiProgress, ProgressBar};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use parking_lot::Mutex;
 use std::{sync::Arc, time::Duration};
+
+const TICK_CHARS: &str = "⠁⠂⠄⡀⢀⠠⠐⠈ ";
 
 /// State of [ProgressBar]s displayed for the given test run.
 /// Shows progress of all test suites matching filter.
@@ -20,26 +24,26 @@ pub struct TestsProgressState {
 }
 
 impl TestsProgressState {
-    // Creates overall tests progress state.
+    /// Creates overall tests progress state.
     pub fn new(suites_len: usize, threads_no: usize) -> Self {
         let multi = MultiProgress::new();
         let overall_progress = multi.add(ProgressBar::new(suites_len as u64));
         overall_progress.set_style(
-            indicatif::ProgressStyle::with_template("{bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
+            ProgressStyle::with_template("{bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
                 .unwrap()
                 .progress_chars("##-"),
         );
-        overall_progress.set_message(format!("completed (with {} threads)", threads_no as u64));
+        overall_progress.set_message(format!("completed (with {threads_no} threads)"));
         Self { multi, overall_progress, suites_progress: HashMap::default() }
     }
 
     /// Creates new test suite progress and add it to overall progress.
-    pub fn start_suite_progress(&mut self, suite_name: &String) {
+    pub fn start_suite_progress(&mut self, suite_name: &str) {
         let suite_progress = self.multi.add(ProgressBar::new_spinner());
         suite_progress.set_style(
-            indicatif::ProgressStyle::with_template("{spinner} {wide_msg:.bold.dim}")
+            ProgressStyle::with_template("{spinner} {wide_msg:.bold.dim}")
                 .unwrap()
-                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
+                .tick_chars(TICK_CHARS),
         );
         suite_progress.set_message(format!("{suite_name} "));
         suite_progress.enable_steady_tick(Duration::from_millis(100));
@@ -47,15 +51,13 @@ impl TestsProgressState {
     }
 
     /// Prints suite result summary and removes it from overall progress.
-    pub fn end_suite_progress(&mut self, suite_name: &String, result_summary: String) {
-        if let Some(suite_progress) = self.suites_progress.remove(suite_name) {
-            self.multi.suspend(|| {
-                let _ = sh_println!("{suite_name}\n  ↪ {result_summary}");
-            });
-            suite_progress.finish_and_clear();
-            // Increment test progress bar to reflect completed test suite.
-            self.overall_progress.inc(1);
-        }
+    pub fn end_suite_progress(&mut self, suite_name: &str, result_summary: String) {
+        let Some(suite_progress) = self.suites_progress.remove(suite_name) else { return };
+        self.multi.suspend(|| {
+            let _ = sh_println!("{suite_name}\n  ↪ {result_summary}");
+        });
+        suite_progress.finish_and_clear();
+        self.overall_progress.inc(1);
     }
 
     /// Creates progress entry for fuzz tests.
@@ -69,26 +71,20 @@ impl TestsProgressState {
         timeout: Option<u32>,
         runs: u32,
     ) -> Option<ProgressBar> {
-        if let Some(suite_progress) = self.suites_progress.get(suite_name) {
-            let fuzz_progress =
-                self.multi.insert_after(suite_progress, ProgressBar::new(runs as u64));
-            let template = if let Some(timeout) = timeout {
-                let ends_at = (Utc::now() + chrono::Duration::seconds(timeout.into()))
-                    .format("%H:%M:%S %Y-%m-%d")
-                    .to_string();
-                format!("    ↪ {{prefix:.bold.dim}}: [{{pos}}] Runs, ends at {ends_at} UTC {{msg}}")
-            } else {
-                "    ↪ {prefix:.bold.dim}: [{pos}/{len}] Runs {msg}".to_string()
-            };
-            fuzz_progress.set_style(
-                indicatif::ProgressStyle::with_template(&template).unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
-            );
-            fuzz_progress.set_prefix(test_name.to_owned());
-            fuzz_progress.enable_steady_tick(Duration::from_millis(100));
-            Some(fuzz_progress)
+        let suite_progress = self.suites_progress.get(suite_name)?;
+        let fuzz_progress = self.multi.insert_after(suite_progress, ProgressBar::new(runs as u64));
+        let template = if let Some(timeout) = timeout {
+            let ends_at = (Utc::now() + chrono::Duration::seconds(timeout.into()))
+                .format("%H:%M:%S %Y-%m-%d");
+            format!("    ↪ {{prefix:.bold.dim}}: [{{pos}}] Runs, ends at {ends_at} UTC {{msg}}")
         } else {
-            None
-        }
+            "    ↪ {prefix:.bold.dim}: [{pos}/{len}] Runs {msg}".to_string()
+        };
+        fuzz_progress
+            .set_style(ProgressStyle::with_template(&template).unwrap().tick_chars(TICK_CHARS));
+        fuzz_progress.set_prefix(test_name.to_owned());
+        fuzz_progress.enable_steady_tick(Duration::from_millis(100));
+        Some(fuzz_progress)
     }
 
     /// Removes overall test progress.
@@ -117,9 +113,5 @@ pub fn start_fuzz_progress(
     timeout: Option<u32>,
     runs: u32,
 ) -> Option<ProgressBar> {
-    if let Some(progress) = tests_progress {
-        progress.inner.lock().start_fuzz_progress(suite_name, test_name, timeout, runs)
-    } else {
-        None
-    }
+    tests_progress?.inner.lock().start_fuzz_progress(suite_name, test_name, timeout, runs)
 }
