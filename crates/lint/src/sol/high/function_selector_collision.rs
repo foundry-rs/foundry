@@ -68,7 +68,10 @@ impl<'hir> LateLintPass<'hir> for FunctionSelectorCollision {
             modifiers: fallback.modifiers,
             index: 0,
             body,
-            body_input: fallback.parameters.first().map(|&var| CalldataInput { var, modifier: None }),
+            body_input: fallback
+                .parameters
+                .first()
+                .map(|&var| CalldataInput { var, modifier: None }),
         });
 
         let proxy_functions = gcx.interface_functions(proxy_id);
@@ -336,7 +339,8 @@ impl<'hir> DelegateTargetCollector<'hir> {
             filters = vec![SelectorFilter::default()];
         }
 
-        let Some(target) = self.targets.iter_mut().find(|target| target.contract == contract) else {
+        let Some(target) = self.targets.iter_mut().find(|target| target.contract == contract)
+        else {
             return self.targets.push(DelegateTarget { contract, filters });
         };
         if target.filters.contains(&SelectorFilter::default()) {
@@ -432,7 +436,8 @@ impl<'hir> DelegateTargetCollector<'hir> {
         next
     }
 
-    /// Collapses `paths` to one unconstrained state keeping only the inputs modified on all of them.
+    /// Collapses `paths` to one unconstrained state keeping only the inputs modified on all of
+    /// them.
     fn widen_loop_paths(paths: &mut Vec<PathState>) {
         let Some(first) = paths.first() else { return };
         let mut modified_inputs = first.modified_inputs.clone();
@@ -470,7 +475,8 @@ impl<'hir> DelegateTargetCollector<'hir> {
             let (true_paths, false_paths) = self.visit_condition(condition);
             self.paths = false_paths;
             if let Some(else_stmt) = else_stmt {
-                let fallthrough = self.visit_loop_stmts(std::slice::from_ref(else_stmt), &mut exits);
+                let fallthrough =
+                    self.visit_loop_stmts(std::slice::from_ref(else_stmt), &mut exits);
                 extend_unique(&mut exits, fallthrough);
             } else {
                 extend_unique(&mut exits, std::mem::take(&mut self.paths));
@@ -783,7 +789,8 @@ fn full_calldata_source(
         return Some(None);
     }
     let ExprKind::Ident(reses) = &expr.peel_parens().kind else { return None };
-    reses.iter().filter_map(Res::as_variable).find_map(|id| {
-        full_calldata_inputs.iter().copied().find(|input| input.var == id).map(Some)
-    })
+    reses
+        .iter()
+        .filter_map(Res::as_variable)
+        .find_map(|id| full_calldata_inputs.iter().copied().find(|input| input.var == id).map(Some))
 }

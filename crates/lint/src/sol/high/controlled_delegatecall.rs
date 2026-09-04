@@ -17,8 +17,8 @@ use solar::{
     sema::{
         Gcx,
         hir::{
-            self, ElementaryType, Expr, ExprKind, FunctionKind, ItemId, LoopSource,
-            Res, Stmt, StmtKind, TypeKind, VariableId, Visit,
+            self, ElementaryType, Expr, ExprKind, FunctionKind, ItemId, LoopSource, Res, Stmt,
+            StmtKind, TypeKind, VariableId, Visit,
         },
     },
 };
@@ -253,7 +253,9 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<()> {
         match &stmt.kind {
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => self.visit_stmts(block.stmts),
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+                self.visit_stmts(block.stmts)
+            }
             StmtKind::If(cond, then, else_) => {
                 let _ = self.visit_expr(cond);
                 let baseline = self.safe_vars.clone();
@@ -288,7 +290,8 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 if falls_through {
                     exits.push(self.safe_vars.clone());
                 }
-                self.safe_vars = exits.iter().skip(1).fold(exits[0].clone(), |a, b| intersect(&a, b));
+                self.safe_vars =
+                    exits.iter().skip(1).fold(exits[0].clone(), |a, b| intersect(&a, b));
                 ControlFlow::Continue(())
             }
             StmtKind::Break | StmtKind::Continue => {
@@ -334,7 +337,11 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             }
             _ => {
                 let _ = self.walk_stmt(stmt);
-                if branch_always_exits(stmt) { ControlFlow::Break(()) } else { ControlFlow::Continue(()) }
+                if branch_always_exits(stmt) {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
             }
         }
     }
@@ -347,7 +354,8 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
                 let _ = self.visit_expr(lhs);
                 let skipped_rhs = self.safe_vars.clone();
-                let ran_rhs = self.visit_arm(lhs, op.kind == BinOpKind::Or, |this| this.visit_expr(rhs));
+                let ran_rhs =
+                    self.visit_arm(lhs, op.kind == BinOpKind::Or, |this| this.visit_expr(rhs));
                 self.join(Some(skipped_rhs), ran_rhs)
             }
             ExprKind::Ternary(cond, if_true, if_false) => {

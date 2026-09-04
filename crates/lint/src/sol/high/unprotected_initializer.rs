@@ -45,8 +45,9 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
         entries.extend(bases.iter().find_map(|&cid| hir.contract(cid).fallback));
         entries.extend(bases.iter().find_map(|&cid| hir.contract(cid).receive));
 
-        let upgradeable = bases.iter().any(|&cid| hir.contract(cid).name.as_str() == "Initializable")
-            || entries.iter().any(|&fid| has_initializer_modifier(hir, hir.function(fid)));
+        let upgradeable =
+            bases.iter().any(|&cid| hir.contract(cid).name.as_str() == "Initializable")
+                || entries.iter().any(|&fid| has_initializer_modifier(hir, hir.function(fid)));
         let locked = bases.iter().filter_map(|&cid| hir.contract(cid).ctor).any(|ctor| {
             reaches(hir, bases, ctor, |expr| {
                 let ExprKind::Call(callee, ..) = &expr.kind else { return false };
