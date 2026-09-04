@@ -85,6 +85,30 @@ Build Profile: [..]
 "#]]);
 });
 
+// tests that a non-UTF-8 command-line argument produces a clean error instead of an unrecovered
+// panic in `GlobalArgs::check_markdown_help` (which used to call `std::env::args()`, documented to
+// panic on invalid Unicode, as the very first statement of every binary's entry point)
+#[cfg(unix)]
+casttest!(non_utf8_argument_does_not_panic, |prj, _cmd| {
+    use std::os::unix::ffi::OsStrExt;
+
+    let bad_arg = std::ffi::OsStr::from_bytes(&[0xff]);
+    let output = prj.cast_bin().arg(bad_arg).output().unwrap();
+
+    assert_ne!(
+        output.status.code(),
+        Some(101),
+        "a non-UTF-8 argument must not cause an unrecovered panic (exit code 101); got status {:?}, stderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked at"),
+        "a non-UTF-8 argument must not panic; stderr: {stderr}"
+    );
+});
+
 // tests `--help` is printed to std out
 casttest!(print_help, |_prj, cmd| {
     cmd.arg("--help").assert_success().stdout_eq(str![[r#"
