@@ -6,8 +6,9 @@ use crate::{
         analysis::{
             DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache, arg_for_param,
             branch_always_exits, count_placeholders, for_each_child, for_each_lhs_var,
-            function_ids, is_address_cast, is_address_like, is_builtin, is_require_or_assert,
-            lhs_local_var, state_lhs_vars, stmts_before_placeholder, tuple_elems, unique,
+            function_ids, is_address_cast, is_address_like, is_builtin, is_inc_dec,
+            is_require_or_assert, lhs_local_var, state_lhs_vars, stmts_before_placeholder,
+            tuple_elems, unique,
         },
     },
 };
@@ -587,10 +588,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             ExprKind::Unary(op, inner) => {
                 self.analyze_expr(inner, state);
-                if matches!(
-                    op.kind,
-                    UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
-                ) {
+                if is_inc_dec(op.kind) {
                     self.record_write(inner, state);
                     if self.reentrancy_balance_enabled
                         && let Some(var_id) = lhs_local_var(self.hir, inner)

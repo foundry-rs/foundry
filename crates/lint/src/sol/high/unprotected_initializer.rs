@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{builtins, function_ids, is_builtin},
+        analysis::{builtins, function_ids, is_builtin, runtime_entry_points},
     },
 };
 use solar::{
@@ -40,10 +40,7 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
 
         // The effective runtime dispatch surface: most-derived overrides plus the inherited
         // fallback/receive functions.
-        let mut entries: Vec<_> =
-            gcx.interface_functions(contract_id).all().iter().map(|f| f.id).collect();
-        entries.extend(bases.iter().find_map(|&cid| hir.contract(cid).fallback));
-        entries.extend(bases.iter().find_map(|&cid| hir.contract(cid).receive));
+        let entries = runtime_entry_points(gcx, contract_id);
 
         let upgradeable =
             bases.iter().any(|&cid| hir.contract(cid).name.as_str() == "Initializable")

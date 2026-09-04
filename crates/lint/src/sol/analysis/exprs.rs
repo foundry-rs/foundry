@@ -227,6 +227,27 @@ pub const fn is_inc_dec(op: UnOpKind) -> bool {
     matches!(op, UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec)
 }
 
+/// The lvalue written by an assignment, `delete` or increment/decrement expression.
+pub fn write_target<'hir>(expr: &'hir Expr<'hir>) -> Option<&'hir Expr<'hir>> {
+    match &expr.kind {
+        ExprKind::Assign(target, ..) | ExprKind::Delete(target) => Some(target),
+        ExprKind::Unary(op, target) if is_inc_dec(op.kind) => Some(target),
+        _ => None,
+    }
+}
+
+/// The functions reachable through the runtime dispatch of a most-derived contract: its
+/// interface functions plus the inherited `fallback`/`receive`, if any.
+pub fn runtime_entry_points(gcx: Gcx<'_>, contract_id: hir::ContractId) -> Vec<FunctionId> {
+    let hir = &gcx.hir;
+    let bases = hir.contract(contract_id).linearized_bases;
+    let mut entries: Vec<_> =
+        gcx.interface_functions(contract_id).all().iter().map(|f| f.id).collect();
+    entries.extend(bases.iter().find_map(|&cid| hir.contract(cid).fallback));
+    entries.extend(bases.iter().find_map(|&cid| hir.contract(cid).receive));
+    entries
+}
+
 /// The elementary type an explicit cast head `T(...)` converts to.
 pub fn cast_type(callee: &Expr<'_>) -> Option<ElementaryType> {
     match &callee.peel_parens().kind {

@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{is_exit_call, is_require_or_assert, tuple_elems},
+        analysis::{is_exit_call, is_inc_dec, is_require_or_assert, tuple_elems},
     },
 };
 use alloy_primitives::{U256, uint};
@@ -799,10 +799,6 @@ fn is_transparent_cast(callee: &Expr<'_>) -> bool {
             ..
         }) if size.bits() == 256
     )
-}
-
-const fn is_inc_dec(op: UnOpKind) -> bool {
-    matches!(op, UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec)
 }
 
 const fn negate_comparison(op: BinOpKind) -> BinOpKind {

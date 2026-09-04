@@ -11,7 +11,7 @@ use crate::{
         Severity, SolLint,
         analysis::{
             branch_always_exits, builtins, function_ids, is_builtin, is_loop_termination_if,
-            lhs_local_var, unique,
+            lhs_local_var, runtime_entry_points, unique,
         },
     },
 };
@@ -65,10 +65,7 @@ impl<'hir> LateLintPass<'hir> for ProtectedVars {
 
         // The effective runtime dispatch surface: most-derived overrides plus the inherited
         // fallback/receive functions.
-        let mut entries: Vec<_> =
-            gcx.interface_functions(contract_id).all().iter().map(|f| f.id).collect();
-        entries.extend(bases.iter().find_map(|&cid| hir.contract(cid).fallback));
-        entries.extend(bases.iter().find_map(|&cid| hir.contract(cid).receive));
+        let entries = runtime_entry_points(gcx, contract_id);
 
         for entry_id in entries {
             let entry = hir.function(entry_id);

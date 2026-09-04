@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{branch_always_exits, resolved_function},
+        analysis::{branch_always_exits, resolved_function, write_target},
     },
 };
 use alloy_primitives::U256;
@@ -402,19 +402,10 @@ fn collect_writes<'hir>(
     let mut writes = ExprWalker {
         hir,
         prune_unreachable: false,
-        f: |expr: &Expr<'_>| match &expr.kind {
-            ExprKind::Assign(target, ..) | ExprKind::Delete(target) => {
+        f: |expr: &Expr<'_>| {
+            if let Some(target) = write_target(expr) {
                 lvalue_variables(target, out)
             }
-            ExprKind::Unary(op, target)
-                if matches!(
-                    op.kind,
-                    UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
-                ) =>
-            {
-                lvalue_variables(target, out)
-            }
-            _ => {}
         },
     };
     for stmt in stmts {

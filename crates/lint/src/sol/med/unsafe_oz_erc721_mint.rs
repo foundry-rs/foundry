@@ -6,7 +6,7 @@ use crate::{
         analysis::{
             OPENZEPPELIN_ROOTS, arg_for_param, for_each_lhs_var, is_address_type, is_builtin,
             is_literal_false, is_require_or_assert, resolved_function, source_in_package,
-            underlying_var, unique,
+            underlying_var, unique, write_target,
         },
     },
 };
@@ -18,7 +18,7 @@ use solar::{
         Gcx,
         hir::{
             self, BinOpKind, CallArgs, Expr, ExprKind, FunctionId, Hir, ItemId, Res, Stmt,
-            StmtKind, TypeKind, UnOpKind, VariableId, Visit,
+            StmtKind, TypeKind, VariableId, Visit,
         },
         ty::{TyFn, TyKind},
     },
@@ -1324,18 +1324,7 @@ fn keeps_its_value(hir: &Hir<'_>, variable: VariableId) -> bool {
 /// Whether an expression writes `var`: `var = x`, `var += x`, `var++` or `delete var`, directly
 /// or as one component of a tuple.
 fn assigns_to(expr: &Expr<'_>, var: VariableId) -> bool {
-    let target = match &expr.kind {
-        ExprKind::Assign(target, ..) | ExprKind::Delete(target) => target,
-        ExprKind::Unary(op, target)
-            if matches!(
-                op.kind,
-                UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
-            ) =>
-        {
-            target
-        }
-        _ => return false,
-    };
+    let Some(target) = write_target(expr) else { return false };
     let mut hit = false;
     for_each_lhs_var(target, &mut |vid| hit |= vid == var);
     hit
