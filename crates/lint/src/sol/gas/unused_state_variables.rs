@@ -6,7 +6,10 @@ use crate::{
 use solar::{
     ast::ContractKind,
     interface::data_structures::Never,
-    sema::hir::{self, Visit as _},
+    sema::{
+        Gcx,
+        hir::{self, ExprKind, Res, Visit as _},
+    },
 };
 use std::{collections::HashSet, ops::ControlFlow};
 
@@ -21,45 +24,28 @@ impl<'hir> LateLintPass<'hir> for UnusedStateVariables {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
+        _gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         contract: &'hir hir::Contract<'hir>,
     ) {
-        // Skip interfaces, they cannot have mutable state variables.
         if contract.kind == ContractKind::Interface {
             return;
         }
 
-        // Collect state variable IDs, skipping constants and immutables
-        // (those are handled by the compiler and don't occupy storage slots).
-        let state_vars: Vec<hir::VariableId> = contract
-            .variables()
-            .filter(|&var_id| {
-                let var = hir.variable(var_id);
-                !var.is_constant() && !var.is_immutable()
-            })
-            .collect();
-
-        if state_vars.is_empty() {
-            return;
-        }
-
-        // Walk the full contract — functions (including modifier call args, parameters, returns,
-        // and bodies) and state variable initializers — to collect every variable referenced
-        // anywhere in this contract.
+        // Functions (including modifier call args) and state variable initializers cover every
+        // variable reference in the contract.
         let mut collector = UsedVarCollector { hir, used: HashSet::new() };
         for func_id in contract.all_functions() {
             let _ = collector.visit_nested_function(func_id);
         }
-        // State variables can reference other state variables in their initializers.
         for var_id in contract.variables() {
             let _ = collector.visit_nested_var(var_id);
         }
 
-        // Report any state variable that was never referenced.
-        for var_id in state_vars {
-            if !collector.used.contains(&var_id) {
-                let var = hir.variable(var_id);
+        // Constants and immutables do not occupy storage slots.
+        for var_id in contract.variables() {
+            let var = hir.variable(var_id);
+            if !var.is_constant() && !var.is_immutable() && !collector.used.contains(&var_id) {
                 ctx.emit(&UNUSED_STATE_VARIABLES, var.span);
             }
         }
@@ -79,12 +65,8 @@ impl<'hir> hir::Visit<'hir> for UsedVarCollector<'hir> {
     }
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        if let hir::ExprKind::Ident(resolutions) = &expr.kind {
-            for res in *resolutions {
-                if let hir::Res::Item(hir::ItemId::Variable(var_id)) = res {
-                    self.used.insert(*var_id);
-                }
-            }
+        if let ExprKind::Ident(reses) = &expr.kind {
+            self.used.extend(reses.iter().filter_map(Res::as_variable));
         }
         self.walk_expr(expr)
     }

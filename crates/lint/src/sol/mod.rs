@@ -31,7 +31,6 @@ use thiserror::Error;
 pub mod macros;
 
 pub mod analysis;
-mod calls;
 pub mod codesize;
 pub mod gas;
 pub mod high;
@@ -40,16 +39,22 @@ pub mod low;
 pub mod med;
 pub mod naming;
 
-static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    let mut lints = Vec::new();
-    lints.extend_from_slice(high::REGISTERED_LINTS);
-    lints.extend_from_slice(med::REGISTERED_LINTS);
-    lints.extend_from_slice(low::REGISTERED_LINTS);
-    lints.extend_from_slice(info::REGISTERED_LINTS);
-    lints.extend_from_slice(gas::REGISTERED_LINTS);
-    lints.extend_from_slice(codesize::REGISTERED_LINTS);
-    lints.into_iter().map(|lint| lint.id()).collect()
-});
+/// Every registered lint, in severity-group order.
+fn all_lints() -> impl Iterator<Item = &'static SolLint> {
+    [
+        high::REGISTERED_LINTS,
+        med::REGISTERED_LINTS,
+        low::REGISTERED_LINTS,
+        info::REGISTERED_LINTS,
+        gas::REGISTERED_LINTS,
+        codesize::REGISTERED_LINTS,
+    ]
+    .into_iter()
+    .flatten()
+}
+
+static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| all_lints().map(|lint| lint.id).collect());
 
 static DEFAULT_LINT_SPECIFIC_CONFIG: LazyLock<LintSpecificConfig> =
     LazyLock::new(LintSpecificConfig::default);
@@ -121,25 +126,16 @@ impl ForgeLintSuite {
     }
 
     fn active_lints(&self, path: Option<&Path>) -> Vec<&'static str> {
-        [
-            high::REGISTERED_LINTS,
-            med::REGISTERED_LINTS,
-            low::REGISTERED_LINTS,
-            info::REGISTERED_LINTS,
-            gas::REGISTERED_LINTS,
-            codesize::REGISTERED_LINTS,
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|lint| {
-            self.include_lint(**lint)
-                && path.is_none_or(|path| {
-                    !self.path_config.is_test_or_script(path)
-                        || !matches!(lint.severity(), Severity::Gas | Severity::CodeSize)
-                })
-        })
-        .map(|lint| lint.id)
-        .collect()
+        all_lints()
+            .filter(|lint| {
+                self.include_lint(**lint)
+                    && path.is_none_or(|path| {
+                        !self.path_config.is_test_or_script(path)
+                            || !matches!(lint.severity(), Severity::Gas | Severity::CodeSize)
+                    })
+            })
+            .map(|lint| lint.id)
+            .collect()
     }
 }
 
@@ -398,36 +394,22 @@ impl<'a> Linter for SolidityLinter<'a> {
         let lint_warn_count = compiler.dcx().warn_count().saturating_sub(warn_count_before);
         let lint_note_count = compiler.dcx().note_count().saturating_sub(note_count_before);
 
-        const MSG: &str = "aborting due to ";
-        match (deny, lint_warn_count, lint_note_count) {
-            // Deny warnings.
-            (DenyLevel::Warnings, w, n) if w > 0 => {
-                if n > 0 {
-                    Err(DeniedLintDiagnostics(format!(
-                        "{MSG}{w} linter warning(s); {n} note(s) were also emitted\n"
-                    ))
-                    .into())
-                } else {
-                    Err(DeniedLintDiagnostics(format!("{MSG}{w} linter warning(s)\n")).into())
-                }
+        let (w, n) = (lint_warn_count, lint_note_count);
+        let denied = match deny {
+            DenyLevel::Warnings if w > 0 && n > 0 => {
+                format!("{w} linter warning(s); {n} note(s) were also emitted")
             }
-
-            // Deny any diagnostic.
-            (DenyLevel::Notes, w, n) if w > 0 || n > 0 => match (w, n) {
-                (w, n) if w > 0 && n > 0 => Err(DeniedLintDiagnostics(format!(
-                    "{MSG}{w} linter warning(s) and {n} note(s)\n"
-                ))
-                .into()),
-                (w, 0) => {
-                    Err(DeniedLintDiagnostics(format!("{MSG}{w} linter warning(s)\n")).into())
-                }
-                (0, n) => Err(DeniedLintDiagnostics(format!("{MSG}{n} linter note(s)\n")).into()),
-                _ => unreachable!(),
-            },
-
-            // Otherwise, succeed.
-            _ => Ok(()),
-        }
+            DenyLevel::Warnings if w > 0 => format!("{w} linter warning(s)"),
+            DenyLevel::Notes if w > 0 && n > 0 => format!("{w} linter warning(s) and {n} note(s)"),
+            DenyLevel::Notes if w > 0 => format!("{w} linter warning(s)"),
+            DenyLevel::Notes if n > 0 => format!("{n} linter note(s)"),
+            _ => return Ok(()),
+        };
+        Err(DeniedLintDiagnostics(format!(
+            "aborting due to {denied}
+"
+        ))
+        .into())
     }
 }
 
@@ -501,60 +483,16 @@ impl<'a> TryFrom<&'a str> for SolLint {
     type Error = SolLintError;
 
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
-        for &lint in high::REGISTERED_LINTS {
-            if lint.id() == value {
-                return Ok(lint);
-            }
-        }
-
-        for &lint in med::REGISTERED_LINTS {
-            if lint.id() == value {
-                return Ok(lint);
-            }
-        }
-
-        for &lint in low::REGISTERED_LINTS {
-            if lint.id() == value {
-                return Ok(lint);
-            }
-        }
-
-        for &lint in info::REGISTERED_LINTS {
-            if lint.id() == value {
-                return Ok(lint);
-            }
-        }
-
-        for &lint in gas::REGISTERED_LINTS {
-            if lint.id() == value {
-                return Ok(lint);
-            }
-        }
-
-        for &lint in codesize::REGISTERED_LINTS {
-            if lint.id() == value {
-                return Ok(lint);
-            }
-        }
-
-        Err(SolLintError::InvalidId(value.to_string()))
+        all_lints()
+            .find(|lint| lint.id == value)
+            .copied()
+            .ok_or_else(|| SolLintError::InvalidId(value.to_string()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const fn severity_doc_name(severity: Severity) -> &'static str {
-        match severity {
-            Severity::High => "High",
-            Severity::Med => "Med",
-            Severity::Low => "Low",
-            Severity::Info => "Info",
-            Severity::Gas => "Gas",
-            Severity::CodeSize => "CodeSize",
-        }
-    }
 
     /// Every registered lint must have a markdown documentation file at
     /// `crates/lint/docs/<str_id>.md` with matching metadata and the standard section structure.
@@ -569,14 +507,7 @@ mod tests {
         let docs_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs");
         assert!(docs_dir.is_dir(), "missing docs directory at {}", docs_dir.display());
 
-        let all_lints: Vec<&'static SolLint> = high::REGISTERED_LINTS
-            .iter()
-            .chain(med::REGISTERED_LINTS)
-            .chain(low::REGISTERED_LINTS)
-            .chain(info::REGISTERED_LINTS)
-            .chain(gas::REGISTERED_LINTS)
-            .chain(codesize::REGISTERED_LINTS)
-            .collect();
+        let all_lints: Vec<_> = all_lints().collect();
 
         let registered_ids: std::collections::HashSet<_> =
             all_lints.iter().map(|lint| lint.id()).collect();
@@ -586,7 +517,7 @@ mod tests {
             let path = docs_dir.join(format!("{}.md", lint.id()));
             match std::fs::read_to_string(&path) {
                 Ok(content) => {
-                    let severity = severity_doc_name(lint.severity());
+                    let severity = format!("{:?}", lint.severity());
                     let required = [
                         format!("**Severity**: `{severity}`"),
                         format!("**ID**: `{}`", lint.id()),
@@ -645,16 +576,7 @@ mod tests {
     /// link printed in diagnostics resolves correctly.
     #[test]
     fn registered_lints_have_canonical_help_url() {
-        let all_lints: Vec<&'static SolLint> = high::REGISTERED_LINTS
-            .iter()
-            .chain(med::REGISTERED_LINTS)
-            .chain(low::REGISTERED_LINTS)
-            .chain(info::REGISTERED_LINTS)
-            .chain(gas::REGISTERED_LINTS)
-            .chain(codesize::REGISTERED_LINTS)
-            .collect();
-
-        for lint in all_lints {
+        for lint in all_lints() {
             let expected = format!("https://getfoundry.sh/forge/linting/{}", lint.id());
             assert_eq!(lint.help(), expected, "lint `{}` has a non-canonical help URL", lint.id());
         }

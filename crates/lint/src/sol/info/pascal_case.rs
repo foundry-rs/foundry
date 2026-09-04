@@ -1,6 +1,9 @@
 use crate::{
-    linter::{EarlyLintPass, LintContext, Suggestion},
-    sol::{Severity, SolLint, naming::check_pascal_case as check_pascal_case_pure},
+    linter::{EarlyLintPass, LintContext},
+    sol::{
+        Severity, SolLint,
+        naming::{check_pascal_case, emit_rename, has_acronym_exception},
+    },
 };
 use foundry_config::lint::LintSpecificConfig;
 use solar::ast::ItemStruct;
@@ -27,55 +30,14 @@ impl PascalCaseStructPass {
 impl<'ast> EarlyLintPass<'ast> for PascalCaseStructPass {
     fn check_item_struct(&mut self, ctx: &LintContext, strukt: &'ast ItemStruct<'ast>) {
         let name = strukt.name.as_str();
-        if let Some(expected) = check_pascal_case(name, &self.config.mixed_case_exceptions) {
-            ctx.emit_with_suggestion(
-                &PASCAL_CASE_STRUCT,
-                strukt.name.span,
-                Suggestion::fix(
-                    expected,
-                    solar::interface::diagnostics::Applicability::MachineApplicable,
-                )
-                .with_desc("consider using"),
-            );
+        // The acronym exceptions shared with the `mixed-case-*` lints keep `ERC20Data` valid.
+        if has_acronym_exception(name, &self.config.mixed_case_exceptions, |pre| {
+            pre == heck::AsUpperCamelCase(pre).to_string()
+        }) {
+            return;
         }
-    }
-}
-
-/// Wraps [`check_pascal_case_pure`] with the configurable acronym exceptions shared with the
-/// `mixed-case-*` lints, so that names like `ERC20Data` are not flagged.
-fn check_pascal_case(s: &str, allowed_patterns: &[String]) -> Option<String> {
-    for pattern in allowed_patterns {
-        if let Some(pos) = s.find(pattern.as_str()) {
-            let (pre, post) = s.split_at(pos);
-            let post = &post[pattern.len()..];
-
-            // Text on either side of the pattern must be valid PascalCase, ignoring preserved
-            // leading/trailing underscores; digits may directly follow the pattern (`ERC20Data`).
-            let pre = pre.strip_prefix('_').unwrap_or(pre);
-            let is_pre_valid = pre == heck::AsUpperCamelCase(pre).to_string();
-            let post = post.trim_start_matches(|c: char| c.is_numeric());
-            let post = post.strip_suffix('_').unwrap_or(post);
-            let is_post_valid = post == heck::AsUpperCamelCase(post).to_string();
-            if is_pre_valid && is_post_valid {
-                return None;
-            }
+        if let Some(expected) = check_pascal_case(name) {
+            emit_rename(ctx, &PASCAL_CASE_STRUCT, strukt.name.span, expected);
         }
-    }
-
-    check_pascal_case_pure(s)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exception_preserves_at_most_one_underscore() {
-        let allowed_patterns = ["ERC".to_string()];
-
-        assert!(check_pascal_case("_ERC20Data", &allowed_patterns).is_none());
-        assert!(check_pascal_case("ERC20Data_", &allowed_patterns).is_none());
-        assert!(check_pascal_case("__ERC20Data", &allowed_patterns).is_some());
-        assert!(check_pascal_case("ERC20Data__", &allowed_patterns).is_some());
     }
 }
