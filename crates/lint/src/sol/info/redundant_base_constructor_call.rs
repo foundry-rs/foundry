@@ -5,7 +5,7 @@ use crate::{
 };
 use solar::{
     interface::{BytePos, Span, diagnostics::Applicability},
-    sema::hir::{self, ItemId},
+    sema::{Gcx, hir},
 };
 
 declare_forge_lint!(
@@ -19,12 +19,11 @@ impl<'hir> LateLintPass<'hir> for RedundantBaseConstructorCall {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
+        _gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         contract: &'hir hir::Contract<'hir>,
     ) {
-        // `contract X is A(...), B(...)` clauses.
-        // Removing only the `()` is enough: `is A` is valid Solidity.
+        // `contract X is A(), B()` clauses: removing only the `()` is enough, `is A` is valid.
         for m in contract.bases_args {
             try_emit(ctx, hir, m, m.args.span);
         }
@@ -33,60 +32,36 @@ impl<'hir> LateLintPass<'hir> for RedundantBaseConstructorCall {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
+        _gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
-        // `constructor() A(...) {}` modifier-style base calls.
-        if !matches!(func.kind, hir::FunctionKind::Constructor) {
-            return;
-        }
-        for m in func.modifiers {
-            // Base-constructor invocations resolve to a contract; real modifiers resolve to
-            // functions.
-            if matches!(m.id, ItemId::Contract(_)) {
-                // The bare base name `A` (without parens) is not valid in a constructor's
-                // modifier list, so the whole `A()` must be removed. Extend the span to also
-                // swallow one leading whitespace char to avoid leaving a double space.
+        // `constructor() A() {}` modifier-style base calls. The bare base name `A` is not valid
+        // in a constructor's modifier list, so the whole `A()` must be removed, along with one
+        // leading whitespace char to avoid leaving a double space.
+        if func.kind == hir::FunctionKind::Constructor {
+            for m in func.modifiers {
                 try_emit(ctx, hir, m, expand_to_leading_ws(ctx, m.span));
             }
         }
     }
 }
 
-fn try_emit<'hir>(
-    ctx: &LintContext,
-    hir: &'hir hir::Hir<'hir>,
-    m: &'hir hir::Modifier<'hir>,
-    fix_span: Span,
-) {
-    let ItemId::Contract(base_id) = m.id else { return };
-
-    // `is A` (no parens written) — nothing to flag.
-    if m.args.is_dummy() {
+fn try_emit(ctx: &LintContext, hir: &hir::Hir<'_>, m: &hir::Modifier<'_>, fix_span: Span) {
+    // Base-constructor invocations resolve to a contract; real modifiers resolve to functions.
+    // `is A` (no parens written) and `A(args...)` with real arguments are not redundant.
+    let hir::ItemId::Contract(base_id) = m.id else { return };
+    if m.args.is_dummy() || !m.args.is_empty() {
         return;
     }
-    // `A(args...)` with real arguments — not redundant.
-    if !m.args.is_empty() {
+    // Empty `()` is redundant only when the base constructor takes no parameters (or the base
+    // declares no constructor at all).
+    if hir.contract(base_id).ctor.is_some_and(|c| !hir.function(c).parameters.is_empty()) {
         return;
     }
-
-    // Empty `()`. Redundant only when the base ctor takes no parameters
-    // (or the base declares no constructor at all).
-    let base = hir.contract(base_id);
-    let redundant = match base.ctor {
-        None => true,
-        Some(c) => hir.function(c).parameters.is_empty(),
-    };
-    if !redundant {
-        return;
-    }
-
     // Only emit a machine-applicable fix if the args span really is just `()` (no comments,
-    // whitespace, etc. that we'd silently drop). Otherwise fall back to a plain diagnostic.
-    let safe_to_fix = ctx.span_to_snippet(m.args.span).map(|s| s.trim() == "()").unwrap_or(false);
-
-    if safe_to_fix {
+    // whitespace, etc. that would silently be dropped).
+    if ctx.span_to_snippet(m.args.span).is_some_and(|s| s.trim() == "()") {
         ctx.emit_with_suggestion(
             &REDUNDANT_BASE_CONSTRUCTOR_CALL,
             m.args.span,
@@ -100,16 +75,13 @@ fn try_emit<'hir>(
 }
 
 /// Extends `span` to start one byte earlier when that byte is an ASCII space or tab.
-///
-/// Used so that removing a modifier-list base call like `A()` from
-/// `constructor() ... A() {}` doesn't leave a stray double space in the source.
 fn expand_to_leading_ws(ctx: &LintContext, span: Span) -> Span {
     if span.is_dummy() || span.lo() == BytePos(0) {
         return span;
     }
-    let prev = Span::new(span.lo() - BytePos(1), span.lo());
-    match ctx.span_to_snippet(prev).as_deref() {
-        Some(" " | "\t") => span.with_lo(span.lo() - BytePos(1)),
+    let lo = span.lo() - BytePos(1);
+    match ctx.span_to_snippet(Span::new(lo, span.lo())).as_deref() {
+        Some(" " | "\t") => span.with_lo(lo),
         _ => span,
     }
 }

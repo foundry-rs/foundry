@@ -19,8 +19,16 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
+  cargo-cooldown:
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cargo-cooldown.yml
+
   test:
     name: flaky tests
+    needs: cargo-cooldown
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: depot-ubuntu-latest-16
     timeout-minutes: 60
     permissions:
@@ -60,7 +68,7 @@ jobs:
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [cargo-cooldown, test]
     if: failure()
     permissions:
       contents: read

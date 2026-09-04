@@ -46,7 +46,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
+    Blob, BlockBody, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
     TransactionEnvelope, TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, Typed2718,
     constants::EMPTY_WITHDRAWALS,
     proofs::{calculate_receipt_root, calculate_transaction_root},
@@ -142,7 +142,7 @@ use foundry_evm::{
         get_blob_params_by_hardfork,
     },
 };
-use foundry_evm_networks::{NetworkConfigs, arbitrum};
+use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile, arbitrum};
 #[cfg(feature = "optimism")]
 use foundry_primitives::get_deposit_tx_parts;
 use foundry_primitives::{
@@ -1352,7 +1352,7 @@ impl<N: Network> Backend<N> {
             PrecompilesMap::from_static(Precompiles::new(PrecompileSpecId::from_spec_id(spec_id)));
         let chain_id = self.protocol_chain_id();
         let timestamp = self.evm_env.read().block_env.timestamp.saturating_to();
-        self.networks.inject_chain_precompiles(&mut precompiles, chain_id, timestamp);
+        apply_bsc_p256_precompile(&mut precompiles, chain_id, timestamp);
 
         let mut precompiles_map = BTreeMap::<String, Address>::default();
         for address in precompiles.addresses() {
@@ -2232,7 +2232,7 @@ impl<N: Network> Backend<N> {
 
     fn inject_configured_precompiles(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
         self.networks.inject_precompiles(precompiles);
-        self.networks.inject_chain_precompiles(
+        apply_bsc_p256_precompile(
             precompiles,
             self.protocol_chain_id(),
             evm_env.block_env.timestamp.saturating_to(),
@@ -7210,9 +7210,9 @@ where
 
         // Cancun specific
         let excess_blob_gas = block.header.excess_blob_gas();
-        let blob_gas_price =
-            alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
         let blob_gas_used = transaction.blob_gas_used();
+        let blob_gas_price = blob_gas_used
+            .map(|_| alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default()));
 
         let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
 
@@ -7235,7 +7235,7 @@ where
             block_hash: Some(block_hash),
             from: info.from,
             to: info.to,
-            blob_gas_price: Some(blob_gas_price),
+            blob_gas_price,
             blob_gas_used,
         };
 
@@ -8281,7 +8281,7 @@ impl Backend<FoundryNetwork> {
                     cache_db.commit(state);
                     preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
                     #[cfg(feature = "optimism")]
-                    let receipt = if matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
+                    let receipt = if tx.as_ref().is_deposit() {
                         crate::eth::backend::executor::optimism::build_simulated_deposit_receipt(
                             self.hardfork(),
                             caller_nonce,
@@ -8426,6 +8426,16 @@ impl Backend<FoundryNetwork> {
                     ..Default::default()
                 };
                 let block_hash = header.hash_slow();
+                let withdrawals = (spec_id >= SpecId::SHANGHAI).then_some(Default::default());
+                let size = U256::from(
+                    BlockBody {
+                        transactions: transaction_envelopes,
+                        ommers: vec![],
+                        withdrawals: withdrawals.clone(),
+                    }
+                    .into_block(header.clone())
+                    .length(),
+                );
                 for (transaction_index, transaction) in transactions.iter_mut().enumerate() {
                     transaction.block_hash = Some(block_hash);
                     transaction.block_number = Some(header.number);
@@ -8437,11 +8447,11 @@ impl Backend<FoundryNetwork> {
                         hash: block_hash,
                         inner: header.into(),
                         total_difficulty: None,
-                        size: None,
+                        size: Some(size),
                     },
                     uncles: vec![],
                     transactions: BlockTransactions::Full(transactions),
-                    withdrawals: (spec_id >= SpecId::SHANGHAI).then_some(Default::default()),
+                    withdrawals,
                 };
 
                 if !return_full_transactions {
@@ -8765,6 +8775,20 @@ where
                         min_allowed,
                     }
                     .into());
+                }
+
+                let hardfork = self.tempo_hardfork();
+                if hardfork.is_t1() && tempo_tx.is_expiring_nonce_tx() {
+                    let max_expiry_secs = hardfork.expiring_nonce_max_expiry_secs();
+                    let max_allowed = current_time.saturating_add(max_expiry_secs);
+                    if valid_before > max_allowed {
+                        return Err(InvalidTransactionError::TempoValidBeforeTooFar {
+                            valid_before,
+                            max_expiry_secs,
+                            max_allowed,
+                        }
+                        .into());
+                    }
                 }
             }
 

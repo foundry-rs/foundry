@@ -3,7 +3,10 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar::ast::{CallArgsKind, Expr, ExprKind};
+use solar::{
+    ast::{CallArgs, CallArgsKind, Expr, ExprKind, LitKind},
+    interface::{kw, sym},
+};
 
 declare_forge_lint!(
     CUSTOM_ERRORS,
@@ -14,40 +17,23 @@ declare_forge_lint!(
 
 impl<'ast> EarlyLintPass<'ast> for CustomErrors {
     fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
-        if let ExprKind::Call(callee, args) = &expr.kind
-            && ((is_require_call(callee) && should_lint_require(args))
-                || (is_revert_call(callee) && should_lint_revert(args)))
-        {
+        let ExprKind::Call(callee, CallArgs { kind: CallArgsKind::Unnamed(args), .. }) = &expr.kind
+        else {
+            return;
+        };
+        let ExprKind::Ident(ident) = &callee.kind else { return };
+        // `require(cond)` / `require(cond, "reason")` and `revert()` / `revert("reason")`.
+        let lint = match ident.name {
+            sym::require => args.len() == 1 || args.get(1).is_some_and(|e| is_string_literal(e)),
+            kw::Revert => args.first().is_none_or(|e| is_string_literal(e)),
+            _ => false,
+        };
+        if lint {
             ctx.emit(&CUSTOM_ERRORS, expr.span);
         }
     }
 }
 
-/// Checks if an expression is a call to the `require` builtin function.
-fn is_require_call(callee: &Expr<'_>) -> bool {
-    matches!(&callee.kind, ExprKind::Ident(ident) if ident.as_str() == "require")
-}
-
-/// Checks if an expression is a call to the `revert` builtin function.
-fn is_revert_call(callee: &Expr<'_>) -> bool {
-    matches!(&callee.kind, ExprKind::Ident(ident) if ident.as_str() == "revert")
-}
-
-/// Checks if a revert call should be linted: `revert()` or `revert("message")`.
-fn should_lint_revert(args: &solar::ast::CallArgs<'_>) -> bool {
-    matches!(&args.kind, CallArgsKind::Unnamed(arg_exprs) if {
-        arg_exprs.is_empty() || arg_exprs.first().is_some_and(|e| is_string_literal(e))
-    })
-}
-
-/// Checks if a require call should be linted: bare `require(condition)` or string literal reason.
-fn should_lint_require(args: &solar::ast::CallArgs<'_>) -> bool {
-    matches!(&args.kind, CallArgsKind::Unnamed(arg_exprs) if {
-        arg_exprs.len() == 1 || arg_exprs.get(1).is_some_and(|e| is_string_literal(e))
-    })
-}
-
-/// Checks if an expression is a string literal.
 const fn is_string_literal(expr: &Expr<'_>) -> bool {
-    matches!(&expr.kind, ExprKind::Lit(lit, _) if matches!(lit.kind, solar::ast::LitKind::Str(..)))
+    matches!(&expr.kind, ExprKind::Lit(lit, _) if matches!(lit.kind, LitKind::Str(..)))
 }

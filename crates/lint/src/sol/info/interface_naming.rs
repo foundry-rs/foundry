@@ -1,8 +1,8 @@
+use super::InterfaceFileNaming;
 use crate::{
     linter::{EarlyLintPass, Lint, LintContext},
-    sol::{Severity, SolLint, info::InterfaceFileNaming},
+    sol::{Severity, SolLint},
 };
-
 use solar::ast;
 
 declare_forge_lint!(
@@ -28,35 +28,32 @@ impl<'ast> EarlyLintPass<'ast> for InterfaceFileNaming {
         if !ctx.is_lint_enabled(INTERFACE_FILE_NAMING.id()) {
             return;
         }
-
-        if let Some(file_name) = file_name(ctx, unit)
+        // A file whose contract-like items are all interfaces is named after the first one.
+        let mut contracts = unit.items.iter().filter_map(|item| match &item.kind {
+            ast::ItemKind::Contract(c) => Some(c),
+            _ => None,
+        });
+        if let Some(first) = contracts.next()
+            && std::iter::once(first)
+                .chain(contracts)
+                .all(|c| c.kind == ast::ContractKind::Interface)
+            && let Some(file_name) = file_name(ctx, unit)
             && !file_name.starts_with('I')
-            && unit.items.iter().all(|item| match &item.kind {
-                ast::ItemKind::Contract(c) => c.kind == ast::ContractKind::Interface,
-                _ => true,
-            })
-            && let Some(c) = unit.items.iter().find_map(|item| match &item.kind {
-                ast::ItemKind::Contract(c) => Some(c),
-                _ => None,
-            })
         {
-            ctx.emit(&INTERFACE_FILE_NAMING, c.name.span);
+            ctx.emit(&INTERFACE_FILE_NAMING, first.name.span);
         }
     }
 
     fn check_item_contract(&mut self, ctx: &LintContext, contract: &'ast ast::ItemContract<'ast>) {
-        if ctx.is_lint_enabled(INTERFACE_NAMING.id())
-            && contract.kind == ast::ContractKind::Interface
-            && !contract.name.as_str().starts_with('I')
+        if contract.kind == ast::ContractKind::Interface && !contract.name.as_str().starts_with('I')
         {
             ctx.emit(&INTERFACE_NAMING, contract.name.span);
         }
     }
 }
 
-fn file_name(ctx: &LintContext, unit: &ast::SourceUnit) -> Option<String> {
+fn file_name(ctx: &LintContext, unit: &ast::SourceUnit<'_>) -> Option<String> {
     let first_item_span = unit.items.first()?.span;
     let file = ctx.session().source_map().lookup_source_file(first_item_span.lo());
-    let file_name = file.name.as_real()?.file_name()?.to_str()?;
-    Some(file_name.to_string())
+    Some(file.name.as_real()?.file_name()?.to_str()?.to_string())
 }

@@ -39,7 +39,7 @@ env:
 
 jobs:
   prepare:
-    if: github.ref == 'refs/heads/master'
+    if: github.repository == 'foundry-rs/foundry' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -108,6 +108,24 @@ impl TxParams {
 
         self.tempo.apply::<N>(tx, self.nonce.map(|n| n.to()));
     }
+
+    /// Converts the shared compact transaction options into the full `cast send` options.
+    pub(crate) fn into_transaction_opts(self) -> TransactionOpts {
+        TransactionOpts {
+            gas_limit: self.gas_limit,
+            gas_price: self.gas_price,
+            priority_gas_price: self.priority_gas_price,
+            value: None,
+            nonce: self.nonce,
+            legacy: false,
+            blob: false,
+            eip4844: false,
+            blob_gas_price: None,
+            auth: Vec::new(),
+            access_list: None,
+            tempo: self.tempo,
+        }
+    }
 }
 
 /// Different sender kinds used by [`CastTxBuilder`].
