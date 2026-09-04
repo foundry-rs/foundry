@@ -469,11 +469,37 @@ impl<N: Network> BlockchainStorage<N> {
         block_hash
     }
 
-    /// Deserialize and add all blocks data to the backend storage
-    pub fn load_blocks(&mut self, serializable_blocks: Vec<SerializableBlock>) {
+    /// Adds a block to storage by hash only, without claiming its number in the
+    /// canonical `number -> hash` map. Used for dumped blocks whose number belongs to a
+    /// fork's real chain rather than the dump itself - see [`Self::load_blocks`].
+    fn insert_block_data_only(&mut self, block: Block) -> B256 {
+        let block_hash = block.header.hash_slow();
+        self.blocks.insert(block_hash, block);
+        block_hash
+    }
+
+    /// Deserialize and add all blocks data to the backend storage.
+    ///
+    /// `fork_boundary`, when set, is the highest block number that belongs to a fork's own
+    /// canonical chain (i.e. the fork's block number, when the loaded state's head was resolved
+    /// from the fork rather than from the dump - see `Backend::load_state`). Dumped blocks at or
+    /// below that number must not claim their slot in the `number -> hash` map: that range
+    /// belongs to the fork's real chain, and letting a dumped block win it corrupts the
+    /// `number -> hash` lookup for every block below the fork head, even though only the head
+    /// entry itself gets corrected afterward. The block's own data is still stored (so lookups
+    /// by hash keep working), only its `number -> hash` claim is skipped.
+    pub fn load_blocks(
+        &mut self,
+        serializable_blocks: Vec<SerializableBlock>,
+        fork_boundary: Option<u64>,
+    ) {
         for serializable_block in serializable_blocks {
             let block: Block = serializable_block.into();
-            self.insert_block(block);
+            if fork_boundary.is_some_and(|boundary| block.header.number() <= boundary) {
+                self.insert_block_data_only(block);
+            } else {
+                self.insert_block(block);
+            }
         }
     }
 
@@ -515,10 +541,23 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> BlockchainStorage<N> 
         transactions
     }
 
-    /// Deserialize and add all transactions data to the backend storage
-    pub fn load_transactions(&mut self, serializable_transactions: Vec<SerializableTransaction>) {
+    /// Deserialize and add all transactions data to the backend storage.
+    ///
+    /// `fork_boundary` has the same meaning as in [`super::BlockchainStorage::load_blocks`]:
+    /// dumped transactions that claim a block number at or below the fork's own boundary are
+    /// dropped, since that block number's canonical block now belongs to the fork rather than to
+    /// the dump - keeping such a transaction would let `eth_getTransactionByHash` report a
+    /// `blockNumber` whose canonical block doesn't actually contain it.
+    pub fn load_transactions(
+        &mut self,
+        serializable_transactions: Vec<SerializableTransaction>,
+        fork_boundary: Option<u64>,
+    ) {
         for serializable_transaction in serializable_transactions {
             let transaction: MinedTransaction<N> = serializable_transaction.into();
+            if fork_boundary.is_some_and(|boundary| transaction.block_number <= boundary) {
+                continue;
+            }
             self.transactions.insert(transaction.info.transaction_hash, transaction);
         }
     }
@@ -880,8 +919,8 @@ mod tests {
 
         let mut load_storage = BlockchainStorage::<FoundryNetwork>::empty();
 
-        load_storage.load_blocks(serialized_blocks);
-        load_storage.load_transactions(serialized_transactions);
+        load_storage.load_blocks(serialized_blocks, None);
+        load_storage.load_transactions(serialized_transactions, None);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
         assert_eq!(loaded_block.header.gas_limit(), header.gas_limit());
@@ -911,7 +950,7 @@ mod tests {
         assert!(canonical_hash < stale_hash);
 
         let mut loaded = BlockchainStorage::<FoundryNetwork>::empty();
-        loaded.load_blocks(storage.serialized_blocks());
+        loaded.load_blocks(storage.serialized_blocks(), None);
         assert_eq!(loaded.hashes.get(&1), Some(&canonical_hash));
     }
 
@@ -992,7 +1031,7 @@ mod tests {
         let serialized = serde_json::to_string(&dump_storage.serialized_blocks()).unwrap();
         let blocks: Vec<SerializableBlock> = serde_json::from_str(&serialized).unwrap();
         let mut load_storage = BlockchainStorage::<FoundryNetwork>::empty();
-        load_storage.load_blocks(blocks);
+        load_storage.load_blocks(blocks, None);
 
         let loaded_block = load_storage.blocks.get(&block_hash).unwrap();
         assert_eq!(loaded_block.header, expected_header);
@@ -1025,7 +1064,7 @@ mod tests {
         let dummy_genesis_hash = B256::repeat_byte(0xab);
         load_storage.genesis_hash = dummy_genesis_hash;
 
-        load_storage.load_blocks(serialized_blocks);
+        load_storage.load_blocks(serialized_blocks, None);
 
         assert_eq!(load_storage.genesis_hash, block_hash);
         assert_ne!(load_storage.genesis_hash, dummy_genesis_hash);
@@ -1042,7 +1081,7 @@ mod tests {
             header_only_73.into(),
             Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new(),
         );
-        sanity_storage.load_blocks(vec![block_73.into()]);
+        sanity_storage.load_blocks(vec![block_73.into()], None);
         assert_eq!(sanity_storage.genesis_hash, dummy_genesis_hash);
     }
 }

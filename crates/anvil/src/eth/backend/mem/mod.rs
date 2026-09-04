@@ -7397,6 +7397,11 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         let mut selected_head = None;
         let mut selected_header = None;
         let mut checkpoint = None;
+        // Highest block number that belongs to the fork's own canonical chain, set only when the
+        // loaded head is resolved from the fork (not from the dump). Dumped blocks/transactions
+        // at or below this number must not claim their number's canonical slot - see
+        // `BlockchainStorage::load_blocks`.
+        let mut fork_block_boundary = None;
         let fork_head = self.get_fork().map(|f| (f.block_number(), f.block_hash(), f.timestamp()));
         if let Some(block) = &mut block_env {
             if self.is_tempo() && self.is_fork() && block.beneficiary.is_zero() {
@@ -7417,6 +7422,9 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 } else {
                     // If loading state file on a fork, set best number to the fork block number.
                     // Ref: https://github.com/foundry-rs/foundry/pull/9215#issue-2618681838
+                    // The head comes from the fork's own chain, so every dumped block at or below
+                    // this number belongs to the fork, not the dump - see `fork_block_boundary`.
+                    fork_block_boundary = Some(number);
                     (number, Some(hash))
                 }
             } else {
@@ -7492,8 +7500,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         let blocks = std::mem::take(&mut state.blocks);
         let transactions = std::mem::take(&mut state.transactions);
         let mut storage = self.blockchain.storage.read().clone();
-        storage.load_blocks(blocks);
-        storage.load_transactions(transactions);
+        storage.load_blocks(blocks, fork_block_boundary);
+        storage.load_transactions(transactions, fork_block_boundary);
         if let Some(checkpoint) = checkpoint {
             storage.insert_block(checkpoint);
         }
