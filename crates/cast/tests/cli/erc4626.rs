@@ -454,6 +454,44 @@ forgetest_async!(erc4626_check_warns_for_known_extensions, |prj, cmd| {
     deploy_test_contract(&mut cmd, &rpc, anvil_const::PK1, "TestAsyncVault");
 
     cmd.cast_fuse()
+        .args(["erc4626", "info", anvil_const::VAULT, "--human", "--rpc-url", &rpc])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Vault                0x5FbDB2315678afecb367f032d93F642f64180aa3
+Name                 Test Async Vault
+Symbol               TAV
+Decimals             18
+Asset                0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE
+Asset name           <unavailable>
+Asset symbol         <unavailable>
+Asset decimals       18
+Total assets         1
+Total supply         0 TAV
+Assets per share     1
+Shares per asset     1 TAV
+
+"#]]);
+
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "erc4626",
+            "position",
+            anvil_const::VAULT,
+            anvil_const::ADDR1,
+            "--json",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+    let output: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(output["data"]["asset_decimals"], 18);
+    assert_eq!(output["data"]["assets_equivalent"]["formatted"], "0");
+
+    cmd.cast_fuse()
         .args(["erc4626", "check", anvil_const::VAULT, "--rpc-url", &rpc])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -484,13 +522,13 @@ Summary: 14 passed, 5 warnings, 0 failed
 "#]]);
 });
 
-forgetest_async!(erc4626_check_fails_for_missing_interface, |prj, cmd| {
+forgetest_async!(erc4626_check_fails_for_missing_metadata, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
 
     foundry_test_utils::util::initialize(prj.root());
     prj.add_source("TestVault.sol", include_str!("../fixtures/TestVault.sol"));
-    deploy_test_contract(&mut cmd, &rpc, anvil_const::PK1, "TestInvalidVault");
+    deploy_test_contract(&mut cmd, &rpc, anvil_const::PK1, "TestMissingMetadataVault");
 
     cmd.cast_fuse()
         .args(["erc4626", "check", anvil_const::VAULT, "--rpc-url", &rpc])
@@ -500,25 +538,25 @@ Vault                0x5FbDB2315678afecb367f032d93F642f64180aa3
 Account              0x0000000000000000000000000000000000000000
 Note: This probes read-call behavior only; it does not prove state-changing selector coverage or semantic ERC-4626 compliance.
 PASS contract code            contract bytecode is present
-FAIL asset()                  call failed or returned incompatible data
-FAIL totalAssets()            call failed or returned incompatible data
-FAIL totalSupply()            call failed or returned incompatible data
-FAIL balanceOf(address)       call failed or returned incompatible data
-FAIL allowance(address,address) call failed or returned incompatible data
-FAIL convertToShares(0)       call failed or returned incompatible data
-FAIL convertToAssets(0)       call failed or returned incompatible data
-FAIL maxDeposit(address)      call failed or returned incompatible data
-FAIL previewDeposit(0)        call failed or returned incompatible data without advertised ERC-7540 support
-FAIL maxMint(address)         call failed or returned incompatible data
-FAIL previewMint(0)           call failed or returned incompatible data without advertised ERC-7540 support
-FAIL maxWithdraw(address)     call failed or returned incompatible data
-FAIL previewWithdraw(0)       call failed or returned incompatible data without advertised ERC-7540 support
-FAIL maxRedeem(address)       call failed or returned incompatible data
-FAIL previewRedeem(0)         call failed or returned incompatible data without advertised ERC-7540 support
-WARN name()                   optional ERC-20 metadata is unavailable
-WARN symbol()                 optional ERC-20 metadata is unavailable
-WARN decimals()               optional ERC-20 metadata is unavailable
-Summary: 1 passed, 3 warnings, 15 failed
+WARN asset()                  returned the ERC-7535 native-asset sentinel
+PASS totalAssets()            call succeeded
+PASS totalSupply()            call succeeded
+PASS balanceOf(address)       call succeeded
+PASS allowance(address,address) call succeeded
+PASS convertToShares(0)       returned zero
+PASS convertToAssets(0)       returned zero
+PASS maxDeposit(address)      call succeeded
+WARN previewDeposit(0)        reverted as required by advertised asynchronous ERC-7540 deposit support
+PASS maxMint(address)         call succeeded
+WARN previewMint(0)           reverted as required by advertised asynchronous ERC-7540 deposit support
+PASS maxWithdraw(address)     call succeeded
+WARN previewWithdraw(0)       reverted as required by advertised asynchronous ERC-7540 redeem support
+PASS maxRedeem(address)       call succeeded
+WARN previewRedeem(0)         reverted as required by advertised asynchronous ERC-7540 redeem support
+FAIL name()                   call failed or returned incompatible data
+FAIL symbol()                 call failed or returned incompatible data
+FAIL decimals()               call failed or returned incompatible data
+Summary: 11 passed, 5 warnings, 3 failed
 
 "#]]);
 
@@ -532,7 +570,7 @@ Summary: 1 passed, 3 warnings, 15 failed
     let output: serde_json::Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(output["success"], false);
     assert_eq!(output["data"]["read_compatible"], false);
-    assert_eq!(output["data"]["failed"], 15);
+    assert_eq!(output["data"]["failed"], 3);
     assert_eq!(output["errors"][0]["code"], "erc4626.compatibility_failed");
 });
 

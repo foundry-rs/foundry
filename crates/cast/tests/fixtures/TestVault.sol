@@ -176,13 +176,22 @@ contract TestVault {
 }
 
 contract TestAsyncVault {
-    string public name = "Test Async Vault";
-    string public symbol = "TAV";
-    uint8 public decimals = 18;
     uint256 public totalSupply;
 
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
+
+    function name() external pure virtual returns (string memory) {
+        return "Test Async Vault";
+    }
+
+    function symbol() external pure virtual returns (string memory) {
+        return "TAV";
+    }
+
+    function decimals() external pure virtual returns (uint8) {
+        return 18;
+    }
 
     function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
         return interfaceId == 0xce3bbe50 || interfaceId == 0x620ee8e4;
@@ -193,7 +202,7 @@ contract TestAsyncVault {
     }
 
     function totalAssets() external pure returns (uint256) {
-        return 0;
+        return 1 ether;
     }
 
     function convertToShares(uint256 assets) external pure returns (uint256) {
@@ -237,4 +246,16 @@ contract TestAsyncVault {
     }
 }
 
-contract TestInvalidVault {}
+contract TestMissingMetadataVault is TestAsyncVault {
+    function name() external pure override returns (string memory) {
+        revert();
+    }
+
+    function symbol() external pure override returns (string memory) {
+        revert();
+    }
+
+    function decimals() external pure override returns (uint8) {
+        revert();
+    }
+}
