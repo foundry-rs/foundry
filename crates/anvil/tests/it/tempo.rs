@@ -4743,6 +4743,67 @@ async fn test_tempo_aa_transaction_expiring_nonce() {
     assert!(receipt.status(), "Tempo AA transaction with expiring nonce should succeed");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_expiring_nonce_valid_before_pool_limits() {
+    for (hardfork, max_expiry_secs, enforce_limit) in [
+        (TempoHardfork::T0, 30, false),
+        (TempoHardfork::T1, 30, true),
+        (TempoHardfork::T10, 30, true),
+        (TempoHardfork::T11, 300, true),
+    ] {
+        let (api, handle) = spawn(
+            NodeConfig::test_tempo().with_hardfork(Some(hardfork.into())).with_no_mining(true),
+        )
+        .await;
+        let provider = handle.http_provider();
+        let accounts: Vec<Address> = handle.dev_accounts().collect();
+        let token = IERC20::new(PATH_USD, &provider);
+        let chain_id = provider.get_chain_id().await.unwrap();
+        let base_fee = provider.get_gas_price().await.unwrap();
+        let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+        let pool_time = block.header.timestamp + 1;
+        api.evm_set_next_block_timestamp(pool_time).unwrap();
+        let calldata: Bytes = token.transfer(accounts[1], U256::from(1)).calldata().clone();
+
+        for (offset, accepted) in [(max_expiry_secs, true), (max_expiry_secs + 1, !enforce_limit)] {
+            let tempo_tx = TempoTransaction {
+                chain_id,
+                fee_token: Some(ALPHA_USD),
+                max_priority_fee_per_gas: base_fee / 10,
+                max_fee_per_gas: base_fee * 2,
+                gas_limit: TIP20_TRANSFER_GAS,
+                calls: vec![Call {
+                    to: TxKind::Call(PATH_USD),
+                    value: U256::ZERO,
+                    input: calldata.clone(),
+                }],
+                access_list: Default::default(),
+                nonce_key: U256::MAX,
+                nonce: 0,
+                fee_payer_signature: None,
+                valid_before: NonZeroU64::new(pool_time + offset),
+                valid_after: None,
+                key_authorization: None,
+                tempo_authorization_list: vec![],
+            };
+            let signature = dev_key(0).sign_hash(&tempo_tx.signature_hash()).await.unwrap();
+            let signed_tx = AASigned::new_unhashed(
+                tempo_tx,
+                TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature)),
+            );
+            let mut encoded = Vec::new();
+            TempoTxEnvelope::AA(signed_tx).encode_2718(&mut encoded);
+
+            let result = provider.send_raw_transaction(&encoded).await;
+            assert_eq!(
+                result.is_ok(),
+                accepted,
+                "unexpected pool admission at {hardfork} with valid_before offset {offset}: {result:?}"
+            );
+        }
+    }
+}
+
 // ============================================================================
 // Tempo AA: Expiring Nonce Replay
 // ============================================================================
