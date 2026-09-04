@@ -15,6 +15,9 @@ use foundry_common::{
     contracts::{ContractsByAddress, ContractsByArtifact},
     shell,
 };
+use foundry_config::{Chain, Config};
+use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
+use foundry_evm_networks::NetworkConfigs;
 use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::{OpcodeFilter, types::DecodedTraceStep};
 use serde::{Deserialize, Serialize};
@@ -27,6 +30,58 @@ use std::{
 
 use alloy_primitives::{Address, U256, map::HashMap};
 use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
+
+/// Network context used to identify and decode execution traces.
+#[derive(Clone, Copy, Debug)]
+pub struct TraceContext {
+    chain: Chain,
+    networks: NetworkConfigs,
+    hardfork: Option<FoundryHardfork>,
+}
+
+impl TraceContext {
+    pub const fn new(
+        chain: Chain,
+        networks: NetworkConfigs,
+        hardfork: Option<FoundryHardfork>,
+    ) -> Self {
+        Self { chain, networks, hardfork }
+    }
+
+    pub const fn chain(self) -> Chain {
+        self.chain
+    }
+
+    pub const fn networks(self) -> NetworkConfigs {
+        self.networks
+    }
+
+    pub const fn hardfork(self) -> Option<FoundryHardfork> {
+        self.hardfork
+    }
+
+    pub const fn with_hardfork(mut self, hardfork: Option<FoundryHardfork>) -> Self {
+        self.hardfork = hardfork;
+        self
+    }
+
+    /// Returns the hardfork to use while decoding this context's traces.
+    pub fn decoding_hardfork(self, config: &Config) -> Option<FoundryHardfork> {
+        let execution_network = self.networks.execution_network();
+        let mut hardfork = self
+            .hardfork
+            .or(config.hardfork)
+            .filter(|hardfork| hardfork.namespace() == execution_network.hardfork_namespace());
+        if hardfork.is_none() && execution_network.is_tempo() {
+            hardfork = Some(config.evm_spec_id::<TempoHardfork>().into());
+        }
+        #[cfg(feature = "monad")]
+        if hardfork.is_none() && execution_network.is_monad() {
+            hardfork = Some(config.evm_spec_id::<foundry_evm_hardforks::MonadHardfork>().into());
+        }
+        hardfork
+    }
+}
 
 pub use revm_inspectors::tracing::{
     CallTraceArena, FourByteInspector, GethTraceBuilder, ParityTraceBuilder, StackSnapshotType,
@@ -672,8 +727,26 @@ impl TraceRequirements {
 mod tests {
     use super::*;
     use alloy_primitives::Bytes;
+    use foundry_config::NamedChain;
     use revm::interpreter::InstructionResult;
     use revm_inspectors::tracing::types::{CallTraceStep, StorageChange, StorageChangeReason};
+
+    #[test]
+    fn trace_context_uses_the_execution_network_hardfork_namespace() {
+        let config = Config {
+            hardfork: Some(FoundryHardfork::Ethereum(
+                foundry_evm_hardforks::EthereumHardfork::Cancun,
+            )),
+            ..Default::default()
+        };
+        let context = TraceContext::new(
+            Chain::from_named(NamedChain::Tempo),
+            NetworkConfigs::with_tempo(),
+            None,
+        );
+
+        assert!(matches!(context.decoding_hardfork(&config), Some(FoundryHardfork::Tempo(_))));
+    }
 
     #[test]
     fn trace_depth_projection_removes_and_reindexes_nodes() {

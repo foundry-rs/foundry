@@ -23,7 +23,9 @@ use foundry_compilers::{
     multi::{MultiCompilerLanguage, MultiCompilerParser},
     utils::canonicalize,
 };
-use foundry_config::{Config, FoundryHardfork};
+use foundry_config::Config;
+#[cfg(all(test, feature = "monad"))]
+use foundry_config::FoundryHardfork;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
@@ -364,29 +366,26 @@ where
     fork_config.fork_block_number = Some(fork_blk_num);
 
     let create2_deployer = evm_opts.create2_deployer;
-    let (mut evm_env, tx_env, fork, chain, networks, endpoint_hardfork) =
-        TracingExecutor::<FEN>::get_fork_material(fork_config, evm_opts).await?;
+    let mut fork = TracingExecutor::<FEN>::get_fork(fork_config, evm_opts).await?;
+    let context = fork.context();
 
-    evm_env.block_env.set_number(U256::from(execution_blk_num));
+    fork.evm_env.block_env.set_number(U256::from(execution_blk_num));
     if let Some(block) = execution_block {
-        configure_env_block::<FEN>(&mut evm_env, block, chain.id(), networks);
+        configure_env_block::<FEN>(
+            &mut fork.evm_env,
+            block,
+            context.chain().id(),
+            context.networks(),
+        );
     }
-    let resolved_hardfork = resolve_runtime_spec::<FEN>(
-        fork_config,
-        networks,
-        chain.id(),
-        endpoint_hardfork,
-        &mut evm_env,
-    );
-    TracingExecutor::<FEN>::extend_precompile_labels(fork_config, networks, resolved_hardfork);
+    fork.resolve_spec(fork_config, None);
+    fork.extend_precompile_labels(fork_config);
 
-    let executor = TracingExecutor::<FEN>::new(
+    let evm_env = fork.evm_env.clone();
+    let tx_env = fork.tx_env.clone();
+    let executor = fork.into_executor(
         executor_builder,
-        (evm_env.clone(), tx_env.clone()),
-        fork,
-        None,
         TraceRequirements::none().with_calls(true),
-        networks,
         create2_deployer,
         None,
     )?;
@@ -394,6 +393,7 @@ where
     Ok((evm_env, tx_env, executor))
 }
 
+#[cfg(all(test, feature = "monad"))]
 fn resolve_runtime_spec<FEN>(
     config: &Config,
     networks: NetworkConfigs,
