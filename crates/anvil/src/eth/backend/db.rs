@@ -706,11 +706,11 @@ pub struct SerializableState {
     /// The block number of the state
     ///
     /// Note: This is an Option for backwards compatibility: <https://github.com/foundry-rs/foundry/issues/5460>
-    #[serde(deserialize_with = "deserialize_block_env_compat")]
+    #[serde(default, deserialize_with = "deserialize_block_env_compat")]
     pub block: Option<BlockEnv>,
     pub accounts: BTreeMap<Address, SerializableAccountRecord>,
     /// The best block number of the state, can be different from block number (Arbitrum chain).
-    #[serde(deserialize_with = "deserialize_best_block_number_compat")]
+    #[serde(default, deserialize_with = "deserialize_best_block_number_compat")]
     pub best_block_number: Option<u64>,
     #[serde(default)]
     pub blocks: Vec<SerializableBlock>,

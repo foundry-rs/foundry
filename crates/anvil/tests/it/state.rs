@@ -1043,6 +1043,68 @@ async fn test_backward_compatibility_optional_fields_deserialization_v1_2() {
     assert!(state.transactions.is_empty());
 }
 
+// `block` and `best_block_number` are documented as `Option`al for backwards compatibility, but
+// `#[serde(deserialize_with = "...")]` alone doesn't default a missing key to `None` - the custom
+// deserializer never runs if the key is absent. Without `#[serde(default)]` an old dump file that
+// simply lacks these keys (as opposed to carrying them with an explicit `null`) fails to parse.
+#[test]
+fn test_backward_compatibility_missing_block_and_best_block_number_v1_2() {
+    let old_format_missing_keys = json!({
+        "accounts": {}
+        // `block` and `best_block_number` keys are entirely absent, not null.
+    });
+
+    let state: SerializableState =
+        serde_json::from_str(&old_format_missing_keys.to_string()).unwrap();
+    assert_eq!(state.block, None);
+    assert_eq!(state.best_block_number, None);
+
+    // Same file with the keys present-and-null must parse identically - proves this is purely an
+    // absent-key issue, not a difference in the compat deserializers themselves.
+    let old_format_null_keys = json!({
+        "block": null,
+        "accounts": {},
+        "best_block_number": null
+    });
+    let state_null: SerializableState =
+        serde_json::from_str(&old_format_null_keys.to_string()).unwrap();
+    assert_eq!(state_null.block, None);
+    assert_eq!(state_null.best_block_number, None);
+}
+
+// End-to-end: Anvil must actually boot off a state file that lacks the `block` and
+// `best_block_number` keys entirely, the same code path `anvil --load-state <file>` /
+// `anvil_loadState` use.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_state_missing_block_and_best_block_number_v1_2() {
+    let tmp = tempfile::tempdir().unwrap();
+    let old_state_file = tmp.path().join("old_state_missing_keys.json");
+
+    let old_state_json = json!({
+        "accounts": {
+            "0x0000000000000000000000000000000000000001": {
+                "nonce": 0,
+                "balance": "0x1234",
+                "code": "0x",
+                "storage": {}
+            }
+        }
+        // `block` and `best_block_number` keys entirely absent.
+    });
+
+    foundry_common::fs::write_json_file(&old_state_file, &old_state_json).unwrap();
+
+    let (api, _handle) = spawn(NodeConfig::test().with_init_state_path(&old_state_file)).await;
+
+    // Boots fine and the account balance from the dump was applied.
+    let addr = "0x0000000000000000000000000000000000000001".parse().unwrap();
+    let provider = _handle.http_provider();
+    let balance = provider.get_balance(addr).await.unwrap();
+    assert_eq!(balance, U256::from(0x1234));
+
+    api.mine_one().await.unwrap();
+}
+
 // <https://github.com/foundry-rs/foundry/issues/11176>
 #[tokio::test(flavor = "multi_thread")]
 async fn test_backward_compatibility_state_dump_deserialization_v1_2() {
