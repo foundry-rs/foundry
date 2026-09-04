@@ -12,8 +12,11 @@ use crate::{
 use solar::{
     ast::{ContractKind, DataLocation, LitKind, StateMutability, Visibility},
     interface::{Span, data_structures::Never},
-    sema::hir::{
-        self, EventId, Expr, ExprKind, FunctionId, ItemId, Stmt, StmtKind, VariableId, Visit,
+    sema::{
+        Gcx,
+        hir::{
+            self, EventId, Expr, ExprKind, FunctionId, ItemId, Stmt, StmtKind, VariableId, Visit,
+        },
     },
 };
 use std::{
@@ -33,7 +36,7 @@ impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
+        gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         contract: &'hir hir::Contract<'hir>,
     ) {
@@ -61,7 +64,7 @@ impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
 
             let guard_targets = guard_vars(hir, func_id);
             let mut analyzer = WriteAnalyzer {
-                hir,
+                gcx,
                 targets: &targets,
                 guard_targets: &guard_targets,
                 state: State {
@@ -150,7 +153,7 @@ struct State {
 
 /// Collects writes to `targets` reachable from an entry point and marks those an `emit` covers.
 struct WriteAnalyzer<'a, 'hir> {
-    hir: &'hir hir::Hir<'hir>,
+    gcx: Gcx<'hir>,
     targets: &'a HashSet<VariableId>,
     /// Targets checked by this entry point's own guards; clearing one of them is reportable even
     /// when the written value carries no source.
@@ -164,7 +167,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
         if self.call_stack.contains(&func_id) {
             return;
         }
-        let func = self.hir.function(func_id);
+        let func = self.gcx.hir.function(func_id);
         let Some(body) = func.body else { return };
         self.call_stack.push(func_id);
         for modifier in func.modifiers {
@@ -183,6 +186,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
     /// aliases are callee-private, pending writes flow back to the caller.
     fn analyze_call(&mut self, callee_id: FunctionId, args: &hir::CallArgs<'hir>) {
         let params = self
+            .gcx
             .hir
             .function(callee_id)
             .parameters
@@ -208,7 +212,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
                 out.insert(Source::Sender);
             }
             if let Some(var_id) = underlying_var(e) {
-                if self.hir.variable(var_id).kind.is_state() {
+                if self.gcx.hir.variable(var_id).kind.is_state() {
                     out.insert(Source::Var(var_id));
                 }
                 if let Some(sources) = self.state.taint.get(&var_id) {
@@ -224,7 +228,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
     fn lhs_state_vars(&self, lhs: &Expr<'_>) -> Vec<VariableId> {
         let mut vars = Vec::new();
         for_each_lhs_var(lhs, &mut |var_id| {
-            let root = if self.hir.variable(var_id).kind.is_state() {
+            let root = if self.gcx.hir.variable(var_id).kind.is_state() {
                 Some(var_id)
             } else {
                 self.state.storage_aliases.get(&var_id).copied()
@@ -265,7 +269,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
     /// Records `var_id = value`, tracking which state variable a storage pointer aliases.
     fn set_local(&mut self, var_id: VariableId, sources: Sources, value: &Expr<'_>) {
         self.set_taint(var_id, sources);
-        let root = (self.hir.variable(var_id).data_location == Some(DataLocation::Storage))
+        let root = (self.gcx.hir.variable(var_id).data_location == Some(DataLocation::Storage))
             .then(|| self.lhs_state_vars(value).into_iter().next())
             .flatten();
         match root {
@@ -279,11 +283,10 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
     fn mark_event(&mut self, expr: &Expr<'_>) {
         let Some(event_id) = emitted_event_id(expr) else { return };
         let event_sources = self.value_sources(expr);
-        let hir = self.hir;
         for write in &mut self.state.writes {
             if !write.evented
                 && (write.fixed_clear || !write.sources.is_disjoint(&event_sources))
-                && event_mentions_state_var(hir, event_id, write.var_id)
+                && event_mentions_state_var(self.gcx, event_id, write.var_id)
             {
                 write.evented = true;
             }
@@ -295,13 +298,13 @@ impl<'hir> Visit<'hir> for WriteAnalyzer<'_, 'hir> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
-                if let Some(init) = self.hir.variable(var_id).initializer {
+                if let Some(init) = self.gcx.hir.variable(var_id).initializer {
                     self.visit_expr(init)?;
                     let sources = self.value_sources(init);
                     self.set_local(var_id, sources, init);
@@ -351,7 +354,7 @@ impl<'hir> Visit<'hir> for WriteAnalyzer<'_, 'hir> {
                     sources.extend(self.value_sources(lhs));
                 }
                 self.record_writes(lhs, &sources, is_zero_value(rhs));
-                if let Some(local) = lhs_local_var(self.hir, lhs) {
+                if let Some(local) = lhs_local_var(&self.gcx.hir, lhs) {
                     self.set_local(local, sources, rhs);
                 }
                 ControlFlow::Continue(())
@@ -439,7 +442,8 @@ fn emitted_event_id(expr: &Expr<'_>) -> Option<EventId> {
 
 /// Whether the event name or one of its parameter names mentions the state variable: its
 /// normalized name, its singular form, or a role keyword it contains.
-fn event_mentions_state_var(hir: &hir::Hir<'_>, event_id: EventId, var_id: VariableId) -> bool {
+fn event_mentions_state_var(gcx: Gcx<'_>, event_id: EventId, var_id: VariableId) -> bool {
+    let hir = &gcx.hir;
     let Some(var_name) = hir.variable(var_id).name else { return false };
     let var_name = normalize(var_name.as_str());
     let mut keywords = vec![var_name.as_str()];

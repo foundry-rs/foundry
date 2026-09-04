@@ -91,7 +91,6 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
         // Candidates that flow into arithmetic reachable from an unprotected function.
         let mut uses = UseAnalyzer {
             gcx,
-            hir,
             contract_id,
             targets: &candidates,
             mode: Mode::Uses,
@@ -109,13 +108,8 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
         }
 
         for func_id in entry_points {
-            let mut analyzer = WriteAnalyzer {
-                gcx,
-                hir,
-                contract_id,
-                targets: &uses.used,
-                call_stack: Vec::new(),
-            };
+            let mut analyzer =
+                WriteAnalyzer { gcx, contract_id, targets: &uses.used, call_stack: Vec::new() };
             let mut emitted = HashSet::new();
             for write in analyzer.analyze_entry_point(func_id) {
                 if !emitted.insert(write.var_id) {
@@ -164,7 +158,6 @@ enum Mode {
 /// Finds target state variables that flow into arithmetic, following locals and internal calls.
 struct UseAnalyzer<'a, 'hir> {
     gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
     contract_id: ContractId,
     targets: &'a HashSet<VariableId>,
     mode: Mode,
@@ -180,7 +173,7 @@ impl<'hir> UseAnalyzer<'_, 'hir> {
         if self.call_stack.contains(&func_id) {
             return;
         }
-        let Some(body) = self.hir.function(func_id).body else { return };
+        let Some(body) = self.gcx.hir.function(func_id).body else { return };
         self.call_stack.push(func_id);
         for stmt in body.stmts {
             let _ = self.visit_stmt(stmt);
@@ -195,6 +188,7 @@ impl<'hir> UseAnalyzer<'_, 'hir> {
             return;
         }
         let params = self
+            .gcx
             .hir
             .function(callee_id)
             .parameters
@@ -257,13 +251,13 @@ impl<'hir> Visit<'hir> for UseAnalyzer<'_, 'hir> {
     type BreakValue = solar::interface::data_structures::Never;
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
-                if let Some(init) = self.hir.variable(var_id).initializer {
+                if let Some(init) = self.gcx.hir.variable(var_id).initializer {
                     let sources = self.sources(init);
                     self.set_taint(var_id, sources);
                 }
@@ -286,7 +280,7 @@ impl<'hir> Visit<'hir> for UseAnalyzer<'_, 'hir> {
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
             ExprKind::Assign(lhs, _, rhs) => {
-                if let Some(local) = lhs_local_var(self.hir, lhs) {
+                if let Some(local) = lhs_local_var(&self.gcx.hir, lhs) {
                     let sources = self.sources(rhs);
                     self.set_taint(local, sources);
                 }
@@ -368,7 +362,6 @@ impl Flow {
 /// Collects writes to target variables that no later `emit` on the same path covers.
 struct WriteAnalyzer<'a, 'hir> {
     gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
     contract_id: ContractId,
     targets: &'a HashSet<VariableId>,
     call_stack: Vec<FunctionId>,
@@ -376,14 +369,15 @@ struct WriteAnalyzer<'a, 'hir> {
 
 impl<'hir> WriteAnalyzer<'_, 'hir> {
     fn analyze_entry_point(&mut self, func_id: FunctionId) -> Vec<StateWrite> {
-        let func = self.hir.function(func_id);
+        let func = self.gcx.hir.function(func_id);
         let state =
             WriteState { dynamic: func.parameters.iter().copied().collect(), writes: Vec::new() };
         let mut state = self.analyze_function(func_id, state).merged();
         // Modifier code after `_` runs once the body finished, innermost modifier first, and may
         // still emit for the body's writes.
         for modifier in func.modifiers.iter().rev() {
-            let Some(body) = modifier.id.as_function().and_then(|id| self.hir.function(id).body)
+            let Some(body) =
+                modifier.id.as_function().and_then(|id| self.gcx.hir.function(id).body)
             else {
                 continue;
             };
@@ -401,7 +395,9 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
         if self.call_stack.contains(&func_id) {
             return Flow::fallthrough(state);
         }
-        let Some(body) = self.hir.function(func_id).body else { return Flow::fallthrough(state) };
+        let Some(body) = self.gcx.hir.function(func_id).body else {
+            return Flow::fallthrough(state);
+        };
         self.call_stack.push(func_id);
         let flow = self.analyze_stmts(body.stmts, state);
         self.call_stack.pop();
@@ -422,7 +418,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
     fn analyze_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>, mut state: WriteState) -> Flow {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
-                if let Some(init) = self.hir.variable(var_id).initializer {
+                if let Some(init) = self.gcx.hir.variable(var_id).initializer {
                     self.analyze_expr(init, &mut state);
                     self.set_dynamic(&mut state, var_id, init);
                 }
@@ -484,7 +480,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
                     if dynamic || op.is_some_and(|op| is_arithmetic_op(op.kind)) {
                         self.record_writes(state, lhs);
                     }
-                    if let Some(local) = lhs_local_var(self.hir, lhs) {
+                    if let Some(local) = lhs_local_var(&self.gcx.hir, lhs) {
                         self.set_dynamic(state, local, rhs);
                     }
                 }
@@ -513,6 +509,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
     ) {
         let callee_state = WriteState {
             dynamic: self
+                .gcx
                 .hir
                 .function(callee_id)
                 .parameters
@@ -529,7 +526,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
     }
 
     fn record_writes(&self, state: &mut WriteState, lhs: &Expr<'_>) {
-        for var_id in state_lhs_vars(self.hir, lhs) {
+        for var_id in state_lhs_vars(&self.gcx.hir, lhs) {
             if self.targets.contains(&var_id) {
                 state.writes.push(StateWrite { var_id, span: lhs.span });
             }
@@ -554,7 +551,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
                     builtins(base).any(|b| matches!(b, Builtin::Block | Builtin::Msg | Builtin::Tx))
                 }
                 _ => underlying_var(e).is_some_and(|var_id| {
-                    let var = self.hir.variable(var_id);
+                    let var = self.gcx.hir.variable(var_id);
                     state.dynamic.contains(&var_id)
                         || (var.kind.is_state() && !var.is_constant() && !var.is_immutable())
                 }),

@@ -36,11 +36,11 @@ impl<'hir> LateLintPass<'hir> for ReentrancyEvents {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
+        _hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
         let Some(body) = func.body else { return };
-        Analyzer::new(ctx, gcx, hir, func.contract).analyze_callable(func, body, false);
+        Analyzer::new(ctx, gcx, func.contract).analyze_callable(func, body, false);
     }
 }
 
@@ -105,7 +105,6 @@ struct InlineCallKey {
 struct Analyzer<'ctx, 's, 'c, 'hir> {
     ctx: &'ctx LintContext<'s, 'c>,
     gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
     /// Contract being analysed; `this.f()` and `super.f()` resolve against it, also inside
     /// inlined helpers (runtime `this`).
     enclosing_contract: Option<ContractId>,
@@ -126,13 +125,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     fn new(
         ctx: &'ctx LintContext<'s, 'c>,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
         enclosing_contract: Option<ContractId>,
     ) -> Self {
         Self {
             ctx,
             gcx,
-            hir,
             enclosing_contract,
             call_stack: Vec::new(),
             inline_cache: HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
@@ -175,7 +172,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         // so duplicates are not skipped; `index` strictly increases, and recursion through
         // internal calls is handled by `analyze_internal_call`.
         let Some((modifier_id, modifier_body)) =
-            modifier.id.as_function().and_then(|id| Some((id, self.hir.function(id).body?)))
+            modifier.id.as_function().and_then(|id| Some((id, self.gcx.hir.function(id).body?)))
         else {
             return self.analyze_modifier_chain(modifiers, index + 1, body, entry);
         };
@@ -212,7 +209,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         self.expr_aborted = false;
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
-                if let Some(init) = self.hir.variable(var_id).initializer {
+                if let Some(init) = self.gcx.hir.variable(var_id).initializer {
                     self.analyze_expr(init, &mut entry);
                 }
                 self.unless_aborted(Exits::fallthrough(entry))
@@ -359,9 +356,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
     /// Internal functions and `super` targets a call through `callee` dispatches to.
     fn callees(&self, callee: &'hir Expr<'hir>, arg_count: usize) -> Vec<FunctionId> {
-        resolved_internal_function_ids(self.hir, callee)
+        resolved_internal_function_ids(&self.gcx.hir, callee)
             .chain(resolved_super_function_ids(
-                self.hir,
+                self.gcx,
                 self.enclosing_contract,
                 callee,
                 arg_count,
@@ -376,7 +373,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             *tainted |= self.helper_may_reach_external_call(func_id, &mut HashSet::new());
             return;
         }
-        let func = self.hir.function(func_id);
+        let func = self.gcx.hir.function(func_id);
         let Some(body) = func.body else { return };
 
         // Diagnostics inside a helper entered clean are left to the helper's own pass, which
@@ -425,7 +422,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             return false;
         }
         let outer_cut = std::mem::replace(&mut self.reachability_cut, false);
-        let func = self.hir.function(func_id);
+        let func = self.gcx.hir.function(func_id);
         let may_reach = func.modifiers.iter().any(|modifier| {
             modifier.args.exprs().any(|arg| self.expr_may_reach_external_call(arg, seen))
                 || modifier
@@ -451,6 +448,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     ) -> bool {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => self
+                .gcx
                 .hir
                 .variable(var_id)
                 .initializer

@@ -24,10 +24,10 @@ impl<'hir> LateLintPass<'hir> for RequireRevertInLoop {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
+        _hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
-        for_each_loop_item(gcx, hir, func, false, |item| {
+        for_each_loop_item(gcx, func, false, |item| {
             let reported = match item {
                 LoopItem::Stmt(stmt) => match stmt.kind {
                     StmtKind::Revert(expr) => Some(expr),

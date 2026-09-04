@@ -12,7 +12,10 @@ use crate::{
 use solar::{
     ast,
     interface::data_structures::Never,
-    sema::hir::{self, ExprKind, StmtKind, VariableId, Visit},
+    sema::{
+        Gcx,
+        hir::{self, ExprKind, StmtKind, VariableId, Visit},
+    },
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -31,7 +34,7 @@ impl<'hir> LateLintPass<'hir> for MissingZeroCheck {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
+        gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
@@ -49,7 +52,7 @@ impl<'hir> LateLintPass<'hir> for MissingZeroCheck {
             return;
         }
 
-        let mut a = Analyzer::new(hir, &params);
+        let mut a = Analyzer::new(gcx, &params);
         for m in func.modifiers {
             let Some(modifier_id) = m.id.as_function() else { continue };
             let modifier = hir.function(modifier_id);
@@ -65,7 +68,7 @@ impl<'hir> LateLintPass<'hir> for MissingZeroCheck {
                 })
                 .collect();
             if let Some(body) = modifier.body.filter(|_| !mapping.is_empty()) {
-                let mut ma = Analyzer::new(hir, &mapping.keys().copied().collect());
+                let mut ma = Analyzer::new(gcx, &mapping.keys().copied().collect());
                 ma.visit_stmts(body.stmts);
                 a.guarded.extend(ma.guarded.iter().filter_map(|mp| mapping.get(mp)));
             }
@@ -82,7 +85,7 @@ impl<'hir> LateLintPass<'hir> for MissingZeroCheck {
 
 /// Tracks address-parameter taint, sinks reached, and guards observed in a function body.
 struct Analyzer<'hir> {
-    hir: &'hir hir::Hir<'hir>,
+    gcx: Gcx<'hir>,
     /// Variables transitively derived from candidate parameters, mapped to their sources.
     /// Each parameter is initially mapped to itself.
     taint: HashMap<VariableId, HashSet<VariableId>>,
@@ -95,9 +98,9 @@ struct Analyzer<'hir> {
 }
 
 impl<'hir> Analyzer<'hir> {
-    fn new(hir: &'hir hir::Hir<'hir>, params: &HashSet<VariableId>) -> Self {
+    fn new(gcx: Gcx<'hir>, params: &HashSet<VariableId>) -> Self {
         Self {
-            hir,
+            gcx,
             taint: params.iter().map(|&p| (p, HashSet::from([p]))).collect(),
             sinks: HashSet::new(),
             guarded: HashSet::new(),
@@ -135,7 +138,7 @@ impl<'hir> Analyzer<'hir> {
     fn propagate(&mut self, local: VariableId, value: &hir::Expr<'_>) {
         // Propagate taint through address-typed locals only; this avoids marking unrelated
         // values (e.g. `bool ok = a.send(1)`) as derived from `a`.
-        if is_address_type(self.hir, local) {
+        if is_address_type(&self.gcx.hir, local) {
             let srcs = self.taint_sources(value);
             if !srcs.is_empty() {
                 self.taint.entry(local).or_default().extend(srcs);
@@ -148,7 +151,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
@@ -188,7 +191,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 return ControlFlow::Continue(());
             }
             StmtKind::DeclSingle(var_id) => {
-                if let Some(init) = self.hir.variable(var_id).initializer {
+                if let Some(init) = self.gcx.hir.variable(var_id).initializer {
                     self.propagate(var_id, init);
                 }
             }
@@ -224,15 +227,15 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
             ExprKind::Assign(lhs, _, rhs) => {
                 // Sink: assignment to an address state variable.
                 if let Some(v) = underlying_var(lhs)
-                    && self.hir.variable(v).kind.is_state()
-                    && is_address_type(self.hir, v)
+                    && self.gcx.hir.variable(v).kind.is_state()
+                    && is_address_type(&self.gcx.hir, v)
                 {
                     self.sink_depth += 1;
                     let _ = self.visit_expr(rhs);
                     self.sink_depth -= 1;
                     return ControlFlow::Continue(());
                 }
-                if let Some(local) = lhs_local_var(self.hir, lhs) {
+                if let Some(local) = lhs_local_var(&self.gcx.hir, lhs) {
                     self.propagate(local, rhs);
                 }
             }

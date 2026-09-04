@@ -26,10 +26,10 @@ impl<'hir> LateLintPass<'hir> for CallsLoop {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
+        _hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
-        for_each_loop_item(gcx, hir, func, false, |item| {
+        for_each_loop_item(gcx, func, false, |item| {
             if let LoopItem::Expr(expr) = item
                 && let ExprKind::Call(callee, ..) = &expr.kind
                 && is_external_call(gcx, callee)
@@ -98,11 +98,12 @@ pub(super) fn is_state_mutating_external_call<'gcx>(gcx: Gcx<'gcx>, callee: &Exp
 /// The base-chain function `super.<member>(..)` dispatches to from `enclosing_contract`: the first
 /// arity-matching `internal`/`public` function of that name in its linearization.
 pub(super) fn resolved_super_function_ids<'hir>(
-    hir: &'hir Hir<'hir>,
+    gcx: Gcx<'hir>,
     enclosing_contract: Option<ContractId>,
     callee: &'hir Expr<'hir>,
     explicit_arg_count: usize,
 ) -> impl Iterator<Item = FunctionId> + 'hir {
+    let hir = &gcx.hir;
     let target = || {
         let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return None };
         if !is_builtin(base, sym::super_) {

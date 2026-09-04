@@ -23,7 +23,7 @@ impl<'hir> LateLintPass<'hir> for SolmateSafeTransferLib {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
+        _hir: &'hir Hir<'hir>,
         expr: &'hir Expr<'hir>,
     ) {
         // A name or member expression typed as a function is a resolved reference, called or
@@ -31,7 +31,7 @@ impl<'hir> LateLintPass<'hir> for SolmateSafeTransferLib {
         // overrides, `using for` and import aliases already accounted for).
         if matches!(expr.kind, ExprKind::Ident(..) | ExprKind::Member(..))
             && let Some(function_id) = resolved_function(gcx, expr)
-            && is_unchecked_token_op(hir, function_id)
+            && is_unchecked_token_op(gcx, function_id)
         {
             ctx.emit(&SOLMATE_SAFE_TRANSFER_LIB, expr.span);
         }
@@ -46,7 +46,8 @@ impl<'hir> LateLintPass<'hir> for SolmateSafeTransferLib {
 /// from a solmate package path (`lib/solmate`, `solmate/...`). Matching a whole path component
 /// rather than a substring keeps a vendored or patched copy under a misleading path such as
 /// `vendor/solmate-fixed/` from being recognized.
-fn is_unchecked_token_op(hir: &Hir<'_>, function_id: FunctionId) -> bool {
+fn is_unchecked_token_op(gcx: Gcx<'_>, function_id: FunctionId) -> bool {
+    let hir = &gcx.hir;
     let function = hir.function(function_id);
     let (Some(name), Some(contract_id)) = (function.name, function.contract) else { return false };
     let contract = hir.contract(contract_id);

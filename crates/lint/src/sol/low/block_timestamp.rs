@@ -32,7 +32,7 @@ impl<'hir> LateLintPass<'hir> for BlockTimestamp {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
+        gcx: Gcx<'hir>,
         hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
@@ -49,7 +49,7 @@ impl<'hir> LateLintPass<'hir> for BlockTimestamp {
                     && helper.body.is_some_and(|body| returns_timestamp(body.stmts))
             })
             .collect();
-        Checker { ctx, hir, helpers, aliases: HashSet::new() }.block(body.stmts);
+        Checker { ctx, gcx, helpers, aliases: HashSet::new() }.block(body.stmts);
     }
 }
 
@@ -57,7 +57,7 @@ impl<'hir> LateLintPass<'hir> for BlockTimestamp {
 /// or a local holding a value derived from either.
 struct Checker<'a, 's, 'c, 'hir> {
     ctx: &'a LintContext<'s, 'c>,
-    hir: &'hir Hir<'hir>,
+    gcx: Gcx<'hir>,
     helpers: Vec<FunctionId>,
     /// Locals currently holding a timestamp-derived value.
     aliases: HashSet<VariableId>,
@@ -105,7 +105,7 @@ impl<'hir> Checker<'_, '_, '_, 'hir> {
     }
 
     fn set_alias(&mut self, var: VariableId, is_source: bool) {
-        if self.hir.variable(var).is_local_or_return() {
+        if self.gcx.hir.variable(var).is_local_or_return() {
             if is_source {
                 self.aliases.insert(var);
             } else {
@@ -157,13 +157,13 @@ impl<'hir> Visit<'hir> for Checker<'_, '_, '_, 'hir> {
     type BreakValue = Infallible;
 
     fn hir(&self) -> &'hir Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Infallible> {
         match &stmt.kind {
             StmtKind::DeclSingle(var) => {
-                if let Some(init) = self.hir.variable(*var).initializer {
+                if let Some(init) = self.gcx.hir.variable(*var).initializer {
                     self.visit_expr(init)?;
                     let is_source = self.is_source_value(init);
                     self.set_alias(*var, is_source);

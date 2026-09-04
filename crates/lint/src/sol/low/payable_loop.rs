@@ -28,7 +28,6 @@ pub(super) enum LoopItem<'hir> {
 /// loops in the internal helpers it calls (whether the call itself sits in a loop or not).
 pub(super) fn for_each_payable_loop_expr<'hir>(
     gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
     func: &'hir Function<'hir>,
     mut f: impl FnMut(&'hir Expr<'hir>),
 ) {
@@ -36,7 +35,7 @@ pub(super) fn for_each_payable_loop_expr<'hir>(
         && func.state_mutability == StateMutability::Payable
         && matches!(func.visibility, Visibility::Public | Visibility::External)
     {
-        for_each_loop_item(gcx, hir, func, true, |item| {
+        for_each_loop_item(gcx, func, true, |item| {
             if let LoopItem::Expr(expr) = item {
                 f(expr);
             }
@@ -49,7 +48,6 @@ pub(super) fn for_each_payable_loop_expr<'hir>(
 /// called outside one, so that their own loops are reported too.
 pub(super) fn for_each_loop_item<'hir>(
     gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
     func: &'hir Function<'hir>,
     follow_calls_outside_loop: bool,
     f: impl FnMut(LoopItem<'hir>),
@@ -57,7 +55,6 @@ pub(super) fn for_each_loop_item<'hir>(
     let Some(body) = func.body else { return };
     let mut walker = LoopWalker {
         gcx,
-        hir,
         f,
         loop_depth: 0,
         placeholder: None,
@@ -74,7 +71,6 @@ type Continuation<'hir> = (&'hir [Modifier<'hir>], usize, Block<'hir>, Option<Co
 
 struct LoopWalker<'hir, F> {
     gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
     f: F,
     loop_depth: usize,
     placeholder: Option<Continuation<'hir>>,
@@ -100,12 +96,12 @@ impl<'hir, F: FnMut(LoopItem<'hir>)> LoopWalker<'hir, F> {
         };
         let _ = self.visit_call_args(&modifier.args);
         if let Some(id) = modifier.id.as_function()
-            && let Some(modifier_body) = self.hir.function(id).body
+            && let Some(modifier_body) = self.gcx.hir.function(id).body
             && !self.stack.contains(&id)
         {
             self.stack.push(id);
             let continuation = Some((modifiers, index + 1, body, contract));
-            self.visit_scoped(modifier_body, continuation, self.hir.function(id).contract);
+            self.visit_scoped(modifier_body, continuation, self.gcx.hir.function(id).contract);
             self.stack.pop();
         } else {
             self.visit_modifiers(modifiers, index + 1, body, contract);
@@ -127,7 +123,7 @@ impl<'hir, F: FnMut(LoopItem<'hir>)> LoopWalker<'hir, F> {
     }
 
     fn visit_call(&mut self, id: FunctionId) {
-        let func = self.hir.function(id);
+        let func = self.gcx.hir.function(id);
         if let Some(body) = func.body
             && !self.stack.contains(&id)
         {
@@ -154,11 +150,11 @@ impl<'hir, F: FnMut(LoopItem<'hir>)> LoopWalker<'hir, F> {
     /// `super.<name>(..)` resolved against the dispatching contract: the first base after the
     /// current one (in its linearization) defining `name` with the resolved signature.
     fn super_target(&self, resolved: FunctionId, name: Symbol) -> Option<FunctionId> {
-        let bases = self.hir.contract(self.dispatch?).linearized_bases;
+        let bases = self.gcx.hir.contract(self.dispatch?).linearized_bases;
         let start = bases.iter().position(|&c| Some(c) == self.current)? + 1;
         let params = self.gcx.item_parameter_types(resolved);
-        bases[start..].iter().flat_map(|&c| self.hir.contract(c).functions()).find(|&id| {
-            let func = self.hir.function(id);
+        bases[start..].iter().flat_map(|&c| self.gcx.hir.contract(c).functions()).find(|&id| {
+            let func = self.gcx.hir.function(id);
             func.name.is_some_and(|n| n.name == name) && self.gcx.item_parameter_types(id) == params
         })
     }
@@ -168,7 +164,7 @@ impl<'hir, F: FnMut(LoopItem<'hir>)> Visit<'hir> for LoopWalker<'hir, F> {
     type BreakValue = Infallible;
 
     fn hir(&self) -> &'hir Hir<'hir> {
-        self.hir
+        &self.gcx.hir
     }
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Infallible> {

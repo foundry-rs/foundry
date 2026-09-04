@@ -23,10 +23,10 @@ impl<'hir> LateLintPass<'hir> for MsgValueLoop {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
+        _hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
-        for_each_payable_loop_expr(gcx, hir, func, |expr| {
+        for_each_payable_loop_expr(gcx, func, |expr| {
             if let ExprKind::Member(base, member) = &expr.peel_parens().kind
                 && member.name == sym::value
                 && is_builtin(base, sym::msg)

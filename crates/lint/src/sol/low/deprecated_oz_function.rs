@@ -23,7 +23,7 @@ impl<'hir> LateLintPass<'hir> for DeprecatedOzFunction {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
+        _hir: &'hir Hir<'hir>,
         expr: &'hir Expr<'hir>,
     ) {
         // A name or member expression typed as a function is a resolved reference, called or
@@ -31,7 +31,7 @@ impl<'hir> LateLintPass<'hir> for DeprecatedOzFunction {
         // overrides, `super.`, `using for` and import aliases already accounted for).
         if matches!(expr.kind, ExprKind::Ident(..) | ExprKind::Member(..))
             && let Some(function_id) = resolved_function(gcx, expr)
-            && is_deprecated_oz(hir, function_id)
+            && is_deprecated_oz(gcx, function_id)
         {
             ctx.emit(&DEPRECATED_OZ_FUNCTION, expr.span);
         }
@@ -43,7 +43,8 @@ impl<'hir> LateLintPass<'hir> for DeprecatedOzFunction {
 /// functions rather than redeclare them, so resolution still lands on the canonical declaration;
 /// a same-name function of an unrelated contract or library stays out, and so does a same-name
 /// local declaration, which fails the provenance check.
-fn is_deprecated_oz(hir: &Hir<'_>, function_id: FunctionId) -> bool {
+fn is_deprecated_oz(gcx: Gcx<'_>, function_id: FunctionId) -> bool {
+    let hir = &gcx.hir;
     let function = hir.function(function_id);
     let (Some(name), Some(contract_id)) = (function.name, function.contract) else { return false };
     if !source_in_package(hir, function.source, OPENZEPPELIN_ROOTS) {

@@ -23,10 +23,10 @@ impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
+        _hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
-        for_each_payable_loop_expr(gcx, hir, func, |expr| {
+        for_each_payable_loop_expr(gcx, func, |expr| {
             // Only `<address>.delegatecall(..)`: user functions named `delegatecall` on
             // contract-typed receivers are ordinary calls.
             if let ExprKind::Call(callee, ..) = &expr.kind
