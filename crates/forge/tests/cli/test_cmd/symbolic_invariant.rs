@@ -249,6 +249,101 @@ invariant_notHit()
     );
 });
 
+forgetest_init!(symbolic_invariant_replay_materializes_omitted_zero_storage, |prj, cmd| {
+    prj.add_test(
+        "SymbolicInvariantOmittedStorage.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface OmittedStorageVm {
+    function setArbitraryStorage(address target, bool overwrite) external;
+}
+
+contract OmittedStorageStore {
+    uint256 public value = 1;
+}
+
+contract OmittedStorageTarget {
+    OmittedStorageStore store;
+    bool public hit;
+
+    constructor(OmittedStorageStore store_) {
+        store = store_;
+    }
+
+    function useStore() external {
+        bytes32 actual = keccak256(abi.encodePacked(store.value()));
+        bytes32 zero = keccak256(abi.encodePacked(uint256(0)));
+        require(actual == zero);
+        hit = true;
+    }
+}
+
+contract SymbolicInvariantOmittedStorage is Test {
+    OmittedStorageStore store;
+    OmittedStorageTarget target;
+
+    function setUp() public {
+        store = new OmittedStorageStore();
+        target = new OmittedStorageTarget(store);
+        OmittedStorageVm(address(vm)).setArbitraryStorage(address(store), true);
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_notHit() public view {
+        require(!target.hit(), "hit");
+    }
+}
+"#,
+    );
+
+    cmd.unset_env("FOUNDRY_INTERNAL_SYMBOLIC_Z3_CONTROL");
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--json",
+            "--symbolic-solver-command",
+            "foundry-symbolic-definitely-missing-solver",
+            "--match-test",
+            "invariant_notHit",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    assert!(
+        !output.stdout.is_empty(),
+        "forge test --json produced no stdout: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result = json_test_result(&output.stdout, "invariant_notHit()");
+    assert_eq!(result["status"], "Failure");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0);
+
+    let failures = result["invariant_failures"].as_array().expect("invariant failures");
+    let artifact_ref = &failures.first().expect("invariant failure")["artifact"];
+    let artifact = read_artifact_ref(artifact_ref);
+    let storage = artifact["storage"].as_array().expect("storage assignments");
+    assert_eq!(storage.len(), 1);
+    assert_eq!(storage[0]["value"], "0x0");
+
+    let artifact_path = artifact_ref["path"].as_str().expect("artifact path").to_string();
+    let replay_stdout = cmd
+        .forge_fuse()
+        .args(["test", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &replay_stdout,
+        str![[r#"
+[FAIL: hit]
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_secondary_replay_preserves_storage, |prj, cmd| {
     skip_unless_z3!("symbolic_secondary_replay_preserves_storage");
 
@@ -648,6 +743,89 @@ contract SymbolicInvariantHandlerFailure is Test {
         replay_result["invariant_handler_failures"].as_array().expect("replay handler failures");
     assert_eq!(replay_handler_failures.len(), 1);
     assert_eq!(replay_handler_failures[0]["kind"], "handler");
+});
+
+forgetest_init!(symbolic_invariant_returndata_copy_revert_replays, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+        config.invariant.runs = 1;
+    });
+    prj.add_test(
+        "SymbolicInvariantReturnDataCopy.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantReturnDataCopyTarget {
+    function copy(uint256 offset) external {
+        assembly {
+            mstore(0, 0x42)
+            if iszero(staticcall(gas(), 4, 0, 32, 0, 32)) { revert(0, 0) }
+            returndatacopy(0, offset, 1)
+        }
+    }
+}
+
+contract SymbolicInvariantReturnDataCopy is Test {
+    SymbolicInvariantReturnDataCopyTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantReturnDataCopyTarget();
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = target.copy.selector;
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 1
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    let output = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--symbolic-solver",
+            "native",
+            "--json",
+            "--match-test",
+            "invariant_ok",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    assert!(
+        !output.stdout.is_empty(),
+        "forge test --json produced no stdout: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result = json_test_result(&output.stdout, "invariant_ok()");
+    assert_eq!(result["status"], "Failure");
+    assert_eq!(result["symbolic"]["status"], "fail_counterexample");
+    assert_eq!(result["symbolic"]["solver"]["name"], "native");
+    assert_eq!(result["symbolic"]["solver"]["stats"]["smt_queries"], 0);
+    assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
+
+    let failures = result["invariant_failures"].as_array().expect("invariant failures");
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["kind"], "predicate");
+    assert!(failures[0]["reason"].as_str().unwrap().contains("OutOfOffset"), "{result}");
+    assert_eq!(failures[0]["counterexample"]["Sequence"][1][0]["args"], "32");
+    let artifact_path =
+        failures[0]["artifact"]["path"].as_str().expect("artifact path").to_string();
+
+    let replay_output = cmd
+        .forge_fuse()
+        .args(["test", "--json", "--replay-symbolic-artifact", &artifact_path])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let replay_result = json_test_result(&replay_output, "invariant_ok()");
+    assert_eq!(replay_result["status"], "Failure");
+    assert!(replay_result["reason"].as_str().unwrap().contains("OutOfOffset"), "{replay_result}");
+    assert_eq!(replay_result["counterexample"]["Sequence"][1][0]["args"], "32");
 });
 
 forgetest_init!(symbolic_invariant_omits_unchecked_predicate_pass_rows, |prj, cmd| {

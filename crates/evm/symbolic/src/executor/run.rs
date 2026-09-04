@@ -404,15 +404,6 @@ impl SymbolicExecutor {
             }
         }
 
-        if normal_paths == 0 && reverted_paths > 0 {
-            debug!(completed_paths, "all symbolic paths reverted");
-            return Ok(SymbolicRunResult::Incomplete {
-                kind: SymbolicStopReason::RevertAll,
-                reason: "all symbolic paths reverted".to_string(),
-                stats: self.stats_with_paths(completed_paths),
-            });
-        }
-
         if self.heuristic_witnesses_used_since(heuristic_witness_baseline) {
             return Ok(SymbolicRunResult::Incomplete {
                 kind: SymbolicStopReason::Timeout,
@@ -425,6 +416,15 @@ impl SymbolicExecutor {
             return Ok(SymbolicRunResult::Incomplete {
                 kind,
                 reason,
+                stats: self.stats_with_paths(completed_paths),
+            });
+        }
+
+        if normal_paths == 0 && reverted_paths > 0 {
+            debug!(completed_paths, "all symbolic paths reverted");
+            return Ok(SymbolicRunResult::Incomplete {
+                kind: SymbolicStopReason::RevertAll,
+                reason: "all symbolic paths reverted".to_string(),
                 stats: self.stats_with_paths(completed_paths),
             });
         }

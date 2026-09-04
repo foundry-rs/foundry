@@ -44,6 +44,26 @@ fn replayable_input(cx: &mut SymCx, name: &str) -> SymExpr {
     SymExpr::get_var(cx, symbol)
 }
 
+#[test]
+fn arbitrary_storage_overloads_preserve_their_abi_sizes_and_modes() {
+    assert_eq!(
+        SymbolicVmCheatcode::from_selector(Vm::setArbitraryStorage_0Call::SELECTOR),
+        Some(SymbolicVmCheatcode::EnableSymbolicStorage)
+    );
+    assert_eq!(
+        SymbolicVmCheatcode::from_selector(Vm::setArbitraryStorage_1Call::SELECTOR),
+        Some(SymbolicVmCheatcode::EnableSymbolicStorageOverwrite)
+    );
+    assert_eq!(
+        symbolic_vm_cheatcode_min_input_size(Vm::setArbitraryStorage_0Call::SELECTOR),
+        Some(4 + 32)
+    );
+    assert_eq!(
+        symbolic_vm_cheatcode_min_input_size(Vm::setArbitraryStorage_1Call::SELECTOR),
+        Some(4 + 64)
+    );
+}
+
 fn model_value(cx: &SymCx, model: &SymbolicModel, name: &str) -> Option<U256> {
     model.get(&cx.symbol(name)).copied()
 }
@@ -4480,11 +4500,24 @@ fn query_limit_is_enforced_before_spawning_solver() {
 fn known_solver_names_resolve_to_smtlib_commands() {
     for solver in BUILTIN_SYMBOLIC_SOLVERS {
         assert!(symbolic_solver_is_builtin(solver));
-        named_solver_command(solver).unwrap();
+        if *solver != "native" {
+            named_solver_command(solver).unwrap();
+        }
     }
     assert!(!symbolic_solver_is_builtin("yices-2.7.0"));
     assert!(!symbolic_solver_is_builtin("cvc5-1.3.4"));
     assert!(!symbolic_solver_is_builtin("bitwuzla-0.9.0"));
+
+    let commands = solver_commands_for_config(&SymbolicConfig {
+        solver: "native".to_string(),
+        ..Default::default()
+    })
+    .unwrap();
+    assert!(commands.is_empty());
+    assert!(matches!(
+        named_solver_command("native"),
+        Err(SolverConfigError::NativeIsNotSubprocess)
+    ));
 
     let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "yices".to_string(),
@@ -4603,6 +4636,17 @@ fn solver_portfolio_resolves_parallel_commands() {
     assert_eq!(commands[2].program(), "custom-wrapper");
     assert_eq!(commands[2].args(), &["--stdin".to_string()]);
     assert!(!commands[2].smt_timeout());
+}
+
+#[test]
+fn native_solver_is_rejected_as_a_portfolio_subprocess() {
+    let err = solver_commands_for_config(&SymbolicConfig {
+        solver_portfolio: vec!["native".to_string(), "z3".to_string()],
+        ..Default::default()
+    })
+    .unwrap_err();
+
+    assert!(matches!(err, SolverConfigError::NativeIsNotSubprocess));
 }
 
 #[test]
@@ -4767,6 +4811,7 @@ fn gasleft_fails_at_smt_emission() {
     let marker = portfolio_test_marker("gasleft-smt");
     let commands = vec![counted_solver_command(&marker, "sat")];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    solver.enable_native_for_test();
     let gas = SymExpr::gas_left(&mut cx, 0);
     let x = SymExpr::var(&mut cx, "x");
     let constraints = vec![SymBoolExpr::eq(&mut cx, gas, x)];
@@ -4776,8 +4821,45 @@ fn gasleft_fails_at_smt_emission() {
 
     let stats = solver.stats();
     assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.native_queries, 1);
+    assert_eq!(stats.native_unknown_queries, 1);
     assert_eq!(stats.smt_queries, 1);
     assert_eq!(counted_solver_invocations(&marker), 0);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+fn native_unknown_falls_through_to_smt_backend() {
+    let mut cx = SymCx::new();
+    let marker = portfolio_test_marker("native-unknown-fallback");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 2, false);
+    solver.enable_native_for_test();
+    let x = SymExpr::var(&mut cx, "x");
+    let y = SymExpr::var(&mut cx, "y");
+    let one = SymExpr::one(&mut cx);
+    let fifteen = SymExpr::constant(&mut cx, U256::from(15));
+    let x_is_nontrivial = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, x.clone(), one.clone());
+    let y_is_nontrivial = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, y.clone(), one);
+    let product = SymExpr::binop(&mut cx, SymBinOp::Mul, x, y);
+    let product_eq_fifteen = SymBoolExpr::eq(&mut cx, product, fifteen);
+    let constraints = vec![x_is_nontrivial, y_is_nontrivial, product_eq_fifteen];
+
+    assert!(solver.is_sat(&mut cx, &constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.native_queries, 1);
+    assert_eq!(stats.native_sat_queries, 0);
+    assert_eq!(stats.native_unsat_queries, 0);
+    assert_eq!(stats.native_unknown_queries, 1);
+    assert_eq!(stats.smt_queries, 1);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    assert_eq!(
+        stats.native_queries,
+        stats.native_sat_queries + stats.native_unsat_queries + stats.native_unknown_queries
+    );
+    assert!(stats.native_max_query_time_ns <= stats.native_solver_time_ns);
     let _ = std::fs::remove_file(&marker);
 }
 

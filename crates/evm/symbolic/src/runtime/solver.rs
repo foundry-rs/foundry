@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(all(test, unix))]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     io::{BufRead, BufReader, Read},
     process::{Child, ChildStdin, Output},
@@ -7,10 +9,14 @@ use std::{
 };
 use wait_timeout::ChildExt;
 
+mod fresh_z3_capture;
 mod hard_arith_fallback;
 mod monotonic_product;
+mod native;
 mod opt;
+mod trace;
 
+use fresh_z3_capture::FreshZ3Capture;
 use hard_arith_fallback::{
     checked_mul_guard_branch_model, constraints_prefer_hard_arith_fallback_first,
 };
@@ -30,6 +36,38 @@ pub(crate) use opt::{
 };
 
 const Z3_QUERY_END: &str = "foundry-query-complete";
+const NATIVE_SOLVER_CONTROL_ENV: &str = "FOUNDRY_INTERNAL_SYMBOLIC_Z3_CONTROL";
+// Benchmark-only companion to `NATIVE_SOLVER_CONTROL_ENV`. It removes the per-solver `--version`
+// probe from same-binary Z3 controls while retaining normal Z3 process startup and query costs.
+const Z3_CONTROL_SKIP_AVAILABILITY_PROBE_ENV: &str =
+    "FOUNDRY_INTERNAL_SYMBOLIC_Z3_CONTROL_SKIP_AVAILABILITY_PROBE";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SolverRouting {
+    NativeWithFallback,
+    NativeOnly,
+    External,
+    ProbeFreeZ3Control,
+}
+
+impl SolverRouting {
+    /// The probe-free mode is deliberately inert unless the existing Z3 control is also enabled.
+    const fn from_internal_controls(z3_control: bool, skip_availability_probe: bool) -> Self {
+        match (z3_control, skip_availability_probe) {
+            (false, _) => Self::NativeWithFallback,
+            (true, false) => Self::External,
+            (true, true) => Self::ProbeFreeZ3Control,
+        }
+    }
+
+    const fn native_enabled(self) -> bool {
+        matches!(self, Self::NativeWithFallback | Self::NativeOnly)
+    }
+
+    const fn native_only(self) -> bool {
+        matches!(self, Self::NativeOnly)
+    }
+}
 
 /// Errors that arise when parsing or constructing solver commands from configuration.
 #[derive(Debug, thiserror::Error)]
@@ -40,6 +78,11 @@ pub(crate) enum SolverConfigError {
     /// The command string contains invalid shell quoting.
     #[error("invalid shell quoting in symbolic solver command")]
     InvalidShellQuoting,
+    /// The in-process native solver was requested where a subprocess command is required.
+    #[error(
+        "`native` is an in-process solver mode and cannot be used as a subprocess or portfolio entry"
+    )]
+    NativeIsNotSubprocess,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -224,6 +267,8 @@ impl SolverCommand {
 
 pub(crate) struct SmtLibSubprocessSolver {
     commands: Result<Vec<SolverCommand>, SolverConfigError>,
+    routing: SolverRouting,
+    fallback_availability: std::sync::OnceLock<Result<(), String>>,
     timeout: Option<u32>,
     max_queries: usize,
     queries: usize,
@@ -242,12 +287,19 @@ pub(crate) struct SmtLibSubprocessSolver {
     sat_cache_hits: usize,
     model_cache_hits: usize,
     smt_queries: usize,
+    native_queries: usize,
+    native_sat_queries: usize,
+    native_unsat_queries: usize,
+    native_unknown_queries: usize,
+    native_solver_time: Duration,
+    native_max_query_time: Duration,
     solver_time: Duration,
     smt_input_bytes: u64,
     smt_max_query_bytes: u64,
     smt_build_time: Duration,
     smt_max_query_time: Duration,
     z3_session: Option<Z3Session>,
+    fresh_z3_capture: Option<FreshZ3Capture>,
 }
 
 impl SmtLibSubprocessSolver {
@@ -259,6 +311,10 @@ impl SmtLibSubprocessSolver {
     ) -> Self {
         Self {
             commands,
+            // Direct constructor callers exercise a specific subprocess backend in unit tests.
+            // Production construction enables the native front-end in `from_config` below.
+            routing: SolverRouting::External,
+            fallback_availability: std::sync::OnceLock::new(),
             timeout,
             max_queries,
             queries: 0,
@@ -277,23 +333,69 @@ impl SmtLibSubprocessSolver {
             sat_cache_hits: 0,
             model_cache_hits: 0,
             smt_queries: 0,
+            native_queries: 0,
+            native_sat_queries: 0,
+            native_unsat_queries: 0,
+            native_unknown_queries: 0,
+            native_solver_time: Duration::ZERO,
+            native_max_query_time: Duration::ZERO,
             solver_time: Duration::ZERO,
             smt_input_bytes: 0,
             smt_max_query_bytes: 0,
             smt_build_time: Duration::ZERO,
             smt_max_query_time: Duration::ZERO,
             z3_session: None,
+            fresh_z3_capture: None,
         }
     }
 
     /// Constructs a subprocess solver from Foundry symbolic config.
     pub(crate) fn from_config(config: &SymbolicConfig) -> Self {
-        Self::new(
+        let routing = if config_uses_native_only_solver(config) {
+            SolverRouting::NativeOnly
+        } else {
+            SolverRouting::from_internal_controls(
+                std::env::var_os(NATIVE_SOLVER_CONTROL_ENV).is_some(),
+                std::env::var_os(Z3_CONTROL_SKIP_AVAILABILITY_PROBE_ENV).is_some(),
+            )
+        };
+        Self::from_config_with_routing(config, routing)
+    }
+
+    fn from_config_with_routing(config: &SymbolicConfig, routing: SolverRouting) -> Self {
+        let mut solver = Self::new(
             solver_commands_for_config(config),
             config.timeout,
             config.max_solver_queries as usize,
             config.dump_smt,
-        )
+        );
+        solver.routing = routing;
+        solver.fresh_z3_capture = FreshZ3Capture::from_env();
+        solver
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn enable_native_for_test(&mut self) {
+        self.routing = SolverRouting::NativeWithFallback;
+    }
+
+    /// Checks the external fallback at most once. Native-complete workloads never call this.
+    fn check_fallback_available(&self) -> Result<(), SymbolicError> {
+        self.fallback_availability
+            .get_or_init(|| {
+                let commands = self.commands.as_ref().map_err(ToString::to_string)?;
+                let mut errors = Vec::new();
+                for command in commands {
+                    if let Some(error) = solver_command_availability_error(command) {
+                        errors.push(error);
+                    } else {
+                        return Ok(());
+                    }
+                }
+                Err(errors.join("; "))
+            })
+            .clone()
+            .map_err(SymbolicError::Solver)
     }
 }
 
@@ -303,6 +405,20 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             paths: 0,
             solver_queries: self.queries,
             smt_queries: self.smt_queries,
+            native_queries: self.native_queries,
+            native_sat_queries: self.native_sat_queries,
+            native_unsat_queries: self.native_unsat_queries,
+            native_unknown_queries: self.native_unknown_queries,
+            native_solver_time_ns: self
+                .native_solver_time
+                .as_nanos()
+                .try_into()
+                .unwrap_or(u64::MAX),
+            native_max_query_time_ns: self
+                .native_max_query_time
+                .as_nanos()
+                .try_into()
+                .unwrap_or(u64::MAX),
             sat_queries: self.sat_queries,
             model_queries: self.model_queries,
             sat_cache_hits: self.sat_cache_hits,
@@ -352,22 +468,19 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     }
 
     fn check_available(&self) -> Result<(), SymbolicError> {
-        let commands = self.commands()?;
-        let mut errors = Vec::new();
-        for command in commands {
-            let output = match Command::new(&command.program).arg("--version").output() {
-                Ok(output) => output,
-                Err(err) => {
-                    errors.push(format!("failed to execute `{}`: {err}", command.program));
-                    continue;
-                }
-            };
-            if output.status.success() {
-                return Ok(());
-            }
-            errors.push(format!("`{}` is not a usable SMT solver executable", command.program));
+        // Invalid command syntax is a configuration error even when the native front-end later
+        // proves every query. Only executable probing is safe to defer.
+        self.commands()?;
+        // The native front-end may answer every query without an external solver. Defer checking
+        // the configured subprocess until a native `Unknown` actually reaches `query_normalized`;
+        // that path already reports process-spawn failures as solver errors. Besides avoiding one
+        // subprocess per symbolic function, this lets fully native workloads run without Z3.
+        match self.routing {
+            SolverRouting::NativeWithFallback | SolverRouting::NativeOnly => Ok(()),
+            SolverRouting::External => self.check_fallback_available(),
+            // Internal benchmark controls still start and query Z3 through `query_normalized`.
+            SolverRouting::ProbeFreeZ3Control => Ok(()),
         }
-        Err(SymbolicError::Solver(errors.join("; ")))
     }
 
     fn is_sat(
@@ -418,7 +531,15 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         replayable_storage: &SymbolicVars,
     ) -> Result<SymbolicModel, SymbolicError> {
         let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
-        let result = <Self as SymbolicSolver>::model(self, cx, constraints);
+        let result = <Self as SymbolicSolver>::model(self, cx, constraints).map(|mut model| {
+            // Validation treats every omitted symbolic value as zero. Materialize the same choice
+            // for all symbolic storage before replay: replay otherwise leaves an omitted slot at
+            // its setup value, which can disagree with a validated Keccak preimage.
+            for symbol in replayable_storage {
+                model.entry(*symbol).or_default();
+            }
+            model
+        });
         self.replayable_storage = previous;
         result
     }
@@ -431,6 +552,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         self.model_queries += 1;
         let smt_constraints =
             normalize_constraints_for_solver_cached(cx, constraints, &mut self.normalization_cache);
+        trace::write_normalized_query_trace(&smt_constraints, true)?;
         let cache_key = smt_constraints.clone();
 
         if self.sat_cache.get(&cache_key) == Some(&false) {
@@ -493,7 +615,10 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key.clone(), true);
             return Ok(model);
         }
-        if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints)
+        let prefer_hard_arith_fallback =
+            constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints);
+        if !self.routing.native_enabled()
+            && prefer_hard_arith_fallback
             && let Some(model) =
                 validated_hard_arith_fallback_model(cx, &smt_constraints, constraints)
         {
@@ -502,6 +627,41 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key.clone(), true);
             self.cache_model_result(cache_key, model.clone());
             return Ok(model);
+        }
+        if self.routing.native_enabled() {
+            trace::write_native_query_trace(&smt_constraints, true)?;
+        }
+        match self.query_native(&smt_constraints, constraints, true) {
+            native::NativeSolveResult::Sat(model) => {
+                trace!("model: native solver returned a validated model");
+                self.cache_sat_result(cache_key.clone(), true);
+                self.cache_model_result(cache_key, model.clone());
+                return Ok(model);
+            }
+            native::NativeSolveResult::Unsat => {
+                trace!("model: native solver proved the path unsatisfiable");
+                self.model_cache.remove(&cache_key);
+                self.cache_sat_result(cache_key, false);
+                return Err(SymbolicError::Solver("counterexample path became unsat".to_string()));
+            }
+            native::NativeSolveResult::Unknown => {
+                trace!("model: native solver delegated to the SMT backend");
+            }
+        }
+        if self.routing.native_enabled()
+            && prefer_hard_arith_fallback
+            && let Some(model) =
+                validated_hard_arith_fallback_model(cx, &smt_constraints, constraints)
+        {
+            self.heuristic_witnesses += 1;
+            trace!("model: validated hard arithmetic fallback model after native unknown");
+            self.cache_sat_result(cache_key.clone(), true);
+            self.cache_model_result(cache_key, model.clone());
+            return Ok(model);
+        }
+        if self.routing.native_only() {
+            trace!("model: native-only solver could not classify the query");
+            return Err(SymbolicError::SolverUnknown);
         }
         let output = match self.query_normalized(cx, &smt_constraints, true, constraints) {
             Ok(output) => output,
@@ -559,6 +719,7 @@ impl SmtLibSubprocessSolver {
         self.sat_queries += 1;
         let smt_constraints =
             normalize_sat_constraints(cx, constraints, &mut self.normalization_cache);
+        trace::write_normalized_query_trace(&smt_constraints, false)?;
         let cache_key = smt_constraints.clone();
         if let Some(result) = self.sat_cache.get(&cache_key) {
             self.sat_cache_hits += 1;
@@ -644,17 +805,55 @@ impl SmtLibSubprocessSolver {
             self.cache_sat_result(cache_key, true);
             return Ok(true);
         }
-        if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints) {
-            if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some() {
-                self.heuristic_witnesses += 1;
-                trace!("is_sat: validated hard arithmetic fallback model before solver");
-                self.cache_sat_result(cache_key, true);
+        let prefer_hard_arith_fallback =
+            constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints);
+        if !self.routing.native_enabled()
+            && prefer_hard_arith_fallback
+            && validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some()
+        {
+            self.heuristic_witnesses += 1;
+            trace!("is_sat: validated hard arithmetic fallback model before solver");
+            self.cache_sat_result(cache_key, true);
+            return Ok(true);
+        }
+        if self.routing.native_enabled() {
+            trace::write_native_query_trace(&smt_constraints, false)?;
+        }
+        match self.query_native(&smt_constraints, constraints, false) {
+            native::NativeSolveResult::Sat(model) => {
+                trace!("is_sat: native solver returned a validated model");
+                self.cache_sat_result(cache_key.clone(), true);
+                self.cache_model_result(cache_key, model);
                 return Ok(true);
             }
-            if defer_hard_arith_without_witness {
-                trace!("is_sat: deferring hard arithmetic branch without local witness");
-                return Err(SymbolicError::SolverUnknown);
+            native::NativeSolveResult::Unsat => {
+                trace!("is_sat: native solver proved the path unsatisfiable");
+                self.cache_sat_result(cache_key, false);
+                return Ok(false);
             }
+            native::NativeSolveResult::Unknown => {
+                trace!("is_sat: native solver delegated to the SMT backend");
+            }
+        }
+        if self.routing.native_enabled()
+            && prefer_hard_arith_fallback
+            && validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some()
+        {
+            self.heuristic_witnesses += 1;
+            trace!("is_sat: validated hard arithmetic fallback model after native unknown");
+            self.cache_sat_result(cache_key, true);
+            return Ok(true);
+        }
+        if self.routing.native_only() {
+            trace!("is_sat: native-only solver could not classify the query");
+            return Err(SymbolicError::SolverUnknown);
+        }
+        if prefer_hard_arith_fallback && defer_hard_arith_without_witness {
+            trace!("is_sat: deferring native-unknown hard arithmetic branch without local witness");
+            // This branch intentionally avoids a potentially expensive SMT query. Report the
+            // same explicit incomplete result whether or not the configured fallback executable
+            // happens to be installed: no subprocess is launched on this path.
+            return Err(SymbolicError::SolverUnknown);
         }
         let output = match self.query_normalized(cx, &smt_constraints, false, constraints) {
             Ok(output) => output,
@@ -760,6 +959,31 @@ impl SmtLibSubprocessSolver {
             .any(|(cached_key, result)| !*result && sorted_bool_exprs_are_subset(cached_key, key))
     }
 
+    /// Attempts one normalized query with the in-process solver and records the full adapter,
+    /// solve, and exact-model-validation cost. Unknown remains an ordinary SMT fallback.
+    fn query_native(
+        &mut self,
+        normalized_constraints: &[SymBoolExpr],
+        original_constraints: &[SymBoolExpr],
+        model: bool,
+    ) -> native::NativeSolveResult {
+        if !self.routing.native_enabled() {
+            return native::NativeSolveResult::Unknown;
+        }
+        self.native_queries += 1;
+        let started = Instant::now();
+        let result = native::solve_native(normalized_constraints, original_constraints, model);
+        let elapsed = started.elapsed();
+        self.native_solver_time = self.native_solver_time.saturating_add(elapsed);
+        self.native_max_query_time = self.native_max_query_time.max(elapsed);
+        match &result {
+            native::NativeSolveResult::Sat(_) => self.native_sat_queries += 1,
+            native::NativeSolveResult::Unsat => self.native_unsat_queries += 1,
+            native::NativeSolveResult::Unknown => self.native_unknown_queries += 1,
+        }
+        result
+    }
+
     /// Sends already-normalized constraints to the configured solver portfolio.
     pub(crate) fn query_normalized(
         &mut self,
@@ -805,26 +1029,81 @@ impl SmtLibSubprocessSolver {
             self.emit_diagnostic(format_args!("--- symbolic SMT query {query} ---\n{smt}\n"));
         }
 
-        let started = Instant::now();
-        let result = if let [command] = commands.as_slice()
-            && command.smt_timeout
-            && command.program == "z3"
-            && command.args == ["-in", "-smt2"]
-        {
-            let output = self.query_z3(command, &smt).into_result();
-            SolverCommandRun { output, summaries: Vec::new() }
+        let capture_command = self
+            .fresh_z3_capture
+            .as_ref()
+            .map(|capture| capture.validate_command(&commands, self.timeout))
+            .transpose()?;
+        let capture_directory = self.fresh_z3_capture.as_ref().map(FreshZ3Capture::directory);
+        let pending_trace =
+            trace::capture_query_trace(smt_constraints, model, smt_bytes, capture_directory);
+        let (result, query_time, captured_bundle) = if let Some(command) = capture_command {
+            let occurrence = pending_trace
+                .as_ref()
+                .ok_or_else(|| {
+                    SymbolicError::Solver(
+                        "fresh Z3 capture failed to create a backend trace".to_string(),
+                    )
+                })?
+                .occurrence()
+                .ok_or_else(|| {
+                    SymbolicError::Solver(
+                        "fresh Z3 capture failed to reserve a backend occurrence".to_string(),
+                    )
+                })?;
+            let capture = self.fresh_z3_capture.as_ref().ok_or_else(|| {
+                SymbolicError::Solver("fresh Z3 capture is unexpectedly disabled".to_string())
+            })?;
+            let captured = capture.run(
+                command,
+                smt.as_bytes(),
+                self.timeout.ok_or_else(|| {
+                    SymbolicError::Solver(
+                        "fresh Z3 capture is missing its validated timeout".to_string(),
+                    )
+                })?,
+                occurrence,
+            )?;
+            let query_time = captured.solver_elapsed;
+            let output = captured.outcome.into_result();
+            (SolverCommandRun { output, summaries: Vec::new() }, query_time, Some(captured.bundle))
         } else {
-            run_solver_commands(
-                cx,
-                &commands,
-                &smt,
-                self.timeout,
-                model.then_some(model_constraints),
-            )
+            let started = Instant::now();
+            let result = if let [command] = commands.as_slice()
+                && command.smt_timeout
+                && command.program == "z3"
+                && command.args == ["-in", "-smt2"]
+            {
+                let output = self.query_z3(command, &smt).into_result();
+                SolverCommandRun { output, summaries: Vec::new() }
+            } else {
+                run_solver_commands(
+                    cx,
+                    &commands,
+                    &smt,
+                    self.timeout,
+                    model.then_some(model_constraints),
+                )
+            };
+            (result, started.elapsed(), None)
         };
-        let query_time = started.elapsed();
         self.solver_time += query_time;
         self.smt_max_query_time = self.smt_max_query_time.max(query_time);
+        if let Some(pending_trace) = pending_trace {
+            if let Some(bundle) = captured_bundle {
+                let encoded = pending_trace.encode(&result.output, query_time)?;
+                self.fresh_z3_capture
+                    .as_mut()
+                    .ok_or_else(|| {
+                        SymbolicError::Solver(
+                            "fresh Z3 capture is unexpectedly disabled".to_string(),
+                        )
+                    })?
+                    .commit(bundle, encoded)?;
+            } else {
+                pending_trace.write(&result.output, query_time)?;
+            }
+        }
         self.portfolio_scheduler.record(&ordered_commands, &result.summaries);
         if self.dump_smt {
             self.portfolio_diagnostics.record(&result.summaries);
@@ -852,12 +1131,29 @@ impl SmtLibSubprocessSolver {
                 self.z3_session = Some(session);
                 output
             }
-            SolverProcessOutcome::Error(_) => {
+            SolverProcessOutcome::Error(error) => {
                 drop(session);
-                run_solver_process(command, smt, self.timeout, &AtomicBool::new(false))
+                resolve_fresh_retry_after_persistent_error(
+                    error,
+                    run_solver_process(command, smt, self.timeout, &AtomicBool::new(false)),
+                )
             }
             other => other,
         }
+    }
+}
+
+/// A fresh process is an independent query attempt, so its semantic outcome is authoritative.
+/// Preserve both transport diagnostics only when the retry itself also fails.
+fn resolve_fresh_retry_after_persistent_error(
+    persistent_error: String,
+    retry: SolverProcessOutcome,
+) -> SolverProcessOutcome {
+    match retry {
+        SolverProcessOutcome::Error(retry_error) => SolverProcessOutcome::Error(format!(
+            "{persistent_error}; fresh solver retry failed: {retry_error}"
+        )),
+        outcome => outcome,
     }
 }
 
@@ -1137,7 +1433,18 @@ pub(crate) fn solver_commands_for_config(
         return portfolio.into_iter().map(solver_command_for_portfolio_entry).collect();
     }
 
+    if config.solver == "native" {
+        return Ok(Vec::new());
+    }
+
     Ok(vec![named_solver_command(&config.solver)?])
+}
+
+/// Returns whether config selects the in-process solver without an external fallback.
+fn config_uses_native_only_solver(config: &SymbolicConfig) -> bool {
+    config.solver == "native"
+        && config.solver_command.as_deref().is_none_or(str::is_empty)
+        && config.solver_portfolio.iter().all(|entry| entry.trim().is_empty())
 }
 
 /// Returns a warning when a configured portfolio will run with unavailable solver entries.
@@ -1174,6 +1481,7 @@ pub(crate) fn solver_portfolio_availability_warning(config: &SymbolicConfig) -> 
 /// Returns the default command for a known solver name.
 pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, SolverConfigError> {
     let (parts, smt_timeout) = match solver {
+        "native" => return Err(SolverConfigError::NativeIsNotSubprocess),
         "z3" => (vec!["z3", "-in", "-smt2"], true),
         "yices" => (vec!["yices-smt2", "--bvconst-in-decimal"], false),
         "cvc5" => (
@@ -1211,6 +1519,9 @@ pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, Solver
 pub(crate) fn solver_command_for_portfolio_entry(
     entry: &str,
 ) -> Result<SolverCommand, SolverConfigError> {
+    if entry == "native" {
+        return Err(SolverConfigError::NativeIsNotSubprocess);
+    }
     if entry.chars().any(|ch| ch.is_whitespace() || matches!(ch, '"' | '\'' | '\\')) {
         SolverCommand::new(split_solver_command(entry)?, false)
     } else {
@@ -2163,4 +2474,129 @@ fn z3_session_resets_and_reuses_the_process() {
     let pid = solver.z3_session.as_mut().unwrap().child.child_mut().id();
     assert_eq!(solver.query_normalized(&cx, &constraints, false, &constraints).unwrap(), "sat\n");
     assert_eq!(solver.z3_session.as_mut().unwrap().child.child_mut().id(), pid);
+}
+
+#[cfg(unix)]
+#[test]
+fn fresh_z3_capture_is_authoritative_and_does_not_create_a_session() {
+    let directory = std::env::temp_dir().join(format!(
+        "foundry-fresh-z3-capture-integration-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let program = directory.join("z3");
+    let invocations = directory.join("invocations");
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nprintf x >> \"{}\"\ncat >/dev/null\nprintf 'sat\\n(model\\n  (define-fun value () (_ BitVec 256) (_ bv1 256))\\n)\\n'\n",
+            invocations.display()
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&program).unwrap().permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&program, permissions).unwrap();
+    let command = SolverCommand::new(
+        vec![program.display().to_string(), "-in".to_string(), "-smt2".to_string()],
+        true,
+    )
+    .unwrap();
+    let capture_directory = directory.join("captures");
+    let mut solver = SmtLibSubprocessSolver::new(Ok(vec![command]), Some(2), 2, false);
+    solver.fresh_z3_capture = Some(FreshZ3Capture::for_test(
+        capture_directory.clone(),
+        1024 * 1024,
+        1024 * 1024,
+        1024 * 1024,
+    ));
+    let mut cx = SymCx::new();
+    let value = SymExpr::var(&mut cx, "value");
+    let one = SymExpr::one(&mut cx);
+    let constraints = vec![SymBoolExpr::eq(&mut cx, value, one)];
+
+    assert_eq!(
+        solver.query_normalized(&cx, &constraints, true, &constraints).unwrap(),
+        "sat\n(model\n  (define-fun value () (_ BitVec 256) (_ bv1 256))\n)\n"
+    );
+    assert!(solver.z3_session.is_none());
+    assert_eq!(std::fs::read(&invocations).unwrap(), b"x");
+    let mut occurrences = std::fs::read_dir(&capture_directory)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir());
+    let occurrence = occurrences.next().unwrap();
+    assert!(occurrences.next().is_none());
+    let trace: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(occurrence.join("query.json")).unwrap()).unwrap();
+    assert_eq!(trace["schema"], "foundry:symbolic-query-dag@v1");
+    assert_eq!(trace["schema_version"], 1);
+    assert_eq!(trace["request"], "model");
+    assert_eq!(trace["baseline"]["outcome"], "sat");
+    assert_eq!(
+        std::fs::read(occurrence.join("stdin.smt2")).unwrap(),
+        "(set-logic QF_BV)\n(set-option :timeout 2000)\n(declare-fun value () (_ BitVec 256))\n(assert (= value (_ bv1 256)))\n(check-sat)\n(get-model)\n".as_bytes()
+    );
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[cfg(test)]
+#[test]
+fn fresh_unknown_retry_is_authoritative() {
+    let SolverProcessOutcome::Output(output) = resolve_fresh_retry_after_persistent_error(
+        "persistent solver crashed".to_string(),
+        SolverProcessOutcome::Output("unknown\n".to_string()),
+    ) else {
+        panic!("fresh solver output must remain authoritative")
+    };
+    assert_eq!(output, "unknown\n");
+
+    assert!(matches!(
+        resolve_fresh_retry_after_persistent_error(
+            "persistent solver crashed".to_string(),
+            SolverProcessOutcome::Unknown,
+        ),
+        SolverProcessOutcome::Unknown
+    ));
+}
+
+#[cfg(test)]
+#[test]
+fn fresh_cancelled_retry_is_authoritative() {
+    assert!(matches!(
+        resolve_fresh_retry_after_persistent_error(
+            "persistent solver crashed".to_string(),
+            SolverProcessOutcome::Cancelled,
+        ),
+        SolverProcessOutcome::Cancelled
+    ));
+}
+
+#[cfg(test)]
+#[test]
+fn repeated_solver_error_preserves_both_failures() {
+    let SolverProcessOutcome::Error(error) = resolve_fresh_retry_after_persistent_error(
+        "persistent solver crashed".to_string(),
+        SolverProcessOutcome::Error("retry crashed".to_string()),
+    ) else {
+        panic!("a second solver process failure must remain an error")
+    };
+    assert!(error.contains("persistent solver crashed"));
+    assert!(error.contains("retry crashed"));
+}
+
+#[cfg(test)]
+#[test]
+fn decisive_retry_recovers_from_persistent_solver_error() {
+    for response in ["sat\n", "unsat\n"] {
+        let SolverProcessOutcome::Output(output) = resolve_fresh_retry_after_persistent_error(
+            "persistent solver crashed".to_string(),
+            SolverProcessOutcome::Output(response.to_string()),
+        ) else {
+            panic!("decisive fresh-process response must recover the query")
+        };
+        assert_eq!(output, response);
+    }
 }

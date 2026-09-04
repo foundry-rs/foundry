@@ -307,6 +307,14 @@ mod tests {
         include_str!("../../evm/symbolic/assets/symbolic-result.schema.json");
     const SYMBOLIC_COUNTEREXAMPLE_SCHEMA_JSON: &str =
         include_str!("../../evm/symbolic/assets/symbolic-counterexample.schema.json");
+    const NATIVE_SOLVER_STAT_KEYS: [&str; 6] = [
+        "native_queries",
+        "native_sat_queries",
+        "native_unsat_queries",
+        "native_unknown_queries",
+        "native_solver_time_ns",
+        "native_max_query_time_ns",
+    ];
 
     fn schema_defs(schema: &serde_json::Value) -> &serde_json::Map<String, serde_json::Value> {
         schema["$defs"].as_object().expect("schema $defs object")
@@ -358,12 +366,15 @@ mod tests {
     }
 
     #[test]
-    fn symbolic_result_schema_includes_solver_stats() {
+    fn symbolic_result_schema_preserves_v1_solver_shape() {
         let schema: serde_json::Value = serde_json::from_str(SYMBOLIC_RESULT_SCHEMA_JSON).unwrap();
+        let solver =
+            schema["$defs"]["solver"]["properties"].as_object().expect("solver properties");
         let stats = schema["$defs"]["solver_stats"]["properties"]
             .as_object()
             .expect("solver stats properties");
 
+        assert!(!solver.contains_key("native_frontend"));
         for key in [
             "paths",
             "solver_queries",
@@ -380,6 +391,9 @@ mod tests {
             "smt_max_query_time_ms",
         ] {
             assert!(stats.contains_key(key), "missing solver stats schema key {key}");
+        }
+        for key in NATIVE_SOLVER_STAT_KEYS {
+            assert!(!stats.contains_key(key), "native stat {key} changed the v1 schema");
         }
     }
 
@@ -526,6 +540,12 @@ mod tests {
             paths: 0,
             solver_queries: 0,
             smt_queries: 0,
+            native_queries: 0,
+            native_sat_queries: 0,
+            native_unsat_queries: 0,
+            native_unknown_queries: 0,
+            native_solver_time_ns: 0,
+            native_max_query_time_ns: 0,
             sat_queries: 0,
             model_queries: 0,
             sat_cache_hits: 0,
@@ -539,6 +559,82 @@ mod tests {
         })]);
 
         assert!(!outcome.failed_tests_are_debuggable());
+    }
+
+    #[test]
+    fn symbolic_result_reports_native_solver_stats_without_changing_v1_json() {
+        let stats = SymbolicStats {
+            paths: 2,
+            solver_queries: 7,
+            smt_queries: 3,
+            native_queries: 5,
+            native_sat_queries: 2,
+            native_unsat_queries: 1,
+            native_unknown_queries: 2,
+            native_solver_time_ns: 101,
+            native_max_query_time_ns: 61,
+            sat_queries: 4,
+            model_queries: 3,
+            sat_cache_hits: 1,
+            model_cache_hits: 2,
+            heuristic_witnesses: 0,
+            solver_time_ms: 13,
+            smt_input_bytes: 1_024,
+            smt_max_query_bytes: 512,
+            smt_build_time_ms: 1,
+            smt_max_query_time_ms: 11,
+        };
+        let symbolic = SymbolicResult::pass(&SymbolicConfig::default(), stats);
+        let mut result = TestResult::default();
+        result.symbolic_result(TestStatus::Success, None, None, symbolic);
+
+        assert_eq!(
+            result.kind.report().to_string(),
+            "(paths: 2, queries: 7, native: 5 (2 sat, 1 unsat, 2 unhandled, 101ns), smt: 3, sat: 4 (1 cached), models: 3 (2 cached), hard-arith: 0, solver: 13ms)"
+        );
+        let encoded_symbolic = serde_json::to_value(result.symbolic.as_ref().unwrap()).unwrap();
+        assert!(encoded_symbolic["solver"].get("native_frontend").is_none());
+        let encoded_solver_stats = &encoded_symbolic["solver"]["stats"];
+        let encoded_kind = serde_json::to_value(&result.kind).unwrap();
+        let encoded_kind_stats = &encoded_kind["Symbolic"];
+        let encoded_engine_stats = serde_json::to_value(stats).unwrap();
+        for key in NATIVE_SOLVER_STAT_KEYS {
+            assert!(encoded_solver_stats.get(key).is_none(), "native stat {key} changed v1 JSON");
+            assert!(encoded_kind_stats.get(key).is_none(), "native stat {key} changed legacy JSON");
+            assert!(
+                encoded_engine_stats.get(key).is_none(),
+                "native stat {key} changed serialized engine stats"
+            );
+        }
+    }
+
+    #[test]
+    fn symbolic_solver_metadata_round_trips_v1_shape() {
+        let encoded = serde_json::json!({
+            "name": "z3",
+            "command": null,
+            "portfolio": [],
+            "stats": {
+                "paths": 2,
+                "solver_queries": 7,
+                "smt_queries": 3,
+                "sat_queries": 4,
+                "model_queries": 3,
+                "sat_cache_hits": 1,
+                "model_cache_hits": 2,
+                "heuristic_witnesses": 0,
+                "solver_time_ms": 13,
+                "smt_input_bytes": 1024,
+                "smt_max_query_bytes": 512,
+                "smt_build_time_ms": 1,
+                "smt_max_query_time_ms": 11
+            }
+        });
+
+        let metadata: SymbolicSolverMetadata = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(metadata.stats.native_queries, 0);
+        assert_eq!(metadata.stats.native_solver_time_ns, 0);
+        assert_eq!(serde_json::to_value(metadata).unwrap(), encoded);
     }
 
     #[test]
@@ -1434,6 +1530,30 @@ pub struct SymbolicSolverStats {
     pub solver_queries: usize,
     /// Number of queries sent to the SMT backend after local fast paths.
     pub smt_queries: usize,
+    /// Number of queries attempted by the native solver after existing local fast paths.
+    ///
+    /// Native metrics remain internal until a later versioned result schema exposes them.
+    #[serde(skip)]
+    pub native_queries: usize,
+    /// Number of native queries answered with an evaluator-validated model.
+    #[serde(skip)]
+    pub native_sat_queries: usize,
+    /// Number of native queries answered by an exact contradiction proof.
+    #[serde(skip)]
+    pub native_unsat_queries: usize,
+    /// Number of queries the native solver did not decide.
+    ///
+    /// These normally reach the configured SMT backend, but may instead become an explicit
+    /// incomplete result when an executor heuristic deliberately defers a hard query. Executed
+    /// SMT queries are counted separately in [`Self::smt_queries`].
+    #[serde(skip)]
+    pub native_unknown_queries: usize,
+    /// Total wall-clock time spent in the native solver, in nanoseconds.
+    #[serde(skip)]
+    pub native_solver_time_ns: u64,
+    /// Longest single native solver query, in nanoseconds.
+    #[serde(skip)]
+    pub native_max_query_time_ns: u64,
     /// Number of satisfiability checks requested by the executor.
     pub sat_queries: usize,
     /// Number of concrete model requests requested by the executor.
@@ -1466,6 +1586,12 @@ impl From<SymbolicStats> for SymbolicSolverStats {
             paths: stats.paths,
             solver_queries: stats.solver_queries,
             smt_queries: stats.smt_queries,
+            native_queries: stats.native_queries,
+            native_sat_queries: stats.native_sat_queries,
+            native_unsat_queries: stats.native_unsat_queries,
+            native_unknown_queries: stats.native_unknown_queries,
+            native_solver_time_ns: stats.native_solver_time_ns,
+            native_max_query_time_ns: stats.native_max_query_time_ns,
             sat_queries: stats.sat_queries,
             model_queries: stats.model_queries,
             sat_cache_hits: stats.sat_cache_hits,
@@ -2589,6 +2715,12 @@ impl TestResult {
             paths: stats.paths,
             solver_queries: stats.solver_queries,
             smt_queries: stats.smt_queries,
+            native_queries: stats.native_queries,
+            native_sat_queries: stats.native_sat_queries,
+            native_unsat_queries: stats.native_unsat_queries,
+            native_unknown_queries: stats.native_unknown_queries,
+            native_solver_time_ns: stats.native_solver_time_ns,
+            native_max_query_time_ns: stats.native_max_query_time_ns,
             sat_queries: stats.sat_queries,
             model_queries: stats.model_queries,
             sat_cache_hits: stats.sat_cache_hits,
@@ -2755,6 +2887,12 @@ pub enum TestKindReport {
         paths: usize,
         solver_queries: usize,
         smt_queries: usize,
+        native_queries: usize,
+        native_sat_queries: usize,
+        native_unsat_queries: usize,
+        native_unknown_queries: usize,
+        native_solver_time_ns: u64,
+        native_max_query_time_ns: u64,
         sat_queries: usize,
         model_queries: usize,
         sat_cache_hits: usize,
@@ -2817,6 +2955,12 @@ impl fmt::Display for TestKindReport {
                 paths,
                 solver_queries,
                 smt_queries,
+                native_queries,
+                native_sat_queries,
+                native_unsat_queries,
+                native_unknown_queries,
+                native_solver_time_ns,
+                native_max_query_time_ns: _,
                 sat_queries,
                 model_queries,
                 sat_cache_hits,
@@ -2830,7 +2974,7 @@ impl fmt::Display for TestKindReport {
             } => {
                 write!(
                     f,
-                    "(paths: {paths}, queries: {solver_queries}, smt: {smt_queries}, sat: {sat_queries} ({sat_cache_hits} cached), models: {model_queries} ({model_cache_hits} cached), hard-arith: {heuristic_witnesses}, solver: {solver_time_ms}ms)"
+                    "(paths: {paths}, queries: {solver_queries}, native: {native_queries} ({native_sat_queries} sat, {native_unsat_queries} unsat, {native_unknown_queries} unhandled, {native_solver_time_ns}ns), smt: {smt_queries}, sat: {sat_queries} ({sat_cache_hits} cached), models: {model_queries} ({model_cache_hits} cached), hard-arith: {heuristic_witnesses}, solver: {solver_time_ms}ms)"
                 )
             }
             Self::Replay { corpus_entries, showmap_files, skipped_entries } => {
@@ -2895,6 +3039,18 @@ pub enum TestKind {
         solver_queries: usize,
         #[serde(default)]
         smt_queries: usize,
+        #[serde(skip)]
+        native_queries: usize,
+        #[serde(skip)]
+        native_sat_queries: usize,
+        #[serde(skip)]
+        native_unsat_queries: usize,
+        #[serde(skip)]
+        native_unknown_queries: usize,
+        #[serde(skip)]
+        native_solver_time_ns: u64,
+        #[serde(skip)]
+        native_max_query_time_ns: u64,
         #[serde(default)]
         sat_queries: usize,
         #[serde(default)]
@@ -2985,6 +3141,12 @@ impl TestKind {
                 paths,
                 solver_queries,
                 smt_queries,
+                native_queries,
+                native_sat_queries,
+                native_unsat_queries,
+                native_unknown_queries,
+                native_solver_time_ns,
+                native_max_query_time_ns,
                 sat_queries,
                 model_queries,
                 sat_cache_hits,
@@ -2999,6 +3161,12 @@ impl TestKind {
                 paths: *paths,
                 solver_queries: *solver_queries,
                 smt_queries: *smt_queries,
+                native_queries: *native_queries,
+                native_sat_queries: *native_sat_queries,
+                native_unsat_queries: *native_unsat_queries,
+                native_unknown_queries: *native_unknown_queries,
+                native_solver_time_ns: *native_solver_time_ns,
+                native_max_query_time_ns: *native_max_query_time_ns,
                 sat_queries: *sat_queries,
                 model_queries: *model_queries,
                 sat_cache_hits: *sat_cache_hits,
