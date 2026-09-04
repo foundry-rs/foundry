@@ -455,18 +455,18 @@ fn rewrite_homepage_links(
             }
         }
         let target = &rest[..i];
+        if !closed {
+            out.push_str(target);
+            rest = &rest[i..];
+            break;
+        }
         match try_rewrite_target(target, base_dir, root, src_to_url, repo, commit) {
             Some(new) => out.push_str(&new),
             None => out.push_str(target),
         }
-        if closed {
-            out.push(')');
-            rest = &rest[i + 1..];
-            consumed += i + 1;
-        } else {
-            rest = &rest[i..];
-            break;
-        }
+        out.push(')');
+        rest = &rest[i + 1..];
+        consumed += i + 1;
     }
     out.push_str(rest);
     out
@@ -741,7 +741,14 @@ A lone ` backtick is not a code span: [Logo](https://github.com/x/y/raw/abc123/i
         let map = SourceToUrl::new();
         let root = Path::new("/repo");
         let input = "See [Foo](abc\\";
-        let out = rewrite_homepage_links(input, root, root, &map, None, None);
+        let out = rewrite_homepage_links(
+            input,
+            root,
+            root,
+            &map,
+            Some("https://github.com/x/y"),
+            Some("abc123"),
+        );
         assert_eq!(out, input, "unclosed target should be left untouched, not panic");
     }
 }
