@@ -2006,12 +2006,22 @@ impl<'ast> State<'_, 'ast> {
     /// Prints the given statement in the source code, handling formatting, inline documentation,
     /// trailing comments and layout logic for various statement kinds.
     fn print_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) {
+        self.print_stmt_bound(stmt, None);
+    }
+
+    /// Like [`Self::print_stmt`], but bounds the statement's own trailing-comment scan by
+    /// `next_pos` instead of scanning unbounded. Every caller other than a `for`-loop's init
+    /// clause prints one statement per line, where an unbounded scan is harmless because
+    /// nothing else follows on that line. A `for`-loop's init clause is different: it shares
+    /// its source line with the condition/increment clauses that get printed afterwards, so an
+    /// unbounded scan can swallow those clauses into the comment (see `print_for_stmt`).
+    fn print_stmt_bound(&mut self, stmt: &'ast ast::Stmt<'ast>, next_pos: Option<BytePos>) {
         let ast::Stmt { ref docs, span, ref kind } = *stmt;
         self.print_docs(docs);
 
         // Handle disabled statements.
         if self.handle_span(span, false) {
-            self.print_trailing_comment_no_break(stmt.span.hi(), None);
+            self.print_trailing_comment_no_break(stmt.span.hi(), next_pos);
             return;
         }
 
@@ -2080,7 +2090,7 @@ impl<'ast> State<'_, 'ast> {
             stmt.span.hi(),
             CommentConfig::default().trailing_no_break().mixed_no_break().mixed_prev_space(),
         );
-        self.print_trailing_comment_no_break(stmt.span.hi(), None);
+        self.print_trailing_comment_no_break(stmt.span.hi(), next_pos);
     }
 
     /// Prints an `assembly` statement, including optional dialect and flags,
@@ -2180,7 +2190,20 @@ impl<'ast> State<'_, 'ast> {
         // Print init.
         self.s.cbox(0);
         match init {
-            Some(init_stmt) => self.print_stmt(init_stmt),
+            Some(init_stmt) => {
+                // Suppress the init clause's own trailing-comment scan entirely (bound the
+                // window to the clause's own end, so nothing after it can ever qualify as
+                // "trailing"). A `for`-loop header shares one source line across init,
+                // condition, and increment, so ANY comment printed with `trailing_no_break`
+                // partway through the header - not just one placed after the whole header -
+                // would swallow whatever gets printed next into itself (see
+                // `print_stmt_bound`'s doc comment). Leaving the comment unconsumed here means
+                // it stays in the comment stream and gets picked up correctly by the
+                // `print_comments(body.span.lo(), ..)` flush below, which runs after the full
+                // header (init, condition, increment, closing paren and brace) has already been
+                // printed - safe regardless of which part of the header the comment followed.
+                self.print_stmt_bound(init_stmt, Some(init_stmt.span.hi()));
+            }
             None => self.print_word(";"),
         }
 
