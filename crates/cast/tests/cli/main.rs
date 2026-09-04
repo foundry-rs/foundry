@@ -38,6 +38,7 @@ use tempo_primitives::{
 extern crate foundry_test_utils;
 
 mod erc20;
+mod erc4626;
 mod keychain;
 mod read_networks;
 mod remote_trace;

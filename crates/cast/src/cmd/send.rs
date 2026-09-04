@@ -27,7 +27,7 @@ use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 use crate::{
     cmd::{auth::confirm_auth_rpc_disclosure_during_build, tip20::iso4217_warning_message},
     tempo,
-    tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
+    tx::{self, CastTxBuilder, CastTxSender, SendTxOpts, TxParams},
 };
 use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 
@@ -104,6 +104,28 @@ pub enum SendTxSubcommands {
 }
 
 impl SendTxArgs {
+    /// Creates a `cast send` invocation for pre-encoded contract calldata.
+    pub(crate) fn contract_call(
+        to: NameOrAddress,
+        data: String,
+        send_tx: SendTxOpts,
+        tx: TxParams,
+    ) -> Self {
+        Self {
+            to: Some(to),
+            sig: None,
+            args: Vec::new(),
+            data: Some(data),
+            send_tx,
+            command: None,
+            unlocked: false,
+            force: false,
+            gas_estimate_multiplier: None,
+            tx: tx.into_transaction_opts(),
+            path: None,
+        }
+    }
+
     pub async fn run(self) -> Result<()> {
         if self.tx.tempo.session_id()?.is_some() {
             return self.run_generic::<TempoNetwork>(None, None).await;
