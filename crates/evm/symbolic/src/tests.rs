@@ -4781,6 +4781,41 @@ fn gasleft_fails_at_smt_emission() {
     let _ = std::fs::remove_file(&marker);
 }
 
+#[test]
+fn bytes_contains_gasleft_inspects_only_observable_range() {
+    let mut cx = SymCx::new();
+    let gas = SymExpr::gas_left(&mut cx, 0);
+    let mask = SymExpr::constant(&mut cx, U256::from(0xff));
+    let low_byte_gas = SymExpr::binop(&mut cx, SymBinOp::And, gas.clone(), mask);
+    let word = SymBytes::word(&mut cx, low_byte_gas);
+    assert!(word.contains_gasleft(&mut cx));
+
+    // The 31 high bytes are provably zero, so slicing them out is gas independent.
+    let high_bytes = word.slice_concrete(&mut cx, 0, 31);
+    assert!(!high_bytes.contains_gasleft(&mut cx));
+    let low_byte = word.slice_concrete(&mut cx, 31, 1);
+    assert!(low_byte.contains_gasleft(&mut cx));
+
+    // A gas-dependent slice offset taints even gas-independent source bytes.
+    let source = SymBytes::concrete(&mut cx, vec![1, 2, 3, 4]);
+    let gas_slice = SymBytes::slice(&mut cx, source, gas.clone(), 2);
+    assert!(gas_slice.contains_gasleft(&mut cx));
+
+    // Bytes beyond `max_size` can never reach the consumer.
+    let zeros = SymBytes::concrete(&mut cx, vec![0; 32]);
+    let gas_word = SymBytes::word(&mut cx, gas.clone());
+    let source = SymBytes::concat(&mut cx, [zeros, gas_word]);
+    let size = SymExpr::var(&mut cx, "size");
+    let sized = SymBytes::sized(&mut cx, source.clone(), size, 32);
+    assert!(!sized.contains_gasleft(&mut cx));
+    // A gas-dependent size taints even when every observable byte is zero.
+    let sized = SymBytes::sized(&mut cx, source.clone(), gas, 32);
+    assert!(sized.contains_gasleft(&mut cx));
+    let size = SymExpr::var(&mut cx, "size");
+    let sized = SymBytes::sized(&mut cx, source, size, 64);
+    assert!(sized.contains_gasleft(&mut cx));
+}
+
 #[cfg(unix)]
 #[test]
 fn gasleft_model_fails_closed() {
