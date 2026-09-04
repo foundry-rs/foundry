@@ -27,169 +27,97 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
         _hir: &'hir hir::Hir<'hir>,
         expr: &'hir hir::Expr<'hir>,
     ) {
-        // Check for type cast expressions: Type(value)
         if let ExprKind::Call(call, args, _) = &expr.kind
-            && let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) = &call.kind
+            && let Some(ty) = cast_type(call)
             && args.len() == 1
-            && let Some(call_arg) = args.exprs().next()
-            && is_unsafe_typecast_hir(gcx, call_arg, ty)
+            && let Some(arg) = args.exprs().next()
+            && !is_bounded_by_mask(arg, ty)
         {
-            ctx.emit_with_suggestion(
-                &UNSAFE_TYPECAST,
-                expr.span,
-                Suggestion::example(
-                    format!(
-                        "// casting to '{abi_ty}' is safe because [explain why]\n// forge-lint: disable-next-line(unsafe-typecast)",
-                        abi_ty = ty.to_abi_str()
-            )).with_desc("consider disabling this lint if you're certain the cast is safe"));
-        }
-    }
-}
-
-/// Determines if a typecast is potentially unsafe (could lose data or precision).
-fn is_unsafe_typecast_hir<'hir>(
-    gcx: Gcx<'hir>,
-    source_expr: &hir::Expr<'hir>,
-    target_type: &hir::ElementaryType,
-) -> bool {
-    if is_bounded_by_mask(source_expr, target_type) {
-        return false;
-    }
-
-    let mut source_types = Vec::<ElementaryType>::new();
-    infer_source_types(Some(&mut source_types), gcx, source_expr);
-
-    if source_types.is_empty() {
-        return false;
-    };
-
-    source_types.iter().any(|source_ty| is_unsafe_elementary_typecast(source_ty, target_type))
-}
-
-/// Returns whether a bitmask bounds an unsigned integer expression to the target type's range.
-fn is_bounded_by_mask(source_expr: &hir::Expr<'_>, target_type: &ElementaryType) -> bool {
-    let ElementaryType::UInt(target_size) = target_type else { return false };
-    let ExprKind::Binary(lhs, op, rhs) = &source_expr.peel_parens().kind else { return false };
-    if op.kind != BinOpKind::BitAnd {
-        return false;
-    }
-
-    [lhs, rhs].into_iter().any(|expr| {
-        matches!(
-            expr.peel_parens().kind,
-            ExprKind::Lit(hir::Lit { kind: LitKind::Number(mask), .. })
-                if mask.bit_len() <= target_size.bits() as usize
-        )
-    })
-}
-
-/// Infers the elementary source type(s) of an expression.
-///
-/// This function traverses an expression tree to find the original "source" types.
-/// For cast chains, it returns the ultimate source type, not intermediate cast results.
-/// For binary operations, it collects types from both sides into the `output` vector.
-///
-/// # Returns
-/// An `Option<ElementaryType>` containing the inferred type of the expression if it can be
-/// resolved to a single source (like variables, literals, or unary expressions).
-/// Returns `None` for expressions complex expressions (like binary operations).
-fn infer_source_types<'hir>(
-    mut output: Option<&mut Vec<ElementaryType>>,
-    gcx: Gcx<'hir>,
-    expr: &hir::Expr<'hir>,
-) -> Option<ElementaryType> {
-    let mut track = |ty: ElementaryType| -> Option<ElementaryType> {
-        if let Some(output) = output.as_mut() {
-            output.push(ty);
-        }
-        Some(ty)
-    };
-
-    match &expr.kind {
-        // A type cast call: `Type(val)`
-        ExprKind::Call(call_expr, args, ..) => {
-            // Check if the called expression is a type, which indicates a cast.
-            if let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(..), .. }) =
-                &call_expr.kind
-                && let Some(inner) = args.exprs().next()
-            {
-                // Recurse to find the original (inner-most) source type.
-                return infer_source_types(output, gcx, inner);
+            let mut sources = Vec::new();
+            source_types(gcx, arg, &mut sources);
+            if sources.iter().any(|source| is_unsafe_elementary_typecast(*source, ty)) {
+                ctx.emit_with_suggestion(
+                    &UNSAFE_TYPECAST,
+                    expr.span,
+                    Suggestion::example(format!(
+                        "// casting to '{}' is safe because [explain why]\n// forge-lint: disable-next-line(unsafe-typecast)",
+                        ty.to_abi_str()
+                    ))
+                    .with_desc("consider disabling this lint if you're certain the cast is safe"),
+                );
             }
-            expr_elementary_type(gcx, expr).and_then(track)
         }
-
-        // Handle string literals explicitly; Solar records them as literal types rather than
-        // elementary `string`/`bytes`.
-        ExprKind::Lit(hir::Lit { kind, .. }) => match kind {
-            LitKind::Str(StrKind::Hex, ..) => track(ElementaryType::Bytes),
-            LitKind::Str(..) => track(ElementaryType::String),
-            _ => expr_elementary_type(gcx, expr).and_then(track),
-        },
-
-        // Identifiers and other simple typed expressions.
-        ExprKind::Ident(_) => expr_elementary_type(gcx, expr).and_then(track),
-
-        // Unary operations: Recurse to find the source type of the inner expression.
-        ExprKind::Unary(_, inner_expr) => infer_source_types(output, gcx, inner_expr),
-
-        // Binary operations
-        ExprKind::Binary(lhs, _, rhs) => {
-            if let Some(mut output) = output {
-                // Recurse on both sides to find and collect all source types.
-                infer_source_types(Some(&mut output), gcx, lhs);
-                infer_source_types(Some(&mut output), gcx, rhs);
-            }
-            None
-        }
-
-        _ => expr_elementary_type(gcx, expr).and_then(track),
     }
 }
 
-fn expr_elementary_type<'hir>(gcx: Gcx<'hir>, expr: &hir::Expr<'hir>) -> Option<ElementaryType> {
-    match gcx.type_of_expr(expr.peel_parens().id)?.peel_refs().kind {
-        TyKind::Elementary(ty) => Some(ty),
-        TyKind::StringLiteral(true, _) => Some(ElementaryType::String),
-        TyKind::StringLiteral(false, _) => Some(ElementaryType::Bytes),
+/// The elementary type `callee` casts to, if it is a `Type(value)` cast head.
+const fn cast_type(callee: &hir::Expr<'_>) -> Option<ElementaryType> {
+    match &callee.kind {
+        ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) => Some(*ty),
         _ => None,
     }
 }
 
-/// Checks if a type cast from source_type to target_type is unsafe.
-const fn is_unsafe_elementary_typecast(
-    source_type: &ElementaryType,
-    target_type: &ElementaryType,
-) -> bool {
-    match (source_type, target_type) {
-        // Numeric downcasts (smaller target size)
-        (ElementaryType::UInt(source_size), ElementaryType::UInt(target_size))
-        | (ElementaryType::Int(source_size), ElementaryType::Int(target_size)) => {
-            source_size.bits() > target_size.bits()
-        }
+/// `x & MASK` where the mask literal fits the unsigned target bounds the value to its range.
+fn is_bounded_by_mask(source: &hir::Expr<'_>, target: ElementaryType) -> bool {
+    let ElementaryType::UInt(target_size) = target else { return false };
+    let ExprKind::Binary(lhs, op, rhs) = &source.peel_parens().kind else { return false };
+    op.kind == BinOpKind::BitAnd
+        && [lhs, rhs].into_iter().any(|expr| {
+            matches!(
+                expr.peel_parens().kind,
+                ExprKind::Lit(hir::Lit { kind: LitKind::Number(mask), .. })
+                    if mask.bit_len() <= target_size.bits() as usize
+            )
+        })
+}
 
-        // Signed to unsigned conversion (potential loss of sign)
+/// Collects the ultimate elementary source type(s) of `expr` into `out`, looking through cast
+/// chains and unary operators and gathering both sides of binary operations.
+fn source_types<'hir>(gcx: Gcx<'hir>, expr: &hir::Expr<'hir>, out: &mut Vec<ElementaryType>) {
+    match &expr.kind {
+        ExprKind::Call(callee, args, _) if cast_type(callee).is_some() => {
+            if let Some(inner) = args.exprs().next() {
+                source_types(gcx, inner, out);
+            }
+        }
+        // Solar types string literals as literal types rather than `string`/`bytes`.
+        ExprKind::Lit(hir::Lit { kind: LitKind::Str(StrKind::Hex, ..), .. }) => {
+            out.push(ElementaryType::Bytes)
+        }
+        ExprKind::Lit(hir::Lit { kind: LitKind::Str(..), .. }) => out.push(ElementaryType::String),
+        ExprKind::Unary(_, inner) => source_types(gcx, inner, out),
+        ExprKind::Binary(lhs, _, rhs) => {
+            source_types(gcx, lhs, out);
+            source_types(gcx, rhs, out);
+        }
+        _ => {
+            if let Some(ty) = gcx.type_of_expr(expr.peel_parens().id) {
+                match ty.peel_refs().kind {
+                    TyKind::Elementary(ty) => out.push(ty),
+                    TyKind::StringLiteral(true, _) => out.push(ElementaryType::String),
+                    TyKind::StringLiteral(false, _) => out.push(ElementaryType::Bytes),
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// Whether casting `source` to `target` can lose data, precision or sign.
+const fn is_unsafe_elementary_typecast(source: ElementaryType, target: ElementaryType) -> bool {
+    match (source, target) {
+        (ElementaryType::UInt(from), ElementaryType::UInt(to))
+        | (ElementaryType::Int(from), ElementaryType::Int(to)) => from.bits() > to.bits(),
         (ElementaryType::Int(_), ElementaryType::UInt(_)) => true,
-
-        // Unsigned to signed conversion with same or smaller size
-        (ElementaryType::UInt(source_size), ElementaryType::Int(target_size)) => {
-            source_size.bits() >= target_size.bits()
+        (ElementaryType::UInt(from), ElementaryType::Int(to)) => from.bits() >= to.bits(),
+        (ElementaryType::FixedBytes(from), ElementaryType::FixedBytes(to)) => {
+            from.bytes() > to.bytes()
         }
-
-        // Fixed bytes to smaller fixed bytes
-        (ElementaryType::FixedBytes(source_size), ElementaryType::FixedBytes(target_size)) => {
-            source_size.bytes() > target_size.bytes()
-        }
-
-        // Dynamic bytes to fixed bytes (potential truncation)
         (ElementaryType::Bytes | ElementaryType::String, ElementaryType::FixedBytes(_)) => true,
-
-        // Address to smaller uint (truncation) - address is 160 bits
-        (ElementaryType::Address(_), ElementaryType::UInt(target_size)) => target_size.bits() < 160,
-
-        // Address to int (sign issues)
+        // `address` is 160 bits.
+        (ElementaryType::Address(_), ElementaryType::UInt(to)) => to.bits() < 160,
         (ElementaryType::Address(_), ElementaryType::Int(_)) => true,
-
         _ => false,
     }
 }
