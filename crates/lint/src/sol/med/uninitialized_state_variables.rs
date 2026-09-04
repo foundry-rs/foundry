@@ -10,7 +10,7 @@ use solar::{
         Hir,
         hir::{
             Block, CallArgs, CallArgsKind, ContractId, DataLocation, Expr, ExprKind, Function,
-            ItemId, LoopSource, Res, Stmt, StmtKind, TypeKind, VariableId, Visit,
+            ItemId, Res, Stmt, StmtKind, TypeKind, VariableId, Visit,
         },
     },
 };
@@ -78,12 +78,12 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
         // Bail out conservatively if any function body contains inline assembly,
         // because we cannot soundly track reads or writes through it.
         let bases = contract.linearized_bases;
+        let no_aliases = Aliases::new();
 
         for &cid in bases {
             for func_id in hir.contract(cid).all_functions() {
                 let function = hir.function(func_id);
-                // Local variable IDs cannot cross function boundaries.
-                let mut aliases = HashMap::new();
+                let aliases = collect_storage_aliases(hir, function, &candidate_set);
 
                 for modifier in function.modifiers {
                     for expr in modifier.args.exprs() {
@@ -93,7 +93,7 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
                             &candidate_set,
                             &mut written,
                             bases,
-                            &mut aliases,
+                            &aliases,
                         )
                         .is_err()
                         {
@@ -109,7 +109,7 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
                         &candidate_set,
                         &mut written,
                         bases,
-                        &mut aliases,
+                        &aliases,
                     )
                     .is_err()
                 {
@@ -119,14 +119,13 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
 
             for base_modifier in hir.contract(cid).bases_args {
                 for expr in base_modifier.args.exprs() {
-                    let mut aliases = HashMap::new();
                     if collect_expr_writes_checked(
                         hir,
                         expr,
                         &candidate_set,
                         &mut written,
                         bases,
-                        &mut aliases,
+                        &no_aliases,
                     )
                     .is_err()
                     {
@@ -137,20 +136,18 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
 
             // Walk state-vars initializer expressions for side-effect writes to other state vars
             for var_id in hir.contract(cid).variables() {
-                if let Some(init) = hir.variable(var_id).initializer {
-                    let mut aliases = HashMap::new();
-                    if collect_expr_writes_checked(
+                if let Some(init) = hir.variable(var_id).initializer
+                    && collect_expr_writes_checked(
                         hir,
                         init,
                         &candidate_set,
                         &mut written,
                         bases,
-                        &mut aliases,
+                        &no_aliases,
                     )
                     .is_err()
-                    {
-                        return;
-                    }
+                {
+                    return;
                 }
             }
         }
@@ -180,51 +177,18 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
     }
 }
 
-type Aliases = HashMap<VariableId, HashSet<VariableId>>;
-
-#[derive(Default)]
-struct Flow {
-    falls_through: bool,
-    breaks: Option<Aliases>,
-    continues: Option<Aliases>,
-}
-
-impl Flow {
-    const fn fallthrough() -> Self {
-        Self { falls_through: true, breaks: None, continues: None }
-    }
-}
-
 fn collect_block_writes_checked<'hir>(
     hir: &'hir Hir<'hir>,
     block: Block<'hir>,
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
     bases: &'hir [ContractId],
-    aliases: &mut Aliases,
-) -> Result<Flow, ()> {
-    collect_stmts_writes_checked(hir, block.stmts, candidates, writes, bases, aliases)
-}
-
-fn collect_stmts_writes_checked<'hir>(
-    hir: &'hir Hir<'hir>,
-    stmts: &'hir [Stmt<'hir>],
-    candidates: &HashSet<VariableId>,
-    writes: &mut HashSet<VariableId>,
-    bases: &'hir [ContractId],
-    aliases: &mut Aliases,
-) -> Result<Flow, ()> {
-    let mut flow = Flow::fallthrough();
-    for stmt in stmts {
-        if !flow.falls_through {
-            break;
-        }
-        let stmt_flow = collect_stmt_writes_checked(hir, stmt, candidates, writes, bases, aliases)?;
-        merge_optional_aliases(&mut flow.breaks, stmt_flow.breaks);
-        merge_optional_aliases(&mut flow.continues, stmt_flow.continues);
-        flow.falls_through = stmt_flow.falls_through;
+    aliases: &Aliases,
+) -> Result<(), ()> {
+    for stmt in block.stmts {
+        collect_stmt_writes_checked(hir, stmt, candidates, writes, bases, aliases)?;
     }
-    Ok(flow)
+    Ok(())
 }
 
 fn collect_stmt_writes_checked<'hir>(
@@ -233,214 +197,49 @@ fn collect_stmt_writes_checked<'hir>(
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
     bases: &'hir [ContractId],
-    aliases: &mut Aliases,
-) -> Result<Flow, ()> {
+    aliases: &Aliases,
+) -> Result<(), ()> {
     match &stmt.kind {
         // Assembly can write storage directly; bail conservatively.
-        StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => Err(()),
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            collect_block_writes_checked(hir, *block, candidates, writes, bases, aliases)
-        }
-        StmtKind::Loop(block, source) => {
-            let entry = aliases.clone();
-            let mut head = entry.clone();
-            // Re-run the loop until every reachable alias target has propagated through its
-            // backedges. Alias sets only grow at the loop head, so this always converges.
-            loop {
-                let mut iteration_aliases = head.clone();
-                let flow = collect_loop_iteration(
-                    hir,
-                    *block,
-                    *source,
-                    candidates,
-                    writes,
-                    bases,
-                    &mut iteration_aliases,
-                )?;
-
-                let mut next_head = entry.clone();
-                if flow.falls_through {
-                    merge_aliases(&mut next_head, iteration_aliases);
-                }
-                if let Some(continued) = flow.continues {
-                    merge_aliases(&mut next_head, continued);
-                }
-
-                if next_head == head {
-                    if let Some(exits) = flow.breaks {
-                        *aliases = exits;
-                        return Ok(Flow::fallthrough());
-                    }
-                    return Ok(Flow::default());
-                }
-                head = next_head;
-            }
+        StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => return Err(()),
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
+            collect_block_writes_checked(hir, *block, candidates, writes, bases, aliases)?;
         }
         StmtKind::If(condition, then_stmt, else_stmt) => {
             collect_expr_writes_checked(hir, condition, candidates, writes, bases, aliases)?;
-            let mut then_aliases = aliases.clone();
-            let then_flow = collect_stmt_writes_checked(
-                hir,
-                then_stmt,
-                candidates,
-                writes,
-                bases,
-                &mut then_aliases,
-            )?;
-            let mut else_aliases = aliases.clone();
-            let else_flow = if let Some(else_stmt) = else_stmt {
-                collect_stmt_writes_checked(
-                    hir,
-                    else_stmt,
-                    candidates,
-                    writes,
-                    bases,
-                    &mut else_aliases,
-                )?
-            } else {
-                Flow::fallthrough()
-            };
-
-            let mut fallthrough = None;
-            if then_flow.falls_through {
-                merge_optional_aliases(&mut fallthrough, Some(then_aliases));
+            collect_stmt_writes_checked(hir, then_stmt, candidates, writes, bases, aliases)?;
+            if let Some(else_stmt) = else_stmt {
+                collect_stmt_writes_checked(hir, else_stmt, candidates, writes, bases, aliases)?;
             }
-            if else_flow.falls_through {
-                merge_optional_aliases(&mut fallthrough, Some(else_aliases));
-            }
-            let falls_through = fallthrough.is_some();
-            if let Some(joined) = fallthrough {
-                *aliases = joined;
-            }
-            Ok(Flow {
-                falls_through,
-                breaks: merge_optional(then_flow.breaks, else_flow.breaks),
-                continues: merge_optional(then_flow.continues, else_flow.continues),
-            })
         }
         StmtKind::Try(stmt_try) => {
             collect_expr_writes_checked(hir, &stmt_try.expr, candidates, writes, bases, aliases)?;
-            let before = aliases.clone();
-            let mut fallthrough = None;
-            let mut breaks = None;
-            let mut continues = None;
             for clause in stmt_try.clauses {
-                let mut clause_aliases = before.clone();
-                let flow = collect_block_writes_checked(
+                collect_block_writes_checked(
                     hir,
                     clause.block,
                     candidates,
                     writes,
                     bases,
-                    &mut clause_aliases,
+                    aliases,
                 )?;
-                if flow.falls_through {
-                    merge_optional_aliases(&mut fallthrough, Some(clause_aliases));
-                }
-                merge_optional_aliases(&mut breaks, flow.breaks);
-                merge_optional_aliases(&mut continues, flow.continues);
             }
-            let falls_through = fallthrough.is_some();
-            if let Some(joined) = fallthrough {
-                *aliases = joined;
-            }
-            Ok(Flow { falls_through, breaks, continues })
         }
         StmtKind::DeclSingle(var_id) => {
             if let Some(initializer) = hir.variable(*var_id).initializer {
                 collect_expr_writes_checked(hir, initializer, candidates, writes, bases, aliases)?;
-
-                if hir.variable(*var_id).data_location == Some(DataLocation::Storage)
-                    && let Some(target) = resolve_alias_targets(initializer, candidates, aliases)
-                {
-                    aliases.insert(*var_id, target);
-                }
             }
-            Ok(Flow::fallthrough())
         }
-        StmtKind::DeclMulti(_, expr) | StmtKind::Emit(expr) | StmtKind::Expr(expr) => {
-            collect_expr_writes_checked(hir, expr, candidates, writes, bases, aliases)?;
-            Ok(Flow::fallthrough())
+        StmtKind::DeclMulti(_, expr)
+        | StmtKind::Emit(expr)
+        | StmtKind::Revert(expr)
+        | StmtKind::Return(Some(expr))
+        | StmtKind::Expr(expr) => {
+            collect_expr_writes_checked(hir, expr, candidates, writes, bases, aliases)?
         }
-        StmtKind::Revert(expr) | StmtKind::Return(Some(expr)) => {
-            collect_expr_writes_checked(hir, expr, candidates, writes, bases, aliases)?;
-            Ok(Flow::default())
-        }
-        StmtKind::Return(None) => Ok(Flow::default()),
-        StmtKind::Break => Ok(Flow { breaks: Some(aliases.clone()), ..Flow::default() }),
-        StmtKind::Continue => Ok(Flow { continues: Some(aliases.clone()), ..Flow::default() }),
-        StmtKind::Placeholder => Ok(Flow::fallthrough()),
+        StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder => {}
     }
-}
-
-fn collect_loop_iteration<'hir>(
-    hir: &'hir Hir<'hir>,
-    block: Block<'hir>,
-    source: LoopSource,
-    candidates: &HashSet<VariableId>,
-    writes: &mut HashSet<VariableId>,
-    bases: &'hir [ContractId],
-    aliases: &mut Aliases,
-) -> Result<Flow, ()> {
-    if source == LoopSource::DoWhile
-        && let Some((condition, body)) = block.stmts.split_last()
-    {
-        let mut body_flow =
-            collect_stmts_writes_checked(hir, body, candidates, writes, bases, aliases)?;
-        let mut condition_aliases = None;
-        if body_flow.falls_through {
-            merge_optional_aliases(&mut condition_aliases, Some(aliases.clone()));
-        }
-        merge_optional_aliases(&mut condition_aliases, body_flow.continues.take());
-
-        if let Some(mut condition_aliases) = condition_aliases {
-            let condition_flow = collect_stmt_writes_checked(
-                hir,
-                condition,
-                candidates,
-                writes,
-                bases,
-                &mut condition_aliases,
-            )?;
-            if condition_flow.falls_through {
-                *aliases = condition_aliases;
-            }
-            merge_optional_aliases(&mut body_flow.breaks, condition_flow.breaks);
-            return Ok(Flow {
-                falls_through: condition_flow.falls_through,
-                breaks: body_flow.breaks,
-                continues: condition_flow.continues,
-            });
-        }
-        return Ok(Flow { breaks: body_flow.breaks, ..Flow::default() });
-    }
-
-    let mut flow = collect_block_writes_checked(hir, block, candidates, writes, bases, aliases)?;
-    if source == LoopSource::ForWithUpdate
-        && let Some(next) = for_loop_next_expr(block)
-        && let Some(continued) = &mut flow.continues
-    {
-        collect_expr_writes_checked(hir, next, candidates, writes, bases, continued)?;
-    }
-    Ok(flow)
-}
-
-fn for_loop_next_expr<'hir>(block: Block<'hir>) -> Option<&'hir Expr<'hir>> {
-    let [stmt] = block.stmts else { return None };
-    let inner = match &stmt.kind {
-        StmtKind::If(_, then_stmt, _) => {
-            let StmtKind::Block(inner) = &then_stmt.kind else { return None };
-            inner
-        }
-        StmtKind::Block(inner) => inner,
-        _ => return None,
-    };
-    if inner.span != block.span {
-        return None;
-    }
-    let [_, next] = inner.stmts else { return None };
-    let StmtKind::Expr(next) = &next.kind else { return None };
-    Some(*next)
+    Ok(())
 }
 
 fn collect_expr_writes_checked<'hir>(
@@ -449,44 +248,24 @@ fn collect_expr_writes_checked<'hir>(
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
     bases: &'hir [ContractId],
-    aliases: &mut Aliases,
+    aliases: &Aliases,
 ) -> Result<(), ()> {
     match &expr.kind {
         ExprKind::Assign(lhs, _, rhs) => {
             // Reassigning a bare storage pointer repoints it rather than writing its target.
-            let is_bare_alias_repoint = matches!(
-                &lhs.peel_parens().kind,
-                ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..])
-                    if !candidates.contains(id) && aliases.contains_key(id)
-            );
-            if !is_bare_alias_repoint {
-                collect_lvalue_writes(lhs, candidates, writes, Some(aliases));
+            if !is_storage_pointer(hir, lhs) {
+                collect_lvalue_writes(lhs, candidates, writes, aliases);
             }
             collect_expr_writes_checked(hir, lhs, candidates, writes, bases, aliases)?;
             collect_expr_writes_checked(hir, rhs, candidates, writes, bases, aliases)?;
-
-            // Replace the alias target, dropping stale targets when the RHS is unresolved.
-            if let ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) = &lhs.peel_parens().kind
-                && !candidates.contains(id)
-                && hir.variable(*id).data_location == Some(DataLocation::Storage)
-            {
-                match resolve_alias_targets(rhs, candidates, aliases) {
-                    Some(targets) => {
-                        aliases.insert(*id, targets);
-                    }
-                    None => {
-                        aliases.remove(id);
-                    }
-                }
-            }
         }
         ExprKind::Delete(inner) => {
-            collect_lvalue_writes(inner, candidates, writes, Some(aliases));
+            collect_lvalue_writes(inner, candidates, writes, aliases);
             collect_expr_writes_checked(hir, inner, candidates, writes, bases, aliases)?;
         }
         ExprKind::Unary(op, inner) => {
             if op.kind.has_side_effects() {
-                collect_lvalue_writes(inner, candidates, writes, Some(aliases));
+                collect_lvalue_writes(inner, candidates, writes, aliases);
             }
             collect_expr_writes_checked(hir, inner, candidates, writes, bases, aliases)?;
         }
@@ -503,21 +282,18 @@ fn collect_expr_writes_checked<'hir>(
             if let ExprKind::Member(base, _) = &callee.kind {
                 // Covers push/pop and library dispatch (`using Lib for T` with `T storage self`);
                 // can't resolve callee without Gcx. Treat the receiver as a write target to avoid
-                // false positives. Do not extend this heuristic through aliases: the call may be
-                // read-only.
-                collect_lvalue_writes(base, candidates, writes, None);
+                // false positives.
+                collect_lvalue_writes(base, candidates, writes, aliases);
             }
 
             // Direct calls to internal functions that take a `storage` parameter
             // mutate the corresponding argument in place; treat it as a write.
             //
             // Handles bare identifier callees (`_set(slot, v)`) and qualified member
-            // callees (`BaseSetter._set(slot, v)`, `super._set(slot, v)`). This conservative
-            // heuristic remains limited to direct state arguments because storage parameters may
-            // be read-only.
+            // callees (`BaseSetter._set(slot, v)`, `super._set(slot, v)`).
             let funcs = collect_callee_funcs(hir, callee, bases);
             if !funcs.is_empty() {
-                mark_storage_args(&funcs, hir, args, candidates, writes);
+                mark_storage_args(&funcs, hir, args, candidates, writes, aliases);
             }
 
             collect_expr_writes_checked(hir, callee, candidates, writes, bases, aliases)?;
@@ -552,26 +328,8 @@ fn collect_expr_writes_checked<'hir>(
         }
         ExprKind::Ternary(condition, then_expr, else_expr) => {
             collect_expr_writes_checked(hir, condition, candidates, writes, bases, aliases)?;
-            let mut then_aliases = aliases.clone();
-            collect_expr_writes_checked(
-                hir,
-                then_expr,
-                candidates,
-                writes,
-                bases,
-                &mut then_aliases,
-            )?;
-            let mut else_aliases = aliases.clone();
-            collect_expr_writes_checked(
-                hir,
-                else_expr,
-                candidates,
-                writes,
-                bases,
-                &mut else_aliases,
-            )?;
-            merge_aliases(&mut then_aliases, else_aliases);
-            *aliases = then_aliases;
+            collect_expr_writes_checked(hir, then_expr, candidates, writes, bases, aliases)?;
+            collect_expr_writes_checked(hir, else_expr, candidates, writes, bases, aliases)?;
         }
         ExprKind::Tuple(exprs) => {
             for expr in exprs.iter().flatten() {
@@ -661,6 +419,7 @@ fn mark_storage_args<'hir>(
     args: &CallArgs<'hir>,
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
+    aliases: &Aliases,
 ) {
     if let CallArgsKind::Unnamed(_) = args.kind {
         for (i, arg_expr) in args.exprs().enumerate() {
@@ -670,7 +429,7 @@ fn mark_storage_args<'hir>(
                 })
             });
             if any_storage {
-                collect_lvalue_writes(arg_expr, candidates, writes, None);
+                collect_lvalue_writes(arg_expr, candidates, writes, aliases);
             }
         }
     }
@@ -687,65 +446,23 @@ fn mark_storage_args<'hir>(
                 })
             });
             if any_storage {
-                collect_lvalue_writes(&named_arg.value, candidates, writes, None);
+                collect_lvalue_writes(&named_arg.value, candidates, writes, aliases);
             }
         }
     }
-}
-
-/// Resolves a storage pointer to its possible state-variable targets.
-fn resolve_alias_targets(
-    expr: &Expr<'_>,
-    candidates: &HashSet<VariableId>,
-    aliases: &HashMap<VariableId, HashSet<VariableId>>,
-) -> Option<HashSet<VariableId>> {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
-            if candidates.contains(id) {
-                Some(HashSet::from([*id]))
-            } else {
-                aliases.get(id).cloned()
-            }
-        }
-        ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) | ExprKind::Member(base, _) => {
-            resolve_alias_targets(base, candidates, aliases)
-        }
-        _ => None,
-    }
-}
-
-fn merge_aliases(aliases: &mut Aliases, other: Aliases) {
-    for (alias, targets) in other {
-        aliases.entry(alias).or_default().extend(targets);
-    }
-}
-
-fn merge_optional_aliases(aliases: &mut Option<Aliases>, other: Option<Aliases>) {
-    if let Some(other) = other {
-        if let Some(aliases) = aliases {
-            merge_aliases(aliases, other);
-        } else {
-            *aliases = Some(other);
-        }
-    }
-}
-
-fn merge_optional(mut aliases: Option<Aliases>, other: Option<Aliases>) -> Option<Aliases> {
-    merge_optional_aliases(&mut aliases, other);
-    aliases
 }
 
 fn collect_lvalue_writes(
     expr: &Expr<'_>,
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
-    aliases: Option<&Aliases>,
+    aliases: &Aliases,
 ) {
     match &expr.peel_parens().kind {
         ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
             if candidates.contains(id) {
                 writes.insert(*id);
-            } else if let Some(targets) = aliases.and_then(|aliases| aliases.get(id)) {
+            } else if let Some(targets) = aliases.get(id) {
                 writes.extend(targets);
             }
         }
@@ -759,6 +476,119 @@ fn collect_lvalue_writes(
         }
         _ => {}
     }
+}
+
+/// Maps each local `storage` pointer of a function to the state variables it may reference.
+type Aliases = HashMap<VariableId, HashSet<VariableId>>;
+
+/// Collects the state variables each local `storage` pointer in `function` may reference.
+///
+/// The analysis is flow-insensitive: every assignment to a pointer contributes to its target set,
+/// so a write through the pointer counts as a write to each state variable it could reference.
+fn collect_storage_aliases<'hir>(
+    hir: &'hir Hir<'hir>,
+    function: &'hir Function<'hir>,
+    candidates: &HashSet<VariableId>,
+) -> Aliases {
+    let Some(body) = function.body else { return Aliases::new() };
+    let mut collector = StorageAliasCollector { hir, edges: HashMap::new() };
+    for stmt in body.stmts {
+        let _ = collector.visit_stmt(stmt);
+    }
+
+    let mut aliases = Aliases::new();
+    for &pointer in collector.edges.keys() {
+        let mut targets = HashSet::new();
+        let mut seen = HashSet::new();
+        let mut stack = vec![pointer];
+        while let Some(var_id) = stack.pop() {
+            if !seen.insert(var_id) {
+                continue;
+            }
+            if candidates.contains(&var_id) {
+                targets.insert(var_id);
+            } else if let Some(roots) = collector.edges.get(&var_id) {
+                stack.extend(roots);
+            }
+        }
+        if !targets.is_empty() {
+            aliases.insert(pointer, targets);
+        }
+    }
+    aliases
+}
+
+/// Records `pointer -> root variable` edges for every assignment to a local `storage` pointer.
+/// Roots are state variables or other pointers, which are resolved transitively afterwards.
+struct StorageAliasCollector<'hir> {
+    hir: &'hir Hir<'hir>,
+    edges: HashMap<VariableId, HashSet<VariableId>>,
+}
+
+impl<'hir> Visit<'hir> for StorageAliasCollector<'hir> {
+    type BreakValue = Never;
+
+    fn hir(&self) -> &'hir Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+        if let StmtKind::DeclSingle(var_id) = &stmt.kind
+            && let Some(initializer) = self.hir.variable(*var_id).initializer
+        {
+            self.record(*var_id, initializer);
+        }
+        self.walk_stmt(stmt)
+    }
+
+    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        if let ExprKind::Assign(lhs, None, rhs) = &expr.kind
+            && let ExprKind::Ident([Res::Item(ItemId::Variable(var_id)), ..]) =
+                &lhs.peel_parens().kind
+        {
+            self.record(*var_id, rhs);
+        }
+        self.walk_expr(expr)
+    }
+}
+
+impl StorageAliasCollector<'_> {
+    fn record(&mut self, var_id: VariableId, rhs: &Expr<'_>) {
+        if is_local_storage_var(self.hir, var_id) {
+            collect_root_vars(rhs, self.edges.entry(var_id).or_default());
+        }
+    }
+}
+
+/// Collects the variables an expression is rooted in, looking through indexing, member access,
+/// and ternaries.
+fn collect_root_vars(expr: &Expr<'_>, roots: &mut HashSet<VariableId>) {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
+            roots.insert(*id);
+        }
+        ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) | ExprKind::Member(base, _) => {
+            collect_root_vars(base, roots)
+        }
+        ExprKind::Ternary(_, then_expr, else_expr) => {
+            collect_root_vars(then_expr, roots);
+            collect_root_vars(else_expr, roots);
+        }
+        _ => {}
+    }
+}
+
+/// Whether `expr` is a bare local `storage` pointer.
+fn is_storage_pointer(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+    matches!(
+        &expr.peel_parens().kind,
+        ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) if is_local_storage_var(hir, *id)
+    )
+}
+
+fn is_local_storage_var(hir: &Hir<'_>, var_id: VariableId) -> bool {
+    let var = hir.variable(var_id);
+    !var.kind.is_state() && var.data_location == Some(DataLocation::Storage)
 }
 
 struct ReadVarCollector<'hir> {
