@@ -75,21 +75,24 @@ impl FilterArgs {
 
     /// Merges the set filter globs with the config's values
     pub fn merge_with_config(mut self, config: &Config) -> ProjectPathsAwareFilter {
-        let c = config;
-        self.test_pattern = self.test_pattern.or_else(|| c.test_pattern.clone().map(Into::into));
-        self.test_pattern_inverse =
-            self.test_pattern_inverse.or_else(|| c.test_pattern_inverse.clone().map(Into::into));
+        self.test_pattern =
+            self.test_pattern.or_else(|| config.test_pattern.clone().map(Into::into));
+        self.test_pattern_inverse = self
+            .test_pattern_inverse
+            .or_else(|| config.test_pattern_inverse.clone().map(Into::into));
         self.contract_pattern =
-            self.contract_pattern.or_else(|| c.contract_pattern.clone().map(Into::into));
+            self.contract_pattern.or_else(|| config.contract_pattern.clone().map(Into::into));
         self.contract_pattern_inverse = self
             .contract_pattern_inverse
-            .or_else(|| c.contract_pattern_inverse.clone().map(Into::into));
-        self.path_pattern = self.path_pattern.or_else(|| c.path_pattern.clone().map(Into::into));
-        self.path_pattern_inverse =
-            self.path_pattern_inverse.or_else(|| c.path_pattern_inverse.clone().map(Into::into));
+            .or_else(|| config.contract_pattern_inverse.clone().map(Into::into));
+        self.path_pattern =
+            self.path_pattern.or_else(|| config.path_pattern.clone().map(Into::into));
+        self.path_pattern_inverse = self
+            .path_pattern_inverse
+            .or_else(|| config.path_pattern_inverse.clone().map(Into::into));
         self.coverage_pattern_inverse = self
             .coverage_pattern_inverse
-            .or_else(|| c.coverage_pattern_inverse.clone().map(Into::into));
+            .or_else(|| config.coverage_pattern_inverse.clone().map(Into::into));
         ProjectPathsAwareFilter {
             args_filter: self,
             paths: config.project_paths(),

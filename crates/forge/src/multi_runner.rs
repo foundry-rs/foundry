@@ -611,8 +611,6 @@ pub struct MultiContractRunnerBuilder {
     pub multi_network: MultiNetworkConfig,
     /// Showmap replay mode (CLI-only, off by default).
     pub showmap: Option<ShowmapConfig>,
-    /// Fuzz minimization replay mode (CLI-only, off by default).
-    pub fuzz_minimize: Option<FuzzMinimizeConfig>,
     /// Run only fuzz and invariant tests.
     pub fuzz_only: bool,
     /// Replay persisted fuzz failures without running a new fuzz campaign.
@@ -651,7 +649,6 @@ impl MultiContractRunnerBuilder {
             fail_fast: false,
             multi_network: Default::default(),
             showmap: None,
-            fuzz_minimize: None,
             fuzz_only: false,
             fuzz_failure_replay: false,
             fuzz_input: None,
@@ -950,7 +947,7 @@ impl MultiContractRunnerBuilder {
                 early_exit: EarlyExit::new(self.fail_fast),
                 multi_network: self.multi_network,
                 showmap: self.showmap,
-                fuzz_minimize: self.fuzz_minimize,
+                fuzz_minimize: None,
                 fuzz_only: self.fuzz_only,
                 fuzz_failure_replay: self.fuzz_failure_replay,
                 fuzz_input: self.fuzz_input,

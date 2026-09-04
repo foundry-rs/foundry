@@ -1886,6 +1886,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
     }
 
+    /// Builds the symbolic executor input for one run of `func`.
     fn symbolic_run_input<'f>(
         &'f self,
         func: &'f Function,
@@ -2447,6 +2448,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.result
     }
 
+    /// Replays a persisted symbolic counterexample artifact against `func`, failing with the
+    /// mismatch reason when the recorded outcome does not reproduce.
     fn replay_symbolic_artifact(
         &mut self,
         func: &Function,
@@ -4650,6 +4653,7 @@ fn parse_frontier_selectors(selectors: &[String], signature: &str) -> Vec<Select
         .collect()
 }
 
+/// Warns about requested frontier `label`s that the frontier file at `path` did not provide.
 fn warn_unimported_frontiers<T: std::fmt::Display + PartialEq>(
     label: &str,
     requested: &[T],
@@ -4706,6 +4710,7 @@ fn fuzz_test_path_name<'a>(
     }
 }
 
+/// Returns whether any canonical replay directory under `dir` holds a corpus entry.
 fn corpus_has_entries(dir: &Path) -> bool {
     canonical_replay_dirs(dir).iter().any(|dir| read_corpus_dir(dir).next().is_some())
 }

@@ -93,6 +93,7 @@ impl TestSummaryReport<'_> {
     }
 }
 
+/// Creates a table styled for the current shell output format.
 fn new_table() -> Table {
     let mut table = Table::new();
     if shell::is_markdown() {

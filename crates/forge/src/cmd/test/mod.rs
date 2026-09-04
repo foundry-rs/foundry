@@ -2191,6 +2191,7 @@ impl TestArgs {
         Ok(regressions)
     }
 
+    /// Prints the run summary, or the detailed summary table when `--summary` is set.
     fn print_summary(&self, outcome: &TestOutcome, duration: Duration) -> Result<()> {
         if !self.summary && !shell::is_json() {
             sh_println!("{}", outcome.summary(duration))?;
@@ -2955,6 +2956,7 @@ macro_rules! dict {
     }};
 }
 
+/// Renders an optional path for the figment provider.
 fn path_string(path: &Option<PathBuf>) -> Option<String> {
     path.as_ref().map(|path| path.to_string_lossy().to_string())
 }
@@ -3500,6 +3502,58 @@ impl JunitOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Parses `args` with the given environment variables set, restoring the previous values.
+    fn parse_with_env(vars: &[(&str, &str)], args: &[&str]) -> TestArgs {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap();
+        let previous = vars.iter().map(|(name, _)| std::env::var_os(name)).collect::<Vec<_>>();
+        for (name, value) in vars {
+            unsafe { std::env::set_var(name, value) };
+        }
+        let parsed =
+            TestArgs::try_parse_from(["foundry-cli"].into_iter().chain(args.iter().copied()));
+        for ((name, _), previous) in vars.iter().zip(previous) {
+            match previous {
+                Some(previous) => unsafe { std::env::set_var(name, previous) },
+                None => unsafe { std::env::remove_var(name) },
+            }
+        }
+        parsed.unwrap()
+    }
+
+    #[test]
+    fn parses_flags_without_cli_coverage() {
+        assert!(TestArgs::parse_from(["foundry-cli", "-vw"]).watch.watch.is_some());
+        assert!(TestArgs::parse_from(["foundry-cli", "--compact-labels"]).tracing.compact_labels);
+        // <https://github.com/foundry-rs/foundry/issues/5913>
+        let args =
+            TestArgs::parse_from(["foundry-cli", "-vvv", "--gas-report", "--fuzz-seed", "0x10"]);
+        assert!(args.fuzz_seed.is_some());
+        let args = TestArgs::parse_from(["foundry-cli", "--invariant-workers", "auto"]);
+        assert_eq!(args.invariant_workers, Some(InvariantWorkers::Auto));
+        assert_eq!(
+            figment::Figment::from(&args)
+                .extract_inner::<InvariantWorkers>("invariant.workers")
+                .unwrap(),
+            InvariantWorkers::Auto
+        );
+    }
+
+    #[test]
+    fn parses_env_vars() {
+        let args = parse_with_env(
+            &[
+                ("FOUNDRY_INVARIANT_WORKERS", "auto"),
+                ("FOUNDRY_FUZZ_CORPUS_DIR", "env_fuzz_corpus"),
+                ("FOUNDRY_INVARIANT_CORPUS_DIR", "env_invariant_corpus"),
+            ],
+            &[],
+        );
+        assert_eq!(args.invariant_workers, Some(InvariantWorkers::Auto));
+        assert_eq!(args.fuzz_corpus_dir, Some(PathBuf::from("env_fuzz_corpus")));
+        assert_eq!(args.invariant_corpus_dir, Some(PathBuf::from("env_invariant_corpus")));
+    }
 
     #[test]
     fn showmap_override_validates_path_component_names() {

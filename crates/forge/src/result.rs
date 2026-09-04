@@ -1560,21 +1560,30 @@ macro_rules! extend {
     };
 }
 
-/// Invariant kind for results that did not run a real campaign (setup failures, replays, skips).
 /// Forge-side outcome of an invariant campaign, recorded into a [`TestResult`].
 #[derive(Default)]
 pub struct InvariantOutcome {
+    /// Whether every checked invariant held.
     pub success: bool,
+    /// Fork block number the campaign ran against, if any.
     pub fork_block_number: Option<u64>,
+    /// Broken invariants, each with its shrunk call sequence.
     pub failures: Vec<InvariantFailure>,
+    /// Handler assertion failures found while running the campaign.
     pub handler_failures: Vec<InvariantFailure>,
+    /// Per-invariant pass/fail/skip rows.
     pub predicate_results: Vec<InvariantPredicateResult>,
+    /// Directory the failing sequences were persisted to.
     pub failure_dir: Option<PathBuf>,
+    /// Number of invariants checked, when the campaign ran more than one.
     pub invariant_count: Option<usize>,
+    /// Best sequence found in optimization mode.
     pub counterexample: Option<CounterExample>,
+    /// Traces collected for the gas report.
     pub gas_report_traces: Vec<Vec<CallTraceArena>>,
 }
 
+/// Invariant kind for results that did not run a real campaign (setup failures, replays, skips).
 pub(crate) fn invariant_kind(runs: usize, calls: usize, reverts: usize) -> TestKind {
     TestKind::Invariant {
         runs,
@@ -2169,6 +2178,72 @@ const fn symbolic_result_schema_version() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SYMBOLIC_RESULT_SCHEMA: &str =
+        include_str!("../../evm/symbolic/assets/symbolic-result.schema.json");
+    const SYMBOLIC_COUNTEREXAMPLE_SCHEMA: &str =
+        include_str!("../../evm/symbolic/assets/symbolic-counterexample.schema.json");
+
+    fn schema_defs(schema: &serde_json::Value) -> &serde_json::Map<String, serde_json::Value> {
+        schema["$defs"].as_object().expect("schema $defs object")
+    }
+
+    /// Collects every `$ref` target in `value`.
+    fn collect_refs<'a>(value: &'a serde_json::Value, refs: &mut Vec<&'a str>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                refs.extend(map.get("$ref").and_then(serde_json::Value::as_str));
+                for child in map.values() {
+                    collect_refs(child, refs);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for child in values {
+                    collect_refs(child, refs);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn symbolic_schemas_match_result_types() {
+        let result_schema: serde_json::Value =
+            serde_json::from_str(SYMBOLIC_RESULT_SCHEMA).unwrap();
+        let counterexample_schema: serde_json::Value =
+            serde_json::from_str(SYMBOLIC_COUNTEREXAMPLE_SCHEMA).unwrap();
+        let result_defs = schema_defs(&result_schema);
+        let counterexample_defs = schema_defs(&counterexample_schema);
+
+        // Every counterexample `$ref` must resolve offline, either locally or into the result
+        // schema.
+        let mut refs = Vec::new();
+        collect_refs(&counterexample_schema, &mut refs);
+        for reference in refs {
+            let resolved = if let Some(name) = reference.strip_prefix(
+                "https://foundry-rs.github.io/schemas/symbolic-result.v1.schema.json#/$defs/",
+            ) {
+                result_defs.contains_key(name)
+            } else if let Some(name) = reference.strip_prefix("#/$defs/") {
+                counterexample_defs.contains_key(name)
+            } else {
+                false
+            };
+            assert!(resolved, "unresolved schema ref {reference}");
+        }
+
+        // The solver stats schema must list exactly the serialized `SymbolicStats` fields.
+        let stats = serde_json::to_value(SymbolicStats::default()).unwrap();
+        let mut expected = stats.as_object().unwrap().keys().collect::<Vec<_>>();
+        let mut actual = result_defs["solver_stats"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>();
+        expected.sort();
+        actual.sort();
+        assert_eq!(actual, expected);
+    }
 
     fn outcome_with_results(test_results: Vec<TestResult>) -> TestOutcome {
         let test_results = test_results
