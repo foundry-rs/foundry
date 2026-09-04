@@ -1,9 +1,14 @@
-use std::{path::PathBuf, str::FromStr, time::Duration};
-use url::Url;
-
+use crate::{
+    cmd::{
+        auth::{confirm_and_build, confirm_and_build_with_tempo_wallet},
+        tip20::iso4217_warning_message,
+    },
+    tempo,
+    tx::{self, CastTxBuilder, CastTxSender, SendTxOpts, TxParams},
+};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
-use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, Network};
 use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
@@ -11,25 +16,20 @@ use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{LoadConfig, get_chain, maybe_print_resolved_lane, resolve_lane},
+    utils::{LoadConfig, get_chain, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
-    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_config::Chain;
 use foundry_wallets::{TempoAccountsWallet, WalletSigner};
+use std::{path::PathBuf, str::FromStr, time::Duration};
 use tempo_alloy::TempoNetwork;
-use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
-
-use crate::{
-    cmd::{auth::confirm_auth_rpc_disclosure_during_build, tip20::iso4217_warning_message},
-    tempo,
-    tx::{self, CastTxBuilder, CastTxSender, SendTxOpts, TxParams},
-};
 use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
+use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
+use url::Url;
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -142,7 +142,7 @@ impl SendTxArgs {
         }
     }
 
-    pub async fn run_generic<N: Network>(
+    async fn run_generic<N: Network>(
         self,
         pre_resolved_signer: Option<WalletSigner>,
         mut access_key: Option<TempoAccountsWallet>,
@@ -171,9 +171,7 @@ impl SendTxArgs {
         if has_session && unlocked {
             eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --unlocked");
         }
-        if has_session && send_tx.browser.browser {
-            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --browser");
-        }
+        tempo::ensure_session_not_browser(&tx.tempo, send_tx.browser.browser)?;
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
         let sponsor_url = tx.tempo.sponsor_url.clone();
@@ -185,7 +183,7 @@ impl SendTxArgs {
             tx.tempo.sponsor_config().await?
         };
 
-        let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
+        let blob_data = path.map(std::fs::read).transpose()?;
 
         if let Some(data) = data {
             sig = Some(data);
@@ -197,15 +195,12 @@ impl SendTxArgs {
             args: constructor_args,
         }) = command
         {
-            // ensure we don't violate settings for transactions that can't be CREATE: 7702 and 4844
-            // which require mandatory target
+            // 7702 and 4844 transactions require a target, so they can't be CREATE transactions.
             if to.is_none() && !tx.auth.is_empty() {
                 return Err(eyre!(
                     "EIP-7702 transactions can't be CREATE transactions and require a destination address"
                 ));
             }
-            // ensure we don't violate settings for transactions that can't be CREATE: 7702 and 4844
-            // which require mandatory target
             if to.is_none() && blob_data.is_some() {
                 return Err(eyre!(
                     "EIP-4844 transactions can't be CREATE transactions and require a destination address"
@@ -220,7 +215,7 @@ impl SendTxArgs {
         };
 
         // Validate ISO 4217 currency code for TIP20Factory createToken calls.
-        if let Some(ref to_addr) = to {
+        if let Some(to_addr) = &to {
             let is_factory = match to_addr {
                 NameOrAddress::Address(addr) => *addr == TIP20_FACTORY_ADDRESS,
                 NameOrAddress::Name(name) => {
@@ -230,7 +225,7 @@ impl SendTxArgs {
 
             if !force
                 && is_factory
-                && let Some(ref sig_str) = sig
+                && let Some(sig_str) = &sig
                 && sig_str.starts_with("createToken")
                 && let Some(currency) = args.get(2)
                 && !is_iso4217_currency(currency)
@@ -246,8 +241,11 @@ impl SendTxArgs {
 
         let config = send_tx.eth.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+        // The provider is not consulted for fee tokens in `--curl` mode.
+        let fee_provider = (!config.eth_rpc_curl).then_some(&provider);
 
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
+        let lane = resolved_lane.as_ref();
 
         if let Some(interval) = send_tx.poll_interval {
             provider.client().set_poll_interval(Duration::from_secs(interval))
@@ -255,14 +253,14 @@ impl SendTxArgs {
 
         if has_session || access_key.is_some() {
             let chain = get_chain(config.chain, &provider).await?;
-            let (_, resolved_access_key) =
+            access_key =
                 tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id())
-                    .await?;
-            access_key = resolved_access_key;
+                    .await?
+                    .1;
         }
 
         // Inject access key ID into TempoOpts so it's set before gas estimation.
-        if let Some(ref ak) = access_key {
+        if let Some(ak) = &access_key {
             tx.tempo.key_id = Some(ak.key_id()?);
         }
 
@@ -274,45 +272,44 @@ impl SendTxArgs {
             .with_code_sig_and_args(code, sig, args)
             .await?
             .with_blob_data(blob_data)?;
+        let chain = builder.chain();
 
         // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
         if print_sponsor_hash {
-            let chain = builder.chain();
-            let (mut tx, from) = if let Some(ref ak) = access_key {
-                if !confirm_auth_rpc_disclosure_during_build(&builder, ak.account(), force)? {
+            // The sponsor hash commits to the sender, so resolve the actual sender first.
+            let (mut tx, from) = if let Some(ak) = &access_key {
+                let Some((tx, prepared)) =
+                    confirm_and_build_with_tempo_wallet(builder, ak, force, None).await?
+                else {
                     return Ok(());
-                }
-                let (tx, _, prepared) = builder.build_with_tempo_wallet(ak).await?;
+                };
                 (tx, prepared.account())
             } else {
-                // Use the pre-resolved signer to derive the actual sender address, since the
-                // sponsor hash commits to the sender.
                 let signer = pre_resolved_signer.as_ref().ok_or_else(|| {
                     eyre!("--tempo.print-sponsor-hash requires a signer (e.g. --private-key)")
                 })?;
-                let from = signer.address();
-                if !confirm_auth_rpc_disclosure_during_build(&builder, signer, force)? {
+                let Some(tx) = confirm_and_build(builder, signer, force, None, false).await? else {
                     return Ok(());
-                }
-                let (tx, _) = builder.build(signer).await?;
-                (tx, from)
+                };
+                (tx, signer.address())
             };
-            let dyn_provider =
-                (!config.eth_rpc_curl).then_some(&provider).map(|p| p as &dyn Provider<N>);
-            tempo::print_sponsor_hash(dyn_provider, chain, &mut tx, from, sponsor_fee_payer)
-                .await?;
+            let hash =
+                tempo::sponsor_hash(fee_provider, chain, &mut tx, from, sponsor_fee_payer).await?;
+            sh_println!("{hash:?}")?;
             return Ok(());
         }
 
-        if let Some(ts) = expires_at {
-            sh_status!("Transaction expires at unix timestamp {ts}")?;
-        }
+        tempo::print_expires(expires_at)?;
 
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+        let SendTxOpts { cast_async, sync, confirmations: confs, .. } = send_tx;
+        // Without a sponsor the fee token is resolved for the sender while sending.
+        let fee_chain = tempo_sponsor.is_none().then_some(chain);
+        let resolve_fee_symbol = tempo_sponsor.is_none() && !config.eth_rpc_curl;
 
         // --sponsor-url is valid with local signers and Tempo access keys. Bail early rather than
         // silently ignoring it in signing paths that cannot produce a raw transaction locally.
-        if let Some(ref url) = sponsor_url {
+        if let Some(url) = &sponsor_url {
             validate_sponsor_url(url)?;
             if unlocked {
                 eyre::bail!("--sponsor-url cannot be combined with --unlocked");
@@ -330,13 +327,10 @@ impl SendTxArgs {
         // This should be the only way this RPC method is used as it requires a local node
         // or remote RPC with unlocked accounts.
         if unlocked && browser.is_none() {
-            // only check current chain id if it was specified in the config
+            // Switch chain if the current chain id is not the one specified in the config.
             if let Some(config_chain) = config.chain {
-                let current_chain_id = provider.get_chain_id().await?;
                 let config_chain_id = config_chain.id();
-                // switch chain if current chain id is not the same as the one specified in the
-                // config
-                if config_chain_id != current_chain_id {
+                if config_chain_id != provider.get_chain_id().await? {
                     sh_warn!("Switching to chain {}", config_chain)?;
                     provider
                         .raw_request::<_, ()>(
@@ -349,54 +343,47 @@ impl SendTxArgs {
                 }
             }
 
-            let chain = builder.chain();
-            if !confirm_auth_rpc_disclosure_during_build(&builder, config.sender, force)? {
+            let Some(mut tx_request) =
+                confirm_and_build(builder, config.sender, force, lane, false).await?
+            else {
                 return Ok(());
-            }
-            let (mut tx_request, _) = builder.build(config.sender).await?;
-            maybe_print_resolved_lane(
-                resolved_lane.as_ref(),
-                tx_request.nonce().unwrap_or_default(),
-            )?;
-            if let Some(sponsor) = &tempo_sponsor {
-                let dyn_provider =
-                    (!config.eth_rpc_curl).then_some(&provider).map(|p| p as &dyn Provider<N>);
-                tempo::attach_sponsor(sponsor, dyn_provider, chain, &mut tx_request, config.sender)
-                    .await?;
-            }
+            };
+            tempo::maybe_attach_sponsor(
+                tempo_sponsor.as_ref(),
+                fee_provider,
+                chain,
+                &mut tx_request,
+                config.sender,
+            )
+            .await?;
 
             cast_send(
                 provider,
                 tx_request,
-                tempo_sponsor.is_none().then_some(chain),
+                fee_chain,
                 None,
-                send_tx.cast_async,
-                send_tx.sync,
-                send_tx.confirmations,
+                cast_async,
+                sync,
+                confs,
                 timeout,
-                tempo_sponsor.is_none() && !config.eth_rpc_curl,
+                resolve_fee_symbol,
             )
             .await?;
         // Case 2:
         // Browser wallet signs and sends the transaction in one step.
         } else if let Some(browser) = browser {
-            let chain = builder.chain();
-            if !confirm_auth_rpc_disclosure_during_build(&builder, browser.address(), force)? {
+            let from = browser.address();
+            let Some(mut tx_request) =
+                confirm_and_build(builder.with_browser_wallet(), from, force, lane, false).await?
+            else {
                 return Ok(());
-            }
-            let (mut tx_request, _) =
-                builder.with_browser_wallet().build(browser.address()).await?;
-            maybe_print_resolved_lane(
-                resolved_lane.as_ref(),
-                tx_request.nonce().unwrap_or_default(),
-            )?;
-
+            };
             tempo::apply_fee_payment::<N, _>(
                 tempo_sponsor.as_ref(),
-                (!config.eth_rpc_curl).then_some(&provider),
+                fee_provider,
                 chain,
                 &mut tx_request,
-                browser.address(),
+                from,
             )
             .await?;
 
@@ -406,42 +393,33 @@ impl SendTxArgs {
             }
 
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
-
-            let cast = CastTxSender::new(&provider);
-            cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
+            CastTxSender::new(&provider)
+                .print_tx_result(tx_hash, cast_async, confs, timeout)
                 .await?;
         // Case 3: Tempo access-key wallet.
         } else if let Some(ak) = access_key {
-            let chain = builder.chain();
-            if !confirm_auth_rpc_disclosure_during_build(&builder, ak.account(), force)? {
+            let Some((mut tx_request, prepared)) =
+                confirm_and_build_with_tempo_wallet(builder, &ak, force, lane).await?
+            else {
                 return Ok(());
-            }
-            let (mut tx_request, _, prepared) = builder.build_with_tempo_wallet(&ak).await?;
-            maybe_print_resolved_lane(
-                resolved_lane.as_ref(),
-                tx_request.nonce().unwrap_or_default(),
-            )?;
-            if let Some(sponsor) = &tempo_sponsor {
-                let dyn_provider =
-                    (!config.eth_rpc_curl).then_some(&provider).map(|p| p as &dyn Provider<N>);
-                tempo::attach_sponsor(
-                    sponsor,
-                    dyn_provider,
-                    chain,
-                    &mut tx_request,
-                    prepared.account(),
-                )
-                .await?;
-            }
+            };
+            tempo::maybe_attach_sponsor(
+                tempo_sponsor.as_ref(),
+                fee_provider,
+                chain,
+                &mut tx_request,
+                prepared.account(),
+            )
+            .await?;
             if let Some(sponsor_url) = sponsor_url.as_deref() {
                 cast_send_with_tempo_wallet_via_sponsor(
                     &provider,
                     tx_request,
                     &prepared,
                     sponsor_url,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
+                    cast_async,
+                    sync,
+                    confs,
                     timeout,
                 )
                 .await?;
@@ -450,96 +428,92 @@ impl SendTxArgs {
                     &provider,
                     tx_request,
                     &prepared,
-                    tempo_sponsor.is_none().then_some(chain),
+                    fee_chain,
                     None,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
+                    cast_async,
+                    sync,
+                    confs,
                     timeout,
-                    tempo_sponsor.is_none() && !config.eth_rpc_curl,
+                    resolve_fee_symbol,
                 )
                 .await?;
             }
-        // Case 4:
-        // Remote sponsor URL: sign locally, ask the sponsor service for a fee-payer signature,
-        // then submit the fully-sponsored tx to the regular RPC.
-        } else if let Some(sponsor_url) = sponsor_url {
-            let (signer, _) = tx::resolve_send_signer(pre_resolved_signer, &send_tx.eth).await?;
-
-            if !confirm_auth_rpc_disclosure_during_build(&builder, &signer, force)? {
-                return Ok(());
-            }
-            let (mut tx_request, _) = builder.build(&signer).await?;
-            maybe_print_resolved_lane(
-                resolved_lane.as_ref(),
-                tx_request.nonce().unwrap_or_default(),
-            )?;
-
-            tx_request.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
-
-            let wallet = EthereumWallet::from(signer);
-            let connector = tempo::sponsor_relay_connector(&provider, &sponsor_url)?;
-            let provider = AlloyProviderBuilder::<_, _, N>::default()
-                .wallet(wallet)
-                .connect_with(&connector)
-                .await?;
-
-            cast_send(
-                provider,
-                tx_request,
-                None,
-                None,
-                send_tx.cast_async,
-                send_tx.sync,
-                send_tx.confirmations,
-                timeout,
-                false,
-            )
-            .await?;
-        // Case 5:
-        // An option to use a local signer was provided.
+        // Case 4: a local signer.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
         // enough information to sign and we must bail.
         } else {
             let (signer, from) = tx::resolve_send_signer(pre_resolved_signer, &send_tx.eth).await?;
-
-            let chain = builder.chain();
-            if !confirm_auth_rpc_disclosure_during_build(&builder, &signer, force)? {
+            let Some(mut tx_request) =
+                confirm_and_build(builder, &signer, force, lane, false).await?
+            else {
                 return Ok(());
+            };
+            let wallet_provider = AlloyProviderBuilder::<_, _, N>::default();
+
+            if let Some(sponsor_url) = sponsor_url {
+                // Sign locally, ask the sponsor service for a fee-payer signature, then submit the
+                // fully-sponsored tx to the regular RPC.
+                tx_request.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
+                let connector = tempo::sponsor_relay_connector(&provider, &sponsor_url)?;
+                let provider = wallet_provider
+                    .wallet(EthereumWallet::from(signer))
+                    .connect_with(&connector)
+                    .await?;
+                cast_send(
+                    provider, tx_request, None, None, cast_async, sync, confs, timeout, false,
+                )
+                .await?;
+            } else {
+                tempo::maybe_attach_sponsor(
+                    tempo_sponsor.as_ref(),
+                    fee_provider,
+                    chain,
+                    &mut tx_request,
+                    from,
+                )
+                .await?;
+                let provider = wallet_provider
+                    .wallet(EthereumWallet::from(signer))
+                    .connect_provider(&provider);
+                cast_send(
+                    provider,
+                    tx_request,
+                    fee_chain,
+                    None,
+                    cast_async,
+                    sync,
+                    confs,
+                    timeout,
+                    resolve_fee_symbol,
+                )
+                .await?;
             }
-            let (mut tx_request, _) = builder.build(&signer).await?;
-            maybe_print_resolved_lane(
-                resolved_lane.as_ref(),
-                tx_request.nonce().unwrap_or_default(),
-            )?;
-
-            if let Some(sponsor) = &tempo_sponsor {
-                let dyn_provider =
-                    (!config.eth_rpc_curl).then_some(&provider).map(|p| p as &dyn Provider<N>);
-                tempo::attach_sponsor(sponsor, dyn_provider, chain, &mut tx_request, from).await?;
-            }
-
-            let wallet = EthereumWallet::from(signer);
-            let provider = AlloyProviderBuilder::<_, _, N>::default()
-                .wallet(wallet)
-                .connect_provider(&provider);
-
-            cast_send(
-                provider,
-                tx_request,
-                tempo_sponsor.is_none().then_some(chain),
-                None,
-                send_tx.cast_async,
-                send_tx.sync,
-                send_tx.confirmations,
-                timeout,
-                tempo_sponsor.is_none() && !config.eth_rpc_curl,
-            )
-            .await?;
         }
 
         Ok(())
     }
+}
+
+/// Prints a sync receipt, or the hash / polled receipt of a pending transaction.
+async fn print_send_result<N: Network, P: Provider<N>>(
+    provider: P,
+    tx_hash: B256,
+    receipt: Option<String>,
+    cast_async: bool,
+    confs: u64,
+    timeout: u64,
+) -> Result<B256>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+{
+    match receipt {
+        Some(receipt) => sh_println!("{receipt}")?,
+        None => {
+            CastTxSender::new(provider).print_tx_result(tx_hash, cast_async, confs, timeout).await?
+        }
+    }
+    Ok(tx_hash)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -558,28 +532,22 @@ where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
-    let fee_token = resolve_and_set_fee_token(
+    tempo::resolve_and_print_fee_token(
         resolve_unknown_fee_token_symbol.then_some(&provider),
         chain,
         &mut tx,
         fee_payer,
     )
     .await?;
-    maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(&provider), fee_token).await?;
-    let cast = CastTxSender::new(provider);
-
-    if sync {
+    let (tx_hash, receipt) = if sync {
         // JSON envelope not supported: N::ReceiptResponse is generic over Display but not
         // Serialize; adding Serialize would ripple across all network-generic callers.
-        let (tx_hash, receipt) = cast.send_sync(tx).await?;
-        sh_println!("{receipt}")?;
-        Ok(tx_hash)
+        let (tx_hash, receipt) = CastTxSender::new(&provider).send_sync(tx).await?;
+        (tx_hash, Some(receipt))
     } else {
-        let pending_tx = cast.send(tx).await?;
-        let tx_hash = *pending_tx.inner().tx_hash();
-        cast.print_tx_result(tx_hash, cast_async, confs, timeout).await?;
-        Ok(tx_hash)
-    }
+        (*CastTxSender::new(&provider).send(tx).await?.tx_hash(), None)
+    };
+    print_send_result(provider, tx_hash, receipt, cast_async, confs, timeout).await
 }
 
 /// Sends a raw transaction using the RPC method selected by `sync`.
@@ -596,8 +564,7 @@ where
         let (tx_hash, receipt) = CastTxSender::new(provider).send_raw_sync(raw_tx).await?;
         Ok((tx_hash, Some(receipt)))
     } else {
-        let tx_hash = *provider.send_raw_transaction(raw_tx).await?.tx_hash();
-        Ok((tx_hash, None))
+        Ok((*provider.send_raw_transaction(raw_tx).await?.tx_hash(), None))
     }
 }
 
@@ -619,24 +586,16 @@ where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
-    let fee_token = resolve_and_set_fee_token(
+    tempo::resolve_and_print_fee_token(
         resolve_unknown_fee_token_symbol.then_some(provider),
         chain,
         &mut tx,
         fee_payer,
     )
     .await?;
-    maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(provider), fee_token).await?;
     let raw_tx = tx.sign_with_tempo_wallet(wallet).await?;
-    let cast = CastTxSender::new(provider);
     let (tx_hash, receipt) = cast_send_raw(provider, &raw_tx, sync).await?;
-
-    if let Some(receipt) = receipt {
-        sh_println!("{receipt}")?;
-    } else {
-        cast.print_tx_result(tx_hash, cast_async, confirmations, timeout).await?;
-    }
-    Ok(tx_hash)
+    print_send_result(provider, tx_hash, receipt, cast_async, confirmations, timeout).await
 }
 
 /// Signs a prepared transaction with a Tempo wallet, obtains a remote fee-payer signature, and
@@ -679,25 +638,17 @@ where
 pub(crate) fn validate_sponsor_url(raw: &str) -> Result<()> {
     let url = Url::parse(raw)
         .map_err(|e| eyre::eyre!("--sponsor-url is not a valid URL ({raw}): {e}"))?;
-
     match url.scheme() {
         "https" => Ok(()),
-        "http" => {
-            let host = url.host_str().unwrap_or("");
-            if host == "localhost" || host == "127.0.0.1" {
-                return Ok(());
-            }
-            eyre::bail!(
-                "--sponsor-url must use https:// for non-local endpoints (got {raw}). \
-                 The sponsor relay is a trusted third party; use an encrypted channel."
-            );
-        }
-        _ => {
-            eyre::bail!(
-                "--sponsor-url must start with https:// (got {raw}). \
+        "http" if matches!(url.host_str(), Some("localhost" | "127.0.0.1")) => Ok(()),
+        "http" => eyre::bail!(
+            "--sponsor-url must use https:// for non-local endpoints (got {raw}). \
              The sponsor relay is a trusted third party; use an encrypted channel."
-            );
-        }
+        ),
+        _ => eyre::bail!(
+            "--sponsor-url must start with https:// (got {raw}). \
+             The sponsor relay is a trusted third party; use an encrypted channel."
+        ),
     }
 }
 
@@ -753,17 +704,6 @@ mod tests {
         // bypass attempts that fooled the old starts_with check
         assert!(validate_sponsor_url("http://localhost.evil.com").is_err());
         assert!(validate_sponsor_url("http://127.0.0.1.evil.com").is_err());
-    }
-
-    #[test]
-    fn parses_gas_estimate_multiplier() {
-        let args = SendTxArgs::parse_from([
-            "cast-send",
-            "0x0000000000000000000000000000000000000000",
-            "--gas-estimate-multiplier",
-            "125",
-        ]);
-        assert_eq!(args.gas_estimate_multiplier, Some(125));
     }
 
     #[tokio::test]

@@ -1,8 +1,13 @@
-use crate::tx::{CastTxBuilder, SenderKind, validate_authorizations};
-use alloy_network::Network;
+use crate::tx::{CastTxBuilder, InputState, SenderKind, validate_authorizations};
+use alloy_network::{Network, TransactionBuilder};
+use alloy_provider::Provider;
 use eyre::Result;
-use foundry_cli::opts::CliAuthorizationList;
-use foundry_common::shell;
+use foundry_cli::{
+    opts::CliAuthorizationList,
+    utils::{ResolvedLane, maybe_print_resolved_lane},
+};
+use foundry_common::{FoundryTransactionBuilder, shell};
+use foundry_wallets::TempoAccountsWallet;
 
 /// Validates the authorization sender and confirms that the user intends to disclose an EIP-7702
 /// authorization to an RPC endpoint.
@@ -15,7 +20,6 @@ pub(super) fn confirm_auth_rpc_disclosure<N: Network, P, S>(
     force: bool,
 ) -> Result<bool> {
     builder.validate_auth(sender)?;
-
     confirm_auth_rpc_disclosure_after_validation(force)
 }
 
@@ -26,7 +30,6 @@ pub(super) fn confirm_auth_rpc_disclosure_before_network_resolution(
     force: bool,
 ) -> Result<bool> {
     validate_authorizations(authorizations, sender)?;
-
     confirm_auth_rpc_disclosure_after_validation(force)
 }
 
@@ -62,6 +65,50 @@ pub(super) fn confirm_auth_rpc_disclosure_during_build<'a, N: Network, P, S>(
     if !builder.will_disclose_auth_during_build() {
         return Ok(true);
     }
-
     confirm_auth_rpc_disclosure(builder, &sender.into(), force)
+}
+
+/// Confirms the authorization disclosure, builds the transaction for `sender` and prints the
+/// resolved lane. `rpc_signs` marks modes where the RPC signs the transaction, which discloses
+/// every authorization regardless of how the request is filled.
+///
+/// Returns `None` when the user declined.
+pub(super) async fn confirm_and_build<'a, N: Network, P: Provider<N>>(
+    builder: CastTxBuilder<N, P, InputState>,
+    sender: impl Into<SenderKind<'a>>,
+    force: bool,
+    lane: Option<&ResolvedLane>,
+    rpc_signs: bool,
+) -> Result<Option<N::TransactionRequest>>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let sender = sender.into();
+    let discloses =
+        if rpc_signs { builder.has_auth() } else { builder.will_disclose_auth_during_build() };
+    if discloses && !confirm_auth_rpc_disclosure(&builder, &sender, force)? {
+        return Ok(None);
+    }
+    let (tx, _) = builder.build(sender).await?;
+    maybe_print_resolved_lane(lane, tx.nonce().unwrap_or_default())?;
+    Ok(Some(tx))
+}
+
+/// [`confirm_and_build`] for a transaction signed by a Tempo access key; also returns the
+/// prepared wallet.
+pub(super) async fn confirm_and_build_with_tempo_wallet<N: Network, P: Provider<N>>(
+    builder: CastTxBuilder<N, P, InputState>,
+    wallet: &TempoAccountsWallet,
+    force: bool,
+    lane: Option<&ResolvedLane>,
+) -> Result<Option<(N::TransactionRequest, TempoAccountsWallet)>>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    if !confirm_auth_rpc_disclosure_during_build(&builder, wallet.account(), force)? {
+        return Ok(None);
+    }
+    let (tx, _, prepared) = builder.build_with_tempo_wallet(wallet).await?;
+    maybe_print_resolved_lane(lane, tx.nonce().unwrap_or_default())?;
+    Ok(Some((tx, prepared)))
 }

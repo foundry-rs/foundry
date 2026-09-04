@@ -2,7 +2,7 @@
 
 use crate::tx::fill_transaction_gas_fees;
 use alloy_network::{Ethereum, Network, TransactionBuilder};
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_provider::Provider;
 use alloy_rpc_client::BuiltInConnectionString;
 use alloy_transport::{BoxTransport, TransportConnect, TransportError};
@@ -36,23 +36,6 @@ pub(crate) fn tempo_provider(rpc: &RpcOpts) -> Result<(Config, RetryProvider<Tem
     Ok((config, provider))
 }
 
-/// Resolves the sponsored fee token and attaches the sponsor signature preview for `payer`.
-pub(crate) async fn attach_sponsor<N>(
-    sponsor: &TempoSponsor,
-    provider: Option<&dyn Provider<N>>,
-    chain: Chain,
-    tx: &mut N::TransactionRequest,
-    payer: Address,
-) -> Result<()>
-where
-    N: Network,
-    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
-{
-    sponsor.resolve_and_set_fee_token(provider, Some(chain), tx).await?;
-    sponsor.attach_and_print::<N>(tx, payer).await?;
-    Ok(())
-}
-
 /// Attaches the fee payment to a built transaction: the sponsor signature when a sponsor is
 /// configured, otherwise the resolved fee token for `payer` (printing it when it was resolved).
 pub(crate) async fn apply_fee_payment<N, P>(
@@ -67,37 +50,72 @@ where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     P: Provider<N>,
 {
-    let dyn_provider = provider.map(|p| p as &dyn Provider<N>);
-    if let Some(sponsor) = sponsor {
-        attach_sponsor(sponsor, dyn_provider, chain, tx, payer).await
+    if sponsor.is_some() {
+        maybe_attach_sponsor(sponsor, provider, chain, tx, payer).await
     } else {
-        let fee_token =
-            resolve_and_set_fee_token(dyn_provider, Some(chain), tx, Some(payer)).await?;
-        maybe_print_fee_token(provider, fee_token).await
+        resolve_and_print_fee_token(provider, Some(chain), tx, Some(payer)).await
     }
 }
 
-/// Prints the sponsor hash of a built transaction, resolving the fee token for `fee_payer` first
-/// when one is configured. Used by `--tempo.print-sponsor-hash`.
-pub(crate) async fn print_sponsor_hash<N>(
-    provider: Option<&dyn Provider<N>>,
+/// Resolves the sponsored fee token and attaches the sponsor signature preview for `payer` when a
+/// sponsor is configured.
+pub(crate) async fn maybe_attach_sponsor<N, P>(
+    sponsor: Option<&TempoSponsor>,
+    provider: Option<&P>,
     chain: Chain,
     tx: &mut N::TransactionRequest,
-    from: Address,
+    payer: Address,
+) -> Result<()>
+where
+    N: Network,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    P: Provider<N>,
+{
+    if let Some(sponsor) = sponsor {
+        let provider = provider.map(|p| p as &dyn Provider<N>);
+        sponsor.resolve_and_set_fee_token(provider, Some(chain), tx).await?;
+        sponsor.attach_and_print::<N>(tx, payer).await?;
+    }
+    Ok(())
+}
+
+/// Resolves and sets the fee token paid by `fee_payer`, printing it when it was resolved.
+pub(crate) async fn resolve_and_print_fee_token<N, P>(
+    provider: Option<&P>,
+    chain: Option<Chain>,
+    tx: &mut N::TransactionRequest,
     fee_payer: Option<Address>,
 ) -> Result<()>
 where
     N: Network,
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    P: Provider<N>,
+{
+    let dyn_provider = provider.map(|p| p as &dyn Provider<N>);
+    let fee_token = resolve_and_set_fee_token(dyn_provider, chain, tx, fee_payer).await?;
+    maybe_print_fee_token(provider, fee_token).await
+}
+
+/// Computes the sponsor hash of a built transaction, resolving the fee token for `fee_payer` first
+/// when one is configured. Used by `--tempo.print-sponsor-hash`.
+pub(crate) async fn sponsor_hash<N, P>(
+    provider: Option<&P>,
+    chain: Chain,
+    tx: &mut N::TransactionRequest,
+    from: Address,
+    fee_payer: Option<Address>,
+) -> Result<B256>
+where
+    N: Network,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    P: Provider<N>,
 {
     if fee_payer.is_some() {
+        let provider = provider.map(|p| p as &dyn Provider<N>);
         resolve_and_set_fee_token(provider, Some(chain), tx, fee_payer).await?;
     }
-    let hash = tx
-        .compute_sponsor_hash(from)
-        .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))?;
-    sh_println!("{hash:?}")?;
-    Ok(())
+    tx.compute_sponsor_hash(from)
+        .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))
 }
 
 /// Prints a command result: the raw payload in JSON mode, the human rendering otherwise.
