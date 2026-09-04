@@ -29,6 +29,11 @@ env:
   RUST_MIN_STACK: 4194304 # 2 * the default (2 * 1024 * 1024)
 
 jobs:
+  cargo-cooldown:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cargo-cooldown.yml
+
   matrices:
     name: build matrices
     runs-on: ubuntu-latest
@@ -60,7 +65,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-    needs: matrices
+    needs: [cargo-cooldown, matrices]
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.matrices.outputs.test-matrix) }}
@@ -73,6 +78,9 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libudev-dev
       # External tests dependencies
       - name: Setup Node.js
         if: contains(matrix.name, 'external')

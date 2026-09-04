@@ -63,6 +63,20 @@ fn deposit_event_runtime(event: DepositEvent) -> Bytes {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_includes_block_size_rpc() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let response = rpc_request(
+        &handle.http_endpoint(),
+        "eth_simulateV1",
+        json!([{"blockStateCalls": [{}]}, "latest"]),
+    )
+    .await;
+
+    assert!(response.get("error").is_none(), "{response}");
+    assert!(quantity(&response["result"][0]["size"]) > 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_fork_simulate_native_transfers_rpc() {
     crate::init_tracing();
     let (_, handle) = spawn(

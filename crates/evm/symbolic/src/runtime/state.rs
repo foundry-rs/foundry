@@ -209,6 +209,8 @@ impl PathState {
         // semantics unless the callee sets its own prank.
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
+        child.expected_revert = None;
+        child.assume_no_revert_next_call = None;
         child
     }
 
@@ -217,8 +219,6 @@ impl PathState {
         child.storage_hook_active = true;
         child.recorded_logs = None;
         child.access_record = None;
-        child.expected_revert = None;
-        child.assume_no_revert_next_call = None;
         child.expected_emit = None;
         child.expected_calls.clear();
         child.expected_creates.clear();
@@ -1075,7 +1075,7 @@ impl ExpectedCall {
             gas,
             min_gas,
             data,
-            expected: count.unwrap_or(1).max(1),
+            expected: count.unwrap_or(1),
             observed: 0,
             exact: count.is_some(),
         }
@@ -2280,6 +2280,31 @@ fn symbolic_storage_symbol(cx: &mut SymCx, address: Address, key: &SymExpr) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expected_call_zero_count_is_satisfied_only_if_call_never_happens() {
+        let mut cx = SymCx::new();
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+
+        // vm.expectCall(callee, data, 0) - the call must NEVER happen.
+        let mut never_called =
+            ExpectedCall::new(callee.clone(), None, None, None, data.clone(), Some(0));
+        // If the forbidden call never occurs, the expectation is satisfied.
+        assert!(never_called.is_satisfied());
+
+        // A forbidden call is rejected without incrementing the observed count.
+        assert!(!never_called.observe());
+        assert!(never_called.is_satisfied());
+
+        // Sanity check: an exact count=1 expectation still behaves as before.
+        let mut called_once = ExpectedCall::new(callee, None, None, None, data, Some(1));
+        assert!(!called_once.is_satisfied());
+        assert!(called_once.observe());
+        assert!(called_once.is_satisfied());
+        // A second call beyond the exact count of 1 must be rejected.
+        assert!(!called_once.observe());
+    }
 
     #[test]
     fn reverted_top_level_effects_preserve_storage_hook_registrations() {

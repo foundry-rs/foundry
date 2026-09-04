@@ -47,9 +47,6 @@ use tempo_contracts::precompiles::{
 /// The Monad cheatcode handler address.
 pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");
 
-#[cfg(feature = "monad")]
-const MONAD_CHEATCODE_ADDRESSES: &[Address] = &[MONAD_CHEATCODE_ADDRESS];
-
 pub mod arbitrum;
 pub mod celo;
 
@@ -499,15 +496,6 @@ impl NetworkConfigs {
         hardfork
     }
 
-    /// Returns additional cheatcode contract addresses for the active network.
-    pub const fn extra_cheatcode_addresses(&self) -> &'static [Address] {
-        #[cfg(feature = "monad")]
-        if self.is_monad() {
-            return MONAD_CHEATCODE_ADDRESSES;
-        }
-        &[]
-    }
-
     pub const fn is_celo(&self) -> bool {
         self.celo
     }
@@ -803,23 +791,6 @@ impl NetworkConfigs {
         }
     }
 
-    /// Injects chain-specific precompiles active at the given timestamp.
-    pub fn inject_chain_precompiles(
-        self,
-        precompiles: &mut PrecompilesMap,
-        chain_id: ChainId,
-        timestamp: u64,
-    ) {
-        let Some(p256verify) = bsc_p256_precompile(chain_id, timestamp) else { return };
-        precompiles.apply_precompile(&BSC_P256_ADDRESS, move |_| {
-            p256verify.map(|p256verify| {
-                DynPrecompile::new(p256verify.id().clone(), move |input| {
-                    p256verify.execute(input.data, input.gas, input.reservoir)
-                })
-            })
-        });
-    }
-
     /// Returns precompile labels for configured networks at the given hardfork, to be used in
     /// traces.
     pub fn precompiles_label(self, hardfork: Option<FoundryHardfork>) -> AddressHashMap<String> {
@@ -897,6 +868,22 @@ impl NetworkConfigs {
         }
         precompiles
     }
+}
+
+/// Applies the BSC P256 precompile active at the given timestamp.
+pub fn apply_bsc_p256_precompile(
+    precompiles: &mut PrecompilesMap,
+    chain_id: ChainId,
+    timestamp: u64,
+) {
+    let Some(p256verify) = bsc_p256_precompile(chain_id, timestamp) else { return };
+    precompiles.apply_precompile(&BSC_P256_ADDRESS, move |_| {
+        p256verify.map(|p256verify| {
+            DynPrecompile::new(p256verify.id().clone(), move |input| {
+                p256verify.execute(input.data, input.gas, input.reservoir)
+            })
+        })
+    });
 }
 
 impl From<NetworkVariant> for NetworkConfigs {
@@ -1497,7 +1484,7 @@ mod tests {
     fn removes_bsc_p256_before_haber() {
         let mut precompiles = PrecompilesMap::from_static(Precompiles::osaka());
         assert!(precompiles.get(&BSC_P256_ADDRESS).is_some());
-        NetworkConfigs::default().inject_chain_precompiles(
+        apply_bsc_p256_precompile(
             &mut precompiles,
             BSC_MAINNET_CHAIN_ID,
             BSC_MAINNET_HABER_TIMESTAMP - 1,
@@ -1614,7 +1601,6 @@ mod tests {
         let cfg = NetworkConfigs::with_monad();
         assert_eq!(cfg.active_network_name(), Some("monad"));
         assert!(cfg.is_monad());
-        assert_eq!(cfg.extra_cheatcode_addresses(), &[MONAD_CHEATCODE_ADDRESS]);
     }
 
     #[test]
@@ -1631,7 +1617,6 @@ mod tests {
         let cfg = NetworkConfigs::default();
         assert_eq!(cfg.active_network_name(), None);
         assert!(!cfg.is_optimism());
-        assert!(cfg.extra_cheatcode_addresses().is_empty());
     }
 
     // --- Serde round-trip ---

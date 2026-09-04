@@ -46,7 +46,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
+    Blob, BlockBody, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
     TransactionEnvelope, TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, Typed2718,
     constants::EMPTY_WITHDRAWALS,
     proofs::{calculate_receipt_root, calculate_transaction_root},
@@ -60,6 +60,7 @@ use alloy_eips::{
     eip7685::EMPTY_REQUESTS_HASH,
     eip7840::BlobParams,
     eip7910::SystemContract,
+    eip7928::EMPTY_BLOCK_ACCESS_LIST_HASH,
 };
 use alloy_evm::{
     Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromTxWithEncoded,
@@ -68,6 +69,7 @@ use alloy_evm::{
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
 };
+use alloy_genesis::Genesis;
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType,
     BlockResponse, Network, NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope,
@@ -111,7 +113,7 @@ use alloy_rpc_types_eth::{AccountInfo as RpcAccountInfo, Bundle, EthCallResponse
 use alloy_rpc_types_mev::{EthCallBundle, EthCallBundleResponse, EthCallBundleTransactionResult};
 use alloy_serde::{OtherFields, WithOtherFields};
 use alloy_sol_types::SolCall;
-use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer};
+use alloy_trie::{HashBuilder, Nibbles, proof::ProofRetainer, root::state_root_ref_unhashed};
 use anvil_core::eth::{
     block::{Block, BlockInfo, canonical_block, create_block},
     transaction::{MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo},
@@ -142,7 +144,7 @@ use foundry_evm::{
         get_blob_params_by_hardfork,
     },
 };
-use foundry_evm_networks::{NetworkConfigs, arbitrum};
+use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile, arbitrum};
 #[cfg(feature = "optimism")]
 use foundry_primitives::get_deposit_tx_parts;
 use foundry_primitives::{
@@ -1352,7 +1354,7 @@ impl<N: Network> Backend<N> {
             PrecompilesMap::from_static(Precompiles::new(PrecompileSpecId::from_spec_id(spec_id)));
         let chain_id = self.protocol_chain_id();
         let timestamp = self.evm_env.read().block_env.timestamp.saturating_to();
-        self.networks.inject_chain_precompiles(&mut precompiles, chain_id, timestamp);
+        apply_bsc_p256_precompile(&mut precompiles, chain_id, timestamp);
 
         let mut precompiles_map = BTreeMap::<String, Address>::default();
         for address in precompiles.addresses() {
@@ -2232,7 +2234,7 @@ impl<N: Network> Backend<N> {
 
     fn inject_configured_precompiles(&self, precompiles: &mut PrecompilesMap, evm_env: &EvmEnv) {
         self.networks.inject_precompiles(precompiles);
-        self.networks.inject_chain_precompiles(
+        apply_bsc_p256_precompile(
             precompiles,
             self.protocol_chain_id(),
             evm_env.block_env.timestamp.saturating_to(),
@@ -3928,12 +3930,16 @@ impl<N: Network> Backend<N> {
             trace!(target: "backend", "using forked blockchain at {}", fork.block_number());
             Blockchain::forked(fork.block_number(), fork.block_hash(), fork.total_difficulty())
         } else {
-            let header = genesis_header(
-                &env.read(),
-                fees.is_eip1559().then(|| fees.base_fee()),
-                genesis.timestamp,
-                genesis.number,
-            );
+            let header = if let Some(genesis) = genesis.genesis_init.as_ref() {
+                genesis_json_header(genesis)
+            } else {
+                genesis_header(
+                    &env.read(),
+                    fees.is_eip1559().then(|| fees.base_fee()),
+                    genesis.timestamp,
+                    genesis.number,
+                )
+            };
             Blockchain::new(foundry_header(&networks, header))
         };
 
@@ -6925,7 +6931,7 @@ where
             return Ok(fork.debug_trace_transaction(hash, opts).await?);
         }
 
-        Ok(GethTrace::Default(Default::default()))
+        Err(BlockchainError::TransactionNotFound)
     }
 
     /// Returns geth-style traces for all transactions in an RLP-encoded block.
@@ -7210,9 +7216,9 @@ where
 
         // Cancun specific
         let excess_blob_gas = block.header.excess_blob_gas();
-        let blob_gas_price =
-            alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default());
         let blob_gas_used = transaction.blob_gas_used();
+        let blob_gas_price = blob_gas_used
+            .map(|_| alloy_eips::eip4844::calc_blob_gasprice(excess_blob_gas.unwrap_or_default()));
 
         let effective_gas_price = transaction.effective_gas_price(block.header.base_fee_per_gas());
 
@@ -7235,7 +7241,7 @@ where
             block_hash: Some(block_hash),
             from: info.from,
             to: info.to,
-            blob_gas_price: Some(blob_gas_price),
+            blob_gas_price,
             blob_gas_used,
         };
 
@@ -7269,6 +7275,33 @@ where
             }
         }
         MinedTransactionReceipt { inner, out: info.out.clone() }
+    }
+
+    /// Executes the pending block and returns its transaction receipts.
+    pub async fn pending_block_receipts(
+        &self,
+        pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
+    ) -> Vec<FoundryTxReceipt> {
+        let BlockInfo { block, transactions, receipts } =
+            self.pending_block(pool_transactions).await;
+        let block_hash = block.header.hash_slow();
+        let mut pending_receipts = Vec::with_capacity(receipts.len());
+        let mut next_log_index = 0;
+
+        for (info, receipt) in transactions.iter().zip(receipts) {
+            let log_count = receipt.logs().len();
+            let receipt = self.build_mined_transaction_receipt(
+                info,
+                receipt,
+                block_hash,
+                &block,
+                next_log_index,
+            );
+            pending_receipts.push(receipt.inner);
+            next_log_index += log_count;
+        }
+
+        pending_receipts
     }
 
     /// Returns the blocks receipts for the given number
@@ -8254,7 +8287,7 @@ impl Backend<FoundryNetwork> {
                     cache_db.commit(state);
                     preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
                     #[cfg(feature = "optimism")]
-                    let receipt = if matches!(tx.as_ref(), FoundryTxEnvelope::Deposit(_)) {
+                    let receipt = if tx.as_ref().is_deposit() {
                         crate::eth::backend::executor::optimism::build_simulated_deposit_receipt(
                             self.hardfork(),
                             caller_nonce,
@@ -8399,6 +8432,16 @@ impl Backend<FoundryNetwork> {
                     ..Default::default()
                 };
                 let block_hash = header.hash_slow();
+                let withdrawals = (spec_id >= SpecId::SHANGHAI).then_some(Default::default());
+                let size = U256::from(
+                    BlockBody {
+                        transactions: transaction_envelopes,
+                        ommers: vec![],
+                        withdrawals: withdrawals.clone(),
+                    }
+                    .into_block(header.clone())
+                    .length(),
+                );
                 for (transaction_index, transaction) in transactions.iter_mut().enumerate() {
                     transaction.block_hash = Some(block_hash);
                     transaction.block_number = Some(header.number);
@@ -8410,11 +8453,11 @@ impl Backend<FoundryNetwork> {
                         hash: block_hash,
                         inner: header.into(),
                         total_difficulty: None,
-                        size: None,
+                        size: Some(size),
                     },
                     uncles: vec![],
                     transactions: BlockTransactions::Full(transactions),
-                    withdrawals: (spec_id >= SpecId::SHANGHAI).then_some(Default::default()),
+                    withdrawals,
                 };
 
                 if !return_full_transactions {
@@ -8738,6 +8781,20 @@ where
                         min_allowed,
                     }
                     .into());
+                }
+
+                let hardfork = self.tempo_hardfork();
+                if hardfork.is_t1() && tempo_tx.is_expiring_nonce_tx() {
+                    let max_expiry_secs = hardfork.expiring_nonce_max_expiry_secs();
+                    let max_allowed = current_time.saturating_add(max_expiry_secs);
+                    if valid_before > max_allowed {
+                        return Err(InvalidTransactionError::TempoValidBeforeTooFar {
+                            valid_before,
+                            max_expiry_secs,
+                            max_allowed,
+                        }
+                        .into());
+                    }
                 }
             }
 
@@ -9384,6 +9441,44 @@ fn genesis_header(
         parent_beacon_block_root: (spec_id >= SpecId::CANCUN).then_some(Default::default()),
         withdrawals_root: (spec_id >= SpecId::SHANGHAI).then_some(EMPTY_WITHDRAWALS),
         requests_hash: (spec_id >= SpecId::PRAGUE).then_some(EMPTY_REQUESTS_HASH),
+        ..Default::default()
+    }
+}
+
+/// Creates an Ethereum header from a `genesis.json` configuration.
+fn genesis_json_header(genesis: &Genesis) -> Header {
+    let number = genesis.number.unwrap_or_default();
+    let timestamp = genesis.timestamp;
+    let is_london = genesis.config.is_london_active_at_block(number);
+    let is_shanghai = genesis.config.is_shanghai_active_at_block_and_timestamp(number, timestamp);
+    let is_cancun = genesis.config.is_cancun_active_at_block_and_timestamp(number, timestamp);
+    let is_prague = genesis.config.prague_time.is_some_and(|fork| fork <= timestamp);
+    let is_amsterdam = genesis.config.amsterdam_time.is_some_and(|fork| fork <= timestamp);
+
+    Header {
+        number,
+        parent_hash: genesis.parent_hash.unwrap_or_default(),
+        gas_limit: genesis.gas_limit,
+        difficulty: genesis.difficulty,
+        nonce: genesis.nonce.into(),
+        extra_data: genesis.extra_data.clone(),
+        state_root: state_root_ref_unhashed(&genesis.alloc),
+        timestamp,
+        mix_hash: genesis.mix_hash,
+        beneficiary: genesis.coinbase,
+        base_fee_per_gas: is_london.then(|| {
+            genesis
+                .base_fee_per_gas
+                .map(|fee| fee as u64)
+                .unwrap_or(crate::eth::fees::INITIAL_BASE_FEE)
+        }),
+        withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
+        parent_beacon_block_root: is_cancun.then_some(B256::ZERO),
+        blob_gas_used: is_cancun.then_some(genesis.blob_gas_used.unwrap_or_default()),
+        excess_blob_gas: is_cancun.then_some(genesis.excess_blob_gas.unwrap_or_default()),
+        requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
+        block_access_list_hash: is_amsterdam.then_some(EMPTY_BLOCK_ACCESS_LIST_HASH),
+        slot_number: is_amsterdam.then_some(genesis.slot_number.unwrap_or_default()),
         ..Default::default()
     }
 }

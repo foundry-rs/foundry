@@ -176,8 +176,6 @@ impl SymbolicExecutor {
         child.world = failure_world.clone();
         child.world.mark_current_transaction_created(created);
         child.world.set_nonce(created, 1);
-        child.expected_revert = None;
-        child.assume_no_revert_next_call = None;
 
         let outcomes = self.execute_external_call(executor, child, &initcode, completed_paths)?;
         if outcomes.is_empty() {
@@ -185,83 +183,48 @@ impl SymbolicExecutor {
         }
 
         let mut parents = VecDeque::with_capacity(outcomes.len());
-        for mut outcome in outcomes {
-            let mut parent = state.clone();
-            parent.take_call_outcome_state(&mut outcome.state);
-
-            if let Some(assumption) = parent.assume_no_revert_next_call.take()
-                && matches!(outcome.status, CallStatus::Revert)
-                && self.assume_no_revert_rejects(
-                    &mut parent,
-                    &assumption,
-                    created,
-                    &outcome.state.frame.return_data,
-                )?
-            {
-                continue;
-            }
-
-            if let Some(mut expected) = parent.expected_revert.clone() {
-                match outcome.status {
-                    CallStatus::Success => {
-                        *state = parent;
-                        return Ok(StepOutcome::Failure);
-                    }
-                    CallStatus::Revert | CallStatus::Failure => {
-                        if !self.expected_revert_matches(
-                            &mut parent,
-                            &expected,
-                            created,
-                            &outcome.state.frame.return_data,
-                        )? {
-                            *state = parent;
-                            return Ok(StepOutcome::Failure);
-                        }
-                        if expected.consume_one() {
-                            parent.expected_revert = None;
-                        } else {
-                            parent.expected_revert = Some(expected);
-                        }
-                        parent.expected_calls = outcome.state.expected_calls;
-                        parent.expected_creates = pending_expected_creates.clone();
-                        parent.call_mocks = outcome.state.call_mocks;
-                        parent.function_mocks = outcome.state.function_mocks;
-                        parent.world = failure_world.clone();
-                        let zero = SymExpr::zero(&mut self.cx);
-                        let return_data = SymReturnData::from_words(&mut self.cx, vec![zero]);
-                        complete_cheatcode_call(
-                            &mut self.cx,
-                            &mut parent,
-                            out_offset.clone(),
-                            out_size,
-                            return_data,
-                        )?;
-                        parents.push_back(parent);
-                        continue;
-                    }
+        for outcome in outcomes {
+            match self.join_call_outcome(state, outcome, created)? {
+                JoinedCallOutcome::Rejected => {}
+                JoinedCallOutcome::Failure(parent) => {
+                    *state = parent;
+                    return Ok(StepOutcome::Failure);
                 }
-            }
-
-            match outcome.status {
-                CallStatus::Success => {
-                    parent.world = outcome.state.world;
-                    parent.block = outcome.state.block;
-                    parent.expected_emit = outcome.state.expected_emit;
-                    parent.expected_calls = outcome.state.expected_calls;
+                JoinedCallOutcome::ExpectedRevert { mut parent, child } => {
+                    parent.expected_calls = child.expected_calls;
                     parent.expected_creates = pending_expected_creates.clone();
-                    parent.call_mocks = outcome.state.call_mocks;
-                    parent.function_mocks = outcome.state.function_mocks;
+                    parent.call_mocks = child.call_mocks;
+                    parent.function_mocks = child.function_mocks;
+                    parent.world = failure_world.clone();
+                    let zero = SymExpr::zero(&mut self.cx);
+                    let return_data = SymReturnData::from_words(&mut self.cx, vec![zero]);
+                    complete_cheatcode_call(
+                        &mut self.cx,
+                        &mut parent,
+                        out_offset.clone(),
+                        out_size,
+                        return_data,
+                    )?;
+                    parents.push_back(parent);
+                }
+                JoinedCallOutcome::Success { mut parent, child } => {
+                    parent.world = child.world;
+                    parent.block = child.block;
+                    parent.expected_emit = child.expected_emit;
+                    parent.expected_calls = child.expected_calls;
+                    parent.expected_creates = pending_expected_creates.clone();
+                    parent.call_mocks = child.call_mocks;
+                    parent.function_mocks = child.function_mocks;
                     self.observe_expected_create(
                         &mut parent,
                         state.address,
                         CreateKind::Create,
-                        &outcome.state.frame.return_data,
+                        &child.frame.return_data,
                     )?;
                     if !parent.world.is_destroyed(created) {
-                        parent.world.install_code(
-                            created,
-                            outcome.state.frame.return_data.to_code(&mut self.cx)?,
-                        );
+                        parent
+                            .world
+                            .install_code(created, child.frame.return_data.to_code(&mut self.cx)?);
                         parent.world.set_nonce(created, 1);
                     }
                     let return_data =
@@ -273,28 +236,19 @@ impl SymbolicExecutor {
                         out_size,
                         return_data,
                     )?;
+                    parents.push_back(parent);
                 }
-                CallStatus::Revert => {
+                JoinedCallOutcome::Revert { mut parent, child } => {
                     parent.world = failure_world.clone();
-                    parent.return_data = outcome.state.frame.return_data;
+                    parent.return_data = child.frame.return_data;
                     parent.copy_call_output_offset(&mut self.cx, out_offset.clone(), out_size)?;
                     parent.stack.push(SymExpr::zero(&mut self.cx))?;
-                }
-                CallStatus::Failure => {
-                    *state = parent;
-                    return Ok(StepOutcome::Failure);
+                    parents.push_back(parent);
                 }
             }
-
-            parents.push_back(parent);
         }
 
-        let Some(first) = self.pop_next_path(&mut parents) else {
-            return Ok(StepOutcome::AssumeRejected);
-        };
-        *state = first;
-        worklist.extend(parents);
-        Ok(StepOutcome::Continue)
+        Ok(self.resume_parent_paths(state, worklist, parents))
     }
 
     pub(super) fn observe_expected_create(

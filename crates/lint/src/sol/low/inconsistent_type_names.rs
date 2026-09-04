@@ -21,26 +21,25 @@ impl<'ast> ProjectLintPass<'ast> for InconsistentTypeNames {
         if !ctx.is_lint_enabled(INCONSISTENT_TYPE_NAMES.id()) {
             return;
         }
-
-        let hir = &ctx.gcx().hir;
-        let source_map = ctx.gcx().sess.source_map();
+        let gcx = ctx.gcx();
+        let hir = &gcx.hir;
+        let source_map = gcx.sess.source_map();
         let input_sources: HashMap<_, _> = hir
             .sources_enumerated()
-            .filter_map(|(source_id, source)| {
-                let FileName::Real(path) = &source.file.name else { return None };
-                let source_idx = sources.iter().position(|source| &source.path == path)?;
-                Some((source_id, source_idx))
+            .filter_map(|(sid, src)| {
+                let FileName::Real(path) = &src.file.name else { return None };
+                Some((sid, sources.iter().position(|s| &s.path == path)?))
             })
             .collect();
 
-        let mut contracts = HashMap::<hir::ContractId, TypeNames>::new();
+        // The spellings each contract uses across all of its variables.
+        let mut contracts = HashMap::<hir::ContractId, Vec<&str>>::new();
         for variable in hir.variables() {
-            let Some(contract_id) = variable.contract else { continue };
-            if !input_sources.contains_key(&variable.source) {
-                continue;
+            if let Some(contract_id) = variable.contract
+                && input_sources.contains_key(&variable.source)
+            {
+                int_spellings(source_map, &variable.ty, contracts.entry(contract_id).or_default());
             }
-
-            contracts.entry(contract_id).or_default().merge(type_names(source_map, &variable.ty));
         }
 
         // HIR variable order is stable, so diagnostics remain deterministic across runs.
@@ -48,10 +47,10 @@ impl<'ast> ProjectLintPass<'ast> for InconsistentTypeNames {
             let Some(contract_id) = variable.contract else { continue };
             let Some(&source_idx) = input_sources.get(&variable.source) else { continue };
             let Some(contract_names) = contracts.get(&contract_id) else { continue };
-            let variable_names = type_names(source_map, &variable.ty);
-
-            if (variable_names.has_uint && contract_names.has_uint256)
-                || (variable_names.has_int && contract_names.has_int256)
+            let mut names = Vec::new();
+            int_spellings(source_map, &variable.ty, &mut names);
+            if (names.contains(&"uint") && contract_names.contains(&"uint256"))
+                || (names.contains(&"int") && contract_names.contains(&"int256"))
             {
                 ctx.emit(&sources[source_idx], &INCONSISTENT_TYPE_NAMES, variable.span);
             }
@@ -59,55 +58,30 @@ impl<'ast> ProjectLintPass<'ast> for InconsistentTypeNames {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct TypeNames {
-    has_int: bool,
-    has_int256: bool,
-    has_uint: bool,
-    has_uint256: bool,
-}
-
-impl TypeNames {
-    const fn merge(&mut self, other: Self) {
-        self.has_int |= other.has_int;
-        self.has_int256 |= other.has_int256;
-        self.has_uint |= other.has_uint;
-        self.has_uint256 |= other.has_uint256;
-    }
-}
-
-/// Collects integer spellings from a single resolved variable declaration.
+/// Collects the 256-bit integer spellings (`int`, `int256`, `uint`, `uint256`) of a declared type.
 ///
-/// Function-type parameters and returns are separate HIR variables, so function types are not
-/// recursed here. This keeps each shorthand declaration to one diagnostic while matching the
-/// upstream detector's treatment of arrays and mappings.
-fn type_names(source_map: &SourceMap, ty: &hir::Type<'_>) -> TypeNames {
-    let mut names = TypeNames::default();
+/// Solar normalizes `int`/`uint` to their 256-bit forms in HIR, so the exact source span of an
+/// already typed 256-bit integer node recovers which spelling the declaration used; a missing or
+/// unexpected snippet is ignored conservatively. Function-type parameters and returns are
+/// separate HIR variables, so function types are not recursed here, matching the upstream
+/// detector's treatment of arrays and mappings.
+fn int_spellings(source_map: &SourceMap, ty: &hir::Type<'_>, out: &mut Vec<&'static str>) {
     match &ty.kind {
-        // Solar normalizes `int`/`uint` to their 256-bit forms in HIR. Inspect only the exact
-        // source span of an already typed 256-bit integer node to recover which spelling the
-        // declaration used. A missing or unexpected snippet is ignored conservatively.
-        TypeKind::Elementary(ElementaryType::Int(size)) if size.bits() == 256 => {
-            match source_map.span_to_snippet(ty.span).as_deref() {
-                Ok("int") => names.has_int = true,
-                Ok("int256") => names.has_int256 = true,
-                _ => {}
+        TypeKind::Elementary(ElementaryType::Int(size) | ElementaryType::UInt(size))
+            if size.bits() == 256 =>
+        {
+            if let Ok(snippet) = source_map.span_to_snippet(ty.span)
+                && let Some(spelling) =
+                    ["int", "int256", "uint", "uint256"].into_iter().find(|s| *s == snippet)
+            {
+                out.push(spelling);
             }
         }
-        TypeKind::Elementary(ElementaryType::UInt(size)) if size.bits() == 256 => {
-            match source_map.span_to_snippet(ty.span).as_deref() {
-                Ok("uint") => names.has_uint = true,
-                Ok("uint256") => names.has_uint256 = true,
-                _ => {}
-            }
-        }
-        TypeKind::Array(array) => names.merge(type_names(source_map, &array.element)),
+        TypeKind::Array(array) => int_spellings(source_map, &array.element, out),
         TypeKind::Mapping(mapping) => {
-            names.merge(type_names(source_map, &mapping.key));
-            names.merge(type_names(source_map, &mapping.value));
+            int_spellings(source_map, &mapping.key, out);
+            int_spellings(source_map, &mapping.value, out);
         }
-        TypeKind::Function(_) | TypeKind::Custom(_) | TypeKind::Err(_) => {}
-        TypeKind::Elementary(_) => {}
+        _ => {}
     }
-    names
 }

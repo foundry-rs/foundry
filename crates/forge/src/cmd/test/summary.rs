@@ -26,103 +26,82 @@ impl<'a> TestSummaryReport<'a> {
 impl Display for TestSummaryReport<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         if shell::is_json() {
-            writeln!(f, "{}", self.format_json_output(&self.is_detailed, self.outcome))?;
+            writeln!(f, "{}", self.format_json_output())
         } else {
-            writeln!(f, "\n{}", self.format_table_output(&self.is_detailed, self.outcome))?;
+            writeln!(f, "\n{}", self.format_table_output())
         }
-        Ok(())
     }
 }
 
 impl TestSummaryReport<'_> {
-    // Helper function to format the JSON output.
-    fn format_json_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> String {
-        let output = json!({
-            "results": outcome.results.iter().map(|(contract, suite)| {
+    fn format_json_output(&self) -> String {
+        let results = self
+            .outcome
+            .results
+            .iter()
+            .map(|(contract, suite)| {
                 let (suite_path, suite_name) = contract.split_once(':').unwrap();
-                let passed = suite.successes().count();
-                let failed = suite.failures().count();
-                let skipped = suite.skips().count();
                 let mut result = json!({
                     "suite": suite_name,
-                    "passed": passed,
-                    "failed": failed,
-                    "skipped": skipped,
+                    "passed": suite.successes().count(),
+                    "failed": suite.failures().count(),
+                    "skipped": suite.skips().count(),
                 });
-
-                if *is_detailed {
-                    result["file_path"] = serde_json::Value::String(suite_path.to_string());
-                    result["duration"] = serde_json::Value::String(format!("{:.2?}", suite.duration));
+                if self.is_detailed {
+                    result["file_path"] = suite_path.into();
+                    result["duration"] = format!("{:.2?}", suite.duration).into();
                 }
-
                 result
-            }).collect::<Vec<serde_json::Value>>(),
-        });
-
-        serde_json::to_string_pretty(&output).unwrap()
+            })
+            .collect::<Vec<_>>();
+        serde_json::to_string_pretty(&json!({ "results": results })).unwrap()
     }
 
-    fn format_table_output(&self, is_detailed: &bool, outcome: &TestOutcome) -> Table {
-        let mut table = Table::new();
-        if shell::is_markdown() {
-            table.load_style(ASCII_MARKDOWN);
-        } else {
-            table.load_style(ASCII_FULL.with_rounded_corners());
-        }
-
+    fn format_table_output(&self) -> Table {
+        let mut table = new_table();
         let mut row = Row::from(vec![
             Cell::new("Test Suite"),
             Cell::new("Passed").fg(Color::Green),
             Cell::new("Failed").fg(Color::Red),
             Cell::new("Skipped").fg(Color::Yellow),
         ]);
-        if *is_detailed {
+        if self.is_detailed {
             row.add_cell(Cell::new("File Path").fg(Color::Cyan));
             row.add_cell(Cell::new("Duration").fg(Color::Cyan));
         }
         table.set_header(row);
 
-        // Traverse the test_results vector and build the table
-        for (contract, suite) in &outcome.results {
-            let mut row = Row::new();
+        for (contract, suite) in &self.outcome.results {
             let (suite_path, suite_name) = contract.split_once(':').unwrap();
-
-            let passed = suite.successes().count();
-            let mut passed_cell = Cell::new(passed);
-
-            let failed = suite.failures().count();
-            let mut failed_cell = Cell::new(failed);
-
-            let skipped = suite.skips().count();
-            let mut skipped_cell = Cell::new(skipped);
-
-            row.add_cell(Cell::new(suite_name));
-
-            if passed > 0 {
-                passed_cell = passed_cell.fg(Color::Green);
-            }
-            row.add_cell(passed_cell);
-
-            if failed > 0 {
-                failed_cell = failed_cell.fg(Color::Red);
-            }
-            row.add_cell(failed_cell);
-
-            if skipped > 0 {
-                skipped_cell = skipped_cell.fg(Color::Yellow);
-            }
-            row.add_cell(skipped_cell);
-
+            let count_cell = |count: usize, color| {
+                let cell = Cell::new(count);
+                if count > 0 { cell.fg(color) } else { cell }
+            };
+            let mut row = Row::from(vec![
+                Cell::new(suite_name),
+                count_cell(suite.successes().count(), Color::Green),
+                count_cell(suite.failures().count(), Color::Red),
+                count_cell(suite.skips().count(), Color::Yellow),
+            ]);
             if self.is_detailed {
                 row.add_cell(Cell::new(suite_path));
                 row.add_cell(Cell::new(format!("{:.2?}", suite.duration)));
             }
-
             table.add_row(row);
         }
-
         table
     }
+}
+
+/// Creates a table styled for the current shell output format.
+fn new_table() -> Table {
+    let mut table = Table::new();
+    if shell::is_markdown() {
+        table.load_style(ASCII_MARKDOWN);
+    } else {
+        table.load_style(ASCII_FULL.with_rounded_corners());
+    }
+    table
 }
 
 /// Helper function to create the invariant metrics table.
@@ -141,13 +120,7 @@ impl TestSummaryReport<'_> {
 pub(crate) fn format_invariant_metrics_table(
     test_metrics: &HashMap<String, InvariantMetrics>,
 ) -> Table {
-    let mut table = Table::new();
-    if shell::is_markdown() {
-        table.load_style(ASCII_MARKDOWN);
-    } else {
-        table.load_style(ASCII_FULL.with_rounded_corners());
-    }
-
+    let mut table = new_table();
     table.set_header(vec![
         Cell::new("Contract"),
         Cell::new("Selector"),
@@ -156,40 +129,21 @@ pub(crate) fn format_invariant_metrics_table(
         Cell::new("Discards").fg(Color::Yellow),
     ]);
 
-    for name in test_metrics.keys().sorted() {
-        if let Some((contract, selector)) =
+    let count_cell =
+        |count: usize, color| Cell::new(count).fg(if count > 0 { color } else { Color::White });
+    for (name, metrics) in test_metrics.iter().sorted_by_key(|(name, _)| *name) {
+        let Some((contract, selector)) =
             name.split_once(':').map_or(name.as_str(), |(_, contract)| contract).split_once('.')
-        {
-            let mut row = Row::new();
-            row.add_cell(Cell::new(contract));
-            row.add_cell(Cell::new(selector));
-
-            if let Some(metrics) = test_metrics.get(name) {
-                let calls_cell = Cell::new(metrics.calls).fg(if metrics.calls > 0 {
-                    Color::Green
-                } else {
-                    Color::White
-                });
-
-                let reverts_cell = Cell::new(metrics.reverts).fg(if metrics.reverts > 0 {
-                    Color::Red
-                } else {
-                    Color::White
-                });
-
-                let discards_cell = Cell::new(metrics.discards).fg(if metrics.discards > 0 {
-                    Color::Yellow
-                } else {
-                    Color::White
-                });
-
-                row.add_cell(calls_cell);
-                row.add_cell(reverts_cell);
-                row.add_cell(discards_cell);
-            }
-
-            table.add_row(row);
-        }
+        else {
+            continue;
+        };
+        table.add_row(vec![
+            Cell::new(contract),
+            Cell::new(selector),
+            count_cell(metrics.calls, Color::Green),
+            count_cell(metrics.reverts, Color::Red),
+            count_cell(metrics.discards, Color::Yellow),
+        ]);
     }
     table
 }

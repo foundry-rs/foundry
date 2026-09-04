@@ -298,7 +298,6 @@ impl FromStr for GasSnapshotEntry {
                                         runs: runs.as_str().parse().unwrap(),
                                         calls: calls.as_str().parse().unwrap(),
                                         reverts: reverts.as_str().parse().unwrap(),
-                                        metrics: HashMap::default(),
                                         failed_corpus_replays: 0,
                                         optimization_best_value: None,
                                     },
@@ -391,7 +390,16 @@ impl GasSnapshotDiff {
 
     /// Determines the percentage change
     fn gas_diff(&self) -> f64 {
-        self.gas_change() as f64 / self.target_gas_used.gas() as f64
+        let target_gas = self.target_gas_used.gas();
+        if target_gas > 0 {
+            self.gas_change() as f64 / target_gas as f64
+        } else if self.source_gas_used.gas() == 0 {
+            // No percentage change when both values are zero.
+            0.0
+        } else {
+            // Preserve an unbounded increase from zero.
+            f64::INFINITY
+        }
     }
 }
 
@@ -588,6 +596,10 @@ fn within_tolerance(source_gas: u64, target_gas: u64, tolerance_pct: Option<u32>
         } else {
             (target_gas, source_gas)
         };
+        if hi == 0 {
+            // No percentage difference when both values are zero.
+            return true;
+        }
         let diff = (1. - (lo as f64 / hi as f64)) * 100.;
         diff < tolerance as f64
     } else {
@@ -606,6 +618,7 @@ mod tests {
         assert!(!within_tolerance(100, 106, Some(5)));
         assert!(!within_tolerance(106, 100, Some(5)));
         assert!(within_tolerance(100, 100, None));
+        assert!(within_tolerance(0, 0, Some(5)));
     }
 
     #[test]
@@ -654,7 +667,6 @@ mod tests {
                     runs: 256,
                     calls: 100,
                     reverts: 200,
-                    metrics: HashMap::default(),
                     failed_corpus_replays: 0,
                     optimization_best_value: None,
                 }
@@ -675,7 +687,6 @@ mod tests {
                     runs: 256,
                     calls: 3840,
                     reverts: 2388,
-                    metrics: HashMap::default(),
                     failed_corpus_replays: 0,
                     optimization_best_value: None,
                 }

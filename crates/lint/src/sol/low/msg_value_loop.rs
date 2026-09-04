@@ -1,19 +1,15 @@
-use super::{
-    MsgValueLoop,
-    payable_loop::{is_builtin, visit_payable_loop_expressions},
-};
+use super::{MsgValueLoop, payable_loop::for_each_payable_loop_expr};
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::is_builtin},
 };
 use solar::{
     interface::sym,
     sema::{
         Gcx,
-        hir::{Expr, ExprKind, Function, Hir},
+        hir::{ExprKind, Function, Hir},
     },
 };
-use std::collections::HashSet;
 
 declare_forge_lint!(
     MSG_VALUE_LOOP,
@@ -30,18 +26,13 @@ impl<'hir> LateLintPass<'hir> for MsgValueLoop {
         hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
-        let mut emitted = HashSet::new();
-        visit_payable_loop_expressions(ctx, gcx, hir, func, |ctx, _, _, expr| {
-            if is_msg_value(expr) && emitted.insert(expr.span) {
+        for_each_payable_loop_expr(gcx, hir, func, |expr| {
+            if let ExprKind::Member(base, member) = &expr.peel_parens().kind
+                && member.name == sym::value
+                && is_builtin(base, sym::msg)
+            {
                 ctx.emit(&MSG_VALUE_LOOP, expr.span);
             }
         });
     }
-}
-
-fn is_msg_value(expr: &Expr<'_>) -> bool {
-    let ExprKind::Member(base, member) = &expr.peel_parens().kind else {
-        return false;
-    };
-    member.name == sym::value && is_builtin(base, sym::msg)
 }

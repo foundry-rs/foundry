@@ -11,6 +11,7 @@ contract MissingZeroCheck {
     address public owner;
     address payable public recipient;
     uint256 public n;
+    mapping(address => bool) public whitelisted;
 
     modifier nonZero(address a) {
         require(a != address(0), "zero");
@@ -148,6 +149,54 @@ contract MissingZeroCheck {
         owner = a;
     }
 
+    function guardNotAgainstZeroSelf(address newOwner) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        require(newOwner != address(this));
+        owner = newOwner;
+    }
+
+    function guardMappingLookupOnly(address newOwner) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        require(whitelisted[newOwner]);
+        owner = newOwner;
+    }
+
+    function guardNotAgainstZeroOtherVar(address newOwner) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        require(newOwner != owner);
+        owner = newOwner;
+    }
+
+    function guardUnrelatedConjunct(address payable to, uint256 amt) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        require(amt > 0 && to != msg.sender);
+        to.transfer(amt);
+    }
+
+    function guardViaArbitraryCallNotCast(address newOwner) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        require(newOwner != lookup(0));
+        owner = newOwner;
+    }
+
+    function lookup(uint256) internal view returns (address) {
+        return owner;
+    }
+
+    function guardViaBitwiseNotNotZero(address newOwner) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        require(newOwner != address(~uint160(0)));
+        owner = newOwner;
+    }
+
+    function guardRequiresZero(address newOwner) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        require(newOwner == address(0));
+        owner = newOwner;
+    }
+
+    function guardOnOneDisjunct(address newOwner, bool flag) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        require(newOwner != address(0) || flag);
+        owner = newOwner;
+    }
+
+    function sinkInZeroBranch(address newOwner) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        if (newOwner == address(0)) owner = newOwner;
+    }
+
     // SHOULD PASS:
 
     function setOwnerGuarded(address newOwner) external {
@@ -266,5 +315,20 @@ contract MissingZeroCheck {
             require(a != address(0));
         }
         owner = a;
+    }
+
+    function setOwnerNegatedOrGuard(address a, address b) external {
+        require(!(a == address(0) || b == address(0)));
+        owner = a;
+        recipient = payable(b);
+    }
+
+    function setOwnerRealCheckPlusUnrelated(address newOwner, uint256 amt) external {
+        require(amt > 0 && newOwner != address(0));
+        owner = newOwner;
+    }
+
+    function sinkInNonzeroBranch(address newOwner) external {
+        if (newOwner != address(0)) owner = newOwner;
     }
 }

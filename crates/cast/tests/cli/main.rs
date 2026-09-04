@@ -38,6 +38,7 @@ use tempo_primitives::{
 extern crate foundry_test_utils;
 
 mod erc20;
+mod erc4626;
 mod keychain;
 mod read_networks;
 mod remote_trace;
@@ -82,6 +83,30 @@ Build Timestamp: [..]
 Build Profile: [..]
 
 "#]]);
+});
+
+// tests that a non-UTF-8 command-line argument produces a clean error instead of an unrecovered
+// panic in `GlobalArgs::check_markdown_help` (which used to call `std::env::args()`, documented to
+// panic on invalid Unicode, as the very first statement of every binary's entry point)
+#[cfg(unix)]
+casttest!(non_utf8_argument_does_not_panic, |prj, _cmd| {
+    use std::os::unix::ffi::OsStrExt;
+
+    let bad_arg = std::ffi::OsStr::from_bytes(&[0xff]);
+    let output = prj.cast_bin().arg(bad_arg).output().unwrap();
+
+    assert_ne!(
+        output.status.code(),
+        Some(101),
+        "a non-UTF-8 argument must not cause an unrecovered panic (exit code 101); got status {:?}, stderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panicked at"),
+        "a non-UTF-8 argument must not panic; stderr: {stderr}"
+    );
 });
 
 // tests `--help` is printed to std out
@@ -5844,6 +5869,63 @@ casttest!(format_units, |_prj, cmd| {
 1.230
 
 "#]]);
+
+    // Negative values must round-trip correctly instead of wrapping to a huge unsigned garbage
+    // value (regression test).
+    cmd.cast_fuse().args(["format-units", "--", "-1000000", "6"]).assert_success().stdout_eq(str![
+        [r#"
+-1
+
+"#]
+    ]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues> negative wei/unit values must round-trip
+// through from-wei/format-units instead of silently wrapping to U256::MAX-derived garbage.
+casttest!(from_wei_negative, |_prj, cmd| {
+    cmd.args(["from-wei", "--", "-1000000000000000000"]).assert_success().stdout_eq(str![[r#"
+-1.000000000000000000
+
+"#]]);
+
+    // Round-trip against the documented inverse command.
+    cmd.cast_fuse().args(["to-wei", "-1", "ether"]).assert_success().stdout_eq(str![[r#"
+-1000000000000000000
+
+"#]]);
+
+    cmd.cast_fuse().args(["from-wei", "--", "-1000000000000000000"]).assert_success().stdout_eq(
+        str![[r#"
+-1.000000000000000000
+
+"#]],
+    );
+
+    // In-binary oracle: to-fixed-point performs the same underlying arithmetic and must agree.
+    cmd.cast_fuse()
+        .args(["to-fixed-point", "18", "--", "-1000000000000000000"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+-1.000000000000000000
+
+"#]]);
+});
+
+// A negative magnitude whose absolute value exceeds I256::MIN (2^255) cannot be represented as a
+// signed 256-bit integer -- must error cleanly, not silently reinterpret as a small positive
+// value (regression test for a review finding on the negative-value fix above).
+casttest!(from_wei_rejects_magnitude_beyond_i256_range, |_prj, cmd| {
+    cmd.args([
+        "from-wei",
+        "--",
+        "-57896044618658097711785492504343953926634992332820282019728792003956564819969",
+        "wei",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: value out of range for a signed 256-bit integer
+
+"#]]);
 });
 
 // tests that fetches a sample contract creation code
@@ -10305,6 +10387,20 @@ Master ID:         0x2f51c0c4
 
 Virtual addresses:
   tag=0x000000000000  [..]
+
+"#]]);
+});
+
+// Tests that `cast trace --raw` reports transaction types Foundry cannot encode instead of
+// panicking, e.g. Arbitrum's `ArbitrumInternalTx`.
+casttest!(trace_raw_json_unsupported_tx_type, |_prj, cmd| {
+    let tx = r#"{"type":"0x6a","chainId":"0xa4b1","nonce":"0x0","gasPrice":"0x0","gas":"0x0","to":"0x00000000000000000000000000000000000a4b05","value":"0x0","input":"0x6bf6a42d","r":"0x0","s":"0x0","v":"0x0","hash":"0xe5ad4cc44e5cd67a464c038af87169fde2bd475f2c00306bd2d55ca2c5e4452e","blockHash":"0x0ce1511da42af573bac6870ef058d63bc4c8552440e97c149d4d539c482b5f7a","blockNumber":"0x1dc83ddc","transactionIndex":"0x0","from":"0x00000000000000000000000000000000000a4b05"}"#;
+
+    cmd.args(["trace", "--raw", tx, "--trace"]).assert_failure().stderr_eq(str![[r#"
+Error: Cannot EIP-2718 encode transaction type 0x6a
+
+Context:
+- conversion error: Unknown transaction type: 0x6A
 
 "#]]);
 });
