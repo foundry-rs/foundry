@@ -1808,12 +1808,14 @@ fn path_state_extracts_symbolic_usize_upper_bound() {
 }
 
 #[test]
-fn path_state_child_replaces_frame_and_resets_local_loop_state() {
+fn path_state_child_replaces_frame_and_resets_local_state() {
     let mut cx = SymCx::new();
     let mut state = PathState::empty(&mut cx, Address::ZERO, Address::ZERO, false);
     state.call_depth = 2;
     state.next_symbol = 7;
     state.loop_jumps.insert(3, 4);
+    state.expected_revert = Some(ExpectedRevert::new(ExpectedRevertData::Any, None, 1));
+    state.assume_no_revert_next_call = Some(AssumeNoRevert::Any);
 
     let parent_stack = SymExpr::constant(&mut cx, U256::from(0xab));
     state.stack.push(parent_stack).unwrap();
@@ -1847,7 +1849,11 @@ fn path_state_child_replaces_frame_and_resets_local_loop_state() {
     assert_eq!(child.world.cached_nonce(cached), Some(9));
     assert_eq!(child.address, child_address);
     assert!(child.loop_jumps.is_empty());
+    assert!(child.expected_revert.is_none());
+    assert!(child.assume_no_revert_next_call.is_none());
     assert_eq!(state.loop_jumps.get(&3), Some(&4));
+    assert!(state.expected_revert.is_some());
+    assert!(state.assume_no_revert_next_call.is_some());
     assert!(child.stack.peek(0).is_err());
 }
 

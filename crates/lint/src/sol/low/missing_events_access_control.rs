@@ -5,12 +5,12 @@ use crate::{
         Severity, SolLint,
         analysis::{
             branch_always_exits, for_each_lhs_var, function_ids, guard_vars, is_protected,
-            is_sender_member, lhs_local_var, referenced_item, underlying_var,
+            is_sender_member, is_zero_value, lhs_local_var, referenced_item, underlying_var,
         },
     },
 };
 use solar::{
-    ast::{ContractKind, DataLocation, LitKind, StateMutability, Visibility},
+    ast::{ContractKind, DataLocation, StateMutability, Visibility},
     interface::{Span, data_structures::Never},
     sema::hir::{
         self, EventId, Expr, ExprKind, FunctionId, ItemId, Stmt, StmtKind, VariableId, Visit,
@@ -409,24 +409,6 @@ fn merge_branches(
         }
     };
     State { taint, storage_aliases, writes }
-}
-
-/// `0`, `false`, `address(0)`, `payable(0)` and casts/negations thereof.
-fn is_zero_value(expr: &Expr<'_>) -> bool {
-    match &expr.peel_parens().kind {
-        ExprKind::Lit(lit) => match &lit.kind {
-            LitKind::Number(value) => value.is_zero(),
-            LitKind::Address(value) => value.is_zero(),
-            LitKind::Bool(value) => !value,
-            _ => false,
-        },
-        ExprKind::Call(_, args, _) => {
-            let mut exprs = args.exprs();
-            exprs.len() == 1 && exprs.next().is_some_and(is_zero_value)
-        }
-        ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => is_zero_value(inner),
-        _ => false,
-    }
 }
 
 fn emitted_event_id(expr: &Expr<'_>) -> Option<EventId> {

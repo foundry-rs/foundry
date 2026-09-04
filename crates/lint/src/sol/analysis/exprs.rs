@@ -56,6 +56,25 @@ pub fn is_revert_call(expr: &Expr<'_>) -> bool {
     matches!(&expr.peel_parens().kind, ExprKind::Call(callee, ..) if is_builtin(callee, kw::Revert))
 }
 
+/// A literal zero/false or an elementary cast or arithmetic negation of one.
+pub fn is_zero_value(expr: &Expr<'_>) -> bool {
+    match &expr.peel_parens().kind {
+        ExprKind::Lit(lit) => match &lit.kind {
+            LitKind::Number(value) => value.is_zero(),
+            LitKind::Address(value) => value.is_zero(),
+            LitKind::Bool(value) => !value,
+            _ => false,
+        },
+        ExprKind::Call(callee, args, _) if cast_type(callee).is_some() => {
+            let mut exprs = args.exprs();
+            exprs.len() == 1 && exprs.next().is_some_and(is_zero_value)
+        }
+        ExprKind::Payable(inner) => is_zero_value(inner),
+        ExprKind::Unary(op, inner) if op.kind == UnOpKind::Neg => is_zero_value(inner),
+        _ => false,
+    }
+}
+
 /// `revert(...)`, `selfdestruct(...)`, `require(false, ...)` or `assert(false)`.
 pub fn is_exit_call(expr: &Expr<'_>) -> bool {
     let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
