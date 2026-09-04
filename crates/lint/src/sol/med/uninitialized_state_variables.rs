@@ -495,6 +495,9 @@ fn collect_storage_aliases<'hir>(
     for stmt in body.stmts {
         let _ = collector.visit_stmt(stmt);
     }
+    if collector.edges.is_empty() {
+        return Aliases::new();
+    }
 
     let mut aliases = Aliases::new();
     for &pointer in collector.edges.keys() {
@@ -533,26 +536,52 @@ impl<'hir> Visit<'hir> for StorageAliasCollector<'hir> {
     }
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
-        if let StmtKind::DeclSingle(var_id) = &stmt.kind
-            && let Some(initializer) = self.hir.variable(*var_id).initializer
-        {
-            self.record(*var_id, initializer);
+        match &stmt.kind {
+            StmtKind::DeclSingle(var_id) => {
+                if let Some(initializer) = self.hir.variable(*var_id).initializer {
+                    self.record(*var_id, initializer);
+                }
+            }
+            StmtKind::DeclMulti(vars, initializer) => {
+                if let ExprKind::Tuple(values) = &initializer.peel_parens().kind {
+                    for (var_id, value) in vars.iter().zip(values.iter()) {
+                        if let (Some(var_id), Some(value)) = (var_id, value) {
+                            self.record(*var_id, value);
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
         self.walk_stmt(stmt)
     }
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        if let ExprKind::Assign(lhs, None, rhs) = &expr.kind
-            && let ExprKind::Ident([Res::Item(ItemId::Variable(var_id)), ..]) =
-                &lhs.peel_parens().kind
-        {
-            self.record(*var_id, rhs);
+        if let ExprKind::Assign(lhs, None, rhs) = &expr.kind {
+            self.record_assignment(lhs, rhs);
         }
         self.walk_expr(expr)
     }
 }
 
 impl StorageAliasCollector<'_> {
+    /// Records `lhs = rhs`, matching tuple destructuring element-wise.
+    fn record_assignment(&mut self, lhs: &Expr<'_>, rhs: &Expr<'_>) {
+        match (&lhs.peel_parens().kind, &rhs.peel_parens().kind) {
+            (ExprKind::Tuple(targets), ExprKind::Tuple(values)) => {
+                for (target, value) in targets.iter().zip(values.iter()) {
+                    if let (Some(target), Some(value)) = (target, value) {
+                        self.record_assignment(target, value);
+                    }
+                }
+            }
+            (ExprKind::Ident([Res::Item(ItemId::Variable(var_id)), ..]), _) => {
+                self.record(*var_id, rhs);
+            }
+            _ => {}
+        }
+    }
+
     fn record(&mut self, var_id: VariableId, rhs: &Expr<'_>) {
         if is_local_storage_var(self.hir, var_id) {
             collect_root_vars(rhs, self.edges.entry(var_id).or_default());
@@ -586,6 +615,7 @@ fn is_storage_pointer(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
     )
 }
 
+/// Whether `var_id` is a local variable or parameter with the `storage` data location.
 fn is_local_storage_var(hir: &Hir<'_>, var_id: VariableId) -> bool {
     let var = hir.variable(var_id);
     !var.kind.is_state() && var.data_location == Some(DataLocation::Storage)

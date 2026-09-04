@@ -555,3 +555,45 @@ contract StoragePointerPush {
 
     function count() external view returns (uint256) { return items.length; }
 }
+
+contract StoragePointerTupleDeclaration {
+    struct Data { uint256 val; }
+    Data public slotA;
+    Data public slotB;
+
+    function set(uint256 v) external {
+        (Data storage p, Data storage q) = (slotA, slotB);
+        p.val = v;
+        (q, ) = (slotA, uint256(0));
+        q.val = v;
+    }
+
+    function getA() public view returns (uint256) { return slotA.val; }
+    function getB() public view returns (uint256) { return slotB.val; }
+}
+
+contract StoragePointerInModifier {
+    struct Data { uint256 val; }
+    Data public slot;
+
+    modifier bump() {
+        Data storage p = slot;
+        p.val += 1;
+        _;
+    }
+
+    function get() external view bump returns (uint256) { return slot.val; }
+}
+
+// A pointer passed to a `memory` parameter is copied, not written.
+contract StoragePointerMemoryArg {
+    struct Data { uint256 val; }
+    Data public slot; //~WARN: state variable is read but never written
+
+    function _read(Data memory d) internal pure returns (uint256) { return d.val; }
+
+    function get() external view returns (uint256) {
+        Data storage p = slot;
+        return _read(p);
+    }
+}
