@@ -7,7 +7,9 @@ use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 // ---------------------------------------------------------------------------
 // Source: https://github.com/crytic/echidna/blob/master/tests/solidity/basic/flags.sol
 // Echidna finds a sequence that falsifies `echidna_sometimesfalse`.
-// We port it as a stateful symbolic invariant with bounded depth.
+// We port it as a stateful symbolic invariant with bounded depth. The invariant
+// is only checked at the terminal depth so the engine reports a full-depth
+// sequence that minimization has to shrink.
 forgetest_init!(echidna_flags_parity, |prj, cmd| {
     skip_unless_z3!("echidna_flags_parity");
 
@@ -37,7 +39,8 @@ contract EchidnaFlagsParity is Test {
         targetContract(address(target));
     }
 
-    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.symbolic.invariant_depth = 3
+    /// forge-config: default.invariant.check_interval = 0
     function invariant_flag1_holds() public view {
         assertTrue(target.flag1());
     }
@@ -104,6 +107,8 @@ contract EchidnaFlagsParity is Test {
 // ---------------------------------------------------------------------------
 // Source: https://github.com/crytic/echidna/blob/master/tests/solidity/basic/revert.sol
 // Echidna's suite asserts this shrinks to one `f(int,address,address)` call.
+// The invariant is only checked at the terminal depth so there is a longer
+// sequence to shrink.
 forgetest_init!(echidna_revert_magic_args_parity, |prj, cmd| {
     skip_unless_z3!("echidna_revert_magic_args_parity");
 
@@ -134,6 +139,8 @@ contract EchidnaRevertParity is Test {
         targetContract(address(target));
     }
 
+    /// forge-config: default.symbolic.invariant_depth = 3
+    /// forge-config: default.invariant.check_interval = 0
     /// forge-config: default.invariant.runs = 1
     /// forge-config: default.invariant.depth = 20
     /// forge-config: default.invariant.shrink_run_limit = 10000

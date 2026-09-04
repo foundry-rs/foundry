@@ -429,6 +429,22 @@ impl SymBytes {
         Some(SymExpr::binop(cx, SymBinOp::Shl, expr, dst_trailing_bits))
     }
 
+    /// Returns `true` if any byte depends on an unresolved `GAS` / `gasleft()` value.
+    pub(crate) fn contains_gasleft(&self) -> bool {
+        match self.kind() {
+            SymBytesKind::Concrete(_) => false,
+            SymBytesKind::Exprs(bytes) => bytes.iter().any(SymExpr::contains_gasleft),
+            SymBytesKind::Word(word) => word.contains_gasleft(),
+            SymBytesKind::Concat(parts) => parts.iter().any(Self::contains_gasleft),
+            SymBytesKind::Slice { bytes, offset, .. } => {
+                bytes.contains_gasleft() || offset.contains_gasleft()
+            }
+            SymBytesKind::Sized { bytes, size, .. } => {
+                bytes.contains_gasleft() || size.contains_gasleft()
+            }
+        }
+    }
+
     pub(crate) fn materialize(&self, cx: &mut SymCx) -> Vec<SymExpr> {
         (0..self.len()).map(|idx| self.byte(cx, idx)).collect()
     }
