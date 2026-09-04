@@ -1,0 +1,45 @@
+# Exact-version exceptions for the coordinated Tempo Alloy 1.7.2 release.
+[[allow.exact]]
+crate = "alloy-core"
+version = "1.7.2"
+
+[[allow.exact]]
+crate = "alloy-dyn-abi"
+version = "1.7.2"
+
+[[allow.exact]]
+crate = "alloy-json-abi"
+version = "1.7.2"
+
+[[allow.exact]]
+crate = "alloy-primitives"
+version = "1.7.2"
+
+[[allow.exact]]
+crate = "alloy-sol-macro"
+version = "1.7.2"
+
+[[allow.exact]]
+crate = "alloy-sol-macro-expander"
+version = "1.7.2"
+
+[[allow.exact]]
+crate = "alloy-sol-macro-input"
+version = "1.7.2"
+
+[[allow.exact]]
+crate = "alloy-sol-type-parser"
+version = "1.7.2"
+
+[[allow.exact]]
+crate = "alloy-sol-types"
+version = "1.7.2"
+
+[[allow.exact]]
+crate = "syn-solidity"
+version = "1.7.2"
+
+# Exact-version exception for the RustCrypto release required by the updated dependency graph.
+[[allow.exact]]
+crate = "wnaf"
+version = "0.14.1"

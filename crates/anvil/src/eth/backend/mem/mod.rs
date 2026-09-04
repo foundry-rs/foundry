@@ -46,7 +46,7 @@ use crate::{
 };
 use alloy_chains::NamedChain;
 use alloy_consensus::{
-    Blob, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
+    Blob, BlockBody, BlockHeader, EnvKzgSettings, Header, Signed, Transaction as TransactionTrait,
     TransactionEnvelope, TrieAccount, TxEip4844Variant, TxEnvelope, TxReceipt, Typed2718,
     constants::EMPTY_WITHDRAWALS,
     proofs::{calculate_receipt_root, calculate_transaction_root},
@@ -8426,6 +8426,16 @@ impl Backend<FoundryNetwork> {
                     ..Default::default()
                 };
                 let block_hash = header.hash_slow();
+                let withdrawals = (spec_id >= SpecId::SHANGHAI).then_some(Default::default());
+                let size = U256::from(
+                    BlockBody {
+                        transactions: transaction_envelopes,
+                        ommers: vec![],
+                        withdrawals: withdrawals.clone(),
+                    }
+                    .into_block(header.clone())
+                    .length(),
+                );
                 for (transaction_index, transaction) in transactions.iter_mut().enumerate() {
                     transaction.block_hash = Some(block_hash);
                     transaction.block_number = Some(header.number);
@@ -8437,11 +8447,11 @@ impl Backend<FoundryNetwork> {
                         hash: block_hash,
                         inner: header.into(),
                         total_difficulty: None,
-                        size: None,
+                        size: Some(size),
                     },
                     uncles: vec![],
                     transactions: BlockTransactions::Full(transactions),
-                    withdrawals: (spec_id >= SpecId::SHANGHAI).then_some(Default::default()),
+                    withdrawals,
                 };
 
                 if !return_full_transactions {
