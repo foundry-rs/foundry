@@ -201,13 +201,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for CowBackend<'_, FEN
     }
 
     fn delete_state_snapshot(&mut self, id: U256) -> bool {
-        // A snapshot taken before this `CowBackend` was ever mutated (e.g. in `setUp()`) is
-        // already present in the deep-cloned `state_snapshots` map regardless of whether
-        // `pending_init` has been consumed yet - that flag only tracks deferred
-        // `Backend::initialize()` setup, not whether the snapshot exists. Check existence on
-        // the possibly-still-borrowed backend first so a miss never forces an unnecessary
-        // clone; only pay for `backend_mut()`'s clone-on-write when there's actually something
-        // to remove.
+        // Snapshots can predate initialization; avoid cloning when the snapshot is missing.
         if self.backend.state_snapshots().get(id).is_none() {
             return false;
         }
