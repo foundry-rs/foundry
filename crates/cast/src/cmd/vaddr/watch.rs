@@ -1,16 +1,14 @@
-use alloy_primitives::{Address, B256, keccak256};
+use crate::{cmd::erc20::IERC20, tempo::tempo_provider};
+use alloy_primitives::{Address, U256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockNumberOrTag, Filter};
+use alloy_rpc_types::{BlockNumberOrTag, Filter, Log};
+use alloy_sol_types::SolEvent;
 use eyre::Result;
-use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
-use foundry_common::{provider::ProviderBuilder, shell};
+use foundry_cli::opts::RpcOpts;
+use foundry_common::shell;
 use serde_json::json;
-use std::sync::LazyLock;
-use tempo_alloy::TempoNetwork;
+use std::time::Duration;
 use tempo_primitives::TempoAddressExt;
-
-static TRANSFER_TOPIC: LazyLock<B256> =
-    LazyLock::new(|| keccak256(b"Transfer(address,address,uint256)"));
 
 pub(super) async fn run(
     addr: Address,
@@ -22,87 +20,58 @@ pub(super) async fn run(
         eyre::bail!("{addr} is not a virtual address");
     }
 
-    let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let (_, provider) = tempo_provider(&rpc)?;
 
-    // Transfer(address indexed from, address indexed to, uint256 value)
-    // topic[0] = event sig, topic[1] = from, topic[2] = to
-    let to_topic: B256 = {
-        let mut buf = [0u8; 32];
-        buf[12..].copy_from_slice(addr.as_slice());
-        buf.into()
-    };
-
-    let start = from_block.map(BlockNumberOrTag::Number).unwrap_or(BlockNumberOrTag::Latest);
-
-    let mut filter =
-        Filter::new().event_signature(*TRANSFER_TOPIC).topic2(to_topic).from_block(start);
-
-    if let Some(tok) = token {
-        filter = filter.address(tok);
+    // Transfer(address indexed from, address indexed to, uint256 value): topic2 is the recipient.
+    let start = from_block.map_or(BlockNumberOrTag::Latest, BlockNumberOrTag::Number);
+    let mut filter = Filter::new()
+        .event_signature(IERC20::Transfer::SIGNATURE_HASH)
+        .topic2(addr.into_word())
+        .from_block(start);
+    if let Some(token) = token {
+        filter = filter.address(token);
     }
 
     if !shell::is_json() {
         sh_status!("Watching transfers to {addr}... (Ctrl-C to stop)")?;
     }
 
-    // Fetch logs from the requested start block (historical when from_block is set)
-    let logs = provider.get_logs(&filter).await?;
-    for log in &logs {
-        print_transfer_log(log)?;
+    // Historical logs from the requested start block, then poll for new ones.
+    for log in provider.get_logs(&filter).await? {
+        print_transfer_log(&log)?;
     }
-
-    // Poll for new logs
     let mut last_block = provider.get_block_number().await?;
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
         let current = provider.get_block_number().await?;
         if current > last_block {
             let poll_filter = filter.clone().from_block(last_block + 1).to_block(current);
-            let new_logs = provider.get_logs(&poll_filter).await?;
-            for log in &new_logs {
-                print_transfer_log(log)?;
+            for log in provider.get_logs(&poll_filter).await? {
+                print_transfer_log(&log)?;
             }
             last_block = current;
         }
     }
 }
 
-fn print_transfer_log(log: &alloy_rpc_types::Log) -> Result<()> {
+fn print_transfer_log(log: &Log) -> Result<()> {
     let block = log.block_number.unwrap_or(0);
     let tx = log.transaction_hash.unwrap_or_default();
     let token = log.address();
-
-    // Decode topics: topic[1]=from, topic[2]=to
-    let from = log.topics().get(1).map(|t| {
-        let mut addr = [0u8; 20];
-        addr.copy_from_slice(&t[12..]);
-        Address::from(addr)
-    });
-
-    // Decode amount from data
-    let amount = if log.data().data.len() >= 32 {
-        alloy_primitives::U256::from_be_slice(&log.data().data[..32])
-    } else {
-        alloy_primitives::U256::ZERO
-    };
+    let from = log.topics().get(1).map(|t| Address::from_word(*t).to_string()).unwrap_or_default();
+    let data = &log.data().data;
+    let amount = if data.len() >= 32 { U256::from_be_slice(&data[..32]) } else { U256::ZERO };
 
     if shell::is_json() {
-        sh_println!(
-            "{}",
-            serde_json::to_string(&json!({
-                "block": block,
-                "tx": format!("{tx}"),
-                "token": format!("{token}"),
-                "from": from.map(|a| format!("{a}")).unwrap_or_default(),
-                "amount": amount.to_string(),
-            }))?
-        )?;
+        let payload = json!({
+            "block": block,
+            "tx": format!("{tx}"),
+            "token": format!("{token}"),
+            "from": from,
+            "amount": amount.to_string(),
+        });
+        sh_println!("{payload}")
     } else {
-        sh_println!(
-            "block={block} tx={tx} token={token} from={} amount={amount}",
-            from.map(|a| a.to_string()).unwrap_or_default(),
-        )?;
+        sh_println!("block={block} tx={tx} token={token} from={from} amount={amount}")
     }
-    Ok(())
 }
