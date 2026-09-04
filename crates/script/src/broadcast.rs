@@ -20,7 +20,7 @@ use alloy_network::{
 };
 use alloy_primitives::{
     Address, TxHash, TxKind, U256, keccak256,
-    map::{AddressHashMap, AddressHashSet, HashMap},
+    map::{AddressHashMap, AddressHashSet, HashMap, HashSet},
     utils::format_units,
 };
 use alloy_provider::{Provider, RootProvider, utils::Eip1559Estimation};
@@ -250,10 +250,28 @@ fn remaining_transaction_start<N: Network>(sequence: &ScriptSequence<N>) -> usiz
     sequence.receipts.len().min(sequence.transactions.len())
 }
 
+fn remaining_transaction_indices<N: Network>(sequence: &ScriptSequence<N>) -> Vec<usize> {
+    let receipt_hashes =
+        sequence.receipts.iter().map(ReceiptResponse::transaction_hash).collect::<HashSet<_>>();
+    sequence
+        .transactions
+        .iter()
+        .enumerate()
+        .filter(|(index, tx)| match tx.hash {
+            Some(hash) => !receipt_hashes.contains(&hash),
+            // Older sequence files did not stamp transaction hashes.
+            None => *index >= sequence.receipts.len(),
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
 fn remaining_transactions<N: Network>(
     sequence: &ScriptSequence<N>,
 ) -> impl Iterator<Item = &TransactionMaybeSigned<N>> + '_ {
-    sequence.transactions().skip(remaining_transaction_start(sequence))
+    remaining_transaction_indices(sequence)
+        .into_iter()
+        .map(|index| sequence.transactions[index].tx())
 }
 
 /// Represents how to send _all_ transactions
@@ -459,11 +477,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 )?
                 .build()?,
             );
-            let already_broadcasted = sequence.receipts.len();
+            let remaining_indices = remaining_transaction_indices(sequence);
 
             let seq_progress = progress.get_sequence_progress(i, sequence);
 
-            if already_broadcasted < sequence.transactions.len() {
+            if !remaining_indices.is_empty() {
                 let is_legacy = Chain::from(sequence.chain).is_legacy() || self.args.legacy;
                 // Make a one-time gas price estimation
                 let (gas_price, eip1559_fees) = match (
@@ -521,10 +539,9 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // Iterate through transactions, matching the `from` field with the associated
                 // wallet. Then send the transaction. Panics if we find a unknown `from`
                 let sequence_chain = sequence.chain;
-                let mut transactions = Vec::with_capacity(
-                    sequence.transactions.len().saturating_sub(already_broadcasted),
-                );
-                for tx_with_metadata in sequence.transactions.iter().skip(already_broadcasted) {
+                let mut transactions = Vec::with_capacity(remaining_indices.len());
+                for index in remaining_indices {
+                    let tx_with_metadata = &sequence.transactions[index];
                     let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
 
                     let kind = match tx_with_metadata.tx().clone() {
@@ -563,7 +580,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         }
                     };
 
-                    transactions.push((kind, is_fixed_gas_limit));
+                    transactions.push((index, kind, is_fixed_gas_limit));
                 }
 
                 let estimate_via_rpc = has_different_gas_calc(sequence.chain)
@@ -583,7 +600,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // We send transactions and wait for receipts in batches of 100, since some networks
                 // cannot handle more than that.
                 let batch_size = if sequential_broadcast { 1 } else { 100 };
-                let mut index = already_broadcasted;
                 let sequence_chain = sequence.chain;
 
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
@@ -595,7 +611,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
                     if !batch.is_empty() {
                         let pending_transactions =
-                            batch.iter().map(|(kind, is_fixed_gas_limit)| {
+                            batch.iter().map(|(index, kind, is_fixed_gas_limit)| {
                                 let provider = provider.clone();
                                 let tempo_sponsor = tempo_sponsor.clone();
                                 async move {
@@ -611,7 +627,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             Some(sequence_chain.into()),
                                         )
                                         .await;
-                                    (res, kind, *is_fixed_gas_limit, 0, None)
+                                    (*index, res, kind, *is_fixed_gas_limit, 0, None)
                                 }
                                 .boxed()
                             });
@@ -619,6 +635,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         let mut buffer = pending_transactions.collect::<FuturesUnordered<_>>();
 
                         'send: while let Some((
+                            index,
                             res,
                             kind,
                             is_fixed_gas_limit,
@@ -658,6 +675,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                         )
                                         .await;
                                     (
+                                        index,
                                         r,
                                         kind,
                                         is_fixed_gas_limit,
@@ -686,7 +704,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                             seq_progress.inner.write().tx_sent(tx_hash);
-                            index += 1;
                         }
 
                         // Checkpoint save
@@ -1547,7 +1564,7 @@ mod tests {
     }
 
     #[test]
-    fn remaining_transactions_skip_receipt_prefix() {
+    fn remaining_transactions_skip_receipt_prefix_without_hashes() {
         let completed = address!("0x1111111111111111111111111111111111111111");
         let second = address!("0x2222222222222222222222222222222222222222");
         let third = address!("0x3333333333333333333333333333333333333333");
@@ -1565,6 +1582,33 @@ mod tests {
 
         sequence.receipts = (0..4).map(|_| receipt()).collect();
         assert!(remaining_transactions(&sequence).next().is_none());
+    }
+
+    #[test]
+    fn remaining_transactions_match_receipts_by_hash() {
+        let first = address!("0x1111111111111111111111111111111111111111");
+        let second = address!("0x2222222222222222222222222222222222222222");
+        let third = address!("0x3333333333333333333333333333333333333333");
+        let mut first_tx = script_tx(first);
+        first_tx.hash = Some(TxHash::repeat_byte(0x11));
+        let mut second_tx = script_tx(second);
+        second_tx.hash = Some(TxHash::repeat_byte(0x22));
+        let mut second_receipt = receipt();
+        second_receipt.transaction_hash = second_tx.hash.unwrap();
+        let sequence = ScriptSequence::<Ethereum> {
+            chain: 4217,
+            transactions: [first_tx, second_tx, script_tx(third)].into(),
+            receipts: vec![second_receipt],
+            ..Default::default()
+        };
+
+        let remaining =
+            remaining_transactions(&sequence).map(|tx| tx.from().unwrap()).collect::<Vec<_>>();
+        assert_eq!(remaining, vec![first, third]);
+
+        let remaining =
+            remaining_unsigned_transactions(std::slice::from_ref(&sequence)).collect::<Vec<_>>();
+        assert_eq!(remaining.iter().map(|tx| tx.from).collect::<Vec<_>>(), vec![first, third]);
     }
 
     #[tokio::test]

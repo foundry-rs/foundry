@@ -264,11 +264,9 @@ impl ScriptProgress {
                     deployment_sequence.add_receipt(receipt);
                 }
                 Ok(TxStatus::Revert(receipt)) => {
-                    // consider:
-                    // if this is not removed from pending, then the script becomes
-                    // un-resumable. Is this desirable on reverts?
                     warn!(tx_hash=?tx_hash, "Transaction Failure");
-                    deployment_sequence.remove_pending(receipt.transaction_hash());
+                    let tx_hash = receipt.transaction_hash();
+                    deployment_sequence.remove_pending(tx_hash);
 
                     let msg = format_receipt(
                         deployment_sequence.chain.into(),
@@ -277,7 +275,8 @@ impl ScriptProgress {
                     );
                     seq_progress.inner.write().finish_tx_spinner_with_msg(tx_hash, &msg)?;
 
-                    errors.push(format!("Transaction Failure: {:?}", receipt.transaction_hash()));
+                    deployment_sequence.add_receipt(receipt);
+                    errors.push(format!("Transaction Failure: {tx_hash:?}"));
                 }
             }
         }
