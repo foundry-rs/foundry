@@ -236,6 +236,13 @@ contract ControlledDelegatecall {
         (ok,) = address(uint160(0x000000000000000000000000000000000000dEaD)).delegatecall(data);
     }
 
+    // A narrowing cast (uint8) inside an otherwise-trusted numeric chain stops the peel, even
+    // though the whole expression is a provably-constant zero address. Accepted false positive:
+    // rejecting narrowing casts is what keeps a genuinely truncating chain from being trusted.
+    function delegateToNarrowedConstant(bytes calldata data) external returns (bool ok) {
+        (ok,) = address(uint160(uint8(0))).delegatecall(data); //~WARN: delegatecall target is not provably trusted
+    }
+
     function delegateToDeleted(address target, bytes calldata data) external returns (bool ok) {
         address localTarget = target;
         delete localTarget;

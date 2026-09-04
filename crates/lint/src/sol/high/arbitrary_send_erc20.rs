@@ -7,7 +7,7 @@ use crate::{
             arg_for_param, branch_always_exits, expr_is_address, function_ids,
             is_address_like_cast, is_address_self, is_address_type, is_elementary, is_msg_sender,
             is_require_or_assert, modifier_prefix, receiver_contract_id, state_lhs_vars,
-            tuple_elems, underlying_var,
+            tuple_elems, underlying_var, underlying_var_through_numeric_casts,
         },
     },
 };
@@ -266,8 +266,8 @@ impl<'hir> Analyzer<'hir> {
         for &param in modifier.parameters {
             // A fact about a rewritten parameter says nothing about the caller's variable.
             if !a.written.contains(&param)
-                && let Some(caller) =
-                    arg_for_param(self.hir, modifier, param, &m.args).and_then(underlying_var)
+                && let Some(caller) = arg_for_param(self.hir, modifier, param, &m.args)
+                    .and_then(underlying_var_through_numeric_casts)
                 && self.is_safe_target(caller)
             {
                 if a.state.safe_vars.contains(&param) {
@@ -332,7 +332,7 @@ impl<'hir> Analyzer<'hir> {
         Rhs {
             safe: self.is_safe(rhs),
             is_self: self.is_self_expr(rhs),
-            alias: underlying_var(rhs).map(|v| self.canonical(v)),
+            alias: underlying_var_through_numeric_casts(rhs).map(|v| self.canonical(v)),
             sum: sum_operands(rhs),
         }
     }
@@ -363,7 +363,7 @@ impl<'hir> Analyzer<'hir> {
     fn assign_lhs(&mut self, lhs: &Expr<'_>, rhs: Option<&Expr<'_>>) {
         // Writing `cfg.token` drops permits keyed on that field.
         if let ExprKind::Member(base, ident) = &lhs.peel_parens().kind
-            && let Some(base) = underlying_var(base)
+            && let Some(base) = underlying_var_through_numeric_casts(base)
         {
             let key = TokenKey::Field(self.canonical(base), ident.name);
             self.state.permits.retain(|p| p.token != key);
@@ -408,7 +408,7 @@ impl<'hir> Analyzer<'hir> {
                     self.state = after_lhs.meet(&self.state);
                 } else if op.kind == eq {
                     for (a, b) in [(lhs, rhs), (rhs, lhs)] {
-                        if let Some(v) = underlying_var(b)
+                        if let Some(v) = underlying_var_through_numeric_casts(b)
                             && self.is_safe_target(v)
                         {
                             if self.is_safe(a) {
@@ -467,12 +467,14 @@ impl<'hir> Analyzer<'hir> {
         }
         Some(PermitRecord {
             token: self.canonical_key(token_key(token)?),
-            owner: self.canonical(underlying_var(owner)?),
+            owner: self.canonical(underlying_var_through_numeric_casts(owner)?),
         })
     }
 
     fn permit_covers(&self, sink: &Sink<'_>) -> bool {
-        let (Some(token), Some(owner)) = (sink.token, underlying_var(sink.from)) else {
+        let (Some(token), Some(owner)) =
+            (sink.token, underlying_var_through_numeric_casts(sink.from))
+        else {
             return false;
         };
         self.state.permits.contains(&PermitRecord {
@@ -491,7 +493,8 @@ impl<'hir> Analyzer<'hir> {
     /// Consumes one pending repayment matched by a sink pulling `amount + fee` from the flash-loan
     /// receiver back to `address(this)`.
     fn consume_repayment(&mut self, sink: &Sink<'_>) -> bool {
-        let (Some(from), Some(TokenKey::Var(token))) = (underlying_var(sink.from), sink.token)
+        let (Some(from), Some(TokenKey::Var(token))) =
+            (underlying_var_through_numeric_casts(sink.from), sink.token)
         else {
             return false;
         };
@@ -725,11 +728,13 @@ fn sum_operands(expr: &Expr<'_>) -> Option<(VariableId, VariableId)> {
 
 /// `token` or `cfg.token` receiver key, through casts and `payable(..)`.
 fn token_key(expr: &Expr<'_>) -> Option<TokenKey> {
-    if let Some(v) = underlying_var(expr) {
+    if let Some(v) = underlying_var_through_numeric_casts(expr) {
         return Some(TokenKey::Var(v));
     }
     match &expr.peel_parens().kind {
-        ExprKind::Member(base, ident) => Some(TokenKey::Field(underlying_var(base)?, ident.name)),
+        ExprKind::Member(base, ident) => {
+            Some(TokenKey::Field(underlying_var_through_numeric_casts(base)?, ident.name))
+        }
         _ => None,
     }
 }
@@ -776,8 +781,8 @@ fn match_flash_loan_call<'hir>(
         return None;
     }
     Some(PendingRepayment {
-        receiver: underlying_var(recv)?,
-        token: underlying_var(a[1])?,
+        receiver: underlying_var_through_numeric_casts(recv)?,
+        token: underlying_var_through_numeric_casts(a[1])?,
         amount: underlying_var(a[2])?,
         fee: underlying_var(a[3])?,
     })
