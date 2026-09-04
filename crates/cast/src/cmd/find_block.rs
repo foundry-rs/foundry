@@ -41,18 +41,15 @@ fn interpolate_block(
 
 impl FindBlockArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { timestamp, rpc } = self;
-
-        let ts_target = timestamp;
-        let config = rpc.load_config()?;
-        let provider = utils::get_provider(&config)?;
+        let Self { timestamp: ts_target, rpc } = self;
+        let provider = utils::get_provider(&rpc.load_config()?)?;
 
         let last_block_num = provider.get_block_number().await?;
         let cast_provider = Cast::new(provider);
-
-        let res = join!(cast_provider.timestamp(last_block_num), cast_provider.timestamp(1));
-        let ts_block_latest: u64 = res.0?.to();
-        let ts_block_1: u64 = res.1?.to();
+        let (ts_block_latest, ts_block_1) =
+            join!(cast_provider.timestamp(last_block_num), cast_provider.timestamp(1));
+        let ts_block_latest = ts_block_latest?.to::<u64>();
+        let ts_block_1 = ts_block_1?.to::<u64>();
 
         let block_num = if ts_block_latest < ts_target {
             // If the most recent block's timestamp is below the target, return it
@@ -122,21 +119,12 @@ mod tests {
     #[test]
     fn interpolates_block_from_timestamps() {
         assert_eq!(interpolate_block(1, 100, 11, 200, 150), 6);
-    }
-
-    #[test]
-    fn keeps_interpolation_inside_search_bounds() {
+        // Stays inside the search bounds.
         assert_eq!(interpolate_block(1, 100, 11, 200, 100), 2);
         assert_eq!(interpolate_block(1, 100, 11, 200, 200), 10);
-    }
-
-    #[test]
-    fn interpolates_without_overflow() {
+        // Does not overflow.
         assert_eq!(interpolate_block(0, 0, u64::MAX, u64::MAX, u64::MAX / 2), u64::MAX / 2);
-    }
-
-    #[test]
-    fn uses_midpoint_for_equal_timestamps() {
+        // Falls back to the midpoint for equal timestamps.
         assert_eq!(interpolate_block(1, 100, 10, 100, 100), 6);
     }
 }
