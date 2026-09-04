@@ -310,22 +310,4 @@ mod tests {
         // non-hex non-signature: should return input as-is
         assert_eq!(sig_to_file_name("not_a_sig_or_hex").as_str(), "not_a_sig_or_hex");
     }
-
-    fn dummy_tx() -> TransactionWithMetadata<alloy_network::Ethereum> {
-        TransactionWithMetadata {
-            hash: None,
-            call_kind: Default::default(),
-            contract_name: None,
-            contract_address: None,
-            function: None,
-            function_abi: None,
-            display_function: None,
-            arguments: None,
-            rpc: String::new(),
-            transaction: TransactionMaybeSigned::new(Default::default()),
-            additional_contracts: vec![],
-            is_fixed_gas_limit: false,
-        }
-    }
-
 }
