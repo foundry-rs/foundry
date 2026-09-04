@@ -209,7 +209,8 @@ fn render_contract<'ast, 'gcx>(
                         // first word is actually part of the description, so recombine them.
                         let full_desc =
                             if desc.is_empty() { name.clone() } else { format!("{name} {desc}") };
-                        let desc_cell = escape_table_cell(&full_desc);
+                        // See the identical comment in `write_param_table`.
+                        let desc_cell = escape_table_cell(&escape_mdx_hazards(&full_desc));
                         writeln!(out, "| &lt;none&gt; | {ty} | {desc_cell} |").unwrap();
                     }
                     writeln!(out).unwrap();
@@ -827,7 +828,8 @@ fn write_getter_table(
             .map(escape_table_cell)
             .unwrap_or_else(|| "&lt;none&gt;".to_string());
         let ty = escape_table_cell(&field.ty);
-        let desc = escape_table_cell(&sanitize(&field.description));
+        // See the identical comment in `write_param_table`.
+        let desc = escape_table_cell(&escape_mdx_hazards(&sanitize(&field.description)));
         writeln!(out, "| {name} | `{ty}` | {desc} |").unwrap();
     }
     writeln!(out).unwrap();
@@ -960,6 +962,105 @@ pub(crate) fn region_contains(
     regions.get(*cursor).is_some_and(|region| region.start <= position)
 }
 
+/// Escape raw `<` and bare `{` that MDX would otherwise parse as a JSX tag or an expression,
+/// outside fenced or inline code regions. `hir_ext::replace_inline_links` used to do this per
+/// NatSpec line, before continuations were stitched back together, so it escaped inside fenced
+/// examples it had no way to see - see that function's doc comment. This runs once, on the fully
+/// assembled block, mirroring `neutralize_esm` below - but it deliberately does NOT reuse
+/// `code_regions`/`to_mdast` the way `neutralize_esm` does.
+///
+/// The reason: `to_mdast` is a full MDX/JSX expression parser, and a bare, not-yet-escaped `{`
+/// or `<` ANYWHERE in the text - not just a malformed fence - makes it fail to parse the whole
+/// document (an unclosed `{` in ordinary prose is read as an unterminated JS expression). That
+/// is exactly the input this function exists to handle, so parsing the pre-escape text to decide
+/// where to escape is circular: verified empirically, a perfectly well-formed fenced example
+/// followed by ordinary prose containing a bare `<`/`{` already fails `to_mdast` outright. The
+/// existing per-line escaping this replaces avoided the problem by running before assembly, when
+/// there was no cross-line fence to protect in the first place; `neutralize_esm` only works
+/// safely on already-escaped text for the same reason.
+///
+/// So this uses the same line-and-backtick-based fence tracking as
+/// `vocs::escape_mdx_outside_code_fences` (a hand-rolled tracker, not a full parser, so it can't
+/// fail to parse) instead: never escape inside a fenced code block or an inline code span,
+/// escape everywhere else. Iterates via `logical_lines` (not a plain `\n` split) so CRLF and
+/// lone-CR NatSpec content is handled the same way `neutralize_esm` already handles it - Solidity
+/// source isn't guaranteed to have been through the same line-ending normalization a checked-in
+/// README has.
+fn escape_mdx_hazards(text: &str) -> String {
+    struct Fence {
+        marker: char,
+        len: usize,
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut fence: Option<Fence> = None;
+    let mut lines = logical_lines(text).peekable();
+    while let Some((start, line)) = lines.next() {
+        let line_end = start + line.len();
+        let sep_end = lines.peek().map_or(text.len(), |&(next_start, _)| next_start);
+        let separator = &text[line_end..sep_end];
+
+        let trimmed = line.trim_start();
+        if let Some(open) = fence.as_ref() {
+            out.push_str(line);
+            out.push_str(separator);
+            let marker_len = trimmed.chars().take_while(|&ch| ch == open.marker).count();
+            let suffix = &trimmed[marker_len..];
+            if marker_len >= open.len && suffix.trim().is_empty() {
+                fence = None;
+            }
+            continue;
+        }
+
+        let opening = trimmed.chars().next().and_then(|marker| {
+            if !matches!(marker, '`' | '~') {
+                return None;
+            }
+            let len = trimmed.chars().take_while(|&ch| ch == marker).count();
+            if len < 3 || marker == '`' && trimmed[len..].contains('`') {
+                return None;
+            }
+            Some(Fence { marker, len })
+        });
+        if let Some(opening) = opening {
+            fence = Some(opening);
+            out.push_str(line);
+            out.push_str(separator);
+            continue;
+        }
+
+        // Not a fence line: escape `<`/bare `{` outside inline code spans (paired backticks).
+        let mut inline_code_ticks = 0usize;
+        let mut pending_ticks = 0usize;
+        for ch in line.chars() {
+            if ch == '`' {
+                pending_ticks += 1;
+                out.push(ch);
+                continue;
+            }
+            if pending_ticks > 0 {
+                if inline_code_ticks == 0 {
+                    inline_code_ticks = pending_ticks;
+                } else if inline_code_ticks == pending_ticks {
+                    inline_code_ticks = 0;
+                }
+                pending_ticks = 0;
+            }
+            if inline_code_ticks > 0 {
+                out.push(ch);
+            } else {
+                match ch {
+                    '{' => out.push_str("&#123;"),
+                    '<' => out.push_str("&lt;"),
+                    c => out.push(c),
+                }
+            }
+        }
+        out.push_str(separator);
+    }
+    out
+}
+
 /// Neutralize any line MDX would parse as an ESM statement (`import ` or `export ` at column one):
 /// the keyword's prefix becomes HTML entities, so the line renders the same but no longer
 /// begins with an ESM token. NatSpec text can be inherited from a dependency via `@inheritdoc`, so
@@ -1024,10 +1125,10 @@ fn write_comment_block(out: &mut String, data: &CommentData) {
         }
         writeln!(block).unwrap();
     }
-    // Neutralize the fully assembled block once: fence state stays continuous across the
-    // whole block, and every displayed line (authors, notices, custom notes), not just
-    // descriptions, is covered.
-    out.push_str(&neutralize_esm(&block));
+    // Escape MDX hazards and neutralize ESM, each once, on the fully assembled block: fence
+    // state stays continuous across the whole block, and every displayed line (authors,
+    // notices, custom notes), not just descriptions, is covered.
+    out.push_str(&neutralize_esm(&escape_mdx_hazards(&block)));
 }
 
 fn write_code_block(out: &mut String, snippet: &str) {
@@ -1113,7 +1214,11 @@ fn write_param_table(
             }
         };
         let name = escape_table_cell(&name);
-        let desc = escape_table_cell(desc);
+        // Table cells are single-line, so a multi-line fenced example can't survive here
+        // regardless - but a single-line inline code span (`` `a < b` ``) can, so this still
+        // needs fence-aware escaping, not the per-line escaping that used to live in
+        // `replace_inline_links`.
+        let desc = escape_table_cell(&escape_mdx_hazards(desc));
         writeln!(out, "| {name} | {ty} | {desc} |").unwrap();
     }
     writeln!(out).unwrap();
@@ -1169,7 +1274,8 @@ fn write_struct_properties_table(
         let desc =
             comments.params.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str()).unwrap_or("");
         let name = escape_table_cell(&name);
-        let desc = escape_table_cell(desc);
+        // See the identical comment in `write_param_table`.
+        let desc = escape_table_cell(&escape_mdx_hazards(desc));
         writeln!(out, "| {name} | {ty} | {desc} |").unwrap();
     }
     writeln!(out).unwrap();
@@ -1188,7 +1294,8 @@ fn write_enum_variants_table(out: &mut String, variants: &[Ident], comments: &Co
         let desc =
             comments.params.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_str()).unwrap_or("");
         let name = escape_table_cell(name);
-        let desc = escape_table_cell(desc);
+        // See the identical comment in `write_param_table`.
+        let desc = escape_table_cell(&escape_mdx_hazards(desc));
         writeln!(out, "| {name} | {desc} |").unwrap();
     }
     writeln!(out).unwrap();
@@ -1379,7 +1486,7 @@ pub fn source<'ast, 'gcx>(
 
 #[cfg(test)]
 mod tests {
-    use super::neutralize_esm;
+    use super::{escape_mdx_hazards, neutralize_esm};
     use markdown::{MdxSignal, ParseOptions, mdast::Node, to_mdast};
 
     fn parse_mdx(text: &str) -> Node {
@@ -1523,5 +1630,74 @@ mod tests {
         let output = neutralize_esm(&input);
         assert_eq!(output.matches("`code`").count(), 10_000);
         assert_eq!(output.matches("&#101;xport outside").count(), 10_000);
+    }
+
+    #[test]
+    fn escape_mdx_hazards_preserves_fenced_and_inline_code() {
+        // A `<`/`{` inside a fenced example must survive literally - this is the exact
+        // corruption the old per-line escaping in `replace_inline_links` produced.
+        let input = "```solidity\nif (a < b) { revert(); }\n```\nProse with a < b and a { too.";
+        let output = escape_mdx_hazards(input);
+        assert!(
+            output.contains("if (a < b) { revert(); }"),
+            "fenced example must survive unescaped, got: {output}"
+        );
+        assert!(
+            output.contains("Prose with a &lt; b and a &#123; too."),
+            "prose outside the fence must still be escaped, got: {output}"
+        );
+
+        // Inline code spans (single backticks) are code regions too, not just fences.
+        let inline = "See `a < b` for details, but a < b in prose stays escaped.";
+        let inline_out = escape_mdx_hazards(inline);
+        assert!(inline_out.contains("`a < b`"), "inline code must survive, got: {inline_out}");
+        assert!(
+            inline_out.contains("but a &lt; b in prose"),
+            "prose after inline code must still be escaped, got: {inline_out}"
+        );
+    }
+
+    #[test]
+    fn escape_mdx_hazards_handles_text_that_would_break_a_full_mdx_parse() {
+        // A bare, not-yet-escaped `{`/`<` anywhere in the text - not just inside a malformed
+        // fence - makes `to_mdast` fail to parse the WHOLE document (verified: an unclosed `{`
+        // in ordinary prose reads as an unterminated JS expression). That's exactly why this
+        // function uses a hand-rolled fence tracker instead of `code_regions`/`to_mdast`: a
+        // parser-based approach would have no safe fallback here, since the input that trips
+        // it (an everyday unescaped comparison operator in NatSpec prose) is the common case,
+        // not a rare malformed-fence edge case.
+        let input = "Unbalanced brace in prose: { and an angle bracket: <, both unescaped.";
+        assert_eq!(
+            escape_mdx_hazards(input),
+            "Unbalanced brace in prose: &#123; and an angle bracket: &lt;, both unescaped."
+        );
+    }
+
+    #[test]
+    fn escape_mdx_hazards_preserves_crlf_and_lone_cr_line_endings() {
+        // Solidity source isn't guaranteed to have gone through the same line-ending
+        // normalization as a checked-in README - `neutralize_esm` explicitly handles CRLF and
+        // lone CR (see `preserves_line_endings_while_neutralizing_esm` above), and this must
+        // match, both in fence tracking and in leaving the exact separator bytes untouched.
+        assert_eq!(
+            escape_mdx_hazards("```\r\nif (a < b) {}\r\n```\r\nafter < prose"),
+            "```\r\nif (a < b) {}\r\n```\r\nafter &lt; prose"
+        );
+        assert_eq!(
+            escape_mdx_hazards("```\rif (a < b) {}\r```\rafter < prose"),
+            "```\rif (a < b) {}\r```\rafter &lt; prose"
+        );
+    }
+
+    #[test]
+    fn escape_mdx_hazards_tracks_indented_and_tilde_fences() {
+        let indented = "    ```\n    if (a < b) {}\n    ```\nafter < prose";
+        assert_eq!(
+            escape_mdx_hazards(indented),
+            "    ```\n    if (a < b) {}\n    ```\nafter &lt; prose"
+        );
+
+        let tilde = "~~~\nif (a < b) {}\n~~~\nafter < prose";
+        assert_eq!(escape_mdx_hazards(tilde), "~~~\nif (a < b) {}\n~~~\nafter &lt; prose");
     }
 }

@@ -937,6 +937,13 @@ fn escape_link_label(s: &str) -> String {
 /// contract (`{member}`, or `{Contract-member}` where `Contract` is the current
 /// contract) becomes an anchor-only link within the page; everything else goes
 /// through the global `name_to_page` index.
+///
+/// This only resolves links; it does not escape MDX hazards (`<`, bare `{`) the way it
+/// used to. This function runs per NatSpec line (solar emits one HIR item per `///`
+/// line), before multi-line continuations are stitched back together, so it never sees
+/// a fenced code example's boundaries and cannot tell whether it is inside one.
+/// Escaping now happens once, after the full comment block is assembled, in
+/// `render::escape_mdx_hazards` - see that function's doc comment for why.
 pub fn replace_inline_links(
     text: &str,
     name_to_page: &NameToPage,
@@ -1041,20 +1048,8 @@ pub fn replace_inline_links(
                 i += end;
                 continue;
             }
-            // Bare `{` with no matching `}`, escape it.
-            out.push_str("&#123;");
-            i += 1;
-            continue;
-        }
-
-        if bytes[i] == b'<' {
-            // Escape `<` that would be parsed as a JSX/HTML tag by MDX.
-            // A `<` is safe only when it's already part of a markdown link `<url>` or
-            // a standard HTML entity. We unconditionally escape to `&lt;` here
-            // since Solidity natspec does not produce markdown autolinks.
-            out.push_str("&lt;");
-            i += 1;
-            continue;
+            // Bare `{` with no matching `}` - not a link, pass through unescaped.
+            // MDX-hazard escaping happens later, once the full block is assembled.
         }
 
         // Advance by the full UTF-8 character to avoid corrupting multi-byte sequences.
