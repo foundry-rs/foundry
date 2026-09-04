@@ -97,6 +97,22 @@ LL │     function invariantbalance_mixedcase_enabled() public {}
 note[mixed-case-function]: function names should use mixedCase
    ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
    │
+LL │     function __rescueERC20() public {}
+   │              ━━━━━━━━━━━━━ help: consider using: `_rescueErc20`
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
+
+note[mixed-case-function]: function names should use mixedCase
+   ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
+   │
+LL │     function rescueERC20__() public {}
+   │              ━━━━━━━━━━━━━ help: consider using: `rescueErc20_`
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
+
+note[mixed-case-function]: function names should use mixedCase
+   ╭▸ ROOT/testdata/MixedCase.sol:LL:CC
+   │
 LL │     function ERC20_DoSomething() public {} // invalid because of the underscore
    │              ━━━━━━━━━━━━━━━━━ help: consider using: `erc20DoSomething`
    │

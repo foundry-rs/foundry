@@ -8,7 +8,7 @@ pub fn check_pascal_case(s: &str) -> Option<String> {
     if s.len() <= 1 {
         return None;
     }
-    let expected = heck::AsPascalCase(s).to_string();
+    let expected = preserve_underscores(s, heck::AsPascalCase(s).to_string());
     if s == expected { None } else { Some(expected) }
 }
 
@@ -53,6 +53,14 @@ mod tests {
         assert_eq!(check_pascal_case("my_struct").as_deref(), Some("MyStruct"));
         assert_eq!(check_pascal_case("myStruct").as_deref(), Some("MyStruct"));
         assert_eq!(check_pascal_case("MY_STRUCT").as_deref(), Some("MyStruct"));
+    }
+
+    #[test]
+    fn pascal_case_preserves_underscores() {
+        assert_eq!(check_pascal_case("_myStruct").as_deref(), Some("_MyStruct"));
+        assert_eq!(check_pascal_case("myStruct_").as_deref(), Some("MyStruct_"));
+        assert_eq!(check_pascal_case("_MyStruct"), None);
+        assert_eq!(check_pascal_case("MyStruct_"), None);
     }
 
     #[test]

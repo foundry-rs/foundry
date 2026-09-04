@@ -12,7 +12,7 @@ mod boolean_equal;
 use boolean_equal::BOOLEAN_EQUAL;
 
 mod pascal_case;
-use pascal_case::PASCAL_CASE_STRUCT;
+use pascal_case::{PASCAL_CASE_STRUCT, PascalCaseStructPass};
 
 mod screaming_snake_case;
 use screaming_snake_case::{SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE};
@@ -80,7 +80,7 @@ use modifier_used_only_once::MODIFIER_USED_ONLY_ONCE;
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
-    (PascalCaseStruct, early, (PASCAL_CASE_STRUCT)),
+    (PascalCaseStruct, early, (PASCAL_CASE_STRUCT), PascalCaseStructPass::new),
     (MixedCaseVariable, early, (MIXED_CASE_VARIABLE), MixedCaseVariablePass::new),
     (MixedCaseFunction, early, (MIXED_CASE_FUNCTION), MixedCaseFunctionPass::new),
     (ScreamingSnakeCase, early, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE)),
