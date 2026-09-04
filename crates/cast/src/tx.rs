@@ -176,6 +176,18 @@ impl From<WalletSigner> for SenderKind<'_> {
     }
 }
 
+/// Resolves the sender of a read-only request: the browser wallet address when `--browser` is
+/// set, otherwise the wallet options. Also returns whether the browser wallet was used.
+pub(crate) async fn read_only_sender<N: Network>(
+    browser: &BrowserWalletOpts,
+    wallet: WalletOpts,
+) -> Result<(SenderKind<'static>, bool)> {
+    Ok(match browser.run::<N>().await? {
+        Some(browser) => (browser.address().into(), true),
+        None => (SenderKind::from_wallet_opts(wallet).await?, false),
+    })
+}
+
 /// Validates that `sender` can resolve every EIP-7702 authorization.
 pub(crate) fn validate_authorizations(
     authorizations: &[CliAuthorizationList],

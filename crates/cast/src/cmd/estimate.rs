@@ -1,5 +1,5 @@
-use super::auth::confirm_auth_rpc_disclosure;
-use crate::tx::{CastTxBuilder, SenderKind};
+use super::auth::confirm_and_build;
+use crate::tx::{CastTxBuilder, read_only_sender};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, Network};
 use alloy_primitives::U256;
@@ -98,7 +98,7 @@ impl EstimateArgs {
         }
     }
 
-    pub async fn run_with_network<N: Network>(self) -> Result<()>
+    async fn run_with_network<N: Network>(self) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
@@ -118,12 +118,7 @@ impl EstimateArgs {
 
         let config = rpc.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
-        let browser = browser.run::<N>().await?;
-        let sender = if let Some(browser) = &browser {
-            browser.address().into()
-        } else {
-            SenderKind::from_wallet_opts(wallet).await?
-        };
+        let (sender, is_browser) = read_only_sender::<N>(&browser, wallet).await?;
 
         let code = if let Some(EstimateSubcommands::Create {
             code,
@@ -149,45 +144,36 @@ impl EstimateArgs {
             .with_code_sig_and_args(code, sig, args)
             .await?
             .raw();
-        if builder.has_auth() && !confirm_auth_rpc_disclosure(&builder, &sender, force)? {
+        let Some(tx) = confirm_and_build(builder, sender, force, None, true).await? else {
             return Ok(());
-        }
-        let (tx, _) = builder.build(sender).await?;
+        };
 
-        let tx = if browser.is_some() { tx.browser_wallet_gas_estimation_request() } else { tx };
+        let tx = if is_browser { tx.browser_wallet_gas_estimation_request() } else { tx };
         let gas = provider.estimate_gas(tx).block(block.unwrap_or_default()).await?;
         if cost {
-            let gas_price_wei = provider.get_gas_price().await?;
-            let cost = gas_price_wei * gas as u128;
-            let cost_eth = cost as f64 / 1e18;
-            print_estimate_result(cost_eth)?;
+            let cost = provider.get_gas_price().await? * gas as u128;
+            print_result_line(cost as f64 / 1e18)
         } else {
-            print_estimate_result(gas)?;
+            print_result_line(gas)
         }
-        Ok(())
     }
 }
 
-fn print_estimate_result(value: impl Serialize + Display) -> Result<()> {
+/// Prints the primary result of a command: a JSON envelope in `--json` mode, otherwise a raw line
+/// that bypasses the shell verbosity layer so `--quiet` does not suppress it.
+pub(super) fn print_result_line(value: impl Serialize + Display) -> Result<()> {
     if shell::is_json() {
-        print_scalar(value)
-    } else {
-        // Bypass the shell verbosity layer so `--quiet` does not suppress the primary result.
-        let mut shell = shell::Shell::get();
-        let out = shell.out();
-        writeln!(out, "{value}")?;
-        out.flush()?;
-        Ok(())
+        return print_scalar(value);
     }
+    print_raw_line(value)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_estimate_value() {
-        let args: EstimateArgs = EstimateArgs::parse_from(["foundry-cli", "--value", "100"]);
-        assert!(args.tx.value.is_some());
-    }
+/// Prints a raw line to stdout, bypassing the shell verbosity layer so `--quiet` does not
+/// suppress it.
+pub(super) fn print_raw_line(value: impl Display) -> Result<()> {
+    let mut shell = shell::Shell::get();
+    let out = shell.out();
+    writeln!(out, "{value}")?;
+    out.flush()?;
+    Ok(())
 }
