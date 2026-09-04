@@ -594,6 +594,52 @@ contract EventsArithmeticReturnHookDerived is EventsArithmeticReturnHookBase {
     }
 }
 
+// Qualified inherited helper calls preserve their Solidity dispatch semantics.
+contract EventsArithmeticQualifiedBase {
+    uint256 public superFee;
+    uint256 public baseFee;
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function _setSuperFee(uint256 newFee) internal {
+        superFee = newFee; //~WARN: `superFee` is changed without an event but is used in arithmetic
+    }
+
+    function _setBaseFee(uint256 newFee) internal {
+        baseFee = newFee; //~WARN: `baseFee` is changed without an event but is used in arithmetic
+    }
+
+    function _superFee() internal view returns (uint256) {
+        return superFee;
+    }
+
+    function _baseFee() internal view returns (uint256) {
+        return baseFee;
+    }
+}
+
+contract EventsArithmeticQualifiedDerived is EventsArithmeticQualifiedBase {
+    function setSuperFee(uint256 newFee) external onlyOwner {
+        super._setSuperFee(newFee);
+    }
+
+    function setBaseFee(uint256 newFee) external onlyOwner {
+        EventsArithmeticQualifiedBase._setBaseFee(newFee);
+    }
+
+    function superQuote(uint256 amount) external view returns (uint256) {
+        return amount * super._superFee();
+    }
+
+    function baseQuote(uint256 amount) external view returns (uint256) {
+        return amount * EventsArithmeticQualifiedBase._baseFee();
+    }
+}
+
 // A concrete base inherited unchanged is reported once, not once per contract in the hierarchy.
 contract EventsArithmeticConcreteBase {
     uint256 public concreteFee;
