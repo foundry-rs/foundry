@@ -142,7 +142,7 @@ impl SendTxArgs {
         }
     }
 
-    async fn run_generic<N: Network>(
+    pub(crate) async fn run_generic<N: Network>(
         self,
         pre_resolved_signer: Option<WalletSigner>,
         mut access_key: Option<TempoAccountsWallet>,
