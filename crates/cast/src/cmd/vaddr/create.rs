@@ -1,10 +1,10 @@
 use crate::{
     cmd::tip20::mine::{self, RegisterMessages},
-    tempo::print_payload,
     tx::{SendTxOpts, TxParams},
 };
 use alloy_primitives::{Address, B256};
 use eyre::Result;
+use foundry_cli::json::print_json_success;
 use foundry_common::shell;
 use serde_json::json;
 use tempo_primitives::{TempoAddressExt, UserTag};
@@ -82,5 +82,8 @@ pub(super) async fn run(
                 .await?;
         payload["registration_tx_hash"] = json!(format!("{tx_hash:#x}"));
     }
-    print_payload(payload, |_| Ok(()))
+    if json {
+        print_json_success(payload)?;
+    }
+    Ok(())
 }
