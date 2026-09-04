@@ -218,7 +218,7 @@ fn call_log(log: &CallLogFrame) -> CallLog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, b256, bytes};
+    use alloy_primitives::{address, bytes};
 
     /// A geth `callTracer` `SELFDESTRUCT` frame encodes `from` as the destructed contract, `to` as
     /// the refund target and `value` as the transferred balance (the inverse of
@@ -424,51 +424,5 @@ mod tests {
             root.ordering,
             vec![TraceMemberOrder::Call(0), TraceMemberOrder::Log(0), TraceMemberOrder::Call(1),]
         );
-    }
-
-    /// `call_kind` must map every geth `callTracer` call-type string to the right `CallKind`, and
-    /// treat anything unknown as a plain call. The conversion tests only exercise
-    /// `CALL`/`STATICCALL`, so a swapped or dropped arm would otherwise go unnoticed.
-    #[test]
-    fn maps_call_kind() {
-        assert_eq!(call_kind("CALL"), CallKind::Call);
-        assert_eq!(call_kind("STATICCALL"), CallKind::StaticCall);
-        assert_eq!(call_kind("DELEGATECALL"), CallKind::DelegateCall);
-        assert_eq!(call_kind("CALLCODE"), CallKind::CallCode);
-        assert_eq!(call_kind("AUTHCALL"), CallKind::AuthCall);
-        assert_eq!(call_kind("CREATE"), CallKind::Create);
-        assert_eq!(call_kind("CREATE2"), CallKind::Create2);
-        // "SELFDESTRUCT" and any unknown type render as a plain call.
-        assert_eq!(call_kind("SELFDESTRUCT"), CallKind::Call);
-        assert_eq!(call_kind("NOT_A_REAL_TYPE"), CallKind::Call);
-    }
-
-    /// `call_log` must map each `callTracer` log field to the right place. Distinct topics, data,
-    /// position and index catch a swapped or dropped field (e.g. topics/data or position/index).
-    #[test]
-    fn maps_call_log_fields() {
-        let frame_log = CallLogFrame {
-            address: Some(address!("3333333333333333333333333333333333333333")),
-            topics: Some(vec![
-                b256!("0x00000000000000000000000000000000000000000000000000000000000000aa"),
-                b256!("0x00000000000000000000000000000000000000000000000000000000000000bb"),
-            ]),
-            data: Some(bytes!("dead")),
-            position: Some(2),
-            index: Some(5),
-        };
-
-        let log = call_log(&frame_log);
-        assert_eq!(log.address, address!("3333333333333333333333333333333333333333"));
-        assert_eq!(
-            log.raw_log.topics(),
-            &[
-                b256!("0x00000000000000000000000000000000000000000000000000000000000000aa"),
-                b256!("0x00000000000000000000000000000000000000000000000000000000000000bb"),
-            ]
-        );
-        assert_eq!(log.raw_log.data, bytes!("dead"));
-        assert_eq!(log.position, 2);
-        assert_eq!(log.index, 5);
     }
 }

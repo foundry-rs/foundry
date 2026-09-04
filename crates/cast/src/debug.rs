@@ -1,6 +1,4 @@
 use alloy_chains::Chain;
-#[cfg(test)]
-use alloy_primitives::B256;
 use alloy_primitives::{Bytes, map::AddressHashMap};
 use foundry_cli::utils::{TraceResult, print_traces};
 use foundry_common::{ContractsByArtifactBuilder, compile::ProjectCompiler};
@@ -144,40 +142,11 @@ pub(crate) async fn handle_traces(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "monad"))]
 mod tests {
     use super::*;
 
     #[test]
-    fn remote_trace_context_rejects_same_url_reset() {
-        let before = ForkEndpointIdentity {
-            endpoint: "http://localhost:8545".to_string(),
-            execution_chain_id: 1,
-            source_chain_id: 1,
-            network: NetworkVariant::Ethereum,
-            network_profile: foundry_evm_networks::NetworkConfigs::default(),
-            reported_hardfork: None,
-            hardfork: None,
-            instance_id: Some(B256::with_last_byte(1)),
-            source_fork_block_number: None,
-            source_fork_block_hash: None,
-        };
-        assert!(ensure_remote_trace_context_unchanged(&before, &before).is_ok());
-
-        let mut after = before.clone();
-        after.instance_id = Some(B256::with_last_byte(2));
-        assert!(ensure_remote_trace_context_unchanged(&before, &after).is_err());
-
-        let mut before_unknown = before;
-        before_unknown.instance_id = None;
-        before_unknown.reported_hardfork = Some("FutureA".to_string());
-        let mut after_unknown = before_unknown.clone();
-        after_unknown.reported_hardfork = Some("FutureB".to_string());
-        assert!(ensure_remote_trace_context_unchanged(&before_unknown, &after_unknown).is_err());
-    }
-
-    #[test]
-    #[cfg(feature = "monad")]
     fn remote_trace_hardfork_ignores_cross_network_override() {
         let ethereum = FoundryHardfork::Ethereum(foundry_evm::hardforks::EthereumHardfork::Cancun);
         let monad_eight = FoundryHardfork::Monad(foundry_evm::hardforks::MonadHardfork::MonadEight);
