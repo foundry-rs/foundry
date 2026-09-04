@@ -19,8 +19,14 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
+  cargo-cooldown:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cargo-cooldown.yml
+
   run-benchmarks:
     name: Run All Benchmarks
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-24.04-32
     permissions:
       contents: read
@@ -49,6 +55,53 @@ jobs:
         with:
           toolchain: stable
 
+      # When 'local' is requested, build origin/master from source in a separate
+      # worktree and benchmark it as the baseline (labelled 'master') against
+      # this branch (labelled 'local'). This compares against master itself, not
+      # the last stable release, so master-only regressions are not hidden.
+      - name: Prepare comparison
+        id: prep
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+        run: |
+          compact="${REQUESTED_VERSIONS//[[:space:]]/}"
+          if [[ ",$compact," == *,local,* ]]; then
+            git fetch --no-tags origin master:refs/remotes/origin/master
+            base_sha="$(git rev-parse origin/master)"
+            candidate_sha="$(git rev-parse HEAD)"
+            git worktree add --detach ../foundry-baseline "$base_sha"
+            echo "versions=master=../foundry-baseline,local" >> "$GITHUB_OUTPUT"
+            echo "is_source_comparison=true" >> "$GITHUB_OUTPUT"
+            if [[ -f ../foundry-baseline/cooldown.toml ]]; then
+              echo "baseline_strict_project_config=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "baseline_strict_project_config=false" >> "$GITHUB_OUTPUT"
+            fi
+            printf '%s' "$base_sha" > benches/baseline-ref.txt
+            printf '%s' "$candidate_sha" > benches/candidate-ref.txt
+            git rev-list --count "${candidate_sha}..${base_sha}" > benches/behind-count.txt
+            pr_number=$(gh api --method GET "repos/$GITHUB_REPOSITORY/pulls" \
+              -f "head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" -f state=open \
+              --jq '.[0].number // empty')
+            if [[ -n "$pr_number" ]]; then
+              echo "BENCHMARK_PR_NUMBER=$pr_number" >> "$GITHUB_ENV"
+            fi
+            echo "Comparing origin/master ($base_sha) against this branch."
+          else
+            echo "versions=$REQUESTED_VERSIONS" >> "$GITHUB_OUTPUT"
+            echo "is_source_comparison=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Enforce baseline Cargo dependency cooldown
+        if: steps.prep.outputs.is_source_comparison == 'true'
+        uses: tempoxyz/gh-actions/actions/cargo-cooldown@0aa93238d85fd085d7901320b670cc6adb7a02f3 # main
+        env:
+          RUSTC_WRAPPER: ""
+        with:
+          strict-project-config: ${{ steps.prep.outputs.baseline_strict_project_config }}
+          working-directory: ../foundry-baseline
+
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
 
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
@@ -69,39 +122,6 @@ jobs:
           curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
           sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
           rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
-
-      # When 'local' is requested, build origin/master from source in a separate
-      # worktree and benchmark it as the baseline (labelled 'master') against
-      # this branch (labelled 'local'). This compares against master itself, not
-      # the last stable release, so master-only regressions are not hidden.
-      - name: Prepare comparison
-        id: prep
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REQUESTED_VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
-        run: |
-          compact="${REQUESTED_VERSIONS//[[:space:]]/}"
-          if [[ ",$compact," == *,local,* ]]; then
-            git fetch --no-tags origin master:refs/remotes/origin/master
-            base_sha="$(git rev-parse origin/master)"
-            candidate_sha="$(git rev-parse HEAD)"
-            git worktree add --detach ../foundry-baseline "$base_sha"
-            echo "versions=master=../foundry-baseline,local" >> "$GITHUB_OUTPUT"
-            echo "is_source_comparison=true" >> "$GITHUB_OUTPUT"
-            printf '%s' "$base_sha" > benches/baseline-ref.txt
-            printf '%s' "$candidate_sha" > benches/candidate-ref.txt
-            git rev-list --count "${candidate_sha}..${base_sha}" > benches/behind-count.txt
-            pr_number=$(gh api --method GET "repos/$GITHUB_REPOSITORY/pulls" \
-              -f "head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" -f state=open \
-              --jq '.[0].number // empty')
-            if [[ -n "$pr_number" ]]; then
-              echo "BENCHMARK_PR_NUMBER=$pr_number" >> "$GITHUB_ENV"
-            fi
-            echo "Comparing origin/master ($base_sha) against this branch."
-          else
-            echo "versions=$REQUESTED_VERSIONS" >> "$GITHUB_OUTPUT"
-            echo "is_source_comparison=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Run forge test benchmarks
         env:

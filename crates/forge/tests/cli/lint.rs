@@ -404,11 +404,12 @@ contract ConcreteTest is Base {}
     cmd.args(["lint", "--only-lint", "could-be-constant", "-D", "notes"]).assert_failure();
 });
 
-forgetest!(default_lint_severity_includes_info, |prj, cmd| {
+forgetest!(default_lint_severity_excludes_info, |prj, cmd| {
     prj.add_source("DefaultInfoLintsImport", DEFAULT_INFO_LINTS_IMPORT);
     prj.add_source("DefaultInfoLints", DEFAULT_INFO_LINTS);
 
-    cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+    cmd.arg("lint").assert_success().stderr_eq("");
+    cmd.forge_fuse().args(["lint", "--severity", "info"]).assert_success().stderr_eq(str![[r#"
 note[mixed-case-function]: function names should use mixedCase
   [FILE]:8:14
   │

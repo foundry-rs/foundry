@@ -111,12 +111,10 @@ impl<'hir> Visit<'hir> for LiteralCollector<'hir> {
     }
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
-        // A Yul `case 500 {}` label is a literal like any other, but `case.constant` is a
-        // `Lit` rather than an expression, so the default visitor never reaches it.
-        if let StmtKind::Switch(switch) = &stmt.kind {
-            for constant in switch.cases.iter().filter_map(|case| case.constant.as_ref()) {
-                self.record_lit(constant, constant.span, None);
-            }
+        // Yul literals commonly encode structural values such as memory offsets, masks, and
+        // selectors, where extracting a constant would not necessarily improve readability.
+        if matches!(stmt.kind, StmtKind::AssemblyBlock(_)) {
+            return ControlFlow::Continue(());
         }
         self.walk_stmt(stmt)
     }

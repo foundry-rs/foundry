@@ -32,8 +32,14 @@ env:
   RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer,monad,optimism
 
 jobs:
+  cargo-cooldown:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cargo-cooldown.yml
+
   build:
     name: build, sign, and stage
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     permissions:
       attestations: write
