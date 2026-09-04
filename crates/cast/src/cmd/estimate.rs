@@ -1,4 +1,4 @@
-use super::auth::confirm_and_build;
+use super::{auth::confirm_and_build, print_result_line};
 use crate::tx::{CastTxBuilder, read_only_sender};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, Network};
@@ -8,14 +8,12 @@ use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    json::print_scalar,
     opts::{RpcOpts, TransactionOpts},
     utils::{LoadConfig, parse_ether_value},
 };
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder, shell};
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
-use serde::Serialize;
-use std::{fmt::Display, str::FromStr};
+use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast estimate`.
@@ -157,23 +155,4 @@ impl EstimateArgs {
             print_result_line(gas)
         }
     }
-}
-
-/// Prints the primary result of a command: a JSON envelope in `--json` mode, otherwise a raw line
-/// that bypasses the shell verbosity layer so `--quiet` does not suppress it.
-pub(super) fn print_result_line(value: impl Serialize + Display) -> Result<()> {
-    if shell::is_json() {
-        return print_scalar(value);
-    }
-    print_raw_line(value)
-}
-
-/// Prints a raw line to stdout, bypassing the shell verbosity layer so `--quiet` does not
-/// suppress it.
-pub(super) fn print_raw_line(value: impl Display) -> Result<()> {
-    let mut shell = shell::Shell::get();
-    let out = shell.out();
-    writeln!(out, "{value}")?;
-    out.flush()?;
-    Ok(())
 }

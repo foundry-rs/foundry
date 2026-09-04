@@ -1,9 +1,7 @@
+use super::fetch_code_via_rpc;
 use crate::{
-    MAX_CONCURRENT_RPC_REQUESTS,
     debug::{ensure_remote_trace_context_unchanged, handle_traces, select_remote_trace_hardfork},
-    rpc_trace::{
-        call_frame_to_arena_with_root_address, is_method_not_found_error, is_missing_state_error,
-    },
+    rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
     traces::TraceKind,
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain,
@@ -62,7 +60,7 @@ use foundry_evm::{
     traces::{InternalTraceMode, SparsedTraceArena, TraceRequirements},
 };
 use foundry_evm_networks::NetworkConfigs;
-use futures::{StreamExt, TryFutureExt};
+use futures::TryFutureExt;
 use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
 
 /// CLI arguments for `cast run`.
@@ -348,7 +346,7 @@ impl RunArgs {
             .is_none()
             .then(|| receipt.contract_address().unwrap_or_else(|| tx.from().create(tx.nonce())));
         let arena = SparsedTraceArena {
-            arena: call_frame_to_arena_with_root_address(&frame, root_create_address),
+            arena: call_frame_to_arena(&frame, root_create_address),
             ignored: Default::default(),
             diagnostics: Default::default(),
         };
@@ -857,21 +855,6 @@ pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
     Ok(contracts_bytecode)
 }
 
-/// Fetches the runtime bytecode of the addresses seen in `result` over RPC.
-///
-/// The RPC trace path (`cast call --debug-trace-call`) has no local executor to read code
-/// from, so the bytecode needed to match local artifacts is fetched from the node with
-/// `eth_getCode`. Addresses whose code cannot be fetched are skipped with a warning.
-pub async fn fetch_contracts_bytecode_via_rpc<N: Network, P: Provider<N>>(
-    provider: &P,
-    result: &TraceResult,
-    block: BlockId,
-) -> AddressHashMap<Bytes> {
-    let mut contracts_bytecode = AddressHashMap::default();
-    fetch_code_via_rpc(&mut contracts_bytecode, provider, trace_addresses(result), block).await;
-    contracts_bytecode
-}
-
 /// Fetches bytecode for a mined transaction at its exact transaction index.
 ///
 /// The prestate tracer provides the code that existed immediately before the transaction, which
@@ -910,38 +893,12 @@ async fn fetch_transaction_contracts_bytecode_via_rpc<N: Network, P: Provider<N>
     let missing_addresses = trace_addresses(result)
         .filter(|address| !contracts_bytecode.contains_key(address))
         .collect::<Vec<_>>();
-    fetch_code_via_rpc(&mut contracts_bytecode, provider, missing_addresses, block).await;
+    contracts_bytecode.extend(fetch_code_via_rpc(provider, missing_addresses, block).await);
     contracts_bytecode
 }
 
-/// Fetches the non-empty code of `addresses` at `block` with bounded concurrency, warning about
-/// addresses whose code cannot be fetched.
-async fn fetch_code_via_rpc<N: Network, P: Provider<N>>(
-    contracts_bytecode: &mut AddressHashMap<Bytes>,
-    provider: &P,
-    addresses: impl IntoIterator<Item = Address>,
-    block: BlockId,
-) {
-    let mut requests = futures::stream::iter(addresses)
-        .map(
-            |address| async move { (address, provider.get_code_at(address).block_id(block).await) },
-        )
-        .buffer_unordered(MAX_CONCURRENT_RPC_REQUESTS);
-    while let Some((address, code)) = requests.next().await {
-        match code {
-            Ok(code) if !code.is_empty() => {
-                contracts_bytecode.insert(address, code);
-            }
-            Ok(_) => {}
-            Err(err) => {
-                let _ = sh_warn!("Failed to fetch code for {address}: {err}");
-            }
-        }
-    }
-}
-
 /// Returns the distinct non-zero addresses and callers seen in the traces of `result`.
-fn trace_addresses(result: &TraceResult) -> impl Iterator<Item = Address> {
+pub(super) fn trace_addresses(result: &TraceResult) -> impl Iterator<Item = Address> {
     let mut addresses = AddressSet::default();
     for (_, trace) in result.traces.iter().flatten() {
         for node in trace.arena.nodes() {

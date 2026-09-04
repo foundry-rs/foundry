@@ -5,10 +5,19 @@
 //! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
 //! [`foundry_config::Config`].
 
+use crate::MAX_CONCURRENT_RPC_REQUESTS;
+use alloy_network::Network;
+use alloy_primitives::{Address, Bytes, map::AddressHashMap};
+use alloy_provider::Provider;
+use alloy_rpc_types::BlockId;
 use eyre::Result;
-use foundry_cli::utils::load_config_from_provider;
+use foundry_cli::{json::print_scalar, utils::load_config_from_provider};
+use foundry_common::shell;
 use foundry_config::{Config, figment::Figment};
 use foundry_evm::opts::EvmOpts;
+use futures::StreamExt;
+use serde::Serialize;
+use std::fmt::Display;
 
 /// Loads Cast's config and applies its normalized network to the EVM options.
 pub(crate) fn load_cast_config_and_evm_opts(figment: Figment) -> Result<(Box<Config>, EvmOpts)> {
@@ -16,6 +25,52 @@ pub(crate) fn load_cast_config_and_evm_opts(figment: Figment) -> Result<(Box<Con
     let mut evm_opts = figment.extract::<EvmOpts>()?;
     evm_opts.networks = config.networks;
     Ok((config, evm_opts))
+}
+
+/// Prints the primary result of a command: a JSON envelope in `--json` mode, otherwise a raw line
+/// that bypasses the shell verbosity layer so `--quiet` does not suppress it.
+pub(crate) fn print_result_line(value: impl Serialize + Display) -> Result<()> {
+    if shell::is_json() {
+        return print_scalar(value);
+    }
+    print_raw_line(value)
+}
+
+/// Prints a raw line to stdout, bypassing the shell verbosity layer so `--quiet` does not
+/// suppress it.
+pub(crate) fn print_raw_line(value: impl Display) -> Result<()> {
+    let mut shell = shell::Shell::get();
+    let out = shell.out();
+    writeln!(out, "{value}")?;
+    out.flush()?;
+    Ok(())
+}
+
+/// Fetches the non-empty code of `addresses` at `block` with bounded concurrency, warning about
+/// addresses whose code cannot be fetched.
+pub(crate) async fn fetch_code_via_rpc<N: Network, P: Provider<N>>(
+    provider: &P,
+    addresses: impl IntoIterator<Item = Address>,
+    block: BlockId,
+) -> AddressHashMap<Bytes> {
+    let mut code_by_address = AddressHashMap::default();
+    let mut requests = futures::stream::iter(addresses)
+        .map(
+            |address| async move { (address, provider.get_code_at(address).block_id(block).await) },
+        )
+        .buffer_unordered(MAX_CONCURRENT_RPC_REQUESTS);
+    while let Some((address, code)) = requests.next().await {
+        match code {
+            Ok(code) if !code.is_empty() => {
+                code_by_address.insert(address, code);
+            }
+            Ok(_) => {}
+            Err(err) => {
+                let _ = sh_warn!("Failed to fetch code for {address}: {err}");
+            }
+        }
+    }
+    code_by_address
 }
 
 pub mod access_list;

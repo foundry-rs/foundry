@@ -1,10 +1,9 @@
 use super::{
     auth::{confirm_auth_rpc_disclosure, confirm_auth_rpc_disclosure_before_network_resolution},
     call_overrides::CallOverrideOpts,
-    estimate::print_raw_line,
+    fetch_code_via_rpc, print_raw_line,
     run::{
-        block_num_hash, call_tracer_frame, fetch_contracts_bytecode_from_trace,
-        fetch_contracts_bytecode_via_rpc,
+        block_num_hash, call_tracer_frame, fetch_contracts_bytecode_from_trace, trace_addresses,
     },
 };
 use crate::{
@@ -535,7 +534,7 @@ impl CallArgs {
             )?;
 
             let arena = SparsedTraceArena {
-                arena: call_frame_to_arena(&frame),
+                arena: call_frame_to_arena(&frame, None),
                 ignored: Default::default(),
                 diagnostics: Default::default(),
             };
@@ -551,7 +550,7 @@ impl CallArgs {
             // local artifacts were requested.
             let contracts_bytecode = if with_local_artifacts {
                 let mut contracts_bytecode =
-                    fetch_contracts_bytecode_via_rpc(&provider, &result, block).await;
+                    fetch_code_via_rpc(&provider, trace_addresses(&result), block).await;
                 // The trace ran the override code, not the on-chain code, so the override
                 // wins for artifact matching.
                 contracts_bytecode.extend(override_bytecode);

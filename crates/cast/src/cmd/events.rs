@@ -1,4 +1,4 @@
-use super::logs::LogQueryArgs;
+use super::{fetch_code_via_rpc, logs::LogQueryArgs};
 use crate::{
     Cast, MAX_CONCURRENT_RPC_REQUESTS,
     traces::{
@@ -130,21 +130,7 @@ async fn local_event_abis<N: Network, P: Provider<N>>(
         return Ok(BTreeMap::new());
     };
 
-    let mut bytecodes = BTreeMap::new();
-    let mut requests = futures::stream::iter(addresses.iter().copied())
-        .map(|address| async move {
-            (address, provider.get_code_at(address).block_id(BlockId::number(block_number)).await)
-        })
-        .buffer_unordered(MAX_CONCURRENT_RPC_REQUESTS);
-    while let Some((address, code)) = requests.next().await {
-        match code {
-            Ok(code) if !code.is_empty() => {
-                bytecodes.insert(address, code);
-            }
-            Ok(_) => {}
-            Err(err) => sh_warn!("Failed to fetch code for {address}: {err}")?,
-        }
-    }
+    let bytecodes = fetch_code_via_rpc(&provider, addresses, BlockId::number(block_number)).await;
 
     let output = ProjectCompiler::new().quiet(true).compile(&config.project()?)?;
     let contracts = ContractsByArtifact::from(output);

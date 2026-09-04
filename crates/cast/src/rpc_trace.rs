@@ -17,16 +17,9 @@ use foundry_evm::traces::{
 };
 use revm::interpreter::InstructionResult;
 
-/// Builds a [`CallTraceArena`] from a geth `callTracer` [`CallFrame`] tree.
-pub fn call_frame_to_arena(root: &CallFrame) -> CallTraceArena {
-    call_frame_to_arena_with_root_address(root, None)
-}
-
-/// Builds a [`CallTraceArena`] and overrides the root frame's address when the tracer omitted it.
-pub fn call_frame_to_arena_with_root_address(
-    root: &CallFrame,
-    root_address: Option<Address>,
-) -> CallTraceArena {
+/// Builds a [`CallTraceArena`] from a geth `callTracer` [`CallFrame`] tree, overriding the root
+/// frame's address with `root_address` when the tracer omitted it.
+pub fn call_frame_to_arena(root: &CallFrame, root_address: Option<Address>) -> CallTraceArena {
     let mut arena = CallTraceArena::default();
     let nodes = arena.nodes_mut();
     nodes.clear();
@@ -237,7 +230,7 @@ mod tests {
             ..Default::default()
         };
 
-        let arena = call_frame_to_arena(&frame);
+        let arena = call_frame_to_arena(&frame, None);
         let trace = &arena.nodes()[0].trace;
 
         // The destructed contract is the identified address, not the refund target.
@@ -254,7 +247,7 @@ mod tests {
         let created = address!("3333333333333333333333333333333333333333");
         let frame = CallFrame { typ: "CREATE".to_string(), ..Default::default() };
 
-        let arena = call_frame_to_arena_with_root_address(&frame, Some(created));
+        let arena = call_frame_to_arena(&frame, Some(created));
 
         assert_eq!(arena.nodes()[0].trace.address, created);
         assert_eq!(arena.nodes()[0].trace.kind, CallKind::Create);
@@ -293,7 +286,7 @@ mod tests {
             ..Default::default()
         };
 
-        let arena = call_frame_to_arena(&frame);
+        let arena = call_frame_to_arena(&frame, None);
         let nodes = arena.nodes();
         assert_eq!(nodes.len(), 2, "root + one child");
 
@@ -360,7 +353,7 @@ mod tests {
             ..Default::default()
         };
 
-        let arena = call_frame_to_arena(&frame);
+        let arena = call_frame_to_arena(&frame, None);
         let root = &arena.nodes()[0];
 
         assert!(!root.trace.success);
@@ -386,7 +379,7 @@ mod tests {
             ..Default::default()
         };
 
-        let arena = call_frame_to_arena(&frame);
+        let arena = call_frame_to_arena(&frame, None);
         let root = &arena.nodes()[0];
 
         assert_eq!(root.logs.len(), 2, "no log dropped");
@@ -415,7 +408,7 @@ mod tests {
             ..Default::default()
         };
 
-        let arena = call_frame_to_arena(&frame);
+        let arena = call_frame_to_arena(&frame, None);
         let root = &arena.nodes()[0];
 
         assert_eq!(arena.nodes().len(), 3, "root + two children");
