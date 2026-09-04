@@ -5869,6 +5869,63 @@ casttest!(format_units, |_prj, cmd| {
 1.230
 
 "#]]);
+
+    // Negative values must round-trip correctly instead of wrapping to a huge unsigned garbage
+    // value (regression test).
+    cmd.cast_fuse().args(["format-units", "--", "-1000000", "6"]).assert_success().stdout_eq(str![
+        [r#"
+-1
+
+"#]
+    ]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues> negative wei/unit values must round-trip
+// through from-wei/format-units instead of silently wrapping to U256::MAX-derived garbage.
+casttest!(from_wei_negative, |_prj, cmd| {
+    cmd.args(["from-wei", "--", "-1000000000000000000"]).assert_success().stdout_eq(str![[r#"
+-1.000000000000000000
+
+"#]]);
+
+    // Round-trip against the documented inverse command.
+    cmd.cast_fuse().args(["to-wei", "-1", "ether"]).assert_success().stdout_eq(str![[r#"
+-1000000000000000000
+
+"#]]);
+
+    cmd.cast_fuse().args(["from-wei", "--", "-1000000000000000000"]).assert_success().stdout_eq(
+        str![[r#"
+-1.000000000000000000
+
+"#]],
+    );
+
+    // In-binary oracle: to-fixed-point performs the same underlying arithmetic and must agree.
+    cmd.cast_fuse()
+        .args(["to-fixed-point", "18", "--", "-1000000000000000000"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+-1.000000000000000000
+
+"#]]);
+});
+
+// A negative magnitude whose absolute value exceeds I256::MIN (2^255) cannot be represented as a
+// signed 256-bit integer -- must error cleanly, not silently reinterpret as a small positive
+// value (regression test for a review finding on the negative-value fix above).
+casttest!(from_wei_rejects_magnitude_beyond_i256_range, |_prj, cmd| {
+    cmd.args([
+        "from-wei",
+        "--",
+        "-57896044618658097711785492504343953926634992332820282019728792003956564819969",
+        "wei",
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: value out of range for a signed 256-bit integer
+
+"#]]);
 });
 
 // tests that fetches a sample contract creation code
