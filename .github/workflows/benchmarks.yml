@@ -73,6 +73,11 @@ jobs:
             git worktree add --detach ../foundry-baseline "$base_sha"
             echo "versions=master=../foundry-baseline,local" >> "$GITHUB_OUTPUT"
             echo "is_source_comparison=true" >> "$GITHUB_OUTPUT"
+            if [[ -f ../foundry-baseline/cooldown.toml ]]; then
+              echo "baseline_strict_project_config=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "baseline_strict_project_config=false" >> "$GITHUB_OUTPUT"
+            fi
             printf '%s' "$base_sha" > benches/baseline-ref.txt
             printf '%s' "$candidate_sha" > benches/candidate-ref.txt
             git rev-list --count "${candidate_sha}..${base_sha}" > benches/behind-count.txt
@@ -94,7 +99,7 @@ jobs:
         env:
           RUSTC_WRAPPER: ""
         with:
-          strict-project-config: true
+          strict-project-config: ${{ steps.prep.outputs.baseline_strict_project_config }}
           working-directory: ../foundry-baseline
 
       - uses: rui314/setup-mold@7e4f20ad28a2e8ca6fd0892ccf72e2abb706b9c3 # v1
