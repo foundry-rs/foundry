@@ -80,18 +80,12 @@ mod tests {
     use alloy_primitives::Signature;
 
     #[test]
-    fn normalizes_safe_eth_sign_v() {
+    fn normalizes_signature_v() {
         let mut signature = [0u8; 65];
         signature[64] = 1;
         assert!(normalize_signature(&signature, true).ends_with("20"));
-
         signature[64] = 27;
         assert!(normalize_signature(&signature, true).ends_with("1f"));
-    }
-
-    #[test]
-    fn normalizes_typed_data_v() {
-        let mut signature = [0u8; 65];
         signature[64] = 0;
         assert!(normalize_signature(&signature, false).ends_with("1b"));
     }
