@@ -1,14 +1,10 @@
-use super::{
-    creation_code::{fetch_creation_code_from_etherscan, parse_code_output},
-    interface::load_abi_from_file,
-};
+use super::creation_code::{fetch_creation_code, load_abi, parse_code_output};
 use alloy_primitives::Address;
-use alloy_provider::Provider;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
-    utils::{self, LoadConfig, fetch_abi_from_etherscan},
+    utils::LoadConfig,
 };
 use foundry_common::fs;
 use serde_json::json;
@@ -48,36 +44,18 @@ pub struct ArtifactArgs {
 impl ArtifactArgs {
     pub async fn run(self) -> Result<()> {
         let mut config = self.load_config()?;
+        let Self { contract, output, abi_path, .. } = self;
 
-        let Self { contract, output: output_location, abi_path, etherscan: _, rpc: _ } = self;
-
-        let provider = utils::get_provider(&config)?;
-        let chain = provider.get_chain_id().await?;
-        config.chain = Some(chain.into());
-
-        let abi = if let Some(ref abi_path) = abi_path {
-            load_abi_from_file(abi_path, None)?
-        } else {
-            fetch_abi_from_etherscan(contract, &config).await?
-        };
-
-        let (abi, _) = abi.first().ok_or_else(|| eyre::eyre!("No ABI found"))?;
-
-        let bytecode = fetch_creation_code_from_etherscan(contract, &config, provider).await?;
+        let bytecode = fetch_creation_code(&mut config, contract).await?;
+        let abi_path = abi_path.as_deref();
+        let abi = load_abi(contract, &config, abi_path).await?;
         let bytecode =
-            parse_code_output(bytecode, contract, &config, abi_path.as_deref(), true, false)
-                .await?;
+            parse_code_output(bytecode, contract, &config, abi_path, true, false).await?;
 
-        let artifact = json!({
-            "abi": abi,
-            "bytecode": {
-              "object": bytecode
-            }
-        });
-
+        let artifact = json!({ "abi": abi, "bytecode": { "object": bytecode } });
         let artifact = serde_json::to_string_pretty(&artifact)?;
 
-        if let Some(loc) = output_location {
+        if let Some(loc) = output {
             if let Some(parent) = loc.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -86,7 +64,6 @@ impl ArtifactArgs {
         } else {
             sh_println!("{artifact}")?;
         }
-
         Ok(())
     }
 }
