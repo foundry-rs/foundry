@@ -162,7 +162,7 @@ fn collect_contract_debug_scopes(
             contract_name: contract.name.to_string(),
             function_name,
             range: function_range.clone(),
-            body_range: body_range.clone(),
+            body_range,
             parameters_src,
             returns_src,
             parameters: variables_from_list(
@@ -442,7 +442,7 @@ impl ContractSources {
                         let stripped = path.strip_prefix(root).unwrap_or(path).to_path_buf();
                         let source_data = Arc::new(SourceData::new(
                             output,
-                            source.content.clone(),
+                            source.content,
                             build.language,
                             stripped,
                             root,

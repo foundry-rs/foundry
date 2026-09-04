@@ -335,9 +335,10 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
             sh_println!("{}", "Saved current session!".green())?;
         }
 
+        let executor_builder = self.session.source.config.executor_builder.clone();
         let mut new_session = match id {
-            "latest" => ChiselSession::<FEN>::latest(),
-            id => ChiselSession::<FEN>::load(id),
+            "latest" => ChiselSession::<FEN>::latest(executor_builder),
+            id => ChiselSession::<FEN>::load(id, executor_builder),
         }
         .wrap_err("failed to load session")?;
 

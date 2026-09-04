@@ -4,7 +4,6 @@ use super::{
     error::{InvariantRunCtx, record_handler_assertion_bug},
 };
 use crate::executors::{Executor, RawCallResult};
-use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, I256, Selector};
 use alloy_sol_types::{Panic, PanicKind, Revert, SolError, SolInterface};
@@ -206,7 +205,7 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
         calldata,
     };
 
-    for (invariant, fail_on_revert) in &invariant_contract.invariant_fns {
+    for (idx, (invariant, fail_on_revert)) in invariant_contract.invariant_fns.iter().enumerate() {
         // We only care about invariants which we haven't broken yet.
         if invariant_failures.has_failure(invariant) {
             continue;
@@ -215,7 +214,7 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
         let (call_result, success) = call_invariant_function(
             executor,
             invariant_contract.address,
-            invariant.abi_encode_input(&[])?.into(),
+            invariant_contract.invariant_calldata(idx),
         )?;
         if call_result.execution_cancelled {
             return Ok((first_broken, true));
@@ -312,7 +311,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             let (inv_result, success) = call_invariant_function(
                 &invariant_run.executor,
                 invariant_contract.address,
-                invariant_contract.anchor().abi_encode_input(&[])?.into(),
+                invariant_contract.anchor_calldata(),
             )?;
             if inv_result.execution_cancelled {
                 return Ok(ContinueOutcome { continues: true, cancelled: true });
@@ -477,6 +476,7 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
 mod tests {
     use super::*;
     use crate::executors::{EarlyExit, ExecutorBuilder};
+    use alloy_dyn_abi::JsonAbiExt;
     use alloy_primitives::{Bytes, U256};
     use alloy_sol_types::SolCall;
     use foundry_cheatcodes::{CheatsConfig, Vm::expectRevert_0Call};

@@ -38,6 +38,7 @@ use tempo_primitives::{
 extern crate foundry_test_utils;
 
 mod erc20;
+mod erc4626;
 mod keychain;
 mod read_networks;
 mod remote_trace;
@@ -10305,6 +10306,20 @@ Master ID:         0x2f51c0c4
 
 Virtual addresses:
   tag=0x000000000000  [..]
+
+"#]]);
+});
+
+// Tests that `cast trace --raw` reports transaction types Foundry cannot encode instead of
+// panicking, e.g. Arbitrum's `ArbitrumInternalTx`.
+casttest!(trace_raw_json_unsupported_tx_type, |_prj, cmd| {
+    let tx = r#"{"type":"0x6a","chainId":"0xa4b1","nonce":"0x0","gasPrice":"0x0","gas":"0x0","to":"0x00000000000000000000000000000000000a4b05","value":"0x0","input":"0x6bf6a42d","r":"0x0","s":"0x0","v":"0x0","hash":"0xe5ad4cc44e5cd67a464c038af87169fde2bd475f2c00306bd2d55ca2c5e4452e","blockHash":"0x0ce1511da42af573bac6870ef058d63bc4c8552440e97c149d4d539c482b5f7a","blockNumber":"0x1dc83ddc","transactionIndex":"0x0","from":"0x00000000000000000000000000000000000a4b05"}"#;
+
+    cmd.args(["trace", "--raw", tx, "--trace"]).assert_failure().stderr_eq(str![[r#"
+Error: Cannot EIP-2718 encode transaction type 0x6a
+
+Context:
+- conversion error: Unknown transaction type: 0x6A
 
 "#]]);
 });

@@ -2,10 +2,6 @@
 //!
 //! Used for running tests, scripts, and interacting with the inner backend which holds the state.
 
-// TODO: The individual executors in this module should be moved into the respective crates, and the
-// `Executor` struct should be accessed using a trait defined in `foundry-evm-core` instead of
-// the concrete `Executor` type.
-
 use crate::inspectors::{
     Cheatcodes, CmpOperands, EdgeCoverage, EdgeIndexMap, InspectorData, InspectorStack,
     cheatcodes::BroadcastableTransactions,
@@ -1746,12 +1742,12 @@ impl<T, FEN: FoundryEvmNetwork> std::ops::DerefMut for CallResult<T, FEN> {
     }
 }
 
-fn calculate_stipend(tx_env: &impl Transaction, spec: SpecId, eip2780_enabled: bool) -> u64 {
-    let eip2780 = eip2780_enabled.then(|| Eip2780TxInfo {
+pub(crate) fn calculate_stipend(tx_env: &impl Transaction, cfg: &impl Cfg) -> u64 {
+    let eip2780 = cfg.is_amsterdam_eip2780_enabled().then(|| Eip2780TxInfo {
         value: tx_env.value(),
         is_self_transfer: matches!(tx_env.kind(), TxKind::Call(to) if to == tx_env.caller()),
     });
-    revm::interpreter::gas::calculate_initial_tx_gas_for_tx(tx_env, spec, eip2780)
+    revm::interpreter::gas::calculate_initial_tx_gas_for_tx(tx_env, cfg.spec().into(), eip2780)
         .initial_total_gas()
 }
 
@@ -1777,11 +1773,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork, H: IntoInstructionResult>(
             (reason.into_instruction_result(), 0_u64, gas.tx_gas_used(), None, logs)
         }
     };
-    let stipend = calculate_stipend(
-        &tx_env,
-        evm_env.cfg_env.spec.into(),
-        evm_env.cfg_env.is_amsterdam_eip2780_enabled(),
-    );
+    let stipend = calculate_stipend(&tx_env, &evm_env.cfg_env);
 
     let result = match &out {
         Some(Output::Call(data)) => data.clone(),
@@ -2014,9 +2006,9 @@ mod tests {
     use foundry_config::Config;
     #[cfg(feature = "monad")]
     use foundry_evm_core::constants::MONAD_CHEATCODE_ADDRESS;
-    use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
+    use foundry_evm_core::{constants::MAGIC_SKIP, evm::TempoEvmNetwork, opts::EvmOpts};
     use foundry_evm_traces::InternalTraceMode;
-    use revm::context::TxEnv;
+    use revm::context::{CfgEnv, TxEnv};
     use std::{sync::mpsc, thread};
 
     fn dense_call(edge: EdgeKey) -> RawCallResult {
@@ -2048,7 +2040,7 @@ mod tests {
             false,
             target,
             Some(MONAD_CHEATCODE_ADDRESS),
-            NetworkConfigs::with_monad().extra_cheatcode_addresses(),
+            &[MONAD_CHEATCODE_ADDRESS],
         ));
     }
 
@@ -2073,6 +2065,25 @@ mod tests {
         assert!(monad.inspector().networks.is_monad());
         assert!(monad.backend().networks().is_monad());
         assert!(monad.backend().is_persistent(&MONAD_CHEATCODE_ADDRESS));
+    }
+
+    #[test]
+    fn tempo_labels_follow_concrete_builder() {
+        let ethereum = ExecutorBuilder::<EthEvmNetwork>::new().build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            Backend::spawn(None).unwrap(),
+            NetworkConfigs::with_tempo(),
+        );
+        assert!(ethereum.inspector().tempo_labels.is_none());
+
+        let tempo = ExecutorBuilder::<TempoEvmNetwork>::new().build(
+            EvmEnvFor::<TempoEvmNetwork>::default(),
+            TxEnvFor::<TempoEvmNetwork>::default(),
+            Backend::spawn(None).unwrap(),
+            NetworkConfigs::default(),
+        );
+        assert!(tempo.inspector().tempo_labels.is_some());
     }
 
     #[test]
@@ -2410,22 +2421,22 @@ mod tests {
         let caller = Address::repeat_byte(0x11);
         let recipient = Address::repeat_byte(0x22);
         let mut tx = TxEnv { caller, kind: TxKind::Call(recipient), ..Default::default() };
+        let cfg = CfgEnv::new_with_spec(SpecId::AMSTERDAM);
 
         assert_eq!(
-            calculate_stipend(&tx, SpecId::AMSTERDAM, true),
+            calculate_stipend(&tx, &cfg),
             revm::primitives::eip2780::TX_BASE_COST
                 + revm::primitives::eip8038::COLD_ACCOUNT_ACCESS
         );
+        let cfg = cfg.with_enable_amsterdam_eip2780(false);
         assert_eq!(
-            calculate_stipend(&tx, SpecId::AMSTERDAM, false),
+            calculate_stipend(&tx, &cfg),
             revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM).tx_base_stipend()
         );
 
         tx.kind = TxKind::Call(caller);
-        assert_eq!(
-            calculate_stipend(&tx, SpecId::AMSTERDAM, true),
-            revm::primitives::eip2780::TX_BASE_COST
-        );
+        let cfg = cfg.with_enable_amsterdam_eip2780(true);
+        assert_eq!(calculate_stipend(&tx, &cfg), revm::primitives::eip2780::TX_BASE_COST);
     }
 
     #[test]

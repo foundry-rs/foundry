@@ -21,6 +21,7 @@ env:
 jobs:
   test:
     name: flaky tests
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: depot-ubuntu-latest-16
     timeout-minutes: 60
     permissions:

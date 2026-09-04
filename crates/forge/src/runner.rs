@@ -4618,7 +4618,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         counterexample: secondary_counterexample,
                         artifact,
                         minimization,
-                        persisted_path: persisted_failure.clone(),
+                        persisted_path: persisted_failure,
                         is_anchor: false,
                     });
                 }
