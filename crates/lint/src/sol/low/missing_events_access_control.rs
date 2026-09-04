@@ -32,12 +32,12 @@ declare_forge_lint!(
     "access control changes should emit events"
 );
 
-impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
+impl<'gcx> LateLintPass<'gcx> for MissingEventsAccessControl {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        contract: &'hir hir::Contract<'hir>,
+        gcx: Gcx<'gcx>,
+        contract: &'gcx hir::Contract<'gcx>,
     ) {
         let hir = &gcx.hir;
         if !matches!(contract.kind, ContractKind::Contract | ContractKind::AbstractContract) {
@@ -99,7 +99,7 @@ impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
 }
 
 /// Calls `f` on every index and slice bound along the spine of an lvalue.
-fn for_each_lhs_index<'hir>(expr: &'hir Expr<'hir>, f: &mut impl FnMut(&'hir Expr<'hir>)) {
+fn for_each_lhs_index<'gcx>(expr: &'gcx Expr<'gcx>, f: &mut impl FnMut(&'gcx Expr<'gcx>)) {
     match &expr.peel_parens().kind {
         ExprKind::Index(base, index) => {
             for_each_lhs_index(base, f);
@@ -152,8 +152,8 @@ struct State {
 }
 
 /// Collects writes to `targets` reachable from an entry point and marks those an `emit` covers.
-struct WriteAnalyzer<'a, 'hir> {
-    gcx: Gcx<'hir>,
+struct WriteAnalyzer<'a, 'gcx> {
+    gcx: Gcx<'gcx>,
     targets: &'a HashSet<VariableId>,
     /// Targets checked by this entry point's own guards; clearing one of them is reportable even
     /// when the written value carries no source.
@@ -162,7 +162,7 @@ struct WriteAnalyzer<'a, 'hir> {
     call_stack: Vec<FunctionId>,
 }
 
-impl<'hir> WriteAnalyzer<'_, 'hir> {
+impl<'gcx> WriteAnalyzer<'_, 'gcx> {
     fn analyze_function(&mut self, func_id: FunctionId) {
         if self.call_stack.contains(&func_id) {
             return;
@@ -184,7 +184,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
 
     /// Inlines `callee_id` with its parameters bound to the sources of `args`; locals and storage
     /// aliases are callee-private, pending writes flow back to the caller.
-    fn analyze_call(&mut self, callee_id: FunctionId, args: &hir::CallArgs<'hir>) {
+    fn analyze_call(&mut self, callee_id: FunctionId, args: &hir::CallArgs<'gcx>) {
         let params = self
             .gcx
             .hir
@@ -294,14 +294,14 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
     }
 }
 
-impl<'hir> Visit<'hir> for WriteAnalyzer<'_, 'hir> {
+impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Never> {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
                 if let Some(init) = self.gcx.hir.variable(var_id).initializer {
@@ -343,7 +343,7 @@ impl<'hir> Visit<'hir> for WriteAnalyzer<'_, 'hir> {
         ControlFlow::Continue(())
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         match &expr.kind {
             ExprKind::Assign(lhs, op, rhs) => {
                 self.visit_expr(rhs)?;

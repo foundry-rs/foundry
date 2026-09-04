@@ -33,11 +33,11 @@ declare_forge_lint!(
     "critical arithmetic state changes should emit events"
 );
 
-impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
+impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
+        gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
         let hir = &gcx.hir;
@@ -156,8 +156,8 @@ enum Mode {
 }
 
 /// Finds target state variables that flow into arithmetic, following locals and internal calls.
-struct UseAnalyzer<'a, 'hir> {
-    gcx: Gcx<'hir>,
+struct UseAnalyzer<'a, 'gcx> {
+    gcx: Gcx<'gcx>,
     contract_id: ContractId,
     targets: &'a HashSet<VariableId>,
     mode: Mode,
@@ -168,7 +168,7 @@ struct UseAnalyzer<'a, 'hir> {
     call_stack: Vec<FunctionId>,
 }
 
-impl<'hir> UseAnalyzer<'_, 'hir> {
+impl<'gcx> UseAnalyzer<'_, 'gcx> {
     fn analyze_function(&mut self, func_id: FunctionId) {
         if self.call_stack.contains(&func_id) {
             return;
@@ -183,7 +183,7 @@ impl<'hir> UseAnalyzer<'_, 'hir> {
 
     /// Analyzes `callee_id` with its parameters bound to the sources of `args`, restoring the
     /// caller's taint afterwards.
-    fn analyze_call(&mut self, callee_id: FunctionId, args: &hir::CallArgs<'hir>) {
+    fn analyze_call(&mut self, callee_id: FunctionId, args: &hir::CallArgs<'gcx>) {
         if self.call_stack.contains(&callee_id) {
             return;
         }
@@ -205,7 +205,7 @@ impl<'hir> UseAnalyzer<'_, 'hir> {
     }
 
     /// Target state variables `expr` may evaluate to, including through helper return values.
-    fn sources(&mut self, expr: &Expr<'hir>) -> HashSet<VariableId> {
+    fn sources(&mut self, expr: &Expr<'gcx>) -> HashSet<VariableId> {
         let mut out = HashSet::new();
         let _ = expr.visit(&mut |e| {
             if let Some(var_id) = underlying_var(e) {
@@ -229,7 +229,7 @@ impl<'hir> UseAnalyzer<'_, 'hir> {
     fn return_sources(
         &mut self,
         callee_id: FunctionId,
-        args: &hir::CallArgs<'hir>,
+        args: &hir::CallArgs<'gcx>,
     ) -> HashSet<VariableId> {
         let outer_mode = std::mem::replace(&mut self.mode, Mode::Returns);
         let outer_returned = std::mem::take(&mut self.returned);
@@ -247,14 +247,14 @@ impl<'hir> UseAnalyzer<'_, 'hir> {
     }
 }
 
-impl<'hir> Visit<'hir> for UseAnalyzer<'_, 'hir> {
+impl<'gcx> Visit<'gcx> for UseAnalyzer<'_, 'gcx> {
     type BreakValue = solar::interface::data_structures::Never;
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_stmt(&mut self, stmt: &'gcx hir::Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
                 if let Some(init) = self.gcx.hir.variable(var_id).initializer {
@@ -277,7 +277,7 @@ impl<'hir> Visit<'hir> for UseAnalyzer<'_, 'hir> {
         self.walk_stmt(stmt)
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
             ExprKind::Assign(lhs, _, rhs) => {
                 if let Some(local) = lhs_local_var(&self.gcx.hir, lhs) {
@@ -360,14 +360,14 @@ impl Flow {
 }
 
 /// Collects writes to target variables that no later `emit` on the same path covers.
-struct WriteAnalyzer<'a, 'hir> {
-    gcx: Gcx<'hir>,
+struct WriteAnalyzer<'a, 'gcx> {
+    gcx: Gcx<'gcx>,
     contract_id: ContractId,
     targets: &'a HashSet<VariableId>,
     call_stack: Vec<FunctionId>,
 }
 
-impl<'hir> WriteAnalyzer<'_, 'hir> {
+impl<'gcx> WriteAnalyzer<'_, 'gcx> {
     fn analyze_entry_point(&mut self, func_id: FunctionId) -> Vec<StateWrite> {
         let func = self.gcx.hir.function(func_id);
         let state =
@@ -406,7 +406,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
 
     fn analyze_stmts(
         &mut self,
-        stmts: impl IntoIterator<Item = &'hir hir::Stmt<'hir>>,
+        stmts: impl IntoIterator<Item = &'gcx hir::Stmt<'gcx>>,
         state: WriteState,
     ) -> Flow {
         let mut flow = Flow::fallthrough(state);
@@ -419,7 +419,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
         flow
     }
 
-    fn analyze_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>, mut state: WriteState) -> Flow {
+    fn analyze_stmt(&mut self, stmt: &'gcx hir::Stmt<'gcx>, mut state: WriteState) -> Flow {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
                 if let Some(init) = self.gcx.hir.variable(var_id).initializer {
@@ -477,7 +477,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
         }
     }
 
-    fn analyze_expr(&mut self, expr: &'hir Expr<'hir>, state: &mut WriteState) {
+    fn analyze_expr(&mut self, expr: &'gcx Expr<'gcx>, state: &mut WriteState) {
         let _ = expr.visit(&mut |e| {
             match &e.kind {
                 ExprKind::Assign(lhs, op, rhs) => {
@@ -509,7 +509,7 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
     fn analyze_call(
         &mut self,
         callee_id: FunctionId,
-        args: &hir::CallArgs<'hir>,
+        args: &hir::CallArgs<'gcx>,
         state: &mut WriteState,
     ) {
         let callee_state = WriteState {

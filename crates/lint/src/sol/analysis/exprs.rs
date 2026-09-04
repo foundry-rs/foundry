@@ -154,7 +154,7 @@ pub fn for_each_lhs_var(expr: &Expr<'_>, f: &mut impl FnMut(VariableId)) {
 }
 
 /// The elements of a tuple expression (through parens).
-pub fn tuple_elems<'hir>(expr: &'hir Expr<'hir>) -> Option<&'hir [Option<&'hir Expr<'hir>>]> {
+pub fn tuple_elems<'gcx>(expr: &'gcx Expr<'gcx>) -> Option<&'gcx [Option<&'gcx Expr<'gcx>>]> {
     match &expr.peel_parens().kind {
         ExprKind::Tuple(elems) => Some(elems),
         _ => None,
@@ -162,12 +162,12 @@ pub fn tuple_elems<'hir>(expr: &'hir Expr<'hir>) -> Option<&'hir [Option<&'hir E
 }
 
 /// The argument bound to `param` of `function` in `args`, positional or named.
-pub fn arg_for_param<'hir>(
-    hir: &hir::Hir<'hir>,
-    function: &hir::Function<'hir>,
+pub fn arg_for_param<'gcx>(
+    hir: &hir::Hir<'gcx>,
+    function: &hir::Function<'gcx>,
     param: VariableId,
-    args: &CallArgs<'hir>,
-) -> Option<&'hir Expr<'hir>> {
+    args: &CallArgs<'gcx>,
+) -> Option<&'gcx Expr<'gcx>> {
     let idx = function.parameters.iter().position(|p| *p == param)?;
     let names: Vec<_> =
         function.parameters.iter().map(|p| hir.variable(*p).name.map(|n| n.name)).collect();
@@ -263,7 +263,7 @@ pub const fn is_inc_dec(op: UnOpKind) -> bool {
 }
 
 /// The lvalue written by an assignment, `delete` or increment/decrement expression.
-pub const fn write_target<'hir>(expr: &'hir Expr<'hir>) -> Option<&'hir Expr<'hir>> {
+pub const fn write_target<'gcx>(expr: &'gcx Expr<'gcx>) -> Option<&'gcx Expr<'gcx>> {
     match &expr.kind {
         ExprKind::Assign(target, ..) | ExprKind::Delete(target) => Some(target),
         ExprKind::Unary(op, target) if is_inc_dec(op.kind) => Some(target),
@@ -308,7 +308,7 @@ pub fn ast_bool_literal(expr: &ast::Expr<'_>) -> Option<bool> {
 }
 
 /// Calls `f` on every direct sub-expression of `expr`, in evaluation order.
-pub fn for_each_child<'hir>(expr: &'hir Expr<'hir>, f: &mut impl FnMut(&'hir Expr<'hir>)) {
+pub fn for_each_child<'gcx>(expr: &'gcx Expr<'gcx>, f: &mut impl FnMut(&'gcx Expr<'gcx>)) {
     match &expr.kind {
         ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
             f(lhs);
@@ -379,10 +379,10 @@ pub fn callee_fids(hir: &hir::Hir<'_>, callee: &Expr<'_>) -> Vec<FunctionId> {
 }
 
 /// Non-external functions a bare identifier callee may resolve to.
-pub fn resolved_internal_function_ids<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    callee: &'hir Expr<'hir>,
-) -> impl Iterator<Item = FunctionId> + 'hir {
+pub fn resolved_internal_function_ids<'gcx>(
+    hir: &'gcx hir::Hir<'gcx>,
+    callee: &'gcx Expr<'gcx>,
+) -> impl Iterator<Item = FunctionId> + 'gcx {
     function_ids(callee).filter(move |&id| {
         let func = hir.function(id);
         func.kind.is_function() && func.visibility != ast::Visibility::External
@@ -391,20 +391,20 @@ pub fn resolved_internal_function_ids<'hir>(
 
 /// True when `callee` names a zero-parameter function whose body returns an expression matching
 /// `pred`.
-pub fn callee_no_arg_returns<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    callee: &'hir Expr<'hir>,
-    mut pred: impl FnMut(&'hir Expr<'hir>) -> bool,
+pub fn callee_no_arg_returns<'gcx>(
+    hir: &'gcx hir::Hir<'gcx>,
+    callee: &'gcx Expr<'gcx>,
+    mut pred: impl FnMut(&'gcx Expr<'gcx>) -> bool,
 ) -> bool {
     callee_fids(hir, callee).into_iter().any(|fid| function_no_arg_returns(hir, fid, &mut pred))
 }
 
 /// True when `fid` takes no parameters and its body is `return e;` or `namedRet = e;` (optionally
 /// followed by a bare `return;`) with `pred(e)`.
-pub fn function_no_arg_returns<'hir>(
-    hir: &'hir hir::Hir<'hir>,
+pub fn function_no_arg_returns<'gcx>(
+    hir: &'gcx hir::Hir<'gcx>,
     fid: FunctionId,
-    pred: &mut impl FnMut(&'hir Expr<'hir>) -> bool,
+    pred: &mut impl FnMut(&'gcx Expr<'gcx>) -> bool,
 ) -> bool {
     let f = hir.function(fid);
     let Some(body) = f.body else { return false };

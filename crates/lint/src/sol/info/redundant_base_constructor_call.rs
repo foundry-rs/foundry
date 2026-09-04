@@ -15,12 +15,12 @@ declare_forge_lint!(
     "explicit empty base-constructor arguments are redundant"
 );
 
-impl<'hir> LateLintPass<'hir> for RedundantBaseConstructorCall {
+impl<'gcx> LateLintPass<'gcx> for RedundantBaseConstructorCall {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        contract: &'hir hir::Contract<'hir>,
+        gcx: Gcx<'gcx>,
+        contract: &'gcx hir::Contract<'gcx>,
     ) {
         let hir = &gcx.hir;
         // `contract X is A(), B()` clauses: removing only the `()` is enough, `is A` is valid.
@@ -32,8 +32,8 @@ impl<'hir> LateLintPass<'hir> for RedundantBaseConstructorCall {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        func: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        func: &'gcx hir::Function<'gcx>,
     ) {
         let hir = &gcx.hir;
         // `constructor() A() {}` modifier-style base calls. The bare base name `A` is not valid

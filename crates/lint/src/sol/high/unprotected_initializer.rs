@@ -24,11 +24,11 @@ declare_forge_lint!(
     "upgradeable initializer is not protected against direct implementation calls"
 );
 
-impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
+impl<'gcx> LateLintPass<'gcx> for UnprotectedInitializer {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
+        gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
         let hir = &gcx.hir;
@@ -92,23 +92,23 @@ fn has_modifier_named(hir: &hir::Hir<'_>, func: &hir::Function<'_>, name: &str) 
 
 /// True if `hit` matches an expression in `fid`'s body or, transitively, in the body of any
 /// internal function it calls.
-fn reaches<'hir>(
-    gcx: Gcx<'hir>,
-    bases: &'hir [ContractId],
+fn reaches<'gcx>(
+    gcx: Gcx<'gcx>,
+    bases: &'gcx [ContractId],
     fid: FunctionId,
-    hit: impl FnMut(&'hir Expr<'hir>) -> bool,
+    hit: impl FnMut(&'gcx Expr<'gcx>) -> bool,
 ) -> bool {
     Reach { gcx, bases, stack: Vec::new(), hit }.visit_function_body(fid).is_break()
 }
 
-struct Reach<'hir, F> {
-    gcx: Gcx<'hir>,
-    bases: &'hir [ContractId],
+struct Reach<'gcx, F> {
+    gcx: Gcx<'gcx>,
+    bases: &'gcx [ContractId],
     stack: Vec<FunctionId>,
     hit: F,
 }
 
-impl<'hir, F: FnMut(&'hir Expr<'hir>) -> bool> Reach<'hir, F> {
+impl<'gcx, F: FnMut(&'gcx Expr<'gcx>) -> bool> Reach<'gcx, F> {
     fn visit_function_body(&mut self, fid: FunctionId) -> ControlFlow<()> {
         if self.stack.contains(&fid) {
             return ControlFlow::Continue(());
@@ -123,14 +123,14 @@ impl<'hir, F: FnMut(&'hir Expr<'hir>) -> bool> Reach<'hir, F> {
     }
 }
 
-impl<'hir, F: FnMut(&'hir Expr<'hir>) -> bool> Visit<'hir> for Reach<'hir, F> {
+impl<'gcx, F: FnMut(&'gcx Expr<'gcx>) -> bool> Visit<'gcx> for Reach<'gcx, F> {
     type BreakValue = ();
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<()> {
         if (self.hit)(expr) {
             return ControlFlow::Break(());
         }

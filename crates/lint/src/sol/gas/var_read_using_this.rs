@@ -20,11 +20,11 @@ declare_forge_lint!(
     "reading a state variable via `this` causes an unnecessary STATICCALL; access it directly"
 );
 
-impl<'hir> LateLintPass<'hir> for VarReadUsingThis {
+impl<'gcx> LateLintPass<'gcx> for VarReadUsingThis {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
+        gcx: Gcx<'gcx>,
         contract_id: hir::ContractId,
     ) {
         let hir = &gcx.hir;
@@ -58,29 +58,29 @@ impl<'hir> LateLintPass<'hir> for VarReadUsingThis {
     }
 }
 
-struct ThisReadFinder<'a, 'hir> {
+struct ThisReadFinder<'a, 'gcx> {
     ctx: &'a LintContext<'a, 'a>,
-    hir: &'hir hir::Hir<'hir>,
-    callable: HashMap<Symbol, Vec<&'hir Function<'hir>>>,
+    hir: &'gcx hir::Hir<'gcx>,
+    callable: HashMap<Symbol, Vec<&'gcx Function<'gcx>>>,
     /// The expression tried by the enclosing `try` statement, which must stay an external call.
     try_target: Option<ExprId>,
 }
 
-impl<'hir> hir::Visit<'hir> for ThisReadFinder<'_, 'hir> {
+impl<'gcx> hir::Visit<'gcx> for ThisReadFinder<'_, 'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         self.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
         if let StmtKind::Try(try_stmt) = &stmt.kind {
             self.try_target = Some(try_stmt.expr.id);
         }
         self.walk_stmt(stmt)
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         if self.try_target != Some(expr.id) {
             self.check_call(expr);
         }

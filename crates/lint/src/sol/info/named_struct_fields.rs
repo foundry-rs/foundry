@@ -18,8 +18,8 @@ declare_forge_lint!(
     "prefer initializing structs with named fields"
 );
 
-impl<'hir> LateLintPass<'hir> for NamedStructFields {
-    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for NamedStructFields {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
         let hir = &gcx.hir;
         let ExprKind::Call(
             Expr { kind: ExprKind::Ident([Res::Item(ItemId::Struct(struct_id))]), span, .. },

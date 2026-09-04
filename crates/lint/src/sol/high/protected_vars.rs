@@ -40,11 +40,11 @@ declare_forge_lint!(
     "protected variable is written without its required protection"
 );
 
-impl<'hir> LateLintPass<'hir> for ProtectedVars {
+impl<'gcx> LateLintPass<'gcx> for ProtectedVars {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
+        gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
         let hir = &gcx.hir;
@@ -333,17 +333,17 @@ struct LoopFlow {
 
 /// What `_` resumes: the rest of the modifier chain and the function body.
 #[derive(Clone, Copy)]
-struct ModifierContinuation<'hir> {
-    modifiers: &'hir [hir::Modifier<'hir>],
+struct ModifierContinuation<'gcx> {
+    modifiers: &'gcx [hir::Modifier<'gcx>],
     next: usize,
-    body: hir::Block<'hir>,
+    body: hir::Block<'gcx>,
 }
 
 /// Runs the entry to a fixpoint over the memoized call summaries and returns, per written state
 /// variable, the guards that held on every path to some write.
-fn analyze_entry<'hir>(
-    gcx: Gcx<'hir>,
-    bases: &'hir [ContractId],
+fn analyze_entry<'gcx>(
+    gcx: Gcx<'gcx>,
+    bases: &'gcx [ContractId],
     entry_id: FunctionId,
 ) -> HashMap<VariableId, HashSet<FunctionId>> {
     let mut call_summaries = HashMap::new();
@@ -375,9 +375,9 @@ fn analyze_entry<'hir>(
     }
 }
 
-struct EntryAnalyzer<'hir> {
-    gcx: Gcx<'hir>,
-    bases: &'hir [ContractId],
+struct EntryAnalyzer<'gcx> {
+    gcx: Gcx<'gcx>,
+    bases: &'gcx [ContractId],
     /// Written state variables to the guards that held at every write.
     writes: HashMap<VariableId, HashSet<FunctionId>>,
     aliases: AliasState,
@@ -395,11 +395,11 @@ struct EntryAnalyzer<'hir> {
     /// Per active function, the joined state at its `return` statements.
     return_flow: Vec<Option<FlowState>>,
     loop_flow: Vec<LoopFlow>,
-    modifier_continuations: Vec<ModifierContinuation<'hir>>,
+    modifier_continuations: Vec<ModifierContinuation<'gcx>>,
     assembly_depth: usize,
 }
 
-impl<'hir> EntryAnalyzer<'hir> {
+impl<'gcx> EntryAnalyzer<'gcx> {
     fn analyze_function(&mut self, function_id: FunctionId) -> CallSummary {
         let function = self.gcx.hir.function(function_id);
         let empty_returns = || function.returns.iter().map(|_| StorageRoots::new()).collect();
@@ -427,9 +427,9 @@ impl<'hir> EntryAnalyzer<'hir> {
     /// control can complete normally.
     fn analyze_modifier_chain(
         &mut self,
-        modifiers: &'hir [hir::Modifier<'hir>],
+        modifiers: &'gcx [hir::Modifier<'gcx>],
         index: usize,
-        body: hir::Block<'hir>,
+        body: hir::Block<'gcx>,
     ) -> bool {
         let Some(modifier) = modifiers.get(index) else {
             let previous_returns = self.return_flow.last_mut().and_then(Option::take);
@@ -474,7 +474,7 @@ impl<'hir> EntryAnalyzer<'hir> {
     fn analyze_call(
         &mut self,
         function_id: FunctionId,
-        arguments: &[&'hir hir::Expr<'hir>],
+        arguments: &[&'gcx hir::Expr<'gcx>],
     ) -> CallSummary {
         let bound = self.argument_aliases(function_id, arguments);
         let saved_aliases = std::mem::replace(&mut self.aliases, bound);
@@ -515,7 +515,7 @@ impl<'hir> EntryAnalyzer<'hir> {
     fn argument_aliases(
         &self,
         function_id: FunctionId,
-        arguments: &[&'hir hir::Expr<'hir>],
+        arguments: &[&'gcx hir::Expr<'gcx>],
     ) -> AliasState {
         let function = self.gcx.hir.function(function_id);
         let mut bound = AliasState::default();
@@ -536,7 +536,7 @@ impl<'hir> EntryAnalyzer<'hir> {
         bound
     }
 
-    fn analyze_block(&mut self, block: hir::Block<'hir>) -> bool {
+    fn analyze_block(&mut self, block: hir::Block<'gcx>) -> bool {
         block.stmts.iter().all(|statement| self.analyze_stmt(statement))
     }
 
@@ -562,7 +562,7 @@ impl<'hir> EntryAnalyzer<'hir> {
     }
 
     /// Analyzes a statement, returning whether control can continue past it.
-    fn analyze_stmt(&mut self, statement: &'hir hir::Stmt<'hir>) -> bool {
+    fn analyze_stmt(&mut self, statement: &'gcx hir::Stmt<'gcx>) -> bool {
         match statement.kind {
             StmtKind::DeclSingle(variable_id) => {
                 let Some(initializer) = self.gcx.hir.variable(variable_id).initializer else {
@@ -662,7 +662,7 @@ impl<'hir> EntryAnalyzer<'hir> {
 
     /// Iterates the loop body from the joined loop-head state until the alias/guard state stops
     /// changing. Returns whether the loop can be left normally.
-    fn analyze_loop(&mut self, block: hir::Block<'hir>, source: LoopSource<'hir>) -> bool {
+    fn analyze_loop(&mut self, block: hir::Block<'gcx>, source: LoopSource<'gcx>) -> bool {
         let mut head = self.flow_state();
         let mut exits = None;
         loop {
@@ -736,7 +736,7 @@ impl<'hir> EntryAnalyzer<'hir> {
     }
 
     /// Analyzes an expression, returning whether its evaluation can complete.
-    fn analyze_expr(&mut self, expression: &'hir hir::Expr<'hir>) -> bool {
+    fn analyze_expr(&mut self, expression: &'gcx hir::Expr<'gcx>) -> bool {
         match &expression.peel_parens().kind {
             ExprKind::Assign(lhs, operator, rhs) => {
                 if !(self.analyze_expr(rhs) && self.analyze_expr(lhs)) {
@@ -897,8 +897,8 @@ impl<'hir> EntryAnalyzer<'hir> {
 
     fn apply_assignment(
         &mut self,
-        lhs: &'hir hir::Expr<'hir>,
-        rhs: &'hir hir::Expr<'hir>,
+        lhs: &'gcx hir::Expr<'gcx>,
+        rhs: &'gcx hir::Expr<'gcx>,
         compound: bool,
     ) {
         let lhs = lhs.peel_parens();
@@ -932,7 +932,7 @@ impl<'hir> EntryAnalyzer<'hir> {
         }
     }
 
-    fn set_return_aliases(&mut self, expression: &'hir hir::Expr<'hir>) {
+    fn set_return_aliases(&mut self, expression: &'gcx hir::Expr<'gcx>) {
         let Some(&function_id) = self.stack.last() else { return };
         let outputs = self.gcx.hir.function(function_id).returns.len();
         let roots: Vec<_> = (0..outputs)
@@ -1003,9 +1003,9 @@ impl<'hir> EntryAnalyzer<'hir> {
     fn ordered_call_arguments(
         &self,
         declared_id: FunctionId,
-        arguments: CallArgs<'hir>,
-        receiver: Option<&'hir hir::Expr<'hir>>,
-    ) -> Vec<&'hir hir::Expr<'hir>> {
+        arguments: CallArgs<'gcx>,
+        receiver: Option<&'gcx hir::Expr<'gcx>>,
+    ) -> Vec<&'gcx hir::Expr<'gcx>> {
         let parameters = self.gcx.hir.function(declared_id).parameters;
         let parameters = &parameters[usize::from(receiver.is_some())..];
         let names: Vec<_> = parameters
@@ -1022,8 +1022,8 @@ impl<'hir> EntryAnalyzer<'hir> {
     /// `super.`/`Base.`/`Lib.` qualified calls.
     fn resolved_internal_call(
         &self,
-        callee: &'hir hir::Expr<'hir>,
-    ) -> Option<(FunctionId, FunctionId, Option<&'hir hir::Expr<'hir>>)> {
+        callee: &'gcx hir::Expr<'gcx>,
+    ) -> Option<(FunctionId, FunctionId, Option<&'gcx hir::Expr<'gcx>>)> {
         let (function_id, attached) = match self.gcx.resolved_callee(callee.id) {
             Some(resolved) => (resolved.res.as_function()?, resolved.attached),
             None => (unique(function_ids(callee))?, false),

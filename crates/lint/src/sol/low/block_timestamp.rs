@@ -29,8 +29,8 @@ declare_forge_lint!(
     "usage of `block.timestamp` in a comparison may be manipulated by validators"
 );
 
-impl<'hir> LateLintPass<'hir> for BlockTimestamp {
-    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for BlockTimestamp {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         let hir = &gcx.hir;
         let Some(body) = func.body else { return };
         // The contract's own internal helpers that return `block.timestamp` directly.
@@ -51,17 +51,17 @@ impl<'hir> LateLintPass<'hir> for BlockTimestamp {
 
 /// Flow-sensitive walk reporting comparisons involving `block.timestamp`, a helper returning it,
 /// or a local holding a value derived from either.
-struct Checker<'a, 's, 'c, 'hir> {
+struct Checker<'a, 's, 'c, 'gcx> {
     ctx: &'a LintContext<'s, 'c>,
-    gcx: Gcx<'hir>,
+    gcx: Gcx<'gcx>,
     helpers: Vec<FunctionId>,
     /// Locals currently holding a timestamp-derived value.
     aliases: HashSet<VariableId>,
 }
 
-impl<'hir> Checker<'_, '_, '_, 'hir> {
+impl<'gcx> Checker<'_, '_, '_, 'gcx> {
     /// Walks statements in order, stopping at the first one control cannot continue past.
-    fn block(&mut self, stmts: impl IntoIterator<Item = &'hir Stmt<'hir>>) {
+    fn block(&mut self, stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>) {
         for stmt in stmts {
             let _ = self.visit_stmt(stmt);
             if branch_always_exits(stmt) {
@@ -75,7 +75,7 @@ impl<'hir> Checker<'_, '_, '_, 'hir> {
     fn arm(
         &mut self,
         merged: &mut HashSet<VariableId>,
-        stmts: impl IntoIterator<Item = &'hir Stmt<'hir>>,
+        stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>,
         walk: impl FnOnce(&mut Self),
     ) {
         let saved = self.aliases.clone();
@@ -149,14 +149,14 @@ impl<'hir> Checker<'_, '_, '_, 'hir> {
     }
 }
 
-impl<'hir> Visit<'hir> for Checker<'_, '_, '_, 'hir> {
+impl<'gcx> Visit<'gcx> for Checker<'_, '_, '_, 'gcx> {
     type BreakValue = Infallible;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Infallible> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Infallible> {
         match &stmt.kind {
             StmtKind::DeclSingle(var) => {
                 if let Some(init) = self.gcx.hir.variable(*var).initializer {
@@ -222,7 +222,7 @@ impl<'hir> Visit<'hir> for Checker<'_, '_, '_, 'hir> {
         ControlFlow::Continue(())
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Infallible> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Infallible> {
         match &expr.peel_parens().kind {
             // The right-hand side is evaluated first, against the aliases before the write.
             ExprKind::Assign(lhs, op, rhs) => {
@@ -265,9 +265,9 @@ impl<'hir> Visit<'hir> for Checker<'_, '_, '_, 'hir> {
     }
 }
 
-impl<'hir> Checker<'_, '_, '_, 'hir> {
+impl<'gcx> Checker<'_, '_, '_, 'gcx> {
     /// True if `expr` or any subexpression is a timestamp source.
-    fn contains_source(&self, expr: &'hir Expr<'hir>) -> bool {
+    fn contains_source(&self, expr: &'gcx Expr<'gcx>) -> bool {
         any_subexpr(expr, |e| self.is_source(e))
     }
 }

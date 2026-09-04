@@ -18,8 +18,8 @@ declare_forge_lint!(
     "Solmate's `SafeTransferLib` does not check that the token has code, so a transfer to a token-less address succeeds silently"
 );
 
-impl<'hir> LateLintPass<'hir> for SolmateSafeTransferLib {
-    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for SolmateSafeTransferLib {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
         // A name or member expression typed as a function is a resolved reference, called or
         // used as a value: judge the single declaration the type checker selected (overloads,
         // overrides, `using for` and import aliases already accounted for).

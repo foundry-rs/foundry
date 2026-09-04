@@ -23,8 +23,8 @@ declare_forge_lint!(
     "state variable initializer depends on a non-pure function or another state variable"
 );
 
-impl<'hir> LateLintPass<'hir> for FunctionInitState {
-    fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, id: ContractId) {
+impl<'gcx> LateLintPass<'gcx> for FunctionInitState {
+    fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, id: ContractId) {
         let hir = &gcx.hir;
         // State variable initializers run at construction, before the constructor body, in
         // base-to-derived order: reading another non-constant state variable or calling a
@@ -55,8 +55,8 @@ impl<'hir> LateLintPass<'hir> for FunctionInitState {
 
 /// Looks for a reference to a non-constant state variable or to a non-pure function anywhere in
 /// an initializer expression, arguments of nested calls included.
-struct ImpureRefFinder<'hir> {
-    gcx: Gcx<'hir>,
+struct ImpureRefFinder<'gcx> {
+    gcx: Gcx<'gcx>,
     /// The source and contract of the initializer, the viewpoint for `using for` lookups.
     source: hir::SourceId,
     contract: ContractId,
@@ -66,14 +66,14 @@ struct ImpureRefFinder<'hir> {
     found: bool,
 }
 
-impl<'hir> Visit<'hir> for ImpureRefFinder<'hir> {
+impl<'gcx> Visit<'gcx> for ImpureRefFinder<'gcx> {
     type BreakValue = Infallible;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         let is_callee = self.callee == Some(expr.id);
         match &expr.kind {
             // The type checker already resolved the one function a call dispatches to (overload

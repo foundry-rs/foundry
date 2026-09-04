@@ -22,8 +22,8 @@ declare_forge_lint!(
     "redundant storage write; value overwritten before being read"
 );
 
-impl<'hir> LateLintPass<'hir> for WriteAfterWrite {
-    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for WriteAfterWrite {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         let hir = &gcx.hir;
         if let Some(body) = func.body {
             Analyzer { ctx, hir, pending: HashMap::new() }.check_block(body);
@@ -33,9 +33,9 @@ impl<'hir> LateLintPass<'hir> for WriteAfterWrite {
 
 /// Tracks state variable writes that no later read has observed yet; a second write to such a
 /// variable makes the pending one redundant.
-struct Analyzer<'a, 'hir> {
+struct Analyzer<'a, 'gcx> {
     ctx: &'a LintContext<'a, 'a>,
-    hir: &'hir Hir<'hir>,
+    hir: &'gcx Hir<'gcx>,
     pending: HashMap<VariableId, Span>,
 }
 

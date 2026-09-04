@@ -19,17 +19,17 @@ use solar::{
 use std::{convert::Infallible, ops::ControlFlow};
 
 /// A statement or expression reached inside a loop.
-pub(super) enum LoopItem<'hir> {
-    Stmt(&'hir Stmt<'hir>),
-    Expr(&'hir Expr<'hir>),
+pub(super) enum LoopItem<'gcx> {
+    Stmt(&'gcx Stmt<'gcx>),
+    Expr(&'gcx Expr<'gcx>),
 }
 
 /// Calls `f` for every expression executing inside a loop of a payable entry point, including
 /// loops in the internal helpers it calls (whether the call itself sits in a loop or not).
-pub(super) fn for_each_payable_loop_expr<'hir>(
-    gcx: Gcx<'hir>,
-    func: &'hir Function<'hir>,
-    mut f: impl FnMut(&'hir Expr<'hir>),
+pub(super) fn for_each_payable_loop_expr<'gcx>(
+    gcx: Gcx<'gcx>,
+    func: &'gcx Function<'gcx>,
+    mut f: impl FnMut(&'gcx Expr<'gcx>),
 ) {
     if !matches!(func.kind, FunctionKind::Constructor | FunctionKind::Modifier)
         && func.state_mutability == StateMutability::Payable
@@ -46,11 +46,11 @@ pub(super) fn for_each_payable_loop_expr<'hir>(
 /// Calls `f` for every statement and expression executing inside a loop of `func`. Internal
 /// helpers called from a loop are inlined; with `follow_calls_outside_loop`, so are helpers
 /// called outside one, so that their own loops are reported too.
-pub(super) fn for_each_loop_item<'hir>(
-    gcx: Gcx<'hir>,
-    func: &'hir Function<'hir>,
+pub(super) fn for_each_loop_item<'gcx>(
+    gcx: Gcx<'gcx>,
+    func: &'gcx Function<'gcx>,
     follow_calls_outside_loop: bool,
-    f: impl FnMut(LoopItem<'hir>),
+    f: impl FnMut(LoopItem<'gcx>),
 ) {
     let Some(body) = func.body else { return };
     let mut walker = LoopWalker {
@@ -67,13 +67,13 @@ pub(super) fn for_each_loop_item<'hir>(
 }
 
 /// The rest of a modifier chain and the function body it wraps, executed at `_`.
-type Continuation<'hir> = (&'hir [Modifier<'hir>], usize, Block<'hir>, Option<ContractId>);
+type Continuation<'gcx> = (&'gcx [Modifier<'gcx>], usize, Block<'gcx>, Option<ContractId>);
 
-struct LoopWalker<'hir, F> {
-    gcx: Gcx<'hir>,
+struct LoopWalker<'gcx, F> {
+    gcx: Gcx<'gcx>,
     f: F,
     loop_depth: usize,
-    placeholder: Option<Continuation<'hir>>,
+    placeholder: Option<Continuation<'gcx>>,
     /// Modifiers and helpers currently being inlined, to cut recursion.
     stack: Vec<FunctionId>,
     /// Contract whose linearization resolves `super`.
@@ -83,12 +83,12 @@ struct LoopWalker<'hir, F> {
     follow_calls_outside_loop: bool,
 }
 
-impl<'hir, F: FnMut(LoopItem<'hir>)> LoopWalker<'hir, F> {
+impl<'gcx, F: FnMut(LoopItem<'gcx>)> LoopWalker<'gcx, F> {
     fn visit_modifiers(
         &mut self,
-        modifiers: &'hir [Modifier<'hir>],
+        modifiers: &'gcx [Modifier<'gcx>],
         index: usize,
-        body: Block<'hir>,
+        body: Block<'gcx>,
         contract: Option<ContractId>,
     ) {
         let Some(modifier) = modifiers.get(index) else {
@@ -110,8 +110,8 @@ impl<'hir, F: FnMut(LoopItem<'hir>)> LoopWalker<'hir, F> {
 
     fn visit_scoped(
         &mut self,
-        block: Block<'hir>,
-        placeholder: Option<Continuation<'hir>>,
+        block: Block<'gcx>,
+        placeholder: Option<Continuation<'gcx>>,
         contract: Option<ContractId>,
     ) {
         let saved = (self.placeholder, self.current);
@@ -136,7 +136,7 @@ impl<'hir, F: FnMut(LoopItem<'hir>)> LoopWalker<'hir, F> {
     /// The internal function a call dispatches to, if it can be inlined: a helper called
     /// directly, through a library/base qualifier or a `using for` binding, or via `super`.
     /// Calls on a contract-typed value (`this` included) are external and are not followed.
-    fn callee(&self, callee: &'hir Expr<'hir>) -> Option<FunctionId> {
+    fn callee(&self, callee: &'gcx Expr<'gcx>) -> Option<FunctionId> {
         let callee = callee.peel_parens();
         let func_id = self.gcx.resolved_expr(callee)?.as_function()?;
         let ExprKind::Member(base, member) = &callee.kind else { return Some(func_id) };
@@ -160,14 +160,14 @@ impl<'hir, F: FnMut(LoopItem<'hir>)> LoopWalker<'hir, F> {
     }
 }
 
-impl<'hir, F: FnMut(LoopItem<'hir>)> Visit<'hir> for LoopWalker<'hir, F> {
+impl<'gcx, F: FnMut(LoopItem<'gcx>)> Visit<'gcx> for LoopWalker<'gcx, F> {
     type BreakValue = Infallible;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Infallible> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Infallible> {
         if self.loop_depth > 0 {
             (self.f)(LoopItem::Stmt(stmt));
         }
@@ -189,7 +189,7 @@ impl<'hir, F: FnMut(LoopItem<'hir>)> Visit<'hir> for LoopWalker<'hir, F> {
         ControlFlow::Continue(())
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Infallible> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Infallible> {
         self.walk_expr(expr)?;
         let in_loop = self.loop_depth > 0;
         if in_loop {

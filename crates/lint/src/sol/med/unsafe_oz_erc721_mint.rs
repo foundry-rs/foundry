@@ -32,12 +32,12 @@ declare_forge_lint!(
     "`ERC721._mint` does not check that the recipient can receive the token; use `_safeMint`"
 );
 
-impl<'hir> LateLintPass<'hir> for UnsafeOzErc721Mint {
+impl<'gcx> LateLintPass<'gcx> for UnsafeOzErc721Mint {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        func: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        func: &'gcx hir::Function<'gcx>,
     ) {
         let hir = &gcx.hir;
         let cx = Cx { gcx };
@@ -84,18 +84,18 @@ struct UnsafeMintTarget {
 }
 
 /// A resolved call: its target, arguments and span.
-type Call<'hir> = (FunctionId, &'hir CallArgs<'hir>, Span);
+type Call<'gcx> = (FunctionId, &'gcx CallArgs<'gcx>, Span);
 
 /// The analysis context.
 #[derive(Clone, Copy)]
-struct Cx<'hir> {
-    gcx: Gcx<'hir>,
+struct Cx<'gcx> {
+    gcx: Gcx<'gcx>,
 }
 
-impl<'hir> Cx<'hir> {
+impl<'gcx> Cx<'gcx> {
     /// Whether an internal/private function is reached from a user `_mint` override of a
     /// derived contract, making it part of the mint primitive rather than a call site.
-    fn is_override_delegation_helper(self, function: &'hir hir::Function<'hir>) -> bool {
+    fn is_override_delegation_helper(self, function: &'gcx hir::Function<'gcx>) -> bool {
         let hir = &self.gcx.hir;
         if !is_internal(function) || (function.override_ && named(function, "_mint")) {
             return false;
@@ -304,9 +304,9 @@ impl<'hir> Cx<'hir> {
     /// Runs `stmt_matches`/`expr_matches` over a subtree and reports whether either held.
     fn any_in_stmts(
         self,
-        stmts: &'hir [Stmt<'hir>],
-        stmt_matches: impl FnMut(&'hir Stmt<'hir>) -> bool,
-        expr_matches: impl FnMut(&'hir Expr<'hir>) -> bool,
+        stmts: &'gcx [Stmt<'gcx>],
+        stmt_matches: impl FnMut(&'gcx Stmt<'gcx>) -> bool,
+        expr_matches: impl FnMut(&'gcx Expr<'gcx>) -> bool,
     ) -> bool {
         let mut finder = Finder { gcx: self.gcx, stmt_matches, expr_matches };
         stmts.iter().any(|stmt| finder.visit_stmt(stmt).is_break())
@@ -314,14 +314,14 @@ impl<'hir> Cx<'hir> {
 
     fn any_in_expr(
         self,
-        expr: &'hir Expr<'hir>,
-        expr_matches: impl FnMut(&'hir Expr<'hir>) -> bool,
+        expr: &'gcx Expr<'gcx>,
+        expr_matches: impl FnMut(&'gcx Expr<'gcx>) -> bool,
     ) -> bool {
         Finder { gcx: self.gcx, stmt_matches: |_| false, expr_matches }.visit_expr(expr).is_break()
     }
 
     /// Every resolved call in a subtree, in source order.
-    fn calls(self, stmts: &'hir [Stmt<'hir>]) -> Vec<Call<'hir>> {
+    fn calls(self, stmts: &'gcx [Stmt<'gcx>]) -> Vec<Call<'gcx>> {
         let mut calls = Vec::new();
         self.any_in_stmts(
             stmts,
@@ -344,7 +344,7 @@ impl<'hir> Cx<'hir> {
         resolved_function(self.gcx, callee)
     }
 
-    fn callee_fn(self, expr: &Expr<'_>) -> Option<&'hir TyFn<'hir>> {
+    fn callee_fn(self, expr: &Expr<'_>) -> Option<&'gcx TyFn<'gcx>> {
         let ExprKind::Call(callee, ..) = &expr.kind else { return None };
         match self.gcx.type_of_expr(callee.peel_parens().id)?.kind {
             TyKind::Fn(function_ty) => Some(function_ty),
@@ -374,9 +374,9 @@ impl<'hir> Cx<'hir> {
     fn arg(
         self,
         function_id: FunctionId,
-        args: &'hir CallArgs<'hir>,
+        args: &'gcx CallArgs<'gcx>,
         index: usize,
-    ) -> Option<&'hir Expr<'hir>> {
+    ) -> Option<&'gcx Expr<'gcx>> {
         let function = self.gcx.hir.function(function_id);
         arg_for_param(&self.gcx.hir, function, *function.parameters.get(index)?, args)
     }
@@ -406,7 +406,7 @@ impl<'hir> Cx<'hir> {
     /// the receiver hook itself. The member is resolved rather than matched by name: spelled on
     /// a same-name function of another shape, `.selector` is a different value. An `immutable`
     /// or a state variable is unknown here and does not exempt.
-    fn is_received_selector(self, expr: &Expr<'hir>) -> bool {
+    fn is_received_selector(self, expr: &Expr<'gcx>) -> bool {
         let expr = expr.peel_parens();
         match &expr.kind {
             ExprKind::Lit(lit) => {
@@ -466,7 +466,7 @@ impl<'hir> Cx<'hir> {
     /// Whether executing `stmt` always reverts, undoing everything the transaction did. Only a
     /// revert counts, see [`Self::may_return`] for the escapes that leave the transaction
     /// standing.
-    fn branch_always_reverts(self, stmt: &'hir Stmt<'hir>) -> bool {
+    fn branch_always_reverts(self, stmt: &'gcx Stmt<'gcx>) -> bool {
         match &stmt.kind {
             StmtKind::Revert(_) => !self.may_return(stmt),
             StmtKind::Expr(expr) => is_revert_call(expr) && !self.may_return(stmt),
@@ -493,7 +493,7 @@ impl<'hir> Cx<'hir> {
     /// Whether a statement may leave the function while keeping what the transaction already
     /// did: a `return`, or the EVM `return`/`stop` an assembly block can hold. Only statements
     /// that provably cannot leave answer no.
-    fn may_return(self, stmt: &'hir Stmt<'hir>) -> bool {
+    fn may_return(self, stmt: &'gcx Stmt<'gcx>) -> bool {
         self.contains_frame_ending_assembly(slice::from_ref(stmt), &mut Vec::new())
             || match &stmt.kind {
                 StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
@@ -519,13 +519,13 @@ impl<'hir> Cx<'hir> {
     /// capable of doing so.
     fn contains_frame_ending_assembly(
         self,
-        stmts: &'hir [Stmt<'hir>],
+        stmts: &'gcx [Stmt<'gcx>],
         seen: &mut Vec<FunctionId>,
     ) -> bool {
         self.any_in_stmts(stmts, is_assembly, |expr| self.call_leaves_frame(expr, seen))
     }
 
-    fn expr_contains_frame_ending_assembly(self, expr: &'hir Expr<'hir>) -> bool {
+    fn expr_contains_frame_ending_assembly(self, expr: &'gcx Expr<'gcx>) -> bool {
         let mut seen = Vec::new();
         self.any_in_expr(expr, |expr| self.call_leaves_frame(expr, &mut seen))
     }
@@ -566,11 +566,11 @@ impl<'hir> Cx<'hir> {
     /// assignment, since it can rewrite Solidity locals outside the HIR expression tree.
     /// Identity is by variable, not by value, so a guard that checked `var` says nothing once
     /// `var` is reassigned.
-    fn mutates_var(self, stmt: &'hir Stmt<'hir>, var: VariableId) -> bool {
+    fn mutates_var(self, stmt: &'gcx Stmt<'gcx>, var: VariableId) -> bool {
         self.any_in_stmts(slice::from_ref(stmt), is_assembly, |expr| assigns_to(expr, var))
     }
 
-    fn expr_mutates_var(self, expr: &'hir Expr<'hir>, var: VariableId) -> bool {
+    fn expr_mutates_var(self, expr: &'gcx Expr<'gcx>, var: VariableId) -> bool {
         self.any_in_expr(expr, |expr| assigns_to(expr, var))
     }
 
@@ -578,7 +578,7 @@ impl<'hir> Cx<'hir> {
     /// and may deploy code even when it contains no HIR call expression.
     fn stmts_may_change_account_code(
         self,
-        stmts: &'hir [Stmt<'hir>],
+        stmts: &'gcx [Stmt<'gcx>],
         delegations: &[FunctionId],
         unstable_code_delegations: &[FunctionId],
         seen: &mut Vec<FunctionId>,
@@ -590,7 +590,7 @@ impl<'hir> Cx<'hir> {
 
     fn expr_may_change_account_code(
         self,
-        expr: &'hir Expr<'hir>,
+        expr: &'gcx Expr<'gcx>,
         delegations: &[FunctionId],
         unstable_code_delegations: &[FunctionId],
         seen: &mut Vec<FunctionId>,
@@ -664,7 +664,7 @@ impl<'hir> Cx<'hir> {
     fn bound_guard_parameters(
         self,
         function_id: FunctionId,
-        args: &'hir CallArgs<'hir>,
+        args: &'gcx CallArgs<'gcx>,
         recipient: VariableId,
         token: VariableId,
     ) -> Option<(VariableId, VariableId)> {
@@ -745,7 +745,7 @@ impl<'hir> Cx<'hir> {
     /// mint the body made, unless assembly in the body or an inner modifier can bypass it.
     fn modifier_coverage_at_body(
         self,
-        function: &'hir hir::Function<'hir>,
+        function: &'gcx hir::Function<'gcx>,
         recipient: VariableId,
         token: VariableId,
         seed: GuardCoverage,
@@ -831,28 +831,28 @@ impl<'hir> Cx<'hir> {
 }
 
 /// Breaks out of a subtree at the first statement or expression matching a predicate.
-struct Finder<'hir, S, E> {
-    gcx: Gcx<'hir>,
+struct Finder<'gcx, S, E> {
+    gcx: Gcx<'gcx>,
     stmt_matches: S,
     expr_matches: E,
 }
 
-impl<'hir, S, E> Visit<'hir> for Finder<'hir, S, E>
+impl<'gcx, S, E> Visit<'gcx> for Finder<'gcx, S, E>
 where
-    S: FnMut(&'hir Stmt<'hir>) -> bool,
-    E: FnMut(&'hir Expr<'hir>) -> bool,
+    S: FnMut(&'gcx Stmt<'gcx>) -> bool,
+    E: FnMut(&'gcx Expr<'gcx>) -> bool,
 {
     type BreakValue = ();
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<()> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<()> {
         if (self.stmt_matches)(stmt) { ControlFlow::Break(()) } else { self.walk_stmt(stmt) }
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<()> {
         if (self.expr_matches)(expr) { ControlFlow::Break(()) } else { self.walk_expr(expr) }
     }
 }
@@ -997,8 +997,8 @@ impl GuardWalk {
 /// Everything else reports, a `try` whose `catch` may swallow the refusal included, and so are
 /// an answer stored in a local and a helper returning it as a `bool`. Following the value
 /// across statements would take a dataflow analysis this detector does not run.
-struct GuardWalker<'a, 'hir> {
-    cx: Cx<'hir>,
+struct GuardWalker<'a, 'gcx> {
+    cx: Cx<'gcx>,
     recipient: VariableId,
     token: VariableId,
     /// The callees that are unsafe mints, and those among them that may change account code.
@@ -1007,8 +1007,8 @@ struct GuardWalker<'a, 'hir> {
     seen: &'a mut Vec<FunctionId>,
 }
 
-impl<'hir> GuardWalker<'_, 'hir> {
-    fn walk(&mut self, stmts: &'hir [Stmt<'hir>], walk: &mut GuardWalk) {
+impl<'gcx> GuardWalker<'_, 'gcx> {
+    fn walk(&mut self, stmts: &'gcx [Stmt<'gcx>], walk: &mut GuardWalk) {
         let cx = self.cx;
         // Read in order: what a guard covers and what an exit walks out with depend on what
         // already ran.
@@ -1130,7 +1130,7 @@ impl<'hir> GuardWalker<'_, 'hir> {
         }
     }
 
-    fn mutates(&self, stmt: &'hir Stmt<'hir>) -> bool {
+    fn mutates(&self, stmt: &'gcx Stmt<'gcx>) -> bool {
         self.cx.mutates_var(stmt, self.recipient) || self.cx.mutates_var(stmt, self.token)
     }
 
@@ -1138,8 +1138,8 @@ impl<'hir> GuardWalker<'_, 'hir> {
     /// only the given expression of it.
     fn may_change_account_code(
         &self,
-        stmts: &'hir [Stmt<'hir>],
-        expr: Option<&'hir Expr<'hir>>,
+        stmts: &'gcx [Stmt<'gcx>],
+        expr: Option<&'gcx Expr<'gcx>>,
     ) -> bool {
         let (delegations, unstable) = (self.delegations, self.unstable_code_delegations);
         let mut seen = Vec::new();
@@ -1156,7 +1156,7 @@ impl<'hir> GuardWalker<'_, 'hir> {
     /// condition is read: a hook call sitting in the revert message decides nothing. An external
     /// helper would ask from a different contract and cannot establish that the recipient
     /// accepts the minting contract's callback.
-    fn guard_expr_coverage(&mut self, expr: &'hir Expr<'hir>) -> GuardCoverage {
+    fn guard_expr_coverage(&mut self, expr: &'gcx Expr<'gcx>) -> GuardCoverage {
         let expr = expr.peel_parens();
         let ExprKind::Call(callee, args, _) = &expr.kind else { return GuardCoverage::None };
         if is_require_or_assert(callee) {
@@ -1180,7 +1180,7 @@ impl<'hir> GuardWalker<'_, 'hir> {
     /// code. The first argument is the closed-form acceptance condition itself; its receiver
     /// callback is part of the proof. Solidity does not guarantee that the other arguments run
     /// before the condition's code-length snapshot.
-    fn guard_extra_args_may_change_account_code(&self, expr: &'hir Expr<'hir>) -> bool {
+    fn guard_extra_args_may_change_account_code(&self, expr: &'gcx Expr<'gcx>) -> bool {
         let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
         is_require_or_assert(callee)
             && args.exprs().skip(1).any(|arg| self.may_change_account_code(&[], Some(arg)))
@@ -1189,7 +1189,7 @@ impl<'hir> GuardWalker<'_, 'hir> {
     /// The condition of a `require`/`assert` that passes only if the recipient can receive the
     /// token: the recipient is proven code-less, the hook comparison succeeds, or the short
     /// circuit `to.code.length == 0 || hook == sel` accepts either case.
-    fn acceptance_coverage(&self, cond: &'hir Expr<'hir>) -> GuardCoverage {
+    fn acceptance_coverage(&self, cond: &'gcx Expr<'gcx>) -> GuardCoverage {
         let cond = cond.peel_parens();
         if self.is_code_length_test(cond, false) {
             return GuardCoverage::CodeLess;
@@ -1211,7 +1211,7 @@ impl<'hir> GuardWalker<'_, 'hir> {
     /// `recipient.onERC721Received(..., token, ...)`: the hook, asked of the recipient itself and
     /// about the delegated token itself. An answer about a different id decides nothing for the
     /// minted one.
-    fn is_hook_call_on(&self, expr: &'hir Expr<'hir>) -> bool {
+    fn is_hook_call_on(&self, expr: &'gcx Expr<'gcx>) -> bool {
         let expr = expr.peel_parens();
         let ExprKind::Call(callee, args, _) = &expr.kind else { return false };
         let ExprKind::Member(receiver, _) = &callee.peel_parens().kind else { return false };
@@ -1225,7 +1225,7 @@ impl<'hir> GuardWalker<'_, 'hir> {
     /// whole expression: in `to == trusted || hook(to) == selector` the hook never runs for
     /// `trusted`. The other operand must be able to hold the accepting answer, and must not be a
     /// hook call itself, which would compare the recipient against itself.
-    fn is_hook_comparison(&self, expr: &'hir Expr<'hir>, want: BinOpKind) -> bool {
+    fn is_hook_comparison(&self, expr: &'gcx Expr<'gcx>, want: BinOpKind) -> bool {
         let ExprKind::Binary(lhs, op, rhs) = &expr.peel_parens().kind else { return false };
         let compares = |hook, answer| {
             self.is_hook_call_on(hook)
@@ -1238,7 +1238,7 @@ impl<'hir> GuardWalker<'_, 'hir> {
     /// `recipient.code.length` compared against zero, for one polarity. Nothing else may ride
     /// along: in `to.code.length > 0 && id == 5` the second operand decides whether the branch
     /// runs.
-    fn is_code_length_test(&self, expr: &'hir Expr<'hir>, has_code: bool) -> bool {
+    fn is_code_length_test(&self, expr: &'gcx Expr<'gcx>, has_code: bool) -> bool {
         let ExprKind::Binary(lhs, op, rhs) = &expr.peel_parens().kind else { return false };
         let is_code_length = |expr: &Expr<'_>| {
             let ExprKind::Member(code, length) = &expr.peel_parens().kind else { return false };
@@ -1342,9 +1342,9 @@ fn is_revert_call(expr: &Expr<'_>) -> bool {
 
 /// The statements before and after a modifier's single top-level placeholder. More complicated
 /// expansion shapes are left uncredited rather than guessing which paths execute the body.
-fn modifier_body_sides<'hir>(
-    stmts: &'hir [Stmt<'hir>],
-) -> Option<(&'hir [Stmt<'hir>], &'hir [Stmt<'hir>])> {
+fn modifier_body_sides<'gcx>(
+    stmts: &'gcx [Stmt<'gcx>],
+) -> Option<(&'gcx [Stmt<'gcx>], &'gcx [Stmt<'gcx>])> {
     let placeholders =
         stmts.iter().enumerate().filter(|(_, stmt)| matches!(stmt.kind, StmtKind::Placeholder));
     let index = unique(placeholders.map(|(index, _)| index))?;

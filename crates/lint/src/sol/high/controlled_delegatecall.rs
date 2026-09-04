@@ -34,12 +34,12 @@ declare_forge_lint!(
 /// How many levels of no-argument helper functions are inlined when checking a target.
 const HELPER_DEPTH: u8 = 3;
 
-impl<'hir> LateLintPass<'hir> for ControlledDelegatecall {
+impl<'gcx> LateLintPass<'gcx> for ControlledDelegatecall {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        func: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        func: &'gcx hir::Function<'gcx>,
     ) {
         let Some(body) = func.body else { return };
         let mut analyzer = Analyzer::new(gcx);
@@ -56,8 +56,8 @@ impl<'hir> LateLintPass<'hir> for ControlledDelegatecall {
 /// Flow-sensitive walk tracking which local address variables provably hold a trusted target.
 ///
 /// `visit_stmt` breaks when control cannot fall through to the next statement.
-struct Analyzer<'hir> {
-    gcx: Gcx<'hir>,
+struct Analyzer<'gcx> {
+    gcx: Gcx<'gcx>,
     safe_vars: HashSet<VariableId>,
     /// Every variable written during the walk.
     assigned: HashSet<VariableId>,
@@ -70,8 +70,8 @@ fn intersect(a: &HashSet<VariableId>, b: &HashSet<VariableId>) -> HashSet<Variab
     a.intersection(b).copied().collect()
 }
 
-impl<'hir> Analyzer<'hir> {
-    fn new(gcx: Gcx<'hir>) -> Self {
+impl<'gcx> Analyzer<'gcx> {
+    fn new(gcx: Gcx<'gcx>) -> Self {
         Self {
             gcx,
             safe_vars: HashSet::new(),
@@ -81,15 +81,15 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn visit_stmts(&mut self, stmts: &'hir [Stmt<'hir>]) -> ControlFlow<()> {
+    fn visit_stmts(&mut self, stmts: &'gcx [Stmt<'gcx>]) -> ControlFlow<()> {
         stmts.iter().try_for_each(|stmt| self.visit_stmt(stmt))
     }
 
-    fn is_trusted_target(&self, expr: &'hir Expr<'hir>) -> bool {
+    fn is_trusted_target(&self, expr: &'gcx Expr<'gcx>) -> bool {
         self.is_trusted_target_inner(expr, HELPER_DEPTH)
     }
 
-    fn is_trusted_target_inner(&self, expr: &'hir Expr<'hir>, depth: u8) -> bool {
+    fn is_trusted_target_inner(&self, expr: &'gcx Expr<'gcx>, depth: u8) -> bool {
         match &expr.peel_parens().kind {
             ExprKind::Lit(lit) => match &lit.kind {
                 LitKind::Address(_) => true,
@@ -139,7 +139,7 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn assign_expr(&mut self, lhs: &'hir Expr<'hir>, rhs: Option<&'hir Expr<'hir>>) {
+    fn assign_expr(&mut self, lhs: &'gcx Expr<'gcx>, rhs: Option<&'gcx Expr<'gcx>>) {
         if let Some(var) = underlying_var(lhs) {
             self.assign(var, rhs.is_some_and(|rhs| self.is_trusted_target(rhs)));
         }
@@ -147,9 +147,9 @@ impl<'hir> Analyzer<'hir> {
 
     fn handle_assign(
         &mut self,
-        lhs: &'hir Expr<'hir>,
+        lhs: &'gcx Expr<'gcx>,
         op: Option<hir::BinOp>,
-        rhs: &'hir Expr<'hir>,
+        rhs: &'gcx Expr<'gcx>,
     ) {
         let rhs = op.is_none().then_some(rhs);
         let Some(lhs_elems) = tuple_elems(lhs) else { return self.assign_expr(lhs, rhs) };
@@ -162,7 +162,7 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn is_controlled_delegatecall(&self, expr: &'hir Expr<'hir>) -> bool {
+    fn is_controlled_delegatecall(&self, expr: &'gcx Expr<'gcx>) -> bool {
         let ExprKind::Call(callee, ..) = &expr.peel_parens().kind else { return false };
         let ExprKind::Member(receiver, member) = &callee.peel_parens().kind else { return false };
         member.name == kw::Delegatecall
@@ -171,13 +171,13 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// Learns which variables are trusted when `pred` evaluates to `!negate`.
-    fn add_facts(&mut self, pred: &'hir Expr<'hir>, negate: bool) {
+    fn add_facts(&mut self, pred: &'gcx Expr<'gcx>, negate: bool) {
         if !has_side_effect(pred) {
             self.add_facts_unchecked(pred, negate);
         }
     }
 
-    fn add_facts_unchecked(&mut self, pred: &'hir Expr<'hir>, negate: bool) {
+    fn add_facts_unchecked(&mut self, pred: &'gcx Expr<'gcx>, negate: bool) {
         match &pred.peel_parens().kind {
             ExprKind::Binary(lhs, op, rhs) => {
                 let (eq, and_op, or_op) = if negate {
@@ -218,7 +218,7 @@ impl<'hir> Analyzer<'hir> {
     /// the arm falls through.
     fn visit_arm(
         &mut self,
-        cond: &'hir Expr<'hir>,
+        cond: &'gcx Expr<'gcx>,
         negate: bool,
         arm: impl FnOnce(&mut Self) -> ControlFlow<()>,
     ) -> Option<HashSet<VariableId>> {
@@ -241,14 +241,14 @@ impl<'hir> Analyzer<'hir> {
     }
 }
 
-impl<'hir> Visit<'hir> for Analyzer<'hir> {
+impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
     type BreakValue = ();
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<()> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<()> {
         match &stmt.kind {
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
                 self.visit_stmts(block.stmts)
@@ -345,7 +345,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
         }
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<()> {
         if self.is_controlled_delegatecall(expr) {
             self.hits.push(expr.span);
         }
@@ -421,10 +421,10 @@ fn is_cast(callee: &Expr<'_>) -> bool {
 
 /// The expression returned by a non-virtual, non-overriding, parameterless helper whose body is a
 /// single `return <expr>;` or `<ret> = <expr>;` (optionally followed by a bare `return;`).
-fn no_arg_helper_return<'hir>(
-    gcx: Gcx<'hir>,
-    callee: &'hir Expr<'hir>,
-) -> Option<&'hir Expr<'hir>> {
+fn no_arg_helper_return<'gcx>(
+    gcx: Gcx<'gcx>,
+    callee: &'gcx Expr<'gcx>,
+) -> Option<&'gcx Expr<'gcx>> {
     let fid = unique(function_ids(callee))?;
     let func = gcx.hir.function(fid);
     if func.virtual_ || func.override_ || !func.parameters.is_empty() {
@@ -452,9 +452,9 @@ fn no_arg_helper_return<'hir>(
 
 /// Caller variables proven trusted by the statements a modifier runs before `_`: a parameter that
 /// is bound to the variable, never reassigned in the prefix, and safe when `_` is reached.
-fn modifier_safe_vars<'hir>(
-    gcx: Gcx<'hir>,
-    invocation: &'hir hir::Modifier<'hir>,
+fn modifier_safe_vars<'gcx>(
+    gcx: Gcx<'gcx>,
+    invocation: &'gcx hir::Modifier<'gcx>,
 ) -> Vec<VariableId> {
     let hir = &gcx.hir;
     let Some(fid) = invocation.id.as_function() else { return Vec::new() };

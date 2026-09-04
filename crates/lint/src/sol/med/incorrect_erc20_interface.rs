@@ -22,12 +22,12 @@ const ERC20_FUNCTIONS: &[(&str, &[&str], &[&str])] = &[
     ("totalSupply", &[], &["uint256"]),
 ];
 
-impl<'hir> LateLintPass<'hir> for IncorrectERC20Interface {
+impl<'gcx> LateLintPass<'gcx> for IncorrectERC20Interface {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: solar::sema::Gcx<'hir>,
-        contract: &'hir hir::Contract<'hir>,
+        gcx: solar::sema::Gcx<'gcx>,
+        contract: &'gcx hir::Contract<'gcx>,
     ) {
         let hir = &gcx.hir;
         let inherits = |names: &[&str]| {

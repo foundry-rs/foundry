@@ -18,8 +18,8 @@ declare_forge_lint!(
     "Return value of an external call is not used"
 );
 
-impl<'hir> LateLintPass<'hir> for UnusedReturn {
-    fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, stmt: &'hir Stmt<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for UnusedReturn {
+    fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, stmt: &'gcx Stmt<'gcx>) {
         let (call, span) = match &stmt.kind {
             StmtKind::Expr(expr) => match &expr.peel_parens().kind {
                 // `(x, ) = call()` with an ignored slot.
@@ -44,7 +44,7 @@ impl<'hir> LateLintPass<'hir> for UnusedReturn {
 /// True if `expr` is a member call on a contract whose every candidate function (same name and
 /// arity) has return values, excluding ERC20 `transfer`/`transferFrom` (covered by
 /// `erc20-unchecked-transfer`).
-fn is_unused_return_call<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
+fn is_unused_return_call<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
     let hir = &gcx.hir;
     let ExprKind::Call(callee, args, ..) = &expr.peel_parens().kind else { return false };
     let ExprKind::Member(receiver, name) = &callee.peel_parens().kind else { return false };

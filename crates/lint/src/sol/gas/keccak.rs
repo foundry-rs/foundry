@@ -18,8 +18,8 @@ declare_forge_lint!(
     "use of inefficient hashing mechanism; consider using inline assembly"
 );
 
-impl<'hir> LateLintPass<'hir> for AsmKeccak256 {
-    fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, stmt: &'hir hir::Stmt<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for AsmKeccak256 {
+    fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, stmt: &'gcx hir::Stmt<'gcx>) {
         let hir = &gcx.hir;
         let expr = match stmt.kind {
             StmtKind::DeclSingle(var_id) => hir.variable(var_id).initializer,

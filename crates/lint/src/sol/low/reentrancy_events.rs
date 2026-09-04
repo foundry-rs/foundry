@@ -31,14 +31,14 @@ declare_forge_lint!(
     "event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on"
 );
 
-impl<'hir> LateLintPass<'hir> for ReentrancyEvents {
-    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for ReentrancyEvents {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         let Some(body) = func.body else { return };
         Analyzer::new(ctx, gcx, func.contract).analyze_callable(func, body, false);
     }
 }
 
-type Placeholder<'hir> = Option<(&'hir [hir::Modifier<'hir>], usize, Block<'hir>)>;
+type Placeholder<'gcx> = Option<(&'gcx [hir::Modifier<'gcx>], usize, Block<'gcx>)>;
 
 /// How control can leave a piece of code. Each exit kind records whether an external call was
 /// seen on some path reaching it; `None` means no path exits that way. Aborting paths
@@ -96,9 +96,9 @@ struct InlineCallKey {
     suppress_inline_reports: bool,
 }
 
-struct Analyzer<'ctx, 's, 'c, 'hir> {
+struct Analyzer<'ctx, 's, 'c, 'gcx> {
     ctx: &'ctx LintContext<'s, 'c>,
-    gcx: Gcx<'hir>,
+    gcx: Gcx<'gcx>,
     /// Contract being analysed; `this.f()` and `super.f()` resolve against it, also inside
     /// inlined helpers (runtime `this`).
     enclosing_contract: Option<ContractId>,
@@ -115,10 +115,10 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     expr_aborted: bool,
 }
 
-impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
+impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
     fn new(
         ctx: &'ctx LintContext<'s, 'c>,
-        gcx: Gcx<'hir>,
+        gcx: Gcx<'gcx>,
         enclosing_contract: Option<ContractId>,
     ) -> Self {
         Self {
@@ -137,8 +137,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
     fn analyze_callable(
         &mut self,
-        func: &'hir Function<'hir>,
-        body: Block<'hir>,
+        func: &'gcx Function<'gcx>,
+        body: Block<'gcx>,
         entry: bool,
     ) -> Exits {
         self.analyze_modifier_chain(func.modifiers, 0, body, entry)
@@ -146,9 +146,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
     fn analyze_modifier_chain(
         &mut self,
-        modifiers: &'hir [hir::Modifier<'hir>],
+        modifiers: &'gcx [hir::Modifier<'gcx>],
         index: usize,
-        body: Block<'hir>,
+        body: Block<'gcx>,
         mut entry: bool,
     ) -> Exits {
         let Some(modifier) = modifiers.get(index) else {
@@ -179,9 +179,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     /// Analyzes one loop iteration: the body, then the `for` update on the paths that complete it.
     fn analyze_iteration(
         &mut self,
-        block: Block<'hir>,
-        source: LoopSource<'hir>,
-        placeholder: Placeholder<'hir>,
+        block: Block<'gcx>,
+        source: LoopSource<'gcx>,
+        placeholder: Placeholder<'gcx>,
         entry: bool,
     ) -> Exits {
         let mut exits = self.analyze_block(block, placeholder, entry);
@@ -193,8 +193,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
     fn analyze_block(
         &mut self,
-        block: Block<'hir>,
-        placeholder: Placeholder<'hir>,
+        block: Block<'gcx>,
+        placeholder: Placeholder<'gcx>,
         mut entry: bool,
     ) -> Exits {
         let mut exits = Exits::default();
@@ -211,8 +211,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
     fn analyze_stmt(
         &mut self,
-        stmt: &'hir Stmt<'hir>,
-        placeholder: Placeholder<'hir>,
+        stmt: &'gcx Stmt<'gcx>,
+        placeholder: Placeholder<'gcx>,
         mut entry: bool,
     ) -> Exits {
         self.expr_aborted = false;
@@ -316,7 +316,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         if self.expr_aborted { Exits::default() } else { exits }
     }
 
-    fn analyze_expr(&mut self, expr: &'hir Expr<'hir>, tainted: &mut bool) {
+    fn analyze_expr(&mut self, expr: &'gcx Expr<'gcx>, tainted: &mut bool) {
         match &expr.kind {
             ExprKind::Call(callee, args, _) => {
                 for_each_child(expr, &mut |child| self.analyze_expr(child, tainted));
@@ -364,7 +364,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 
     /// Internal functions and `super` targets a call through `callee` dispatches to.
-    fn callees(&self, callee: &'hir Expr<'hir>, arg_count: usize) -> Vec<FunctionId> {
+    fn callees(&self, callee: &'gcx Expr<'gcx>, arg_count: usize) -> Vec<FunctionId> {
         resolved_internal_function_ids(&self.gcx.hir, callee)
             .chain(resolved_super_function_ids(
                 self.gcx,
@@ -452,7 +452,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
     fn stmt_may_reach_external_call(
         &mut self,
-        stmt: &'hir Stmt<'hir>,
+        stmt: &'gcx Stmt<'gcx>,
         seen: &mut HashSet<FunctionId>,
     ) -> bool {
         match stmt.kind {
@@ -499,7 +499,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
     fn expr_may_reach_external_call(
         &mut self,
-        expr: &'hir Expr<'hir>,
+        expr: &'gcx Expr<'gcx>,
         seen: &mut HashSet<FunctionId>,
     ) -> bool {
         let mut reached = false;

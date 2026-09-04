@@ -16,27 +16,27 @@ use std::ops::ControlFlow;
 
 declare_forge_lint!(COSTLY_LOOP, Severity::Gas, "costly-loop", "storage write inside a loop");
 
-impl<'hir> LateLintPass<'hir> for CostlyLoop {
-    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for CostlyLoop {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         let mut finder = LoopWriteFinder { ctx, gcx, loop_depth: 0 };
         let _ = finder.visit_function(func);
     }
 }
 
-struct LoopWriteFinder<'a, 'hir> {
+struct LoopWriteFinder<'a, 'gcx> {
     ctx: &'a LintContext<'a, 'a>,
-    gcx: Gcx<'hir>,
+    gcx: Gcx<'gcx>,
     loop_depth: u32,
 }
 
-impl<'hir> hir::Visit<'hir> for LoopWriteFinder<'_, 'hir> {
+impl<'gcx> hir::Visit<'gcx> for LoopWriteFinder<'_, 'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
         let is_loop = matches!(stmt.kind, StmtKind::Loop(..));
         self.loop_depth += is_loop as u32;
         let flow = self.walk_stmt(stmt);
@@ -44,7 +44,7 @@ impl<'hir> hir::Visit<'hir> for LoopWriteFinder<'_, 'hir> {
         flow
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         if self.loop_depth > 0 {
             let lvalue = match &expr.kind {
                 ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => Some(lhs),

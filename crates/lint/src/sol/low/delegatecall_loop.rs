@@ -18,8 +18,8 @@ declare_forge_lint!(
     "payable functions should not use `delegatecall` inside a loop"
 );
 
-impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
-    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for DelegatecallLoop {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         for_each_payable_loop_expr(gcx, func, |expr| {
             // Only `<address>.delegatecall(..)`: user functions named `delegatecall` on
             // contract-typed receivers are ordinary calls.

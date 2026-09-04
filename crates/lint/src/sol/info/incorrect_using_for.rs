@@ -18,15 +18,15 @@ declare_forge_lint!(
     "`using ... for` names a library with no function applicable to the type, so the directive attaches nothing"
 );
 
-impl<'hir> LateLintPass<'hir> for IncorrectUsingFor {
-    fn check_nested_source(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, id: hir::SourceId) {
+impl<'gcx> LateLintPass<'gcx> for IncorrectUsingFor {
+    fn check_nested_source(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, id: hir::SourceId) {
         let hir = &gcx.hir;
         for directive in hir.source(id).usings {
             check_directive(ctx, gcx, directive);
         }
     }
 
-    fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, id: hir::ContractId) {
+    fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, id: hir::ContractId) {
         let hir = &gcx.hir;
         for directive in hir.contract(id).usings {
             check_directive(ctx, gcx, directive);
@@ -37,7 +37,7 @@ impl<'hir> LateLintPass<'hir> for IncorrectUsingFor {
 /// Judges one `using ... for` directive: a library entry that contributes no member to the
 /// target type attaches nothing, which means no function of the library accepts the type as
 /// its bound first parameter.
-fn check_directive<'hir>(ctx: &LintContext, gcx: Gcx<'hir>, directive: &'hir UsingDirective<'hir>) {
+fn check_directive<'gcx>(ctx: &LintContext, gcx: Gcx<'gcx>, directive: &'gcx UsingDirective<'gcx>) {
     // `using L for *` attaches every function of the library: nothing to validate.
     let Some(hir_ty) = &directive.ty else { return };
     // `members_of` expects reference types wrapped in their data location. Storage converts

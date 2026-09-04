@@ -32,11 +32,11 @@ declare_forge_lint!(
     "state variable could be declared constant"
 );
 
-impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
+impl<'gcx> LateLintPass<'gcx> for UnchangedStateVariables {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
+        gcx: Gcx<'gcx>,
         contract_id: hir::ContractId,
     ) {
         let hir = &gcx.hir;
@@ -141,19 +141,19 @@ fn has_assembly_or_unknown(stmt: &Stmt<'_>) -> bool {
 }
 
 /// Collects every variable at the root of an assigned, deleted or incremented lvalue.
-struct WriteCollector<'hir> {
-    hir: &'hir hir::Hir<'hir>,
+struct WriteCollector<'gcx> {
+    hir: &'gcx hir::Hir<'gcx>,
     writes: HashSet<VariableId>,
 }
 
-impl<'hir> hir::Visit<'hir> for WriteCollector<'hir> {
+impl<'gcx> hir::Visit<'gcx> for WriteCollector<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         self.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         let lvalue = match &expr.kind {
             ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => Some(lhs),
             ExprKind::Unary(op, inner) if op.kind.has_side_effects() => Some(inner),

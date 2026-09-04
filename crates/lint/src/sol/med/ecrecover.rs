@@ -38,12 +38,12 @@ declare_forge_lint!(
 const SECP256K1_HALF_ORDER: U256 =
     uint!(0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0_U256);
 
-impl<'hir> LateLintPass<'hir> for Ecrecover {
+impl<'gcx> LateLintPass<'gcx> for Ecrecover {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        func: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        func: &'gcx hir::Function<'gcx>,
     ) {
         let Some(body) = func.body else { return };
         let mut analyzer = Analyzer {
@@ -150,14 +150,14 @@ impl FlowState {
 }
 
 /// A place written by an assignment, paired with the expression it receives.
-type Pair<'hir> = (Option<ValueKey>, Option<&'hir Expr<'hir>>);
+type Pair<'gcx> = (Option<ValueKey>, Option<&'gcx Expr<'gcx>>);
 
 /// The `s` argument of an `ecrecover` call.
-type Signature<'hir> = &'hir Expr<'hir>;
+type Signature<'gcx> = &'gcx Expr<'gcx>;
 
-struct Analyzer<'hir> {
-    gcx: Gcx<'hir>,
-    returns: &'hir [VariableId],
+struct Analyzer<'gcx> {
+    gcx: Gcx<'gcx>,
+    returns: &'gcx [VariableId],
     state: FlowState,
     next_value: u32,
     hits: Vec<Span>,
@@ -167,10 +167,10 @@ struct Analyzer<'hir> {
     /// States reaching `break`/`continue` or the end of the innermost loop body.
     loop_exits: Vec<FlowState>,
     /// Update statement of the innermost `for` loop, which `continue` still executes.
-    loop_next: Option<&'hir Stmt<'hir>>,
+    loop_next: Option<&'gcx Stmt<'gcx>>,
 }
 
-impl<'hir> Analyzer<'hir> {
+impl<'gcx> Analyzer<'gcx> {
     const fn fresh_value(&mut self) -> ValueId {
         self.next_value += 1;
         ValueId::Assigned(self.next_value)
@@ -278,8 +278,8 @@ impl<'hir> Analyzer<'hir> {
     /// receiver of a `using for` call), which the callee may write through.
     fn reference_args(
         &self,
-        callee: &'hir Expr<'hir>,
-        args: &'hir hir::CallArgs<'hir>,
+        callee: &'gcx Expr<'gcx>,
+        args: &'gcx hir::CallArgs<'gcx>,
     ) -> Vec<VariableId> {
         let callee = callee.peel_parens();
         let Some(TyKind::Fn(function)) = self.gcx.type_of_expr(callee.id).map(|ty| ty.kind) else {
@@ -316,8 +316,8 @@ impl<'hir> Analyzer<'hir> {
     /// The call expression and signature argument of a builtin `ecrecover` call.
     fn ecrecover_call(
         &self,
-        expr: &'hir Expr<'hir>,
-    ) -> Option<(&'hir Expr<'hir>, Signature<'hir>)> {
+        expr: &'gcx Expr<'gcx>,
+    ) -> Option<(&'gcx Expr<'gcx>, Signature<'gcx>)> {
         let expr = expr.peel_parens();
         let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
         let callee = self.gcx.resolved_builtin(callee.peel_parens());
@@ -326,7 +326,7 @@ impl<'hir> Analyzer<'hir> {
             .zip(args.exprs().nth(3))
     }
 
-    fn pending_recovery(&self, expr: &'hir Expr<'hir>) -> Option<PendingRecovery> {
+    fn pending_recovery(&self, expr: &'gcx Expr<'gcx>) -> Option<PendingRecovery> {
         let (call, signature) = self.ecrecover_call(expr)?;
         (!self.is_proven_low_s(signature))
             .then(|| PendingRecovery { signature: self.current_value(signature), span: call.span })
@@ -344,7 +344,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// `ecrecover` calls whose result becomes the value of `expr`.
-    fn result_calls(&self, expr: &'hir Expr<'hir>, out: &mut Vec<ExprId>) {
+    fn result_calls(&self, expr: &'gcx Expr<'gcx>, out: &mut Vec<ExprId>) {
         let expr = expr.peel_parens();
         if self.ecrecover_call(expr).is_some() {
             out.push(expr.id);
@@ -396,7 +396,7 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn is_proven_low_s(&self, expr: &'hir Expr<'hir>) -> bool {
+    fn is_proven_low_s(&self, expr: &'gcx Expr<'gcx>) -> bool {
         self.const_value(expr).is_some_and(|value| value <= SECP256K1_HALF_ORDER)
             || self.current_value(expr).is_some_and(|value| self.state.low_s.contains(&value))
             || matches!(&expr.peel_parens().kind, ExprKind::Ternary(cond, then, otherwise)
@@ -404,7 +404,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// The `(value, proven low)` a variable takes when assigned `rhs`.
-    fn assigned(&self, rhs: Option<&'hir Expr<'hir>>) -> (Option<ValueId>, bool) {
+    fn assigned(&self, rhs: Option<&'gcx Expr<'gcx>>) -> (Option<ValueId>, bool) {
         (
             rhs.and_then(|rhs| self.current_value(rhs)),
             rhs.is_some_and(|rhs| self.is_proven_low_s(rhs)),
@@ -446,9 +446,9 @@ impl<'hir> Analyzer<'hir> {
     /// Pairs every place written by `lhs` with the expression it receives.
     fn pairs(
         &self,
-        lhs: &'hir Expr<'hir>,
-        rhs: Option<&'hir Expr<'hir>>,
-        out: &mut Vec<Pair<'hir>>,
+        lhs: &'gcx Expr<'gcx>,
+        rhs: Option<&'gcx Expr<'gcx>>,
+        out: &mut Vec<Pair<'gcx>>,
     ) {
         let Some(elems) = tuple_elems(lhs) else { return out.push((self.place_key(lhs), rhs)) };
         let rhs_elems = rhs.and_then(tuple_elems);
@@ -462,7 +462,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// Assigns every pair, reading all right-hand sides first so tuple swaps are exact.
-    fn assign_pairs(&mut self, pairs: &[Pair<'hir>]) {
+    fn assign_pairs(&mut self, pairs: &[Pair<'gcx>]) {
         let assigned: Vec<_> =
             pairs.iter().filter_map(|(key, rhs)| Some(((*key)?, self.assigned(*rhs)))).collect();
         for (key, assigned) in assigned {
@@ -470,7 +470,7 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn assign_lhs(&mut self, lhs: &'hir Expr<'hir>, rhs: Option<&'hir Expr<'hir>>) {
+    fn assign_lhs(&mut self, lhs: &'gcx Expr<'gcx>, rhs: Option<&'gcx Expr<'gcx>>) {
         let mut pairs = Vec::new();
         self.pairs(lhs, rhs, &mut pairs);
         self.assign_pairs(&pairs);
@@ -479,7 +479,7 @@ impl<'hir> Analyzer<'hir> {
     /// Models a statement-level store of `rhs` into `pairs`. Recoveries stored into locals stay
     /// pending until the local is read or the signature validated; any other destination
     /// observes the result immediately.
-    fn store(&mut self, pairs: &[Pair<'hir>], rhs: Option<&'hir Expr<'hir>>) {
+    fn store(&mut self, pairs: &[Pair<'gcx>], rhs: Option<&'gcx Expr<'gcx>>) {
         let mut calls = Vec::new();
         for &(key, rhs) in pairs {
             let local = key.filter(|key| self.is_local(key.var()));
@@ -515,14 +515,14 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn store_expr(&mut self, lhs: &'hir Expr<'hir>, rhs: &'hir Expr<'hir>) {
+    fn store_expr(&mut self, lhs: &'gcx Expr<'gcx>, rhs: &'gcx Expr<'gcx>) {
         let mut pairs = Vec::new();
         self.pairs(lhs, Some(rhs), &mut pairs);
         self.store(&pairs, Some(rhs));
     }
 
     /// Visits an lvalue without treating the written variables as reads.
-    fn visit_lhs(&mut self, lhs: &'hir Expr<'hir>) {
+    fn visit_lhs(&mut self, lhs: &'gcx Expr<'gcx>) {
         if let Some(elems) = tuple_elems(lhs) {
             for elem in elems.iter().flatten() {
                 self.visit_lhs(elem);
@@ -545,16 +545,16 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn has_side_effect(&self, expr: &'hir Expr<'hir>) -> bool {
+    fn has_side_effect(&self, expr: &'gcx Expr<'gcx>) -> bool {
         SideEffects(self).visit_expr(expr).is_break()
     }
 
-    fn assume(&mut self, predicate: &'hir Expr<'hir>, negate: bool) {
+    fn assume(&mut self, predicate: &'gcx Expr<'gcx>, negate: bool) {
         self.add_facts(predicate, negate);
         self.validate_pending();
     }
 
-    fn add_facts(&mut self, predicate: &'hir Expr<'hir>, negate: bool) {
+    fn add_facts(&mut self, predicate: &'gcx Expr<'gcx>, negate: bool) {
         // Facts are derived from the current values, which a side effect may have replaced.
         if self.has_side_effect(predicate) {
             return;
@@ -618,7 +618,7 @@ impl<'hir> Analyzer<'hir> {
     /// `cond`, then continues from the join of the arms that did not exit.
     fn branch(
         &mut self,
-        cond: &'hir Expr<'hir>,
+        cond: &'gcx Expr<'gcx>,
         then: impl FnOnce(&mut Self) -> bool,
         otherwise: impl FnOnce(&mut Self) -> bool,
     ) -> bool {
@@ -641,12 +641,12 @@ impl<'hir> Analyzer<'hir> {
         then_live || else_live
     }
 
-    fn run_block(&mut self, stmts: &'hir [Stmt<'hir>]) -> bool {
+    fn run_block(&mut self, stmts: &'gcx [Stmt<'gcx>]) -> bool {
         stmts.iter().all(|stmt| self.run_stmt(stmt))
     }
 
     /// Runs `stmt`; returns `false` when control cannot continue past it.
-    fn run_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> bool {
+    fn run_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> bool {
         match &stmt.kind {
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => self.run_block(block.stmts),
             StmtKind::If(cond, then, otherwise) => {
@@ -727,7 +727,7 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn run_loop(&mut self, block: &'hir hir::Block<'hir>, source: LoopSource<'hir>) -> bool {
+    fn run_loop(&mut self, block: &'gcx hir::Block<'gcx>, source: LoopSource<'gcx>) -> bool {
         let next = loop_update(source);
         let outer_exits = mem::take(&mut self.loop_exits);
         let outer_next = mem::replace(&mut self.loop_next, next);
@@ -752,21 +752,21 @@ impl<'hir> Analyzer<'hir> {
         self.join_all(exits)
     }
 
-    fn run_loop_body(&mut self, block: &'hir hir::Block<'hir>) {
+    fn run_loop_body(&mut self, block: &'gcx hir::Block<'gcx>) {
         if self.run_block(block.stmts) && self.loop_next.is_none_or(|next| self.run_stmt(next)) {
             self.loop_exits.push(self.state.clone());
         }
     }
 }
 
-impl<'hir> Visit<'hir> for Analyzer<'hir> {
+impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         match &expr.kind {
             ExprKind::Ident(_) => {
                 if let Some(value) = self.current_value(expr) {
@@ -851,16 +851,16 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
 }
 
 /// Finds writes and state-mutating calls that run when an expression is evaluated.
-struct SideEffects<'a, 'hir>(&'a Analyzer<'hir>);
+struct SideEffects<'a, 'gcx>(&'a Analyzer<'gcx>);
 
-impl<'hir> Visit<'hir> for SideEffects<'_, 'hir> {
+impl<'gcx> Visit<'gcx> for SideEffects<'_, 'gcx> {
     type BreakValue = ();
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         &self.0.gcx.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<()> {
         match &expr.kind {
             ExprKind::Assign(..) | ExprKind::Delete(_) => ControlFlow::Break(()),
             ExprKind::Unary(op, _) if is_inc_dec(op.kind) => ControlFlow::Break(()),

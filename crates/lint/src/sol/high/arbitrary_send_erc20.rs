@@ -48,12 +48,12 @@ declare_forge_lint!(
 /// Recursion budget for `_msgSender()`-style helper chains.
 const HELPER_DEPTH: u8 = 3;
 
-impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
+impl<'gcx> LateLintPass<'gcx> for ArbitrarySendErc20 {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        func: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        func: &'gcx hir::Function<'gcx>,
     ) {
         let hir = &gcx.hir;
         // Library functions forward `from` from their caller; the call site is flagged instead.
@@ -119,10 +119,10 @@ struct PendingRepayment {
 }
 
 /// An ERC20 `transferFrom`-shaped sink.
-struct Sink<'hir> {
-    from: &'hir Expr<'hir>,
-    to: &'hir Expr<'hir>,
-    amount: &'hir Expr<'hir>,
+struct Sink<'gcx> {
+    from: &'gcx Expr<'gcx>,
+    to: &'gcx Expr<'gcx>,
+    amount: &'gcx Expr<'gcx>,
     token: Option<TokenKey>,
 }
 
@@ -177,8 +177,8 @@ fn common_entries<K: Eq + Hash + Copy, V: PartialEq + Copy>(
     a.iter().filter(|(k, v)| b.get(k) == Some(v)).map(|(k, v)| (*k, *v)).collect()
 }
 
-struct Analyzer<'hir> {
-    gcx: Gcx<'hir>,
+struct Analyzer<'gcx> {
+    gcx: Gcx<'gcx>,
     /// Gates the `using ... for address` sink form on a Solady-shaped library being present.
     has_solady_lib: bool,
     state: State,
@@ -189,8 +189,8 @@ struct Analyzer<'hir> {
     hits: Vec<(Span, &'static SolLint)>,
 }
 
-impl<'hir> Analyzer<'hir> {
-    fn new(gcx: Gcx<'hir>, has_solady_lib: bool) -> Self {
+impl<'gcx> Analyzer<'gcx> {
+    fn new(gcx: Gcx<'gcx>, has_solady_lib: bool) -> Self {
         Self {
             gcx,
             has_solady_lib,
@@ -231,7 +231,7 @@ impl<'hir> Analyzer<'hir> {
 
     /// Seeds parameters of an internal function or modifier that every invocation site in the
     /// compilation unit passes a safe argument for.
-    fn seed_callsite_facts(&mut self, func: &'hir hir::Function<'hir>) {
+    fn seed_callsite_facts(&mut self, func: &'gcx hir::Function<'gcx>) {
         if !is_internal_only(func) {
             return;
         }
@@ -254,7 +254,7 @@ impl<'hir> Analyzer<'hir> {
 
     /// Hoists `require(param == msg.sender | address(this))` guards from the prefix of modifier
     /// `m` onto the caller's argument variables.
-    fn hoist_modifier_facts(&mut self, m: &'hir Modifier<'hir>) {
+    fn hoist_modifier_facts(&mut self, m: &'gcx Modifier<'gcx>) {
         let hir = &self.gcx.hir;
         let Some(fid) = m.id.as_function() else { return };
         let Some(prefix) = modifier_prefix(hir, fid) else { return };
@@ -430,7 +430,7 @@ impl<'hir> Analyzer<'hir> {
 
     /// EIP-2612 `token.permit(owner, <self>, ...)` or the OpenZeppelin-style wrapper
     /// `Lib.safePermit(token, owner, <self>, ...)`.
-    fn match_permit_call(&self, expr: &Expr<'hir>) -> Option<PermitRecord> {
+    fn match_permit_call(&self, expr: &Expr<'gcx>) -> Option<PermitRecord> {
         let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
         let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
         let (token, owner, spender) = match ident.name.as_str() {
@@ -517,12 +517,12 @@ impl<'hir> Analyzer<'hir> {
 
     /// Visits `stmts` up to the first that cannot fall through; returns whether the end is
     /// reachable.
-    fn visit_stmts(&mut self, stmts: &'hir [Stmt<'hir>]) -> bool {
+    fn visit_stmts(&mut self, stmts: &'gcx [Stmt<'gcx>]) -> bool {
         stmts.iter().all(|s| self.stmt(s))
     }
 
     /// Visits `stmt`, returning whether control can fall through it.
-    fn stmt(&mut self, stmt: &'hir Stmt<'hir>) -> bool {
+    fn stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> bool {
         match &stmt.kind {
             StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => return self.visit_stmts(b.stmts),
             StmtKind::Break | StmtKind::Continue => {
@@ -604,19 +604,19 @@ impl<'hir> Analyzer<'hir> {
     }
 }
 
-impl<'hir> Visit<'hir> for Analyzer<'hir> {
+impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Never> {
         self.stmt(stmt);
         ControlFlow::Continue(())
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         match &expr.kind {
             // `rhs` may not execute: its facts and writes survive only if they also hold without
             // it, while `lhs` facts flow into `rhs`. Sinks in `rhs` are still reported.
@@ -739,10 +739,10 @@ fn token_key(expr: &Expr<'_>) -> Option<TokenKey> {
 
 /// Positional or named call arguments in declaration order; `slots[i]` lists the parameter names
 /// accepted for position `i`. `None` when the arity differs or a slot is unmatched.
-fn canonical_args<'hir>(
-    args: &'hir CallArgs<'hir>,
+fn canonical_args<'gcx>(
+    args: &'gcx CallArgs<'gcx>,
     slots: &[&[&str]],
-) -> Option<Vec<&'hir Expr<'hir>>> {
+) -> Option<Vec<&'gcx Expr<'gcx>>> {
     if args.len() != slots.len() {
         return None;
     }
@@ -757,7 +757,7 @@ fn canonical_args<'hir>(
 
 /// EIP-3156 `receiver.onFlashLoan(initiator, token, amount, fee, data)` on a receiver type
 /// declaring the exact signature. Literal arguments yield `None`.
-fn match_flash_loan_call<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> Option<PendingRepayment> {
+fn match_flash_loan_call<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> Option<PendingRepayment> {
     let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
     let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
     if ident.name.as_str() != "onFlashLoan" {
@@ -786,11 +786,11 @@ fn match_flash_loan_call<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> Option<Pend
 /// declaring ERC20's `transferFrom(address,address,uint256) returns (bool)` (ERC721's same-named
 /// overload is excluded), `addr.safeTransferFrom(..)` via `using SafeTransferLib for address`,
 /// or the library form `Lib.safeTransferFrom(token, from, to, amt)`.
-fn match_sink<'hir>(
-    gcx: Gcx<'hir>,
+fn match_sink<'gcx>(
+    gcx: Gcx<'gcx>,
     has_solady_lib: bool,
-    expr: &'hir Expr<'hir>,
-) -> Option<Sink<'hir>> {
+    expr: &'gcx Expr<'gcx>,
+) -> Option<Sink<'gcx>> {
     let hir = &gcx.hir;
     let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
     let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
@@ -818,7 +818,7 @@ fn match_sink<'hir>(
 }
 
 /// State variables written by `fid` or by the internal functions it calls (one level deep).
-fn state_writes<'hir>(hir: &'hir Hir<'hir>, fid: FunctionId) -> HashSet<VariableId> {
+fn state_writes<'gcx>(hir: &'gcx Hir<'gcx>, fid: FunctionId) -> HashSet<VariableId> {
     let mut w = StateWrites { hir, out: HashSet::new(), callees: Vec::new() };
     w.scan(fid);
     for callee in std::mem::take(&mut w.callees) {
@@ -827,8 +827,8 @@ fn state_writes<'hir>(hir: &'hir Hir<'hir>, fid: FunctionId) -> HashSet<Variable
     w.out
 }
 
-struct StateWrites<'hir> {
-    hir: &'hir Hir<'hir>,
+struct StateWrites<'gcx> {
+    hir: &'gcx Hir<'gcx>,
     out: HashSet<VariableId>,
     callees: Vec<FunctionId>,
 }
@@ -843,14 +843,14 @@ impl StateWrites<'_> {
     }
 }
 
-impl<'hir> Visit<'hir> for StateWrites<'hir> {
+impl<'gcx> Visit<'gcx> for StateWrites<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         self.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         match &expr.kind {
             ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => {
                 self.out.extend(state_lhs_vars(self.hir, lhs));
@@ -880,7 +880,7 @@ thread_local! {
 }
 
 /// The call-site index of `hir`, built once per compilation unit.
-fn callsite_index<'hir>(hir: &'hir Hir<'hir>) -> Rc<CallsiteFacts> {
+fn callsite_index<'gcx>(hir: &'gcx Hir<'gcx>) -> Rc<CallsiteFacts> {
     let key = std::ptr::from_ref(hir) as usize;
     CALLSITE_INDEX.with(|cell| {
         let mut slot = cell.borrow_mut();
@@ -906,13 +906,13 @@ fn callsite_index<'hir>(hir: &'hir Hir<'hir>) -> Rc<CallsiteFacts> {
     })
 }
 
-struct CallsiteCollector<'hir> {
-    hir: &'hir Hir<'hir>,
+struct CallsiteCollector<'gcx> {
+    hir: &'gcx Hir<'gcx>,
     out: CallsiteFacts,
 }
 
-impl<'hir> CallsiteCollector<'hir> {
-    fn record(&mut self, fid: FunctionId, args: &'hir CallArgs<'hir>) {
+impl<'gcx> CallsiteCollector<'gcx> {
+    fn record(&mut self, fid: FunctionId, args: &'gcx CallArgs<'gcx>) {
         let f = self.hir.function(fid);
         if !is_internal_only(f) {
             return;
@@ -934,14 +934,14 @@ impl<'hir> CallsiteCollector<'hir> {
     }
 }
 
-impl<'hir> Visit<'hir> for CallsiteCollector<'hir> {
+impl<'gcx> Visit<'gcx> for CallsiteCollector<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         self.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         if let ExprKind::Call(callee, args, _) = &expr.kind
             && let Some(fid) = function_ids(callee).next()
         {

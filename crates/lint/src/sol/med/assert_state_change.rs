@@ -27,8 +27,8 @@ declare_forge_lint!(
     "assert() should not contain state-modifying expressions"
 );
 
-impl<'hir> LateLintPass<'hir> for AssertStateChange {
-    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for AssertStateChange {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
         let ExprKind::Call(callee, args, _) = &expr.kind else { return };
         if !is_builtin(callee, sym::assert) {
             return;
@@ -54,7 +54,7 @@ impl<'hir> LateLintPass<'hir> for AssertStateChange {
     }
 }
 
-fn is_state_change<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
+fn is_state_change<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
     match &expr.kind {
         ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => is_storage_lvalue(gcx, lhs),
         ExprKind::Unary(op, lhs) => op.kind.has_side_effects() && is_storage_lvalue(gcx, lhs),
@@ -74,7 +74,7 @@ fn is_storage_lvalue(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     found
 }
 
-fn is_mutating_call<'hir>(gcx: Gcx<'hir>, callee: &Expr<'hir>, args: &CallArgs<'hir>) -> bool {
+fn is_mutating_call<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>, args: &CallArgs<'gcx>) -> bool {
     let hir = &gcx.hir;
     let mutates = |fid| hir.function(fid).mutates_state();
     if let ExprKind::Member(base, method) = &callee.kind {
@@ -122,7 +122,7 @@ fn is_mutating_call<'hir>(gcx: Gcx<'hir>, callee: &Expr<'hir>, args: &CallArgs<'
 }
 
 /// The contract a method-call receiver denotes, including `this`.
-fn contract_id_of<'hir>(gcx: Gcx<'hir>, recv: &Expr<'hir>) -> Option<ContractId> {
+fn contract_id_of<'gcx>(gcx: Gcx<'gcx>, recv: &Expr<'gcx>) -> Option<ContractId> {
     gcx.type_of_expr(recv.peel_parens().id)
         .and_then(ty_contract_id)
         .or_else(|| receiver_contract_id(gcx, recv))

@@ -15,12 +15,12 @@ declare_forge_lint!(
     "`nonReentrant` should be the first modifier"
 );
 
-impl<'hir> LateLintPass<'hir> for NonReentrantNotFirst {
+impl<'gcx> LateLintPass<'gcx> for NonReentrantNotFirst {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        func: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        func: &'gcx hir::Function<'gcx>,
     ) {
         let hir = &gcx.hir;
         if !matches!(

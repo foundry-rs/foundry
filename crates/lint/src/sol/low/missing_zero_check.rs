@@ -30,12 +30,12 @@ declare_forge_lint!(
     "address parameter is used in a state write or value transfer without a zero-address check"
 );
 
-impl<'hir> LateLintPass<'hir> for MissingZeroCheck {
+impl<'gcx> LateLintPass<'gcx> for MissingZeroCheck {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        func: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        func: &'gcx hir::Function<'gcx>,
     ) {
         let hir = &gcx.hir;
         let is_entry_point = !matches!(
@@ -84,8 +84,8 @@ impl<'hir> LateLintPass<'hir> for MissingZeroCheck {
 }
 
 /// Tracks address-parameter taint, sinks reached, and guards observed in a function body.
-struct Analyzer<'hir> {
-    gcx: Gcx<'hir>,
+struct Analyzer<'gcx> {
+    gcx: Gcx<'gcx>,
     /// Variables transitively derived from candidate parameters, mapped to their sources.
     /// Each parameter is initially mapped to itself.
     taint: HashMap<VariableId, HashSet<VariableId>>,
@@ -97,8 +97,8 @@ struct Analyzer<'hir> {
     sink_depth: u32,
 }
 
-impl<'hir> Analyzer<'hir> {
-    fn new(gcx: Gcx<'hir>, params: &HashSet<VariableId>) -> Self {
+impl<'gcx> Analyzer<'gcx> {
+    fn new(gcx: Gcx<'gcx>, params: &HashSet<VariableId>) -> Self {
         Self {
             gcx,
             taint: params.iter().map(|&p| (p, HashSet::from([p]))).collect(),
@@ -109,7 +109,7 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn visit_stmts(&mut self, stmts: impl IntoIterator<Item = &'hir hir::Stmt<'hir>>) {
+    fn visit_stmts(&mut self, stmts: impl IntoIterator<Item = &'gcx hir::Stmt<'gcx>>) {
         for s in stmts {
             let _ = self.visit_stmt(s);
         }
@@ -118,7 +118,7 @@ impl<'hir> Analyzer<'hir> {
     /// Guards added while visiting `stmts`, leaving `self.guarded` untouched.
     fn scoped_guards(
         &mut self,
-        stmts: impl IntoIterator<Item = &'hir hir::Stmt<'hir>>,
+        stmts: impl IntoIterator<Item = &'gcx hir::Stmt<'gcx>>,
     ) -> HashSet<VariableId> {
         let baseline = self.guarded.clone();
         self.visit_stmts(stmts);
@@ -150,14 +150,14 @@ impl<'hir> Analyzer<'hir> {
     }
 }
 
-impl<'hir> Visit<'hir> for Analyzer<'hir> {
+impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_stmt(&mut self, stmt: &'gcx hir::Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
         match stmt.kind {
             StmtKind::If(cond, then, else_) => {
                 self.guard_depth += 1;
@@ -203,7 +203,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
         self.walk_stmt(stmt)
     }
 
-    fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
             // `require(cond, ..)` / `assert(cond)`: only the first arg is a guard predicate.
             ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {

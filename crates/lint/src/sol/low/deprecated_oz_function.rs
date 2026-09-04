@@ -18,8 +18,8 @@ declare_forge_lint!(
     "OpenZeppelin deprecated this function: `_grantRole` replaces `_setupRole`, `safeIncreaseAllowance` / `safeDecreaseAllowance` replace `safeApprove`"
 );
 
-impl<'hir> LateLintPass<'hir> for DeprecatedOzFunction {
-    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for DeprecatedOzFunction {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
         // A name or member expression typed as a function is a resolved reference, called or
         // used as a value: judge the single declaration the type checker selected (overloads,
         // overrides, `super.`, `using for` and import aliases already accounted for).

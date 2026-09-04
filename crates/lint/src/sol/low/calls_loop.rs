@@ -21,8 +21,8 @@ use solar::{
 
 declare_forge_lint!(CALLS_LOOP, Severity::Low, "calls-loop", "external call inside a loop");
 
-impl<'hir> LateLintPass<'hir> for CallsLoop {
-    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for CallsLoop {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         for_each_loop_item(gcx, func, false, |item| {
             if let LoopItem::Expr(expr) = item
                 && let ExprKind::Call(callee, ..) = &expr.kind
@@ -91,12 +91,12 @@ pub(super) fn is_state_mutating_external_call<'gcx>(gcx: Gcx<'gcx>, callee: &Exp
 
 /// The base-chain function `super.<member>(..)` dispatches to from `enclosing_contract`: the first
 /// arity-matching `internal`/`public` function of that name in its linearization.
-pub(super) fn resolved_super_function_ids<'hir>(
-    gcx: Gcx<'hir>,
+pub(super) fn resolved_super_function_ids<'gcx>(
+    gcx: Gcx<'gcx>,
     enclosing_contract: Option<ContractId>,
-    callee: &'hir Expr<'hir>,
+    callee: &'gcx Expr<'gcx>,
     explicit_arg_count: usize,
-) -> impl Iterator<Item = FunctionId> + 'hir {
+) -> impl Iterator<Item = FunctionId> + 'gcx {
     let hir = &gcx.hir;
     let target = || {
         let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return None };

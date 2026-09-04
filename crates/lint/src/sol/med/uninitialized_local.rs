@@ -28,8 +28,8 @@ declare_forge_lint!(
     "local variable is read before being initialized"
 );
 
-impl<'hir> LateLintPass<'hir> for UninitializedLocal {
-    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for UninitializedLocal {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         let hir = &gcx.hir;
         let Some(body) = func.body else { return };
         let mut checker = Checker { hir, uninitialized: HashSet::new(), findings: HashMap::new() };
@@ -42,8 +42,8 @@ impl<'hir> LateLintPass<'hir> for UninitializedLocal {
     }
 }
 
-struct Checker<'hir> {
-    hir: &'hir Hir<'hir>,
+struct Checker<'gcx> {
+    hir: &'gcx Hir<'gcx>,
     /// Value-type locals declared without an initializer that have not yet been written on
     /// every path.
     uninitialized: HashSet<VariableId>,
@@ -59,14 +59,14 @@ impl Checker<'_> {
     }
 }
 
-impl<'hir> Visit<'hir> for Checker<'hir> {
+impl<'gcx> Visit<'gcx> for Checker<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         self.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Never> {
         match &stmt.kind {
             StmtKind::DeclSingle(vid) => {
                 let v = self.hir.variable(*vid);
@@ -127,7 +127,7 @@ impl<'hir> Visit<'hir> for Checker<'hir> {
         self.walk_stmt(stmt)
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         match &expr.kind {
             // Compound `op=` reads the lhs first; plain `=` reads only the rhs (catches `x = x`).
             // The lhs is still walked afterwards for reads inside e.g. an index expression.

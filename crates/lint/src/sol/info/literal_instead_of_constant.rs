@@ -22,8 +22,8 @@ declare_forge_lint!(
     "this literal appears multiple times in the contract; declare a named constant for it"
 );
 
-impl<'hir> LateLintPass<'hir> for LiteralInsteadOfConstant {
-    fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, id: hir::ContractId) {
+impl<'gcx> LateLintPass<'gcx> for LiteralInsteadOfConstant {
+    fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, id: hir::ContractId) {
         let hir = &gcx.hir;
         // Group the literals of the contract's own functions and modifiers by semantic value;
         // inherited items group with their declaring contract. Collection covers the executable
@@ -65,12 +65,12 @@ enum LiteralValue {
 /// Collects the grouping-relevant literals of a subtree: numbers above 2, address literals
 /// and hex string literals. A bare literal indexing an array-like value or bounding a slice
 /// stays out as positional, matching Aderyn; a mapping key counts, it is configuration data.
-struct LiteralCollector<'hir> {
-    gcx: Gcx<'hir>,
+struct LiteralCollector<'gcx> {
+    gcx: Gcx<'gcx>,
     groups: HashMap<LiteralValue, Vec<Span>>,
 }
 
-impl<'hir> LiteralCollector<'hir> {
+impl<'gcx> LiteralCollector<'gcx> {
     /// Records one literal under its semantic grouping key, `op` being the value-changing
     /// unary operator applied to it, if any.
     fn record_lit(&mut self, lit: &Lit<'_>, span: Span, op: Option<UnOpKind>) {
@@ -87,7 +87,7 @@ impl<'hir> LiteralCollector<'hir> {
     }
 
     /// Walks `expr` unless it is a bare literal in a positional role.
-    fn visit_unless_bare_lit(&mut self, expr: &'hir Expr<'hir>) {
+    fn visit_unless_bare_lit(&mut self, expr: &'gcx Expr<'gcx>) {
         if !is_lit(expr) {
             let _ = self.visit_expr(expr);
         }
@@ -98,14 +98,14 @@ fn is_lit(expr: &Expr<'_>) -> bool {
     matches!(expr.peel_parens().kind, ExprKind::Lit(..))
 }
 
-impl<'hir> Visit<'hir> for LiteralCollector<'hir> {
+impl<'gcx> Visit<'gcx> for LiteralCollector<'gcx> {
     type BreakValue = Infallible;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
         // A Yul `case 500 {}` label is a literal like any other, but `case.constant` is a
         // `Lit` rather than an expression, so the default visitor never reaches it.
         if let StmtKind::Switch(switch) = &stmt.kind {
@@ -116,7 +116,7 @@ impl<'hir> Visit<'hir> for LiteralCollector<'hir> {
         self.walk_stmt(stmt)
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         let is_shift =
             |op: &hir::BinOp| matches!(op.kind, BinOpKind::Shl | BinOpKind::Shr | BinOpKind::Sar);
         let is_value_changing =

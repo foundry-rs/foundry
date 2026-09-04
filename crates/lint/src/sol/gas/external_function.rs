@@ -46,7 +46,7 @@ thread_local! {
     static PROJECT_INDEX: RefCell<Option<(usize, Rc<ProjectIndex>)>> = const { RefCell::new(None) };
 }
 
-fn project_index<'hir>(hir: &'hir hir::Hir<'hir>) -> Rc<ProjectIndex> {
+fn project_index<'gcx>(hir: &'gcx hir::Hir<'gcx>) -> Rc<ProjectIndex> {
     let key = std::ptr::from_ref(hir) as usize;
     PROJECT_INDEX.with_borrow_mut(|slot| match slot {
         Some((cached_key, index)) if *cached_key == key => index.clone(),
@@ -54,7 +54,7 @@ fn project_index<'hir>(hir: &'hir hir::Hir<'hir>) -> Rc<ProjectIndex> {
     })
 }
 
-fn build_project_index<'hir>(hir: &'hir hir::Hir<'hir>) -> ProjectIndex {
+fn build_project_index<'gcx>(hir: &'gcx hir::Hir<'gcx>) -> ProjectIndex {
     let mut builder = IndexBuilder { hir, index: ProjectIndex::default(), contract: None };
     for func in hir.functions() {
         builder.contract = func.contract;
@@ -68,21 +68,21 @@ fn build_project_index<'hir>(hir: &'hir hir::Hir<'hir>) -> ProjectIndex {
     builder.index
 }
 
-struct IndexBuilder<'hir> {
-    hir: &'hir hir::Hir<'hir>,
+struct IndexBuilder<'gcx> {
+    hir: &'gcx hir::Hir<'gcx>,
     index: ProjectIndex,
     /// Contract being walked, to attribute `super.<name>` accesses to the caller.
     contract: Option<ContractId>,
 }
 
-impl<'hir> hir::Visit<'hir> for IndexBuilder<'hir> {
+impl<'gcx> hir::Visit<'gcx> for IndexBuilder<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         self.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         match &expr.kind {
             ExprKind::Ident(_) => self.index.referenced.extend(function_ids(expr)),
             ExprKind::Member(base, member) if is_builtin(base, sym::super_) => {
@@ -96,11 +96,11 @@ impl<'hir> hir::Visit<'hir> for IndexBuilder<'hir> {
     }
 }
 
-impl<'hir> LateLintPass<'hir> for ExternalFunction {
+impl<'gcx> LateLintPass<'gcx> for ExternalFunction {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
+        gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
         let hir = &gcx.hir;
@@ -164,8 +164,8 @@ impl<'hir> LateLintPass<'hir> for ExternalFunction {
 
 /// Breaks when a parameter is written, aliased, passed to a callee or modifier that could mutate
 /// it through the internal-call memory-reference aliasing rule.
-struct ParamEscapeFinder<'a, 'hir> {
-    hir: &'hir hir::Hir<'hir>,
+struct ParamEscapeFinder<'a, 'gcx> {
+    hir: &'gcx hir::Hir<'gcx>,
     params: &'a [VariableId],
 }
 
@@ -175,21 +175,21 @@ impl ParamEscapeFinder<'_, '_> {
     }
 }
 
-impl<'hir> hir::Visit<'hir> for ParamEscapeFinder<'_, 'hir> {
+impl<'gcx> hir::Visit<'gcx> for ParamEscapeFinder<'_, 'gcx> {
     type BreakValue = ();
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         self.hir
     }
 
-    fn visit_modifier(&mut self, modifier: &'hir hir::Modifier<'hir>) -> ControlFlow<()> {
+    fn visit_modifier(&mut self, modifier: &'gcx hir::Modifier<'gcx>) -> ControlFlow<()> {
         if modifier.args.exprs().any(|arg| self.is_param(arg)) {
             return ControlFlow::Break(());
         }
         self.walk_modifier(modifier)
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<()> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<()> {
         if let StmtKind::DeclSingle(vid) = &stmt.kind
             && let var = self.hir.variable(*vid)
             && is_memory_reference(var)
@@ -200,7 +200,7 @@ impl<'hir> hir::Visit<'hir> for ParamEscapeFinder<'_, 'hir> {
         self.walk_stmt(stmt)
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<()> {
         let escapes = match &expr.kind {
             ExprKind::Assign(lhs, op, rhs) => {
                 self.is_param(lhs)

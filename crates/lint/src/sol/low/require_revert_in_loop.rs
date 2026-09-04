@@ -19,8 +19,8 @@ declare_forge_lint!(
     "`require` or `revert` inside a loop"
 );
 
-impl<'hir> LateLintPass<'hir> for RequireRevertInLoop {
-    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for RequireRevertInLoop {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         for_each_loop_item(gcx, func, false, |item| {
             let reported = match item {
                 LoopItem::Stmt(stmt) => match stmt.kind {

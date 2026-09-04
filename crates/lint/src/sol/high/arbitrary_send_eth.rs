@@ -45,12 +45,12 @@ const SELF_ALIAS_DEPTH: u8 = 8;
 /// Cap on inlined helper calls (covers `ctor → _init → _initInner → _initLeaf`).
 const HELPER_CALL_DEPTH: usize = 4;
 
-impl<'hir> LateLintPass<'hir> for ArbitrarySendEth {
+impl<'gcx> LateLintPass<'gcx> for ArbitrarySendEth {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        func: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        func: &'gcx hir::Function<'gcx>,
     ) {
         let hir = &gcx.hir;
         if matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
@@ -101,9 +101,9 @@ impl State {
     }
 }
 
-struct Analyzer<'hir> {
-    gcx: Gcx<'hir>,
-    guards: CallerGuards<'hir>,
+struct Analyzer<'gcx> {
+    gcx: Gcx<'gcx>,
+    guards: CallerGuards<'gcx>,
     state: State,
     /// States at `break`/`continue` of each enclosing loop, innermost last.
     loop_exits: Vec<Vec<State>>,
@@ -112,8 +112,8 @@ struct Analyzer<'hir> {
     hits: Vec<Span>,
 }
 
-impl<'hir> Analyzer<'hir> {
-    fn new(gcx: Gcx<'hir>) -> Self {
+impl<'gcx> Analyzer<'gcx> {
+    fn new(gcx: Gcx<'gcx>) -> Self {
         Self {
             gcx,
             guards: CallerGuards::new(gcx),
@@ -126,7 +126,7 @@ impl<'hir> Analyzer<'hir> {
 
     /// Hoists `require(param == msg.sender)`-style guards from the prefix of modifier `m` onto
     /// the caller's argument variables.
-    fn hoist_modifier_facts(&mut self, m: &'hir Modifier<'hir>) {
+    fn hoist_modifier_facts(&mut self, m: &'gcx Modifier<'gcx>) {
         let hir = &self.gcx.hir;
         let ItemId::Function(fid) = m.id else { return };
         let Some(prefix) = modifier_prefix(hir, fid) else { return };
@@ -150,11 +150,11 @@ impl<'hir> Analyzer<'hir> {
     /// True when `expr` denotes a destination that is fixed at deploy time or is the caller
     /// itself: `msg.sender`, `tx.origin`, `address(this)`, address or zero literals,
     /// `immutable`/`constant` state, tracked locals and `this.f` function pointers.
-    fn is_safe(&self, expr: &'hir Expr<'hir>) -> bool {
+    fn is_safe(&self, expr: &'gcx Expr<'gcx>) -> bool {
         self.is_safe_inner(expr, HELPER_DEPTH)
     }
 
-    fn is_safe_inner(&self, expr: &'hir Expr<'hir>, depth: u8) -> bool {
+    fn is_safe_inner(&self, expr: &'gcx Expr<'gcx>, depth: u8) -> bool {
         let expr = peel_casts(expr);
         match &expr.kind {
             ExprKind::Member(base, ident) => {
@@ -195,7 +195,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// `target = rhs`; `rhs == None` is an unknown value.
-    fn assign_var(&mut self, target: VariableId, rhs: Option<&'hir Expr<'hir>>) {
+    fn assign_var(&mut self, target: VariableId, rhs: Option<&'gcx Expr<'gcx>>) {
         self.written.insert(target);
         self.state.safe_vars.remove(&target);
         if !self.gcx.hir.variable(target).kind.is_state() && rhs.is_some_and(|r| self.is_safe(r)) {
@@ -204,7 +204,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// Handles single and tuple LHS; tuple slots align with a tuple-literal RHS.
-    fn assign_lhs(&mut self, lhs: &'hir Expr<'hir>, rhs: Option<&'hir Expr<'hir>>) {
+    fn assign_lhs(&mut self, lhs: &'gcx Expr<'gcx>, rhs: Option<&'gcx Expr<'gcx>>) {
         if let Some(elems) = tuple_elems(lhs) {
             let rhs = rhs.and_then(tuple_elems);
             for (i, lhs) in elems.iter().enumerate() {
@@ -218,7 +218,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// Records variables proven equal to a safe destination by `pred` (`!pred` when `negate`).
-    fn add_facts(&mut self, pred: &'hir Expr<'hir>, negate: bool) {
+    fn add_facts(&mut self, pred: &'gcx Expr<'gcx>, negate: bool) {
         match &pred.peel_parens().kind {
             ExprKind::Binary(lhs, op, rhs) => {
                 let (eq, and, or) = if negate {
@@ -255,7 +255,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     /// Applies a guard known to hold (`holds`) or fail on the current path.
-    fn note_guard(&mut self, cond: &'hir Expr<'hir>, holds: bool) {
+    fn note_guard(&mut self, cond: &'gcx Expr<'gcx>, holds: bool) {
         self.add_facts(cond, !holds);
         if self.guards.cond_restricts(cond, holds) {
             self.state.caller_restricted = true;
@@ -264,12 +264,12 @@ impl<'hir> Analyzer<'hir> {
 
     /// Visits `stmts` up to the first that cannot fall through; returns whether the end is
     /// reachable.
-    fn visit_stmts(&mut self, stmts: &'hir [Stmt<'hir>]) -> bool {
+    fn visit_stmts(&mut self, stmts: &'gcx [Stmt<'gcx>]) -> bool {
         stmts.iter().all(|s| self.stmt(s))
     }
 
     /// Visits `stmt`, returning whether control can fall through it.
-    fn stmt(&mut self, stmt: &'hir Stmt<'hir>) -> bool {
+    fn stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> bool {
         match &stmt.kind {
             StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => return self.visit_stmts(b.stmts),
             StmtKind::Break | StmtKind::Continue => {
@@ -347,19 +347,19 @@ impl<'hir> Analyzer<'hir> {
     }
 }
 
-impl<'hir> Visit<'hir> for Analyzer<'hir> {
+impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Never> {
         self.stmt(stmt);
         ControlFlow::Continue(())
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         match &expr.kind {
             // `rhs` may not execute: its facts and writes survive only if they also hold without
             // it, while `lhs` facts flow into `rhs`.
@@ -415,7 +415,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
 /// Destination of an ETH-sending call: `selfdestruct(x)`, `x.{call,send,transfer}`,
 /// `f{value: v}()`, `IFoo(x).f{value: v}()` and common OpenZeppelin/Solady helpers. Sends to
 /// `address(this)` or of a literal-zero amount are not sinks.
-fn match_sink<'hir>(gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) -> Option<&'hir Expr<'hir>> {
+fn match_sink<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) -> Option<&'gcx Expr<'gcx>> {
     let ExprKind::Call(callee, args, opts) = &expr.kind else { return None };
     let callee = callee.peel_parens();
     if builtins(callee).any(|b| b == Builtin::Selfdestruct) {
@@ -441,12 +441,12 @@ fn match_sink<'hir>(gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) -> Option<&'hir Expr
 
 /// Destination of an OpenZeppelin `Address` / Solady `SafeTransferLib` ETH helper, called either
 /// statically (`Lib.f(to, ...)`) or via `using ... for address` (`to.f(...)`).
-fn match_eth_library_call<'hir>(
-    gcx: Gcx<'hir>,
-    recv: &'hir Expr<'hir>,
+fn match_eth_library_call<'gcx>(
+    gcx: Gcx<'gcx>,
+    recv: &'gcx Expr<'gcx>,
     name: &str,
-    args: &'hir CallArgs<'hir>,
-) -> Option<&'hir Expr<'hir>> {
+    args: &'gcx CallArgs<'gcx>,
+) -> Option<&'gcx Expr<'gcx>> {
     // Amount position and accepted arities, in the static form.
     let (amount, arities): (Option<usize>, &[usize]) = match name {
         "sendValue" | "safeTransferETH" | "safeMoveETH" => (Some(1), &[2]),
@@ -474,7 +474,7 @@ fn match_eth_library_call<'hir>(
 }
 
 /// Call-site argument at position `pos`, or bound to any of `names` in the named form.
-fn arg<'hir>(args: &'hir CallArgs<'hir>, pos: usize, names: &[&str]) -> Option<&'hir Expr<'hir>> {
+fn arg<'gcx>(args: &'gcx CallArgs<'gcx>, pos: usize, names: &[&str]) -> Option<&'gcx Expr<'gcx>> {
     match args.kind {
         CallArgsKind::Unnamed(exprs) => exprs.get(pos),
         CallArgsKind::Named(named) => {
@@ -485,15 +485,15 @@ fn arg<'hir>(args: &'hir CallArgs<'hir>, pos: usize, names: &[&str]) -> Option<&
 
 /// Recognises guards that restrict `msg.sender` to a deploy-time-fixed principal, backed by a
 /// memoised analysis of which state variables may alias `address(this)`.
-struct CallerGuards<'hir> {
-    gcx: Gcx<'hir>,
+struct CallerGuards<'gcx> {
+    gcx: Gcx<'gcx>,
     alias_cache: HelperAnalysisCache<(VariableId, u8), bool>,
     /// Functions currently being inlined, to stop recursion.
     stack: Vec<FunctionId>,
 }
 
-impl<'hir> CallerGuards<'hir> {
-    fn new(gcx: Gcx<'hir>) -> Self {
+impl<'gcx> CallerGuards<'gcx> {
+    fn new(gcx: Gcx<'gcx>) -> Self {
         Self {
             gcx,
             alias_cache: HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
@@ -508,7 +508,7 @@ impl<'hir> CallerGuards<'hir> {
             .is_some_and(|prefix| prefix.into_iter().any(|s| self.stmt_restricts(s)))
     }
 
-    fn stmt_restricts(&mut self, stmt: &'hir Stmt<'hir>) -> bool {
+    fn stmt_restricts(&mut self, stmt: &'gcx Stmt<'gcx>) -> bool {
         match &stmt.kind {
             StmtKind::Expr(e) => self.expr_restricts(e),
             StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => {
@@ -529,7 +529,7 @@ impl<'hir> CallerGuards<'hir> {
 
     /// `require(guard)` / `assert(guard)`, or a call to an internal helper whose body restricts
     /// the caller and cannot `return` early.
-    fn expr_restricts(&mut self, expr: &'hir Expr<'hir>) -> bool {
+    fn expr_restricts(&mut self, expr: &'gcx Expr<'gcx>) -> bool {
         let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
         if is_require_or_assert(callee) {
             return args.exprs().next().is_some_and(|c| self.cond_restricts(c, true));
@@ -557,7 +557,7 @@ impl<'hir> CallerGuards<'hir> {
     }
 
     /// True when `cond` (holding iff `holds`) entails `msg.sender == <trusted>` on every path.
-    fn cond_restricts(&mut self, cond: &'hir Expr<'hir>, holds: bool) -> bool {
+    fn cond_restricts(&mut self, cond: &'gcx Expr<'gcx>, holds: bool) -> bool {
         match &cond.peel_parens().kind {
             ExprKind::Binary(lhs, op, rhs) => {
                 let (eq, any, all) = if holds {
@@ -588,7 +588,7 @@ impl<'hir> CallerGuards<'hir> {
     /// Conservatively recognises deploy-time-fixed caller principals: address/zero literals and
     /// state (or statically indexed state) that cannot alias `address(this)`, possibly behind a
     /// no-arg getter. Parameters, locals, `msg.sender`, `tx.origin` and `this` are rejected.
-    fn is_trusted_principal(&mut self, expr: &'hir Expr<'hir>, depth: u8) -> bool {
+    fn is_trusted_principal(&mut self, expr: &'gcx Expr<'gcx>, depth: u8) -> bool {
         let expr = peel_casts(expr);
         match &expr.kind {
             ExprKind::Lit(_) => is_trusted_literal(expr),
@@ -646,7 +646,7 @@ impl<'hir> CallerGuards<'hir> {
     fn rhs_carries_self(
         &mut self,
         target: &Variable<'_>,
-        rhs: &'hir Expr<'hir>,
+        rhs: &'gcx Expr<'gcx>,
         depth: u8,
         locals: &HashSet<VariableId>,
     ) -> bool {
@@ -661,7 +661,7 @@ impl<'hir> CallerGuards<'hir> {
     /// True when `expr` may embed `address(this)` (or a local carrying it) anywhere.
     fn expr_may_contain_self(
         &mut self,
-        expr: &'hir Expr<'hir>,
+        expr: &'gcx Expr<'gcx>,
         depth: u8,
         locals: &HashSet<VariableId>,
     ) -> bool {
@@ -673,7 +673,7 @@ impl<'hir> CallerGuards<'hir> {
         if depth == 0 {
             return false;
         }
-        let children: Vec<&'hir Expr<'hir>> = match &peel_casts(expr).kind {
+        let children: Vec<&'gcx Expr<'gcx>> = match &peel_casts(expr).kind {
             ExprKind::Call(_, args, _) => args.exprs().collect(),
             ExprKind::Ternary(_, t, f) => vec![t, f],
             ExprKind::Tuple(elems) => elems.iter().copied().flatten().collect(),
@@ -684,7 +684,7 @@ impl<'hir> CallerGuards<'hir> {
     }
 
     /// True when `expr` may evaluate to `address(this)`.
-    fn expr_resolves_to_self(&mut self, expr: &'hir Expr<'hir>, depth: u8) -> bool {
+    fn expr_resolves_to_self(&mut self, expr: &'gcx Expr<'gcx>, depth: u8) -> bool {
         let expr = peel_casts(expr);
         if is_address_self(expr) {
             return true;
@@ -734,8 +734,8 @@ impl<'hir> CallerGuards<'hir> {
 
 /// Scans one function, its modifiers / base constructors and inlined internal helpers for an
 /// assignment that may plant `address(this)` into `target`.
-struct SelfAssignScan<'a, 'hir> {
-    guards: &'a mut CallerGuards<'hir>,
+struct SelfAssignScan<'a, 'gcx> {
+    guards: &'a mut CallerGuards<'gcx>,
     target: VariableId,
     depth: u8,
     found: bool,
@@ -744,18 +744,18 @@ struct SelfAssignScan<'a, 'hir> {
     locals: HashSet<VariableId>,
 }
 
-impl<'hir> SelfAssignScan<'_, 'hir> {
-    fn may_contain_self(&mut self, expr: &'hir Expr<'hir>) -> bool {
+impl<'gcx> SelfAssignScan<'_, 'gcx> {
+    fn may_contain_self(&mut self, expr: &'gcx Expr<'gcx>) -> bool {
         self.guards.expr_may_contain_self(expr, self.depth, &self.locals)
     }
 
-    fn note_local(&mut self, v: VariableId, rhs: &'hir Expr<'hir>) {
+    fn note_local(&mut self, v: VariableId, rhs: &'gcx Expr<'gcx>) {
         if !self.guards.gcx.hir.variable(v).kind.is_state() && self.may_contain_self(rhs) {
             self.locals.insert(v);
         }
     }
 
-    fn assign(&mut self, lhs: &'hir Expr<'hir>, rhs: &'hir Expr<'hir>) {
+    fn assign(&mut self, lhs: &'gcx Expr<'gcx>, rhs: &'gcx Expr<'gcx>) {
         if let Some(elems) = tuple_elems(lhs) {
             let rhs = tuple_elems(rhs);
             for (i, lhs) in elems.iter().enumerate() {
@@ -776,7 +776,7 @@ impl<'hir> SelfAssignScan<'_, 'hir> {
     }
 
     /// Scans `fid`, seeding its parameters from `args` when given.
-    fn scan_function(&mut self, fid: FunctionId, args: Option<&'hir CallArgs<'hir>>) {
+    fn scan_function(&mut self, fid: FunctionId, args: Option<&'gcx CallArgs<'gcx>>) {
         if self.found || self.stack.len() >= HELPER_CALL_DEPTH || self.stack.contains(&fid) {
             return;
         }
@@ -805,14 +805,14 @@ impl<'hir> SelfAssignScan<'_, 'hir> {
     }
 }
 
-impl<'hir> Visit<'hir> for SelfAssignScan<'_, 'hir> {
+impl<'gcx> Visit<'gcx> for SelfAssignScan<'_, 'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         &self.guards.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Never> {
         if self.found {
             return ControlFlow::Continue(());
         }
@@ -834,7 +834,7 @@ impl<'hir> Visit<'hir> for SelfAssignScan<'_, 'hir> {
         self.walk_stmt(stmt)
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         if self.found {
             return ControlFlow::Continue(());
         }
@@ -873,11 +873,11 @@ fn invoked_function(hir: &Hir<'_>, m: &Modifier<'_>) -> Option<FunctionId> {
 }
 
 /// Argument returned verbatim (modulo casts) by an identity helper call `id(x)` / `Lib.id(x)`.
-fn identity_helper_arg<'hir>(
-    hir: &'hir Hir<'hir>,
-    callee: &'hir Expr<'hir>,
-    args: &'hir CallArgs<'hir>,
-) -> Option<&'hir Expr<'hir>> {
+fn identity_helper_arg<'gcx>(
+    hir: &'gcx Hir<'gcx>,
+    callee: &'gcx Expr<'gcx>,
+    args: &'gcx CallArgs<'gcx>,
+) -> Option<&'gcx Expr<'gcx>> {
     callee_fids(hir, callee).into_iter().find_map(|fid| {
         let f = hir.function(fid);
         let [stmt] = f.body?.stmts else { return None };
@@ -954,7 +954,7 @@ fn stmt_contains_return(stmt: &Stmt<'_>) -> bool {
 }
 
 /// `msg.sender` modulo parens, casts, `payable(..)` and no-arg helpers such as `_msgSender()`.
-fn is_msg_sender_like<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>, depth: u8) -> bool {
+fn is_msg_sender_like<'gcx>(hir: &'gcx Hir<'gcx>, expr: &'gcx Expr<'gcx>, depth: u8) -> bool {
     let expr = peel_casts(expr);
     is_msg_sender(expr)
         || matches!(&expr.kind, ExprKind::Call(callee, args, _)
@@ -994,11 +994,11 @@ fn is_trusted_literal(expr: &Expr<'_>) -> bool {
         || is_literal_zero(expr)
 }
 
-fn expr_is_function<'hir>(gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) -> bool {
+fn expr_is_function<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) -> bool {
     expr_ty(gcx, expr).is_some_and(|ty| matches!(ty.peel_refs().kind, TyKind::Fn(_)))
 }
 
-fn expr_is_array_or_bytes<'hir>(gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) -> bool {
+fn expr_is_array_or_bytes<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) -> bool {
     expr_ty(gcx, expr).is_some_and(|ty| {
         matches!(
             ty.peel_refs().kind,

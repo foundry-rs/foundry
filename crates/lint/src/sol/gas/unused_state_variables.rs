@@ -20,12 +20,12 @@ declare_forge_lint!(
     "state variable is never used"
 );
 
-impl<'hir> LateLintPass<'hir> for UnusedStateVariables {
+impl<'gcx> LateLintPass<'gcx> for UnusedStateVariables {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        contract: &'hir hir::Contract<'hir>,
+        gcx: Gcx<'gcx>,
+        contract: &'gcx hir::Contract<'gcx>,
     ) {
         let hir = &gcx.hir;
         if contract.kind == ContractKind::Interface {
@@ -52,19 +52,19 @@ impl<'hir> LateLintPass<'hir> for UnusedStateVariables {
     }
 }
 
-struct UsedVarCollector<'hir> {
-    hir: &'hir hir::Hir<'hir>,
+struct UsedVarCollector<'gcx> {
+    hir: &'gcx hir::Hir<'gcx>,
     used: HashSet<hir::VariableId>,
 }
 
-impl<'hir> hir::Visit<'hir> for UsedVarCollector<'hir> {
+impl<'gcx> hir::Visit<'gcx> for UsedVarCollector<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         self.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         if let ExprKind::Ident(reses) = &expr.kind {
             self.used.extend(reses.iter().filter_map(Res::as_variable));
         }

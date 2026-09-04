@@ -30,8 +30,8 @@ declare_forge_lint!(
 ///
 /// WARN: can issue false positives, as it doesn't check that the contract being called sticks to
 /// the full ERC20 specification.
-impl<'hir> LateLintPass<'hir> for UncheckedTransferERC20 {
-    fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, stmt: &'hir hir::Stmt<'hir>) {
+impl<'gcx> LateLintPass<'gcx> for UncheckedTransferERC20 {
+    fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, stmt: &'gcx hir::Stmt<'gcx>) {
         // Only expression statements can contain unchecked transfers.
         if let hir::StmtKind::Expr(expr) = &stmt.kind
             && is_erc20_transfer_call(gcx, expr)
@@ -44,7 +44,7 @@ impl<'hir> LateLintPass<'hir> for UncheckedTransferERC20 {
 /// Checks if an expression is a call to a contract member matching the ERC20 signature of
 /// * `function transfer(address to, uint256 amount) external returns (bool);`
 /// * `function transferFrom(address from, address to, uint256 amount) external returns (bool);`
-fn is_erc20_transfer_call<'hir>(gcx: Gcx<'hir>, expr: &hir::Expr<'hir>) -> bool {
+fn is_erc20_transfer_call<'gcx>(gcx: Gcx<'gcx>, expr: &hir::Expr<'gcx>) -> bool {
     let hir = &gcx.hir;
     let hir::ExprKind::Call(callee, call_args, ..) = &expr.kind else { return false };
     let hir::ExprKind::Member(receiver, func_ident) = &callee.kind else { return false };

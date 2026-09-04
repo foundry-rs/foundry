@@ -26,12 +26,12 @@ const ERC721_FUNCTIONS: &[(&str, &[&str], &[&str])] = &[
     ("supportsInterface", &["bytes4"], &["bool"]),
 ];
 
-impl<'hir> LateLintPass<'hir> for IncorrectERC721Interface {
+impl<'gcx> LateLintPass<'gcx> for IncorrectERC721Interface {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: solar::sema::Gcx<'hir>,
-        contract: &'hir hir::Contract<'hir>,
+        gcx: solar::sema::Gcx<'gcx>,
+        contract: &'gcx hir::Contract<'gcx>,
     ) {
         let hir = &gcx.hir;
         if !contract

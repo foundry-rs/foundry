@@ -30,11 +30,11 @@ declare_forge_lint!(
     "contract can receive ETH but has no mechanism to send it out"
 );
 
-impl<'hir> LateLintPass<'hir> for LockedEther {
+impl<'gcx> LateLintPass<'gcx> for LockedEther {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
+        gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
         let hir = &gcx.hir;
@@ -108,7 +108,7 @@ fn always_reverts(gcx: Gcx<'_>, func: &hir::Function<'_>) -> bool {
 /// Runtime entry points reachable on the deployed contract: the most-derived implementation of
 /// each `(name, parameter types)` plus the most-derived `receive` / `fallback`. `bases` must be
 /// the C3 linearization (leaf first). Constructors and modifiers are excluded.
-fn runtime_dispatch_surface<'hir>(gcx: Gcx<'hir>, bases: &[ContractId]) -> Vec<FunctionId> {
+fn runtime_dispatch_surface<'gcx>(gcx: Gcx<'gcx>, bases: &[ContractId]) -> Vec<FunctionId> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for fid in bases.iter().flat_map(|&cid| gcx.hir.contract(cid).all_functions()) {
@@ -131,10 +131,10 @@ fn runtime_dispatch_surface<'hir>(gcx: Gcx<'hir>, bases: &[ContractId]) -> Vec<F
 
 /// HIR visitor that short-circuits on the first ETH-sending expression and queues statically
 /// resolved callees for transitive exploration by the outer worklist loop.
-struct SendChecker<'hir> {
-    gcx: Gcx<'hir>,
+struct SendChecker<'gcx> {
+    gcx: Gcx<'gcx>,
     /// Linearization of the linted contract, which resolves virtual dispatch.
-    bases: &'hir [ContractId],
+    bases: &'gcx [ContractId],
     worklist: Vec<FunctionId>,
 }
 
@@ -164,16 +164,16 @@ impl SendChecker<'_> {
     }
 }
 
-impl<'hir> Visit<'hir> for SendChecker<'hir> {
+impl<'gcx> Visit<'gcx> for SendChecker<'gcx> {
     type BreakValue = ();
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         &self.gcx.hir
     }
 
     /// Inline assembly can contain ETH-sending opcodes (`call`, `selfdestruct`, ...): bail
     /// conservatively, as if an exit was found.
-    fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<()> {
+    fn visit_stmt(&mut self, stmt: &'gcx hir::Stmt<'gcx>) -> ControlFlow<()> {
         if matches!(stmt.kind, StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_))
         {
             return ControlFlow::Break(());
@@ -181,7 +181,7 @@ impl<'hir> Visit<'hir> for SendChecker<'hir> {
         self.walk_stmt(stmt)
     }
 
-    fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<()> {
+    fn visit_expr(&mut self, expr: &'gcx hir::Expr<'gcx>) -> ControlFlow<()> {
         if expr_sends_ether(self.gcx, expr) {
             return ControlFlow::Break(());
         }
@@ -211,7 +211,7 @@ impl<'hir> Visit<'hir> for SendChecker<'hir> {
 /// option, `.transfer`/`.send` with a non-zero amount, low-level `.delegatecall`/`.callcode`
 /// (drainable via `selfdestruct`), or the `selfdestruct` builtin. Only literal `0` is treated as
 /// a zero amount, and sends targeting this contract's own address are not exits.
-fn expr_sends_ether<'hir>(gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
+fn expr_sends_ether<'gcx>(gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) -> bool {
     let ExprKind::Call(callee, args, opts) = &expr.kind else { return false };
     let callee = callee.peel_parens();
     let receiver = match &callee.kind {
