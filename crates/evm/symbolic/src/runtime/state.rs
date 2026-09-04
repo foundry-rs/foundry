@@ -209,18 +209,13 @@ impl PathState {
         // semantics unless the callee sets its own prank.
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
-        child
-    }
-
-    pub(crate) fn external_call_child(&self, frame: CallFrame) -> Self {
-        let mut child = self.child(frame);
         child.expected_revert = None;
         child.assume_no_revert_next_call = None;
         child
     }
 
     pub(crate) fn storage_hook_child(&self, frame: CallFrame) -> Self {
-        let mut child = self.external_call_child(frame);
+        let mut child = self.child(frame);
         child.storage_hook_active = true;
         child.recorded_logs = None;
         child.access_record = None;
