@@ -101,6 +101,36 @@ contract StateSnapshotTest is Test {
     }
 }
 
+// A snapshot taken in `setUp()` must be deletable as the very FIRST cheatcode call of a test
+// run, not only after some other mutating cheatcode has already run in that same call. Each
+// test/fuzz run executes as a fresh, non-committing call over the post-`setUp()` state, and the
+// deletion must not depend on incidental prior mutating-cheatcode history within that run.
+contract StateSnapshotDeleteFromSetUpTest is Test {
+    uint256 id;
+
+    function setUp() public {
+        id = vm.snapshotState();
+    }
+
+    function testDeleteStateSnapshotTakenInSetUpAsFirstCall() public {
+        // Must be the first cheatcode call in this test body - anything mutating before it
+        // would incidentally unmask the bug by forcing backend initialization early.
+        assertTrue(vm.deleteStateSnapshot(id));
+        assert(!vm.revertToState(id));
+    }
+
+    function testDeleteStateSnapshotsTakenInSetUpAsFirstCall() public {
+        vm.deleteStateSnapshots();
+        assert(!vm.revertToState(id));
+    }
+
+    function testFuzz_DeleteStateSnapshotTakenInSetUp(uint256) public {
+        // Every fuzz run gets its own fresh, non-committing execution over the post-`setUp()`
+        // state, so this must pass identically on every run, not just after the first.
+        assertTrue(vm.deleteStateSnapshot(id));
+    }
+}
+
 // TODO: remove this test suite once `snapshot*` has been deprecated in favor of `snapshotState*`.
 contract DeprecatedStateSnapshotTest is Test {
     Storage store;
