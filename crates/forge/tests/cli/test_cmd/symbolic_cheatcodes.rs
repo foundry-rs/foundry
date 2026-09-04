@@ -5255,6 +5255,7 @@ contract StorageHookFuzzGuidanceTest is Test {
 
 forgetest_init!(symbolic_mapping_storage_hooks, |prj, cmd| {
     skip_unless_z3!("symbolic_mapping_storage_hooks");
+    prj.update_config(|config| config.invariant.runs = 0);
     prj.add_test(
         "SymbolicMappingStorageHooks.t.sol",
         r#"
@@ -5899,8 +5900,6 @@ contract SymbolicMappingStorageHooksSymbolicSize is Test {
             "test",
             "--symbolic",
             "--json",
-            "--fuzz-runs",
-            "0",
             "--match-contract",
             "^SymbolicMappingStorageHooksStale$",
         ])
