@@ -58,7 +58,8 @@ pub enum ContractException {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LintSpecificConfig {
-    /// Configurable patterns that should be excluded when performing `mixedCase` lint checks.
+    /// Configurable patterns that should be excluded when performing `mixedCase` and
+    /// `PascalCase` lint checks.
     ///
     /// Defaults to ["ERC", "URI"] to allow common names like `rescueERC20`, `ERC721TokenReceiver`
     /// or `tokenURI`.

@@ -41,28 +41,19 @@ impl<'ast> EarlyLintPass<'ast> for PascalCaseStructPass {
     }
 }
 
-/// Wraps [`check_pascal_case_pure`] with the same configurable acronym
-/// exceptions `mixed-case-*` uses (e.g. `ERC20Data`, `EIP712Domain`), so a
-/// struct/enum name is not flagged just because it contains an allowed
-/// all-caps acronym.
+/// Wraps [`check_pascal_case_pure`] with the configurable acronym exceptions shared with the
+/// `mixed-case-*` lints, so that names like `ERC20Data` are not flagged.
 fn check_pascal_case(s: &str, allowed_patterns: &[String]) -> Option<String> {
-    if s.len() <= 1 {
-        return None;
-    }
-
     for pattern in allowed_patterns {
         if let Some(pos) = s.find(pattern.as_str()) {
             let (pre, post) = s.split_at(pos);
             let post = &post[pattern.len()..];
 
-            // Text before the pattern must already be valid PascalCase (or empty).
-            let is_pre_valid = pre.is_empty() || pre == heck::AsUpperCamelCase(pre).to_string();
-
-            // Text after the pattern must be valid PascalCase, allowing leading digits.
-            let post_trimmed = post.trim_start_matches(|c: char| c.is_numeric());
-            let is_post_valid = post_trimmed.is_empty()
-                || post_trimmed == heck::AsUpperCamelCase(post_trimmed).to_string();
-
+            // Text on either side of the pattern must be valid PascalCase; digits may directly
+            // follow the pattern (`ERC20Data`).
+            let is_pre_valid = pre == heck::AsUpperCamelCase(pre).to_string();
+            let post = post.trim_start_matches(|c: char| c.is_numeric());
+            let is_post_valid = post == heck::AsUpperCamelCase(post).to_string();
             if is_pre_valid && is_post_valid {
                 return None;
             }
