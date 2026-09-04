@@ -1,5 +1,7 @@
 use std::{str::FromStr, time::Duration};
 
+#[cfg(feature = "base")]
+use crate::cmd::resolve_network;
 use crate::{
     cmd::{
         call_overrides::CallOverrideOpts,
@@ -21,6 +23,8 @@ use alloy_provider::{
 };
 use alloy_signer::{Signature, Signer};
 use alloy_sol_types::sol;
+#[cfg(feature = "base")]
+use base_common_network::Base as BaseNetwork;
 use clap::Parser;
 use foundry_cli::{
     json::{print_json_success, print_scalar},
@@ -334,10 +338,15 @@ impl Erc20Subcommand {
             resolved_tempo || self.should_use_tempo_network(&tempo_access_key, has_session).await?;
 
         if is_tempo {
-            self.run_generic::<TempoNetwork>(signer, tempo_access_key, has_session).await
-        } else {
-            self.run_generic::<Ethereum>(signer, None, has_session).await
+            return self.run_generic::<TempoNetwork>(signer, tempo_access_key, has_session).await;
         }
+
+        #[cfg(feature = "base")]
+        if resolve_network(&self.rpc_opts().load_config()?).await?.is_base() {
+            return Box::pin(self.run_generic::<BaseNetwork>(signer, None, has_session)).await;
+        }
+
+        self.run_generic::<Ethereum>(signer, None, has_session).await
     }
 
     #[allow(clippy::large_stack_frames)]

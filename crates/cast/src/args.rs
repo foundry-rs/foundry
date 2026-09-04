@@ -1,3 +1,5 @@
+#[cfg(feature = "base")]
+use crate::cmd::resolve_network;
 use crate::{
     Cast, SimpleCast,
     cmd::erc20::IERC20,
@@ -13,6 +15,8 @@ use alloy_network::{Ethereum, eip2718::Decodable2718};
 use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
+#[cfg(feature = "base")]
+use base_common_network::Base as BaseNetwork;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::{Result, WrapErr};
@@ -420,7 +424,25 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             // Can use either --raw or specify raw as a field
             let is_raw_block = raw || fields.contains(&"raw".into());
             let output = if is_raw_block {
+                // Base encodes EIP-8130 transactions, so the raw block is only faithful with a
+                // Base-typed provider. Base is the only family inferred here; every other one
+                // still comes from `--network` alone.
+                #[cfg(feature = "base")]
+                let network = match network {
+                    Some(network) => Some(network),
+                    None => {
+                        resolve_network(&config).await?.is_base().then_some(NetworkVariant::Base)
+                    }
+                };
                 match network {
+                    #[cfg(feature = "base")]
+                    Some(NetworkVariant::Base) => {
+                        let provider =
+                            ProviderBuilder::<BaseNetwork>::from_config(&config)?.build()?;
+                        Cast::new(&provider)
+                            .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
+                            .await?
+                    }
                     #[cfg(feature = "optimism")]
                     Some(NetworkVariant::Optimism) => {
                         let provider =
@@ -728,8 +750,24 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
             let is_raw = raw || field.as_ref().is_some_and(|f| f == "raw");
+            // Base encodes EIP-8130 transactions, so the response is only faithful with a
+            // Base-typed provider. Base is the only family inferred here; every other one still
+            // comes from `--network` alone.
+            #[cfg(feature = "base")]
+            let network = match network {
+                Some(network) => Some(network),
+                None => resolve_network(&config).await?.is_base().then_some(NetworkVariant::Base),
+            };
             let output = if is_raw || lane {
                 let encoded = match network {
+                    #[cfg(feature = "base")]
+                    Some(NetworkVariant::Base) => {
+                        let provider =
+                            ProviderBuilder::<BaseNetwork>::from_config(&config)?.build()?;
+                        let tx =
+                            Cast::new(&provider).transaction_response(tx_hash, from, nonce).await?;
+                        tx.as_ref().encoded_2718().into()
+                    }
                     #[cfg(feature = "optimism")]
                     Some(NetworkVariant::Optimism) => {
                         let provider =
@@ -764,6 +802,14 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 }
             } else {
                 match network {
+                    #[cfg(feature = "base")]
+                    Some(NetworkVariant::Base) => {
+                        let provider =
+                            ProviderBuilder::<BaseNetwork>::from_config(&config)?.build()?;
+                        Cast::new(&provider)
+                            .transaction(tx_hash, from, nonce, field, false, to_request, false)
+                            .await?
+                    }
                     #[cfg(feature = "optimism")]
                     Some(NetworkVariant::Optimism) => {
                         let provider =
@@ -780,7 +826,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                             .transaction(tx_hash, from, nonce, field, false, to_request, false)
                             .await?
                     }
-                    // Ethereum (default) or no --raw flag
+                    // Ethereum (default), Monad, or no --raw flag
                     _ => {
                         let provider = utils::get_provider(&config)?;
                         Cast::new(&provider)
@@ -990,6 +1036,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::DecodeTransaction { tx, network } => {
             let tx = stdin::unwrap_line(tx)?;
             let decoded_tx = match network {
+                #[cfg(feature = "base")]
+                Some(NetworkVariant::Base) => {
+                    SimpleCast::decode_raw_transaction::<BaseNetwork>(&tx)?
+                }
                 #[cfg(feature = "optimism")]
                 Some(NetworkVariant::Optimism) => {
                     SimpleCast::decode_raw_transaction::<Optimism>(&tx)?
@@ -1025,7 +1075,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::KeyAuthorization { command } => command.run().await?,
         CastSubcommand::Tempo { command } => command.run().await?,
         CastSubcommand::VirtualAddress { command } => command.run().await?,
-        #[cfg(feature = "optimism")]
+        #[cfg(any(feature = "base", feature = "optimism"))]
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;
         }

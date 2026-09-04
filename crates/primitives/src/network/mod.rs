@@ -1,7 +1,7 @@
 use alloy_network::Network;
 
 mod header;
-#[cfg(feature = "optimism")]
+#[cfg(any(feature = "base", feature = "optimism"))]
 mod optimism;
 mod receipt;
 

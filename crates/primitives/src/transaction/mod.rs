@@ -1,9 +1,13 @@
+#[cfg(feature = "base")]
+mod base;
 mod envelope;
 #[cfg(feature = "optimism")]
 mod optimism;
 mod receipt;
 mod request;
 
+#[cfg(all(feature = "base", not(feature = "optimism")))]
+pub use base::get_deposit_tx_parts;
 pub use envelope::{FoundryTxEnvelope, FoundryTxType, FoundryTypedTx};
 #[cfg(feature = "optimism")]
 pub use optimism::get_deposit_tx_parts;

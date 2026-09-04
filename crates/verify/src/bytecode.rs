@@ -31,6 +31,8 @@ use foundry_common::{
 };
 use foundry_compilers::info::ContractInfo;
 use foundry_config::{Chain, Config, figment, impl_figment_convert};
+#[cfg(feature = "base")]
+use foundry_evm::core::evm::BaseEvmNetwork;
 #[cfg(feature = "monad")]
 use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
@@ -251,45 +253,56 @@ impl VerifyBytecodeArgs {
 
         match network {
             NetworkVariant::Ethereum => {
-                self.run_with_network_and_config::<EthEvmNetwork>(
+                Box::pin(self.run_with_network_and_config::<EthEvmNetwork>(
                     config,
                     endpoint_identity,
                     network_was_inferred,
                     replay_block_transactions::<EthEvmNetwork>,
                     ExecutorBuilder::<EthEvmNetwork>::new(),
-                )
+                ))
+                .await
+            }
+            #[cfg(feature = "base")]
+            NetworkVariant::Base => {
+                Box::pin(self.run_with_network_and_config::<BaseEvmNetwork>(
+                    config,
+                    endpoint_identity,
+                    network_was_inferred,
+                    replay_block_transactions::<BaseEvmNetwork>,
+                    ExecutorBuilder::<BaseEvmNetwork>::new(),
+                ))
                 .await
             }
             #[cfg(feature = "optimism")]
             NetworkVariant::Optimism => {
-                self.run_with_network_and_config::<OpEvmNetwork>(
+                Box::pin(self.run_with_network_and_config::<OpEvmNetwork>(
                     config,
                     endpoint_identity,
                     network_was_inferred,
                     replay_block_transactions::<OpEvmNetwork>,
                     ExecutorBuilder::<OpEvmNetwork>::new(),
-                )
+                ))
                 .await
             }
             NetworkVariant::Tempo => {
-                self.run_with_network_and_config::<TempoEvmNetwork>(
+                Box::pin(self.run_with_network_and_config::<TempoEvmNetwork>(
                     config,
                     endpoint_identity,
                     network_was_inferred,
                     replay_block_transactions::<TempoEvmNetwork>,
                     ExecutorBuilder::<TempoEvmNetwork>::new(),
-                )
+                ))
                 .await
             }
             #[cfg(feature = "monad")]
             NetworkVariant::Monad => {
-                self.run_with_network_and_config::<MonadEvmNetwork>(
+                Box::pin(self.run_with_network_and_config::<MonadEvmNetwork>(
                     config,
                     endpoint_identity,
                     network_was_inferred,
                     replay_monad_block_transactions,
                     ExecutorBuilder::<MonadEvmNetwork>::new(),
-                )
+                ))
                 .await
             }
         }
@@ -1227,6 +1240,16 @@ mod tests {
                 .unwrap()
                 .id(),
             1
+        );
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn configured_network_preserves_base() {
+        let config = Config { networks: NetworkVariant::Base.into(), ..Default::default() };
+        assert_eq!(
+            VerifyBytecodeArgs::configured_network(None, &config),
+            Some(NetworkVariant::Base)
         );
     }
 }

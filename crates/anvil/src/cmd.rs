@@ -94,6 +94,11 @@ pub struct NodeArgs {
     #[arg(long)]
     pub hardfork: Option<String>,
 
+    /// Override the Base activation-registry administrator.
+    #[cfg(feature = "base")]
+    #[arg(long, value_name = "ADDRESS")]
+    pub base_activation_admin: Option<Address>,
+
     /// Block time in seconds for interval mining.
     #[arg(short, long, visible_alias = "blockTime", value_name = "SECONDS", value_parser = duration_from_secs_f64)]
     pub block_time: Option<Duration>,
@@ -256,6 +261,8 @@ impl NodeArgs {
         }
 
         let funded_accounts = self.parse_funded_accounts()?;
+        #[cfg(feature = "base")]
+        let base_activation_admin = self.base_activation_admin;
 
         let local_chain_id = self
             .evm
@@ -283,7 +290,7 @@ impl NodeArgs {
             networks
         };
 
-        Ok(NodeConfig::default()
+        let config = NodeConfig::default()
             .with_gas_limit(self.evm.gas_limit)
             .disable_block_gas_limit(self.evm.disable_block_gas_limit)
             .enable_tx_gas_limit(self.evm.enable_tx_gas_limit)
@@ -345,7 +352,10 @@ impl NodeArgs {
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm.memory_limit)
             .with_cache_path(self.cache_path)
-            .with_funded_accounts(funded_accounts))
+            .with_funded_accounts(funded_accounts);
+        #[cfg(feature = "base")]
+        let config = config.with_base_activation_admin(base_activation_admin);
+        Ok(config)
     }
 
     fn parse_funded_accounts(&self) -> eyre::Result<HashMap<Address, U256>> {
@@ -931,6 +941,8 @@ mod tests {
     use foundry_evm::hardfork::EthereumHardfork;
     #[cfg(feature = "optimism")]
     use foundry_evm::hardfork::OpHardfork;
+    #[cfg(feature = "base")]
+    use foundry_evm::hardforks::BaseUpgrade;
     use std::{env, net::Ipv4Addr};
     use tempo_hardfork::TempoHardfork;
 
@@ -999,6 +1011,46 @@ mod tests {
         assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
     }
 
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_parse_base_hardfork_from_network() {
+        let args: NodeArgs =
+            NodeArgs::parse_from(["anvil", "--network", "base", "--hardfork", "Beryl"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.hardfork, Some(BaseUpgrade::Beryl.into()));
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_parse_namespaced_base_hardfork() {
+        let args = NodeArgs::parse_from(["anvil", "--hardfork", "base:Beryl"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.hardfork, Some(BaseUpgrade::Beryl.into()));
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_parse_base_activation_admin() {
+        let admin = Address::repeat_byte(0xaa);
+        let admin_arg = admin.to_string();
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--base",
+            "--hardfork",
+            "base:Beryl",
+            "--base-activation-admin",
+            admin_arg.as_str(),
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.base_activation_admin, Some(admin));
+    }
+
     #[cfg(feature = "optimism")]
     #[test]
     fn chain_id_infers_optimism_network_in_node_config() {
@@ -1006,6 +1058,15 @@ mod tests {
         let config = args.into_node_config().unwrap();
 
         assert!(config.networks.is_optimism());
+    }
+
+    #[cfg(feature = "base")]
+    #[test]
+    fn chain_id_infers_base_network_in_node_config() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--chain-id", "8453"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
     }
 
     #[test]
@@ -1019,6 +1080,40 @@ mod tests {
             "cannot infer execution network from chain ID 10: network family `optimism` is not \
              enabled in this build"
         );
+    }
+
+    #[test]
+    #[cfg(feature = "base")]
+    fn base_fork_chain_id_precedes_execution_chain_id_for_network() {
+        let args = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-block-number",
+            "1",
+            "--fork-chain-id",
+            "8453",
+            "--chain-id",
+            "1",
+        ]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_base());
+        assert_eq!(config.get_chain_id(), 1);
+    }
+
+    /// `anvil --chain-id 8453` resolved to Optimism before Base support existed and must keep
+    /// doing so in builds without the feature, which is what release binaries ship.
+    #[test]
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn chain_id_without_base_still_resolves_to_optimism() {
+        for chain_id in ["8453", "84532"] {
+            let args = NodeArgs::parse_from(["anvil", "--chain-id", chain_id]);
+            let config = args
+                .into_node_config()
+                .unwrap_or_else(|error| panic!("chain ID {chain_id} must still resolve: {error}"));
+            assert!(config.networks.is_optimism(), "chain ID {chain_id} must resolve to Optimism");
+        }
     }
 
     #[test]
@@ -1036,6 +1131,15 @@ mod tests {
                 )
             );
         }
+    }
+
+    #[test]
+    fn explicit_ethereum_allows_base_chain_id() {
+        let args = NodeArgs::parse_from(["anvil", "--network", "ethereum", "--chain-id", "8453"]);
+        let config = args.into_node_config().unwrap();
+
+        assert_eq!(config.networks, NetworkConfigs::with_ethereum());
+        assert_eq!(config.get_chain_id(), 8453);
     }
 
     #[test]
@@ -1066,6 +1170,32 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "base")]
+    fn genesis_chain_id_infers_base_network() {
+        let mut args = NodeArgs::parse_from(["anvil"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 8453;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
+        assert!(config.networks.is_base());
+    }
+
+    /// Base chain IDs resolved to Optimism before Base support existed, so a build without the
+    /// `base` feature must keep resolving them that way rather than erroring.
+    #[test]
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn genesis_chain_id_without_base_still_infers_optimism() {
+        let mut args = NodeArgs::parse_from(["anvil"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 8453;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
+        assert!(config.networks.is_optimism());
+    }
+
+    #[test]
     #[cfg(not(feature = "monad"))]
     fn explicit_network_overrides_genesis_chain_id_inference() {
         let mut args = NodeArgs::parse_from(["anvil", "--network", "ethereum"]);
@@ -1089,6 +1219,30 @@ mod tests {
 
         let config = args.into_node_config().unwrap();
 
+        assert!(!config.networks.has_network_selection());
+        assert_eq!(config.get_chain_id(), 1);
+    }
+
+    #[test]
+    fn explicit_network_overrides_base_genesis_chain_id_inference() {
+        let mut args = NodeArgs::parse_from(["anvil", "--network", "ethereum"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 8453;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.networks, NetworkConfigs::with_ethereum());
+        assert_eq!(config.get_chain_id(), 8453);
+    }
+
+    #[test]
+    fn explicit_chain_id_precedes_base_genesis_network_inference() {
+        let mut args = NodeArgs::parse_from(["anvil", "--chain-id", "1"]);
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = 8453;
+        args.init = Some(genesis);
+
+        let config = args.into_node_config().unwrap();
         assert!(!config.networks.has_network_selection());
         assert_eq!(config.get_chain_id(), 1);
     }

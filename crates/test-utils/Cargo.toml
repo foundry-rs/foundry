@@ -46,4 +46,5 @@ idna_adapter.workspace = true
 
 [features]
 default = ["optimism"]
+base = ["foundry-common/base"]
 optimism = ["foundry-common/optimism"]

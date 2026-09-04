@@ -425,6 +425,16 @@ impl ScriptArgs {
             .await;
         }
 
+        #[cfg(feature = "base")]
+        if evm_opts.networks.is_base() {
+            return Box::pin(self.run_generic_script::<foundry_evm::core::evm::BaseEvmNetwork>(
+                config,
+                evm_opts,
+                ExecutorBuilder::<foundry_evm::core::evm::BaseEvmNetwork>::new(),
+            ))
+            .await;
+        }
+
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
             return Box::pin(self.run_generic_script::<MonadEvmNetwork>(

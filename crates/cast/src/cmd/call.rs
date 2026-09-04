@@ -284,6 +284,18 @@ impl CallArgs {
                 .await;
         }
 
+        #[cfg(feature = "base")]
+        if evm_opts.networks.is_base() {
+            return self
+                .run_with_network_and_opts::<foundry_evm::core::evm::BaseEvmNetwork>(
+                    config,
+                    evm_opts,
+                    auth_preflight,
+                    ExecutorBuilder::<foundry_evm::core::evm::BaseEvmNetwork>::new(),
+                )
+                .await;
+        }
+
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
             return self
@@ -1052,6 +1064,18 @@ mod tests {
         assert_eq!(config.chain, Some(Chain::mainnet()));
     }
 
+    /// Base chain IDs resolved to Optimism before Base support existed, so a build without the
+    /// `base` feature — which is what release binaries ship — must keep resolving them that way.
+    #[test]
+    #[cfg(all(not(feature = "base"), feature = "optimism"))]
+    fn chain_id_without_base_still_resolves_to_optimism() {
+        for chain_id in [8453, 84532] {
+            let networks = infer_network_from_chain_id(NetworkConfigs::default(), chain_id)
+                .unwrap_or_else(|error| panic!("chain ID {chain_id} must still resolve: {error}"));
+            assert!(networks.is_optimism(), "chain ID {chain_id} must resolve to Optimism");
+        }
+    }
+
     #[test]
     #[cfg(not(feature = "monad"))]
     fn chain_id_rejects_disabled_monad_network() {
@@ -1067,9 +1091,9 @@ mod tests {
     #[test]
     fn explicit_ethereum_overrides_chain_id_inference() {
         let ethereum = NetworkConfigs::with_ethereum();
-        let inferred = infer_network_from_chain_id(ethereum, 143).unwrap();
-
-        assert_eq!(inferred, ethereum);
+        for chain_id in [8453, 143] {
+            assert_eq!(infer_network_from_chain_id(ethereum, chain_id).unwrap(), ethereum);
+        }
     }
 
     #[test]

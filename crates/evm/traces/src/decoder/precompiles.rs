@@ -551,6 +551,35 @@ pub(crate) fn is_known_precompile(
             }
         }
     }
+    // Base precompiles (only on a Base chain or in an explicitly configured Base context).
+    #[cfg(feature = "base")]
+    {
+        let base_upgrade = hardfork
+            .and_then(foundry_evm_hardforks::BaseSpecId::from_foundry_hardfork)
+            .map(|spec| spec.upgrade());
+        let is_base_context = networks.map_or_else(
+            || {
+                chain_id.is_some_and(|id| {
+                    matches!(
+                        Chain::from_id(id).named(),
+                        Some(NamedChain::Base | NamedChain::BaseSepolia)
+                    )
+                }) || base_upgrade.is_some()
+            },
+            |networks| networks.is_base(),
+        );
+        if is_base_context {
+            let installed = match base_upgrade {
+                Some(upgrade) => {
+                    foundry_evm_networks::is_base_precompile_active_at(address, upgrade)
+                }
+                None => foundry_evm_networks::BASE_PRECOMPILE_ADDRESSES.contains(&address),
+            };
+            if installed {
+                return true;
+            }
+        }
+    }
     // Celo transfer precompile (only on Celo chains).
     let is_celo_context = networks.map_or_else(
         || {

@@ -1,4 +1,6 @@
 use super::auth::confirm_auth_rpc_disclosure;
+#[cfg(feature = "base")]
+use crate::cmd::resolve_network;
 use crate::{
     Cast,
     tx::{CastTxBuilder, SenderKind},
@@ -6,6 +8,8 @@ use crate::{
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, Network};
 use alloy_rpc_types::BlockId;
+#[cfg(feature = "base")]
+use base_common_network::Base as BaseNetwork;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -68,10 +72,15 @@ pub struct AccessListArgs {
 impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
         if self.tx.tempo.is_tempo() {
-            self.run_with_network::<TempoNetwork>().await
-        } else {
-            self.run_with_network::<Ethereum>().await
+            return self.run_with_network::<TempoNetwork>().await;
         }
+
+        #[cfg(feature = "base")]
+        if resolve_network(&self.rpc.load_config()?).await?.is_base() {
+            return self.run_with_network::<BaseNetwork>().await;
+        }
+
+        self.run_with_network::<Ethereum>().await
     }
 
     pub async fn run_with_network<N: Network + Unpin>(self) -> Result<()>

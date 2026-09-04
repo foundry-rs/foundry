@@ -10,6 +10,8 @@ use foundry_evm_core::{
     fork::CreateFork,
     opts::{EvmOpts, ExecutionSpecContext, resolve_execution_spec},
 };
+#[cfg(feature = "base")]
+use foundry_evm_hardforks::BaseSpecId;
 use foundry_evm_hardforks::{FoundryHardfork, TempoHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_evm_traces::TraceRequirements;
@@ -168,6 +170,10 @@ fn network_hardfork_from_evm_version(
 ) -> Option<FoundryHardfork> {
     if networks.is_tempo() {
         return Some(FoundryHardfork::Tempo(evm_spec_id::<TempoHardfork>(evm_version)));
+    }
+    #[cfg(feature = "base")]
+    if networks.is_base() {
+        return Some(FoundryHardfork::Base(evm_spec_id::<BaseSpecId>(evm_version).upgrade()));
     }
     #[cfg(feature = "monad")]
     if networks.is_monad() {

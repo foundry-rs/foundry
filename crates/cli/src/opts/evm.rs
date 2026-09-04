@@ -366,6 +366,17 @@ mod tests {
         assert_eq!(env.chain, Some(NamedChain::Goerli.into()));
     }
 
+    #[cfg(feature = "base")]
+    #[test]
+    fn can_parse_namespaced_base_hardfork() {
+        let args = EvmArgs::parse_from(["foundry-cli", "--hardfork", "base:Beryl"]);
+        assert_eq!(args.hardfork.map(String::from).as_deref(), Some("base:Beryl"));
+
+        let config = Config::from_provider(Config::figment().merge(args)).unwrap();
+        assert!(config.networks.is_base());
+        assert_eq!(config.hardfork.map(String::from).as_deref(), Some("base:Beryl"));
+    }
+
     #[test]
     fn hardfork_arg_selects_network() {
         let args = EvmArgs::parse_from(["foundry-cli", "--hardfork", "tempo:T5"]);

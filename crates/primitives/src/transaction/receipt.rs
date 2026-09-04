@@ -11,6 +11,12 @@ use alloy_network::{
 use alloy_primitives::{Bloom, Log, TxHash, logs_bloom};
 use alloy_rlp::{BufMut, Decodable, Encodable, bytes};
 use alloy_rpc_types::{BlockNumHash, trace::otterscan::OtsReceipt};
+#[cfg(feature = "base")]
+use base_common_consensus::Eip8130Receipt;
+#[cfg(feature = "base")]
+use base_common_evm::EIP8130_TRANSACTION_TYPE;
+#[cfg(all(feature = "base", not(feature = "optimism")))]
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{
     DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom, POST_EXEC_TX_TYPE_ID,
@@ -36,9 +42,12 @@ pub enum FoundryReceiptEnvelope<T = Log> {
     #[cfg(feature = "optimism")]
     #[serde(rename = "0x7D", alias = "0x7d")]
     PostExec(ReceiptWithBloom<Receipt<T>>),
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     #[serde(rename = "0x7E", alias = "0x7e")]
     Deposit(OpDepositReceiptWithBloom<T>),
+    #[cfg(feature = "base")]
+    #[serde(rename = "0x79")]
+    Eip8130(ReceiptWithBloom<Eip8130Receipt<T>>),
     #[serde(rename = "0x76")]
     Tempo(ReceiptWithBloom<Receipt<T>>),
     /// A receipt with a transaction type Foundry does not model.
@@ -57,8 +66,10 @@ impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
         cumulative_gas_used: u64,
         logs: impl IntoIterator<Item = alloy_rpc_types::Log>,
         tx_type: FoundryTxType,
-        #[cfg_attr(not(feature = "optimism"), allow(unused_variables))] deposit_nonce: Option<u64>,
-        #[cfg_attr(not(feature = "optimism"), allow(unused_variables))]
+        #[cfg(feature = "base")] eip8130_phase_statuses: Vec<u8>,
+        #[cfg_attr(not(any(feature = "base", feature = "optimism")), allow(unused_variables))]
+        deposit_nonce: Option<u64>,
+        #[cfg_attr(not(any(feature = "base", feature = "optimism")), allow(unused_variables))]
         deposit_receipt_version: Option<u64>,
     ) -> Self {
         let logs = logs.into_iter().collect::<Vec<_>>();
@@ -85,7 +96,7 @@ impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
             FoundryTxType::PostExec => {
                 Self::PostExec(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             FoundryTxType::Deposit => {
                 let inner = OpDepositReceiptWithBloom {
                     receipt: OpDepositReceipt {
@@ -97,6 +108,11 @@ impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
                 };
                 Self::Deposit(inner)
             }
+            #[cfg(feature = "base")]
+            FoundryTxType::Eip8130 => Self::Eip8130(ReceiptWithBloom {
+                receipt: Eip8130Receipt::new(inner_receipt, eip8130_phase_statuses),
+                logs_bloom,
+            }),
             FoundryTxType::Tempo => {
                 Self::Tempo(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
@@ -133,7 +149,7 @@ impl FoundryReceiptEnvelope<Log> {
 
 impl<T> FoundryReceiptEnvelope<T> {
     /// Returns `true` if this is an OP stack deposit receipt.
-    #[cfg(feature = "optimism")]
+    #[cfg(any(feature = "base", feature = "optimism"))]
     pub const fn is_deposit(&self) -> bool {
         matches!(self, Self::Deposit(_))
     }
@@ -142,6 +158,21 @@ impl<T> FoundryReceiptEnvelope<T> {
     #[cfg(feature = "optimism")]
     pub const fn is_post_exec(&self) -> bool {
         matches!(self, Self::PostExec(_))
+    }
+
+    /// Returns `true` if this is a Base EIP-8130 receipt.
+    #[cfg(feature = "base")]
+    pub const fn is_eip8130(&self) -> bool {
+        matches!(self, Self::Eip8130(_))
+    }
+
+    /// Returns EIP-8130 per-phase statuses, or an empty slice for other receipt types.
+    #[cfg(feature = "base")]
+    pub fn eip8130_phase_statuses(&self) -> &[u8] {
+        match self {
+            Self::Eip8130(receipt) => &receipt.receipt.phase_statuses,
+            _ => &[],
+        }
     }
 
     /// Returns `true` if this is a Tempo receipt.
@@ -164,8 +195,10 @@ impl<T> FoundryReceiptEnvelope<T> {
             Self::Eip7702(_) => EIP7702_TX_TYPE_ID,
             #[cfg(feature = "optimism")]
             Self::PostExec(_) => POST_EXEC_TX_TYPE_ID,
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Deposit(_) => DEPOSIT_TX_TYPE_ID,
+            #[cfg(feature = "base")]
+            Self::Eip8130(_) => EIP8130_TRANSACTION_TYPE,
             Self::Tempo(_) => TEMPO_TX_TYPE_ID,
             Self::Unknown(r) => r.r#type,
         }
@@ -181,8 +214,10 @@ impl<T> FoundryReceiptEnvelope<T> {
             Self::Eip7702(_) => FoundryTxType::Eip7702,
             #[cfg(feature = "optimism")]
             Self::PostExec(_) => FoundryTxType::PostExec,
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Deposit(_) => FoundryTxType::Deposit,
+            #[cfg(feature = "base")]
+            Self::Eip8130(_) => FoundryTxType::Eip8130,
             Self::Tempo(_) => FoundryTxType::Tempo,
             Self::Unknown(_) => return None,
         })
@@ -210,10 +245,14 @@ impl<T> FoundryReceiptEnvelope<T> {
             Self::Eip7702(r) => FoundryReceiptEnvelope::Eip7702(r.map_logs(f)),
             #[cfg(feature = "optimism")]
             Self::PostExec(r) => FoundryReceiptEnvelope::PostExec(r.map_logs(f)),
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Deposit(r) => FoundryReceiptEnvelope::Deposit(
                 r.map_receipt(|r: OpDepositReceipt<T>| r.map_logs(f)),
             ),
+            #[cfg(feature = "base")]
+            Self::Eip8130(r) => {
+                FoundryReceiptEnvelope::Eip8130(r.map_receipt(|r: Eip8130Receipt<T>| r.map_logs(f)))
+            }
             Self::Tempo(r) => FoundryReceiptEnvelope::Tempo(r.map_logs(f)),
             Self::Unknown(r) => FoundryReceiptEnvelope::Unknown(AnyReceiptEnvelope {
                 inner: r.inner.map_logs(f),
@@ -242,8 +281,10 @@ impl<T> FoundryReceiptEnvelope<T> {
             Self::Eip7702(t) => &t.logs_bloom,
             #[cfg(feature = "optimism")]
             Self::PostExec(t) => &t.logs_bloom,
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Deposit(t) => &t.logs_bloom,
+            #[cfg(feature = "base")]
+            Self::Eip8130(t) => &t.logs_bloom,
             Self::Tempo(t) => &t.logs_bloom,
             Self::Unknown(t) => &t.inner.logs_bloom,
         }
@@ -260,8 +301,10 @@ impl<T> FoundryReceiptEnvelope<T> {
             | Self::Tempo(t) => t.receipt,
             #[cfg(feature = "optimism")]
             Self::PostExec(t) => t.receipt,
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Deposit(t) => t.receipt.into_inner(),
+            #[cfg(feature = "base")]
+            Self::Eip8130(t) => t.receipt.into_inner(),
             Self::Unknown(t) => t.inner.receipt,
         }
     }
@@ -277,8 +320,10 @@ impl<T> FoundryReceiptEnvelope<T> {
             | Self::Tempo(t) => &t.receipt,
             #[cfg(feature = "optimism")]
             Self::PostExec(t) => &t.receipt,
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Deposit(t) => &t.receipt.inner,
+            #[cfg(feature = "base")]
+            Self::Eip8130(t) => &t.receipt.inner,
             Self::Unknown(t) => &t.inner.receipt,
         }
     }
@@ -350,8 +395,10 @@ impl Encodable2718 for FoundryReceiptEnvelope {
             Self::Eip7702(r) => 1 + r.length(),
             #[cfg(feature = "optimism")]
             Self::PostExec(r) => 1 + r.length(),
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Deposit(r) => 1 + r.length(),
+            #[cfg(feature = "base")]
+            Self::Eip8130(r) => 1 + r.length(),
             Self::Tempo(r) => 1 + r.length(),
             Self::Unknown(r) => r.rlp_payload_length(),
         }
@@ -370,8 +417,10 @@ impl Encodable2718 for FoundryReceiptEnvelope {
             | Self::Tempo(r) => r.encode(out),
             #[cfg(feature = "optimism")]
             Self::PostExec(r) => r.encode(out),
-            #[cfg(feature = "optimism")]
+            #[cfg(any(feature = "base", feature = "optimism"))]
             Self::Deposit(r) => r.encode(out),
+            #[cfg(feature = "base")]
+            Self::Eip8130(r) => r.encode(out),
             Self::Unknown(r) => r.inner.encode(out),
         }
     }
@@ -379,6 +428,14 @@ impl Encodable2718 for FoundryReceiptEnvelope {
 
 impl Decodable2718 for FoundryReceiptEnvelope {
     fn typed_decode(ty: u8, buf: &mut &[u8]) -> Result<Self, Eip2718Error> {
+        #[cfg(feature = "base")]
+        if ty == EIP8130_TRANSACTION_TYPE {
+            return Ok(Self::Eip8130(ReceiptWithBloom::decode(buf)?));
+        }
+        #[cfg(all(feature = "base", not(feature = "optimism")))]
+        if ty == DEPOSIT_TX_TYPE_ID {
+            return Ok(Self::Deposit(OpDepositReceiptWithBloom::decode(buf)?));
+        }
         #[cfg(feature = "optimism")]
         {
             if ty == DEPOSIT_TX_TYPE_ID {
@@ -445,6 +502,8 @@ mod tests {
             0,
             Vec::new(),
             tx_type,
+            #[cfg(feature = "base")]
+            Vec::new(),
             None,
             None,
         )
@@ -593,6 +652,29 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "base")]
+    #[test]
+    fn eip8130_receipt_preserves_phase_statuses_outside_consensus_encoding() {
+        use alloy_network::eip2718::{Decodable2718, Encodable2718};
+
+        let receipt = FoundryReceiptEnvelope::<alloy_rpc_types::Log>::from_parts(
+            false,
+            42_000,
+            Vec::new(),
+            FoundryTxType::Eip8130,
+            vec![0x01, 0x00],
+            None,
+            None,
+        )
+        .map_logs(|log| log.inner);
+        assert_eq!(receipt.eip8130_phase_statuses(), &[0x01, 0x00]);
+
+        let encoded = receipt.encoded_2718();
+        let decoded = FoundryReceiptEnvelope::decode_2718(&mut encoded.as_slice()).unwrap();
+        assert!(decoded.eip8130_phase_statuses().is_empty());
+        assert_eq!(decoded.encoded_2718(), encoded);
+    }
+
     #[test]
     fn encode_legacy_receipt() {
         let expected = hex::decode("f901668001b9010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f85ff85d940000000000000000000000000000000000000011f842a0000000000000000000000000000000000000000000000000000000000000deada0000000000000000000000000000000000000000000000000000000000000beef830100ff").unwrap();
@@ -736,6 +818,8 @@ mod tests {
             100000,
             vec![],
             FoundryTxType::Tempo,
+            #[cfg(feature = "base")]
+            Vec::new(),
             None,
             None,
         );
