@@ -10,7 +10,7 @@ use solar::sema::{
 /// placeholder (`_`) or reverted.
 ///
 /// Each flag tracks whether there is at least one such path. If every path reaches `_` or reverts,
-/// all flags are `false` ([`Outcome::COVERED`]).
+/// all flags are `false` (`Outcome::COVERED`).
 #[derive(Clone, Copy)]
 pub struct Outcome {
     /// Control can reach the end of the construct normally and continue to the next statement.

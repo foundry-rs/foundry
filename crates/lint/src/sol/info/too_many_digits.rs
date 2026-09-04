@@ -21,7 +21,7 @@ impl<'ast> EarlyLintPass<'ast> for TooManyDigits {
     fn check_stmt(&mut self, ctx: &LintContext, stmt: &'ast Stmt<'ast>) {
         // Yul literals are not `Expr`s, so `check_expr` never sees them.
         if let StmtKind::Assembly(assembly) = &stmt.kind {
-            let _ = YulLits { ctx }.visit_yul_block(&assembly.block);
+            let _ = YulLiterals { ctx }.visit_yul_block(&assembly.block);
         }
     }
 
@@ -53,11 +53,11 @@ fn check_lit(ctx: &LintContext, lit: &Lit<'_>) {
 }
 
 /// Checks every literal of an assembly block, `case` labels included.
-struct YulLits<'a, 's> {
+struct YulLiterals<'a, 's> {
     ctx: &'a LintContext<'s, 'a>,
 }
 
-impl<'ast> Visit<'ast> for YulLits<'_, '_> {
+impl<'ast> Visit<'ast> for YulLiterals<'_, '_> {
     type BreakValue = Never;
 
     fn visit_lit(&mut self, lit: &'ast Lit<'_>) -> ControlFlow<Self::BreakValue> {
