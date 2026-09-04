@@ -19,8 +19,14 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
+  cargo-cooldown:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cargo-cooldown.yml
+
   run-benchmarks:
     name: Run All Benchmarks
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-24.04-32
     permissions:
       contents: read
@@ -102,6 +108,12 @@ jobs:
             echo "versions=$REQUESTED_VERSIONS" >> "$GITHUB_OUTPUT"
             echo "is_source_comparison=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Enforce baseline Cargo dependency cooldown
+        if: steps.prep.outputs.is_source_comparison == 'true'
+        uses: tempoxyz/gh-actions/actions/cargo-cooldown@216431dd18ebe7c199654e6c310ed99570ddcc33 # gh-actions#98
+        with:
+          working-directory: ../foundry-baseline
 
       - name: Run forge test benchmarks
         env:

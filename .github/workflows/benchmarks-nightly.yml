@@ -11,8 +11,14 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
+  cargo-cooldown:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cargo-cooldown.yml
+
   run-benchmarks:
     name: Run Nightly Benchmarks
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-24.04-32
     permissions:
       contents: read

@@ -39,7 +39,7 @@ ENV CARGO_INCREMENTAL=0 \
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=shared \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=shared \
-    cargo chef cook --recipe-path recipe.json --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}"
+    cargo chef cook --locked --recipe-path recipe.json --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}"
 
 ARG TAG_NAME="dev"
 ENV TAG_NAME=$TAG_NAME
@@ -51,7 +51,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=shared \
     --mount=type=cache,target=$SCCACHE_DIR,sharing=shared \
-    cargo build --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}" \
+    cargo build --locked --profile ${RUST_PROFILE} --no-default-features --features "${RUST_FEATURES}" \
     && sccache --show-stats || true
 
 # `dev` profile outputs to the `target/debug` directory.

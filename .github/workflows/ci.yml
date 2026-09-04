@@ -17,6 +17,11 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
+  cargo-cooldown:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/cargo-cooldown.yml
+
   test:
     uses: ./.github/workflows/test.yml
     permissions:
@@ -36,6 +41,7 @@ jobs:
       id-token: write
 
   doctest:
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -56,6 +62,7 @@ jobs:
       - run: cargo test --workspace --doc --locked
 
   no-default-features:
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -74,6 +81,7 @@ jobs:
   touch-id-link:
     name: touch-id link (macOS)
     if: github.event_name == 'push'
+    needs: cargo-cooldown
     runs-on: depot-macos-latest
     timeout-minutes: 45
     permissions:
@@ -145,6 +153,7 @@ jobs:
           node --test .github/scripts/tests/test-create-tag.js
 
   clippy:
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -180,6 +189,7 @@ jobs:
       - run: cargo fmt --all --check
 
   forge-fmt:
+    needs: cargo-cooldown
     runs-on: depot-ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -203,6 +213,7 @@ jobs:
         run: ./.github/scripts/format.sh --check
 
   deny:
+    needs: cargo-cooldown
     uses: tempoxyz/ci/.github/workflows/deny.yml@268b3ce142717ff86c58fbbcc3abc3f109f0fb8d # main
     permissions:
       contents: read
@@ -249,6 +260,7 @@ jobs:
     if: always()
     permissions: {}
     needs:
+      - cargo-cooldown
       - test
       - docs
       - doctest

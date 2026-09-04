@@ -1,0 +1,25 @@
+name: Cargo dependency cooldown
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Reject newly published crates
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: ""
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        uses: tempoxyz/gh-actions/vendor/dtolnay/rust-toolchain@216431dd18ebe7c199654e6c310ed99570ddcc33 # gh-actions#98
+        with:
+          toolchain: stable
+      - name: Enforce Cargo dependency cooldown
+        uses: tempoxyz/gh-actions/actions/cargo-cooldown@216431dd18ebe7c199654e6c310ed99570ddcc33 # gh-actions#98
