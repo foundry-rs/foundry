@@ -731,16 +731,8 @@ impl KeychainSubcommand {
                 mut tempo,
                 rpc,
             } => {
-                let mut doctor = Doctor {
-                    steps: Vec::new(),
-                    context: DoctorContext {
-                        root_account,
-                        key_address,
-                        chain_id: None,
-                        fee_token: fee_token.or(tempo.fee_token).unwrap_or(DEFAULT_FEE_TOKEN),
-                    },
-                };
-                let expires_at = tempo.resolve_expires();
+                let fee_token = fee_token.or(tempo.fee_token).unwrap_or(DEFAULT_FEE_TOKEN);
+                let mut doctor = Doctor::new(root_account, key_address, fee_token);
                 doctor
                     .run(
                         key_address,
@@ -748,8 +740,7 @@ impl KeychainSubcommand {
                         to,
                         selector.map(SelectorArg::into_bytes),
                         recipient,
-                        &tempo,
-                        expires_at,
+                        &mut tempo,
                         rpc,
                     )
                     .await;
@@ -1400,6 +1391,15 @@ struct Doctor {
 }
 
 impl Doctor {
+    const fn new(
+        root_account: Option<Address>,
+        key_address: Option<Address>,
+        fee_token: Address,
+    ) -> Self {
+        let context = DoctorContext { root_account, key_address, chain_id: None, fee_token };
+        Self { steps: Vec::new(), context }
+    }
+
     /// Records `step`; `None` when it failed so `?` stops the diagnosis.
     fn check(&mut self, step: DoctorStep) -> Option<()> {
         let failed = step.status == DoctorStatus::Fail;
@@ -1427,10 +1427,11 @@ impl Doctor {
         to: Option<Address>,
         selector: Option<[u8; 4]>,
         recipient: Option<Address>,
-        tempo: &TempoOpts,
-        resolved_expires_at: Option<u64>,
+        tempo: &mut TempoOpts,
         rpc: RpcOpts,
     ) -> Option<()> {
+        let resolved_expires_at = tempo.resolve_expires();
+
         // Step 1: Tempo Accounts store lookup.
         let (step, candidates) =
             self.attempt(collect_local_candidates(key_address, root_account))?;
