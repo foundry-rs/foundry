@@ -76,7 +76,7 @@ use campaign::{
 };
 
 mod replay;
-pub use replay::{replay_error, replay_run};
+pub use replay::{ReplayErrorResult, replay_error, replay_run};
 
 mod result;
 pub use result::InvariantFuzzTestResult;

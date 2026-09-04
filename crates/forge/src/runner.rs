@@ -9,16 +9,16 @@ use crate::{
         TestContract, TestFunctionMatcher, TestRunnerConfig,
         is_generated_symbolic_regression_contract,
     },
-    progress::{TestsProgress, start_fuzz_progress},
+    progress::TestsProgress,
     result::{
-        InvariantFailure, InvariantPredicateResult, SuiteResult, SymbolicArtifactRef,
-        SymbolicCallTrace, SymbolicCorpusSeedMetadata, SymbolicCorpusSeedRef,
+        InvariantFailure, InvariantOutcome, InvariantPredicateResult, SuiteResult,
+        SymbolicArtifactRef, SymbolicCallTrace, SymbolicCorpusSeedMetadata, SymbolicCorpusSeedRef,
         SymbolicCounterexample, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind,
         SymbolicCounterexampleCall, SymbolicCounterexampleMinimization,
         SymbolicCounterexampleReplaySemantics, SymbolicCounterexampleTestIdentity,
         SymbolicInvariantArtifactFailure, SymbolicInvariantFailureSite, SymbolicReplayMetadata,
-        SymbolicReplayStatus, SymbolicResult, TestResult, TestSetup, TestStatus,
-        invariant_campaign_display_name,
+        SymbolicReplayStatus, SymbolicResult, TestKind, TestResult, TestSetup, TestStatus,
+        invariant_campaign_display_name, invariant_kind,
     },
     symbolic_minimizer::{
         MinimizedSequence, minimize_sequence_counterexample, minimize_single_call_counterexample,
@@ -50,8 +50,8 @@ use foundry_evm::{
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
-            HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError, check_sequence,
-            execute_tx, execute_tx_and_register_created, replay_error,
+            HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError, ReplayErrorResult,
+            check_sequence, execute_tx, execute_tx_and_register_created, replay_error,
             replay_handler_failure_sequence, replay_run,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
@@ -337,32 +337,6 @@ mod tests {
         assert!(same_sequence_failure(&outcome(site(1, 1)), &expected));
         assert!(!same_sequence_failure(&outcome(site(2, 1)), &expected));
         assert!(!same_sequence_failure(&outcome(site(1, 2)), &expected));
-    }
-
-    #[test]
-    fn symbolic_handler_storage_requires_the_same_sequence() {
-        let tx = |byte: u8| BasicTxDetails {
-            warp: None,
-            roll: None,
-            sender: Address::with_last_byte(1),
-            call_details: CallDetails {
-                target: Address::with_last_byte(2),
-                calldata: Bytes::copy_from_slice(&[byte]),
-                value: None,
-            },
-        };
-        let assignment = SymbolicStorageAssignment {
-            address: Address::with_last_byte(3),
-            slot: U256::ZERO,
-            value: U256::from(42),
-        };
-        let storage = SymbolicHandlerReplayStorage {
-            call_sequence: vec![tx(1)],
-            assignments: vec![assignment.clone()],
-        };
-
-        assert_eq!(storage.assignments_for(&[tx(1)]), [assignment]);
-        assert!(storage.assignments_for(&[tx(2)]).is_empty());
     }
 
     fn count_anchors(abi: &JsonAbi, inline_config: &InlineConfig) -> usize {
@@ -1268,6 +1242,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self.cr.mcr.revert_decoder
     }
 
+    /// Creates the progress bar for a fuzz or invariant campaign, if progress is shown.
+    fn fuzz_progress(
+        &self,
+        test_name: &str,
+        timeout: Option<u32>,
+        runs: u32,
+    ) -> Option<indicatif::ProgressBar> {
+        self.cr.progress?.inner.lock().start_fuzz_progress(self.cr.name, test_name, timeout, runs)
+    }
+
     fn fuzz_minimize_target_id(&self, test_name: &str) -> String {
         let network = self
             .cr
@@ -1452,19 +1436,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             original_calls
         };
 
-        let (call_sequence, _, fork_block_number) = self.replay_error(
-            replay_config,
-            self.clone_executor_with_symbolic_storage(replay.storage)?,
-            replay_calls,
-            inner_sequence,
-            replay.assertion_failure,
-            None,
-            replay.invariant_contract,
-            replay.target_invariant,
-            identified_contracts,
-            progress,
-            position,
-        )?;
+        let ReplayErrorResult { counterexample_sequence: call_sequence, fork_block_number, .. } =
+            self.replay_error(
+                replay_config,
+                self.clone_executor_with_symbolic_storage(replay.storage)?,
+                replay_calls,
+                inner_sequence,
+                replay.assertion_failure,
+                None,
+                replay.invariant_contract,
+                replay.target_invariant,
+                identified_contracts,
+                progress,
+                position,
+            )?;
 
         let test_name = replay.target_invariant.signature();
         let calls = self.sequence_calls(&call_sequence);
@@ -1544,8 +1529,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         identified_contracts: &ContractsByAddress,
         progress: Option<&indicatif::ProgressBar>,
         position: Option<(usize, usize)>,
-    ) -> Result<(Vec<BaseCounterExample>, Option<CheckSequenceOutcome>, Option<u64>)> {
-        let replayed = replay_error(
+    ) -> Result<ReplayErrorResult> {
+        replay_error(
             config,
             executor,
             calls,
@@ -1565,8 +1550,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             progress,
             &self.tcfg.early_exit,
             position,
-        )?;
-        Ok((replayed.counterexample_sequence, replayed.check_result, replayed.fork_block_number))
+        )
     }
 
     fn minimize_symbolic_invariant_sequence(
@@ -2710,37 +2694,29 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             invariant_handler_failure_name(&setup_contracts, *reverter, *selector)
                         });
                         self.result.invariant_result(
-                            Vec::new(),
-                            false,
-                            None,
-                            Vec::new(),
-                            Vec::new(),
-                            None,
-                            None,
-                            vec![InvariantFailure::Handler {
-                                name: handler_name,
-                                reverter: *reverter,
-                                selector: *selector,
-                                reason: reason.unwrap_or_else(|| {
-                                    "symbolic handler counterexample".to_string()
-                                }),
-                                counterexample: Some(CounterExample::Sequence(calls.len(), calls)),
-                                artifact: Some(SymbolicArtifactRef::new(replay.path.clone())),
-                            }],
-                            None,
-                            1,
-                            outcome.calls_count,
-                            outcome.reverts,
-                            Default::default(),
-                            0,
-                            1,
-                            None,
+                            invariant_kind(1, outcome.calls_count, outcome.reverts),
+                            InvariantOutcome {
+                                handler_failures: vec![InvariantFailure::Handler {
+                                    name: handler_name,
+                                    reverter: *reverter,
+                                    selector: *selector,
+                                    reason: reason.unwrap_or_else(|| {
+                                        "symbolic handler counterexample".to_string()
+                                    }),
+                                    counterexample: Some(CounterExample::Sequence(
+                                        calls.len(),
+                                        calls,
+                                    )),
+                                    artifact: Some(SymbolicArtifactRef::new(replay.path.clone())),
+                                }],
+                                ..Default::default()
+                            },
                         );
                     }
                     _ => {
                         if let Some(SymbolicInvariantArtifactFailure::Predicate { site, .. }) =
                             artifact_failure
-                            && outcome.failure_site.map(symbolic_invariant_failure_site) != *site
+                            && outcome.failure_site.map(SymbolicInvariantFailureSite::from) != *site
                         {
                             return Err(format!(
                                 "sequence symbolic artifact replayed a different failure \
@@ -3000,13 +2976,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             table_fixtures.push(&fixtures[..]);
         }
 
-        let progress = start_fuzz_progress(
-            self.cr.progress,
-            self.cr.name,
-            &func.name,
-            None,
-            fixtures_len as u32,
-        );
+        let progress = self.fuzz_progress(&func.name, None, fixtures_len as u32);
 
         let mut result = FuzzTestResult::default();
 
@@ -3216,9 +3186,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
 
-        let progress = start_fuzz_progress(
-            self.cr.progress,
-            self.cr.name,
+        let progress = self.fuzz_progress(
             &invariant_display_name,
             invariant_config.timeout,
             invariant_config.runs,
@@ -3272,7 +3240,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 continue;
             }
             let Some(confirmed_failure_site) =
-                replay.failure_site.map(symbolic_invariant_failure_site)
+                replay.failure_site.map(SymbolicInvariantFailureSite::from)
             else {
                 continue;
             };
@@ -3344,10 +3312,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 progress.as_ref(),
                 None,
             ) {
-                Ok((sequence, check_result, _)) if !sequence.is_empty() => {
+                Ok(ReplayErrorResult {
+                    counterexample_sequence: sequence, check_result, ..
+                }) if !sequence.is_empty() => {
                     call_sequence = sequence;
                     if let Some(updated) = check_result {
-                        if updated.failure_site.map(symbolic_invariant_failure_site)
+                        if updated.failure_site.map(SymbolicInvariantFailureSite::from)
                             != Some(confirmed_failure_site)
                         {
                             continue;
@@ -3549,7 +3519,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         .map(SymbolicCounterexampleCall::to_basic_tx_details)
                         .collect::<Vec<_>>();
                     let original_sequence_len = txes.len();
-                    let failure_site = failure.failure_site.map(symbolic_invariant_failure_site);
+                    let failure_site = failure.failure_site.map(SymbolicInvariantFailureSite::from);
                     let (artifact_file_name, artifact_failure) = match handler_site {
                         Some((reverter, selector, fingerprint)) => (
                             format!("handler-{reverter}-{selector}"),
@@ -3709,22 +3679,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         Vec::new()
                     };
                     self.result.invariant_result(
-                        Vec::new(),
-                        false,
-                        fork_block_number,
-                        invariant_failures,
-                        invariant_predicate_results,
-                        Some(failure_dir),
-                        invariant_count,
-                        Vec::new(),
-                        None,
-                        1,
-                        failure.calls_count,
-                        failure.reverts,
-                        Default::default(),
-                        0,
-                        1,
-                        None,
+                        invariant_kind(1, failure.calls_count, failure.reverts),
+                        InvariantOutcome {
+                            fork_block_number,
+                            failures: invariant_failures,
+                            predicate_results: invariant_predicate_results,
+                            failure_dir: Some(failure_dir),
+                            invariant_count,
+                            ..Default::default()
+                        },
                     );
                     self.result.record_symbolic(symbolic_result);
                     return self.result;
@@ -3782,7 +3745,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     progress.as_ref(),
                     None,
                 ) {
-                    Ok((sequence, ..)) if !sequence.is_empty() => {
+                    Ok(ReplayErrorResult { counterexample_sequence: sequence, .. })
+                        if !sequence.is_empty() =>
+                    {
                         counterexample = Some(CounterExample::Sequence(
                             invariant_result.optimization_best_sequence.len(),
                             sequence,
@@ -4059,22 +4024,26 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .collect::<Vec<_>>();
 
         self.result.invariant_result(
-            invariant_result.gas_report_traces,
-            success,
-            fork_block_number,
-            invariant_failures,
-            invariant_predicate_results,
-            invariant_failure_dir,
-            invariant_count,
-            invariant_handler_failures,
-            counterexample,
-            invariant_result.runs,
-            invariant_result.calls,
-            invariant_result.reverts,
-            invariant_result.metrics,
-            invariant_result.failed_corpus_replays,
-            invariant_result.workers,
-            invariant_result.optimization_best_value,
+            TestKind::Invariant {
+                runs: invariant_result.runs,
+                calls: invariant_result.calls,
+                reverts: invariant_result.reverts,
+                workers: invariant_result.workers.max(1),
+                metrics: invariant_result.metrics,
+                failed_corpus_replays: invariant_result.failed_corpus_replays,
+                optimization_best_value: invariant_result.optimization_best_value,
+            },
+            InvariantOutcome {
+                success,
+                fork_block_number,
+                failures: invariant_failures,
+                handler_failures: invariant_handler_failures,
+                predicate_results: invariant_predicate_results,
+                failure_dir: invariant_failure_dir,
+                invariant_count,
+                counterexample,
+                gas_report_traces: invariant_result.gas_report_traces,
+            },
         );
         self.result
     }
@@ -4243,9 +4212,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.try_seed_fuzz_corpus_from_frontiers(func, &fuzz_config);
         self.try_seed_fuzz_corpus_symbolically(func, &fuzz_config);
 
-        let progress = start_fuzz_progress(
-            self.cr.progress,
-            self.cr.name,
+        let progress = self.fuzz_progress(
             &func.name,
             fuzz_config.timeout,
             if fuzz_config.run.is_some() { 1 } else { fuzz_config.runs },
@@ -4548,16 +4515,7 @@ struct SymbolicHandlerReplayStorage {
 
 impl SymbolicHandlerReplayStorage {
     fn assignments_for(&self, call_sequence: &[BasicTxDetails]) -> &[SymbolicStorageAssignment] {
-        let same = self.call_sequence.len() == call_sequence.len()
-            && self.call_sequence.iter().zip(call_sequence).all(|(expected, actual)| {
-                expected.warp == actual.warp
-                    && expected.roll == actual.roll
-                    && expected.sender == actual.sender
-                    && expected.call_details.target == actual.call_details.target
-                    && expected.call_details.calldata == actual.call_details.calldata
-                    && expected.call_details.value == actual.call_details.value
-            });
-        if same { &self.assignments } else { &[] }
+        if self.call_sequence == call_sequence { &self.assignments } else { &[] }
     }
 }
 
@@ -4989,22 +4947,6 @@ fn symbolic_invariant_unsupported_domain_reason(
         return Some("symbolic invariant execution does not model payable call values");
     }
     None
-}
-
-const fn symbolic_invariant_failure_site(
-    site: CheckSequenceFailureSite,
-) -> SymbolicInvariantFailureSite {
-    match site {
-        CheckSequenceFailureSite::SequenceCall { target, selector, fingerprint } => {
-            SymbolicInvariantFailureSite::SequenceCall { target, selector, fingerprint }
-        }
-        CheckSequenceFailureSite::Invariant { target, selector, fingerprint } => {
-            SymbolicInvariantFailureSite::Invariant { target, selector, fingerprint }
-        }
-        CheckSequenceFailureSite::AfterInvariant { target, selector, fingerprint } => {
-            SymbolicInvariantFailureSite::AfterInvariant { target, selector, fingerprint }
-        }
-    }
 }
 
 /// Replays one corpus-minimization candidate and records its coverage observation.

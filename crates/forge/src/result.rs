@@ -15,7 +15,10 @@ use foundry_evm::{
     core::{Breakpoints, evm::FoundryEvmNetwork},
     coverage::HitMaps,
     decode::SkipReason,
-    executors::{RawCallResult, invariant::InvariantMetrics},
+    executors::{
+        RawCallResult,
+        invariant::{CheckSequenceFailureSite, InvariantMetrics},
+    },
     fuzz::{
         CallDetails, CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult,
         strategies::EvmFuzzState,
@@ -369,7 +372,7 @@ pub struct SuiteTestResult {
 
 impl SuiteTestResult {
     /// Returns the gas used by the test.
-    pub fn gas_used(&self) -> u64 {
+    pub const fn gas_used(&self) -> u64 {
         self.result.kind.report().gas()
     }
 
@@ -1119,6 +1122,22 @@ pub enum SymbolicInvariantFailureSite {
     AfterInvariant { target: Address, selector: Selector, fingerprint: B256 },
 }
 
+impl From<CheckSequenceFailureSite> for SymbolicInvariantFailureSite {
+    fn from(site: CheckSequenceFailureSite) -> Self {
+        match site {
+            CheckSequenceFailureSite::SequenceCall { target, selector, fingerprint } => {
+                Self::SequenceCall { target, selector, fingerprint }
+            }
+            CheckSequenceFailureSite::Invariant { target, selector, fingerprint } => {
+                Self::Invariant { target, selector, fingerprint }
+            }
+            CheckSequenceFailureSite::AfterInvariant { target, selector, fingerprint } => {
+                Self::AfterInvariant { target, selector, fingerprint }
+            }
+        }
+    }
+}
+
 /// Test identity for a symbolic counterexample artifact.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1542,7 +1561,21 @@ macro_rules! extend {
 }
 
 /// Invariant kind for results that did not run a real campaign (setup failures, replays, skips).
-fn invariant_kind(runs: usize, calls: usize, reverts: usize) -> TestKind {
+/// Forge-side outcome of an invariant campaign, recorded into a [`TestResult`].
+#[derive(Default)]
+pub struct InvariantOutcome {
+    pub success: bool,
+    pub fork_block_number: Option<u64>,
+    pub failures: Vec<InvariantFailure>,
+    pub handler_failures: Vec<InvariantFailure>,
+    pub predicate_results: Vec<InvariantPredicateResult>,
+    pub failure_dir: Option<PathBuf>,
+    pub invariant_count: Option<usize>,
+    pub counterexample: Option<CounterExample>,
+    pub gas_report_traces: Vec<Vec<CallTraceArena>>,
+}
+
+pub(crate) fn invariant_kind(runs: usize, calls: usize, reverts: usize) -> TestKind {
     TestKind::Invariant {
         runs,
         calls,
@@ -1734,59 +1767,32 @@ impl TestResult {
     }
 
     /// Returns the invariant test result.
-    #[expect(clippy::too_many_arguments)]
-    pub fn invariant_result(
-        &mut self,
-        gas_report_traces: Vec<Vec<CallTraceArena>>,
-        success: bool,
-        fork_block_number: Option<u64>,
-        invariant_failures: Vec<InvariantFailure>,
-        invariant_predicate_results: Vec<InvariantPredicateResult>,
-        invariant_failure_dir: Option<PathBuf>,
-        invariant_count: Option<usize>,
-        invariant_handler_failures: Vec<InvariantFailure>,
-        counterexample: Option<CounterExample>,
-        runs: usize,
-        calls: usize,
-        reverts: usize,
-        metrics: Map<String, InvariantMetrics>,
-        failed_corpus_replays: usize,
-        workers: usize,
-        optimization_best_value: Option<I256>,
-    ) {
-        self.kind = TestKind::Invariant {
-            runs,
-            calls,
-            reverts,
-            workers: workers.max(1),
-            metrics,
-            failed_corpus_replays,
-            optimization_best_value,
-        };
+    pub fn invariant_result(&mut self, kind: TestKind, outcome: InvariantOutcome) {
         // For optimization mode (Some value), always succeed. For check mode (None), use success.
-        self.status = if optimization_best_value.is_some() || success {
-            TestStatus::Success
-        } else {
-            TestStatus::Failure
-        };
-        self.fork_block_number = fork_block_number;
-        self.invariant_predicate_results = invariant_predicate_results;
-        self.invariant_failure_dir = invariant_failure_dir;
-        self.invariant_count = invariant_count;
+        let optimizing =
+            matches!(kind, TestKind::Invariant { optimization_best_value: Some(_), .. });
+        self.kind = kind;
+        self.status =
+            if optimizing || outcome.success { TestStatus::Success } else { TestStatus::Failure };
+        self.fork_block_number = outcome.fork_block_number;
+        self.invariant_predicate_results = outcome.predicate_results;
+        self.invariant_failure_dir = outcome.failure_dir;
+        self.invariant_count = outcome.invariant_count;
         // `counterexample` is only used by the renderer for optimization mode (the "best
         // sequence" rendered on success). Invariant check-mode failures live entirely in
         // `invariant_failures`; `reason`/`counterexample` stay `None` for invariant tests.
-        self.counterexample = counterexample;
-        for artifact in invariant_failures
+        self.counterexample = outcome.counterexample;
+        for artifact in outcome
+            .failures
             .iter()
-            .chain(&invariant_handler_failures)
+            .chain(&outcome.handler_failures)
             .flat_map(|failure| replay_artifacts(failure.artifact(), failure.minimization()))
         {
             self.add_counterexample_artifact(artifact.clone());
         }
-        self.invariant_failures = invariant_failures;
-        self.invariant_handler_failures = invariant_handler_failures;
-        self.gas_report_traces = gas_report_traces;
+        self.invariant_failures = outcome.failures;
+        self.invariant_handler_failures = outcome.handler_failures;
+        self.gas_report_traces = outcome.gas_report_traces;
     }
 
     /// Returns the result for a symbolic test.
@@ -1903,7 +1909,6 @@ pub enum TestKindReport {
         runs: usize,
         calls: usize,
         reverts: usize,
-        metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
         /// For optimization mode (int256 return): the best value achieved. None = check mode.
         optimization_best_value: Option<I256>,
@@ -1937,7 +1942,6 @@ impl fmt::Display for TestKindReport {
                 runs,
                 calls,
                 reverts,
-                metrics: _,
                 failed_corpus_replays,
                 optimization_best_value,
             } => {
@@ -2060,7 +2064,7 @@ impl TestKind {
     }
 
     /// The gas consumed by this test
-    pub fn report(&self) -> TestKindReport {
+    pub const fn report(&self) -> TestKindReport {
         match *self {
             Self::Unit { gas } => TestKindReport::Unit { gas },
             Self::Fuzz { runs, mean_gas, median_gas, failed_corpus_replays, .. } => {
@@ -2077,7 +2081,6 @@ impl TestKind {
                 runs,
                 calls,
                 reverts,
-                metrics: Default::default(),
                 failed_corpus_replays,
                 optimization_best_value,
             },

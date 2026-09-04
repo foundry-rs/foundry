@@ -6,6 +6,7 @@ use crate::{
     result::{SuiteResult, SymbolicCounterexampleArtifact, SymbolicCounterexampleArtifactKind},
     runner::{
         ContractRunnerContext, InvariantCampaignScope, count_runnable_invariant_campaign_anchors,
+        function_matches_network_pass,
     },
     symbolic_regression::SYMBOLIC_REGRESSION_MARKER,
 };
@@ -115,7 +116,7 @@ impl<FEN: FoundryEvmNetwork> DerefMut for MultiContractRunner<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
-    fn test_function_matcher(&self) -> TestFunctionMatcher<'_> {
+    pub(crate) fn test_function_matcher(&self) -> TestFunctionMatcher<'_> {
         TestFunctionMatcher::new(
             &self.config,
             &self.inline_config,
@@ -1030,6 +1031,44 @@ impl<'a> TestFunctionMatcher<'a> {
         self.test_functions(id.identifier(), abi, move |contract_id, func, kind| {
             filter.matches_test_function_kind_in_contract(contract_id, func, kind)
         })
+    }
+
+    /// Counts the fuzz test functions and runnable invariant campaign anchors of `abi` that
+    /// match `filter` in the current network pass.
+    pub(crate) fn count_fuzz_engine_targets(
+        &self,
+        filter: &dyn TestFilter,
+        id: &ArtifactId,
+        abi: &JsonAbi,
+        multi_network: &MultiNetworkConfig,
+    ) -> (usize, usize) {
+        let contract_name = id.identifier();
+        let matches_network_pass = |func: &Function| {
+            function_matches_network_pass(
+                &multi_network.all_override_networks,
+                multi_network.pass_network.as_ref(),
+                self.inline_config.network_for(&self.config.profile, &contract_name, &func.name),
+            )
+        };
+        let fuzz = self
+            .test_functions(contract_name.clone(), abi, |contract_id, func, kind| {
+                matches!(kind, TestFunctionKind::FuzzTest { .. })
+                    && filter.matches_test_function_kind_in_contract(contract_id, func, kind)
+                    && matches_network_pass(func)
+            })
+            .count();
+        let invariant = count_runnable_invariant_campaign_anchors(
+            abi,
+            filter,
+            InvariantCampaignScope {
+                config: self.config,
+                inline_config: self.inline_config,
+                contract_name: &contract_name,
+                all_override_networks: &multi_network.all_override_networks,
+                pass_network: multi_network.pass_network.as_ref(),
+            },
+        );
+        (fuzz, invariant)
     }
 
     pub(crate) fn matches_contract(

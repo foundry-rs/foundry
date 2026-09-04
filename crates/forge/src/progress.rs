@@ -104,14 +104,3 @@ impl TestsProgress {
         Self { inner: Arc::new(Mutex::new(TestsProgressState::new(suites_len, threads_no))) }
     }
 }
-
-/// Helper function for creating fuzz test progress bar.
-pub fn start_fuzz_progress(
-    tests_progress: Option<&TestsProgress>,
-    suite_name: &str,
-    test_name: &str,
-    timeout: Option<u32>,
-    runs: u32,
-) -> Option<ProgressBar> {
-    tests_progress?.inner.lock().start_fuzz_progress(suite_name, test_name, timeout, runs)
-}

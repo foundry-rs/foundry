@@ -13,10 +13,7 @@ use crate::{
         SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA, SuiteResult, SymbolicCounterexampleArtifact,
         SymbolicReplayStatus, TestKind, TestKindReport, TestOutcome, TestResult, TestStatus,
     },
-    runner::{
-        InvariantCampaignScope, count_runnable_invariant_campaign_anchors,
-        effective_test_function_kind, function_matches_network_pass, inline_config_for,
-    },
+    runner::{effective_test_function_kind, inline_config_for},
     symbolic_regression::{
         SymbolicRegression, SymbolicRegressionConfig, attach_symbolic_regressions_to_suites,
         collect_symbolic_artifacts_from_suites, emit_symbolic_regressions,
@@ -199,41 +196,17 @@ fn count_fuzz_minimize_targets<FEN: FoundryEvmNetwork>(
     runner: &MultiContractRunner<FEN>,
     filter: &dyn TestFilter,
 ) -> usize {
-    let tcfg = &runner.tcfg;
-    let multi_network = &tcfg.multi_network;
+    let matcher = runner.test_function_matcher();
     runner
         .matching_contracts(filter)
         .map(|(id, contract)| {
-            let contract_name = id.identifier();
-            let fuzz_targets = contract
-                .abi
-                .functions()
-                .filter(|func| {
-                    func.is_fuzz_test()
-                        && filter.matches_test_function_in_contract(&contract_name, func)
-                        && function_matches_network_pass(
-                            &multi_network.all_override_networks,
-                            multi_network.pass_network.as_ref(),
-                            tcfg.inline_config.network_for(
-                                &tcfg.config.profile,
-                                &contract_name,
-                                &func.name,
-                            ),
-                        )
-                })
-                .count();
-            let invariant_targets = count_runnable_invariant_campaign_anchors(
-                &contract.abi,
+            let (fuzz, invariant) = matcher.count_fuzz_engine_targets(
                 filter,
-                InvariantCampaignScope {
-                    config: &tcfg.config,
-                    inline_config: &tcfg.inline_config,
-                    contract_name: &contract_name,
-                    all_override_networks: &multi_network.all_override_networks,
-                    pass_network: multi_network.pass_network.as_ref(),
-                },
+                id,
+                &contract.abi,
+                &runner.tcfg.multi_network,
             );
-            fuzz_targets + invariant_targets
+            fuzz + invariant
         })
         .sum()
 }
@@ -1300,36 +1273,9 @@ impl TestArgs {
         let matcher = TestFunctionMatcher::new(config, inline_config, None);
         let (mut fuzz, mut invariant) = (0, 0);
         for (id, _, abi) in matching_test_contracts(output, config, &matcher, filter) {
-            let contract_name = id.identifier();
-            let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
-            fuzz += abi
-                .functions()
-                .filter(|func| {
-                    let kind = matcher.test_function_kind(
-                        &contract_name,
-                        func,
-                        generated_symbolic_regression,
-                    );
-                    matches!(kind, TestFunctionKind::FuzzTest { .. })
-                        && filter.matches_test_function_kind_in_contract(&contract_name, func, kind)
-                        && function_matches_network_pass(
-                            &multi_network.all_override_networks,
-                            multi_network.pass_network.as_ref(),
-                            inline_config.network_for(&config.profile, &contract_name, &func.name),
-                        )
-                })
-                .count();
-            invariant += count_runnable_invariant_campaign_anchors(
-                abi,
-                filter,
-                InvariantCampaignScope {
-                    config,
-                    inline_config,
-                    contract_name: &contract_name,
-                    all_override_networks: &multi_network.all_override_networks,
-                    pass_network: multi_network.pass_network.as_ref(),
-                },
-            );
+            let (f, i) = matcher.count_fuzz_engine_targets(filter, &id, abi, multi_network);
+            fuzz += f;
+            invariant += i;
         }
         let unused: &[(bool, &str, &str)] = if fuzz == 0 && invariant > 0 {
             &[
