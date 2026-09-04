@@ -2,13 +2,9 @@ use alloy_consensus::BlockHeader;
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{BlockResponse, TransactionResponse};
 use alloy_provider::Provider;
-#[cfg(feature = "monad")]
-use alloy_rpc_types::BlockNumberOrTag;
 use alloy_rpc_types::BlockTransactions;
 use eyre::{Result, WrapErr};
 
-#[cfg(feature = "monad")]
-use super::MonadEvmNetwork;
 use super::{BlockResponseFor, ChainFor, FoundryEvmNetwork, TxEnvFor};
 use crate::FoundryChain;
 
@@ -92,31 +88,6 @@ impl<FEN: FoundryEvmNetwork> BlockContext<FEN> {
         self.grandparent = std::mem::take(&mut self.parent);
         self.parent = std::mem::take(&mut self.current);
     }
-}
-
-/// Builds Monad context for a synthetic transaction executed on top of `block_number`.
-#[cfg(feature = "monad")]
-pub async fn monad_context_for_child_transaction<P>(
-    provider: &P,
-    block_number: u64,
-    tx: &TxEnvFor<MonadEvmNetwork>,
-) -> Result<ChainFor<MonadEvmNetwork>>
-where
-    P: Provider<<MonadEvmNetwork as FoundryEvmNetwork>::Network>,
-{
-    let block = provider
-        .get_block(BlockNumberOrTag::Number(block_number).into())
-        .full()
-        .await?
-        .ok_or_else(|| eyre::eyre!("block {block_number} not found while building EVM context"))?;
-    let parent = fetch_parent::<MonadEvmNetwork, P>(provider, &block).await?;
-    let current = transaction_envs::<MonadEvmNetwork>(&block)?;
-    let parent =
-        parent.as_ref().map(transaction_envs::<MonadEvmNetwork>).transpose()?.unwrap_or_default();
-
-    Ok(BlockContext::<MonadEvmNetwork>::new(Vec::new(), parent, current)
-        .into_child()
-        .next_transaction(tx))
 }
 
 async fn fetch_parent<FEN, P>(

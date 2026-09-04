@@ -35,7 +35,7 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     abi::{encode_function_args, get_func},
-    provider::{ProviderBuilder, RetryProvider, curl_transport::generate_curl_command},
+    provider::{ProviderBuilder, curl_transport::generate_curl_command},
     sh_println, shell,
 };
 use foundry_compilers::artifacts::EvmVersion;
@@ -52,8 +52,8 @@ use foundry_evm::core::evm::MonadEvmNetwork;
 use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
-        FoundryBlock, FoundryChain, FoundryTransaction,
-        evm::{ChainFor, EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        FoundryBlock, FoundryTransaction,
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
     },
     executors::{ExecutorBuilder, TracingExecutor},
     opts::EvmOpts,
@@ -61,46 +61,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
-use revm::context::Block;
 use std::str::FromStr;
-
-struct StatelessChildContext;
-
-#[cfg(feature = "monad")]
-struct MonadChildContext;
-
-trait ChildTransactionContext<FEN: FoundryEvmNetwork> {
-    async fn build(
-        &self,
-        provider: &RetryProvider<FEN::Network>,
-        block_number: u64,
-        tx: &TxEnvFor<FEN>,
-    ) -> Result<ChainFor<FEN>>;
-}
-
-impl<FEN: FoundryEvmNetwork> ChildTransactionContext<FEN> for StatelessChildContext {
-    async fn build(
-        &self,
-        _provider: &RetryProvider<FEN::Network>,
-        _block_number: u64,
-        tx: &TxEnvFor<FEN>,
-    ) -> Result<ChainFor<FEN>> {
-        Ok(ChainFor::<FEN>::for_transaction(tx))
-    }
-}
-
-#[cfg(feature = "monad")]
-impl ChildTransactionContext<MonadEvmNetwork> for MonadChildContext {
-    async fn build(
-        &self,
-        provider: &RetryProvider<<MonadEvmNetwork as FoundryEvmNetwork>::Network>,
-        block_number: u64,
-        tx: &TxEnvFor<MonadEvmNetwork>,
-    ) -> Result<ChainFor<MonadEvmNetwork>> {
-        foundry_evm::core::evm::monad_context_for_child_transaction(provider, block_number, tx)
-            .await
-    }
-}
 
 /// CLI arguments for `cast call`.
 ///
@@ -318,7 +279,6 @@ impl CallArgs {
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<TempoEvmNetwork>::new(),
-                    StatelessChildContext,
                 )
                 .await;
         }
@@ -331,7 +291,6 @@ impl CallArgs {
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<MonadEvmNetwork>::new(),
-                    MonadChildContext,
                 )
                 .await;
         }
@@ -344,7 +303,6 @@ impl CallArgs {
                     evm_opts,
                     auth_preflight,
                     ExecutorBuilder::<OpEvmNetwork>::new(),
-                    StatelessChildContext,
                 )
                 .await;
         }
@@ -354,7 +312,6 @@ impl CallArgs {
             evm_opts,
             auth_preflight,
             ExecutorBuilder::<EthEvmNetwork>::new(),
-            StatelessChildContext,
         )
         .await
     }
@@ -412,7 +369,6 @@ impl CallArgs {
         evm_opts: EvmOpts,
         auth_preflight: AuthDisclosurePreflight,
         executor_builder: ExecutorBuilder<FEN>,
-        child_context: impl ChildTransactionContext<FEN>,
     ) -> Result<()> {
         config.networks = evm_opts.networks;
         let mut state_overrides = self.get_state_overrides()?;
@@ -681,7 +637,6 @@ impl CallArgs {
             let create2_deployer = evm_opts.create2_deployer;
             let verbosity = tracing.verbosity;
             let mut fork = TracingExecutor::<FEN>::get_fork(&mut config, evm_opts).await?;
-            let context_block_number = fork.evm_env.block_env.number().saturating_to();
             // Modify settings usually set in eth_call while keeping execution gas bounded.
             fork.evm_env.cfg_env.disable_block_gas_limit = true;
             fork.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
@@ -759,22 +714,13 @@ impl CallArgs {
                 env_tx.set_signed_authorization(auth);
             }
 
-            let mut context_tx = executor.tx_env().clone();
-            context_tx.set_caller(from);
-            context_tx.set_kind(tx_kind);
-            context_tx.set_data(input.clone());
-            context_tx.set_value(value);
-            let chain_context =
-                child_context.build(&provider, context_block_number, &context_tx).await?;
-
             let trace = match tx_kind {
                 TxKind::Create => {
-                    let deploy_result =
-                        executor.deploy_with_context(from, input, value, chain_context, None);
+                    let deploy_result = executor.deploy(from, input, value, None);
                     TraceResult::try_from(deploy_result)?
                 }
                 TxKind::Call(to) => TraceResult::from_raw(
-                    executor.transact_raw_with_context(from, to, input, value, chain_context)?,
+                    executor.transact_raw(from, to, input, value)?,
                     TraceKind::Execution,
                 ),
             };
