@@ -1,7 +1,6 @@
 [package]
 name = "foundry-evm-symbolic"
 description = "Foundry symbolic EVM executor"
-readme = "README.md"
 
 version.workspace = true
 edition.workspace = true
