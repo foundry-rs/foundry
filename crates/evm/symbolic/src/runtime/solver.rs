@@ -86,6 +86,27 @@ impl fmt::Display for SolverOutcome {
 
 pub(crate) type QueryObserver = Box<dyn Fn(usize) + Send + Sync + 'static>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BranchFeasibility {
+    Sat,
+    Unsat,
+    NeedsSolver,
+}
+
+impl BranchFeasibility {
+    const fn from_bool(sat: bool) -> Self {
+        if sat { Self::Sat } else { Self::Unsat }
+    }
+
+    const fn into_result(self) -> Result<bool, SymbolicError> {
+        match self {
+            Self::Sat => Ok(true),
+            Self::Unsat => Ok(false),
+            Self::NeedsSolver => Err(SymbolicError::SolverUnknown),
+        }
+    }
+}
+
 /// Minimal solver backend interface used by the symbolic executor.
 ///
 /// Implementations are responsible for translating accumulated symbolic constraints
@@ -112,6 +133,7 @@ pub(crate) trait SymbolicSolver {
     fn clear_context_caches(&mut self) {}
 
     /// Returns the number of satisfiable witnesses produced by local hard-arithmetic search.
+    #[cfg(test)]
     fn heuristic_witnesses(&self) -> usize {
         0
     }
@@ -143,6 +165,18 @@ pub(crate) trait SymbolicSolver {
         self.is_sat(cx, constraints)
     }
 
+    /// Checks a branch using local fast paths and indicates when backend solving should be
+    /// deferred.
+    fn branch_feasibility_with_replayable_storage(
+        &mut self,
+        cx: &mut SymCx,
+        constraints: &[SymBoolExpr],
+        replayable_storage: &SymbolicVars,
+    ) -> Result<BranchFeasibility, SymbolicError> {
+        self.is_sat_with_replayable_storage(cx, constraints, replayable_storage)
+            .map(BranchFeasibility::from_bool)
+    }
+
     #[cfg(test)]
     fn is_sat_branch(
         &mut self,
@@ -150,16 +184,6 @@ pub(crate) trait SymbolicSolver {
         constraints: &[SymBoolExpr],
     ) -> Result<bool, SymbolicError> {
         self.is_sat(cx, constraints)
-    }
-
-    /// Returns branch satisfiability with path-local storage symbols concrete replay can set.
-    fn is_sat_branch_with_replayable_storage(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-        replayable_storage: &SymbolicVars,
-    ) -> Result<bool, SymbolicError> {
-        self.is_sat_with_replayable_storage(cx, constraints, replayable_storage)
     }
 
     /// Returns a concrete model for all symbolic variables constrained by the path.
@@ -347,6 +371,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     }
 
     /// Returns how many validated local hard-arithmetic witnesses this solver used.
+    #[cfg(test)]
     fn heuristic_witnesses(&self) -> usize {
         self.heuristic_witnesses
     }
@@ -375,7 +400,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
     ) -> Result<bool, SymbolicError> {
-        self.is_sat_inner(cx, constraints, false)
+        self.is_sat_inner(cx, constraints, false)?.into_result()
     }
 
     fn is_sat_with_replayable_storage(
@@ -385,7 +410,8 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         replayable_storage: &SymbolicVars,
     ) -> Result<bool, SymbolicError> {
         let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
-        let result = self.is_sat_inner(cx, constraints, false);
+        let result =
+            self.is_sat_inner(cx, constraints, false).and_then(BranchFeasibility::into_result);
         self.replayable_storage = previous;
         result
     }
@@ -396,15 +422,15 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
     ) -> Result<bool, SymbolicError> {
-        self.is_sat_inner(cx, constraints, true)
+        self.is_sat_inner(cx, constraints, true)?.into_result()
     }
 
-    fn is_sat_branch_with_replayable_storage(
+    fn branch_feasibility_with_replayable_storage(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
         replayable_storage: &SymbolicVars,
-    ) -> Result<bool, SymbolicError> {
+    ) -> Result<BranchFeasibility, SymbolicError> {
         let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
         let result = self.is_sat_inner(cx, constraints, true);
         self.replayable_storage = previous;
@@ -555,7 +581,7 @@ impl SmtLibSubprocessSolver {
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
         defer_hard_arith_without_witness: bool,
-    ) -> Result<bool, SymbolicError> {
+    ) -> Result<BranchFeasibility, SymbolicError> {
         self.sat_queries += 1;
         let smt_constraints =
             normalize_sat_constraints(cx, constraints, &mut self.normalization_cache);
@@ -563,13 +589,13 @@ impl SmtLibSubprocessSolver {
         if let Some(result) = self.sat_cache.get(&cache_key) {
             self.sat_cache_hits += 1;
             trace!(result, "is_sat: normalized cache hit");
-            return Ok(*result);
+            return Ok(BranchFeasibility::from_bool(*result));
         }
         if self.has_cached_unsat_subset(&cache_key) {
             self.sat_cache_hits += 1;
             trace!("is_sat: normalized unsat subset cache hit");
             self.cache_sat_result(cache_key, false);
-            return Ok(false);
+            return Ok(BranchFeasibility::Unsat);
         }
         if defer_hard_arith_without_witness
             && let Some((condition, base)) = constraints.split_last()
@@ -590,7 +616,7 @@ impl SmtLibSubprocessSolver {
             self.sat_cache_hits += 1;
             trace!("is_sat: branch complement unsat cache hit");
             self.cache_sat_result(cache_key, true);
-            return Ok(true);
+            return Ok(BranchFeasibility::Sat);
         }
 
         self.reserve_query()?;
@@ -606,31 +632,31 @@ impl SmtLibSubprocessSolver {
         if constraints_are_directly_unsat(cx, &smt_constraints) {
             trace!("is_sat: direct contradiction");
             self.cache_sat_result(cache_key, false);
-            return Ok(false);
+            return Ok(BranchFeasibility::Unsat);
         }
         if product_monotonic_unsat_normalized(&smt_constraints) {
             trace!("is_sat: monotonic product contradiction");
             self.cache_sat_result(cache_key, false);
-            return Ok(false);
+            return Ok(BranchFeasibility::Unsat);
         }
         if !constraints.is_empty()
             && model_satisfies_constraints(&SymbolicModel::default(), constraints)
             && !constraints.iter().any(SymBoolExpr::contains_gasleft)
         {
             self.cache_sat_result(cache_key, true);
-            return Ok(true);
+            return Ok(BranchFeasibility::Sat);
         }
         if let Some(model) = fallback_single_var_model(&smt_constraints)
             && model_satisfies_constraints(&model, constraints)
         {
             self.cache_sat_result(cache_key, true);
-            return Ok(true);
+            return Ok(BranchFeasibility::Sat);
         }
         if let Some(model) = fallback_two_var_model(&smt_constraints)
             && model_satisfies_constraints(&model, constraints)
         {
             self.cache_sat_result(cache_key, true);
-            return Ok(true);
+            return Ok(BranchFeasibility::Sat);
         }
         if checked_mul_guard_branch_model(
             cx,
@@ -642,18 +668,18 @@ impl SmtLibSubprocessSolver {
         {
             trace!("is_sat: validated constructive checked-multiply guard model");
             self.cache_sat_result(cache_key, true);
-            return Ok(true);
+            return Ok(BranchFeasibility::Sat);
         }
         if constraints_prefer_hard_arith_fallback_first(cx, &smt_constraints) {
             if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some() {
                 self.heuristic_witnesses += 1;
                 trace!("is_sat: validated hard arithmetic fallback model before solver");
                 self.cache_sat_result(cache_key, true);
-                return Ok(true);
+                return Ok(BranchFeasibility::Sat);
             }
             if defer_hard_arith_without_witness {
                 trace!("is_sat: deferring hard arithmetic branch without local witness");
-                return Err(SymbolicError::SolverUnknown);
+                return Ok(BranchFeasibility::NeedsSolver);
             }
         }
         let output = match self.query_normalized(cx, &smt_constraints, false, constraints) {
@@ -664,7 +690,7 @@ impl SmtLibSubprocessSolver {
                     self.heuristic_witnesses += 1;
                     trace!("is_sat: validated hard arithmetic fallback model after solver unknown");
                     self.cache_sat_result(cache_key, true);
-                    return Ok(true);
+                    return Ok(BranchFeasibility::Sat);
                 }
                 return Err(SymbolicError::SolverUnknown);
             }
@@ -673,18 +699,18 @@ impl SmtLibSubprocessSolver {
         match output.lines().next().unwrap_or_default().trim() {
             "sat" => {
                 self.cache_sat_result(cache_key, true);
-                Ok(true)
+                Ok(BranchFeasibility::Sat)
             }
             "unsat" => {
                 self.cache_sat_result(cache_key, false);
-                Ok(false)
+                Ok(BranchFeasibility::Unsat)
             }
             "unknown" => {
                 if validated_hard_arith_fallback_model(cx, &smt_constraints, constraints).is_some()
                 {
                     self.heuristic_witnesses += 1;
                     self.cache_sat_result(cache_key, true);
-                    Ok(true)
+                    Ok(BranchFeasibility::Sat)
                 } else {
                     Err(SymbolicError::SolverUnknown)
                 }
