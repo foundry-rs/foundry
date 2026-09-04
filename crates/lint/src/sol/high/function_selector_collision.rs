@@ -206,10 +206,10 @@ fn lvalue_contains_var(expr: &Expr<'_>, target: VariableId) -> bool {
     }
 }
 
-fn extend_unique(paths: &mut Vec<PathState>, new_paths: impl IntoIterator<Item = PathState>) {
-    for path in new_paths {
-        if !paths.contains(&path) {
-            paths.push(path);
+fn extend_unique<T: PartialEq>(items: &mut Vec<T>, new_items: impl IntoIterator<Item = T>) {
+    for item in new_items {
+        if !items.contains(&item) {
+            items.push(item);
         }
     }
 }
@@ -323,34 +323,31 @@ impl<'hir> DelegateTargetCollector<'hir> {
         self.paths = output_paths;
     }
 
+    /// Records `contract` as a delegatecall target reachable under the current paths' selector
+    /// filters (only paths on which `required_input` still holds the full calldata count).
     fn record_target(&mut self, contract: ContractId, required_input: Option<CalldataInput>) {
         let mut filters = Vec::new();
-        for path in &self.paths {
-            if required_input.is_none_or(|input| path.input_unmodified(input))
-                && !filters.contains(&path.selector_filter)
-            {
-                filters.push(path.selector_filter.clone());
-            }
-        }
+        extend_unique(
+            &mut filters,
+            self.paths
+                .iter()
+                .filter(|path| required_input.is_none_or(|input| path.input_unmodified(input)))
+                .map(|path| path.selector_filter.clone()),
+        );
         if filters.is_empty() {
             return;
         }
-        if filters.len() > MAX_LOOP_PATH_STATES {
-            filters = vec![SelectorFilter::default()];
-        }
-
-        let Some(target) = self.targets.iter_mut().find(|target| target.contract == contract)
-        else {
-            return self.targets.push(DelegateTarget { contract, filters });
+        let target = match self.targets.iter().position(|target| target.contract == contract) {
+            Some(index) => &mut self.targets[index],
+            None => {
+                self.targets.push(DelegateTarget { contract, filters: Vec::new() });
+                self.targets.last_mut().expect("target was just pushed")
+            }
         };
         if target.filters.contains(&SelectorFilter::default()) {
             return;
         }
-        for filter in filters {
-            if !target.filters.contains(&filter) {
-                target.filters.push(filter);
-            }
-        }
+        extend_unique(&mut target.filters, filters);
         if target.filters.len() > MAX_LOOP_PATH_STATES {
             target.filters = vec![SelectorFilter::default()];
         }
