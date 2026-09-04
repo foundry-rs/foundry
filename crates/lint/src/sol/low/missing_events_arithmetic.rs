@@ -7,11 +7,15 @@ use crate::{
     },
 };
 use solar::{
-    ast::{ContractKind, StateMutability, Visibility},
+    ast::{ContractKind, StateMutability},
     interface::{Span, kw, sym},
-    sema::hir::{
-        self, BinOpKind, ElementaryType, ExprKind, FunctionId, ItemId, Res, StmtKind, TypeKind,
-        UnOpKind, VariableId,
+    sema::{
+        Gcx,
+        hir::{
+            self, BinOpKind, ContractId, ElementaryType, ExprKind, FunctionId, ItemId, Res,
+            StmtKind, TypeKind, UnOpKind, VariableId,
+        },
+        ty::TyKind,
     },
 };
 use std::collections::{HashMap, HashSet};
@@ -24,28 +28,40 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
-    fn check_contract(
+    fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
+        gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
-        contract: &'hir hir::Contract<'hir>,
+        contract_id: ContractId,
     ) {
-        if contract.kind != ContractKind::Contract {
+        let contract = hir.contract(contract_id);
+        if contract.kind != ContractKind::Contract || contract.linearization_failed() {
             return;
         }
 
-        let candidate_vars: HashSet<_> =
-            contract.variables().filter(|&var_id| is_candidate_state_var(hir, var_id)).collect();
+        // State variables and their entry points are commonly split across a base/derived pair,
+        // so collect candidates from the whole inheritance chain.
+        let candidate_vars: HashSet<_> = contract
+            .linearized_bases
+            .iter()
+            .flat_map(|&cid| hir.contract(cid).variables())
+            .filter(|&var_id| is_candidate_state_var(hir, var_id))
+            .collect();
         if candidate_vars.is_empty() {
             return;
         }
 
+        // The externally reachable functions, with overridden base implementations resolved to
+        // the most derived one.
+        let entry_points: Vec<_> =
+            gcx.interface_functions(contract_id).all().iter().map(|func| func.id).collect();
+
         let mut protected_funcs = HashSet::new();
         let mut protected_entry_points = Vec::new();
-        for func_id in contract.all_functions() {
+        for &func_id in &entry_points {
             let func = hir.function(func_id);
-            if !is_external_function(func) || !is_protected(hir, func_id, func) {
+            if !is_protected(hir, func_id, func) {
                 continue;
             }
 
@@ -58,14 +74,22 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
             return;
         }
 
-        let arithmetic_vars =
-            vars_used_in_unprotected_arithmetic(hir, contract, &candidate_vars, &protected_funcs);
+        let arithmetic_vars = vars_used_in_unprotected_arithmetic(
+            gcx,
+            hir,
+            contract_id,
+            &entry_points,
+            &candidate_vars,
+            &protected_funcs,
+        );
         if arithmetic_vars.is_empty() {
             return;
         }
 
+        // A concrete base and every contract deriving from it report the same write; the
+        // diagnostic context deduplicates identical diagnostics.
         for func_id in protected_entry_points {
-            let mut analyzer = WriteAnalyzer::new(hir, &arithmetic_vars);
+            let mut analyzer = WriteAnalyzer::new(gcx, hir, contract_id, &arithmetic_vars);
             let writes = analyzer.analyze_entry_point(func_id);
             let mut emitted = HashSet::new();
 
@@ -100,28 +124,22 @@ fn is_candidate_state_var(hir: &hir::Hir<'_>, var_id: VariableId) -> bool {
         )
 }
 
-fn is_external_function(func: &hir::Function<'_>) -> bool {
-    func.kind.is_function()
-        && matches!(func.visibility, Visibility::Public | Visibility::External)
-        && !func.is_constructor()
-        && !func.is_special()
-}
-
 fn vars_used_in_unprotected_arithmetic<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
-    contract: &hir::Contract<'hir>,
+    contract_id: ContractId,
+    entry_points: &[FunctionId],
     candidate_vars: &HashSet<VariableId>,
     protected_funcs: &HashSet<FunctionId>,
 ) -> HashSet<VariableId> {
     let mut used = HashSet::new();
 
-    for func_id in contract.all_functions() {
-        let func = hir.function(func_id);
-        if !is_external_function(func) || protected_funcs.contains(&func_id) {
+    for &func_id in entry_points {
+        if protected_funcs.contains(&func_id) {
             continue;
         }
 
-        let mut analyzer = ArithmeticUseAnalyzer::new(hir, candidate_vars);
+        let mut analyzer = ArithmeticUseAnalyzer::new(gcx, hir, contract_id, candidate_vars);
         used.extend(analyzer.analyze_entry_point(func_id));
     }
 
@@ -164,14 +182,21 @@ impl WriteFlow {
 }
 
 struct WriteAnalyzer<'a, 'hir> {
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
+    contract_id: ContractId,
     targets: &'a HashSet<VariableId>,
     call_stack: Vec<FunctionId>,
 }
 
 impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
-    const fn new(hir: &'hir hir::Hir<'hir>, targets: &'a HashSet<VariableId>) -> Self {
-        Self { hir, targets, call_stack: Vec::new() }
+    const fn new(
+        gcx: Gcx<'hir>,
+        hir: &'hir hir::Hir<'hir>,
+        contract_id: ContractId,
+        targets: &'a HashSet<VariableId>,
+    ) -> Self {
+        Self { gcx, hir, contract_id, targets, call_stack: Vec::new() }
     }
 
     fn analyze_entry_point(&mut self, func_id: FunctionId) -> Vec<StateWrite> {
@@ -379,7 +404,7 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
                     self.analyze_expr(arg, state);
                 }
 
-                for callee_id in resolved_function_ids(callee) {
+                if let Some(callee_id) = resolved_function_id(self.gcx, self.contract_id, callee) {
                     self.analyze_internal_call(callee_id, args, state);
                 }
             }
@@ -570,7 +595,9 @@ fn set_taint_entry(
 }
 
 struct ArithmeticUseAnalyzer<'a, 'hir> {
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
+    contract_id: ContractId,
     targets: &'a HashSet<VariableId>,
     taint: HashMap<VariableId, HashSet<VariableId>>,
     used: HashSet<VariableId>,
@@ -578,8 +605,21 @@ struct ArithmeticUseAnalyzer<'a, 'hir> {
 }
 
 impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
-    fn new(hir: &'hir hir::Hir<'hir>, targets: &'a HashSet<VariableId>) -> Self {
-        Self { hir, targets, taint: HashMap::new(), used: HashSet::new(), call_stack: Vec::new() }
+    fn new(
+        gcx: Gcx<'hir>,
+        hir: &'hir hir::Hir<'hir>,
+        contract_id: ContractId,
+        targets: &'a HashSet<VariableId>,
+    ) -> Self {
+        Self {
+            gcx,
+            contract_id,
+            hir,
+            targets,
+            taint: HashMap::new(),
+            used: HashSet::new(),
+            call_stack: Vec::new(),
+        }
     }
 
     fn analyze_entry_point(&mut self, func_id: FunctionId) -> HashSet<VariableId> {
@@ -693,7 +733,7 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
                     self.analyze_expr(arg);
                 }
 
-                for callee_id in resolved_function_ids(callee) {
+                if let Some(callee_id) = resolved_function_id(self.gcx, self.contract_id, callee) {
                     self.analyze_internal_call(callee_id, args);
                 }
             }
@@ -801,7 +841,7 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
                 for arg in args.exprs() {
                     self.collect_call_return_sources(arg, out);
                 }
-                for callee_id in resolved_function_ids(callee) {
+                if let Some(callee_id) = resolved_function_id(self.gcx, self.contract_id, callee) {
                     self.collect_function_return_sources(callee_id, args, out);
                 }
             }
@@ -1677,4 +1717,29 @@ fn resolved_function_ids<'hir>(
         Res::Item(ItemId::Function(func_id)) => Some(*func_id),
         _ => None,
     })
+}
+
+fn resolved_function_id(
+    gcx: Gcx<'_>,
+    contract_id: ContractId,
+    callee: &hir::Expr<'_>,
+) -> Option<FunctionId> {
+    let callee = callee.peel_parens();
+    let resolved = gcx.resolved_callee(callee.id)?;
+    let Res::Item(ItemId::Function(function_id)) = resolved.res else { return None };
+
+    if let ExprKind::Member(base, _) = &callee.kind
+        && let Some(TyKind::Type(ty)) = gcx.type_of_expr(base.id).map(|ty| ty.kind)
+    {
+        return Some(match ty.kind {
+            TyKind::Contract(_) => function_id,
+            TyKind::Super(defining_contract) => {
+                gcx.resolve_super_function(contract_id, defining_contract, function_id)
+            }
+            _ => return None,
+        });
+    }
+
+    matches!(callee.kind, ExprKind::Ident(_))
+        .then(|| gcx.resolve_virtual_function(contract_id, function_id))
 }
