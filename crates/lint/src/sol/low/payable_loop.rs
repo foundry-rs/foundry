@@ -194,11 +194,11 @@ impl<'hir, F: FnMut(LoopItem<'hir>)> Visit<'hir> for LoopWalker<'hir, F> {
     }
 
     fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Infallible> {
+        self.walk_expr(expr)?;
         let in_loop = self.loop_depth > 0;
         if in_loop {
             (self.f)(LoopItem::Expr(expr));
         }
-        self.walk_expr(expr)?;
         if (in_loop || self.follow_calls_outside_loop)
             && let ExprKind::Call(callee, ..) = &expr.kind
             && let Some(id) = self.callee(callee)
