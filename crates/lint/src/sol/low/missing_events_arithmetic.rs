@@ -845,6 +845,7 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
                     self.collect_call_return_sources(arg, out);
                 }
                 for callee_id in resolved_function_ids(callee) {
+                    let callee_id = self.gcx.resolve_virtual_function(self.contract_id, callee_id);
                     self.collect_function_return_sources(callee_id, args, out);
                 }
             }

@@ -567,6 +567,33 @@ contract EventsArithmeticAbstractHookDerived is EventsArithmeticAbstractHookBase
     }
 }
 
+// An inherited arithmetic expression follows a virtual return helper to the derived override.
+abstract contract EventsArithmeticReturnHookBase {
+    uint256 public returnHookFee;
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function setReturnHookFee(uint256 newFee) external onlyOwner {
+        returnHookFee = newFee; //~WARN: `returnHookFee` is changed without an event but is used in arithmetic
+    }
+
+    function returnHookQuote(uint256 amount) external view returns (uint256) {
+        return amount * _returnHookFee();
+    }
+
+    function _returnHookFee() internal view virtual returns (uint256);
+}
+
+contract EventsArithmeticReturnHookDerived is EventsArithmeticReturnHookBase {
+    function _returnHookFee() internal view override returns (uint256) {
+        return returnHookFee;
+    }
+}
+
 // A concrete base inherited unchanged is reported once, not once per contract in the hierarchy.
 contract EventsArithmeticConcreteBase {
     uint256 public concreteFee;
