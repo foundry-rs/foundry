@@ -37,7 +37,7 @@ use foundry_common::{
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     },
     shell,
-    tempo::{TempoSponsor, maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{TempoSponsor, TempoTransactionPreparation},
 };
 use foundry_config::Config;
 use foundry_evm::core::{
@@ -130,12 +130,14 @@ where
             **wallet = tx.prepare_with_tempo_wallet(provider, wallet).await?;
         }
 
-        let fee_token = if let Some(sponsor) = tempo_sponsor {
-            sponsor.resolve_and_set_fee_token(Some(provider), chain, tx).await?;
-            None
-        } else {
-            resolve_and_set_fee_token(Some(provider), chain, tx, tx.from()).await?
-        };
+        let preparation = TempoTransactionPreparation::resolve(
+            tempo_sponsor,
+            Some(provider),
+            chain,
+            tx,
+            tx.from(),
+        )
+        .await?;
 
         // A fee token, sponsor, validity window, or other Tempo field selects
         // the AA transaction type. AA requests carry CREATE as their first
@@ -148,12 +150,7 @@ where
             estimate_gas(tx, provider, estimate_multiplier, tempo_browser).await?;
         }
 
-        if let Some(sponsor) = tempo_sponsor {
-            let from = tx.from().expect("no sender");
-            sponsor.attach_and_print::<N>(tx, from).await?;
-        } else {
-            maybe_print_fee_token(Some(provider), fee_token).await?;
-        }
+        preparation.finish(Some(provider), tx).await?;
 
         Ok(())
     }
@@ -1139,24 +1136,14 @@ impl BundledState<TempoEvmNetwork> {
             ..Default::default()
         };
         self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
-        let fee_token = if let Some(sponsor) = &tempo_sponsor {
-            sponsor
-                .resolve_and_set_fee_token(
-                    Some(provider.as_ref()),
-                    Some(Chain::from_named(NamedChain::Tempo)),
-                    &mut batch_tx,
-                )
-                .await?;
-            None
-        } else {
-            resolve_and_set_fee_token(
-                Some(provider.as_ref()),
-                Some(Chain::from_named(NamedChain::Tempo)),
-                &mut batch_tx,
-                Some(sender),
-            )
-            .await?
-        };
+        let preparation = TempoTransactionPreparation::resolve(
+            tempo_sponsor.as_ref(),
+            Some(provider.as_ref()),
+            Some(Chain::from_named(NamedChain::Tempo)),
+            &mut batch_tx,
+            Some(sender),
+        )
+        .await?;
 
         if let BatchSigner::TempoKeychain(wallet) = &mut batch_signer {
             **wallet = batch_tx.prepare_with_tempo_wallet(provider.as_ref(), wallet).await?;
@@ -1168,11 +1155,7 @@ impl BundledState<TempoEvmNetwork> {
 
         sh_println!("Estimated gas: {}", batch_tx.inner.gas.unwrap_or(0))?;
 
-        if let Some(sponsor) = &tempo_sponsor {
-            sponsor.attach_and_print::<TempoNetwork>(&mut batch_tx, sender).await?;
-        } else {
-            maybe_print_fee_token(Some(provider.as_ref()), fee_token).await?;
-        }
+        preparation.finish(Some(provider.as_ref()), &mut batch_tx).await?;
 
         // Sign and send.
         let tx_hash = match batch_signer {

@@ -17,7 +17,7 @@ use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
-    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{TempoTransactionPreparation, prepare_tempo_sponsor_hash, prepare_tempo_transaction},
 };
 use foundry_config::Chain;
 use foundry_wallets::{TempoAccountsWallet, WalletSigner};
@@ -297,18 +297,14 @@ impl SendTxArgs {
                 let (tx, _) = builder.build(signer).await?;
                 (tx, from)
             };
-            if let Some(fee_payer) = sponsor_fee_payer {
-                resolve_and_set_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    &mut tx,
-                    Some(fee_payer),
-                )
-                .await?;
-            }
-            let hash = tx
-                .compute_sponsor_hash(from)
-                .ok_or_else(|| eyre!("This network does not support sponsored transactions"))?;
+            let hash = prepare_tempo_sponsor_hash(
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                &mut tx,
+                from,
+                sponsor_fee_payer,
+            )
+            .await?;
             sh_println!("{hash:?}")?;
             return Ok(());
         }
@@ -368,14 +364,14 @@ impl SendTxArgs {
                 tx_request.nonce().unwrap_or_default(),
             )?;
             if let Some(sponsor) = &tempo_sponsor {
-                sponsor
-                    .resolve_and_set_fee_token(
-                        (!config.eth_rpc_curl).then_some(&provider),
-                        Some(chain),
-                        &mut tx_request,
-                    )
-                    .await?;
-                sponsor.attach_and_print::<N>(&mut tx_request, config.sender).await?;
+                prepare_tempo_transaction(
+                    Some(sponsor),
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx_request,
+                    config.sender,
+                )
+                .await?;
             }
 
             cast_send(
@@ -404,26 +400,14 @@ impl SendTxArgs {
                 tx_request.nonce().unwrap_or_default(),
             )?;
 
-            if let Some(sponsor) = &tempo_sponsor {
-                sponsor
-                    .resolve_and_set_fee_token(
-                        (!config.eth_rpc_curl).then_some(&provider),
-                        Some(chain),
-                        &mut tx_request,
-                    )
-                    .await?;
-                sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
-            } else {
-                let fee_token = resolve_and_set_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    &mut tx_request,
-                    Some(browser.address()),
-                )
-                .await?;
-                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
-                    .await?;
-            }
+            prepare_tempo_transaction(
+                tempo_sponsor.as_ref(),
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                &mut tx_request,
+                browser.address(),
+            )
+            .await?;
 
             if chain.id() != browser.chain_id() {
                 sh_warn!("Switching browser wallet to chain {}", chain)?;
@@ -447,14 +431,14 @@ impl SendTxArgs {
                 tx_request.nonce().unwrap_or_default(),
             )?;
             if let Some(sponsor) = &tempo_sponsor {
-                sponsor
-                    .resolve_and_set_fee_token(
-                        (!config.eth_rpc_curl).then_some(&provider),
-                        Some(chain),
-                        &mut tx_request,
-                    )
-                    .await?;
-                sponsor.attach_and_print::<N>(&mut tx_request, prepared.account()).await?;
+                prepare_tempo_transaction(
+                    Some(sponsor),
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx_request,
+                    prepared.account(),
+                )
+                .await?;
             }
             if let Some(sponsor_url) = sponsor_url.as_deref() {
                 cast_send_with_tempo_wallet_via_sponsor(
@@ -549,14 +533,14 @@ impl SendTxArgs {
             )?;
 
             if let Some(sponsor) = &tempo_sponsor {
-                sponsor
-                    .resolve_and_set_fee_token(
-                        (!config.eth_rpc_curl).then_some(&provider),
-                        Some(chain),
-                        &mut tx_request,
-                    )
-                    .await?;
-                sponsor.attach_and_print::<N>(&mut tx_request, from).await?;
+                prepare_tempo_transaction(
+                    Some(sponsor),
+                    (!config.eth_rpc_curl).then_some(&provider),
+                    Some(chain),
+                    &mut tx_request,
+                    from,
+                )
+                .await?;
             }
 
             let wallet = EthereumWallet::from(signer);
@@ -598,14 +582,15 @@ where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
-    let fee_token = resolve_and_set_fee_token(
+    let preparation = TempoTransactionPreparation::resolve(
+        None,
         resolve_unknown_fee_token_symbol.then_some(&provider),
         chain,
         &mut tx,
         fee_payer,
     )
     .await?;
-    maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(&provider), fee_token).await?;
+    preparation.finish(resolve_unknown_fee_token_symbol.then_some(&provider), &mut tx).await?;
     let cast = CastTxSender::new(provider);
 
     if sync {
@@ -659,14 +644,15 @@ where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
-    let fee_token = resolve_and_set_fee_token(
+    let preparation = TempoTransactionPreparation::resolve(
+        None,
         resolve_unknown_fee_token_symbol.then_some(provider),
         chain,
         &mut tx,
         fee_payer,
     )
     .await?;
-    maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(provider), fee_token).await?;
+    preparation.finish(resolve_unknown_fee_token_symbol.then_some(provider), &mut tx).await?;
     let raw_tx = tx.sign_with_tempo_wallet(wallet).await?;
     let cast = CastTxSender::new(provider);
     let (tx_hash, receipt) = cast_send_raw(provider, &raw_tx, sync).await?;

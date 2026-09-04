@@ -26,7 +26,7 @@ use foundry_common::{
         fee::{estimate_eip1559_fees, resolve_broadcast_eip1559_fees},
     },
     shell,
-    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::prepare_tempo_transaction,
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
@@ -606,26 +606,14 @@ impl CreateArgs {
         }
 
         let tempo_sponsor = self.tx.tempo.sponsor_config().await?;
-        if let Some(sponsor) = &tempo_sponsor {
-            sponsor
-                .resolve_and_set_fee_token(
-                    resolve_unknown_fee_token_symbol.then_some(&provider),
-                    Some(chain),
-                    &mut deployer.tx,
-                )
-                .await?;
-            sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
-        } else {
-            let fee_token = resolve_and_set_fee_token(
-                resolve_unknown_fee_token_symbol.then_some(&provider),
-                Some(chain),
-                &mut deployer.tx,
-                Some(deployer_address),
-            )
-            .await?;
-            maybe_print_fee_token(resolve_unknown_fee_token_symbol.then_some(&provider), fee_token)
-                .await?;
-        }
+        prepare_tempo_transaction(
+            tempo_sponsor.as_ref(),
+            resolve_unknown_fee_token_symbol.then_some(&provider),
+            Some(chain),
+            &mut deployer.tx,
+            deployer_address,
+        )
+        .await?;
 
         // Deploy the actual contract
         let (deployed_contract, receipt) = if let Some(browser) = browser_signer {

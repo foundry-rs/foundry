@@ -32,7 +32,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::{ProviderBuilder, RetryProviderWithSigner},
     shell,
-    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::{prepare_tempo_sponsor_hash, prepare_tempo_transaction},
 };
 #[doc(hidden)]
 pub use foundry_config::{Chain, Eip1559FeeEstimatePreset, utils::*};
@@ -421,39 +421,26 @@ impl Erc20Subcommand {
                     .await?;
                     if needs_sponsor_payload {
                         if print_sponsor_hash {
-                            if let Some(fee_payer) = sponsor_fee_payer {
-                                resolve_and_set_fee_token(
-                                    (!config.eth_rpc_curl).then_some(&$provider),
-                                    Some(chain),
-                                    &mut tx,
-                                    Some(fee_payer),
-                                )
-                                .await?;
-                            }
-                            let hash = tx
-                                .compute_sponsor_hash(prepared_access_key.account())
-                                .ok_or_else(|| {
-                                    eyre::eyre!(
-                                        "This network does not support sponsored transactions"
-                                    )
-                                })?;
+                            let hash = prepare_tempo_sponsor_hash(
+                                (!config.eth_rpc_curl).then_some(&$provider),
+                                Some(chain),
+                                &mut tx,
+                                prepared_access_key.account(),
+                                sponsor_fee_payer,
+                            )
+                            .await?;
                             sh_println!("{hash:?}")?;
                             return Ok(());
                         }
                         if let Some(sponsor) = &tempo_sponsor {
-                            sponsor
-                                .resolve_and_set_fee_token(
-                                    (!config.eth_rpc_curl).then_some(&$provider),
-                                    Some(chain),
-                                    &mut tx,
-                                )
-                                .await?;
-                            sponsor
-                                .attach_and_print::<TempoNetwork>(
-                                    &mut tx,
-                                    prepared_access_key.account(),
-                                )
-                                .await?;
+                            prepare_tempo_transaction(
+                                Some(sponsor),
+                                (!config.eth_rpc_curl).then_some(&$provider),
+                                Some(chain),
+                                &mut tx,
+                                prepared_access_key.account(),
+                            )
+                            .await?;
                         }
                     }
                     if let Some(sponsor_url) = sponsor_url.as_deref() {
@@ -502,44 +489,25 @@ impl Erc20Subcommand {
                     )
                     .await?;
                     if print_sponsor_hash {
-                        if let Some(fee_payer) = sponsor_fee_payer {
-                            resolve_and_set_fee_token(
-                                (!config.eth_rpc_curl).then_some(&$provider),
-                                Some(chain),
-                                &mut tx,
-                                Some(fee_payer),
-                            )
-                            .await?;
-                        }
-                        let hash = tx.compute_sponsor_hash(browser.address()).ok_or_else(|| {
-                            eyre::eyre!("This network does not support sponsored transactions")
-                        })?;
-                        sh_println!("{hash:?}")?;
-                        return Ok(());
-                    }
-                    if let Some(sponsor) = &tempo_sponsor {
-                        sponsor
-                            .resolve_and_set_fee_token(
-                                (!config.eth_rpc_curl).then_some(&$provider),
-                                Some(chain),
-                                &mut tx,
-                            )
-                            .await?;
-                        sponsor.attach_and_print::<N>(&mut tx, browser.address()).await?;
-                    } else {
-                        let fee_token = resolve_and_set_fee_token(
+                        let hash = prepare_tempo_sponsor_hash(
                             (!config.eth_rpc_curl).then_some(&$provider),
                             Some(chain),
                             &mut tx,
-                            Some(browser.address()),
+                            browser.address(),
+                            sponsor_fee_payer,
                         )
                         .await?;
-                        maybe_print_fee_token(
-                            (!config.eth_rpc_curl).then_some(&$provider),
-                            fee_token,
-                        )
-                        .await?;
+                        sh_println!("{hash:?}")?;
+                        return Ok(());
                     }
+                    prepare_tempo_transaction(
+                        tempo_sponsor.as_ref(),
+                        (!config.eth_rpc_curl).then_some(&$provider),
+                        Some(chain),
+                        &mut tx,
+                        browser.address(),
+                    )
+                    .await?;
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
                     CastTxSender::new(&$provider)
                         .print_tx_result(
@@ -573,30 +541,26 @@ impl Erc20Subcommand {
                         )
                         .await?;
                         if print_sponsor_hash {
-                            if let Some(fee_payer) = sponsor_fee_payer {
-                                resolve_and_set_fee_token(
-                                    (!config.eth_rpc_curl).then_some(&$provider),
-                                    Some(chain),
-                                    &mut tx,
-                                    Some(fee_payer),
-                                )
-                                .await?;
-                            }
-                            let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
-                                eyre::eyre!("This network does not support sponsored transactions")
-                            })?;
+                            let hash = prepare_tempo_sponsor_hash(
+                                (!config.eth_rpc_curl).then_some(&$provider),
+                                Some(chain),
+                                &mut tx,
+                                from,
+                                sponsor_fee_payer,
+                            )
+                            .await?;
                             sh_println!("{hash:?}")?;
                             return Ok(());
                         }
                         if let Some(sponsor) = &tempo_sponsor {
-                            sponsor
-                                .resolve_and_set_fee_token(
-                                    (!config.eth_rpc_curl).then_some(&$provider),
-                                    Some(chain),
-                                    &mut tx,
-                                )
-                                .await?;
-                            sponsor.attach_and_print::<N>(&mut tx, from).await?;
+                            prepare_tempo_transaction(
+                                Some(sponsor),
+                                (!config.eth_rpc_curl).then_some(&$provider),
+                                Some(chain),
+                                &mut tx,
+                                from,
+                            )
+                            .await?;
                         }
                     } else {
                         // Fill only the fees; the provider fills nonce and gas limit.

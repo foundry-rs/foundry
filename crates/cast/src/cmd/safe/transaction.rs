@@ -11,9 +11,7 @@ use foundry_cli::{
     utils::{LoadConfig, resolve_lane},
 };
 use foundry_common::{
-    FoundryTransactionBuilder,
-    provider::ProviderBuilder,
-    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
+    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::prepare_tempo_transaction,
 };
 use foundry_wallets::WalletOpts;
 use serde::Serialize;
@@ -133,14 +131,14 @@ where
         .await?;
     let chain = builder.chain();
     let (mut request, _) = builder.build(from).await?;
-    let fee_token = resolve_and_set_fee_token(
+    prepare_tempo_transaction(
+        None,
         (!config.eth_rpc_curl).then_some(&provider),
         Some(chain),
         &mut request,
-        Some(from),
+        from,
     )
     .await?;
-    maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
 
     let receipt = provider
         .send_transaction(request)

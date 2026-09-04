@@ -22,9 +22,7 @@ use foundry_cli::{
     utils::{self, LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
-    FoundryTransactionBuilder,
-    provider::ProviderBuilder,
-    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
+    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::prepare_tempo_transaction,
 };
 use foundry_wallets::{TempoAccountsWallet, WalletOpts, WalletSigner};
 use tempo_alloy::TempoNetwork;
@@ -145,14 +143,14 @@ impl BatchMakeTxArgs {
             }
             let (mut tx, _) = tx_builder.build(from).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            let fee_token = resolve_and_set_fee_token(
+            prepare_tempo_transaction(
+                None,
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
-                Some(from),
+                from,
             )
             .await?;
-            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let raw_tx =
                 alloy_primitives::hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
             sh_println!("{raw_tx}")?;
@@ -166,14 +164,14 @@ impl BatchMakeTxArgs {
             }
             let (mut tx, _) = tx_builder.build(config.sender).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            let fee_token = resolve_and_set_fee_token(
+            prepare_tempo_transaction(
+                None,
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
-                Some(config.sender),
+                config.sender,
             )
             .await?;
-            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let signed_tx = provider.sign_transaction(tx).await?;
             sh_println!("{signed_tx}")?;
             return Ok(());
@@ -186,14 +184,14 @@ impl BatchMakeTxArgs {
             }
             let (mut tx, _, prepared) = tx_builder.build_with_tempo_wallet(access_key).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            let fee_token = resolve_and_set_fee_token(
+            prepare_tempo_transaction(
+                None,
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
-                Some(prepared.account()),
+                prepared.account(),
             )
             .await?;
-            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let raw_tx = tx.sign_with_tempo_wallet(&prepared).await?;
             alloy_primitives::hex::encode(raw_tx)
         } else {
@@ -207,14 +205,14 @@ impl BatchMakeTxArgs {
             }
             let (mut tx, _) = tx_builder.build(&signer).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            let fee_token = resolve_and_set_fee_token(
+            prepare_tempo_transaction(
+                None,
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
-                Some(Signer::address(&signer)),
+                Signer::address(&signer),
             )
             .await?;
-            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let envelope = tx.build(&EthereumWallet::new(signer)).await?;
             alloy_primitives::hex::encode(envelope.encoded_2718())
         };

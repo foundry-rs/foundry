@@ -21,7 +21,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
     shell,
-    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
+    tempo::prepare_tempo_transaction,
 };
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use serde_json::json;
@@ -201,14 +201,14 @@ async fn register(
         .await?;
         if shell::is_json() {
             // JSON mode bypasses `cast_send_with_tempo_wallet`, so report the selection here.
-            let fee_token = resolve_and_set_fee_token(
+            prepare_tempo_transaction(
+                None,
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
-                Some(prepared.account()),
+                prepared.account(),
             )
             .await?;
-            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let raw_tx = tx.sign_with_tempo_wallet(&prepared).await?;
             let (tx_hash, _) = cast_send_raw(&provider, &raw_tx, send_tx.sync).await?;
             if !send_tx.sync {
@@ -250,14 +250,14 @@ async fn register(
         .await?;
         if shell::is_json() {
             // JSON mode bypasses `cast_send`, so report the selection here.
-            let fee_token = resolve_and_set_fee_token(
+            prepare_tempo_transaction(
+                None,
                 (!config.eth_rpc_curl).then_some(&provider),
                 Some(chain),
                 &mut tx,
-                Some(sender),
+                sender,
             )
             .await?;
-            maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token).await?;
             let cast = CastTxSender::new(&provider);
             if send_tx.sync {
                 cast.send_sync(tx).await.map(|(tx_hash, _)| tx_hash)

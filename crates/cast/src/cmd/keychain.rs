@@ -20,12 +20,11 @@ use foundry_cli::{
     utils::{LoadConfig, maybe_print_resolved_lane, parse_fee_token_address, resolve_lane},
 };
 use foundry_common::{
-    FoundryTransactionBuilder,
     provider::{ProviderBuilder, is_rpc_method_not_found},
     sh_warn, shell,
     tempo::{
-        self, AccountsStoreView, KeyType, maybe_print_fee_token, read_tempo_accounts_store,
-        resolve_and_set_fee_token, tempo_accounts_store_path,
+        self, AccountsStoreView, KeyType, prepare_tempo_sponsor_hash, prepare_tempo_transaction,
+        read_tempo_accounts_store, tempo_accounts_store_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -3649,18 +3648,14 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         let from = root_signer.address();
         let chain = builder.chain();
         let (mut tx, _) = builder.build(root_signer.sender()).await?;
-        if let Some(fee_payer) = sponsor_fee_payer {
-            resolve_and_set_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                &mut tx,
-                Some(fee_payer),
-            )
-            .await?;
-        }
-        let hash = tx
-            .compute_sponsor_hash(from)
-            .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))?;
+        let hash = prepare_tempo_sponsor_hash(
+            (!config.eth_rpc_curl).then_some(&provider),
+            Some(chain),
+            &mut tx,
+            from,
+            sponsor_fee_payer,
+        )
+        .await?;
         if shell::is_json() {
             sh_println!("{}", serde_json::json!({ "sponsor_hash": format!("{hash:?}") }))?;
         } else {
@@ -3675,26 +3670,14 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         KeychainRootSigner::Browser(browser) => {
             let chain = builder.chain();
             let (mut tx, _) = builder.with_browser_wallet().build(browser.address()).await?;
-            if let Some(sponsor) = &tempo_sponsor {
-                sponsor
-                    .resolve_and_set_fee_token(
-                        (!config.eth_rpc_curl).then_some(&provider),
-                        Some(chain),
-                        &mut tx,
-                    )
-                    .await?;
-                sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
-            } else {
-                let fee_token = resolve_and_set_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    &mut tx,
-                    Some(browser.address()),
-                )
-                .await?;
-                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
-                    .await?;
-            }
+            prepare_tempo_transaction(
+                tempo_sponsor.as_ref(),
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                &mut tx,
+                browser.address(),
+            )
+            .await?;
 
             before_submit()?;
             let tx_hash = browser.send_transaction_via_browser(tx).await?;
@@ -3707,26 +3690,14 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
             let chain = builder.chain();
             let (mut tx, _) = builder.build(signer.as_ref()).await?;
             maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            if let Some(sponsor) = &tempo_sponsor {
-                sponsor
-                    .resolve_and_set_fee_token(
-                        (!config.eth_rpc_curl).then_some(&provider),
-                        Some(chain),
-                        &mut tx,
-                    )
-                    .await?;
-                sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
-            } else {
-                let fee_token = resolve_and_set_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    &mut tx,
-                    Some(from),
-                )
-                .await?;
-                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
-                    .await?;
-            }
+            prepare_tempo_transaction(
+                tempo_sponsor.as_ref(),
+                (!config.eth_rpc_curl).then_some(&provider),
+                Some(chain),
+                &mut tx,
+                from,
+            )
+            .await?;
 
             before_submit()?;
             let wallet = EthereumWallet::from(*signer);

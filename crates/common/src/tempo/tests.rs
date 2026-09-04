@@ -20,8 +20,8 @@ use tempo_primitives::transaction::{Call, SignatureType};
 
 use super::{
     ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS, TempoSponsor, known_fee_token_symbol, resolve_and_set_fee_token,
-    resolve_fee_token_symbol,
+    TIP_FEE_MANAGER_ADDRESS, TempoSponsor, TempoTransactionPreparation, known_fee_token_symbol,
+    resolve_and_set_fee_token, resolve_fee_token_symbol,
 };
 
 #[test]
@@ -310,16 +310,14 @@ async fn sponsor_fee_token_resolution_uses_sponsor_address() -> eyre::Result<()>
 
     asserter.push_success(&BETA_USD_ADDRESS.abi_encode());
 
-    assert_eq!(
-        sponsor
-            .resolve_and_set_fee_token::<TempoNetwork>(
-                Some(&provider),
-                Some(Chain::from_named(NamedChain::Tempo)),
-                &mut tx,
-            )
-            .await?,
-        Some(BETA_USD_ADDRESS)
-    );
+    let _preparation = TempoTransactionPreparation::resolve(
+        Some(&sponsor),
+        Some(&provider),
+        Some(Chain::from_named(NamedChain::Tempo)),
+        &mut tx,
+        Some(sender),
+    )
+    .await?;
     assert_eq!(tx.fee_token, Some(BETA_USD_ADDRESS));
     Ok(())
 }

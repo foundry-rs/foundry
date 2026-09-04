@@ -250,6 +250,104 @@ pub async fn resolve_tempo_sponsor_signer(spec: &str) -> Result<WalletSigner> {
     }
 }
 
+/// Tempo transaction state resolved before gas estimation and finalized before signing.
+///
+/// Fee-token resolution must happen before estimating gas, while sponsor signatures must be
+/// attached afterwards because their digest commits to the completed transaction.
+#[must_use = "Tempo transaction preparation must be finalized before signing"]
+#[derive(Debug)]
+pub struct TempoTransactionPreparation<'a>(TempoTransactionPreparationKind<'a>);
+
+#[derive(Debug)]
+enum TempoTransactionPreparationKind<'a> {
+    Sponsored { sponsor: &'a TempoSponsor, sender: Option<Address> },
+    FeeToken(Option<Address>),
+}
+
+impl<'a> TempoTransactionPreparation<'a> {
+    /// Resolves the fee token and remembers the transaction account needed for finalization.
+    pub async fn resolve<N>(
+        sponsor: Option<&'a TempoSponsor>,
+        provider: Option<&dyn Provider<N>>,
+        chain: Option<Chain>,
+        tx: &mut N::TransactionRequest,
+        account: Option<Address>,
+    ) -> Result<Self>
+    where
+        N: Network,
+        N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    {
+        if let Some(sponsor) = sponsor {
+            sponsor.resolve_and_set_fee_token(provider, chain, tx).await?;
+            Ok(Self(TempoTransactionPreparationKind::Sponsored { sponsor, sender: account }))
+        } else {
+            let fee_token = resolve_and_set_fee_token(provider, chain, tx, account).await?;
+            Ok(Self(TempoTransactionPreparationKind::FeeToken(fee_token)))
+        }
+    }
+
+    /// Attaches the sponsor signature or prints the resolved fee token.
+    pub async fn finish<N>(
+        self,
+        provider: Option<&dyn Provider<N>>,
+        tx: &mut N::TransactionRequest,
+    ) -> Result<()>
+    where
+        N: Network,
+        N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    {
+        match self.0 {
+            TempoTransactionPreparationKind::Sponsored { sponsor, sender } => {
+                let sender = sender.ok_or_else(|| {
+                    eyre::eyre!("missing transaction sender for Tempo sponsor signature")
+                })?;
+                sponsor.attach_and_print::<N>(tx, sender).await?;
+            }
+            TempoTransactionPreparationKind::FeeToken(fee_token) => {
+                maybe_print_fee_token(provider, fee_token).await?
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Resolves and finalizes Tempo-specific transaction fields when no intervening gas estimation is
+/// required.
+pub async fn prepare_tempo_transaction<N>(
+    sponsor: Option<&TempoSponsor>,
+    provider: Option<&dyn Provider<N>>,
+    chain: Option<Chain>,
+    tx: &mut N::TransactionRequest,
+    sender: Address,
+) -> Result<()>
+where
+    N: Network,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+{
+    let preparation =
+        TempoTransactionPreparation::resolve(sponsor, provider, chain, tx, Some(sender)).await?;
+    preparation.finish(provider, tx).await
+}
+
+/// Resolves the fee token selected for a sponsor digest and computes the digest.
+pub async fn prepare_tempo_sponsor_hash<N>(
+    provider: Option<&dyn Provider<N>>,
+    chain: Option<Chain>,
+    tx: &mut N::TransactionRequest,
+    sender: Address,
+    fee_payer: Option<Address>,
+) -> Result<B256>
+where
+    N: Network,
+    N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+{
+    if let Some(fee_payer) = fee_payer {
+        resolve_and_set_fee_token(provider, chain, tx, Some(fee_payer)).await?;
+    }
+    tx.compute_sponsor_hash(sender)
+        .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))
+}
+
 /// Placeholder rendered by `Debug` impls in place of secret key material.
 fn redacted_debug(value: &str) -> &'static str {
     if value.trim().is_empty() { "<empty>" } else { "<redacted>" }
@@ -424,7 +522,7 @@ async fn resolve_fee_token_symbol<N, P>(provider: &P, fee_token: Address) -> Opt
 where
     N: Network,
     N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
-    P: Provider<N>,
+    P: Provider<N> + ?Sized,
 {
     if let Some(symbol) = known_fee_token_symbol(fee_token) {
         return Some(symbol.to_string());
@@ -449,7 +547,7 @@ pub async fn maybe_print_fee_token<N, P>(
 where
     N: Network,
     N::TransactionRequest: Default + NetworkTransactionBuilder<N>,
-    P: Provider<N>,
+    P: Provider<N> + ?Sized,
 {
     if let Some(fee_token) = fee_token {
         let symbol = if let Some(symbol) = known_fee_token_symbol(fee_token) {
