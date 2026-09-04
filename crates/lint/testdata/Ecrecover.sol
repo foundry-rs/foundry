@@ -787,10 +787,18 @@ contract Ecrecover {
         sig.s = bytes32(type(uint256).max);
     }
 
+    function inspectSig(Sig memory) external pure {}
+
     function structMemberMutatedByCall(bytes32 hash, Sig memory sig) external pure returns (address) {
         require(uint256(sig.s) <= HALF_ORDER);
         normalizeSig(sig);
         return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function structMemberCopiedByExternalCall(bytes32 hash, Sig memory sig) external view returns (address) {
+        require(uint256(sig.s) <= HALF_ORDER);
+        this.inspectSig(sig);
+        return ecrecover(hash, sig.v, sig.r, sig.s);
     }
 
     function structMemberHashedOk(bytes32 hash, Sig memory sig) external pure returns (address) {

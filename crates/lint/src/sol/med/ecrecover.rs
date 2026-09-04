@@ -1372,6 +1372,11 @@ fn reference_args<'hir>(
     if !matches!(resolved.res, Res::Item(ItemId::Function(_))) {
         return Vec::new();
     }
+    let Some(ty) = gcx.type_of_expr(callee.id) else { return Vec::new() };
+    let TyKind::Fn(function_ty) = ty.kind else { return Vec::new() };
+    if !function_ty.is_internal() {
+        return Vec::new();
+    }
     let receiver = match &callee.kind {
         ExprKind::Member(base, _) if resolved.attached => Some(*base),
         _ => None,
