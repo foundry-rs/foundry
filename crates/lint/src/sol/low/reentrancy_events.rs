@@ -9,16 +9,19 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::helper_cache::{DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache},
+        analysis::{
+            helper_cache::{DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache},
+            is_exit_call,
+        },
     },
 };
 use solar::{
-    ast::LitKind,
-    interface::{Span, kw, sym},
+    interface::Span,
     sema::{
         Gcx,
         hir::{
-            self, Block, ContractId, Expr, ExprKind, Function, FunctionId, Hir, Res, Stmt, StmtKind,
+            self, BinOpKind, Block, ContractId, Expr, ExprKind, Function, FunctionId, Hir, Stmt,
+            StmtKind,
         },
     },
 };
@@ -40,79 +43,58 @@ impl<'hir> LateLintPass<'hir> for ReentrancyEvents {
         func: &'hir Function<'hir>,
     ) {
         let Some(body) = func.body else { return };
-
-        let mut analyzer = Analyzer::new(ctx, gcx, hir, func.contract);
-        let _ = analyzer.analyze_callable(func, body, FlowState::default());
+        Analyzer::new(ctx, gcx, hir, func.contract).analyze_callable(func, body, false);
     }
 }
 
 type Placeholder<'hir> = Option<(&'hir [hir::Modifier<'hir>], usize, Block<'hir>)>;
 
-/// Per-path state tracked by the may-analysis.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct FlowState {
-    /// True iff an external call has occurred on the path leading to the current program point.
-    external_call_seen: bool,
-}
-
-impl FlowState {
-    const fn merge(&mut self, other: &Self) {
-        self.external_call_seen |= other.external_call_seen;
-    }
-}
-
-/// Summarises how a piece of code can exit, with the [`FlowState`] reaching each exit kind.
-/// `None` means no path produces that exit; `Some(_)` means some path does.
-///
-/// Aborting paths (`revert`/`require(false)`/etc.) drop their state — they are simply absent
-/// from every bucket, so they cannot taint subsequent statements.
-#[derive(Clone, Debug, Default)]
+/// How control can leave a piece of code. Each exit kind records whether an external call was
+/// seen on some path reaching it; `None` means no path exits that way. Aborting paths
+/// (`revert`, `require(false)`, ...) are simply absent, so they cannot taint later statements.
+#[derive(Clone, Copy, Debug, Default)]
 struct Exits {
-    /// Control falls through to the next statement of the enclosing block.
-    fallthrough: Option<FlowState>,
-    /// Control exits the enclosing function via `return`.
-    return_: Option<FlowState>,
-    /// Control exits the enclosing loop via `break`.
-    break_: Option<FlowState>,
-    /// Control goes back to the loop header via `continue`.
-    continue_: Option<FlowState>,
+    fallthrough: Option<bool>,
+    return_: Option<bool>,
+    break_: Option<bool>,
+    continue_: Option<bool>,
 }
 
 impl Exits {
-    fn fallthrough(state: FlowState) -> Self {
-        Self { fallthrough: Some(state), ..Default::default() }
+    fn fallthrough(tainted: bool) -> Self {
+        Self { fallthrough: Some(tainted), ..Self::default() }
     }
 
-    fn return_(state: FlowState) -> Self {
-        Self { return_: Some(state), ..Default::default() }
+    fn return_(tainted: bool) -> Self {
+        Self { return_: Some(tainted), ..Self::default() }
     }
 
-    fn break_(state: FlowState) -> Self {
-        Self { break_: Some(state), ..Default::default() }
+    fn break_(tainted: bool) -> Self {
+        Self { break_: Some(tainted), ..Self::default() }
     }
 
-    fn continue_(state: FlowState) -> Self {
-        Self { continue_: Some(state), ..Default::default() }
+    fn continue_(tainted: bool) -> Self {
+        Self { continue_: Some(tainted), ..Self::default() }
     }
 
-    /// Aborting exit (`revert`, infinite loop, panic): no paths flow out.
-    fn abort() -> Self {
-        Self::default()
+    fn merge(&mut self, other: Self) {
+        self.fallthrough = join(self.fallthrough, other.fallthrough);
+        self.return_ = join(self.return_, other.return_);
+        self.break_ = join(self.break_, other.break_);
+        self.continue_ = join(self.continue_, other.continue_);
     }
 
-    const fn merge(&mut self, other: Self) {
-        merge_opt(&mut self.fallthrough, other.fallthrough);
-        merge_opt(&mut self.return_, other.return_);
-        merge_opt(&mut self.break_, other.break_);
-        merge_opt(&mut self.continue_, other.continue_);
+    /// State of the paths that return to the caller normally.
+    fn normal(self) -> Option<bool> {
+        join(self.fallthrough, self.return_)
     }
 }
 
-const fn merge_opt(dst: &mut Option<FlowState>, src: Option<FlowState>) {
-    match (dst.as_mut(), src) {
-        (None, src) => *dst = src,
-        (Some(_), None) => {}
-        (Some(d), Some(s)) => d.merge(&s),
+/// Joins two path states: reachable if either is, tainted if either is.
+fn join(lhs: Option<bool>, rhs: Option<bool>) -> Option<bool> {
+    match (lhs, rhs) {
+        (Some(lhs), Some(rhs)) => Some(lhs || rhs),
+        _ => lhs.or(rhs),
     }
 }
 
@@ -127,23 +109,19 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     ctx: &'ctx LintContext<'s, 'c>,
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
-    /// Top-level analyzed contract; used to resolve `this.<method>` without consulting
-    /// Solar for the `this` builtin. Held fixed across inlined helpers (runtime `this`).
+    /// Contract being analysed; `this.f()` and `super.f()` resolve against it, also inside
+    /// inlined helpers (runtime `this`).
     enclosing_contract: Option<ContractId>,
-    /// Call stack to break recursion when inlining internal helpers and modifiers.
     call_stack: Vec<FunctionId>,
-    /// Cached summaries for transitive helper analysis. This keeps shared helper graphs from
-    /// being rescanned for every call edge in a function.
     inline_cache: HelperAnalysisCache<InlineCallKey, Exits>,
-    /// Cached conservative summaries used only when a recursive edge is cut.
+    /// Whether a helper can ever perform an external call; used where a recursive edge is cut.
     external_call_reachability: HashMap<FunctionId, bool>,
-    /// Spans already reported, to dedupe diagnostics across paths/iterations.
+    /// Set when a reachability walk hit a recursive edge, so a negative result is inconclusive.
+    reachability_cut: bool,
     emitted: HashSet<Span>,
-    /// When `true`, suppress emit diagnostics: we are inside an inlined helper that was
-    /// entered with a clean state, so the helper's own self-pass will catch any taint.
+    /// Inside a helper entered with a clean state: the helper's own pass reports its emits.
     suppress_inline_reports: bool,
-    /// Set by `analyze_internal_call` when the inlined callee has no normal exits, so the
-    /// enclosing statement can treat itself as aborting.
+    /// Set by an inlined callee with no normal exit, so the enclosing statement aborts.
     expr_aborted: bool,
 }
 
@@ -162,6 +140,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             call_stack: Vec::new(),
             inline_cache: HelperAnalysisCache::new(DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT),
             external_call_reachability: HashMap::new(),
+            reachability_cut: false,
             emitted: HashSet::new(),
             suppress_inline_reports: false,
             expr_aborted: false,
@@ -172,7 +151,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         &mut self,
         func: &'hir Function<'hir>,
         body: Block<'hir>,
-        entry: FlowState,
+        entry: bool,
     ) -> Exits {
         self.analyze_modifier_chain(func.modifiers, 0, body, entry)
     }
@@ -182,234 +161,162 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         modifiers: &'hir [hir::Modifier<'hir>],
         index: usize,
         body: Block<'hir>,
-        mut entry: FlowState,
+        mut entry: bool,
     ) -> Exits {
         let Some(modifier) = modifiers.get(index) else {
             return self.analyze_block(body, None, entry);
         };
-
         for arg in modifier.args.exprs() {
             self.expr_aborted = false;
             self.analyze_expr(arg, &mut entry);
-            // An aborting arg means the modifier (and therefore its body) is never entered.
+            // An aborting argument means the modifier, and so the body, is never entered.
             if self.expr_aborted {
-                return Exits::abort();
+                return Exits::default();
             }
         }
-
-        let Some(modifier_id) = modifier.id.as_function() else {
+        // A modifier may legitimately appear several times in the chain (`m(false) m(true)`),
+        // so duplicates are not skipped; `index` strictly increases, and recursion through
+        // internal calls is handled by `analyze_internal_call`.
+        let Some((modifier_id, modifier_body)) =
+            modifier.id.as_function().and_then(|id| Some((id, self.hir.function(id).body?)))
+        else {
             return self.analyze_modifier_chain(modifiers, index + 1, body, entry);
         };
-
-        // Note: we deliberately do NOT skip duplicate modifier IDs here. A modifier may
-        // legitimately appear at multiple indices in the chain (e.g. `f() m(false) m(true)`),
-        // and the chain itself cannot recurse infinitely because `index` strictly increases.
-        // True recursion through internal calls is still handled by `analyze_internal_call`.
-
-        let modifier_func = self.hir.function(modifier_id);
-        let Some(modifier_body) = modifier_func.body else {
-            return self.analyze_modifier_chain(modifiers, index + 1, body, entry);
-        };
-
         self.call_stack.push(modifier_id);
-        let summary = self.analyze_block(modifier_body, Some((modifiers, index + 1, body)), entry);
+        let exits = self.analyze_block(modifier_body, Some((modifiers, index + 1, body)), entry);
         self.call_stack.pop();
-        summary
+        exits
     }
 
     fn analyze_block(
         &mut self,
         block: Block<'hir>,
         placeholder: Placeholder<'hir>,
-        mut entry: FlowState,
+        mut entry: bool,
     ) -> Exits {
-        let mut summary = Exits::default();
+        let mut exits = Exits::default();
         for stmt in block.stmts {
             let stmt_exits = self.analyze_stmt(stmt, placeholder, entry);
-            // Non-fallthrough exits propagate up out of the block.
-            merge_opt(&mut summary.return_, stmt_exits.return_);
-            merge_opt(&mut summary.break_, stmt_exits.break_);
-            merge_opt(&mut summary.continue_, stmt_exits.continue_);
-            // Only the fallthrough state reaches the next statement.
-            match stmt_exits.fallthrough {
-                Some(next) => entry = next,
-                None => return summary, // Subsequent statements are dead.
-            }
+            exits.merge(Exits { fallthrough: None, ..stmt_exits });
+            // Only the fallthrough state reaches the next statement; without it the rest is dead.
+            let Some(next) = stmt_exits.fallthrough else { return exits };
+            entry = next;
         }
-        summary.fallthrough = Some(entry);
-        summary
+        exits.fallthrough = Some(entry);
+        exits
     }
 
     fn analyze_stmt(
         &mut self,
         stmt: &'hir Stmt<'hir>,
         placeholder: Placeholder<'hir>,
-        mut entry: FlowState,
+        mut entry: bool,
     ) -> Exits {
-        // Reset once per statement so each branch can read `expr_aborted` after analyzing
-        // its top-level expressions without leaking state from a previous statement.
         self.expr_aborted = false;
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
                 if let Some(init) = self.hir.variable(var_id).initializer {
                     self.analyze_expr(init, &mut entry);
                 }
-                if self.expr_aborted {
-                    return Exits::abort();
-                }
-                Exits::fallthrough(entry)
+                self.unless_aborted(Exits::fallthrough(entry))
             }
             StmtKind::DeclMulti(_, expr) | StmtKind::Expr(expr) => {
                 self.analyze_expr(expr, &mut entry);
-                // Aborts via builtins (`revert()`, `selfdestruct(...)`, `require(false, …)`,
-                // `assert(false)`) or via an inlined helper with no normal exit.
-                if is_aborting_call(expr) || self.expr_aborted {
-                    return Exits::abort();
+                if is_exit_call(expr) {
+                    return Exits::default();
                 }
-                Exits::fallthrough(entry)
+                self.unless_aborted(Exits::fallthrough(entry))
             }
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
                 self.analyze_block(block, placeholder, entry)
             }
             StmtKind::Emit(expr) => {
-                // Solidity evaluates event arguments before emitting, so an external call inside
-                // the arguments also taints this emit. Analyze the args first, then check state.
+                // Event arguments are evaluated before emitting, so an external call in them
+                // taints this emit too, and an aborting argument makes it unreachable.
                 self.analyze_expr(expr, &mut entry);
-                // If an argument aborts (e.g. `emit E(helperThatAlwaysReverts())`), the emit
-                // itself is unreachable, so it must not be reported and the path aborts.
                 if self.expr_aborted {
-                    return Exits::abort();
+                    return Exits::default();
                 }
-                if entry.external_call_seen
-                    && !self.suppress_inline_reports
-                    && self.emitted.insert(stmt.span)
-                {
+                if entry && !self.suppress_inline_reports && self.emitted.insert(stmt.span) {
                     self.ctx.emit(&REENTRANCY_EVENTS, stmt.span);
                 }
                 Exits::fallthrough(entry)
             }
             StmtKind::Revert(expr) => {
                 self.analyze_expr(expr, &mut entry);
-                Exits::abort()
+                Exits::default()
             }
             StmtKind::Return(expr) => {
                 if let Some(expr) = expr {
                     self.analyze_expr(expr, &mut entry);
                 }
-                // If the return value computation aborts, the `return` itself never runs.
-                if self.expr_aborted {
-                    return Exits::abort();
-                }
-                Exits::return_(entry)
+                self.unless_aborted(Exits::return_(entry))
             }
             StmtKind::Break => Exits::break_(entry),
             StmtKind::Continue => Exits::continue_(entry),
             StmtKind::Loop(block, _) => {
-                // Two-pass fixpoint: with a 1-bit state the back-edge can only strengthen
-                // `external_call_seen` from false to true, so a second pass with the merged
-                // entry suffices to catch emits tainted only on iterations 2..N. Duplicate
-                // diagnostics from the first pass are deduped via `self.emitted`.
-                let first = self.analyze_block(block, placeholder, entry.clone());
-
-                // Back-edge entry: pre-loop entry merged with anything that loops back
-                // (fallthrough at the end of the body, or an explicit `continue`).
-                let mut back_edge = entry.clone();
-                if let Some(ft) = &first.fallthrough {
-                    back_edge.merge(ft);
-                }
-                if let Some(c) = &first.continue_ {
-                    back_edge.merge(c);
-                }
-
+                // Two passes suffice: the one-bit state can only go from clean to tainted around
+                // the back-edge, so a second pass from the merged entry catches emits tainted
+                // only on later iterations. `emitted` dedupes the diagnostics.
+                let first = self.analyze_block(block, placeholder, entry);
+                let back_edge =
+                    entry || first.fallthrough.unwrap_or(false) || first.continue_.unwrap_or(false);
                 let body = if back_edge == entry {
                     first
                 } else {
                     self.analyze_block(block, placeholder, back_edge)
                 };
-
-                // Post-loop state combines the entry (zero iterations), fallthrough at end of
-                // body, plus any `break` or `continue` exits. Aborting paths are absent and
-                // therefore drop out.
-                let mut post = entry;
-                if let Some(ft) = body.fallthrough {
-                    post.merge(&ft);
-                }
-                if let Some(b) = body.break_ {
-                    post.merge(&b);
-                }
-                if let Some(c) = body.continue_ {
-                    post.merge(&c);
-                }
-                Exits {
-                    fallthrough: Some(post),
-                    return_: body.return_,
-                    break_: None,
-                    continue_: None,
-                }
+                // Zero iterations, the end of the body, `break` and `continue` all reach the exit.
+                let post = entry
+                    || body.fallthrough.unwrap_or(false)
+                    || body.break_.unwrap_or(false)
+                    || body.continue_.unwrap_or(false);
+                Exits { fallthrough: Some(post), return_: body.return_, ..Exits::default() }
             }
             StmtKind::If(cond, then_stmt, else_stmt) => {
                 self.analyze_expr(cond, &mut entry);
-                // If the condition aborts (e.g. `if (helperThatAlwaysReverts())`), neither
-                // branch is reachable.
                 if self.expr_aborted {
-                    return Exits::abort();
+                    return Exits::default();
                 }
-
-                let then_exits = self.analyze_stmt(then_stmt, placeholder, entry.clone());
-                let else_exits = if let Some(else_stmt) = else_stmt {
-                    self.analyze_stmt(else_stmt, placeholder, entry)
-                } else {
-                    Exits::fallthrough(entry)
-                };
-
-                let mut merged = then_exits;
-                merged.merge(else_exits);
-                merged
+                let mut exits = self.analyze_stmt(then_stmt, placeholder, entry);
+                exits.merge(match else_stmt {
+                    Some(else_stmt) => self.analyze_stmt(else_stmt, placeholder, entry),
+                    None => Exits::fallthrough(entry),
+                });
+                exits
             }
             StmtKind::Try(try_stmt) => {
                 self.analyze_expr(&try_stmt.expr, &mut entry);
-                // If evaluating the try-call expression aborts before the call itself runs
-                // (e.g. an aborting arg), no clause can execute.
                 if self.expr_aborted {
-                    return Exits::abort();
+                    return Exits::default();
                 }
-
-                let mut summary = Exits::default();
+                let mut exits = Exits::default();
                 for clause in try_stmt.clauses {
-                    let clause_exits = self.analyze_block(clause.block, placeholder, entry.clone());
-                    summary.merge(clause_exits);
+                    exits.merge(self.analyze_block(clause.block, placeholder, entry));
                 }
-                summary
+                exits
             }
-            StmtKind::Placeholder => {
-                if let Some((modifiers, index, body)) = placeholder {
+            StmtKind::Placeholder => match placeholder {
+                Some((modifiers, index, body)) => {
                     self.analyze_modifier_chain(modifiers, index, body, entry)
-                } else {
-                    Exits::fallthrough(entry)
                 }
-            }
+                None => Exits::fallthrough(entry),
+            },
+            // Inline assembly can call out and log; conservatively taint.
             StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => {
-                // Inline assembly can perform external interactions
-                // (call/delegatecall/create, logs). Conservatively taint.
-                entry.external_call_seen = true;
-                Exits::fallthrough(entry)
+                Exits::fallthrough(true)
             }
         }
     }
 
-    fn analyze_expr(&mut self, expr: &'hir Expr<'hir>, state: &mut FlowState) {
-        match &expr.kind {
-            ExprKind::Call(callee, args, opts) => {
-                self.analyze_expr(callee, state);
-                if let Some(opts) = opts {
-                    for opt in opts.args {
-                        self.analyze_expr(&opt.value, state);
-                    }
-                }
-                for arg in args.exprs() {
-                    self.analyze_expr(arg, state);
-                }
+    fn unless_aborted(&self, exits: Exits) -> Exits {
+        if self.expr_aborted { Exits::default() } else { exits }
+    }
 
+    fn analyze_expr(&mut self, expr: &'hir Expr<'hir>, tainted: &mut bool) {
+        match &expr.kind {
+            ExprKind::Call(callee, args, _) => {
+                for_each_child(expr, &mut |child| self.analyze_expr(child, tainted));
                 if is_state_mutating_external_call(
                     self.gcx,
                     self.hir,
@@ -417,303 +324,172 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     args.len(),
                     self.enclosing_contract,
                 ) {
-                    state.external_call_seen = true;
+                    *tainted = true;
                 }
-
-                // Follow internal/private/public helpers transitively so external calls in
-                // helpers also taint the caller's flow state.
-                for func_id in resolved_internal_function_ids(self.hir, callee) {
-                    self.analyze_internal_call(func_id, state);
-                }
-                // Same for `super.<member>(...)` base-chain dispatch.
-                for func_id in resolved_super_function_ids(
-                    self.hir,
-                    self.enclosing_contract,
-                    callee,
-                    args.len(),
-                ) {
-                    self.analyze_internal_call(func_id, state);
+                // Follow internal helpers and `super` dispatch so their external calls taint the
+                // caller too.
+                for func_id in self.callees(callee, args.len()) {
+                    self.analyze_internal_call(func_id, tainted);
                 }
             }
-            ExprKind::Binary(lhs, op, rhs)
-                if matches!(op.kind, hir::BinOpKind::And | hir::BinOpKind::Or) =>
-            {
-                // Short-circuiting `&&`/`||`: LHS always runs, RHS is conditional. Model RHS
-                // on a forked state so its taint only reaches the merged result when the
-                // short-circuit path is also possible, and so an aborting RHS does not kill
-                // the whole expression (the short-circuit path still falls through).
-                self.analyze_expr(lhs, state);
+            ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
+                // The RHS is conditional: model it on a fork so its taint joins the result next
+                // to the short-circuit path, and an aborting RHS only drops the non-short-circuit
+                // path.
+                self.analyze_expr(lhs, tainted);
                 let lhs_aborted = std::mem::replace(&mut self.expr_aborted, false);
-
-                let mut rhs_state = state.clone();
-                self.analyze_expr(rhs, &mut rhs_state);
+                let mut rhs_tainted = *tainted;
+                self.analyze_expr(rhs, &mut rhs_tainted);
                 let rhs_aborted = self.expr_aborted;
-
-                // The expression aborts iff LHS aborts (then no path survives); an
-                // RHS-only abort just drops the non-short-circuit path.
                 self.expr_aborted = lhs_aborted;
-
                 if !lhs_aborted && !rhs_aborted {
-                    state.merge(&rhs_state);
-                }
-            }
-            ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-                self.analyze_expr(lhs, state);
-                self.analyze_expr(rhs, state);
-            }
-            ExprKind::Unary(_, inner) | ExprKind::Delete(inner) | ExprKind::Payable(inner) => {
-                self.analyze_expr(inner, state);
-            }
-            ExprKind::Index(base, index) => {
-                self.analyze_expr(base, state);
-                if let Some(index) = index {
-                    self.analyze_expr(index, state);
-                }
-            }
-            ExprKind::Slice(base, start, end) => {
-                self.analyze_expr(base, state);
-                if let Some(start) = start {
-                    self.analyze_expr(start, state);
-                }
-                if let Some(end) = end {
-                    self.analyze_expr(end, state);
+                    *tainted |= rhs_tainted;
                 }
             }
             ExprKind::Ternary(cond, then_expr, else_expr) => {
-                self.analyze_expr(cond, state);
-                // Sample `expr_aborted` per branch so an aborting branch can't poison the
-                // sibling. The ternary aborts iff `cond` aborts OR both branches abort.
-                let outer_aborted = std::mem::replace(&mut self.expr_aborted, false);
-
-                let mut then_state = state.clone();
-                self.analyze_expr(then_expr, &mut then_state);
+                self.analyze_expr(cond, tainted);
+                let cond_aborted = std::mem::replace(&mut self.expr_aborted, false);
+                let mut then_tainted = *tainted;
+                self.analyze_expr(then_expr, &mut then_tainted);
                 let then_aborted = std::mem::replace(&mut self.expr_aborted, false);
-
-                let mut else_state = state.clone();
-                self.analyze_expr(else_expr, &mut else_state);
+                let mut else_tainted = *tainted;
+                self.analyze_expr(else_expr, &mut else_tainted);
                 let else_aborted = self.expr_aborted;
-
-                self.expr_aborted = outer_aborted || (then_aborted && else_aborted);
-
-                // Aborting branches drop their state; only surviving branches contribute.
-                match (then_aborted, else_aborted) {
-                    (true, true) => {}
-                    (true, false) => *state = else_state,
-                    (false, true) => *state = then_state,
-                    (false, false) => {
-                        *state = then_state;
-                        state.merge(&else_state);
-                    }
+                // The ternary aborts iff the condition does or both branches do; aborting
+                // branches drop their state.
+                self.expr_aborted = cond_aborted || (then_aborted && else_aborted);
+                if !(then_aborted && else_aborted) {
+                    *tainted =
+                        (!then_aborted && then_tainted) || (!else_aborted && else_tainted);
                 }
             }
-            ExprKind::Array(exprs) => {
-                for expr in *exprs {
-                    self.analyze_expr(expr, state);
-                }
-            }
-            ExprKind::Tuple(exprs) => {
-                for expr in exprs.iter().copied().flatten() {
-                    self.analyze_expr(expr, state);
-                }
-            }
-            ExprKind::Member(base, _) => self.analyze_expr(base, state),
-            ExprKind::Ident(_)
-            | ExprKind::Lit(_)
-            | ExprKind::New(_)
-            | ExprKind::TypeCall(_)
-            | ExprKind::Type(_)
-            | ExprKind::YulMember(..)
-            | ExprKind::Err(_) => {}
+            _ => for_each_child(expr, &mut |child| self.analyze_expr(child, tainted)),
         }
     }
 
-    fn analyze_internal_call(&mut self, func_id: FunctionId, state: &mut FlowState) {
+    /// Internal functions and `super` targets a call through `callee` dispatches to.
+    fn callees(&self, callee: &'hir Expr<'hir>, arg_count: usize) -> Vec<FunctionId> {
+        resolved_internal_function_ids(self.hir, callee)
+            .chain(resolved_super_function_ids(
+                self.hir,
+                self.enclosing_contract,
+                callee,
+                arg_count,
+            ))
+            .collect()
+    }
+
+    fn analyze_internal_call(&mut self, func_id: FunctionId, tainted: &mut bool) {
         if self.call_stack.contains(&func_id) {
-            // Keep inline summaries stack-insensitive by replacing cut recursive edges with a
-            // conservative cached "can this helper ever taint by external call?" summary.
-            if self.helper_may_reach_external_call(func_id) {
-                state.external_call_seen = true;
-            }
+            // Replace the cut recursive edge with the conservative "can this helper ever call
+            // out?" summary so inline summaries stay stack-insensitive.
+            *tainted |= self.helper_may_reach_external_call(func_id, &mut HashSet::new());
             return;
         }
-
         let func = self.hir.function(func_id);
         let Some(body) = func.body else { return };
 
-        let suppress_inline_reports = self.suppress_inline_reports || !state.external_call_seen;
-        let key = InlineCallKey {
-            func_id,
-            external_call_seen: state.external_call_seen,
-            suppress_inline_reports,
-        };
-
+        // Diagnostics inside a helper entered clean are left to the helper's own pass, which
+        // avoids duplicate reports across callers.
+        let suppress = self.suppress_inline_reports || !*tainted;
+        let key =
+            InlineCallKey { func_id, external_call_seen: *tainted, suppress_inline_reports: suppress };
         if self.inline_cache.is_in_progress(&key) {
             return;
         }
-
-        if let Some(summary) = self.inline_cache.get(&key).cloned() {
-            self.apply_inline_summary(summary, state);
-            return;
-        }
-
-        // Suppress diagnostics inside helpers entered with a clean state — the helper's
-        // own self-pass will independently catch any intra-helper taint, avoiding
-        // duplicate reports across callers.
-        let prev_suppress = self.suppress_inline_reports;
-        self.suppress_inline_reports = suppress_inline_reports;
-
-        self.inline_cache.start(key);
-        self.call_stack.push(func_id);
-        let summary = self.analyze_callable(func, body, state.clone());
-        self.call_stack.pop();
-
-        self.inline_cache.finish(key, summary.clone());
-
-        self.suppress_inline_reports = prev_suppress;
-
-        self.apply_inline_summary(summary, state);
-    }
-
-    fn apply_inline_summary(&mut self, summary: Exits, state: &mut FlowState) {
-        // Caller inherits the state of paths that return normally. If the callee has no
-        // normal exits (always aborts), signal abort to the enclosing statement.
-        let any_normal = summary.fallthrough.is_some() || summary.return_.is_some();
-        if any_normal {
-            let mut after = FlowState::default();
-            if let Some(ft) = summary.fallthrough {
-                after.merge(&ft);
+        let summary = match self.inline_cache.get(&key) {
+            Some(summary) => *summary,
+            None => {
+                let prev_suppress = std::mem::replace(&mut self.suppress_inline_reports, suppress);
+                self.inline_cache.start(key);
+                self.call_stack.push(func_id);
+                let summary = self.analyze_callable(func, body, *tainted);
+                self.call_stack.pop();
+                self.inline_cache.finish(key, summary);
+                self.suppress_inline_reports = prev_suppress;
+                summary
             }
-            if let Some(rt) = summary.return_ {
-                after.merge(&rt);
-            }
-            *state = after;
-        } else {
-            self.expr_aborted = true;
+        };
+        // The caller continues in the state of the normally returning paths; a callee without
+        // any aborts the enclosing statement.
+        match summary.normal() {
+            Some(after) => *tainted = after,
+            None => self.expr_aborted = true,
         }
     }
 
-    fn helper_may_reach_external_call(&mut self, func_id: FunctionId) -> bool {
-        self.helper_may_reach_external_call_inner(func_id, &mut HashSet::new()).0
-    }
-
-    fn helper_may_reach_external_call_inner(
+    /// Conservative summary of whether `func_id` can ever perform an external call.
+    fn helper_may_reach_external_call(
         &mut self,
         func_id: FunctionId,
         seen: &mut HashSet<FunctionId>,
-    ) -> (bool, bool) {
-        if let Some(cached) = self.external_call_reachability.get(&func_id) {
-            return (*cached, false);
+    ) -> bool {
+        if let Some(&cached) = self.external_call_reachability.get(&func_id) {
+            return cached;
         }
         if !seen.insert(func_id) {
-            return (false, true);
+            self.reachability_cut = true;
+            return false;
         }
-
+        let outer_cut = std::mem::replace(&mut self.reachability_cut, false);
         let func = self.hir.function(func_id);
-        let mut may_reach = false;
-        let mut cut_recursive_edge = false;
-        for modifier in func.modifiers {
-            for arg in modifier.args.exprs() {
-                let (arg_may_reach, arg_cut_recursive_edge) =
-                    self.expr_may_reach_external_call(arg, seen);
-                cut_recursive_edge |= arg_cut_recursive_edge;
-                if arg_may_reach {
-                    may_reach = true;
-                    break;
-                }
-            }
-            if may_reach {
-                break;
-            }
-            if let Some(modifier_id) = modifier.id.as_function() {
-                let (modifier_may_reach, modifier_cut_recursive_edge) =
-                    self.helper_may_reach_external_call_inner(modifier_id, seen);
-                cut_recursive_edge |= modifier_cut_recursive_edge;
-                if modifier_may_reach {
-                    may_reach = true;
-                    break;
-                }
-            }
-        }
-        if !may_reach && let Some(body) = func.body {
-            let (body_may_reach, body_cut_recursive_edge) =
-                self.block_may_reach_external_call(body, seen);
-            may_reach = body_may_reach;
-            cut_recursive_edge |= body_cut_recursive_edge;
-        }
-
+        let may_reach = func.modifiers.iter().any(|modifier| {
+            modifier.args.exprs().any(|arg| self.expr_may_reach_external_call(arg, seen))
+                || modifier
+                    .id
+                    .as_function()
+                    .is_some_and(|id| self.helper_may_reach_external_call(id, seen))
+        }) || func.body.is_some_and(|body| {
+            body.stmts.iter().any(|stmt| self.stmt_may_reach_external_call(stmt, seen))
+        });
         seen.remove(&func_id);
-        if may_reach || !cut_recursive_edge {
+        // A negative answer that relied on a cut recursive edge is not conclusive.
+        if may_reach || !self.reachability_cut {
             self.external_call_reachability.insert(func_id, may_reach);
         }
-        (may_reach, cut_recursive_edge)
-    }
-
-    fn block_may_reach_external_call(
-        &mut self,
-        block: Block<'hir>,
-        seen: &mut HashSet<FunctionId>,
-    ) -> (bool, bool) {
-        let mut cut_recursive_edge = false;
-        for stmt in block.stmts {
-            let (may_reach, stmt_cut_recursive_edge) =
-                self.stmt_may_reach_external_call(stmt, seen);
-            cut_recursive_edge |= stmt_cut_recursive_edge;
-            if may_reach {
-                return (true, cut_recursive_edge);
-            }
-        }
-        (false, cut_recursive_edge)
+        self.reachability_cut |= outer_cut;
+        may_reach
     }
 
     fn stmt_may_reach_external_call(
         &mut self,
         stmt: &'hir Stmt<'hir>,
         seen: &mut HashSet<FunctionId>,
-    ) -> (bool, bool) {
+    ) -> bool {
         match stmt.kind {
-            StmtKind::DeclSingle(var_id) => match self.hir.variable(var_id).initializer {
-                Some(expr) => self.expr_may_reach_external_call(expr, seen),
-                None => (false, false),
-            },
+            StmtKind::DeclSingle(var_id) => self
+                .hir
+                .variable(var_id)
+                .initializer
+                .is_some_and(|init| self.expr_may_reach_external_call(init, seen)),
             StmtKind::DeclMulti(_, expr)
             | StmtKind::Expr(expr)
             | StmtKind::Emit(expr)
             | StmtKind::Revert(expr) => self.expr_may_reach_external_call(expr, seen),
-            StmtKind::Return(expr) => match expr {
-                Some(expr) => self.expr_may_reach_external_call(expr, seen),
-                None => (false, false),
-            },
+            StmtKind::Return(expr) => {
+                expr.is_some_and(|expr| self.expr_may_reach_external_call(expr, seen))
+            }
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-                self.block_may_reach_external_call(block, seen)
+                block.stmts.iter().any(|stmt| self.stmt_may_reach_external_call(stmt, seen))
             }
-            StmtKind::If(cond, then_stmt, else_stmt) => Self::any_may_reach_external_call([
-                self.expr_may_reach_external_call(cond, seen),
-                self.stmt_may_reach_external_call(then_stmt, seen),
-                else_stmt
-                    .map(|else_stmt| self.stmt_may_reach_external_call(else_stmt, seen))
-                    .unwrap_or((false, false)),
-            ]),
+            StmtKind::If(cond, then_stmt, else_stmt) => {
+                self.expr_may_reach_external_call(cond, seen)
+                    || self.stmt_may_reach_external_call(then_stmt, seen)
+                    || else_stmt.is_some_and(|stmt| self.stmt_may_reach_external_call(stmt, seen))
+            }
             StmtKind::Try(try_stmt) => {
-                let mut cut_recursive_edge = false;
-                let (expr_may_reach, expr_cut_recursive_edge) =
-                    self.expr_may_reach_external_call(&try_stmt.expr, seen);
-                cut_recursive_edge |= expr_cut_recursive_edge;
-                if expr_may_reach {
-                    return (true, cut_recursive_edge);
-                }
-                for clause in try_stmt.clauses {
-                    let (clause_may_reach, clause_cut_recursive_edge) =
-                        self.block_may_reach_external_call(clause.block, seen);
-                    cut_recursive_edge |= clause_cut_recursive_edge;
-                    if clause_may_reach {
-                        return (true, cut_recursive_edge);
-                    }
-                }
-                (false, cut_recursive_edge)
+                self.expr_may_reach_external_call(&try_stmt.expr, seen)
+                    || try_stmt.clauses.iter().any(|clause| {
+                        clause
+                            .block
+                            .stmts
+                            .iter()
+                            .any(|stmt| self.stmt_may_reach_external_call(stmt, seen))
+                    })
             }
-            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) => (true, false),
+            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) => true,
             StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => {
-                (false, false)
+                false
             }
         }
     }
@@ -722,182 +498,65 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         &mut self,
         expr: &'hir Expr<'hir>,
         seen: &mut HashSet<FunctionId>,
-    ) -> (bool, bool) {
-        match &expr.kind {
-            ExprKind::Call(callee, args, opts) => {
-                let mut cut_recursive_edge = false;
-                let (callee_may_reach, callee_cut_recursive_edge) =
-                    self.expr_may_reach_external_call(callee, seen);
-                cut_recursive_edge |= callee_cut_recursive_edge;
-                if callee_may_reach {
-                    return (true, cut_recursive_edge);
-                }
-                if let Some(opts) = opts {
-                    for opt in opts.args {
-                        let (opt_may_reach, opt_cut_recursive_edge) =
-                            self.expr_may_reach_external_call(&opt.value, seen);
-                        cut_recursive_edge |= opt_cut_recursive_edge;
-                        if opt_may_reach {
-                            return (true, cut_recursive_edge);
-                        }
-                    }
-                }
-                for arg in args.exprs() {
-                    let (arg_may_reach, arg_cut_recursive_edge) =
-                        self.expr_may_reach_external_call(arg, seen);
-                    cut_recursive_edge |= arg_cut_recursive_edge;
-                    if arg_may_reach {
-                        return (true, cut_recursive_edge);
-                    }
-                }
-                if is_state_mutating_external_call(
-                    self.gcx,
-                    self.hir,
-                    callee,
-                    args.len(),
-                    self.enclosing_contract,
-                ) {
-                    return (true, cut_recursive_edge);
-                }
-
-                let internal: Vec<_> = resolved_internal_function_ids(self.hir, callee).collect();
-                for func_id in internal {
-                    let (func_may_reach, func_cut_recursive_edge) =
-                        self.helper_may_reach_external_call_inner(func_id, seen);
-                    cut_recursive_edge |= func_cut_recursive_edge;
-                    if func_may_reach {
-                        return (true, cut_recursive_edge);
-                    }
-                }
-
-                for func_id in resolved_super_function_ids(
-                    self.hir,
-                    self.enclosing_contract,
-                    callee,
-                    args.len(),
-                ) {
-                    let (func_may_reach, func_cut_recursive_edge) =
-                        self.helper_may_reach_external_call_inner(func_id, seen);
-                    cut_recursive_edge |= func_cut_recursive_edge;
-                    if func_may_reach {
-                        return (true, cut_recursive_edge);
-                    }
-                }
-
-                (false, cut_recursive_edge)
-            }
-            ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-                Self::any_may_reach_external_call([
-                    self.expr_may_reach_external_call(lhs, seen),
-                    self.expr_may_reach_external_call(rhs, seen),
-                ])
-            }
-            ExprKind::Unary(_, inner)
-            | ExprKind::Delete(inner)
-            | ExprKind::Payable(inner)
-            | ExprKind::Member(inner, _) => self.expr_may_reach_external_call(inner, seen),
-            ExprKind::Index(base, index) => Self::any_may_reach_external_call([
-                self.expr_may_reach_external_call(base, seen),
-                index
-                    .map(|index| self.expr_may_reach_external_call(index, seen))
-                    .unwrap_or((false, false)),
-            ]),
-            ExprKind::Slice(base, start, end) => Self::any_may_reach_external_call([
-                self.expr_may_reach_external_call(base, seen),
-                start
-                    .map(|start| self.expr_may_reach_external_call(start, seen))
-                    .unwrap_or((false, false)),
-                end.map(|end| self.expr_may_reach_external_call(end, seen))
-                    .unwrap_or((false, false)),
-            ]),
-            ExprKind::Ternary(cond, then_expr, else_expr) => Self::any_may_reach_external_call([
-                self.expr_may_reach_external_call(cond, seen),
-                self.expr_may_reach_external_call(then_expr, seen),
-                self.expr_may_reach_external_call(else_expr, seen),
-            ]),
-            ExprKind::Array(exprs) => self.exprs_may_reach_external_call(exprs, seen),
-            ExprKind::Tuple(exprs) => {
-                let mut cut_recursive_edge = false;
-                for expr in exprs.iter().copied().flatten() {
-                    let (expr_may_reach, expr_cut_recursive_edge) =
-                        self.expr_may_reach_external_call(expr, seen);
-                    cut_recursive_edge |= expr_cut_recursive_edge;
-                    if expr_may_reach {
-                        return (true, cut_recursive_edge);
-                    }
-                }
-                (false, cut_recursive_edge)
-            }
-            ExprKind::Ident(_)
-            | ExprKind::Lit(_)
-            | ExprKind::New(_)
-            | ExprKind::TypeCall(_)
-            | ExprKind::Type(_)
-            | ExprKind::YulMember(..)
-            | ExprKind::Err(_) => (false, false),
+    ) -> bool {
+        let mut reached = false;
+        for_each_child(expr, &mut |child| {
+            reached = reached || self.expr_may_reach_external_call(child, seen);
+        });
+        if reached {
+            return true;
         }
-    }
-
-    fn exprs_may_reach_external_call(
-        &mut self,
-        exprs: &'hir [Expr<'hir>],
-        seen: &mut HashSet<FunctionId>,
-    ) -> (bool, bool) {
-        let mut cut_recursive_edge = false;
-        for expr in exprs {
-            let (expr_may_reach, expr_cut_recursive_edge) =
-                self.expr_may_reach_external_call(expr, seen);
-            cut_recursive_edge |= expr_cut_recursive_edge;
-            if expr_may_reach {
-                return (true, cut_recursive_edge);
-            }
-        }
-        (false, cut_recursive_edge)
-    }
-
-    fn any_may_reach_external_call(
-        results: impl IntoIterator<Item = (bool, bool)>,
-    ) -> (bool, bool) {
-        let mut cut_recursive_edge = false;
-        for (may_reach, result_cut_recursive_edge) in results {
-            cut_recursive_edge |= result_cut_recursive_edge;
-            if may_reach {
-                return (true, cut_recursive_edge);
-            }
-        }
-        (false, cut_recursive_edge)
+        let ExprKind::Call(callee, args, _) = &expr.kind else { return false };
+        is_state_mutating_external_call(
+            self.gcx,
+            self.hir,
+            callee,
+            args.len(),
+            self.enclosing_contract,
+        ) || self
+            .callees(callee, args.len())
+            .into_iter()
+            .any(|id| self.helper_may_reach_external_call(id, seen))
     }
 }
 
-/// Returns `true` when the expression-statement is a builtin call that always terminates
-/// execution: `revert()` / `revert("msg")`, `selfdestruct(...)`, `require(false, ...)`, or
-/// `assert(false)`.
-fn is_aborting_call(expr: &Expr<'_>) -> bool {
-    let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else {
-        return false;
-    };
-    let ExprKind::Ident(reses) = &callee.peel_parens().kind else {
-        return false;
-    };
-    for res in *reses {
-        let Res::Builtin(b) = res else { continue };
-        let name = b.name();
-        if name == kw::Revert || name == kw::Selfdestruct {
-            return true;
+/// Calls `f` on every direct sub-expression of `expr`, in evaluation order.
+fn for_each_child<'hir>(expr: &'hir Expr<'hir>, f: &mut impl FnMut(&'hir Expr<'hir>)) {
+    match &expr.kind {
+        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
+            f(lhs);
+            f(rhs);
         }
-        if (name == sym::require || name == sym::assert)
-            && args.exprs().next().is_some_and(literal_false)
-        {
-            return true;
+        ExprKind::Unary(_, inner)
+        | ExprKind::Delete(inner)
+        | ExprKind::Member(inner, _)
+        | ExprKind::Payable(inner) => f(inner),
+        ExprKind::Call(callee, args, opts) => {
+            f(callee);
+            opts.iter().flat_map(|opts| opts.args).for_each(|opt| f(&opt.value));
+            args.exprs().for_each(f);
         }
+        ExprKind::Index(base, index) => {
+            f(base);
+            index.iter().copied().for_each(f);
+        }
+        ExprKind::Slice(base, start, end) => {
+            f(base);
+            [*start, *end].into_iter().flatten().for_each(f);
+        }
+        ExprKind::Ternary(cond, true_expr, false_expr) => {
+            f(cond);
+            f(true_expr);
+            f(false_expr);
+        }
+        ExprKind::Array(exprs) => exprs.iter().for_each(f),
+        ExprKind::Tuple(exprs) => exprs.iter().flatten().copied().for_each(f),
+        ExprKind::Ident(_)
+        | ExprKind::Lit(_)
+        | ExprKind::New(_)
+        | ExprKind::TypeCall(_)
+        | ExprKind::Type(_)
+        | ExprKind::YulMember(..)
+        | ExprKind::Err(_) => {}
     }
-    false
-}
-
-/// Returns `true` if `expr` is the boolean literal `false`.
-fn literal_false(expr: &Expr<'_>) -> bool {
-    matches!(
-        &expr.peel_parens().kind,
-        ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Bool(false))
-    )
 }
