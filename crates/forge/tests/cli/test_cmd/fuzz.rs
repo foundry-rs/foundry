@@ -1356,50 +1356,83 @@ contract ForgeFuzzRunWarningsTest {
     );
 });
 
-forgetest_init!(forge_fuzz_run_warns_for_fuzz_only_flag_on_invariant_only_match, |prj, cmd| {
+forgetest_init!(forge_fuzz_run_captures_stateful_branch_frontiers, |prj, cmd| {
     prj.add_test(
-        "ForgeFuzzRunInvariantWarnings.t.sol",
+        "ForgeFuzzRunStatefulFrontiers.t.sol",
         r#"
 import {Test} from "forge-std/Test.sol";
 
-contract ForgeFuzzRunInvariantWarningsTest is Test {
+contract StatefulFrontierTarget {
+    uint256 public phase;
+    uint256 public marker;
+
+    function advance(uint256 value) external {
+        if (phase == 0) {
+            marker = value < 100 ? 1 : 2;
+            phase = 1;
+        } else if (phase == 1) {
+            marker = value == 123456789 ? 3 : 4;
+            phase = 2;
+        }
+    }
+}
+
+contract ForgeFuzzRunStatefulFrontiersTest is Test {
     function setUp() public {
-        targetContract(address(this));
+        targetContract(address(new StatefulFrontierTarget()));
     }
 
     function invariant_ok() public pure {}
-
-    function targetTouch(uint256 value) external pure {
-        value;
-    }
 }
    "#,
     );
 
-    let output = cmd
-        .forge_fuse()
+    cmd.forge_fuse()
         .args([
             "fuzz",
             "run",
             "--match-contract",
-            "ForgeFuzzRunInvariantWarningsTest",
+            "ForgeFuzzRunStatefulFrontiersTest",
             "--match-test",
             "invariant",
             "--runs",
             "1",
             "--depth",
+            "3",
+            "--seed",
+            "0x1234",
+            "--threads",
             "1",
             "--frontier-dir",
-            "frontier",
+            "stateful_frontiers",
         ])
         .assert_success();
-    let stderr = String::from_utf8(output.get_output().stderr.clone()).unwrap();
-    assert!(
-        stderr.contains(
-            "`--frontier-dir` only applies to fuzz tests; no matched fuzz tests were found."
-        ),
-        "{stderr}"
-    );
+
+    let frontier_path = prj
+        .root()
+        .join("stateful_frontiers")
+        .join("ForgeFuzzRunStatefulFrontiersTest")
+        .join("branch-frontiers.json");
+    let artifact: Value = serde_json::from_slice(
+        &std::fs::read(&frontier_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+    )
+    .unwrap();
+    assert_eq!(artifact["schema"], "foundry:fuzz.branch-frontiers@v2");
+    assert_eq!(artifact["version"], 2);
+    assert_eq!(artifact["test"], "invariant_ok()");
+
+    let sequences = artifact["sequences"].as_array().unwrap();
+    assert!(!sequences.is_empty(), "{artifact:#}");
+    let frontiers = artifact["frontiers"].as_array().unwrap();
+    assert!(!frontiers.is_empty(), "{artifact:#}");
+    assert!(frontiers.iter().any(|frontier| frontier["call_index"] == 1), "{artifact:#}");
+    for frontier in frontiers {
+        let call_index = frontier["call_index"].as_u64().unwrap() as usize;
+        let sequence_index = frontier["sequence_index"].as_u64().unwrap() as usize;
+        let sequence = sequences[sequence_index].as_array().unwrap();
+        assert!(sequence.len() > call_index, "{frontier:#}");
+    }
 });
 
 forgetest_init!(forge_fuzz_run_runs_sets_invariant_runs, |prj, cmd| {

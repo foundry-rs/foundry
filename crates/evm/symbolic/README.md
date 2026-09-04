@@ -122,27 +122,46 @@ follow-up:
 forge test --match-test test_hard_branch --fuzz-frontier-dir fuzz_frontiers
 ```
 
+Invariant campaigns can capture the same EVM-level comparisons together with
+the concrete transaction prefix that reached each stateful site:
+
+```sh
+forge fuzz run --match-test invariant_ \
+  --runs 1000 \
+  --depth 500 \
+  --frontier-dir fuzz_frontiers
+```
+
 For example, a fuzz run may pass after reaching `feeMultiplier == 100` at a
 `feeMultiplier < 100` guard; the frontier gives symbolic execution the replay
 calldata and comparison site needed to solve the adjacent missed branch.
 
-Forge writes one bounded artifact per fuzz test at
-`<fuzz_frontier_dir>/<contract>/<test>/branch-frontiers.json`. The artifact
-uses schema `foundry:fuzz.branch-frontiers@v1` and records the test signature,
+Forge writes one bounded artifact per stateless fuzz test at
+`<fuzz_frontier_dir>/<contract>/<test>/branch-frontiers.json`, or one per
+invariant campaign at `<fuzz_frontier_dir>/<contract>/branch-frontiers.json`.
+Stateless artifacts use schema `foundry:fuzz.branch-frontiers@v1`. Invariant
+artifacts use `foundry:fuzz.branch-frontiers@v2`, storing concrete sequences
+once in a top-level `sequences` array and referencing them by `sequence_index`
+to avoid repeating long transaction prefixes. Both record the test signature,
 configured record limit, and a `frontiers` array. Each frontier contains:
 
 - a stable record index (`id`) within the artifact
-- fuzz replay metadata (`seed`, `run`, `worker`) when available
-- the concrete one-call sequence that reached the site
+- the concrete call sequence, directly or by `sequence_index`, and the index of
+  the call whose prefix reached the site
 - the EVM comparison site (`address`, `pc`, `opcode`, `opcode_name`)
 - concrete operands (`lhs`, `rhs`), the comparison result, and an
   `operand_delta` priority score interpreted according to opcode signedness
-- whether the call also expanded the worker's coverage map (`new_coverage`),
-  present only when edge coverage is collected via a corpus directory, edge
-  coverage metrics, or sancov, and omitted otherwise
 
-Frontier capture is opt-in and bounded by `fuzz.frontier_limit` (default 256).
-It reuses the fuzzer's comparison-operand inspector and does not store traces.
+Stateless records additionally contain fuzz replay metadata (`seed`, `run`,
+`worker`) when available and `new_coverage` when edge coverage is collected.
+
+Frontier capture is opt-in and bounded by `fuzz.frontier_limit` or
+`invariant.frontier_limit` (both default to 256). It reuses the fuzzer's
+comparison-operand inspector and does not store traces. When equally close
+executions reach the same comparison side, it retains the shortest sequence.
+The current symbolic frontier importer accepts stateless one-call records only;
+invariant records are durable inputs for stateful replay and future targeted
+suffix solving, not automatic symbolic seeds yet.
 
 Symbolic execution can consume those artifacts to solve the opposite side of
 captured comparisons and write replay-confirmed inputs into the fuzz corpus:

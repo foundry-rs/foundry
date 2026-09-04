@@ -762,6 +762,14 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_DIR", value_name = "PATH", value_hint = ValueHint::DirPath)]
     pub invariant_corpus_dir: Option<PathBuf>,
 
+    /// Directory inherited from `forge fuzz run --frontier-dir` for invariant frontiers.
+    #[arg(skip)]
+    invariant_frontier_dir: Option<PathBuf>,
+
+    /// Frontier limit inherited from `forge fuzz run --frontier-limit` for invariant frontiers.
+    #[arg(skip)]
+    invariant_frontier_limit: Option<usize>,
+
     /// Percent chance that fuzzed payable invariant calls carry non-zero msg.value.
     #[arg(long, env = "FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", value_name = "PERCENT")]
     pub invariant_payable_value_weight: Option<u32>,
@@ -1279,8 +1287,16 @@ impl TestArgs {
         }
         let unused: &[(bool, &str, &str)] = if fuzz == 0 && invariant > 0 {
             &[
-                (self.fuzz_frontier_dir.is_some(), "--frontier-dir", "fuzz"),
-                (self.fuzz_frontier_limit.is_some(), "--frontier-limit", "fuzz"),
+                (
+                    self.fuzz_frontier_dir.is_some() && self.invariant_frontier_dir.is_none(),
+                    "--frontier-dir",
+                    "fuzz",
+                ),
+                (
+                    self.fuzz_frontier_limit.is_some() && self.invariant_frontier_limit.is_none(),
+                    "--frontier-limit",
+                    "fuzz",
+                ),
                 (self.fuzz_run.is_some(), "--fuzz-run", "fuzz"),
             ]
         } else if invariant == 0 && fuzz > 0 {
@@ -1361,8 +1377,10 @@ impl TestArgs {
             invariant_mutation_weight_abi: campaign.mutation_weight_abi,
             fuzz_mutation_weight_cmp: campaign.mutation_weight_cmp,
             invariant_mutation_weight_cmp: campaign.mutation_weight_cmp,
-            fuzz_frontier_dir: campaign.frontier_dir,
+            fuzz_frontier_dir: campaign.frontier_dir.clone(),
+            invariant_frontier_dir: campaign.frontier_dir,
             fuzz_frontier_limit: campaign.frontier_limit,
+            invariant_frontier_limit: campaign.frontier_limit,
             invariant_depth: campaign.depth,
             invariant_min_depth: campaign.min_depth,
             invariant_depth_mode: campaign.depth_mode,
@@ -3004,6 +3022,8 @@ impl Provider for TestArgs {
             "corpus_random_sequence_weight_configured" =>
                 self.invariant_corpus_random_sequence_weight.map(|_| true),
             "corpus_dir" => path_string(&self.invariant_corpus_dir),
+            "frontier_dir" => path_string(&self.invariant_frontier_dir),
+            "frontier_limit" => self.invariant_frontier_limit,
             "payable_value_weight" => self.invariant_payable_value_weight,
             "timeout" => self.invariant_timeout_override,
             "mutation_weight_splice" => self.invariant_mutation_weight_splice,
@@ -3607,6 +3627,10 @@ mod tests {
             "7",
             "--workers",
             "2",
+            "--frontier-dir",
+            "frontiers",
+            "--frontier-limit",
+            "17",
         ]);
         let args = TestArgs::from_fuzz_run(args);
         let figment = figment::Figment::from(&args);
@@ -3617,6 +3641,16 @@ mod tests {
         assert_eq!(figment.extract_inner::<u64>("invariant.runs").unwrap(), 9);
         assert_eq!(figment.extract_inner::<u32>("invariant.timeout").unwrap(), 3);
         assert_eq!(figment.extract_inner::<u32>("invariant.depth").unwrap(), 7);
+        assert_eq!(
+            figment.extract_inner::<PathBuf>("fuzz.frontier_dir").unwrap(),
+            PathBuf::from("frontiers")
+        );
+        assert_eq!(figment.extract_inner::<usize>("fuzz.frontier_limit").unwrap(), 17);
+        assert_eq!(
+            figment.extract_inner::<PathBuf>("invariant.frontier_dir").unwrap(),
+            PathBuf::from("frontiers")
+        );
+        assert_eq!(figment.extract_inner::<usize>("invariant.frontier_limit").unwrap(), 17);
         assert_eq!(
             figment.extract_inner::<InvariantWorkers>("invariant.workers").unwrap(),
             InvariantWorkers::Fixed(std::num::NonZeroUsize::new(2).unwrap())
