@@ -8766,6 +8766,20 @@ where
                     }
                     .into());
                 }
+
+                let hardfork = self.tempo_hardfork();
+                if hardfork.is_t1() && tempo_tx.is_expiring_nonce_tx() {
+                    let max_expiry_secs = hardfork.expiring_nonce_max_expiry_secs();
+                    let max_allowed = current_time.saturating_add(max_expiry_secs);
+                    if valid_before > max_allowed {
+                        return Err(InvalidTransactionError::TempoValidBeforeTooFar {
+                            valid_before,
+                            max_expiry_secs,
+                            max_allowed,
+                        }
+                        .into());
+                    }
+                }
             }
 
             // Reject if valid_after is too far in the future (> 1 hour)

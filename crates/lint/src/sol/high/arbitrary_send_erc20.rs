@@ -44,7 +44,7 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
-        if !func.kind.is_function()
+        if matches!(func.kind, hir::FunctionKind::Constructor)
             || matches!(
                 func.state_mutability,
                 ast::StateMutability::Pure | ast::StateMutability::View
@@ -1342,10 +1342,13 @@ fn seed_internal_callsite_facts<'hir>(
     }
 }
 
+/// Internal functions and modifiers are only reachable from contracts in the compilation unit, so
+/// their parameters can be proven safe from the invocation sites seen there.
 const fn is_internal_callsite_seed_candidate(func: &hir::Function<'_>) -> bool {
-    func.kind.is_function()
-        && matches!(func.visibility, ast::Visibility::Private | ast::Visibility::Internal)
-        && !func.parameters.is_empty()
+    let internal_only = matches!(func.kind, hir::FunctionKind::Modifier)
+        || (func.kind.is_function()
+            && matches!(func.visibility, ast::Visibility::Private | ast::Visibility::Internal));
+    internal_only && !func.parameters.is_empty()
 }
 
 thread_local! {
@@ -1387,7 +1390,14 @@ fn build_project_index<'hir>(
     let mut collector =
         InternalCallsiteCollector { gcx, hir, has_solady_lib, out: &mut index.internal_callsites };
     for fid in hir.function_ids() {
-        let Some(body) = hir.function(fid).body else { continue };
+        let func = hir.function(fid);
+        // Modifier invocations are the call sites of a modifier body.
+        for modifier in func.modifiers {
+            if let ItemId::Function(modifier_id) = modifier.id {
+                collector.record_call(modifier_id, &modifier.args);
+            }
+        }
+        let Some(body) = func.body else { continue };
         for stmt in body.stmts {
             let _ = collector.visit_stmt(stmt);
         }

@@ -1232,6 +1232,9 @@ impl<N: Network> EthApi<N> {
         {
             return Err(FeeHistoryError::InvalidRewardPercentiles.into());
         }
+        if block_count.is_zero() {
+            return Ok(FeeHistory::default());
+        }
 
         // max number of blocks in the requested range
 
@@ -2536,6 +2539,10 @@ impl EthApi<FoundryNetwork> {
         block_number: Option<BlockId>,
     ) -> Result<HashMap<Address, Vec<B256>>> {
         node_info!("eth_getStorageValues");
+
+        if requests.is_empty() {
+            return Err(RpcError::invalid_params("empty request").into());
+        }
 
         let total_slots: usize = requests.values().map(|s| s.len()).sum();
         if total_slots > 1024 {

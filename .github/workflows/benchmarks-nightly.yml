@@ -13,6 +13,7 @@ env:
 jobs:
   run-benchmarks:
     name: Run Nightly Benchmarks
+    if: github.event_name != 'schedule' || github.repository == 'foundry-rs/foundry'
     runs-on: depot-ubuntu-24.04-32
     permissions:
       contents: read
