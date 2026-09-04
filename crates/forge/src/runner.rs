@@ -1639,16 +1639,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         call_sequence: &mut [BaseCounterExample],
         expect_assertion_failure: bool,
         storage: &[SymbolicStorageAssignment],
-    ) -> (Vec<BasicTxDetails>, Result<CheckSequenceOutcome>) {
+    ) -> Result<(Vec<BasicTxDetails>, CheckSequenceOutcome)> {
         let config = &self.config.invariant;
         let txes = base_counterexamples_to_txes(call_sequence, config.show_solidity);
-        let executor = match self.clone_executor_with_symbolic_storage(storage) {
-            Ok(executor) => executor,
-            Err(err) => return (txes, Err(err)),
-        };
         let sequence = (0..min(txes.len(), config.depth as usize)).collect::<Vec<_>>();
-        let result = check_sequence(
-            executor,
+        let outcome = check_sequence(
+            self.clone_executor_with_symbolic_storage(storage)?,
             &txes,
             &sequence,
             invariant_contract.address,
@@ -1660,8 +1656,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 call_after_invariant: invariant_contract.call_after_invariant,
                 rd: Some(self.revert_decoder()),
             },
-        );
-        (txes, result)
+        )?;
+        Ok((txes, outcome))
     }
 
     /// Replays persisted handler-side assertion bugs. A file is kept only if the anchor still
@@ -1911,6 +1907,29 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
     }
 
+    /// Sets the per-test corpus directory in `fuzz_config` and returns the test path name, the
+    /// legacy corpus directory and the persisted failure `(dir, file)` paths.
+    fn fuzz_test_paths<'f>(
+        &self,
+        func: &'f Function,
+        fuzz_config: &mut FuzzConfig,
+    ) -> (Cow<'f, str>, Option<PathBuf>, (PathBuf, PathBuf)) {
+        let test_name = fuzz_test_path_name(&self.cr.contract.abi, func, fuzz_config, self.cr.name);
+        let legacy_corpus_dir = legacy_fuzz_corpus_dir(
+            fuzz_config.corpus.corpus_dir.as_deref(),
+            self.cr.name,
+            func,
+            &test_name,
+        );
+        let failure_paths = test_paths(
+            &mut fuzz_config.corpus,
+            fuzz_config.failure_persist_dir.clone().unwrap(),
+            self.cr.name,
+            &test_name,
+        );
+        (test_name, legacy_corpus_dir, failure_paths)
+    }
+
     /// Imports persisted fuzz corpus entries as symbolic path-priority hints.
     fn import_symbolic_fuzz_corpus(
         &self,
@@ -1922,20 +1941,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         let mut fuzz_config = self.config.fuzz.clone();
-        let test_name =
-            fuzz_test_path_name(&self.cr.contract.abi, func, &fuzz_config, self.cr.name);
-        let legacy_corpus_dir = legacy_fuzz_corpus_dir(
-            fuzz_config.corpus.corpus_dir.as_deref(),
-            self.cr.name,
-            func,
-            &test_name,
-        );
-        let _ = test_paths(
-            &mut fuzz_config.corpus,
-            fuzz_config.failure_persist_dir.clone().unwrap(),
-            self.cr.name,
-            &test_name,
-        );
+        let (_, legacy_corpus_dir, _) = self.fuzz_test_paths(func, &mut fuzz_config);
         let corpus_dir = legacy_corpus_dir.or(fuzz_config.corpus.corpus_dir);
         let limit = self.config.symbolic.corpus_seed_limit;
         let mut metadata = SymbolicCorpusSeedMetadata {
@@ -2669,7 +2675,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     self.result.invariant_replay_success(outcome.calls_count, outcome.reverts);
                     return Ok(());
                 }
-                let reason = outcome.reason.or_else(|| artifact.replay.reason.clone());
                 match artifact_failure {
                     Some(SymbolicInvariantArtifactFailure::Handler {
                         name,
@@ -2700,9 +2705,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                     name: handler_name,
                                     reverter: *reverter,
                                     selector: *selector,
-                                    reason: reason.unwrap_or_else(|| {
-                                        "symbolic handler counterexample".to_string()
-                                    }),
+                                    reason: outcome
+                                        .reason
+                                        .or_else(|| artifact.replay.reason.clone())
+                                        .unwrap_or_else(|| {
+                                            "symbolic handler counterexample".to_string()
+                                        }),
                                     counterexample: Some(CounterExample::Sequence(
                                         calls.len(),
                                         calls,
@@ -2732,11 +2740,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             _ => signature.as_str(),
                         };
                         self.result.invariant_replay_fail(
-                            outcome.replayed_entirely,
+                            outcome,
                             invariant_name,
-                            reason,
-                            outcome.calls_count,
-                            outcome.reverts,
+                            artifact.replay.reason.clone(),
                             calls,
                         );
                     }
@@ -3229,13 +3235,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 call_after_invariant,
                 &self.cr.contract.abi,
             );
-            let (txes, replay) = self.replay_persisted_call_sequence(
+            let Ok((txes, mut replay)) = self.replay_persisted_call_sequence(
                 &replay_contract,
                 &mut call_sequence,
                 assertion_failure,
                 &storage,
-            );
-            let Ok(replay) = replay else { continue };
+            ) else {
+                continue;
+            };
             if replay.success {
                 continue;
             }
@@ -3278,10 +3285,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 ));
                 continue;
             }
-            let mut replayed_entirely = replay.replayed_entirely;
-            let mut replay_reason = replay.reason;
-            let mut calls_count = replay.calls_count;
-            let mut reverts = replay.reverts;
             let warn = "Replayed invariant failure from persisted file. \nRun `forge clean` or remove file to ignore failure and to continue invariant test campaign.";
             if let Some(progress) = &progress {
                 progress.set_prefix(format!("{invariant_display_name}\n{warn}\n"));
@@ -3322,13 +3325,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         {
                             continue;
                         }
-                        replayed_entirely = updated.replayed_entirely;
-                        replay_reason = updated.reason;
-                        calls_count = updated.calls_count;
-                        reverts = updated.reverts;
+                        replay = updated;
                     }
                     record_invariant_failure(
-                        &failure_dir,
                         &invariant_failure_file(&failure_dir, replay_invariant),
                         &call_sequence,
                         &current_settings,
@@ -3344,11 +3343,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
 
             self.result.invariant_replay_fail(
-                replayed_entirely,
+                replay,
                 &replay_invariant.name,
-                replay_reason,
-                calls_count,
-                reverts,
+                None,
                 call_sequence.clone(),
             );
             let signature = replay_invariant.signature();
@@ -3483,36 +3480,36 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         assertion_failure: false,
                         storage: &storage,
                     };
-                    let Some(failure) = self.symbolic_sequence_failure(check, &symbolic_calls)
-                    else {
-                        let reason = "symbolic invariant counterexample did not replay";
-                        self.result.record_symbolic(incomplete(
-                            SymbolicStopReason::Error,
-                            reason,
-                            stats,
-                            SymbolicReplayMetadata::mismatch(reason.to_string()),
-                        ));
-                        break 'counterexample;
+                    let replayed = self
+                        .symbolic_sequence_failure(check, &symbolic_calls)
+                        .ok_or("symbolic invariant counterexample did not replay")
+                        .and_then(|failure| {
+                            let handler_site = match failure.failure_site {
+                                Some(CheckSequenceFailureSite::SequenceCall {
+                                    target,
+                                    selector,
+                                    fingerprint,
+                                }) if is_handler => Some((target, selector, fingerprint)),
+                                _ => None,
+                            };
+                            if is_handler && handler_site.is_none() {
+                                return Err("symbolic handler counterexample replayed at a \
+                                            non-handler failure site");
+                            }
+                            Ok((failure, handler_site))
+                        });
+                    let (failure, handler_site) = match replayed {
+                        Ok(replayed) => replayed,
+                        Err(reason) => {
+                            self.result.record_symbolic(incomplete(
+                                SymbolicStopReason::Error,
+                                reason,
+                                stats,
+                                SymbolicReplayMetadata::mismatch(reason.to_string()),
+                            ));
+                            break 'counterexample;
+                        }
                     };
-                    let handler_site = match failure.failure_site {
-                        Some(CheckSequenceFailureSite::SequenceCall {
-                            target,
-                            selector,
-                            fingerprint,
-                        }) if is_handler => Some((target, selector, fingerprint)),
-                        _ => None,
-                    };
-                    if is_handler && handler_site.is_none() {
-                        let reason = "symbolic handler counterexample replayed at a \
-                                          non-handler failure site";
-                        self.result.record_symbolic(incomplete(
-                            SymbolicStopReason::Error,
-                            reason,
-                            stats,
-                            SymbolicReplayMetadata::mismatch(reason.to_string()),
-                        ));
-                        break 'counterexample;
-                    }
 
                     let txes = symbolic_calls
                         .iter()
@@ -3620,7 +3617,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
 
                     record_invariant_failure(
-                        &failure_dir,
                         &primary_failure_file,
                         &call_sequence,
                         &current_settings,
@@ -3822,7 +3818,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 let replayed = if !is_anchor && self.tcfg.early_exit.should_stop() {
                     if replayed_metadata.is_none() {
                         record_invariant_failure(
-                            &failure_dir,
                             &persisted_path,
                             &base_counterexamples(
                                 calls,
@@ -3892,7 +3887,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             // campaign error takes precedence and is persisted normally.
                             if replayed_metadata.is_none() {
                                 record_invariant_failure(
-                                    &failure_dir,
                                     &persisted_path,
                                     &replayed.call_sequence,
                                     &current_settings,
@@ -3975,8 +3969,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 let name = invariant_handler_failure_name(identified_contracts, reverter, selector);
                 let symbolic_storage = symbolic_handler_storage
                     .get(&(reverter, selector, failure.edge_fingerprint))
-                    .map(|storage| storage.assignments_for(&failure.call_sequence))
-                    .unwrap_or_default();
+                    .filter(|storage| storage.call_sequence == failure.call_sequence)
+                    .map_or(&[][..], |storage| &storage.assignments);
                 let calls = base_counterexamples(
                     &failure.call_sequence,
                     identified_contracts,
@@ -4096,20 +4090,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let runner = self.fuzz_runner();
         let mut fuzz_config = self.config.fuzz.clone();
-        let test_name =
-            fuzz_test_path_name(&self.cr.contract.abi, func, &fuzz_config, self.cr.name);
-        let legacy_corpus_dir = legacy_fuzz_corpus_dir(
-            fuzz_config.corpus.corpus_dir.as_deref(),
-            self.cr.name,
-            func,
-            &test_name,
-        );
-        let (failure_dir, failure_file) = test_paths(
-            &mut fuzz_config.corpus,
-            fuzz_config.failure_persist_dir.clone().unwrap(),
-            self.cr.name,
-            &test_name,
-        );
+        let (test_name, legacy_corpus_dir, (failure_dir, failure_file)) =
+            self.fuzz_test_paths(func, &mut fuzz_config);
         let fuzz_input = self.cr.mcr.tcfg.fuzz_input.as_ref();
         let is_explicit_target = fuzz_input
             .is_some_and(|input| input.contract == self.cr.name && input.test == func.signature());
@@ -4513,12 +4495,6 @@ struct SymbolicHandlerReplayStorage {
     assignments: Vec<SymbolicStorageAssignment>,
 }
 
-impl SymbolicHandlerReplayStorage {
-    fn assignments_for(&self, call_sequence: &[BasicTxDetails]) -> &[SymbolicStorageAssignment] {
-        if self.call_sequence == call_sequence { &self.assignments } else { &[] }
-    }
-}
-
 /// Helper function to load failed call sequence from file.
 /// Ignores failure if generated with different invariant settings than the current ones.
 fn persisted_call_sequence(
@@ -4827,7 +4803,6 @@ fn symbolic_artifact_file_name(
 
 /// Persists an invariant failure, with any symbolic replay storage and confirmed failure site.
 fn record_invariant_failure(
-    failure_dir: &Path,
     failure_file: &Path,
     call_sequence: &[BaseCounterExample],
     settings: &InvariantSettings,
@@ -4835,10 +4810,6 @@ fn record_invariant_failure(
     storage: &[SymbolicStorageAssignment],
     failure_site: Option<SymbolicInvariantFailureSite>,
 ) {
-    if let Err(err) = foundry_common::fs::create_dir_all(failure_dir) {
-        error!(%err, "Failed to create invariant failure dir");
-        return;
-    }
     if let Some(parent) = failure_file.parent()
         && let Err(err) = foundry_common::fs::create_dir_all(parent)
     {
@@ -4870,13 +4841,11 @@ fn record_handler_failure(
     settings: &InvariantSettings,
     storage: &[SymbolicStorageAssignment],
 ) {
-    let handlers_dir = failure_dir.join("handlers");
     let mut buf = [0u8; 24];
     buf[..20].copy_from_slice(reverter.as_slice());
     buf[20..].copy_from_slice(selector.as_slice());
-    let file = handlers_dir.join(format!("{:x}.json", keccak256(buf)));
+    let file = failure_dir.join("handlers").join(format!("{:x}.json", keccak256(buf)));
     record_invariant_failure(
-        &handlers_dir,
         &file,
         call_sequence,
         settings,

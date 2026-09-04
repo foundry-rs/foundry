@@ -17,7 +17,7 @@ use foundry_evm::{
     decode::SkipReason,
     executors::{
         RawCallResult,
-        invariant::{CheckSequenceFailureSite, InvariantMetrics},
+        invariant::{CheckSequenceFailureSite, CheckSequenceOutcome, InvariantMetrics},
     },
     fuzz::{
         CallDetails, CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult,
@@ -1735,18 +1735,19 @@ impl TestResult {
     /// Returns the fail result for replayed invariant test.
     pub fn invariant_replay_fail(
         &mut self,
-        replayed_entirely: bool,
+        outcome: CheckSequenceOutcome,
         invariant_name: &str,
-        replay_reason: Option<String>,
-        calls: usize,
-        reverts: usize,
+        fallback_reason: Option<String>,
         call_sequence: Vec<BaseCounterExample>,
     ) {
-        self.kind = invariant_kind(1, calls, reverts);
+        self.kind = invariant_kind(1, outcome.calls_count, outcome.reverts);
         self.status = TestStatus::Failure;
-        self.reason = Some(replay_reason.unwrap_or_else(|| {
-            let what =
-                if replayed_entirely { "replay failure" } else { "persisted failure revert" };
+        self.reason = Some(outcome.reason.or(fallback_reason).unwrap_or_else(|| {
+            let what = if outcome.replayed_entirely {
+                "replay failure"
+            } else {
+                "persisted failure revert"
+            };
             format!("{invariant_name} {what}")
         }));
         self.counterexample = Some(CounterExample::Sequence(call_sequence.len(), call_sequence));
