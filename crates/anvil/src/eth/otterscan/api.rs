@@ -373,6 +373,9 @@ impl EthApi<FoundryNetwork> {
             return Err(BlockchainError::DataUnavailable);
         }
 
+        // Preserve the total transaction count before pagination.
+        let transaction_count = block.transactions().len();
+
         block.transactions = match block.transactions() {
             BlockTransactions::Full(txs) => BlockTransactions::Full(
                 txs.iter().skip(page * page_size).take(page_size).cloned().collect(),
@@ -400,7 +403,6 @@ impl EthApi<FoundryNetwork> {
         .into_iter()
         .collect::<Result<Vec<_>>>()?;
 
-        let transaction_count = block.transactions().len();
         let fullblock = OtsBlock { block: block.inner.clone(), transaction_count };
 
         let ots_block_txs = OtsBlockTransactions { fullblock, receipts };
