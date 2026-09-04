@@ -477,9 +477,8 @@ contract SymbolicPredicateArtifactOrigin is Test {
 
 forgetest_init!(symbolic_invariant_handler_failure_stays_handler, |prj, cmd| {
     skip_unless_z3!("symbolic_invariant_handler_failure_stays_handler");
-    prj.update_config(|config| config.invariant.runs = 0);
-
     prj.update_config(|config| {
+        config.invariant.runs = 0;
         config.invariant.fail_on_revert = false;
     });
     prj.add_test(

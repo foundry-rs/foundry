@@ -307,6 +307,7 @@ impl SymbolicExecutor {
                     }
                     if input.collect_success_input
                         && state.satisfies_branch_target()
+                        && state.can_seed_success_input()
                         && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
                     {
                         success_input = Some((
@@ -357,6 +358,7 @@ impl SymbolicExecutor {
                         }
                         if input.collect_success_input
                             && state.satisfies_branch_target()
+                            && state.can_seed_success_input()
                             && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
                         {
                             success_input = Some((
