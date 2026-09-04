@@ -508,6 +508,86 @@ contract EventsArithmeticOverrideDerived is EventsArithmeticOverrideBase {
     }
 }
 
+// Regression: a `virtual` internal hook dispatches to the derived override, which emits.
+abstract contract EventsArithmeticHookBase {
+    uint256 public hookFee;
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function setHookFee(uint256 newFee) external onlyOwner {
+        _setHookFee(newFee);
+    }
+
+    function _setHookFee(uint256 newFee) internal virtual {
+        hookFee = newFee;
+    }
+
+    function hookQuote(uint256 amount) external view returns (uint256) {
+        return amount * hookFee;
+    }
+}
+
+contract EventsArithmeticHookDerived is EventsArithmeticHookBase {
+    event HookFeeUpdated(uint256 fee);
+
+    function _setHookFee(uint256 newFee) internal override {
+        hookFee = newFee;
+        emit HookFeeUpdated(newFee);
+    }
+}
+
+// An unimplemented `virtual` hook resolves to the derived implementation, which is inspected.
+abstract contract EventsArithmeticAbstractHookBase {
+    uint256 public abstractFee;
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function setAbstractFee(uint256 newFee) external onlyOwner {
+        _setAbstractFee(newFee);
+    }
+
+    function _setAbstractFee(uint256 newFee) internal virtual;
+
+    function abstractQuote(uint256 amount) external view returns (uint256) {
+        return amount * abstractFee;
+    }
+}
+
+contract EventsArithmeticAbstractHookDerived is EventsArithmeticAbstractHookBase {
+    function _setAbstractFee(uint256 newFee) internal override {
+        abstractFee = newFee; //~WARN: `abstractFee` is changed without an event but is used in arithmetic
+    }
+}
+
+// A concrete base inherited unchanged is reported once, not once per contract in the hierarchy.
+contract EventsArithmeticConcreteBase {
+    uint256 public concreteFee;
+    address public owner = msg.sender;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "not owner");
+        _;
+    }
+
+    function setConcreteFee(uint256 newFee) external onlyOwner {
+        concreteFee = newFee; //~WARN: `concreteFee` is changed without an event but is used in arithmetic
+    }
+
+    function concreteQuote(uint256 amount) external view returns (uint256) {
+        return amount * concreteFee;
+    }
+}
+
+contract EventsArithmeticConcreteDerived is EventsArithmeticConcreteBase {}
+
 contract ReproAccessNameCalleeResultIgnored {
     address public owner = msg.sender;
     uint256 public price;

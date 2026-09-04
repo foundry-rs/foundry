@@ -9,9 +9,12 @@ use crate::{
 use solar::{
     ast::{ContractKind, StateMutability},
     interface::{Span, kw, sym},
-    sema::hir::{
-        self, BinOpKind, ElementaryType, ExprKind, FunctionId, ItemId, Res, StmtKind, TypeKind,
-        UnOpKind, VariableId,
+    sema::{
+        Gcx,
+        hir::{
+            self, BinOpKind, ContractId, ElementaryType, ExprKind, FunctionId, ItemId, Res,
+            StmtKind, TypeKind, UnOpKind, VariableId,
+        },
     },
 };
 use std::collections::{HashMap, HashSet};
@@ -27,9 +30,9 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: solar::sema::Gcx<'hir>,
+        gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
-        contract_id: hir::ContractId,
+        contract_id: ContractId,
     ) {
         let contract = hir.contract(contract_id);
         if contract.kind != ContractKind::Contract || contract.linearization_failed() {
@@ -71,7 +74,9 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
         }
 
         let arithmetic_vars = vars_used_in_unprotected_arithmetic(
+            gcx,
             hir,
+            contract_id,
             &entry_points,
             &candidate_vars,
             &protected_funcs,
@@ -80,8 +85,10 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
             return;
         }
 
+        // A concrete base and every contract deriving from it report the same write; the
+        // diagnostic context deduplicates identical diagnostics.
         for func_id in protected_entry_points {
-            let mut analyzer = WriteAnalyzer::new(hir, &arithmetic_vars);
+            let mut analyzer = WriteAnalyzer::new(gcx, hir, contract_id, &arithmetic_vars);
             let writes = analyzer.analyze_entry_point(func_id);
             let mut emitted = HashSet::new();
 
@@ -117,7 +124,9 @@ fn is_candidate_state_var(hir: &hir::Hir<'_>, var_id: VariableId) -> bool {
 }
 
 fn vars_used_in_unprotected_arithmetic<'hir>(
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
+    contract_id: ContractId,
     entry_points: &[FunctionId],
     candidate_vars: &HashSet<VariableId>,
     protected_funcs: &HashSet<FunctionId>,
@@ -129,7 +138,7 @@ fn vars_used_in_unprotected_arithmetic<'hir>(
             continue;
         }
 
-        let mut analyzer = ArithmeticUseAnalyzer::new(hir, candidate_vars);
+        let mut analyzer = ArithmeticUseAnalyzer::new(gcx, hir, contract_id, candidate_vars);
         used.extend(analyzer.analyze_entry_point(func_id));
     }
 
@@ -172,14 +181,21 @@ impl WriteFlow {
 }
 
 struct WriteAnalyzer<'a, 'hir> {
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
+    contract_id: ContractId,
     targets: &'a HashSet<VariableId>,
     call_stack: Vec<FunctionId>,
 }
 
 impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
-    const fn new(hir: &'hir hir::Hir<'hir>, targets: &'a HashSet<VariableId>) -> Self {
-        Self { hir, targets, call_stack: Vec::new() }
+    const fn new(
+        gcx: Gcx<'hir>,
+        hir: &'hir hir::Hir<'hir>,
+        contract_id: ContractId,
+        targets: &'a HashSet<VariableId>,
+    ) -> Self {
+        Self { gcx, hir, contract_id, targets, call_stack: Vec::new() }
     }
 
     fn analyze_entry_point(&mut self, func_id: FunctionId) -> Vec<StateWrite> {
@@ -456,6 +472,8 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
         args: &hir::CallArgs<'hir>,
         state: &mut WriteState,
     ) {
+        // A `virtual` callee dispatches to the override the analyzed contract inherits.
+        let callee_id = self.gcx.resolve_virtual_function(self.contract_id, callee_id);
         if self.call_stack.contains(&callee_id) {
             return;
         }
@@ -578,7 +596,9 @@ fn set_taint_entry(
 }
 
 struct ArithmeticUseAnalyzer<'a, 'hir> {
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
+    contract_id: ContractId,
     targets: &'a HashSet<VariableId>,
     taint: HashMap<VariableId, HashSet<VariableId>>,
     used: HashSet<VariableId>,
@@ -586,8 +606,21 @@ struct ArithmeticUseAnalyzer<'a, 'hir> {
 }
 
 impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
-    fn new(hir: &'hir hir::Hir<'hir>, targets: &'a HashSet<VariableId>) -> Self {
-        Self { hir, targets, taint: HashMap::new(), used: HashSet::new(), call_stack: Vec::new() }
+    fn new(
+        gcx: Gcx<'hir>,
+        hir: &'hir hir::Hir<'hir>,
+        contract_id: ContractId,
+        targets: &'a HashSet<VariableId>,
+    ) -> Self {
+        Self {
+            gcx,
+            contract_id,
+            hir,
+            targets,
+            taint: HashMap::new(),
+            used: HashSet::new(),
+            call_stack: Vec::new(),
+        }
     }
 
     fn analyze_entry_point(&mut self, func_id: FunctionId) -> HashSet<VariableId> {
@@ -745,6 +778,8 @@ impl<'a, 'hir> ArithmeticUseAnalyzer<'a, 'hir> {
     }
 
     fn analyze_internal_call(&mut self, callee_id: FunctionId, args: &hir::CallArgs<'hir>) {
+        // A `virtual` callee dispatches to the override the analyzed contract inherits.
+        let callee_id = self.gcx.resolve_virtual_function(self.contract_id, callee_id);
         if self.call_stack.contains(&callee_id) {
             return;
         }
