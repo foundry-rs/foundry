@@ -14,7 +14,9 @@ use alloy_sol_types::{SolCall, sol};
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    json::{JsonMessage, print_json_success, print_json_success_with_warnings, print_scalar},
+    json::{
+        JsonError, JsonMessage, print_json_success, print_json_success_with_warnings, print_scalar,
+    },
     opts::RpcOpts,
     utils::{LoadConfig, get_provider},
 };
@@ -1086,12 +1088,19 @@ async fn check_compatibility(
         failed,
         checks,
     };
-    print_compatibility_report(&report)?;
-
     if failed > 0 {
-        eyre::bail!("vault failed {failed} ERC-4626 compatibility probe(s)")
+        let message = format!("vault failed {failed} ERC-4626 compatibility probe(s)");
+        if shell::is_json() {
+            return Err(JsonError::new(
+                report,
+                JsonMessage::error("erc4626.compatibility_failed", message),
+            )?
+            .into());
+        }
+        print_compatibility_report(&report)?;
+        eyre::bail!(message)
     }
-    Ok(())
+    print_compatibility_report(&report)
 }
 
 fn print_info(info: VaultInfo, human: bool, warnings: Vec<VaultWarning>) -> Result<()> {

@@ -521,6 +521,19 @@ WARN decimals()               optional ERC-20 metadata is unavailable
 Summary: 1 passed, 3 warnings, 15 failed
 
 "#]]);
+
+    let output = cmd
+        .cast_fuse()
+        .args(["erc4626", "check", anvil_const::VAULT, "--rpc-url", &rpc, "--json"])
+        .assert_failure()
+        .get_output()
+        .stdout
+        .clone();
+    let output: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(output["success"], false);
+    assert_eq!(output["data"]["read_compatible"], false);
+    assert_eq!(output["data"]["failed"], 15);
+    assert_eq!(output["errors"][0]["code"], "erc4626.compatibility_failed");
 });
 
 casttest!(erc4626_fork_reads_multiple_production_vaults, async |_prj, cmd| {
