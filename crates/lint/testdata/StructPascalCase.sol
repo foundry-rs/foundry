@@ -53,4 +53,12 @@ contract StructPascalCaseTest {
     struct ERC20Data_ {
         uint256 a;
     }
+
+    struct __ERC20Data { //~NOTE: structs should use PascalCase
+        uint256 a;
+    }
+
+    struct ERC20Data__ { //~NOTE: structs should use PascalCase
+        uint256 a;
+    }
 }

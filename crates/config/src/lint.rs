@@ -61,8 +61,8 @@ pub struct LintSpecificConfig {
     /// Configurable patterns that should be excluded when performing `mixedCase` and
     /// `PascalCase` lint checks.
     ///
-    /// Defaults to ["ERC", "URI"] to allow common names like `rescueERC20`, `ERC721TokenReceiver`
-    /// or `tokenURI`.
+    /// Defaults to ["ERC", "URI", "ID", "URL", "API", "JSON", "XML", "HTML", "HTTP",
+    /// "HTTPS"] to allow common names like `rescueERC20`, `ERC721TokenReceiver` or `tokenURI`.
     pub mixed_case_exceptions: Vec<String>,
 
     /// Contract types that are allowed to appear multiple times in the same file.

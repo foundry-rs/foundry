@@ -51,9 +51,10 @@ fn check_pascal_case(s: &str, allowed_patterns: &[String]) -> Option<String> {
 
             // Text on either side of the pattern must be valid PascalCase, ignoring preserved
             // leading/trailing underscores; digits may directly follow the pattern (`ERC20Data`).
-            let pre = pre.trim_start_matches('_');
+            let pre = pre.strip_prefix('_').unwrap_or(pre);
             let is_pre_valid = pre == heck::AsUpperCamelCase(pre).to_string();
-            let post = post.trim_start_matches(|c: char| c.is_numeric()).trim_end_matches('_');
+            let post = post.trim_start_matches(|c: char| c.is_numeric());
+            let post = post.strip_suffix('_').unwrap_or(post);
             let is_post_valid = post == heck::AsUpperCamelCase(post).to_string();
             if is_pre_valid && is_post_valid {
                 return None;
@@ -62,4 +63,19 @@ fn check_pascal_case(s: &str, allowed_patterns: &[String]) -> Option<String> {
     }
 
     check_pascal_case_pure(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exception_preserves_at_most_one_underscore() {
+        let allowed_patterns = ["ERC".to_string()];
+
+        assert!(check_pascal_case("_ERC20Data", &allowed_patterns).is_none());
+        assert!(check_pascal_case("ERC20Data_", &allowed_patterns).is_none());
+        assert!(check_pascal_case("__ERC20Data", &allowed_patterns).is_some());
+        assert!(check_pascal_case("ERC20Data__", &allowed_patterns).is_some());
+    }
 }

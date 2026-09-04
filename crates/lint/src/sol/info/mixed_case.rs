@@ -110,13 +110,13 @@ fn check_mixed_case(s: &str, is_fn: bool, allowed_patterns: &[String]) -> Option
             let post = &post[pattern.len()..];
 
             // Pre-pattern must be valid lowerCamelCase, ignoring a preserved leading underscore.
-            let pre = pre.trim_start_matches('_');
+            let pre = pre.strip_prefix('_').unwrap_or(pre);
             let is_pre_valid = pre == heck::AsLowerCamelCase(pre).to_string();
 
             // Post-pattern must be valid UpperCamelCase (allowing leading numbers), ignoring a
             // preserved trailing underscore.
-            let post_trimmed =
-                post.trim_start_matches(|c: char| c.is_numeric()).trim_end_matches('_');
+            let post_trimmed = post.trim_start_matches(|c: char| c.is_numeric());
+            let post_trimmed = post_trimmed.strip_suffix('_').unwrap_or(post_trimmed);
             let is_post_valid = post_trimmed == heck::AsUpperCamelCase(post_trimmed).to_string();
 
             if is_pre_valid && is_post_valid {
@@ -126,6 +126,21 @@ fn check_mixed_case(s: &str, is_fn: bool, allowed_patterns: &[String]) -> Option
     }
 
     check_mixed_case_pure(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exception_preserves_at_most_one_underscore() {
+        let allowed_patterns = ["ERC".to_string()];
+
+        assert!(check_mixed_case("_rescueERC20", true, &allowed_patterns).is_none());
+        assert!(check_mixed_case("rescueERC20_", true, &allowed_patterns).is_none());
+        assert!(check_mixed_case("__rescueERC20", true, &allowed_patterns).is_some());
+        assert!(check_mixed_case("rescueERC20__", true, &allowed_patterns).is_some());
+    }
 }
 
 /// Checks if a function getter is a valid constant getter with a heuristic:
