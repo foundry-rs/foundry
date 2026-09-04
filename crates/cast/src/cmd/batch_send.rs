@@ -8,7 +8,7 @@ use crate::{
     call_spec::CallSpec,
     cmd::{
         auth::{confirm_and_build, confirm_and_build_with_tempo_wallet},
-        send::{cast_send, cast_send_with_tempo_wallet},
+        send::{SendOptions, cast_send, cast_send_with_tempo_wallet},
     },
     tempo,
     tx::{self, CastTxBuilder, InitState, InputState, SendTxOpts},
@@ -90,46 +90,22 @@ impl BatchSendArgs {
         let builder = with_batch_calls(&calls, builder, &provider).await?;
         tempo::print_expires(expires_at)?;
 
-        let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-        let SendTxOpts { cast_async, sync, confirmations: confs, .. } = send_tx;
-        let resolve_fee_symbol = !config.eth_rpc_curl;
+        let send_opts =
+            SendOptions::new(&send_tx, &config).resolving_fee_token(Some(chain), &config);
 
         if unlocked {
             let Some(tx) = confirm_and_build(builder, config.sender, force, lane, false).await?
             else {
                 return Ok(());
             };
-            cast_send(
-                provider,
-                tx,
-                Some(chain),
-                None,
-                cast_async,
-                sync,
-                confs,
-                timeout,
-                resolve_fee_symbol,
-            )
-            .await?;
+            cast_send(provider, tx, &send_opts).await?;
         } else if let Some(access_key) = &tempo_access_key {
             let Some((tx_request, prepared)) =
                 confirm_and_build_with_tempo_wallet(builder, access_key, force, lane).await?
             else {
                 return Ok(());
             };
-            cast_send_with_tempo_wallet(
-                &provider,
-                tx_request,
-                &prepared,
-                Some(chain),
-                None,
-                cast_async,
-                sync,
-                confs,
-                timeout,
-                resolve_fee_symbol,
-            )
-            .await?;
+            cast_send_with_tempo_wallet(&provider, tx_request, &prepared, &send_opts).await?;
         } else {
             let (signer, _) = tx::resolve_send_signer(signer, &send_tx.eth).await?;
             let Some(tx_request) = confirm_and_build(builder, &signer, force, lane, false).await?
@@ -139,18 +115,7 @@ impl BatchSendArgs {
             let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
                 .wallet(EthereumWallet::from(signer))
                 .connect_provider(&provider);
-            cast_send(
-                provider,
-                tx_request,
-                Some(chain),
-                None,
-                cast_async,
-                sync,
-                confs,
-                timeout,
-                resolve_fee_symbol,
-            )
-            .await?;
+            cast_send(provider, tx_request, &send_opts).await?;
         }
 
         Ok(())

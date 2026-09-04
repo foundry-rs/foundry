@@ -9,11 +9,7 @@ use alloy_provider::Provider;
 use alloy_signer::Signer;
 use eyre::Result;
 use foundry_cli::utils::get_chain;
-use foundry_common::{
-    FoundryTransactionBuilder,
-    provider::ProviderBuilder,
-    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
-};
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use std::time::{Duration, Instant};
 use tempo_alloy::{
@@ -171,14 +167,8 @@ pub(crate) async fn register_virtual_master(
             config.eip1559_fee_estimate,
         )
         .await?;
-        let fee_token = resolve_and_set_fee_token(
-            fee_provider.map(|p| p as &dyn Provider<TempoNetwork>),
-            Some(chain),
-            &mut tx,
-            Some(sender),
-        )
-        .await?;
-        maybe_print_fee_token(fee_provider, fee_token).await?;
+        tempo::resolve_and_print_fee_token(fee_provider, Some(chain), &mut tx, Some(sender))
+            .await?;
         let raw_tx = tx.sign_with_tempo_wallet(&prepared).await?;
         cast_send_raw(&provider, &raw_tx, send_tx.sync).await?
     } else {
@@ -194,14 +184,8 @@ pub(crate) async fn register_virtual_master(
             config.eip1559_fee_estimate,
         )
         .await?;
-        let fee_token = resolve_and_set_fee_token(
-            fee_provider.map(|p| p as &dyn Provider<TempoNetwork>),
-            Some(chain),
-            &mut tx,
-            Some(sender),
-        )
-        .await?;
-        maybe_print_fee_token(fee_provider, fee_token).await?;
+        tempo::resolve_and_print_fee_token(fee_provider, Some(chain), &mut tx, Some(sender))
+            .await?;
         let cast = CastTxSender::new(&signer_provider);
         if send_tx.sync {
             let (tx_hash, receipt) = cast.send_sync(tx).await?;

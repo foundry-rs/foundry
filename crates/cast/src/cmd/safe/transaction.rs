@@ -11,11 +11,7 @@ use foundry_cli::{
     opts::{EthereumOpts, RpcOpts, TransactionOpts},
     utils::{LoadConfig, resolve_lane},
 };
-use foundry_common::{
-    FoundryTransactionBuilder,
-    provider::ProviderBuilder,
-    tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
-};
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use foundry_wallets::{WalletOpts, WalletSigner};
 use serde::Serialize;
 use std::time::Duration;
@@ -132,14 +128,8 @@ impl SafeCall {
         let chain = builder.chain();
         let (mut request, _) = builder.build(from).await?;
         let fee_provider = (!config.eth_rpc_curl).then_some(&provider);
-        let fee_token = resolve_and_set_fee_token(
-            fee_provider.map(|p| p as &dyn Provider<N>),
-            Some(chain),
-            &mut request,
-            Some(from),
-        )
-        .await?;
-        maybe_print_fee_token(fee_provider, fee_token).await?;
+        tempo::resolve_and_print_fee_token(fee_provider, Some(chain), &mut request, Some(from))
+            .await?;
 
         let receipt = provider
             .send_transaction(request)

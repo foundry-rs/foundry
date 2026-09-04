@@ -23,7 +23,7 @@ use foundry_common::{
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
 };
-use foundry_config::Chain;
+use foundry_config::{Chain, Config};
 use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use std::{path::PathBuf, str::FromStr, time::Duration};
 use tempo_alloy::TempoNetwork;
@@ -301,11 +301,10 @@ impl SendTxArgs {
 
         tempo::print_expires(expires_at)?;
 
-        let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-        let SendTxOpts { cast_async, sync, confirmations: confs, .. } = send_tx;
         // Without a sponsor the fee token is resolved for the sender while sending.
-        let fee_chain = tempo_sponsor.is_none().then_some(chain);
-        let resolve_fee_symbol = tempo_sponsor.is_none() && !config.eth_rpc_curl;
+        let send_opts = SendOptions::new(&send_tx, &config);
+        let fee_send_opts =
+            send_opts.resolving_fee_token(tempo_sponsor.is_none().then_some(chain), &config);
 
         // --sponsor-url is valid with local signers and Tempo access keys. Bail early rather than
         // silently ignoring it in signing paths that cannot produce a raw transaction locally.
@@ -357,18 +356,7 @@ impl SendTxArgs {
             )
             .await?;
 
-            cast_send(
-                provider,
-                tx_request,
-                fee_chain,
-                None,
-                cast_async,
-                sync,
-                confs,
-                timeout,
-                resolve_fee_symbol,
-            )
-            .await?;
+            cast_send(provider, tx_request, &fee_send_opts).await?;
         // Case 2:
         // Browser wallet signs and sends the transaction in one step.
         } else if let Some(browser) = browser {
@@ -393,9 +381,7 @@ impl SendTxArgs {
             }
 
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
-            CastTxSender::new(&provider)
-                .print_tx_result(tx_hash, cast_async, confs, timeout)
-                .await?;
+            send_opts.print_tx_result(&provider, tx_hash).await?;
         // Case 3: Tempo access-key wallet.
         } else if let Some(ak) = access_key {
             let Some((mut tx_request, prepared)) =
@@ -417,26 +403,12 @@ impl SendTxArgs {
                     tx_request,
                     &prepared,
                     sponsor_url,
-                    cast_async,
-                    sync,
-                    confs,
-                    timeout,
+                    &send_opts,
                 )
                 .await?;
             } else {
-                cast_send_with_tempo_wallet(
-                    &provider,
-                    tx_request,
-                    &prepared,
-                    fee_chain,
-                    None,
-                    cast_async,
-                    sync,
-                    confs,
-                    timeout,
-                    resolve_fee_symbol,
-                )
-                .await?;
+                cast_send_with_tempo_wallet(&provider, tx_request, &prepared, &fee_send_opts)
+                    .await?;
             }
         // Case 4: a local signer.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -459,10 +431,7 @@ impl SendTxArgs {
                     .wallet(EthereumWallet::from(signer))
                     .connect_with(&connector)
                     .await?;
-                cast_send(
-                    provider, tx_request, None, None, cast_async, sync, confs, timeout, false,
-                )
-                .await?;
+                cast_send(provider, tx_request, &send_opts).await?;
             } else {
                 tempo::maybe_attach_sponsor(
                     tempo_sponsor.as_ref(),
@@ -475,18 +444,7 @@ impl SendTxArgs {
                 let provider = wallet_provider
                     .wallet(EthereumWallet::from(signer))
                     .connect_provider(&provider);
-                cast_send(
-                    provider,
-                    tx_request,
-                    fee_chain,
-                    None,
-                    cast_async,
-                    sync,
-                    confs,
-                    timeout,
-                    resolve_fee_symbol,
-                )
-                .await?;
+                cast_send(provider, tx_request, &fee_send_opts).await?;
             }
         }
 
@@ -494,52 +452,105 @@ impl SendTxArgs {
     }
 }
 
-/// Prints a sync receipt, or the hash / polled receipt of a pending transaction.
-async fn print_send_result<N: Network, P: Provider<N>>(
-    provider: P,
-    tx_hash: B256,
-    receipt: Option<String>,
+/// How a transaction is submitted and its result reported.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SendOptions {
+    /// Only print the transaction hash instead of waiting for the receipt.
     cast_async: bool,
-    confs: u64,
+    /// Submit with the synchronous RPC methods and print the returned receipt.
+    sync: bool,
+    confirmations: u64,
     timeout: u64,
-) -> Result<B256>
-where
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
-    N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
-{
-    match receipt {
-        Some(receipt) => sh_println!("{receipt}")?,
-        None => {
-            CastTxSender::new(provider).print_tx_result(tx_hash, cast_async, confs, timeout).await?
-        }
-    }
-    Ok(tx_hash)
+    /// Chain used to resolve a missing Tempo fee token for the sender before sending. `None`
+    /// leaves the fee token as built, e.g. when a sponsor already selected it.
+    fee_chain: Option<Chain>,
+    /// Whether the provider may be queried for the stored fee token and its symbol.
+    query_fee_token: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
+impl SendOptions {
+    /// Submission options from the CLI flags and config, without fee token resolution.
+    pub(crate) fn new(send_tx: &SendTxOpts, config: &Config) -> Self {
+        Self {
+            cast_async: send_tx.cast_async,
+            sync: send_tx.sync,
+            confirmations: send_tx.confirmations,
+            timeout: send_tx.timeout.unwrap_or(config.transaction_timeout),
+            fee_chain: None,
+            query_fee_token: false,
+        }
+    }
+
+    /// Resolves the sender's fee token on `chain` before sending, querying the RPC unless the
+    /// request is only rendered as `curl`.
+    pub(crate) const fn resolving_fee_token(self, chain: Option<Chain>, config: &Config) -> Self {
+        Self { fee_chain: chain, query_fee_token: chain.is_some() && !config.eth_rpc_curl, ..self }
+    }
+
+    /// Prints the hash of a submitted transaction, or its receipt unless `--async` was passed.
+    pub(crate) async fn print_tx_result<N: Network, P: Provider<N>>(
+        &self,
+        provider: P,
+        tx_hash: B256,
+    ) -> Result<()>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+    {
+        CastTxSender::new(provider)
+            .print_tx_result(tx_hash, self.cast_async, self.confirmations, self.timeout)
+            .await
+    }
+
+    /// Prints a sync receipt, or the hash / polled receipt of a pending transaction.
+    async fn print_send_result<N: Network, P: Provider<N>>(
+        &self,
+        provider: P,
+        tx_hash: B256,
+        receipt: Option<String>,
+    ) -> Result<B256>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+    {
+        match receipt {
+            Some(receipt) => sh_println!("{receipt}")?,
+            None => self.print_tx_result(provider, tx_hash).await?,
+        }
+        Ok(tx_hash)
+    }
+
+    async fn resolve_and_print_fee_token<N: Network, P: Provider<N>>(
+        &self,
+        provider: &P,
+        tx: &mut N::TransactionRequest,
+    ) -> Result<()>
+    where
+        N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
+    {
+        tempo::resolve_and_print_fee_token(
+            self.query_fee_token.then_some(provider),
+            self.fee_chain,
+            tx,
+            None,
+        )
+        .await
+    }
+}
+
+/// Sends a transaction through `provider`, which signs it (a wallet-filled provider or an
+/// unlocked RPC account).
 pub(crate) async fn cast_send<N: Network, P: Provider<N>>(
     provider: P,
     mut tx: N::TransactionRequest,
-    chain: Option<Chain>,
-    fee_payer: Option<Address>,
-    cast_async: bool,
-    sync: bool,
-    confs: u64,
-    timeout: u64,
-    resolve_unknown_fee_token_symbol: bool,
+    opts: &SendOptions,
 ) -> Result<B256>
 where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
-    tempo::resolve_and_print_fee_token(
-        resolve_unknown_fee_token_symbol.then_some(&provider),
-        chain,
-        &mut tx,
-        fee_payer,
-    )
-    .await?;
-    let (tx_hash, receipt) = if sync {
+    opts.resolve_and_print_fee_token(&provider, &mut tx).await?;
+    let (tx_hash, receipt) = if opts.sync {
         // JSON envelope not supported: N::ReceiptResponse is generic over Display but not
         // Serialize; adding Serialize would ripple across all network-generic callers.
         let (tx_hash, receipt) = CastTxSender::new(&provider).send_sync(tx).await?;
@@ -547,7 +558,7 @@ where
     } else {
         (*CastTxSender::new(&provider).send(tx).await?.tx_hash(), None)
     };
-    print_send_result(provider, tx_hash, receipt, cast_async, confs, timeout).await
+    opts.print_send_result(provider, tx_hash, receipt).await
 }
 
 /// Sends a raw transaction using the RPC method selected by `sync`.
@@ -569,47 +580,31 @@ where
 }
 
 /// Signs a prepared transaction with a Tempo wallet and sends it as a raw transaction.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn cast_send_with_tempo_wallet<N: Network, P: Provider<N>>(
     provider: &P,
     mut tx: N::TransactionRequest,
     wallet: &TempoAccountsWallet,
-    chain: Option<Chain>,
-    fee_payer: Option<Address>,
-    cast_async: bool,
-    sync: bool,
-    confirmations: u64,
-    timeout: u64,
-    resolve_unknown_fee_token_symbol: bool,
+    opts: &SendOptions,
 ) -> Result<B256>
 where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
-    tempo::resolve_and_print_fee_token(
-        resolve_unknown_fee_token_symbol.then_some(provider),
-        chain,
-        &mut tx,
-        fee_payer,
-    )
-    .await?;
+    opts.resolve_and_print_fee_token(provider, &mut tx).await?;
     let raw_tx = tx.sign_with_tempo_wallet(wallet).await?;
-    let (tx_hash, receipt) = cast_send_raw(provider, &raw_tx, sync).await?;
-    print_send_result(provider, tx_hash, receipt, cast_async, confirmations, timeout).await
+    let (tx_hash, receipt) = cast_send_raw(provider, &raw_tx, opts.sync).await?;
+    opts.print_send_result(provider, tx_hash, receipt).await
 }
 
 /// Signs a prepared transaction with a Tempo wallet, obtains a remote fee-payer signature, and
-/// broadcasts the sponsored transaction through the original provider transport.
-#[allow(clippy::too_many_arguments)]
+/// broadcasts the sponsored transaction through the original provider transport. The relay
+/// selects the fee token, so `opts` must not resolve one.
 pub(crate) async fn cast_send_with_tempo_wallet_via_sponsor<N: Network, P: Provider<N>>(
     provider: &P,
     mut tx: N::TransactionRequest,
     wallet: &TempoAccountsWallet,
     sponsor_url: &str,
-    cast_async: bool,
-    sync: bool,
-    confirmations: u64,
-    timeout: u64,
+    opts: &SendOptions,
 ) -> Result<B256>
 where
     N::TransactionRequest: Default + FoundryTransactionBuilder<N>,
@@ -619,19 +614,7 @@ where
     let connector = tempo::sponsor_relay_connector(provider, sponsor_url)?;
     let sponsor_provider =
         AlloyProviderBuilder::<_, _, N>::default().connect_with(&connector).await?;
-    cast_send_with_tempo_wallet(
-        &sponsor_provider,
-        tx,
-        wallet,
-        None,
-        None,
-        cast_async,
-        sync,
-        confirmations,
-        timeout,
-        false,
-    )
-    .await
+    cast_send_with_tempo_wallet(&sponsor_provider, tx, wallet, opts).await
 }
 
 /// Validates that a sponsor URL uses https:// (localhost/127.0.0.1 may use http://).
@@ -753,11 +736,15 @@ mod tests {
             ..Default::default()
         };
 
-        let actual_hash = cast_send_with_tempo_wallet(
-            &provider, tx, &wallet, None, None, false, true, 1, 1, false,
-        )
-        .await
-        .unwrap();
+        let opts = SendOptions {
+            cast_async: false,
+            sync: true,
+            confirmations: 1,
+            timeout: 1,
+            fee_chain: None,
+            query_fee_token: false,
+        };
+        let actual_hash = cast_send_with_tempo_wallet(&provider, tx, &wallet, &opts).await.unwrap();
 
         assert_eq!(actual_hash, tx_hash);
         assert_eq!(methods.lock().unwrap().as_slice(), ["eth_sendRawTransactionSync"]);

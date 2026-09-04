@@ -1,17 +1,17 @@
 use crate::{
     cmd::{
-        auth::confirm_auth_rpc_disclosure_during_build,
-        send::cast_send,
+        auth::confirm_and_build,
+        send::{SendOptions, cast_send},
         tempo_policy_args::{
             SelectorArg, parse_period, parse_scope, parse_selector_arg, parse_selector_bytes,
         },
     },
-    tempo::{apply_fee_payment, print_expires, tempo_provider},
-    tx::{CastTxBuilder, CastTxSender, SendTxOpts, SenderKind},
+    tempo::{apply_fee_payment, print_expires, sponsor_hash, tempo_provider},
+    tx::{CastTxBuilder, SendTxOpts, SenderKind},
 };
 use alloy_consensus::BlockHeader;
 use alloy_ens::NameOrAddress;
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_rpc_types::BlockId;
@@ -24,15 +24,13 @@ use eyre::Result;
 use foundry_cli::{
     json::{print_json_object, print_json_success},
     opts::{RpcOpts, TempoOpts, TransactionOpts},
-    utils::{LoadConfig, maybe_print_resolved_lane, parse_fee_token_address, resolve_lane},
+    utils::{LoadConfig, parse_fee_token_address, resolve_lane},
 };
 use foundry_common::{
-    FoundryTransactionBuilder,
     provider::{ProviderBuilder, is_rpc_method_not_found},
     sh_warn, shell,
     tempo::{
-        self, AccountsStoreView, KeyType, read_tempo_accounts_store, resolve_and_set_fee_token,
-        tempo_accounts_store_path,
+        self, AccountsStoreView, KeyType, read_tempo_accounts_store, tempo_accounts_store_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
@@ -2995,7 +2993,6 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
 
     let config = send_tx.eth.load_config()?;
-    let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     if let Some(interval) = send_tx.poll_interval {
         provider.client().set_poll_interval(Duration::from_secs(interval));
@@ -3014,26 +3011,15 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
 
-    if !confirm_auth_rpc_disclosure_during_build(&builder, root_signer.sender(), force)? {
-        return Ok(KeychainTxOutcome::Aborted);
-    }
-
     let from = root_signer.address();
     let chain = builder.chain();
     if print_sponsor_hash {
-        let (mut tx, _) = builder.build(root_signer.sender()).await?;
-        if sponsor_fee_payer.is_some() {
-            resolve_and_set_fee_token(
-                fee_provider.map(|p| p as &dyn Provider<TempoNetwork>),
-                Some(chain),
-                &mut tx,
-                sponsor_fee_payer,
-            )
-            .await?;
-        }
-        let hash = tx
-            .compute_sponsor_hash(from)
-            .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))?;
+        let Some(mut tx) =
+            confirm_and_build(builder, root_signer.sender(), force, None, false).await?
+        else {
+            return Ok(KeychainTxOutcome::Aborted);
+        };
+        let hash = sponsor_hash(fee_provider, chain, &mut tx, from, sponsor_fee_payer).await?;
         if shell::is_json() {
             sh_println!("{}", json!({ "sponsor_hash": format!("{hash:?}") }))?;
         } else {
@@ -3044,12 +3030,18 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
 
     print_expires(expires_at)?;
 
+    let send_opts = SendOptions::new(send_tx, &config)
+        .resolving_fee_token(tempo_sponsor.is_none().then_some(chain), &config);
     let is_browser = matches!(root_signer, KeychainRootSigner::Browser(_));
-    let builder = if is_browser { builder.with_browser_wallet() } else { builder };
-    let (mut tx, _) = builder.build(root_signer.sender()).await?;
-    if !is_browser {
-        maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-    }
+    let (builder, lane) = if is_browser {
+        (builder.with_browser_wallet(), None)
+    } else {
+        (builder, resolved_lane.as_ref())
+    };
+    let Some(mut tx) = confirm_and_build(builder, root_signer.sender(), force, lane, false).await?
+    else {
+        return Ok(KeychainTxOutcome::Aborted);
+    };
     apply_fee_payment::<TempoNetwork, _>(
         tempo_sponsor.as_ref(),
         fee_provider,
@@ -3063,26 +3055,13 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     match root_signer {
         KeychainRootSigner::Browser(browser) => {
             let tx_hash = browser.send_transaction_via_browser(tx).await?;
-            CastTxSender::new(&provider)
-                .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
-                .await?;
+            send_opts.print_tx_result(&provider, tx_hash).await?;
         }
         KeychainRootSigner::Wallet(signer) => {
             let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
                 .wallet(EthereumWallet::from(*signer))
                 .connect_provider(&provider);
-            cast_send(
-                provider,
-                tx,
-                tempo_sponsor.is_none().then_some(chain),
-                None,
-                send_tx.cast_async,
-                send_tx.sync,
-                send_tx.confirmations,
-                timeout,
-                tempo_sponsor.is_none() && !config.eth_rpc_curl,
-            )
-            .await?;
+            cast_send(provider, tx, &send_opts).await?;
         }
     }
 
