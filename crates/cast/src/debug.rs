@@ -27,6 +27,21 @@ pub(crate) fn select_remote_trace_hardfork(
         .or_else(|| endpoint.filter(|hardfork| hardfork.namespace() == namespace))
 }
 
+/// Resolves the hardfork used to decode a trace executed by the remote node. A configured
+/// hardfork is an explicit override; otherwise an Anvil endpoint's exact execution hardfork is
+/// honored before consulting the source chain's schedule at `block_timestamp`.
+pub(crate) fn resolve_remote_trace_hardfork(
+    configured: Option<FoundryHardfork>,
+    endpoint: &ForkEndpointIdentity,
+    block_timestamp: Option<u64>,
+) -> Option<FoundryHardfork> {
+    select_remote_trace_hardfork(configured, endpoint.hardfork, endpoint.network).or_else(|| {
+        block_timestamp.and_then(|timestamp| {
+            FoundryHardfork::from_chain_and_timestamp(endpoint.source_chain_id, timestamp)
+        })
+    })
+}
+
 pub(crate) fn ensure_remote_trace_context_unchanged(
     before: &ForkEndpointIdentity,
     after: &ForkEndpointIdentity,

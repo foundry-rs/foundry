@@ -1,3 +1,4 @@
+use super::confirm_continue;
 use crate::tx::{CastTxBuilder, InputState, SenderKind, validate_authorizations};
 use alloy_network::{Network, TransactionBuilder};
 use alloy_provider::Provider;
@@ -46,26 +47,7 @@ fn confirm_auth_rpc_disclosure_after_validation(force: bool) -> Result<bool> {
     sh_warn!(
         "This command will send a signed EIP-7702 authorization to the RPC endpoint. The authorization can be submitted on-chain by anyone once its nonce is valid."
     )?;
-    let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
-    if !matches!(response.trim(), "y" | "Y") {
-        sh_status!("Aborted.")?;
-        return Ok(false);
-    }
-
-    Ok(true)
-}
-
-/// Confirms disclosure when building the transaction will send an EIP-7702 authorization to an
-/// RPC endpoint.
-pub(super) fn confirm_auth_rpc_disclosure_during_build<'a, N: Network, P, S>(
-    builder: &CastTxBuilder<N, P, S>,
-    sender: impl Into<SenderKind<'a>>,
-    force: bool,
-) -> Result<bool> {
-    if !builder.will_disclose_auth_during_build() {
-        return Ok(true);
-    }
-    confirm_auth_rpc_disclosure(builder, &sender.into(), force)
+    confirm_continue()
 }
 
 /// Confirms the authorization disclosure, builds the transaction for `sender` and prints the
@@ -105,7 +87,9 @@ pub(super) async fn confirm_and_build_with_tempo_wallet<N: Network, P: Provider<
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
-    if !confirm_auth_rpc_disclosure_during_build(&builder, wallet.account(), force)? {
+    if builder.will_disclose_auth_during_build()
+        && !confirm_auth_rpc_disclosure(&builder, &wallet.account().into(), force)?
+    {
         return Ok(None);
     }
     let (tx, _, prepared) = builder.build_with_tempo_wallet(wallet).await?;

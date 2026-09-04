@@ -1,11 +1,10 @@
 use crate::{
     cmd::send::cast_send_raw,
     tempo,
-    tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
+    tx::{CastTxSender, SendTxOpts, TxParams, apply_poll_interval, fill_transaction_gas_fees},
 };
 use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, B256, keccak256};
-use alloy_provider::Provider;
 use alloy_signer::Signer;
 use eyre::Result;
 use foundry_cli::utils::get_chain;
@@ -129,9 +128,7 @@ pub(crate) async fn register_virtual_master(
     msgs: &RegisterMessages,
 ) -> Result<B256> {
     let (config, provider) = tempo::tempo_provider(&send_tx.eth.rpc)?;
-    if let Some(interval) = send_tx.poll_interval {
-        provider.client().set_poll_interval(Duration::from_secs(interval));
-    }
+    apply_poll_interval(&provider, send_tx.poll_interval);
     let chain = get_chain(config.chain, &provider).await?;
     tempo::ensure_session_not_browser(&tx_opts.tempo, send_tx.browser.browser)?;
     let (signer, access_key) =

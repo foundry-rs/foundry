@@ -60,6 +60,13 @@ pub struct SendTxOpts {
     pub browser: BrowserWalletOpts,
 }
 
+/// Applies the `--poll-interval` (in seconds) to a provider's receipt polling when one was given.
+pub(crate) fn apply_poll_interval<N: Network>(provider: &impl Provider<N>, interval: Option<u64>) {
+    if let Some(interval) = interval {
+        provider.client().set_poll_interval(Duration::from_secs(interval));
+    }
+}
+
 /// Transaction options shared across cast commands that submit on-chain transactions.
 #[derive(Debug, Clone, Args)]
 #[command(next_help_heading = "Transaction options")]

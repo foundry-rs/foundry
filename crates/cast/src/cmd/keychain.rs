@@ -9,7 +9,7 @@ use crate::{
         apply_fee_payment, is_tempo_hardfork_active, print_expires, require_hardfork, sponsor_hash,
         tempo_provider,
     },
-    tx::{CastTxBuilder, SendTxOpts, SenderKind},
+    tx::{CastTxBuilder, SendTxOpts, SenderKind, apply_poll_interval},
 };
 use alloy_consensus::BlockHeader;
 use alloy_ens::NameOrAddress;
@@ -40,7 +40,7 @@ use foundry_wallets::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{fmt::Display, time::Duration};
+use std::fmt::Display;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, DEFAULT_FEE_TOKEN,
@@ -2961,9 +2961,7 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
 
     let (config, provider) = tempo_provider(&send_tx.eth)?;
-    if let Some(interval) = send_tx.poll_interval {
-        provider.client().set_poll_interval(Duration::from_secs(interval));
-    }
+    apply_poll_interval(&provider, send_tx.poll_interval);
     // `--curl` must preserve the first RPC request for the user's intended action.
     let fee_provider = (!config.eth_rpc_curl).then_some(&provider);
 

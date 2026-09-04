@@ -4,7 +4,7 @@ use crate::{
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
-use alloy_primitives::{Address, B256, hex};
+use alloy_primitives::{Address, B256};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::utils::get_chain;
@@ -183,7 +183,7 @@ pub(crate) async fn send_tip20_transaction(
     let chain = get_chain(config.chain, &provider).await?;
     let (signer, access_key) =
         tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id()).await?;
-    SendTxArgs::contract_call(NameOrAddress::Address(to), hex::encode_prefixed(data), send_tx, tx)
+    SendTxArgs::contract_call(NameOrAddress::Address(to), data, send_tx, tx)
         .run_generic::<TempoNetwork>(signer, access_key)
         .await
 }

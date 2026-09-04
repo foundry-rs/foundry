@@ -37,6 +37,16 @@ pub(crate) fn rpc_provider(rpc: &RpcOpts) -> Result<RetryProvider> {
     get_provider(&rpc.load_config()?)
 }
 
+/// Asks whether to continue after a warning, printing `Aborted.` when the user declines.
+pub(crate) fn confirm_continue() -> Result<bool> {
+    let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
+    if matches!(response.trim(), "y" | "Y") {
+        return Ok(true);
+    }
+    sh_status!("Aborted.")?;
+    Ok(false)
+}
+
 /// Prints `json` pretty-printed (un-enveloped) in JSON mode, `plain` otherwise.
 pub(crate) fn print_json_or(json: Value, plain: impl Display) -> Result<()> {
     if shell::is_json() {

@@ -11,7 +11,7 @@ use crate::{
         send::{SendOptions, cast_send, cast_send_with_tempo_wallet},
     },
     tempo,
-    tx::{self, CastTxBuilder, InitState, InputState, SendTxOpts},
+    tx::{self, CastTxBuilder, InitState, InputState, SendTxOpts, apply_poll_interval},
 };
 use alloy_network::EthereumWallet;
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
@@ -21,7 +21,6 @@ use foundry_cli::{
     opts::TransactionOpts,
     utils::{self, resolve_lane},
 };
-use std::time::Duration;
 use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast batch-send`.
@@ -70,9 +69,7 @@ impl BatchSendArgs {
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
         let lane = resolved_lane.as_ref();
 
-        if let Some(interval) = send_tx.poll_interval {
-            provider.client().set_poll_interval(Duration::from_secs(interval))
-        }
+        apply_poll_interval(&provider, send_tx.poll_interval);
 
         let chain = utils::get_chain(config.chain, &provider).await?;
         let (signer, tempo_access_key) =

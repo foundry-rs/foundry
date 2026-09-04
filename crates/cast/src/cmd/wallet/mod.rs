@@ -1,4 +1,4 @@
-use crate::cmd::rpc_provider;
+use crate::cmd::{confirm_continue, rpc_provider};
 use alloy_chains::Chain;
 use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, B256, Signature, U256, hex};
@@ -593,9 +593,7 @@ impl WalletSubcommands {
                     sh_warn!(
                         "Chain ID 0 creates an EIP-7702 authorization that is valid on every chain."
                     )?;
-                    let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
-                    if !matches!(response.trim(), "y" | "Y") {
-                        sh_status!("Aborted.")?;
+                    if !confirm_continue()? {
                         return Ok(());
                     }
                 }

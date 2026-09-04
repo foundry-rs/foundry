@@ -1,15 +1,16 @@
 use crate::{
     cmd::{
         auth::{confirm_and_build, confirm_and_build_with_tempo_wallet},
+        confirm_continue,
         tip20::iso4217_warning_message,
     },
     tempo,
-    tx::{self, CastTxBuilder, CastTxSender, SendTxOpts, TxParams},
+    tx::{self, CastTxBuilder, CastTxSender, SendTxOpts, TxParams, apply_poll_interval},
 };
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, EthereumWallet, Network};
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, hex};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
 use clap::Parser;
@@ -25,7 +26,7 @@ use foundry_common::{
 };
 use foundry_config::{Chain, Config};
 use foundry_wallets::{TempoAccountsWallet, WalletSigner};
-use std::{path::PathBuf, str::FromStr, time::Duration};
+use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
@@ -107,7 +108,7 @@ impl SendTxArgs {
     /// Creates a `cast send` invocation for pre-encoded contract calldata.
     pub(crate) fn contract_call(
         to: NameOrAddress,
-        data: String,
+        data: Vec<u8>,
         send_tx: SendTxOpts,
         tx: TxParams,
     ) -> Self {
@@ -115,7 +116,7 @@ impl SendTxArgs {
             to: Some(to),
             sig: None,
             args: Vec::new(),
-            data: Some(data),
+            data: Some(hex::encode_prefixed(data)),
             send_tx,
             command: None,
             unlocked: false,
@@ -231,9 +232,7 @@ impl SendTxArgs {
                 && !is_iso4217_currency(currency)
             {
                 sh_warn!("{}", iso4217_warning_message(currency))?;
-                let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
-                if !matches!(response.trim(), "y" | "Y") {
-                    sh_status!("Aborted.")?;
+                if !confirm_continue()? {
                     return Ok(());
                 }
             }
@@ -247,9 +246,7 @@ impl SendTxArgs {
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
         let lane = resolved_lane.as_ref();
 
-        if let Some(interval) = send_tx.poll_interval {
-            provider.client().set_poll_interval(Duration::from_secs(interval))
-        }
+        apply_poll_interval(&provider, send_tx.poll_interval);
 
         if has_session || access_key.is_some() {
             let chain = get_chain(config.chain, &provider).await?;

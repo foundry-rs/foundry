@@ -8,7 +8,7 @@ use crate::{
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
 use alloy_network::AnyNetwork;
-use alloy_primitives::{Address, FixedBytes, U256, address, hex};
+use alloy_primitives::{Address, FixedBytes, U256, address};
 use alloy_provider::Provider;
 use alloy_sol_types::{SolCall, sol};
 use clap::Parser;
@@ -1270,7 +1270,6 @@ async fn send_call<C: SolCall>(
     send_tx: SendTxOpts,
     tx: TxParams,
 ) -> Result<()> {
-    let data = hex::encode_prefixed(call.abi_encode());
     // Boxed to keep the large `cast send` future off this command's stack frame.
-    Box::pin(SendTxArgs::contract_call(vault, data, send_tx, tx).run()).await
+    Box::pin(SendTxArgs::contract_call(vault, call.abi_encode(), send_tx, tx).run()).await
 }

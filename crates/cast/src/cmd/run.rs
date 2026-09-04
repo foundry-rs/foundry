@@ -1,6 +1,6 @@
 use super::fetch_code_via_rpc;
 use crate::{
-    debug::{ensure_remote_trace_context_unchanged, handle_traces, select_remote_trace_hardfork},
+    debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
     rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
     traces::TraceKind,
     utils::{
@@ -375,19 +375,11 @@ impl RunArgs {
         // The remote node executed this trace, so its reported family is authoritative for
         // decoding even when the caller selected a compatible local EVM implementation.
         let chain = Chain::from_id(endpoint_identity.source_chain_id);
-        // A configured hardfork is an explicit trace-decoding override. Otherwise honor an
-        // Anvil endpoint's exact execution hardfork before consulting the source schedule.
-        let resolved_hardfork = select_remote_trace_hardfork(
+        let resolved_hardfork = resolve_remote_trace_hardfork(
             config.hardfork,
-            endpoint_identity.hardfork,
-            endpoint_identity.network,
-        )
-        .or_else(|| {
-            FoundryHardfork::from_chain_and_timestamp(
-                chain.id(),
-                transaction_block.header().timestamp(),
-            )
-        });
+            &endpoint_identity,
+            Some(transaction_block.header().timestamp()),
+        );
         let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
         ensure_remote_trace_context_unchanged(&endpoint_identity, &final_endpoint_identity)?;
 

@@ -1,6 +1,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::{
+    cmd::confirm_continue,
     tempo::tempo_provider,
     tx::{SendTxOpts, TxParams},
 };
@@ -58,9 +59,7 @@ pub(super) async fn run(
 
     if !is_iso4217_currency(&currency) && !force {
         sh_warn!("{}", iso4217_warning_message(&currency))?;
-        let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
-        if !matches!(response.trim(), "y" | "Y") {
-            sh_status!("Aborted.")?;
+        if !confirm_continue()? {
             return Ok(());
         }
     }

@@ -1,4 +1,7 @@
-use crate::{tempo, tx::CastTxBuilder};
+use crate::{
+    tempo,
+    tx::{CastTxBuilder, apply_poll_interval},
+};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_network::{Ethereum, EthereumWallet, Network, ReceiptResponse};
 use alloy_primitives::{Address, B256, Bytes, hex};
@@ -116,9 +119,7 @@ impl SafeCall {
         let from = signer.address();
         let provider = ProviderBuilder::<N>::from_config(&config)?
             .build_with_wallet(EthereumWallet::from(signer))?;
-        if let Some(interval) = self.poll_interval {
-            provider.client().set_poll_interval(Duration::from_secs(interval));
-        }
+        apply_poll_interval(&provider, self.poll_interval);
         let builder = CastTxBuilder::new(&provider, tx_opts, &config)
             .await?
             .with_to(Some(self.to.into()))

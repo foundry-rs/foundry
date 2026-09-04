@@ -8,7 +8,7 @@ use crate::{
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
 use alloy_network::AnyNetwork;
-use alloy_primitives::{Address, U256, hex};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, sol};
 use clap::Parser;
 use eyre::Result;
@@ -301,9 +301,8 @@ async fn send(
     send_tx: SendTxOpts,
     tx: TxParams,
 ) -> Result<()> {
-    let data = hex::encode_prefixed(call.abi_encode());
     // Boxed to keep the large `cast send` future off this command's stack frame.
-    Box::pin(SendTxArgs::contract_call(token, data, send_tx, tx).run()).await
+    Box::pin(SendTxArgs::contract_call(token, call.abi_encode(), send_tx, tx).run()).await
 }
 
 /// Prints a token amount: the raw decimal string in JSON mode, exponent-annotated otherwise.

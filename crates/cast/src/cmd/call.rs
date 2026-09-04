@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     Cast,
-    debug::{ensure_remote_trace_context_unchanged, handle_traces, select_remote_trace_hardfork},
+    debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
     rpc_trace::call_frame_to_arena,
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind, read_only_sender},
@@ -42,7 +42,7 @@ use foundry_common::{
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    Chain, Config, FoundryHardfork, TracingConfig,
+    Chain, Config, TracingConfig,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
@@ -566,18 +566,8 @@ impl CallArgs {
             let chain = alloy_chains::Chain::from_id(endpoint_identity.source_chain_id);
             let block_timestamp = block_time_override
                 .or_else(|| fetched_block.as_ref().map(|block| block.header().timestamp()));
-            // A configured hardfork is an explicit trace-decoding override. Otherwise honor an
-            // Anvil endpoint's exact execution hardfork before consulting the source schedule.
-            let resolved_hardfork = select_remote_trace_hardfork(
-                config.hardfork,
-                endpoint_identity.hardfork,
-                endpoint_identity.network,
-            )
-            .or_else(|| {
-                block_timestamp.and_then(|timestamp| {
-                    FoundryHardfork::from_chain_and_timestamp(chain.id(), timestamp)
-                })
-            });
+            let resolved_hardfork =
+                resolve_remote_trace_hardfork(config.hardfork, &endpoint_identity, block_timestamp);
             if let Some(resolved_block) = resolved_canonical_block {
                 let canonical_block =
                     provider.get_block_by_number(resolved_block.number.into()).await?;
