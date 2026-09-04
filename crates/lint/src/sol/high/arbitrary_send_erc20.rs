@@ -185,6 +185,14 @@ struct Analyzer<'hir> {
     state: State,
     /// States at `break`/`continue` of each enclosing loop, innermost last.
     loop_exits: Vec<Vec<State>>,
+    /// Repayment counts as they stood at the entry of each enclosing loop's body, innermost
+    /// last. A repayment can only be consumed inside a loop if its count exceeds this floor,
+    /// i.e. it was freshly minted since that loop was entered - a repayment already pending
+    /// beforehand must not license a sink the single-pass body walk merely happens to contain,
+    /// since at runtime that same sink may re-execute every iteration against the one license.
+    /// Unlike `State`, this is never snapshotted or restored around `if`/`try` branches - see
+    /// `invalidate`'s comment on why it must never be mutated in place mid-analysis.
+    loop_repayment_floors: Vec<HashMap<PendingRepayment, u32>>,
     /// Every variable written on any path.
     written: HashSet<VariableId>,
     hits: Vec<(Span, &'static SolLint)>,
@@ -198,6 +206,7 @@ impl<'hir> Analyzer<'hir> {
             has_solady_lib,
             state: State::default(),
             loop_exits: Vec::new(),
+            loop_repayment_floors: Vec::new(),
             written: HashSet::new(),
             hits: Vec::new(),
         }
@@ -325,6 +334,14 @@ impl<'hir> Analyzer<'hir> {
         s.sum_of.retain(|k, (a, b)| *k != v && *a != v && *b != v);
         s.permits.retain(|p| !p.token.touches(v) && p.owner != v);
         s.repayments.retain(|r, _| ![r.receiver, r.token, r.amount, r.fee].contains(&v));
+        // Deliberately NOT purged here: `loop_repayment_floors` is shared, mutate-in-place
+        // analyzer state, not part of `State` - unlike everything above, it isn't snapshotted
+        // and restored around `if`/`try` branches. Purging a floor entry here would leak across
+        // sibling branches (e.g. a `then` that reassigns `v` would permanently drop the floor
+        // before the `else` branch, sharing the same loop, is ever analyzed), turning a real
+        // repeated-pull vulnerability into a false negative. Reassigning a repayment's own key
+        // variable mid-loop and re-minting is a rare enough shape that the resulting false
+        // positive (see `badFlashLoanReassignThenRemintInLoop`) is the safer trade-off.
     }
 
     fn eval_rhs(&self, rhs: Option<&Expr<'_>>) -> Rhs {
@@ -498,11 +515,30 @@ impl<'hir> Analyzer<'hir> {
         if !self.is_self_expr(sink.to) {
             return false;
         }
-        let Some(rep) = self.state.repayments.keys().copied().find(|r| {
-            r.receiver == from
-                && r.token == token
-                && self.amount_matches(sink.amount, r.amount, r.fee)
-        }) else {
+        let candidates: Vec<PendingRepayment> = self
+            .state
+            .repayments
+            .keys()
+            .copied()
+            .filter(|r| {
+                r.receiver == from
+                    && r.token == token
+                    && self.amount_matches(sink.amount, r.amount, r.fee)
+            })
+            .collect();
+        // `amount + fee` and `fee + amount` both match, so an outer (pre-loop) repayment and an
+        // in-loop fresh one can both structurally match the same sink. Prefer one this loop
+        // hasn't already spent its entry-floor allowance on, rather than an arbitrary HashMap
+        // iteration order picking the stale one and rejecting a genuinely fresh license.
+        let floor = self.loop_repayment_floors.last();
+        let is_fresh = |r: &PendingRepayment, repayments: &HashMap<PendingRepayment, u32>| {
+            let count = repayments.get(r).copied().unwrap_or(0);
+            let floor = floor.and_then(|f| f.get(r)).copied().unwrap_or(0);
+            count > floor
+        };
+        let Some(rep) =
+            candidates.into_iter().find(|r| is_fresh(r, &self.state.repayments))
+        else {
             return false;
         };
         match self.state.repayments.get_mut(&rep) {
@@ -551,10 +587,26 @@ impl<'hir> Analyzer<'hir> {
                 // all; `do-while` bodies run at least once.
                 let baseline = (!matches!(source, LoopSource::DoWhile)).then(|| self.state.clone());
                 self.loop_exits.push(baseline.into_iter().collect());
+                // The body is walked as a single static pass, but a real loop may run it many
+                // times. Record the repayment counts as they stand on entry so `consume_repayment`
+                // can refuse to spend a repayment that was already pending beforehand - such a
+                // license must not cover a sink the single-pass body walk merely happens to
+                // contain, since at runtime that sink may re-execute every iteration against the
+                // one license. A repayment minted (and consumed) inside this same body pass is
+                // unaffected, since its count exceeds the floor recorded here; repayments the body
+                // never touches at all pass through the eventual `meet` unchanged, so code after
+                // the loop still sees them.
+                //
+                // This has no notion of a loop shape that provably runs its body at most once
+                // (`do { .. } while (false)`, `while (cond) { ..; break; }`), so those flag a
+                // pull they can't actually repeat. Accepted: a narrow false positive on an
+                // otherwise-safe idiom, traded for never missing a real repeated-pull drain.
+                self.loop_repayment_floors.push(self.state.repayments.clone());
                 if self.visit_stmts(block.stmts) {
                     let state = self.state.clone();
                     self.loop_exits.last_mut().expect("pushed above").push(state);
                 }
+                self.loop_repayment_floors.pop().expect("pushed above");
                 let exits = self.loop_exits.pop().expect("pushed above");
                 let falls = !exits.is_empty();
                 if let Some(joined) = exits.into_iter().reduce(|a, b| a.meet(&b)) {
