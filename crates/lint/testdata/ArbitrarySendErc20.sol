@@ -733,6 +733,87 @@ contract ArbitrarySendErc20 {
         } while (false);
         token.transferFrom(x, to, a);
     }
+
+    // -- MODIFIER BODY SINKS --
+
+    modifier pullBad(address from, address to, uint256 a) {
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        _;
+    }
+
+    function modifierSinkBad(address from, address to, uint256 a) public pullBad(from, to, a) {}
+
+    modifier guardedPullOk(address from, address to, uint256 a) {
+        require(from == msg.sender, "auth");
+        token.transferFrom(from, to, a);
+        _;
+    }
+
+    function modifierGuardedSinkOk(address from, address to, uint256 a) public guardedPullOk(from, to, a) {}
+
+    modifier pullBeforeGuardBad(address from, address to, uint256 a) {
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        require(from == msg.sender, "auth");
+        _;
+    }
+
+    function modifierSinkBeforeGuardBad(address from, address to, uint256 a)
+        public
+        pullBeforeGuardBad(from, to, a)
+    {}
+
+    // A modifier is only reachable through its invocations, so a `from` that is safe at every
+    // invocation site is not arbitrary.
+    modifier pullFromCallerOk(address from, address to, uint256 a) {
+        token.transferFrom(from, to, a);
+        _;
+    }
+
+    function modifierSenderInvocationOk(address to, uint256 a) public pullFromCallerOk(msg.sender, to, a) {}
+
+    function modifierSelfInvocationOk(address to, uint256 a) public pullFromCallerOk(address(this), to, a) {}
+
+    modifier pullFromMixedCallersBad(address from, address to, uint256 a) {
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        _;
+    }
+
+    function modifierMixedSenderInvocation(address to, uint256 a) public pullFromMixedCallersBad(msg.sender, to, a) {}
+
+    function modifierMixedArbitraryInvocation(address from, address to, uint256 a)
+        public
+        pullFromMixedCallersBad(from, to, a)
+    {}
+
+    // Statements after `_;` keep the prefix facts: parameters and locals cannot be changed by the
+    // wrapped function body, and mutable state is never trusted in the first place.
+    modifier guardedSuffixPullOk(address from, address to, uint256 a) {
+        require(from == msg.sender, "auth");
+        _;
+        token.transferFrom(from, to, a);
+    }
+
+    function modifierGuardedSuffixOk(address from, address to, uint256 a)
+        public
+        guardedSuffixPullOk(from, to, a)
+    {}
+
+    modifier suffixPullBad(address from, address to, uint256 a) {
+        _;
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function modifierSuffixSinkBad(address from, address to, uint256 a) public suffixPullBad(from, to, a) {}
+
+    // -- FALLBACK SINKS --
+    // Only constructors are excluded, so a sink reachable through `fallback`/`receive` is
+    // reported like one in an ordinary function.
+
+    fallback(bytes calldata data) external returns (bytes memory) {
+        address from = abi.decode(data, (address));
+        token.transferFrom(from, msg.sender, 1); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        return "";
+    }
 }
 
 // Struct / array / mapping receivers.
@@ -858,4 +939,25 @@ contract SafeERC721CallSites {
     function okSafeErc721ArbitraryFrom(address from, address to, uint256 tokenId) public {
         SafeERC721.safeTransferFrom(nft, from, to, tokenId);
     }
+}
+
+// A modifier declared in a base contract is seeded from the invocations in derived contracts.
+abstract contract PullModifierBase {
+    IERC20 internal token;
+
+    modifier pullFromCaller(address from, uint256 a) {
+        token.transferFrom(from, address(this), a);
+        _;
+    }
+
+    modifier pullFromAnyone(address from, uint256 a) {
+        token.transferFrom(from, address(this), a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        _;
+    }
+}
+
+contract PullModifierDerived is PullModifierBase {
+    function depositFromSender(uint256 a) external pullFromCaller(msg.sender, a) {}
+
+    function depositFrom(address from, uint256 a) external pullFromAnyone(from, a) {}
 }
