@@ -762,9 +762,32 @@ contract ArbitrarySendErc20 {
         pullBeforeGuardBad(from, to, a)
     {}
 
-    // -- FALLBACK / RECEIVE SINKS --
-    // `Fallback`/`Receive` are no longer excluded (only `Constructor` is); an unsafe sink
-    // reachable through either is a real finding, same as in an ordinary function.
+    // A modifier is only reachable through its invocations, so a `from` that is safe at every
+    // invocation site is not arbitrary.
+    modifier pullFromCallerOk(address from, address to, uint256 a) {
+        token.transferFrom(from, to, a);
+        _;
+    }
+
+    function modifierSenderInvocationOk(address to, uint256 a) public pullFromCallerOk(msg.sender, to, a) {}
+
+    function modifierSelfInvocationOk(address to, uint256 a) public pullFromCallerOk(address(this), to, a) {}
+
+    modifier pullFromMixedCallersBad(address from, address to, uint256 a) {
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        _;
+    }
+
+    function modifierMixedSenderInvocation(address to, uint256 a) public pullFromMixedCallersBad(msg.sender, to, a) {}
+
+    function modifierMixedArbitraryInvocation(address from, address to, uint256 a)
+        public
+        pullFromMixedCallersBad(from, to, a)
+    {}
+
+    // -- FALLBACK SINKS --
+    // Only constructors are excluded, so a sink reachable through `fallback`/`receive` is
+    // reported like one in an ordinary function.
 
     fallback(bytes calldata data) external returns (bytes memory) {
         address from = abi.decode(data, (address));
