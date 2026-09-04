@@ -1,107 +1,37 @@
 use crate::sol::SolLint;
 
-mod mixed_case;
-use mixed_case::{
-    MIXED_CASE_FUNCTION, MIXED_CASE_VARIABLE, MixedCaseFunctionPass, MixedCaseVariablePass,
-};
-
-mod boolean_cst;
-use boolean_cst::BOOLEAN_CST;
-
-mod boolean_equal;
-use boolean_equal::BOOLEAN_EQUAL;
-
-mod pascal_case;
-use pascal_case::PASCAL_CASE_STRUCT;
-
-mod screaming_snake_case;
-use screaming_snake_case::{SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE};
-
-mod imports;
-use imports::{UNALIASED_PLAIN_IMPORT, UNUSED_IMPORT};
-
-mod named_struct_fields;
-use named_struct_fields::NAMED_STRUCT_FIELDS;
-
-mod unsafe_cheatcodes;
-use unsafe_cheatcodes::UNSAFE_CHEATCODE_USAGE;
-
-mod multi_contract_file;
-use multi_contract_file::{MULTI_CONTRACT_FILE, MultiContractFilePass};
-
-mod interface_naming;
-use interface_naming::{INTERFACE_FILE_NAMING, INTERFACE_NAMING};
-
-mod too_many_digits;
-use too_many_digits::TOO_MANY_DIGITS;
-
-mod pragma_directive;
-use pragma_directive::PRAGMA_INCONSISTENT;
-
-mod inline_assembly;
-use inline_assembly::INLINE_ASSEMBLY;
-
-mod low_level_calls;
-use low_level_calls::LOW_LEVEL_CALLS;
-
-mod redundant_base_constructor_call;
-use redundant_base_constructor_call::REDUNDANT_BASE_CONSTRUCTOR_CALL;
-
-mod missing_inheritance;
-use missing_inheritance::MISSING_INHERITANCE;
-
-mod event_fields;
-use event_fields::EVENT_FIELDS;
-
-mod todo;
-use todo::TODO_COMMENT;
-
-mod unused_error;
-use unused_error::UNUSED_ERROR;
-
-mod literal_instead_of_constant;
-use literal_instead_of_constant::LITERAL_INSTEAD_OF_CONSTANT;
-
-mod function_init_state;
-use function_init_state::FUNCTION_INIT_STATE;
-
-mod internal_function_used_once;
-use internal_function_used_once::INTERNAL_FUNCTION_USED_ONCE;
-
-mod cyclomatic_complexity;
-use cyclomatic_complexity::CYCLOMATIC_COMPLEXITY;
-
-mod incorrect_using_for;
-use incorrect_using_for::INCORRECT_USING_FOR;
-
-mod modifier_used_only_once;
-use modifier_used_only_once::MODIFIER_USED_ONLY_ONCE;
-
 register_lints!(
-    (BooleanCst, early, (BOOLEAN_CST)),
-    (BooleanEqual, early, (BOOLEAN_EQUAL)),
-    (PascalCaseStruct, early, (PASCAL_CASE_STRUCT)),
-    (MixedCaseVariable, early, (MIXED_CASE_VARIABLE), MixedCaseVariablePass::new),
-    (MixedCaseFunction, early, (MIXED_CASE_FUNCTION), MixedCaseFunctionPass::new),
-    (ScreamingSnakeCase, early, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE)),
-    (Imports, early, (UNALIASED_PLAIN_IMPORT, UNUSED_IMPORT)),
-    (NamedStructFields, late, (NAMED_STRUCT_FIELDS)),
-    (UnsafeCheatcodes, early, (UNSAFE_CHEATCODE_USAGE)),
-    (MultiContractFile, early, (MULTI_CONTRACT_FILE), MultiContractFilePass::new),
-    (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING)),
-    (TooManyDigits, early, (TOO_MANY_DIGITS)),
-    (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
-    (InlineAssembly, early, (INLINE_ASSEMBLY)),
-    (LowLevelCalls, early, (LOW_LEVEL_CALLS)),
-    (RedundantBaseConstructorCall, late, (REDUNDANT_BASE_CONSTRUCTOR_CALL)),
-    (MissingInheritance, project, (MISSING_INHERITANCE)),
-    (EventFields, early, (EVENT_FIELDS)),
-    (TodoComment, early, (TODO_COMMENT)),
-    (UnusedError, project, (UNUSED_ERROR)),
-    (LiteralInsteadOfConstant, late, (LITERAL_INSTEAD_OF_CONSTANT)),
-    (FunctionInitState, late, (FUNCTION_INIT_STATE)),
-    (InternalFunctionUsedOnce, project, (INTERNAL_FUNCTION_USED_ONCE)),
-    (CyclomaticComplexity, late, (CYCLOMATIC_COMPLEXITY)),
-    (IncorrectUsingFor, late, (INCORRECT_USING_FOR)),
-    (ModifierUsedOnlyOnce, project, (MODIFIER_USED_ONLY_ONCE)),
+    boolean_cst: (BooleanCst, early, (BOOLEAN_CST));
+    boolean_equal: (BooleanEqual, early, (BOOLEAN_EQUAL));
+    pascal_case: (PascalCaseStruct, early, (PASCAL_CASE_STRUCT));
+    screaming_snake_case: (
+        ScreamingSnakeCase,
+        early,
+        (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE)
+    );
+    mixed_case:
+        (MixedCaseVariable, early, (MIXED_CASE_VARIABLE), MixedCaseVariablePass::new),
+        (MixedCaseFunction, early, (MIXED_CASE_FUNCTION), MixedCaseFunctionPass::new);
+    imports: (Imports, early, (UNALIASED_PLAIN_IMPORT, UNUSED_IMPORT));
+    named_struct_fields: (NamedStructFields, late, (NAMED_STRUCT_FIELDS));
+    unsafe_cheatcodes: (UnsafeCheatcodes, early, (UNSAFE_CHEATCODE_USAGE));
+    multi_contract_file:
+        (MultiContractFile, early, (MULTI_CONTRACT_FILE), MultiContractFilePass::new);
+    interface_naming: (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING));
+    too_many_digits: (TooManyDigits, early, (TOO_MANY_DIGITS));
+    pragma_directive: (PragmaDirective, project, (PRAGMA_INCONSISTENT));
+    inline_assembly: (InlineAssembly, early, (INLINE_ASSEMBLY));
+    low_level_calls: (LowLevelCalls, early, (LOW_LEVEL_CALLS));
+    redundant_base_constructor_call:
+        (RedundantBaseConstructorCall, late, (REDUNDANT_BASE_CONSTRUCTOR_CALL));
+    missing_inheritance: (MissingInheritance, project, (MISSING_INHERITANCE));
+    event_fields: (EventFields, early, (EVENT_FIELDS));
+    todo: (TodoComment, early, (TODO_COMMENT));
+    unused_error: (UnusedError, project, (UNUSED_ERROR));
+    literal_instead_of_constant: (LiteralInsteadOfConstant, late, (LITERAL_INSTEAD_OF_CONSTANT));
+    function_init_state: (FunctionInitState, late, (FUNCTION_INIT_STATE));
+    internal_function_used_once: (InternalFunctionUsedOnce, project, (INTERNAL_FUNCTION_USED_ONCE));
+    cyclomatic_complexity: (CyclomaticComplexity, late, (CYCLOMATIC_COMPLEXITY));
+    incorrect_using_for: (IncorrectUsingFor, late, (INCORRECT_USING_FOR));
+    modifier_used_only_once: (ModifierUsedOnlyOnce, project, (MODIFIER_USED_ONLY_ONCE));
 );

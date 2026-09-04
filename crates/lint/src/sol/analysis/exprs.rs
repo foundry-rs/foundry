@@ -56,7 +56,8 @@ pub fn is_exit_call(expr: &Expr<'_>) -> bool {
         || (is_require_or_assert(callee) && args.exprs().next().is_some_and(is_literal_false))
 }
 
-fn is_literal_false(expr: &Expr<'_>) -> bool {
+/// The boolean literal `false`.
+pub fn is_literal_false(expr: &Expr<'_>) -> bool {
     matches!(&expr.peel_parens().kind, ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Bool(false)))
 }
 

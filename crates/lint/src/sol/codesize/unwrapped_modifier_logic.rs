@@ -1,7 +1,7 @@
 use super::UnwrappedModifierLogic;
 use crate::{
     linter::{LateLintPass, LintContext, Suggestion},
-    sol::{Severity, SolLint, low::incorrect_modifier},
+    sol::{Severity, SolLint, analysis::block_outcome},
 };
 use solar::{
     ast,
@@ -30,7 +30,7 @@ impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
             _ => return,
         };
 
-        if incorrect_modifier::block_outcome(*body).can_skip_placeholder() {
+        if block_outcome(*body).can_skip_placeholder() {
             return;
         }
 
