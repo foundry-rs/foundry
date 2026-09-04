@@ -39,7 +39,7 @@ contract ScribbleInstrumentedSupply {
 ...
 Failing tests:
 Encountered 1 failing test in test/ScribbleInstrumentedSupply.t.sol:ScribbleInstrumentedSupply
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkSupplyAnnotation(address,uint8) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkSupplyAnnotation(address,uint8) ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
