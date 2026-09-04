@@ -3285,6 +3285,184 @@ contract SymbolicFuzzCalleeFrontierSeed {
     assert!(found_branch_flipping_seed);
 });
 
+forgetest_init!(symbolic_invariant_frontier_seeding_solves_stalled_handler_call, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_solves_stalled_handler_call because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantFrontierSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantFrontierTarget {
+    uint256 public phase;
+    bool public broken;
+
+    function advance(uint256 value) external {
+        if (phase == 0) {
+            phase = 1;
+        } else if (phase == 1) {
+            if (value >= 123456789) {
+                broken = true;
+            }
+            phase = 2;
+        }
+    }
+}
+
+contract SymbolicInvariantFrontierSeed is Test {
+    SymbolicInvariantFrontierTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantFrontierTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_notBroken() public view {
+        assertFalse(target.broken());
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantFrontierSeed",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x5678",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "invariant_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = prj
+        .root()
+        .join("invariant_frontiers")
+        .join("SymbolicInvariantFrontierSeed")
+        .join("branch-frontiers.json");
+    let mut artifact: Value = serde_json::from_slice(
+        &std::fs::read(&frontier_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+    )
+    .unwrap();
+    let target_frontier = artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|frontier| {
+            frontier["call_index"] == 1
+                && frontier["site"]["opcode_name"] == "LT"
+                && (frontier["operands"]["lhs"] == "0x75bcd15"
+                    || frontier["operands"]["rhs"] == "0x75bcd15")
+        })
+        .cloned()
+        .unwrap_or_else(|| panic!("missing value >= 123456789 frontier in {artifact}"));
+    *artifact["frontiers"].as_array_mut().unwrap() = vec![target_frontier.clone()];
+    std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap())
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", frontier_path.display()));
+
+    let covered_frontier_path = prj
+        .root()
+        .join("covered_invariant_frontiers")
+        .join("SymbolicInvariantFrontierSeed")
+        .join("branch-frontiers.json");
+    std::fs::create_dir_all(covered_frontier_path.parent().unwrap()).unwrap();
+    let mut covered_artifact = artifact.clone();
+    let mut opposite_frontier = target_frontier;
+    let result = opposite_frontier["operands"]["result"].as_bool().unwrap();
+    opposite_frontier["operands"]["result"] = Value::Bool(!result);
+    covered_artifact["frontiers"].as_array_mut().unwrap().push(opposite_frontier);
+    std::fs::write(&covered_frontier_path, serde_json::to_vec_pretty(&covered_artifact).unwrap())
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", covered_frontier_path.display()));
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantFrontierSeed",
+        "--invariant-depth",
+        "1",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "covered_invariant_frontiers",
+        "--invariant-corpus-dir",
+        "covered_invariant_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "8",
+    ])
+    .assert_success();
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantFrontierSeed",
+            "--match-test",
+            "invariant_notBroken",
+            "--corpus-dir",
+            "covered_invariant_corpus",
+        ])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantFrontierSeed",
+        "--invariant-depth",
+        "1",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "invariant_frontiers",
+        "--invariant-corpus-dir",
+        "invariant_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "8",
+    ])
+    .assert_success();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantFrontierSeed",
+            "--match-test",
+            "invariant_notBroken",
+            "--corpus-dir",
+            "invariant_corpus",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(
+        stdout.contains("[FAIL:") && stdout.contains("invariant_notBroken"),
+        "stdout={stdout}\nstderr={stderr}"
+    );
+});
+
 forgetest_init!(symbolic_import_fuzz_corpus_guides_bounded_symbolic_path, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

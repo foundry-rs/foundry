@@ -44,9 +44,9 @@ use foundry_evm::{
     core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
     decode::{RevertDecoder, SkipReason},
     executors::{
-        CallResult, EvmError, Executor, ITest, InvariantReplayOptions, MinimizationReplayInput,
-        RawCallResult, ShowmapOpts, ShowmapReplayTarget, StatelessReplayTarget,
-        canonical_replay_dirs,
+        CallResult, DynamicTargetCtx, EvmError, Executor, ITest, InvariantReplayOptions,
+        MinimizationReplayInput, RawCallResult, ShowmapOpts, ShowmapReplayTarget,
+        StatelessReplayTarget, canonical_replay_dirs,
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
@@ -93,6 +93,7 @@ use tokio::signal;
 use tracing::Span;
 
 const FUZZ_BRANCH_FRONTIER_SCHEMA: &str = "foundry:fuzz.branch-frontiers@v1";
+const STATEFUL_FUZZ_BRANCH_FRONTIER_SCHEMA: &str = "foundry:fuzz.branch-frontiers@v2";
 const FUZZ_BRANCH_FRONTIER_FILE: &str = "branch-frontiers.json";
 
 #[derive(Deserialize)]
@@ -100,6 +101,8 @@ struct FuzzBranchFrontierArtifact {
     schema: String,
     version: u32,
     test: String,
+    #[serde(default)]
+    sequences: Vec<Vec<BasicTxDetails>>,
     frontiers: Vec<FuzzBranchFrontierRecord>,
 }
 
@@ -107,7 +110,9 @@ struct FuzzBranchFrontierArtifact {
 struct FuzzBranchFrontierRecord {
     id: u64,
     call_index: usize,
+    #[serde(default)]
     sequence: Vec<BasicTxDetails>,
+    sequence_index: Option<usize>,
     site: FuzzBranchFrontierSite,
     operands: FuzzBranchFrontierOperands,
 }
@@ -2155,6 +2160,147 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         imported
     }
 
+    fn import_symbolic_invariant_frontiers(
+        &self,
+        func: &Function,
+        invariant_config: &InvariantConfig,
+    ) -> Vec<(u64, usize, Arc<[BasicTxDetails]>, SymbolicBranchTarget)> {
+        let limit = self.config.symbolic.frontier_limit;
+        if limit == 0 {
+            return Vec::new();
+        }
+
+        let Some(frontier_dir) = invariant_config.corpus.frontier_dir.as_ref() else {
+            let _ = sh_warn!(
+                "`--symbolic-use-fuzz-frontiers` requires `--invariant-frontier-dir` or \
+                 `invariant.frontier_dir`; running without targeted frontier seeds"
+            );
+            return Vec::new();
+        };
+        let frontier_path = frontier_dir.join(FUZZ_BRANCH_FRONTIER_FILE);
+        let artifact = match foundry_common::fs::read_json_file::<FuzzBranchFrontierArtifact>(
+            &frontier_path,
+        ) {
+            Ok(artifact) => artifact,
+            Err(err) => {
+                debug!(
+                    %err,
+                    path = %frontier_path.display(),
+                    "failed to read invariant branch frontier artifact"
+                );
+                return Vec::new();
+            }
+        };
+        if artifact.schema != STATEFUL_FUZZ_BRANCH_FRONTIER_SCHEMA || artifact.version != 2 {
+            warn!(
+                schema = %artifact.schema,
+                version = artifact.version,
+                path = %frontier_path.display(),
+                "unsupported invariant branch frontier artifact"
+            );
+            return Vec::new();
+        }
+        let signature = func.signature();
+        if artifact.test != signature {
+            warn!(
+                artifact_test = %artifact.test,
+                test = %signature,
+                path = %frontier_path.display(),
+                "invariant branch frontier artifact does not match campaign anchor"
+            );
+            return Vec::new();
+        }
+
+        let requested_ids = &self.config.symbolic.frontier_ids;
+        let requested_pcs = &self.config.symbolic.frontier_pcs;
+        let requested_selectors = &self.config.symbolic.frontier_selectors;
+        let parsed_selectors = parse_frontier_selectors(requested_selectors, &signature);
+        let select_frontier_ids = !requested_ids.is_empty();
+        let select_frontier_pcs = !requested_pcs.is_empty();
+        let select_frontier_selectors = !requested_selectors.is_empty();
+
+        let FuzzBranchFrontierArtifact { sequences, mut frontiers, .. } = artifact;
+        let sequences =
+            sequences.into_iter().map(Arc::<[BasicTxDetails]>::from).collect::<Vec<_>>();
+        let mut observed_results = HashMap::<(Address, usize, u8), u8>::default();
+        for frontier in &frontiers {
+            let key = (frontier.site.address, frontier.site.pc, frontier.site.opcode);
+            let result_bit = if frontier.operands.result { 2 } else { 1 };
+            *observed_results.entry(key).or_default() |= result_bit;
+        }
+        frontiers.retain(|frontier| {
+            observed_results
+                .get(&(frontier.site.address, frontier.site.pc, frontier.site.opcode))
+                .is_some_and(|results| *results != 3)
+        });
+        frontiers.sort_by_key(|frontier| (frontier.call_index, frontier.id));
+
+        let mut imported = Vec::with_capacity(limit.min(frontiers.len()));
+        for frontier in frontiers {
+            if imported.len() == limit {
+                break;
+            }
+            if select_frontier_ids && !requested_ids.contains(&frontier.id) {
+                continue;
+            }
+            if select_frontier_pcs && !requested_pcs.contains(&frontier.site.pc) {
+                continue;
+            }
+            if !matches!(
+                frontier.site.opcode,
+                opcode::EQ | opcode::LT | opcode::GT | opcode::SLT | opcode::SGT | opcode::ISZERO
+            ) {
+                continue;
+            }
+            let Some(sequence) = frontier.sequence_index.and_then(|index| sequences.get(index))
+            else {
+                debug!(id = frontier.id, "skipping invariant frontier with missing sequence");
+                continue;
+            };
+            let Some(call) = sequence.get(frontier.call_index) else {
+                debug!(
+                    id = frontier.id,
+                    call_index = frontier.call_index,
+                    sequence_len = sequence.len(),
+                    "skipping invariant frontier with invalid call index"
+                );
+                continue;
+            };
+            let selector = call
+                .call_details
+                .calldata
+                .get(..4)
+                .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
+                .map(Selector::from);
+            if select_frontier_selectors
+                && selector.is_none_or(|selector| !parsed_selectors.contains(&selector))
+            {
+                continue;
+            }
+
+            imported.push((
+                frontier.id,
+                frontier.call_index,
+                Arc::clone(sequence),
+                SymbolicBranchTarget::new(
+                    frontier.site.address,
+                    frontier.site.pc,
+                    frontier.site.opcode,
+                    frontier.operands.result,
+                ),
+            ));
+        }
+
+        debug!(
+            test = %signature,
+            path = %frontier_path.display(),
+            imported = imported.len(),
+            limit,
+            "imported invariant branch frontiers for targeted symbolic seeding"
+        );
+        imported
+    }
+
     fn symbolic_corpus_seed_input(
         &self,
         func: &Function,
@@ -2835,6 +2981,156 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
     }
 
+    fn try_seed_invariant_corpus_from_frontiers(
+        &self,
+        func: &Function,
+        invariant_config: &InvariantConfig,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
+        dynamic_target_ctx: &DynamicTargetCtx<'_>,
+    ) {
+        if !self.config.symbolic.use_fuzz_frontiers {
+            return;
+        }
+        if invariant_config.corpus.corpus_dir.is_none() {
+            let _ = sh_warn!(
+                "`--symbolic-use-fuzz-frontiers` requires `--invariant-corpus-dir` or \
+                 `invariant.corpus_dir`; skipping targeted invariant frontier seeding"
+            );
+            return;
+        }
+
+        for (id, call_index, sequence, target) in
+            self.import_symbolic_invariant_frontiers(func, invariant_config)
+        {
+            let Some(call) = sequence.get(call_index) else {
+                continue;
+            };
+            if call.warp.is_some_and(|warp| !warp.is_zero())
+                || call.roll.is_some_and(|roll| !roll.is_zero())
+            {
+                debug!(
+                    id,
+                    "skipping invariant frontier whose target call changes the block environment"
+                );
+                continue;
+            }
+            let Some(selector) = call
+                .call_details
+                .calldata
+                .get(..4)
+                .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
+                .map(Selector::from)
+            else {
+                continue;
+            };
+            let mut prefix_executor = self.clone_executor();
+            let mut created_contracts = Vec::new();
+            let prefix_targets = FuzzRunIdentifiedContracts::new(
+                targeted_contracts.targets().clone(),
+                targeted_contracts.is_updatable,
+            );
+            let prefix_result = sequence[..call_index].iter().try_for_each(|prefix_call| {
+                execute_tx_and_register_created(
+                    &mut prefix_executor,
+                    prefix_call,
+                    &prefix_targets,
+                    dynamic_target_ctx,
+                    &mut created_contracts,
+                )
+            });
+            if let Err(err) = prefix_result {
+                debug!(%err, id, "failed to replay invariant frontier prefix");
+                continue;
+            }
+            let function = {
+                let targets = prefix_targets.targets();
+                targets
+                    .get(&call.call_details.target)
+                    .and_then(|contract| contract.fuzzed_function_by_selector(selector))
+                    .cloned()
+            };
+            let Some(function) = function else {
+                debug!(id, selector = %selector, "skipping invariant frontier with unknown target function");
+                continue;
+            };
+            let Ok(args) = function.abi_decode_input(&call.call_details.calldata[4..]) else {
+                debug!(id, selector = %selector, "skipping invariant frontier with invalid calldata");
+                continue;
+            };
+
+            let input =
+                SymbolicConcreteInput { args, calldata: call.call_details.calldata.clone() };
+            let value = match call.call_details.value {
+                Some(requested) if !requested.is_zero() => {
+                    let Ok(balance) = prefix_executor.get_balance(call.sender) else {
+                        debug!(id, sender = %call.sender, "failed to read frontier sender balance");
+                        continue;
+                    };
+                    requested.min(balance)
+                }
+                _ => U256::ZERO,
+            };
+            let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
+            let result = symbolic.run(SymbolicRunInput {
+                executor: &prefix_executor,
+                target: call.call_details.target,
+                sender: call.sender,
+                function: &function,
+                value,
+                ffi_enabled: self.config.ffi,
+                collect_success_input: true,
+                corpus_seeds: vec![input],
+                branch_target: Some(target),
+            });
+            let solved_input = match result {
+                SymbolicRunResult::Safe { success_input: Some(input), .. } => input,
+                SymbolicRunResult::Counterexample { args, calldata, .. } => {
+                    SymbolicConcreteInput { args, calldata }
+                }
+                SymbolicRunResult::Safe { success_input: None, .. } => {
+                    debug!(id, "targeted invariant frontier produced no branch-flipping input");
+                    continue;
+                }
+                SymbolicRunResult::Incomplete { kind, reason, .. } => {
+                    debug!(id, ?kind, %reason, "targeted invariant frontier incomplete");
+                    continue;
+                }
+            };
+
+            let mut solved_sequence = sequence[..=call_index].to_vec();
+            solved_sequence[call_index].call_details.calldata = solved_input.calldata;
+            let mut replay_executor = self.clone_executor();
+            let replay_targets = FuzzRunIdentifiedContracts::new(
+                targeted_contracts.targets().clone(),
+                targeted_contracts.is_updatable,
+            );
+            let mut replay_created_contracts = Vec::new();
+            let replay_result = solved_sequence.iter().try_for_each(|replay_call| {
+                execute_tx_and_register_created(
+                    &mut replay_executor,
+                    replay_call,
+                    &replay_targets,
+                    dynamic_target_ctx,
+                    &mut replay_created_contracts,
+                )
+            });
+            if let Err(err) = replay_result {
+                debug!(%err, id, "failed to replay solved invariant frontier");
+                continue;
+            }
+
+            match persist_corpus_seed(&invariant_config.corpus, solved_sequence) {
+                Ok(Some(path)) => {
+                    debug!(id, path = %path.display(), "persisted targeted invariant frontier seed");
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    warn!(%err, id, "failed to persist targeted invariant frontier seed");
+                }
+            }
+        }
+    }
+
     fn try_seed_fuzz_corpus_symbolically(&self, func: &Function, fuzz_config: &FuzzConfig) {
         if !self.config.symbolic.seed_corpus || !func.test_function_kind().is_fuzz_test() {
             return;
@@ -3384,6 +3680,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             };
             self.result.single_skip(SkipReason(Some(reason)));
             return self.result;
+        }
+
+        if self.config.symbolic.use_fuzz_frontiers {
+            let dynamic_target_ctx = evm.dynamic_target_ctx();
+            let invariant_config = evm.config();
+            self.try_seed_invariant_corpus_from_frontiers(
+                invariant_contract.anchor(),
+                &invariant_config,
+                &targeted,
+                &dynamic_target_ctx,
+            );
         }
 
         if self.config.symbolic.enabled && !is_optimization {

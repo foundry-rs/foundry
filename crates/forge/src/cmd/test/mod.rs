@@ -762,13 +762,13 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_INVARIANT_CORPUS_DIR", value_name = "PATH", value_hint = ValueHint::DirPath)]
     pub invariant_corpus_dir: Option<PathBuf>,
 
-    /// Directory inherited from `forge fuzz run --frontier-dir` for invariant frontiers.
-    #[arg(skip)]
-    invariant_frontier_dir: Option<PathBuf>,
+    /// Directory for invariant branch frontier artifacts.
+    #[arg(long, env = "FOUNDRY_INVARIANT_FRONTIER_DIR", value_name = "PATH", value_hint = ValueHint::DirPath)]
+    pub invariant_frontier_dir: Option<PathBuf>,
 
-    /// Frontier limit inherited from `forge fuzz run --frontier-limit` for invariant frontiers.
-    #[arg(skip)]
-    invariant_frontier_limit: Option<usize>,
+    /// Maximum number of invariant branch frontier records to write per campaign.
+    #[arg(long, env = "FOUNDRY_INVARIANT_FRONTIER_LIMIT", value_name = "COUNT")]
+    pub invariant_frontier_limit: Option<usize>,
 
     /// Percent chance that fuzzed payable invariant calls carry non-zero msg.value.
     #[arg(long, env = "FOUNDRY_INVARIANT_PAYABLE_VALUE_WEIGHT", value_name = "PERCENT")]

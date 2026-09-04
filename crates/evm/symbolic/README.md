@@ -159,9 +159,6 @@ Frontier capture is opt-in and bounded by `fuzz.frontier_limit` or
 `invariant.frontier_limit` (both default to 256). It reuses the fuzzer's
 comparison-operand inspector and does not store traces. When equally close
 executions reach the same comparison side, it retains the shortest sequence.
-The current symbolic frontier importer accepts stateless one-call records only;
-invariant records are durable inputs for stateful replay and future targeted
-suffix solving, not automatic symbolic seeds yet.
 
 Symbolic execution can consume those artifacts to solve the opposite side of
 captured comparisons and write replay-confirmed inputs into the fuzz corpus:
@@ -177,6 +174,34 @@ Forge imports up to `symbolic.frontier_limit` records (default 256), replays the
 recorded one-call seed as a path-priority hint, constrains symbolic execution to
 flip the captured comparison result, and persists only candidates that replay
 with the expected concrete outcome.
+
+For an invariant campaign, point the follow-up run at both the captured
+frontiers and an invariant corpus directory:
+
+```sh
+forge test --match-test invariant_ \
+  --invariant-frontier-dir fuzz_frontiers \
+  --invariant-corpus-dir fuzz_corpus \
+  --symbolic-use-fuzz-frontiers \
+  --symbolic-timeout 1
+```
+
+Forge replays each recorded prefix into a fresh EVM, symbolically solves only
+the call that reached a comparison for which the artifact observed only one
+result, replays the resulting sequence concretely, and writes replayable
+candidates to the normal invariant corpus. Replay the resulting corpus to check
+every persisted sequence deterministically:
+
+```sh
+forge fuzz replay --match-test invariant_ --corpus-dir fuzz_corpus
+```
+
+This is an explicit follow-up to a concrete campaign, not automatic symbolic
+work in every fuzz run. A short solver timeout keeps iteration bounded; increase
+it for frontiers that report incomplete. Use frontier IDs, PCs, selectors, or a
+lower `symbolic.frontier_limit` when only selected sites should consume solver
+time. Frontier capture currently covers direct EVM comparison opcodes; branch
+conditions compiled into arithmetic followed by `JUMPI` are not targeted yet.
 
 To focus solver time on specific captured sites, pass frontier artifact IDs,
 comparison PCs, or calldata selectors:
@@ -195,10 +220,10 @@ forge test --match-test test_hard_branch \
 `symbolic.frontier_selectors` default to `[]`, meaning any value for that
 dimension. Non-empty filters compose conjunctively, so the example imports only
 records matching one of the requested IDs, one of the requested PCs, and one of
-the requested selectors. Forge keeps the artifact order as the priority order
-after filtering, imports up to `symbolic.frontier_limit` records, reports how
-many records were imported or skipped by target filters, and warns if a
-requested target cannot be imported.
+the requested selectors. Stateless imports keep artifact order; stateful
+imports prefer shorter replay prefixes. Forge imports up to
+`symbolic.frontier_limit` matching records and warns if a requested stateless
+target cannot be imported.
 
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
