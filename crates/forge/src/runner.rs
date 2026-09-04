@@ -577,6 +577,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         // Deploy libraries.
         self.executor.set_balance(LIBRARY_DEPLOYER, U256::MAX)?;
 
+        let rd = &self.mcr.revert_decoder;
         let mut result = TestSetup::default();
         let mut pending_account_diffs = Vec::new();
         match self.mcr.library_deployment {
@@ -584,25 +585,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 for (nonce, code) in self.mcr.libs_to_deploy.iter().enumerate() {
                     // Libraries are linked from nonce zero in the same order they are deployed.
                     let expected_address = LIBRARY_DEPLOYER.create(nonce as u64);
-                    let recording_library_deployment =
-                        self.contract.library_addresses.contains(&expected_address)
-                            && self
-                                .executor
-                                .inspector_mut()
-                                .cheatcodes
-                                .as_deref_mut()
-                                .is_some_and(|cheats| cheats.start_internal_state_diff_recording());
-                    let deploy_result = self.executor.deploy(
-                        LIBRARY_DEPLOYER,
-                        code.clone(),
-                        U256::ZERO,
-                        Some(&self.mcr.revert_decoder),
-                    );
-                    let recorded_account_diffs = if recording_library_deployment {
-                        self.finish_library_deployment_recording()
-                    } else {
-                        Vec::new()
-                    };
+                    let (deploy_result, recorded_account_diffs) =
+                        self.deploy_library(expected_address, |executor| {
+                            executor.deploy(LIBRARY_DEPLOYER, code.clone(), U256::ZERO, Some(rd))
+                        });
 
                     if let Ok(deployed) = &deploy_result {
                         result.deployed_libs.push(deployed.address);
@@ -633,33 +619,19 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 for code in &self.mcr.libs_to_deploy {
                     let address = deployer.create2_from_code(salt, code);
                     if self.executor.is_empty_code(address)? {
-                        let recording_library_deployment = self
-                            .contract
-                            .library_addresses
-                            .contains(&address)
-                            && self
-                                .executor
-                                .inspector_mut()
-                                .cheatcodes
-                                .as_deref_mut()
-                                .is_some_and(|cheats| cheats.start_internal_state_diff_recording());
                         let calldata = [salt.as_slice(), code.as_ref()].concat().into();
-                        let raw = self.executor.transact_raw(
-                            LIBRARY_DEPLOYER,
-                            deployer,
-                            calldata,
-                            U256::ZERO,
-                        );
-                        let recorded_account_diffs = if recording_library_deployment {
-                            self.finish_library_deployment_recording()
-                        } else {
-                            Vec::new()
-                        };
+                        let (raw, recorded_account_diffs) =
+                            self.deploy_library(address, |executor| {
+                                executor.transact_raw(
+                                    LIBRARY_DEPLOYER,
+                                    deployer,
+                                    calldata,
+                                    U256::ZERO,
+                                )
+                            });
                         let raw = raw?;
                         let (raw, reason) = if raw.reverted {
-                            RawCallResult::from_evm_result(Err(
-                                raw.into_evm_error(Some(&self.mcr.revert_decoder))
-                            ))?
+                            RawCallResult::from_evm_result(Err(raw.into_evm_error(Some(rd))))?
                         } else {
                             (raw, None)
                         };
@@ -712,12 +684,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         self.executor.set_balance(address, self.initial_balance())?;
 
         // Deploy the test contract
-        let deploy_result = self.executor.deploy(
-            self.sender,
-            self.contract.bytecode.clone(),
-            U256::ZERO,
-            Some(&self.mcr.revert_decoder),
-        );
+        let deploy_result =
+            self.executor.deploy(self.sender, self.contract.bytecode.clone(), U256::ZERO, Some(rd));
 
         result.deployment_failure = deploy_result.is_err();
 
@@ -746,7 +714,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         // Optionally call the `setUp` function
         if call_setup {
             trace!("calling setUp");
-            let res = self.executor.setup(None, address, Some(&self.mcr.revert_decoder));
+            let res = self.executor.setup(None, address, Some(rd));
             let (raw, reason) = RawCallResult::from_evm_result(res)?;
             result.extend(raw, TraceKind::Setup);
             result.reason = reason;
@@ -759,13 +727,32 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         self.evm_opts.initial_balance
     }
 
-    fn finish_library_deployment_recording(&mut self) -> Vec<AccountAccess> {
-        self.executor
-            .inspector_mut()
-            .cheatcodes
-            .as_deref_mut()
-            .map(|cheats| cheats.stop_internal_state_diff_recording())
-            .unwrap_or_default()
+    /// Runs `deploy`, recording the account diffs of linked library deployments so cheatcodes
+    /// can attribute them to the library.
+    fn deploy_library<T>(
+        &mut self,
+        address: Address,
+        deploy: impl FnOnce(&mut Executor<FEN>) -> T,
+    ) -> (T, Vec<AccountAccess>) {
+        let recording = self.contract.library_addresses.contains(&address)
+            && self
+                .executor
+                .inspector_mut()
+                .cheatcodes
+                .as_deref_mut()
+                .is_some_and(|cheats| cheats.start_internal_state_diff_recording());
+        let result = deploy(&mut self.executor);
+        let diffs = if recording {
+            self.executor
+                .inspector_mut()
+                .cheatcodes
+                .as_deref_mut()
+                .map(|cheats| cheats.stop_internal_state_diff_recording())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        (result, diffs)
     }
 
     /// Configures this runner with the inline configuration for the contract.
@@ -842,51 +829,56 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         FuzzFixtures::new(fixtures).with_enum_bounds(self.mcr.enum_bounds.clone())
     }
 
+    /// Classifies test functions with the current contract-level configuration.
+    fn test_matcher(&self) -> TestFunctionMatcher<'_> {
+        TestFunctionMatcher::new(
+            &self.config,
+            &self.mcr.inline_config,
+            self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
+        )
+    }
+
+    /// Returns the test functions selected by `filter` that run in the current network pass.
+    fn matching_test_functions(
+        &self,
+        filter: &dyn TestFilter,
+        test_matcher: &TestFunctionMatcher<'_>,
+    ) -> Vec<&'a Function> {
+        let generated_symbolic_regression =
+            is_generated_symbolic_regression_contract(&self.contract.abi);
+        self.contract
+            .abi
+            .functions()
+            .filter(|func| {
+                test_matcher.matches_test_function(
+                    filter,
+                    self.name,
+                    func,
+                    generated_symbolic_regression,
+                ) && self.function_matches_network_pass(func)
+            })
+            .collect()
+    }
+
     /// Runs all tests for a contract whose names match the provided regular expression
     pub fn run_tests(mut self, filter: &dyn TestFilter) -> SuiteResult {
         let start = Instant::now();
         let mut warnings = Vec::new();
+        let generated_symbolic_regression =
+            is_generated_symbolic_regression_contract(&self.contract.abi);
+        // Classified before `setUp`; the full function list is built after setup so
+        // contract-level inline config can still affect symbolic entrypoint discovery.
+        let test_matcher = self.test_matcher();
         // In fuzz-only mode, drop suites with no runnable fuzz or invariant tests before
-        // executing `setUp`. The full function list is built after setup so contract-level
-        // inline config can still affect symbolic entrypoint discovery.
-        let skip_fuzz_only_suite = if self.mcr.tcfg.fuzz_only {
-            let test_matcher = TestFunctionMatcher::new(
-                &self.config,
-                &self.mcr.inline_config,
-                self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
-            );
-            let generated_symbolic_regression =
-                is_generated_symbolic_regression_contract(&self.contract.abi);
-            !self
-                .contract
-                .abi
-                .functions()
-                .filter(|func| {
-                    filter.matches_test_function_kind_in_contract(
-                        self.name,
-                        func,
-                        test_matcher.test_function_kind(
-                            self.name,
-                            func,
-                            generated_symbolic_regression,
-                        ),
-                    )
-                })
-                .filter(|func| self.function_matches_network_pass(func))
-                .any(|func| {
-                    matches!(
-                        test_matcher.test_function_kind(
-                            self.name,
-                            func,
-                            generated_symbolic_regression,
-                        ),
-                        TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
-                    )
-                })
-        } else {
-            false
-        };
-        if skip_fuzz_only_suite {
+        // executing `setUp`.
+        if self.mcr.tcfg.fuzz_only
+            && !self.matching_test_functions(filter, &test_matcher).into_iter().any(|func| {
+                matches!(
+                    test_matcher.test_function_kind(self.name, func, generated_symbolic_regression),
+                    TestFunctionKind::FuzzTest { .. } | TestFunctionKind::InvariantTest
+                )
+            })
+        {
             return SuiteResult::new(start.elapsed(), BTreeMap::new(), warnings);
         }
 
@@ -906,15 +898,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
         // There are multiple setUp function, so we return a single test result for `setUp`
         if setup_fns.len() > 1 {
-            // Trip the global fail-fast flag so sibling parallel suites (notably long-running
-            // invariant campaigns) observe `should_stop()` and exit at their next run boundary
-            // instead of running to their timeout.
-            self.tcfg.early_exit.record_failure();
-            return SuiteResult::new(
-                start.elapsed(),
-                [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))]
-                    .into(),
+            return self.failed_suite(
+                start,
                 warnings,
+                [("setUp()".to_string(), TestResult::fail("multiple setUp functions".to_string()))],
             );
         }
 
@@ -922,16 +909,13 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let after_invariant_fns: Vec<_> =
             self.contract.abi.functions().filter(|func| func.name.is_after_invariant()).collect();
         if after_invariant_fns.len() > 1 {
-            // Return a single test result failure if multiple functions declared.
-            self.tcfg.early_exit.record_failure();
-            return SuiteResult::new(
-                start.elapsed(),
+            return self.failed_suite(
+                start,
+                warnings,
                 [(
                     "afterInvariant()".to_string(),
                     TestResult::fail("multiple afterInvariant functions".to_string()),
-                )]
-                .into(),
-                warnings,
+                )],
             );
         }
         let call_after_invariant = after_invariant_fns.first().is_some_and(|after_invariant_fn| {
@@ -945,49 +929,32 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             match_sig
         });
 
-        let invariant_fns: Vec<_> = {
-            let test_matcher = TestFunctionMatcher::new(
-                &self.config,
-                &self.mcr.inline_config,
-                self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
-            );
-            let generated_symbolic_regression =
-                is_generated_symbolic_regression_contract(&self.contract.abi);
-            self.contract
-                .abi
-                .functions()
-                .filter(|func| {
-                    test_matcher
-                        .test_function_kind(self.name, func, generated_symbolic_regression)
-                        .is_invariant_test()
-                })
-                .collect()
-        };
+        let invariant_fns = self
+            .contract
+            .abi
+            .functions()
+            .filter(|func| {
+                test_matcher
+                    .test_function_kind(self.name, func, generated_symbolic_regression)
+                    .is_invariant_test()
+            })
+            .collect::<Vec<_>>();
 
         // Validate signatures up front: invariant functions must take no parameters. Without
         // this, parameterized `invariant_*` functions would slip into contract-level campaigns
         // and fail with a confusing "selector not found" / decode error mid-campaign. Reject
         // here with a per-function result so the failure is obvious to the user.
-        let invalid_invariants: Vec<_> = invariant_fns
+        let invalid_invariants = invariant_fns
             .iter()
             .filter(|f| !f.inputs.is_empty())
             .map(|f| {
-                (
-                    f.signature(),
-                    TestResult::fail(format!(
-                        "invariant `{}` must take no parameters",
-                        f.signature()
-                    )),
-                )
+                let signature = f.signature();
+                let reason = format!("invariant `{signature}` must take no parameters");
+                (signature, TestResult::fail(reason))
             })
-            .collect();
+            .collect::<Vec<_>>();
         if !invalid_invariants.is_empty() {
-            self.tcfg.early_exit.record_failure();
-            return SuiteResult::new(
-                start.elapsed(),
-                invalid_invariants.into_iter().collect(),
-                warnings,
-            );
+            return self.failed_suite(start, warnings, invalid_invariants);
         }
 
         for invariant in &invariant_fns {
@@ -1024,47 +991,18 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
-            let fail_msg = if setup.deployment_failure {
-                "constructor()".to_string()
-            } else {
-                "setUp()".to_string()
-            };
-            self.tcfg.early_exit.record_failure();
-            return SuiteResult::new(
-                start.elapsed(),
-                [(fail_msg, TestResult::setup_result(setup))].into(),
+            let name = if setup.deployment_failure { "constructor()" } else { "setUp()" };
+            return self.failed_suite(
+                start,
                 warnings,
+                [(name.to_string(), TestResult::setup_result(setup))],
             );
         }
 
         // Filter out functions sequentially since it's very fast and there is no need to do it
         // in parallel.
         let find_timer = Instant::now();
-        let functions = {
-            let test_matcher = TestFunctionMatcher::new(
-                &self.config,
-                &self.mcr.inline_config,
-                self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
-            );
-            let generated_symbolic_regression =
-                is_generated_symbolic_regression_contract(&self.contract.abi);
-            self.contract
-                .abi
-                .functions()
-                .filter(|func| {
-                    filter.matches_test_function_kind_in_contract(
-                        self.name,
-                        func,
-                        test_matcher.test_function_kind(
-                            self.name,
-                            func,
-                            generated_symbolic_regression,
-                        ),
-                    )
-                })
-                .filter(|func| self.function_matches_network_pass(func))
-                .collect::<Vec<_>>()
-        };
+        let functions = self.matching_test_functions(filter, &self.test_matcher());
         debug!(
             "Found {} test functions out of {} in {:?}",
             functions.len(),
@@ -1078,96 +1016,70 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
         if let Some(replay) = &self.mcr.tcfg.symbolic_artifact_replay {
             let artifact = &replay.artifact;
-            let replay_functions = functions
-                .iter()
-                .filter(|func| func.signature() == artifact.test.test)
-                .copied()
-                .collect::<Vec<_>>();
-
-            if replay_functions.is_empty() {
-                if !self.mcr.tcfg.multi_network.all_override_networks.is_empty() {
+            let target = &artifact.test;
+            let replay_functions =
+                functions.iter().filter(|func| func.signature() == target.test).collect::<Vec<_>>();
+            let func = match replay_functions[..] {
+                [] if !self.mcr.tcfg.multi_network.all_override_networks.is_empty() => {
                     return SuiteResult::new(start.elapsed(), BTreeMap::new(), warnings);
                 }
-                return SuiteResult::new(
-                    start.elapsed(),
-                    [(
-                        artifact.test.test.clone(),
-                        TestResult::fail(format!(
-                            "symbolic artifact target `{}` was not found in `{}`",
-                            artifact.test.test, artifact.test.contract,
-                        )),
-                    )]
-                    .into(),
-                    warnings,
-                );
-            }
-            if replay_functions.len() > 1 {
-                return SuiteResult::new(
-                    start.elapsed(),
-                    [(
-                        artifact.test.test.clone(),
-                        TestResult::fail(format!(
-                            "symbolic artifact target `{}` matched {} functions in `{}`",
-                            artifact.test.test,
-                            replay_functions.len(),
-                            artifact.test.contract,
-                        )),
-                    )]
-                    .into(),
-                    warnings,
-                );
-            }
-
-            let test_results = replay_functions
-                .into_iter()
-                .map(|func| {
-                    let start = Instant::now();
-                    let kind = if artifact.kind == SymbolicCounterexampleArtifactKind::SingleCall {
-                        TestFunctionKind::SymbolicTest
-                    } else {
-                        func.test_function_kind()
-                    };
-                    if artifact.kind == SymbolicCounterexampleArtifactKind::Sequence
-                        && !kind.is_invariant_test()
-                    {
-                        return (
-                            func.signature(),
-                            TestResult::fail(format!(
-                                "sequence symbolic artifact must target an invariant test, but matched {} function `{}`",
-                                kind.name(),
-                                func.signature(),
-                            )),
-                        );
-                    }
-                    let invariants =
-                        if artifact.kind == SymbolicCounterexampleArtifactKind::Sequence {
-                            std::slice::from_ref(&func)
-                        } else {
-                            &[][..]
-                        };
-                    let mut res = FunctionRunner::new(&self, &setup).run_symbolic_artifact_replay(
-                        func,
-                        invariants,
-                        call_after_invariant,
+                [] => {
+                    let reason = format!(
+                        "symbolic artifact target `{}` was not found in `{}`",
+                        target.test, target.contract
                     );
-                    res.duration = start.elapsed();
-                    debug!(%kind, path = %replay.path.display(), "replayed symbolic artifact");
-                    (func.signature(), res)
-                })
-                .collect::<BTreeMap<_, _>>();
+                    let results = [(target.test.clone(), TestResult::fail(reason))];
+                    return SuiteResult::new(start.elapsed(), results.into(), warnings);
+                }
+                [func] => *func,
+                _ => {
+                    let reason = format!(
+                        "symbolic artifact target `{}` matched {} functions in `{}`",
+                        target.test,
+                        replay_functions.len(),
+                        target.contract
+                    );
+                    let results = [(target.test.clone(), TestResult::fail(reason))];
+                    return SuiteResult::new(start.elapsed(), results.into(), warnings);
+                }
+            };
 
-            return SuiteResult::new(start.elapsed(), test_results, warnings);
+            let is_sequence = artifact.kind == SymbolicCounterexampleArtifactKind::Sequence;
+            let kind = if is_sequence {
+                func.test_function_kind()
+            } else {
+                TestFunctionKind::SymbolicTest
+            };
+            let test_start = Instant::now();
+            let mut res = if is_sequence && !kind.is_invariant_test() {
+                TestResult::fail(format!(
+                    "sequence symbolic artifact must target an invariant test, but matched {} function `{}`",
+                    kind.name(),
+                    func.signature(),
+                ))
+            } else {
+                let invariants = if is_sequence { std::slice::from_ref(&func) } else { &[][..] };
+                FunctionRunner::new(&self, &setup).run_symbolic_artifact_replay(
+                    func,
+                    invariants,
+                    call_after_invariant,
+                )
+            };
+            res.duration = test_start.elapsed();
+            debug!(%kind, path = %replay.path.display(), "replayed symbolic artifact");
+            return SuiteResult::new(start.elapsed(), [(func.signature(), res)].into(), warnings);
         }
 
-        let test_fail_functions =
-            functions.iter().filter(|func| func.test_function_kind().is_any_test_fail());
-        if test_fail_functions.clone().next().is_some() {
-            let fail = || {
-                TestResult::fail("`testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert".to_string())
-            };
-            let test_results = test_fail_functions.map(|func| (func.signature(), fail())).collect();
-            self.tcfg.early_exit.record_failure();
-            return SuiteResult::new(start.elapsed(), test_results, warnings);
+        let test_fail_results = functions
+            .iter()
+            .filter(|func| func.test_function_kind().is_any_test_fail())
+            .map(|func| {
+                let reason = "`testFail*` has been removed. Consider changing to test_Revert[If|When]_Condition and expecting a revert";
+                (func.signature(), TestResult::fail(reason.to_string()))
+            })
+            .collect::<Vec<_>>();
+        if !test_fail_results.is_empty() {
+            return self.failed_suite(start, warnings, test_fail_results);
         }
 
         if functions.iter().any(|func| {
@@ -1182,14 +1094,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         }
 
         let early_exit = &self.tcfg.early_exit;
-        let test_matcher = TestFunctionMatcher::new(
-            &self.config,
-            &self.mcr.inline_config,
-            self.mcr.tcfg.symbolic_artifact_replay.as_ref(),
-        );
-        let generated_symbolic_regression =
-            is_generated_symbolic_regression_contract(&self.contract.abi);
-
+        let test_matcher = self.test_matcher();
         if self.progress.is_some() {
             let interrupt = early_exit.clone();
             self.tokio_handle.spawn(async move {
@@ -1198,19 +1103,18 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             });
         }
 
-        let invariant_campaigns = select_invariant_campaigns(
+        let InvariantCampaignSelection {
+            matched_boolean_invariant_fns,
+            merge_boolean_suite: merge_invariant_suite,
+            boolean_suite_anchor: invariant_suite_anchor,
+            optimization_anchors: _,
+        } = select_invariant_campaigns(
             &invariant_fns,
             &functions,
             &self.config,
             &self.mcr.inline_config,
             self.name,
         );
-        let InvariantCampaignSelection {
-            matched_boolean_invariant_fns,
-            merge_boolean_suite: merge_invariant_suite,
-            boolean_suite_anchor: invariant_suite_anchor,
-            optimization_anchors: _,
-        } = invariant_campaigns;
 
         let test_results = functions
             .par_iter()
@@ -1281,8 +1185,20 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             })
             .collect::<BTreeMap<_, _>>();
 
-        let duration = start.elapsed();
-        SuiteResult::new(duration, test_results, warnings)
+        SuiteResult::new(start.elapsed(), test_results, warnings)
+    }
+
+    /// Returns a suite that failed before its tests could run, tripping the global fail-fast
+    /// flag so sibling parallel suites (notably long-running invariant campaigns) observe
+    /// `should_stop()` and exit at their next run boundary instead of running to their timeout.
+    fn failed_suite(
+        &self,
+        start: Instant,
+        warnings: Vec<String>,
+        results: impl IntoIterator<Item = (String, TestResult)>,
+    ) -> SuiteResult {
+        self.tcfg.early_exit.record_failure();
+        SuiteResult::new(start.elapsed(), results.into_iter().collect(), warnings)
     }
 }
 
@@ -1936,30 +1852,41 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         // Run current unit test.
-        let (mut raw_call_result, reason) = match self.executor.call(
-            self.sender,
-            self.address,
-            func,
-            &[],
-            U256::ZERO,
-            Some(self.revert_decoder()),
-        ) {
-            Ok(res) => (res.raw, None),
-            Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
-            Err(EvmError::Skip(reason)) => {
-                self.result.single_skip(reason);
-                return self.result;
-            }
-            Err(err) => {
-                self.result.single_fail(Some(err.to_string()));
-                return self.result;
-            }
+        let Ok((mut raw_call_result, reason)) = self.call_test(func, &[]) else {
+            return self.result;
         };
-
         let success =
             self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
         self.result.single_result(success, reason, raw_call_result);
         self.result
+    }
+
+    /// Calls `func` on the test contract, returning the raw result and revert reason. Skipped
+    /// and failed calls are recorded in the test result and returned as `Err`.
+    fn call_test(
+        &mut self,
+        func: &Function,
+        args: &[DynSolValue],
+    ) -> Result<(RawCallResult<FEN>, Option<String>), ()> {
+        match self.executor.call(
+            self.sender,
+            self.address,
+            func,
+            args,
+            U256::ZERO,
+            Some(self.revert_decoder()),
+        ) {
+            Ok(res) => Ok((res.raw, None)),
+            Err(EvmError::Execution(err)) => Ok((err.raw, Some(err.reason))),
+            Err(EvmError::Skip(reason)) => {
+                self.result.single_skip(reason);
+                Err(())
+            }
+            Err(err) => {
+                self.result.single_fail(Some(err.to_string()));
+                Err(())
+            }
+        }
     }
 
     fn symbolic_run_input<'f>(
@@ -3077,24 +3004,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
 
             let args = table_fixtures.iter().map(|row| row[i].clone()).collect_vec();
-            let (mut raw_call_result, reason) = match self.executor.call(
-                self.sender,
-                self.address,
-                func,
-                &args,
-                U256::ZERO,
-                Some(self.revert_decoder()),
-            ) {
-                Ok(res) => (res.raw, None),
-                Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
-                Err(EvmError::Skip(reason)) => {
-                    self.result.single_skip(reason);
-                    return self.result;
-                }
-                Err(err) => {
-                    self.result.single_fail(Some(err.to_string()));
-                    return self.result;
-                }
+            let Ok((mut raw_call_result, reason)) = self.call_test(func, &args) else {
+                return self.result;
             };
 
             result.gas_by_case.push((raw_call_result.gas_used, raw_call_result.stipend));
@@ -3113,16 +3024,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         raw_call_result.traces.clone(),
                     )));
                 result.reason = reason;
-                result.traces = raw_call_result.traces;
-                result.debug_bytecodes = raw_call_result.debug_bytecodes;
-                self.result.table_result(result);
-                return self.result;
             }
-
-            // If it's the last iteration and all other runs succeeded, then use last call result
-            // for logs and traces.
-            if i == fixtures_len - 1 {
-                result.success = true;
+            // Stop on the first failure, or after the last row using its call result for logs
+            // and traces.
+            if !is_success || i == fixtures_len - 1 {
+                result.success = is_success;
                 result.traces = raw_call_result.traces;
                 result.debug_bytecodes = raw_call_result.debug_bytecodes;
                 self.result.table_result(result);
@@ -4443,28 +4349,22 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 let spec_id: SpecId = self.executor.spec_id().into();
                 debug!(?calldata, spec=%spec_id, "applying before_test_setup");
                 // Apply before test configured calldata.
-                match self.executor.to_mut().transact_raw(
+                let Ok(call_result) = self.executor.to_mut().transact_raw(
                     self.tcfg.sender,
                     address,
                     calldata,
                     U256::ZERO,
-                ) {
-                    Ok(call_result) => {
-                        let reverted = call_result.reverted;
-
-                        // Merge tx result traces in unit test result.
-                        self.result.extend_setup(call_result);
-
-                        // To continue unit test execution the call should not revert.
-                        if reverted {
-                            self.result.single_fail(None);
-                            return Err(());
-                        }
-                    }
-                    Err(_) => {
-                        self.result.single_fail(None);
-                        return Err(());
-                    }
+                ) else {
+                    self.result.single_fail(None);
+                    return Err(());
+                };
+                let reverted = call_result.reverted;
+                // Merge tx result traces in unit test result.
+                self.result.extend_setup(call_result);
+                // To continue unit test execution the call should not revert.
+                if reverted {
+                    self.result.single_fail(None);
+                    return Err(());
                 }
             }
         }
