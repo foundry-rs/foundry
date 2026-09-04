@@ -406,56 +406,6 @@ struct CompiledTestProject {
     _brutalized_workspace: Option<TempDir>,
 }
 
-fn sources_to_compile_from_artifacts(
-    config: &Config,
-    test_filter: &ProjectPathsAwareFilter,
-    root_sources: &BTreeSet<PathBuf>,
-    artifacts: &ProjectCompileOutput,
-    test_matcher: &TestFunctionMatcher<'_>,
-) -> BTreeSet<PathBuf> {
-    let paths = config.project_paths::<MultiCompilerLanguage>();
-    let empty_filter = EmptyTestFilter::default();
-    let filter_args = test_filter.args();
-    let has_contract_or_test_filter = filter_args.test_pattern.is_some()
-        || filter_args.test_pattern_inverse.is_some()
-        || filter_args.contract_pattern.is_some()
-        || filter_args.contract_pattern_inverse.is_some();
-
-    // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
-    // identifiers it constructs are project-relative. Match that here for the filter check
-    // (notably for the `--rerun` failure list, which is persisted relative) but return the
-    // original absolute source paths so downstream compilation can locate them.
-    artifacts
-        .artifact_ids()
-        .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
-        // Imported dependencies must remain attached to their roots so compilation restrictions
-        // apply to the entire source graph instead of compiling dependencies with default settings.
-        .filter(|(id, _)| root_sources.contains(&id.source))
-        .filter(|(id, abi)| {
-            if id.source.starts_with(&paths.sources) {
-                return true;
-            }
-            if paths.is_script(&id.source) && !paths.is_test(&id.source) {
-                return false;
-            }
-            let stripped = id.clone().with_stripped_file_prefixes(&config.root);
-            // ABI-only compilation can omit test functions with invalid bodies, so preserve the
-            // existing filter behavior for conventional test files instead of treating them as
-            // fixtures.
-            if stripped.source.is_sol_test() {
-                return if has_contract_or_test_filter {
-                    test_matcher.matches_contract(test_filter, &stripped, abi)
-                } else {
-                    test_filter.matches_path(&stripped.source)
-                };
-            }
-            !test_matcher.matches_contract(&empty_filter, &stripped, abi)
-                || test_matcher.matches_contract(test_filter, &stripped, abi)
-        })
-        .map(|(id, _)| id.source)
-        .collect()
-}
-
 /// Shared campaign arguments for `forge fuzz run`.
 #[derive(Clone, Debug, Parser)]
 #[command(next_help_heading = "Campaign options")]
@@ -1347,8 +1297,40 @@ impl TestArgs {
         if !self.fuzz_only {
             return Ok(());
         }
-        let (fuzz, invariant) =
-            matched_engine_counts(output, config, inline_config, filter, multi_network);
+        let matcher = TestFunctionMatcher::new(config, inline_config, None);
+        let (mut fuzz, mut invariant) = (0, 0);
+        for (id, _, abi) in matching_test_contracts(output, config, &matcher, filter) {
+            let contract_name = id.identifier();
+            let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
+            fuzz += abi
+                .functions()
+                .filter(|func| {
+                    let kind = matcher.test_function_kind(
+                        &contract_name,
+                        func,
+                        generated_symbolic_regression,
+                    );
+                    matches!(kind, TestFunctionKind::FuzzTest { .. })
+                        && filter.matches_test_function_kind_in_contract(&contract_name, func, kind)
+                        && function_matches_network_pass(
+                            &multi_network.all_override_networks,
+                            multi_network.pass_network.as_ref(),
+                            inline_config.network_for(&config.profile, &contract_name, &func.name),
+                        )
+                })
+                .count();
+            invariant += count_runnable_invariant_campaign_anchors(
+                abi,
+                filter,
+                InvariantCampaignScope {
+                    config,
+                    inline_config,
+                    contract_name: &contract_name,
+                    all_override_networks: &multi_network.all_override_networks,
+                    pass_network: multi_network.pass_network.as_ref(),
+                },
+            );
+        }
         let unused: &[(bool, &str, &str)] = if fuzz == 0 && invariant > 0 {
             &[
                 (self.fuzz_frontier_dir.is_some(), "--frontier-dir", "fuzz"),
@@ -1579,13 +1561,48 @@ impl TestArgs {
         let inline_config = Arc::new(InlineConfig::new_parsed(&output, config)?);
         let test_matcher =
             TestFunctionMatcher::new(config, &inline_config, symbolic_artifact_replay);
-        let files = sources_to_compile_from_artifacts(
-            config,
-            test_filter,
-            &sources,
-            &output,
-            &test_matcher,
-        );
+        let paths = config.project_paths::<MultiCompilerLanguage>();
+        let empty_filter = EmptyTestFilter::default();
+        let filter_args = test_filter.args();
+        let has_contract_or_test_filter = filter_args.test_pattern.is_some()
+            || filter_args.test_pattern_inverse.is_some()
+            || filter_args.contract_pattern.is_some()
+            || filter_args.contract_pattern_inverse.is_some();
+
+        // `MultiContractRunner::build` strips the root prefix from artifact source paths so the
+        // identifiers it constructs are project-relative. Match that here for the filter check
+        // (notably for the `--rerun` failure list, which is persisted relative) but return the
+        // original absolute source paths so downstream compilation can locate them.
+        let files = output
+            .artifact_ids()
+            .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
+            // Imported dependencies must remain attached to their roots so compilation restrictions
+            // apply to the entire source graph instead of compiling dependencies with default
+            // settings.
+            .filter(|(id, _)| sources.contains(&id.source))
+            .filter(|(id, abi)| {
+                if id.source.starts_with(&paths.sources) {
+                    return true;
+                }
+                if paths.is_script(&id.source) && !paths.is_test(&id.source) {
+                    return false;
+                }
+                let stripped = id.clone().with_stripped_file_prefixes(&config.root);
+                // ABI-only compilation can omit test functions with invalid bodies, so preserve the
+                // existing filter behavior for conventional test files instead of treating them as
+                // fixtures.
+                if stripped.source.is_sol_test() {
+                    return if has_contract_or_test_filter {
+                        test_matcher.matches_contract(test_filter, &stripped, abi)
+                    } else {
+                        test_filter.matches_path(&stripped.source)
+                    };
+                }
+                !test_matcher.matches_contract(&empty_filter, &stripped, abi)
+                    || test_matcher.matches_contract(test_filter, &stripped, abi)
+            })
+            .map(|(id, _)| id.source)
+            .collect();
         Ok((files, Some(inline_config)))
     }
 
@@ -3181,48 +3198,6 @@ fn list_from_output(
     Ok(TestOutcome::empty(None, false))
 }
 
-/// Counts the matched `(fuzz, invariant)` test targets.
-fn matched_engine_counts(
-    output: &ProjectCompileOutput,
-    config: &Config,
-    inline_config: &InlineConfig,
-    filter: &ProjectPathsAwareFilter,
-    multi_network: &MultiNetworkConfig,
-) -> (usize, usize) {
-    let matcher = TestFunctionMatcher::new(config, inline_config, None);
-    let mut counts = (0, 0);
-    for (id, _, abi) in matching_test_contracts(output, config, &matcher, filter) {
-        let contract_name = id.identifier();
-        let generated_symbolic_regression = is_generated_symbolic_regression_contract(abi);
-        counts.0 += abi
-            .functions()
-            .filter(|func| {
-                let kind =
-                    matcher.test_function_kind(&contract_name, func, generated_symbolic_regression);
-                matches!(kind, TestFunctionKind::FuzzTest { .. })
-                    && filter.matches_test_function_kind_in_contract(&contract_name, func, kind)
-                    && function_matches_network_pass(
-                        &multi_network.all_override_networks,
-                        multi_network.pass_network.as_ref(),
-                        inline_config.network_for(&config.profile, &contract_name, &func.name),
-                    )
-            })
-            .count();
-        counts.1 += count_runnable_invariant_campaign_anchors(
-            abi,
-            filter,
-            InvariantCampaignScope {
-                config,
-                inline_config,
-                contract_name: &contract_name,
-                all_override_networks: &multi_network.all_override_networks,
-                pass_network: multi_network.pass_network.as_ref(),
-            },
-        );
-    }
-    counts
-}
-
 fn matching_fuzz_replay_targets(
     output: &ProjectCompileOutput,
     config: &Config,
@@ -3843,76 +3818,6 @@ mod tests {
             "--invariant-mutation-weight-cmp",
             "7",
         ]);
-
-        let figment = figment::Figment::from(&args);
-        assert_eq!(figment.extract_inner::<u32>("fuzz.dictionary_weight").unwrap(), 35);
-        assert_eq!(
-            figment.extract_inner::<String>("fuzz.max_fuzz_dictionary_addresses").unwrap(),
-            "max"
-        );
-        assert_eq!(
-            figment.extract_inner::<String>("fuzz.max_fuzz_dictionary_values").unwrap(),
-            "1234"
-        );
-        assert_eq!(
-            figment.extract_inner::<String>("fuzz.max_fuzz_dictionary_literals").unwrap(),
-            "4321"
-        );
-        assert_eq!(figment.extract_inner::<u32>("fuzz.corpus_random_sequence_weight").unwrap(), 55);
-        assert_eq!(
-            figment.extract_inner::<PathBuf>("fuzz.corpus_dir").unwrap(),
-            PathBuf::from("fuzz_corpus")
-        );
-        assert_eq!(
-            figment.extract_inner::<PathBuf>("fuzz.frontier_dir").unwrap(),
-            PathBuf::from("fuzz_frontiers")
-        );
-        assert_eq!(figment.extract_inner::<usize>("fuzz.frontier_limit").unwrap(), 7);
-        assert_eq!(figment.extract_inner::<u32>("fuzz.payable_value_weight").unwrap(), 12);
-        assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_splice").unwrap(), 4);
-        assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_abi").unwrap(), 3);
-        assert_eq!(figment.extract_inner::<u32>("fuzz.mutation_weight_cmp").unwrap(), 5);
-        assert!(figment.extract_inner::<bool>("symbolic.use_fuzz_frontiers").unwrap());
-        assert_eq!(figment.extract_inner::<usize>("symbolic.frontier_limit").unwrap(), 3);
-        assert_eq!(figment.extract_inner::<Vec<u64>>("symbolic.frontier_ids").unwrap(), vec![4, 9]);
-        assert_eq!(
-            figment.extract_inner::<Vec<usize>>("symbolic.frontier_pcs").unwrap(),
-            vec![123, 456]
-        );
-        assert_eq!(
-            figment.extract_inner::<Vec<String>>("symbolic.frontier_selectors").unwrap(),
-            vec!["0x12345678", "deadbeef"]
-        );
-        assert_eq!(figment.extract_inner::<u32>("invariant.depth").unwrap(), 300);
-        assert_eq!(figment.extract_inner::<u32>("invariant.min_depth").unwrap(), 20);
-        assert_eq!(
-            figment.extract_inner::<InvariantDepthMode>("invariant.depth_mode").unwrap(),
-            InvariantDepthMode::Random
-        );
-        assert_eq!(figment.extract_inner::<u32>("invariant.dictionary_weight").unwrap(), 45);
-        assert_eq!(
-            figment.extract_inner::<String>("invariant.max_fuzz_dictionary_addresses").unwrap(),
-            "8765"
-        );
-        assert_eq!(
-            figment.extract_inner::<String>("invariant.max_fuzz_dictionary_values").unwrap(),
-            "max"
-        );
-        assert_eq!(
-            figment.extract_inner::<String>("invariant.max_fuzz_dictionary_literals").unwrap(),
-            "6789"
-        );
-        assert_eq!(
-            figment.extract_inner::<u32>("invariant.corpus_random_sequence_weight").unwrap(),
-            25
-        );
-        assert_eq!(
-            figment.extract_inner::<PathBuf>("invariant.corpus_dir").unwrap(),
-            PathBuf::from("invariant_corpus")
-        );
-        assert_eq!(figment.extract_inner::<u32>("invariant.payable_value_weight").unwrap(), 34);
-        assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_splice").unwrap(), 2);
-        assert_eq!(figment.extract_inner::<u32>("invariant.mutation_weight_cmp").unwrap(), 7);
 
         let config = Config::default().merge_inline_provider(&args).unwrap();
         assert_eq!(config.fuzz.dictionary.dictionary_weight, 35);
