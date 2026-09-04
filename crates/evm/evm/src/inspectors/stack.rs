@@ -50,7 +50,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::executors::{EarlyExit, EvmExecutionCancellation};
+use crate::executors::{EarlyExit, EvmExecutionCancellation, calculate_stipend};
 
 #[derive(Clone, Debug)]
 #[must_use = "builders do nothing unless you call `build` on them"]
@@ -362,6 +362,16 @@ pub struct InnerContextData {
     original_origin: Address,
     /// Accounts that were created locally before entering the nested EVM context.
     locally_created_accounts: AddressHashSet,
+}
+
+/// Gas accounting carried across an isolated frame's synthetic transaction boundary.
+struct IsolatedGas {
+    /// Regular execution gas available to the isolated frame.
+    regular_limit: u64,
+    /// State gas reservoir available to the isolated frame.
+    reservoir: u64,
+    /// State gas already charged by the outer opcode.
+    precharged_state: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -998,9 +1008,10 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         kind: TxKind,
         caller: Address,
         input: Bytes,
-        gas_limit: u64,
+        gas: IsolatedGas,
         value: U256,
     ) -> (InterpreterResult, Option<Address>, bool) {
+        let IsolatedGas { regular_limit, reservoir, precharged_state } = gas;
         let cached_evm_env = ecx.evm_clone();
         let cached_tx_env = ecx.tx_clone();
         self.isolated_call_was_precompile = None;
@@ -1013,8 +1024,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         ecx.tx_mut().set_kind(kind);
         ecx.tx_mut().set_data(input);
         ecx.tx_mut().set_value(value);
-        // Add 21000 to the gas limit to account for the base cost of transaction.
-        ecx.tx_mut().set_gas_limit(gas_limit + 21000);
+        let initial_gas = calculate_stipend(ecx.tx(), ecx.cfg());
+        // Preserve the frame's regular gas and reservoir across the synthetic transaction
+        // boundary. The extra state gas offsets the account-creation charge already paid by the
+        // outer opcode.
+        let regular_gas_limit = regular_limit.saturating_add(initial_gas);
+        ecx.cfg_env_mut().tx_gas_limit_cap = Some(regular_gas_limit);
+        let mut tx_gas_limit = regular_gas_limit.saturating_add(reservoir);
+        if let Some(precharged_state) = precharged_state {
+            tx_gas_limit = tx_gas_limit.saturating_add(precharged_state);
+        }
+        ecx.tx_mut().set_gas_limit(tx_gas_limit);
 
         // If we haven't disabled gas limit checks, ensure that transaction gas limit will not
         // exceed block gas limit.
@@ -1121,6 +1141,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             // but restoring the original tx and basefee (which we zeroed for the nested call).
             let mut restored_evm_env = nested_env;
             restored_evm_env.block_env.set_basefee(cached_evm_env.block_env.basefee());
+            restored_evm_env.cfg_env.tx_gas_limit_cap = cached_evm_env.cfg_env.tx_gas_limit_cap;
             ecx.set_evm(restored_evm_env);
             ecx.set_tx(cached_tx_env);
 
@@ -1137,7 +1158,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             cheats.in_isolation_context = false;
         }
 
-        let mut gas = Gas::new(gas_limit);
+        let mut gas = Gas::new_with_regular_gas_and_reservoir(regular_limit, reservoir);
         let was_precompile_called = self.isolated_call_was_precompile.take().unwrap_or(false);
 
         let Ok(res) = res else {
@@ -1154,18 +1175,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         };
 
         let transaction_gas = res.result.gas();
-        let state_gas_used = transaction_gas.block_state_gas_used();
+        let mut state_gas_used = transaction_gas.block_state_gas_used();
+        if let Some(precharged_state) = precharged_state {
+            state_gas_used = state_gas_used.saturating_sub(precharged_state);
+        }
         if state_gas_used == 0 {
-            let mut snapshot_gas = Gas::new(gas_limit);
+            let mut snapshot_gas = Gas::new(regular_limit);
             let _ = snapshot_gas.record_regular_cost(transaction_gas.tx_gas_used());
             if let Some(cheats) = self.cheatcodes.as_deref_mut() {
                 cheats.gas_metering.set_isolated_snapshot_gas_used(snapshot_gas.total_gas_spent());
             }
         }
-        gas.set_state_gas_spent(
-            i64::try_from(state_gas_used)
-                .expect("transaction state gas originates from a signed gas tracker"),
-        );
+        let _ = gas.record_state_cost(state_gas_used);
         let _ = gas.record_regular_cost(transaction_gas.block_regular_gas_used());
 
         let rolled_back = !res.result.is_success();
@@ -1716,12 +1737,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 // Isolate CALLs
                 CallScheme::Call => {
                     let input = call.input.bytes(ecx);
+                    let precharged_state = call
+                        .charged_new_account_state_gas
+                        .then_some(ecx.cfg().gas_params().new_account_state_gas());
                     let (result, _, was_precompile_called) = self.transact_inner(
                         ecx,
                         TxKind::Call(call.target_address),
                         call.caller,
                         input,
-                        call.gas_limit,
+                        IsolatedGas {
+                            regular_limit: call.gas_limit,
+                            reservoir: call.reservoir,
+                            precharged_state,
+                        },
                         call.value.get(),
                     );
                     return Some(CallOutcome {
@@ -1872,13 +1900,20 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 .evm_state()
                 .get(&create.caller())
                 .map(|acc| create.caller().create(acc.info.nonce));
+            let precharged_state = create
+                .charged_create_state_gas()
+                .then_some(ecx.cfg().gas_params().create_state_gas());
 
             let (result, address, _) = self.transact_inner(
                 ecx,
                 TxKind::Create,
                 create.caller(),
                 create.init_code().clone(),
-                create.gas_limit(),
+                IsolatedGas {
+                    regular_limit: create.gas_limit(),
+                    reservoir: create.reservoir(),
+                    precharged_state,
+                },
                 create.value(),
             );
             let address =
