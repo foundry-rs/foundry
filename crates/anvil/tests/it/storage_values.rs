@@ -41,6 +41,22 @@ async fn storage_values_batches_multiple_accounts() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn storage_values_rejects_empty_request() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let err = provider
+        .client()
+        .request::<_, HashMap<Address, Vec<B256>>>(
+            "eth_getStorageValues",
+            (HashMap::<Address, Vec<B256>>::default(), BlockId::latest()),
+        )
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("empty request"), "unexpected error: {err}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn storage_values_rejects_more_than_1024_slots() {
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();

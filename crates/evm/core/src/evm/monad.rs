@@ -388,7 +388,6 @@ impl FoundryEvmFactory for MonadEvmFactory {
         let mut monad_evm = self.create_evm_with_inspector(db, evm_env, inspector);
         monad_evm.ctx_mut().chain = chain_context;
         monad_evm.cfg.tx_chain_id_check = true;
-        monad_evm.inspector().get_networks().inject_precompiles(monad_evm.precompiles_mut());
         monad_evm
     }
 
@@ -421,8 +420,6 @@ impl FoundryEvmFactory for MonadEvmFactory {
 
         evm.0.ctx.chain = chain_context;
         evm.0.ctx.cfg.tx_chain_id_check = true;
-        evm.0.inspector.get_networks().inject_precompiles(&mut evm.0.precompiles);
-
         Box::new(evm)
     }
 }
