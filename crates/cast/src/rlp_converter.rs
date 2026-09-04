@@ -76,28 +76,20 @@ impl Item {
     pub(crate) fn value_to_item(value: &Value) -> eyre::Result<Self> {
         match value {
             Value::Null => Ok(Self::Data(vec![])),
-            Value::Bool(_) => {
-                eyre::bail!("RLP input can not contain booleans");
-            }
+            Value::Bool(_) => eyre::bail!("RLP input can not contain booleans"),
             Value::Number(n) => {
                 Ok(Self::Data(n.to_string().parse::<U256>()?.to_be_bytes_trimmed_vec()))
             }
             Value::String(s) => Ok(Self::Data(hex::decode(s).wrap_err("Could not decode hex")?)),
-            Value::Array(values) => values.iter().map(Self::value_to_item).collect(),
-            Value::Object(_) => {
-                eyre::bail!("RLP input can not contain objects");
+            Value::Array(values) => {
+                values.iter().map(Self::value_to_item).collect::<Result<_, _>>().map(Self::Array)
             }
+            Value::Object(_) => eyre::bail!("RLP input can not contain objects"),
         }
     }
 }
 
-impl FromIterator<Self> for Item {
-    fn from_iter<T: IntoIterator<Item = Self>>(iter: T) -> Self {
-        Self::Array(Vec::from_iter(iter))
-    }
-}
-
-// Display as hex values
+/// Displays the items as nested JSON arrays of hex strings.
 impl fmt::Display for Item {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
         enum Task<'a> {
