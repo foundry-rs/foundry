@@ -9,6 +9,7 @@ use path_slash::PathExt;
 use std::{
     collections::HashMap,
     fs,
+    ops::Range,
     path::{Component, Path, PathBuf},
 };
 
@@ -317,15 +318,9 @@ fn build_source_to_url(pages: &[PathBuf]) -> SourceToUrl {
     map
 }
 
-/// Escape MDX-sensitive characters (`{` and `<`) in plain-text regions of a
-/// Markdown document, leaving fenced code blocks (` ``` ` or `~~~`) untouched.
-///
-/// Without this, README content with template placeholders like `{FOO}` or
-/// HTML-like tokens like `<TOKEN>` would be interpreted as MDX expressions/JSX
-/// and break `vocs dev` / `vocs build`.
-/// Shared fence-open/fence-close detection for a single markdown line, used
-/// by both `escape_mdx_outside_code_fences` and `code_regions` so the two
-/// line-walkers agree on what counts as "inside a code fence".
+/// Fence-open/close detection for a single markdown line, shared by
+/// `escape_mdx_outside_code_fences` and `code_regions` so both agree on what
+/// counts as "inside a code fence".
 struct FenceState {
     marker: char,
     len: usize,
@@ -356,6 +351,12 @@ impl FenceState {
     }
 }
 
+/// Escape MDX-sensitive characters (`{` and `<`) in plain-text regions of a
+/// Markdown document, leaving fenced code blocks (` ``` ` or `~~~`) untouched.
+///
+/// Without this, README content with template placeholders like `{FOO}` or
+/// HTML-like tokens like `<TOKEN>` would be interpreted as MDX expressions/JSX
+/// and break `vocs dev` / `vocs build`.
 fn escape_mdx_outside_code_fences(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut fence: Option<FenceState> = None;
@@ -407,12 +408,8 @@ fn escape_mdx_outside_code_fences(text: &str) -> String {
     out
 }
 
-/// Byte ranges of `text` that sit inside a code fence or an inline code span
-/// (`` `...` ``), reusing `FenceState` so this agrees with
-/// `escape_mdx_outside_code_fences` about what counts as "code". Used by
-/// `rewrite_homepage_links` so it never mistakes Solidity syntax like
-/// `new address[](2)` for a markdown link.
-fn code_regions(text: &str) -> Vec<std::ops::Range<usize>> {
+/// Byte ranges of `text` that sit inside a code fence or an inline code span.
+fn code_regions(text: &str) -> Vec<Range<usize>> {
     let mut regions = Vec::new();
     let mut fence: Option<FenceState> = None;
     let mut offset = 0usize;
@@ -434,8 +431,8 @@ fn code_regions(text: &str) -> Vec<std::ops::Range<usize>> {
             continue;
         }
 
-        // Inline code spans (`` `...` `` or longer runs of backticks) within
-        // this line, mirroring escape_mdx_outside_code_fences's tick pairing.
+        // Inline code spans within this line, mirroring the tick pairing in
+        // `escape_mdx_outside_code_fences`.
         let mut pending_ticks = 0usize;
         let mut inline_code_ticks = 0usize;
         let mut span_start: Option<usize> = None;
@@ -461,10 +458,7 @@ fn code_regions(text: &str) -> Vec<std::ops::Range<usize>> {
             }
             pos += ch_len;
         }
-        // An unterminated run of backticks (odd number of tick groups) opens
-        // an inline span that extends to end-of-line, matching how
-        // escape_mdx_outside_code_fences treats the remainder of the line as
-        // inline code once `inline_code_ticks > 0`.
+        // An unterminated inline span extends to the end of the line.
         if inline_code_ticks > 0
             && let Some(start) = span_start
         {
@@ -478,9 +472,7 @@ fn code_regions(text: &str) -> Vec<std::ops::Range<usize>> {
 /// * `.sol` paths that resolve to a known page → vocs URL.
 /// * Any other relative path under `root` → `{repo}/blob/{commit}/...`.
 /// * Absolute URLs, anchors, and unresolved targets are left untouched.
-/// * Anything inside a code fence or inline code span is left untouched —
-///   Solidity syntax like `new address[](2)` looks like a markdown link
-///   (`](`) to a naive scanner but is not one.
+/// * Code fences and inline code spans are left untouched.
 fn rewrite_homepage_links(
     text: &str,
     base_dir: &Path,
@@ -489,7 +481,7 @@ fn rewrite_homepage_links(
     repo: Option<&str>,
     commit: Option<&str>,
 ) -> String {
-    let protected = code_regions(text);
+    let code_regions = code_regions(text);
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     let mut consumed = 0usize;
@@ -498,6 +490,10 @@ fn rewrite_homepage_links(
         out.push_str(&rest[..open + 2]);
         rest = &rest[open + 2..];
         consumed += open + 2;
+        // Solidity syntax like `new address[](2)` inside code is not a link.
+        if code_regions.iter().any(|region| region.contains(&abs_open)) {
+            continue;
+        }
         // Scan the URL, counting parens so we don't split on `(` / `)` inside it.
         let bytes = rest.as_bytes();
         let mut i = 0;
@@ -518,9 +514,8 @@ fn rewrite_homepage_links(
                     i += 1;
                 }
                 b'\\' => {
-                    // Skip the escaped character. Clamp so a trailing
-                    // backslash at the very end of the text can't push `i`
-                    // past `bytes.len()` and panic the slice below.
+                    // Skip the escaped character; clamp so a trailing backslash
+                    // can't index past the end of the text.
                     i = (i + 2).min(bytes.len());
                 }
                 _ => {
@@ -529,13 +524,7 @@ fn rewrite_homepage_links(
             }
         }
         let target = &rest[..i];
-        let in_protected = protected.iter().any(|r| r.contains(&abs_open));
-        let rewritten = if in_protected {
-            None
-        } else {
-            try_rewrite_target(target, base_dir, root, src_to_url, repo, commit)
-        };
-        match rewritten {
+        match try_rewrite_target(target, base_dir, root, src_to_url, repo, commit) {
             Some(new) => out.push_str(&new),
             None => out.push_str(target),
         }
@@ -776,11 +765,7 @@ End {brace}.
     }
 
     #[test]
-    fn rewrite_homepage_links_leaves_code_fences_alone() {
-        // `new address[](2)` contains a literal `](` that a naive scanner
-        // mistakes for a markdown link — the fenced Solidity must survive
-        // byte-for-byte, while a real link in the surrounding prose still
-        // gets rewritten.
+    fn rewrite_homepage_links_leaves_code_alone() {
         let map = build_source_to_url(&[PathBuf::from("src/contract.Foo.mdx")]);
         let root = Path::new("/repo");
         let repo = Some("https://github.com/x/y");
@@ -791,41 +776,29 @@ See [Foo](./src/Foo.sol) for details.
 ```solidity
 function deploy() external {
     address[] memory targets = new address[](2);
-    bytes memory data = new bytes(4);
 }
 ```
 
-Also uses `new bytes(4)` inline.
+Also uses `new address[](2)` inline, then links [Contrib](./CONTRIBUTING.md).
 ";
-        let out = rewrite_homepage_links(input, Path::new("/repo"), root, &map, repo, commit);
+        let expected = "\
+See [Foo](/src/contract.Foo) for details.
 
-        // Real link outside the fence is still rewritten.
-        assert!(out.contains("[Foo](/src/contract.Foo)"), "prose link must still be rewritten");
-        // Fenced Solidity is untouched — no GitHub URL leaked into the array length.
-        assert!(
-            out.contains("new address[](2)"),
-            "array allocation inside a fence must survive unchanged, got: {out}"
-        );
-        assert!(
-            !out.contains("address[](https://"),
-            "must not rewrite `](` inside a code fence, got: {out}"
-        );
-        // Inline-code span outside the fence is also untouched.
-        assert!(
-            out.contains("`new bytes(4)`"),
-            "array allocation inside inline code must survive unchanged, got: {out}"
-        );
-        assert!(
-            !out.contains("bytes(https://"),
-            "must not rewrite `](` inside an inline code span, got: {out}"
-        );
+```solidity
+function deploy() external {
+    address[] memory targets = new address[](2);
+}
+```
+
+Also uses `new address[](2)` inline, then links [Contrib](https://github.com/x/y/blob/abc123/CONTRIBUTING.md).
+";
+        let out = rewrite_homepage_links(input, root, root, &map, repo, commit);
+        assert_eq!(out, expected);
     }
 
     #[test]
     fn rewrite_homepage_links_handles_trailing_unclosed_backslash() {
-        // A dangling `](` with no closing paren, ending in a literal
-        // backslash as the very last byte of the text, must not panic on an
-        // out-of-bounds slice.
+        // A dangling `](` whose target ends in a backslash must not panic.
         let map = SourceToUrl::new();
         let root = Path::new("/repo");
         let input = "See [Foo](abc\\";
