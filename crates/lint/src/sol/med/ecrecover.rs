@@ -9,7 +9,7 @@ use crate::{
 use alloy_primitives::{U256, uint};
 use solar::{
     ast::{BinOpKind, ElementaryType, UnOpKind},
-    interface::{Span, data_structures::Never},
+    interface::{Span, Symbol, data_structures::Never},
     sema::{
         Gcx,
         builtins::Builtin,
@@ -63,43 +63,25 @@ impl<'hir> LateLintPass<'hir> for Ecrecover {
     }
 }
 
-/// Identifies a trackable "place": either a whole variable, or a specific struct field
-/// reached from a variable (`sig` vs. `sig.s`). `Field` lets a malleability guard on
-/// `sig.s` be recorded and matched against a later `ecrecover(..., sig.s)` call, instead
-/// of falling back to an untracked `None` for any member expression.
+/// A tracked place: a whole variable, or a struct field reached from a variable (`sig.s`).
 ///
-/// The field variant carries an `epoch`, bumped by `FlowState::reset_var` whenever the
-/// whole base variable is reassigned/deleted/invalidated. Without it, a field that was
-/// only ever *read* (never explicitly written, e.g. via a `require` guard) has no entry
-/// in `values`, so it falls back to `ValueId::Initial(key)` - and since that fallback
-/// identity is purely structural (derived from `var` + field name), it would be *the
-/// same* identity before and after `sig = other;`, letting a stale low-s proof on the
-/// old struct silently survive onto the new one. Baking the epoch into the key ensures
-/// a post-reassignment read gets a fresh, previously-unproven identity instead.
+/// A field that is only ever read has no `values` entry and resolves to `ValueId::Initial(key)`,
+/// so the key carries an epoch that [`FlowState::reset_var`] bumps whenever the whole base
+/// variable is reassigned. Otherwise a guard on `sig.s` would survive `sig = other;`.
 ///
-/// Known limitation: a field is keyed by the *base variable's* id, with no alias
-/// tracking. Two storage/memory references to the same underlying struct (e.g.
-/// `Sig storage a = stored;` or `Sig memory a = sig;`) are different `VariableId`s, so a
-/// guard recorded through one does not follow a write made through the other. This can
-/// under-invalidate (a stale proof survives a write through an alias) as well as
-/// over-warn (a guard through an alias isn't visible to the other reference) - a
-/// pre-existing class of imprecision for this heuristic, best-effort analyzer, not
-/// something this field-tracking addition claims to solve.
+/// Fields are keyed by their base variable only, so aliases of the same struct are tracked
+/// independently.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum ValueKey {
     Var(hir::VariableId),
-    Field(hir::VariableId, solar::interface::Symbol, u32),
+    Field(hir::VariableId, Symbol, u32),
 }
 
 impl ValueKey {
     const fn var(&self) -> hir::VariableId {
         match self {
-            Self::Var(v) | Self::Field(v, _, _) => *v,
+            Self::Var(var) | Self::Field(var, _, _) => *var,
         }
-    }
-
-    fn touches(&self, v: hir::VariableId) -> bool {
-        self.var() == v
     }
 }
 
@@ -126,7 +108,7 @@ struct FlowState {
     values: HashMap<ValueKey, ValueId>,
     low_s: HashSet<ValueId>,
     pending: HashMap<ValueId, Vec<PendingRecovery>>,
-    /// Current field epoch per variable - see `ValueKey::Field`.
+    /// Current field epoch per variable, see [`ValueKey`].
     field_epoch: HashMap<hir::VariableId, u32>,
 }
 
@@ -154,15 +136,24 @@ impl FlowState {
         self.field_epoch.get(&var).copied().unwrap_or(0)
     }
 
-    fn field_key(&self, var: hir::VariableId, field: solar::interface::Symbol) -> ValueKey {
+    fn field_key(&self, var: hir::VariableId, field: Symbol) -> ValueKey {
         ValueKey::Field(var, field, self.field_epoch(var))
     }
 
-    /// Resets `var` to `value`, dropping every stale `Field(var, _, _)` fact and bumping
-    /// the field epoch so any subsequent, not-yet-rewritten field read gets a fresh
-    /// identity rather than reusing a pre-reset one that might already be proven low-s.
+    /// Sets the value of `key`, resetting the whole variable for a `Var` key.
+    fn set(&mut self, key: ValueKey, value: ValueId) {
+        match key {
+            ValueKey::Var(var) => self.reset_var(var, value),
+            ValueKey::Field(..) => {
+                self.values.insert(key, value);
+            }
+        }
+    }
+
+    /// Resets `var` to `value`, dropping every tracked field of `var` and starting a new field
+    /// epoch so that untracked fields no longer resolve to a possibly proven identity.
     fn reset_var(&mut self, var: hir::VariableId, value: ValueId) {
-        self.values.retain(|key, _| !key.touches(var));
+        self.values.retain(|key, _| key.var() != var);
         *self.field_epoch.entry(var).or_insert(0) += 1;
         self.values.insert(ValueKey::Var(var), value);
     }
@@ -212,8 +203,8 @@ impl<'hir> Analyzer<'hir> {
     }
 
     fn join(&mut self, left: FlowState, right: FlowState) -> FlowState {
-        // Take the max epoch per var from either branch so a field read after the join
-        // never coincides with an identity used pre-join in either branch.
+        // Keep the highest epoch so a field read after the join never reuses an identity that
+        // was reset in either branch.
         let mut field_epoch = left.field_epoch.clone();
         for (var, epoch) in &right.field_epoch {
             field_epoch.entry(*var).and_modify(|e| *e = (*e).max(*epoch)).or_insert(*epoch);
@@ -329,12 +320,7 @@ impl<'hir> Analyzer<'hir> {
                 args.exprs().next().and_then(|arg| self.current_value(arg))
             }
             ExprKind::Assign(lhs, None, _) => self.current_value(lhs),
-            // `sig.s`: a struct-field access. Without this arm every field read is
-            // untracked, so a guard like `require(uint256(sig.s) <= HALF_ORDER)` records
-            // no fact and the lint fires unconditionally on correctly-guarded code.
-            ExprKind::Member(base, field) => {
-                underlying_var(base).map(|var| self.state.value(self.state.field_key(var, field.name)))
-            }
+            ExprKind::Member(..) => self.place_key(expr).map(|key| self.state.value(key)),
             _ => None,
         }
     }
@@ -524,61 +510,23 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn assign_var_value(&mut self, var: hir::VariableId, assigned: AssignedValue) {
+    fn assign_value(&mut self, key: ValueKey, assigned: AssignedValue) {
         let value = assigned.value.unwrap_or_else(|| self.fresh_value());
         if assigned.low_s {
             self.state.low_s.insert(value);
         }
-        // A whole-value reassignment (`sig = newSig;`) supersedes any previously-tracked
-        // field (`sig.s`), so drop stale `Field(var, _, _)` facts along with the old `Var`
-        // entry - otherwise a guard on the old struct would incorrectly survive onto
-        // the new one. `reset_var` also bumps the field epoch, so even a field that was
-        // only ever *read* (never explicitly written, so never had a `values` entry to
-        // drop here) can't keep resolving to its pre-reassignment identity.
-        self.state.reset_var(var, value);
-    }
-
-    /// Handles a direct field write (`sig.s = value;`), which `collect_assignments`
-    /// cannot see since `underlying_var` never resolves a `Member` expression to a
-    /// variable. Without this, the stale fact from an earlier guard on `sig.s` would
-    /// survive the write, and a subsequent `ecrecover(..., sig.s)` would be judged safe
-    /// even though `sig.s` may now be attacker-controlled. Recurses through tuples the
-    /// same way `collect_assignments` does, so `(sig.s, sig.v) = (attackerS, newV);`
-    /// invalidates `sig.s` too, instead of only being visible to `assign_lhs` (which
-    /// skips a tuple element it can't resolve to a whole variable).
-    fn assign_member(&mut self, lhs: &'hir hir::Expr<'hir>, rhs: Option<&'hir hir::Expr<'hir>>) {
-        if let ExprKind::Tuple(lhs_elems) = &lhs.peel_parens().kind {
-            let rhs_elems = match rhs.map(|rhs| &rhs.peel_parens().kind) {
-                Some(ExprKind::Tuple(elems)) => Some(*elems),
-                _ => None,
-            };
-            for (index, elem) in lhs_elems.iter().enumerate() {
-                let Some(elem) = elem else { continue };
-                let elem_rhs = rhs_elems.and_then(|elems| elems.get(index)).copied().flatten();
-                self.assign_member(elem, elem_rhs);
-            }
-            return;
-        }
-        let ExprKind::Member(base, field) = &lhs.peel_parens().kind else { return };
-        let Some(var) = underlying_var(base) else { return };
-        let assigned = self.assigned_value(rhs);
-        let value = assigned.value.unwrap_or_else(|| self.fresh_value());
-        if assigned.low_s {
-            self.state.low_s.insert(value);
-        }
-        let key = self.state.field_key(var, field.name);
-        self.state.values.insert(key, value);
+        self.state.set(key, value);
     }
 
     fn assign_var(&mut self, var: hir::VariableId, rhs: Option<&'hir hir::Expr<'hir>>) {
-        self.assign_var_value(var, self.assigned_value(rhs));
+        self.assign_value(ValueKey::Var(var), self.assigned_value(rhs));
     }
 
     fn assign_lhs(&mut self, lhs: &'hir hir::Expr<'hir>, rhs: Option<&'hir hir::Expr<'hir>>) {
         let mut assignments = Vec::new();
         self.collect_assignments(lhs, rhs, &mut assignments);
-        for (var, assigned) in assignments {
-            self.assign_var_value(var, assigned);
+        for (key, assigned) in assignments {
+            self.assign_value(key, assigned);
         }
     }
 
@@ -586,7 +534,7 @@ impl<'hir> Analyzer<'hir> {
         &self,
         lhs: &'hir hir::Expr<'hir>,
         rhs: Option<&'hir hir::Expr<'hir>>,
-        assignments: &mut Vec<(hir::VariableId, AssignedValue)>,
+        assignments: &mut Vec<(ValueKey, AssignedValue)>,
     ) {
         if let ExprKind::Tuple(lhs_elems) = &lhs.peel_parens().kind {
             let rhs_elems = match rhs.map(|rhs| &rhs.peel_parens().kind) {
@@ -598,56 +546,44 @@ impl<'hir> Analyzer<'hir> {
                 let rhs = rhs_elems.and_then(|elems| elems.get(index)).copied().flatten();
                 self.collect_assignments(lhs, rhs, assignments);
             }
-        } else if let Some(var) = underlying_var(lhs) {
-            assignments.push((var, self.assigned_value(rhs)));
+        } else if let Some(key) = self.place_key(lhs) {
+            assignments.push((key, self.assigned_value(rhs)));
         }
+    }
+
+    /// Resolves an assignable expression to its tracked place, if any.
+    fn place_key(&self, expr: &hir::Expr<'_>) -> Option<ValueKey> {
+        if let Some(var) = underlying_var(expr) {
+            return Some(ValueKey::Var(var));
+        }
+        if let ExprKind::Member(base, field) = &expr.peel_parens().kind
+            && let Some(var) = underlying_var(base)
+        {
+            return Some(self.state.field_key(var, field.name));
+        }
+        None
     }
 
     fn mark_deleted(&mut self, target: &'hir hir::Expr<'hir>) {
-        if let Some(var) = underlying_var(target) {
-            let value = self.fresh_value();
-            self.state.reset_var(var, value);
-            self.state.low_s.insert(value);
-            return;
-        }
-        // `delete sig.s;` resets just that field to its zero value, which is trivially
-        // low-s - proven, same as the whole-variable case above.
-        if let ExprKind::Member(base, field) = &target.peel_parens().kind
-            && let Some(var) = underlying_var(base)
-        {
-            let value = self.fresh_value();
-            let key = self.state.field_key(var, field.name);
-            self.state.values.insert(key, value);
-            self.state.low_s.insert(value);
-        }
+        let Some(key) = self.place_key(target) else { return };
+        let value = self.fresh_value();
+        self.state.set(key, value);
+        self.state.low_s.insert(value);
     }
 
     fn invalidate(&mut self, target: &'hir hir::Expr<'hir>) {
-        if let Some(var) = underlying_var(target) {
-            self.invalidate_var(var);
-            return;
-        }
-        // `sig.s++`/`sig.s--` etc.: install a *fresh* value for the field, mirroring
-        // `invalidate_var` for a single field instead of the whole variable. Removing
-        // the entry instead of overwriting it would not be enough - a lookup miss falls
-        // back to `ValueId::Initial(field_key)`, the exact same structural identity the
-        // field held before this write, which may already sit in `low_s` from an earlier
-        // guard (e.g. `require(sig.s <= HALF_ORDER); sig.s++;` must not still read as
-        // proven).
-        if let ExprKind::Member(base, field) = &target.peel_parens().kind
-            && let Some(var) = underlying_var(base)
-        {
-            let key = self.state.field_key(var, field.name);
-            let value = self.fresh_value();
-            self.state.values.insert(key, value);
+        if let Some(key) = self.place_key(target) {
+            self.invalidate_key(key);
         }
     }
 
     fn invalidate_var(&mut self, var: hir::VariableId) {
+        self.invalidate_key(ValueKey::Var(var));
+    }
+
+    fn invalidate_key(&mut self, key: ValueKey) {
         let value = self.fresh_value();
-        // Drop any tracked field facts under `var` along with its own value - see
-        // `assign_var_value` for why a whole-variable write must invalidate both.
-        self.state.reset_var(var, value);
+        self.state.set(key, value);
     }
 
     fn tracked_vars(&self) -> HashSet<hir::VariableId> {
@@ -1351,7 +1287,6 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                     );
                     self.deferred_calls = deferred_calls;
                     self.assign_lhs(lhs, Some(rhs));
-                    self.assign_member(lhs, Some(rhs));
                     for (var, recovery) in recoveries {
                         self.record_pending(var, recovery);
                     }
@@ -1364,7 +1299,6 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 }
                 let result = self.walk_expr(expr);
                 self.assign_lhs(lhs, None);
-                self.assign_member(lhs, None);
                 return result;
             }
             ExprKind::Delete(target) => {
@@ -1418,12 +1352,19 @@ fn underlying_var(expr: &hir::Expr<'_>) -> Option<hir::VariableId> {
 }
 
 fn collect_lhs_vars(expr: &hir::Expr<'_>, vars: &mut HashSet<hir::VariableId>) {
-    if let ExprKind::Tuple(exprs) = &expr.peel_parens().kind {
-        for expr in exprs.iter().flatten() {
-            collect_lhs_vars(expr, vars);
+    match &expr.peel_parens().kind {
+        ExprKind::Tuple(exprs) => {
+            for expr in exprs.iter().flatten() {
+                collect_lhs_vars(expr, vars);
+            }
         }
-    } else if let Some(var) = underlying_var(expr) {
-        vars.insert(var);
+        // A field write is attributed to its base variable.
+        ExprKind::Member(base, _) => collect_lhs_vars(base, vars),
+        _ => {
+            if let Some(var) = underlying_var(expr) {
+                vars.insert(var);
+            }
+        }
     }
 }
 

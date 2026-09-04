@@ -769,6 +769,19 @@ contract Ecrecover {
         (sig.s, sig.v) = (replacement, newV);
         return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
     }
+
+    function structMemberLoopCarried(
+        bytes32 hash,
+        Sig memory sig,
+        bytes32 replacement,
+        bool repeat
+    ) external pure returns (address signer) {
+        require(uint256(sig.s) <= HALF_ORDER);
+        while (repeat) {
+            signer = ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+            sig.s = replacement;
+        }
+    }
 }
 
 contract SameNameEcrecover {
