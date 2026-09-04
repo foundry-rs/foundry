@@ -27,7 +27,7 @@ use crate::{
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi, StateMutability};
 use alloy_primitives::{
-    Address, B256, Bytes, Selector, U256, address, hex, keccak256,
+    Address, B256, Bytes, I256, Selector, U256, address, hex, keccak256,
     map::{Entry, HashMap},
 };
 use eyre::Result;
@@ -1460,28 +1460,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             original_calls
         };
 
-        let replayed = replay_error(
+        let (call_sequence, _, fork_block_number) = self.replay_error(
             replay_config,
             self.clone_executor_with_symbolic_storage(replay.storage)?,
             replay_calls,
             inner_sequence,
             replay.assertion_failure,
-            Some(self.revert_decoder()),
             None,
             replay.invariant_contract,
             replay.target_invariant,
-            &self.cr.mcr.known_contracts,
-            identified_contracts.clone(),
-            &mut self.result.logs,
-            &mut self.result.traces,
-            &mut self.result.debug_bytecodes,
-            &mut self.result.line_coverage,
-            &mut self.result.deprecated_cheatcodes,
+            identified_contracts,
             progress,
-            &self.tcfg.early_exit,
             position,
         )?;
-        let call_sequence = replayed.counterexample_sequence;
 
         let test_name = replay.target_invariant.signature();
         let calls = self.sequence_calls(&call_sequence);
@@ -1540,8 +1531,50 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             call_sequence,
             artifact: artifact_ref,
             minimization,
-            fork_block_number: replayed.fork_block_number,
+            fork_block_number,
         })
+    }
+
+    /// Shrinks and replays a failing call sequence, collecting logs, traces and coverage into
+    /// the test result. Returns the counterexample, the terminal check outcome when shrinking
+    /// re-checked the sequence, and the fork block number.
+    #[expect(clippy::too_many_arguments)]
+    fn replay_error(
+        &mut self,
+        config: InvariantConfig,
+        executor: Executor<FEN>,
+        calls: &[BasicTxDetails],
+        inner_sequence: Option<Vec<Option<BasicTxDetails>>>,
+        expect_assertion_failure: bool,
+        target_value: Option<I256>,
+        invariant_contract: &InvariantContract<'_>,
+        target_invariant: &Function,
+        identified_contracts: &ContractsByAddress,
+        progress: Option<&indicatif::ProgressBar>,
+        position: Option<(usize, usize)>,
+    ) -> Result<(Vec<BaseCounterExample>, Option<CheckSequenceOutcome>, Option<u64>)> {
+        let replayed = replay_error(
+            config,
+            executor,
+            calls,
+            inner_sequence,
+            expect_assertion_failure,
+            target_value.is_none().then(|| self.revert_decoder()),
+            target_value,
+            invariant_contract,
+            target_invariant,
+            &self.cr.mcr.known_contracts,
+            identified_contracts.clone(),
+            &mut self.result.logs,
+            &mut self.result.traces,
+            &mut self.result.debug_bytecodes,
+            &mut self.result.line_coverage,
+            &mut self.result.deprecated_cheatcodes,
+            progress,
+            &self.tcfg.early_exit,
+            position,
+        )?;
+        Ok((replayed.counterexample_sequence, replayed.check_result, replayed.fork_block_number))
     }
 
     fn minimize_symbolic_invariant_sequence(
@@ -1555,19 +1588,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return None;
         }
 
-        let original_calls = self.sequence_calls(
-            &calls
-                .iter()
-                .map(|tx| {
-                    BaseCounterExample::from_invariant_call(
-                        tx,
-                        identified_contracts,
-                        None,
-                        replay.invariant_config.show_solidity,
-                    )
-                })
-                .collect::<Vec<_>>(),
-        );
+        let original_calls = self.sequence_calls(&base_counterexamples(
+            calls,
+            identified_contracts,
+            replay.invariant_config.show_solidity,
+        ));
         let expected = self.symbolic_sequence_failure(replay, &original_calls)?;
         let preserves = |candidate: &[SymbolicCounterexampleCall]| {
             self.symbolic_sequence_failure(replay, candidate)
@@ -3314,30 +3339,22 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     return self.result;
                 }
             };
-            match replay_error(
+            match self.replay_error(
                 invariant_config.clone(),
                 trace_executor,
                 &txes,
                 None,
                 assertion_failure,
-                Some(self.revert_decoder()),
                 None,
                 &replay_contract,
                 replay_invariant,
-                &self.cr.mcr.known_contracts,
-                identified_contracts.clone(),
-                &mut self.result.logs,
-                &mut self.result.traces,
-                &mut self.result.debug_bytecodes,
-                &mut self.result.line_coverage,
-                &mut self.result.deprecated_cheatcodes,
+                identified_contracts,
                 progress.as_ref(),
-                &self.tcfg.early_exit,
                 None,
             ) {
-                Ok(replay) if !replay.counterexample_sequence.is_empty() => {
-                    call_sequence = replay.counterexample_sequence;
-                    if let Some(updated) = replay.check_result {
+                Ok((sequence, check_result, _)) if !sequence.is_empty() => {
+                    call_sequence = sequence;
+                    if let Some(updated) = check_result {
                         if updated.failure_site.map(symbolic_invariant_failure_site)
                             != Some(confirmed_failure_site)
                         {
@@ -3665,27 +3682,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         if let Some((_, error, _, _)) = replayed_secondary_failures
                             .iter()
                             .find(|(name, ..)| name == &invariant.name)
-                            && let InvariantFuzzError::BrokenInvariant(case_data)
-                            | InvariantFuzzError::Revert(case_data) = error
-                            && let TestError::Fail(_, calls) = &case_data.test_error
+                            && let Some(calls) = failed_invariant_calls(error)
                         {
-                            let call_sequence = calls
-                                .iter()
-                                .map(|tx| {
-                                    BaseCounterExample::from_invariant_call(
-                                        tx,
-                                        identified_contracts,
-                                        None,
-                                        invariant_config.show_solidity,
-                                    )
-                                })
-                                .collect();
                             invariant_failures.push(InvariantFailure::Predicate {
                                 name: invariant.name.clone(),
                                 reason: error.revert_reason().unwrap_or_default(),
                                 counterexample: Some(CounterExample::Sequence(
                                     calls.len(),
-                                    call_sequence,
+                                    base_counterexamples(
+                                        calls,
+                                        identified_contracts,
+                                        invariant_config.show_solidity,
+                                    ),
                                 )),
                                 artifact: None,
                                 minimization: None,
@@ -3769,31 +3777,23 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if success {
             if let Some(best_value) = invariant_result.optimization_best_value {
                 // Optimization mode: replay and shrink to find shortest best sequence.
-                match replay_error(
+                match self.replay_error(
                     invariant_config.clone(),
                     self.clone_executor(),
                     &invariant_result.optimization_best_sequence,
                     None,
                     false,
-                    None,
                     Some(best_value),
                     &invariant_contract,
                     anchor,
-                    &self.cr.mcr.known_contracts,
-                    identified_contracts.clone(),
-                    &mut self.result.logs,
-                    &mut self.result.traces,
-                    &mut self.result.debug_bytecodes,
-                    &mut self.result.line_coverage,
-                    &mut self.result.deprecated_cheatcodes,
+                    identified_contracts,
                     progress.as_ref(),
-                    &self.tcfg.early_exit,
                     None,
                 ) {
-                    Ok(replay) if !replay.counterexample_sequence.is_empty() => {
+                    Ok((sequence, ..)) if !sequence.is_empty() => {
                         counterexample = Some(CounterExample::Sequence(
                             invariant_result.optimization_best_sequence.len(),
-                            replay.counterexample_sequence,
+                            sequence,
                         ));
                     }
                     Err(err) => {
@@ -3838,10 +3838,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 let (case_data, calls) = match error {
                     InvariantFuzzError::BrokenInvariant(case_data)
                     | InvariantFuzzError::Revert(case_data) => {
-                        let TestError::Fail(_, calls) = &case_data.test_error else {
-                            unreachable!("FailedInvariantCaseData::new always sets TestError::Fail")
-                        };
-                        (case_data, calls)
+                        (case_data, failed_invariant_calls(error).unwrap_or_default())
                     }
                     // Non-replayable anchor errors (e.g. `MaxAssumeRejects`) still get an entry,
                     // without a counterexample, so the reason is rendered.
@@ -3867,21 +3864,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 // still gets a terse `name: reason` line via the no-counterexample path.
                 let replayed = if !is_anchor && self.tcfg.early_exit.should_stop() {
                     if replayed_metadata.is_none() {
-                        let unshrunk_sequence = calls
-                            .iter()
-                            .map(|tx| {
-                                BaseCounterExample::from_invariant_call(
-                                    tx,
-                                    identified_contracts,
-                                    None,
-                                    invariant_config.show_solidity,
-                                )
-                            })
-                            .collect::<Vec<_>>();
                         record_invariant_failure(
                             &failure_dir,
                             &persisted_path,
-                            &unshrunk_sequence,
+                            &base_counterexamples(
+                                calls,
+                                identified_contracts,
+                                invariant_config.show_solidity,
+                            ),
                             &current_settings,
                             case_data.assertion_failure,
                             &[],
@@ -4030,18 +4020,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     .get(&(reverter, selector, failure.edge_fingerprint))
                     .map(|storage| storage.assignments_for(&failure.call_sequence))
                     .unwrap_or_default();
-                let calls = failure
-                    .call_sequence
-                    .iter()
-                    .map(|tx| {
-                        BaseCounterExample::from_invariant_call(
-                            tx,
-                            identified_contracts,
-                            None,
-                            invariant_config.show_solidity,
-                        )
-                    })
-                    .collect::<Vec<_>>();
+                let calls = base_counterexamples(
+                    &failure.call_sequence,
+                    identified_contracts,
+                    invariant_config.show_solidity,
+                );
 
                 // Persist for next-run replay (skip if nothing to record).
                 if !calls.is_empty() {
@@ -4639,6 +4622,33 @@ fn base_counterexamples_to_txes(
             base_counterexample_to_tx(seq)
         })
         .collect()
+}
+
+/// Converts campaign transactions into displayable counterexample calls.
+fn base_counterexamples(
+    calls: &[BasicTxDetails],
+    identified_contracts: &ContractsByAddress,
+    show_solidity: bool,
+) -> Vec<BaseCounterExample> {
+    calls
+        .iter()
+        .map(|tx| {
+            BaseCounterExample::from_invariant_call(tx, identified_contracts, None, show_solidity)
+        })
+        .collect()
+}
+
+/// Returns the failing call sequence of a replayable invariant error.
+fn failed_invariant_calls(error: &InvariantFuzzError) -> Option<&[BasicTxDetails]> {
+    match error {
+        InvariantFuzzError::BrokenInvariant(case_data) | InvariantFuzzError::Revert(case_data) => {
+            let TestError::Fail(_, calls) = &case_data.test_error else {
+                unreachable!("FailedInvariantCaseData::new always sets TestError::Fail")
+            };
+            Some(calls)
+        }
+        _ => None,
+    }
 }
 
 fn base_counterexample_to_tx(seq: &BaseCounterExample) -> BasicTxDetails {
