@@ -69,9 +69,8 @@ impl<'hir> LateLintPass<'hir> for Ecrecover {
 /// so the key carries an epoch that [`FlowState::reset_var`] bumps whenever the whole base
 /// variable is reassigned. Otherwise a guard on `sig.s` would survive `sig = other;`.
 ///
-/// Fields are keyed by their base variable only, so aliases of the same struct are tracked
-/// independently: a write through one alias does not invalidate a guard recorded through another
-/// and can be missed.
+/// Fields are keyed by their base variable. Writes through memory or storage references
+/// conservatively invalidate field facts for other potentially aliasing variables.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum ValueKey {
     Var(hir::VariableId),
@@ -157,6 +156,12 @@ impl FlowState {
         self.values.retain(|key, _| key.var() != var);
         *self.field_epoch.entry(var).or_insert(0) += 1;
         self.values.insert(ValueKey::Var(var), value);
+    }
+
+    /// Drops tracked fields of `var` and starts a new field epoch.
+    fn reset_fields(&mut self, var: hir::VariableId) {
+        self.values.retain(|key, _| !matches!(key, ValueKey::Field(base, ..) if *base == var));
+        *self.field_epoch.entry(var).or_insert(0) += 1;
     }
 }
 
@@ -517,7 +522,7 @@ impl<'hir> Analyzer<'hir> {
         if assigned.low_s {
             self.state.low_s.insert(value);
         }
-        self.state.set(key, value);
+        self.set_value(key, value);
     }
 
     fn assign_var(&mut self, var: hir::VariableId, rhs: Option<&'hir hir::Expr<'hir>>) {
@@ -569,7 +574,7 @@ impl<'hir> Analyzer<'hir> {
     fn mark_deleted(&mut self, target: &'hir hir::Expr<'hir>) {
         let Some(key) = self.place_key(target) else { return };
         let value = self.fresh_value();
-        self.state.set(key, value);
+        self.set_value(key, value);
         self.state.low_s.insert(value);
     }
 
@@ -585,7 +590,39 @@ impl<'hir> Analyzer<'hir> {
 
     fn invalidate_key(&mut self, key: ValueKey) {
         let value = self.fresh_value();
+        self.set_value(key, value);
+    }
+
+    fn set_value(&mut self, key: ValueKey, value: ValueId) {
+        let ValueKey::Field(var, field, _) = key else {
+            self.state.set(key, value);
+            return;
+        };
+        self.invalidate_aliasable_fields(var);
+        let key = self.state.field_key(var, field);
         self.state.set(key, value);
+    }
+
+    fn invalidate_aliasable_fields(&mut self, written: hir::VariableId) {
+        let Some(location) = self.aliasable_location(written) else {
+            return;
+        };
+        for var in self.tracked_vars() {
+            if var != written && self.aliasable_location(var) == Some(location) {
+                self.state.reset_fields(var);
+            }
+        }
+    }
+
+    fn aliasable_location(&self, var: hir::VariableId) -> Option<hir::DataLocation> {
+        let var = self.hir.variable(var);
+        if var.kind.is_state() && !var.is_constant() && !var.is_immutable() {
+            Some(hir::DataLocation::Storage)
+        } else {
+            var.data_location.filter(|location| {
+                matches!(location, hir::DataLocation::Memory | hir::DataLocation::Storage)
+            })
+        }
     }
 
     fn tracked_vars(&self) -> HashSet<hir::VariableId> {
@@ -1368,17 +1405,17 @@ fn reference_args<'hir>(
     args: &'hir hir::CallArgs<'hir>,
 ) -> Vec<hir::VariableId> {
     let callee = callee.peel_parens();
-    let Some(resolved) = gcx.resolved_callee(callee.id) else { return Vec::new() };
-    if !matches!(resolved.res, Res::Item(ItemId::Function(_))) {
-        return Vec::new();
-    }
     let Some(ty) = gcx.type_of_expr(callee.id) else { return Vec::new() };
     let TyKind::Fn(function_ty) = ty.kind else { return Vec::new() };
     if !function_ty.is_internal() {
         return Vec::new();
     }
     let receiver = match &callee.kind {
-        ExprKind::Member(base, _) if resolved.attached => Some(*base),
+        ExprKind::Member(base, _)
+            if gcx.resolved_callee(callee.id).is_some_and(|resolved| resolved.attached) =>
+        {
+            Some(*base)
+        }
         _ => None,
     };
     receiver

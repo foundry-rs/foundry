@@ -745,6 +745,17 @@ contract Ecrecover {
         return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
     }
 
+    function structFieldReassignedThroughMemoryAlias(
+        bytes32 hash,
+        Sig memory sig,
+        bytes32 replacement
+    ) external pure returns (address) {
+        Sig memory aliasSig = sig;
+        require(uint256(sig.s) <= HALF_ORDER);
+        aliasSig.s = replacement;
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+    }
+
     function stateStructMemberGuarded(bytes32 hash) external view returns (address) {
         require(uint256(storedSig.s) <= HALF_ORDER);
         return ecrecover(hash, storedSig.v, storedSig.r, storedSig.s);
@@ -795,6 +806,16 @@ contract Ecrecover {
         return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
     }
 
+    function structMemberMutatedByFunctionPointer(
+        bytes32 hash,
+        Sig memory sig
+    ) external pure returns (address) {
+        function(Sig memory) internal pure fn = normalizeSig;
+        require(uint256(sig.s) <= HALF_ORDER);
+        fn(sig);
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+    }
+
     function structMemberCopiedByExternalCall(bytes32 hash, Sig memory sig) external view returns (address) {
         require(uint256(sig.s) <= HALF_ORDER);
         this.inspectSig(sig);
@@ -815,6 +836,17 @@ contract Ecrecover {
         Sig storage sig = storedSig;
         require(uint256(sig.s) <= HALF_ORDER);
         mutateStoredSig();
+        return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
+    }
+
+    function structFieldReassignedThroughStorageAlias(
+        bytes32 hash,
+        bytes32 replacement
+    ) external returns (address) {
+        Sig storage sig = storedSig;
+        Sig storage aliasSig = sig;
+        require(uint256(sig.s) <= HALF_ORDER);
+        aliasSig.s = replacement;
         return ecrecover(hash, sig.v, sig.r, sig.s); //~WARN: ecrecover should reject malleable signatures
     }
 }
