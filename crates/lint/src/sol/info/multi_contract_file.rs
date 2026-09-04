@@ -2,7 +2,6 @@ use crate::{
     linter::{EarlyLintPass, Lint, LintContext},
     sol::{Severity, SolLint},
 };
-
 use foundry_config::lint::LintSpecificConfig;
 use solar::ast;
 use std::sync::Arc;
@@ -34,22 +33,19 @@ impl<'ast> EarlyLintPass<'ast> for MultiContractFilePass {
         if !ctx.is_lint_enabled(MULTI_CONTRACT_FILE.id()) {
             return;
         }
-
-        // Collect spans of all contract-like items, skipping those that are exempted
-        let relevant_spans: Vec<_> = unit
+        // Every non-exempted contract-like item is flagged when there is more than one.
+        let spans: Vec<_> = unit
             .items
             .iter()
             .filter_map(|item| match &item.kind {
-                ast::ItemKind::Contract(c) => {
-                    (!self.config.is_exempted(&c.kind)).then_some(c.name.span)
+                ast::ItemKind::Contract(c) if !self.config.is_exempted(&c.kind) => {
+                    Some(c.name.span)
                 }
                 _ => None,
             })
             .collect();
-
-        // Flag all if there's more than one
-        if relevant_spans.len() > 1 {
-            for span in relevant_spans {
+        if spans.len() > 1 {
+            for span in spans {
                 ctx.emit(&MULTI_CONTRACT_FILE, span);
             }
         }

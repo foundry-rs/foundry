@@ -1,4 +1,4 @@
-use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
+use alloy_evm::{EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_op_evm::{OpEvm, OpEvmContext, OpEvmFactory, OpTx};
 use foundry_fork_db::DatabaseError;
 use op_alloy_network::Optimism;
@@ -80,7 +80,6 @@ impl FoundryEvmFactory for OpEvmFactory {
         let mut op_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
         op_evm.ctx_mut().chain = chain_context;
         op_evm.cfg.tx_chain_id_check = true;
-        op_evm.inspector().get_networks().inject_precompiles(op_evm.precompiles_mut());
         op_evm
     }
 

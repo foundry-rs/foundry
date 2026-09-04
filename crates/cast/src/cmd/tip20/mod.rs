@@ -12,10 +12,7 @@ use alloy_primitives::{Address, B256};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::Signer;
 use clap::Parser;
-use foundry_cli::{
-    opts::TransactionOpts,
-    utils::{LoadConfig, get_chain, maybe_print_resolved_lane, resolve_lane},
-};
+use foundry_cli::utils::{LoadConfig, get_chain, maybe_print_resolved_lane, resolve_lane};
 use foundry_common::{
     FoundryTransactionBuilder,
     provider::ProviderBuilder,
@@ -441,23 +438,4 @@ where
         .await?;
     sponsor.attach_and_print::<TempoNetwork>(tx, payer).await?;
     Ok(())
-}
-
-impl TxParams {
-    fn into_transaction_opts(self) -> TransactionOpts {
-        TransactionOpts {
-            gas_limit: self.gas_limit,
-            gas_price: self.gas_price,
-            priority_gas_price: self.priority_gas_price,
-            value: None,
-            nonce: self.nonce,
-            legacy: false,
-            blob: false,
-            eip4844: false,
-            blob_gas_price: None,
-            auth: Vec::new(),
-            access_list: None,
-            tempo: self.tempo,
-        }
-    }
 }

@@ -2,31 +2,35 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 use syn::{Attribute, Data, DataStruct, DeriveInput, Error, Result};
 
-// TODO: `proc_macro_error2` only emits warnings when feature "nightly" is enabled, which we can't
-// practically enable.
+// Stable proc macros cannot emit warnings, so treat validation diagnostics as errors.
 macro_rules! emit_warning {
-    ($($t:tt)*) => {
-        proc_macro_error2::emit_error! { $($t)* }
+    ($errors:expr, $span:expr, $($t:tt)*) => {
+        $errors.push(Error::new($span, format!($($t)*)))
     };
 }
 
-pub fn derive_cheatcode(input: &DeriveInput) -> Result<TokenStream> {
+pub fn derive_cheatcode(input: &DeriveInput, errors: &mut Vec<Error>) -> Result<TokenStream> {
     let name = &input.ident;
     let name_s = name.to_string();
     match &input.data {
-        Data::Struct(s) if name_s.ends_with("Call") => derive_call(name, s, &input.attrs),
+        Data::Struct(s) if name_s.ends_with("Call") => derive_call(name, s, &input.attrs, errors),
         Data::Struct(_) if name_s.ends_with("Return") => Ok(TokenStream::new()),
-        Data::Struct(s) => derive_struct(name, s, &input.attrs),
+        Data::Struct(s) => derive_struct(name, s, &input.attrs, errors),
         Data::Enum(e) if name_s.ends_with("Calls") => derive_calls_enum(e),
         Data::Enum(e) if name_s.ends_with("Errors") => derive_errors_events_enum(e, false),
         Data::Enum(e) if name_s.ends_with("Events") => derive_errors_events_enum(e, true),
-        Data::Enum(e) => derive_enum(name, e, &input.attrs),
+        Data::Enum(e) => derive_enum(name, e, &input.attrs, errors),
         Data::Union(_) => Err(Error::new(name.span(), "unions are not supported")),
     }
 }
 
 /// Implements `CheatcodeDef` for a function call struct.
-fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<TokenStream> {
+fn derive_call(
+    name: &Ident,
+    data: &DataStruct,
+    attrs: &[Attribute],
+    errors: &mut Vec<Error>,
+) -> Result<TokenStream> {
     let mut group = None::<Ident>;
     let mut status = None::<TokenStream>;
     let mut safety = None::<Ident>;
@@ -58,7 +62,7 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
         }
     };
 
-    check_named_fields(data, name);
+    check_named_fields(data, name, errors);
 
     let id = name.to_string();
     let id = id.strip_suffix("Call").expect("function struct ends in Call");
@@ -72,6 +76,7 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
     }
     if params.contains(" memory ") {
         emit_warning!(
+            errors,
             name.span(),
             "parameter data locations must be `calldata` instead of `memory`"
         );
@@ -82,7 +87,7 @@ fn derive_call(name: &Ident, data: &DataStruct, attrs: &[Attribute]) -> Result<T
     let mutability = Ident::new(mutability, Span::call_site());
 
     if description.is_empty() {
-        emit_warning!(name.span(), "missing documentation for a cheatcode")
+        emit_warning!(errors, name.span(), "missing documentation for a cheatcode")
     }
     let description = description.replace("\n ", "\n");
 
@@ -160,6 +165,7 @@ fn derive_struct(
     name: &Ident,
     input: &syn::DataStruct,
     attrs: &[Attribute],
+    errors: &mut Vec<Error>,
 ) -> Result<TokenStream> {
     let name_s = name.to_string();
 
@@ -189,11 +195,11 @@ fn derive_struct(
             StructKind::Event => "n",
             StructKind::Struct => "",
         };
-        emit_warning!(name.span(), "missing documentation for a{n} {}", kind.as_str());
+        emit_warning!(errors, name.span(), "missing documentation for a{n} {}", kind.as_str());
     }
 
     if kind == StructKind::Struct {
-        check_named_fields(input, name);
+        check_named_fields(input, name, errors);
     }
 
     let def = match kind {
@@ -272,20 +278,25 @@ impl StructKind {
     }
 }
 
-fn derive_enum(name: &Ident, input: &syn::DataEnum, attrs: &[Attribute]) -> Result<TokenStream> {
+fn derive_enum(
+    name: &Ident,
+    input: &syn::DataEnum,
+    attrs: &[Attribute],
+    errors: &mut Vec<Error>,
+) -> Result<TokenStream> {
     let name_s = name.to_string();
     let doc = get_docstring(attrs);
     let doc_end = doc.find("```solidity").expect("bad docstring");
     let doc = doc[..doc_end].trim();
     if doc.is_empty() {
-        emit_warning!(name.span(), "missing documentation for an enum");
+        emit_warning!(errors, name.span(), "missing documentation for an enum");
     }
     let variants = input.variants.iter().filter(|v| v.discriminant.is_none()).map(|v| {
         let name = v.ident.to_string();
         let doc = get_docstring(&v.attrs);
         let doc = doc.trim();
         if doc.is_empty() {
-            emit_warning!(v.ident.span(), "missing documentation for a variant");
+            emit_warning!(errors, v.ident.span(), "missing documentation for a variant");
         }
         quote! {
             EnumVariant {
@@ -306,10 +317,10 @@ fn derive_enum(name: &Ident, input: &syn::DataEnum, attrs: &[Attribute]) -> Resu
     })
 }
 
-fn check_named_fields(data: &DataStruct, ident: &Ident) {
+fn check_named_fields(data: &DataStruct, ident: &Ident, errors: &mut Vec<Error>) {
     for field in &data.fields {
         if field.ident.is_none() {
-            emit_warning!(ident, "all params must be named");
+            emit_warning!(errors, ident.span(), "all params must be named");
         }
     }
 }

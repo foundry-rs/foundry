@@ -1,14 +1,22 @@
 use super::UnchangedStateVariables;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{
+        Severity, SolLint,
+        analysis::{builtins, for_each_lhs_var, is_contract_cast},
+    },
 };
 use solar::{
-    ast::{self, UnOpKind},
-    interface::{kw, sym},
-    sema::hir::{self, ExprKind, Res, StmtKind, TypeKind},
+    ast::{ContractKind, ElementaryType},
+    interface::{data_structures::Never, kw, sym},
+    sema::{
+        Gcx,
+        hir::{
+            self, Expr, ExprKind, ItemId, Res, Stmt, StmtKind, TypeKind, VariableId, Visit as _,
+        },
+    },
 };
-use std::collections::HashSet;
+use std::{collections::HashSet, ops::ControlFlow};
 
 declare_forge_lint!(
     COULD_BE_IMMUTABLE,
@@ -28,119 +36,86 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
+        _gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         contract_id: hir::ContractId,
     ) {
         let contract = hir.contract(contract_id);
-        if contract.kind == ast::ContractKind::Interface {
-            return;
-        }
-        if !is_most_derived_contract(hir, contract_id) {
+        // Only the most derived contract sees every write of its inheritance chain.
+        if contract.kind == ContractKind::Interface
+            || hir.contracts().any(|c| c.linearized_bases[1..].contains(&contract_id))
+        {
             return;
         }
 
-        // Use the broader `constant`-eligible filter so the candidate set covers both lints.
-        let candidates: Vec<_> = contract
+        // Constants accept any elementary type (value types plus `string`/`bytes`) and contract
+        // types, which is the broader filter and covers both lints.
+        let candidates =
+            contract.linearized_bases.iter().flat_map(|&id| hir.contract(id).variables()).filter(
+                |&id| {
+                    let var = hir.variable(id);
+                    var.mutability.is_none()
+                        && matches!(
+                            var.ty.kind,
+                            TypeKind::Elementary(_) | TypeKind::Custom(ItemId::Contract(_))
+                        )
+                },
+            );
+        let functions = contract
             .linearized_bases
             .iter()
-            .flat_map(|&contract_id| hir.contract(contract_id).variables())
-            .filter(|&id| is_constant_candidate_type(hir.variable(id)))
-            .collect();
+            .flat_map(|&id| hir.contract(id).all_functions())
+            .map(|id| hir.function(id));
 
-        if candidates.is_empty() {
+        // Inline assembly can write arbitrary storage slots.
+        if functions
+            .clone()
+            .any(|f| f.body.is_some_and(|body| body.stmts.iter().any(has_assembly_or_unknown)))
+        {
             return;
         }
-        let candidate_set: HashSet<_> = candidates.iter().copied().collect();
 
-        if contract_contains_assembly_or_unknown_stmt(hir, contract) {
-            return;
-        }
-
-        let mut constructor_body_writes = HashSet::new();
-        let mut initializer_side_effect_writes = HashSet::new();
-        let mut runtime_writes = HashSet::new();
-        let mut non_constant_initializer = HashSet::new();
-
-        for &var_id in &candidates {
-            let var = hir.variable(var_id);
-            if let Some(expr) = var.initializer {
-                if !is_compile_time_constant(hir, expr) {
-                    non_constant_initializer.insert(var_id);
-                }
-                // Tracked separately: blocks `could-be-constant` but not `could-be-immutable`.
-                collect_expr_writes(expr, &candidate_set, &mut initializer_side_effect_writes);
+        // Writes performed as side effects of state variable initializers block `constant` but are
+        // not valid `immutable` assignments, so they are tracked separately.
+        let mut initializer_writes = WriteCollector { hir, writes: HashSet::new() };
+        for id in candidates.clone() {
+            if let Some(init) = hir.variable(id).initializer {
+                let _ = initializer_writes.visit_expr(init);
             }
         }
-
-        for &contract_id in contract.linearized_bases {
-            for function_id in hir.contract(contract_id).all_functions() {
-                let function = hir.function(function_id);
-                if function.is_constructor() {
-                    collect_modifier_writes(
-                        hir,
-                        function,
-                        &candidate_set,
-                        &mut constructor_body_writes,
-                        &mut runtime_writes,
-                        &mut HashSet::new(),
-                    );
-
-                    if let Some(body) = function.body {
-                        collect_state_writes(
-                            hir,
-                            body,
-                            &candidate_set,
-                            &mut constructor_body_writes,
-                        );
-                    }
-                } else {
-                    // Immutable variables can only be assigned inline or directly in constructor
-                    // bodies, so writes hidden behind internal helpers are not valid candidates.
-                    let mut modifier_argument_writes = HashSet::new();
-                    collect_modifier_writes(
-                        hir,
-                        function,
-                        &candidate_set,
-                        &mut modifier_argument_writes,
-                        &mut runtime_writes,
-                        &mut HashSet::new(),
-                    );
-                    runtime_writes.extend(modifier_argument_writes);
-
-                    if let Some(body) = function.body {
-                        collect_state_writes(hir, body, &candidate_set, &mut runtime_writes);
-                    }
-                }
-            }
+        // Modifier bodies are visited as ordinary functions, so their writes count as runtime.
+        let mut constructor_writes = WriteCollector { hir, writes: HashSet::new() };
+        let mut runtime_writes = WriteCollector { hir, writes: HashSet::new() };
+        for function in functions {
+            let collector = if function.is_constructor() {
+                &mut constructor_writes
+            } else {
+                &mut runtime_writes
+            };
+            let _ = collector.visit_function(function);
         }
 
-        for &var_id in &candidates {
-            if runtime_writes.contains(&var_id) {
+        for var_id in candidates {
+            if runtime_writes.writes.contains(&var_id) {
                 continue;
             }
             let var = hir.variable(var_id);
             let span = var.name.map_or(var.span, |name| name.span);
-
-            // `could-be-constant`: requires a compile-time-constant inline initializer and no
-            // writes anywhere (constructor body, other state-var initializers, or runtime).
-            let has_constant_initializer =
+            let constant_initializer =
                 var.initializer.is_some_and(|expr| is_compile_time_constant(hir, expr));
-            if has_constant_initializer
-                && !constructor_body_writes.contains(&var_id)
-                && !initializer_side_effect_writes.contains(&var_id)
+            let written_in_constructor = constructor_writes.writes.contains(&var_id);
+            let immutable_type = match var.ty.kind {
+                TypeKind::Elementary(ty) => ty.is_value_type(),
+                TypeKind::Custom(ItemId::Contract(_)) => true,
+                _ => false,
+            };
+            if constant_initializer
+                && !written_in_constructor
+                && !initializer_writes.writes.contains(&var_id)
             {
                 ctx.emit(&COULD_BE_CONSTANT, span);
-                continue;
-            }
-
-            // `could-be-immutable`: written in the constructor (body or non-constant initializer)
-            // and never at runtime; type must be immutable-compatible.
-            if !is_immutable_candidate_type(var) {
-                continue;
-            }
-            if non_constant_initializer.contains(&var_id)
-                || constructor_body_writes.contains(&var_id)
+            } else if immutable_type
+                && (written_in_constructor || (var.initializer.is_some() && !constant_initializer))
             {
                 ctx.emit(&COULD_BE_IMMUTABLE, span);
             }
@@ -148,346 +123,103 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
     }
 }
 
-fn is_most_derived_contract(hir: &hir::Hir<'_>, contract_id: hir::ContractId) -> bool {
-    !hir.contracts()
-        .any(|contract| contract.linearized_bases.iter().skip(1).any(|&id| id == contract_id))
-}
-
-fn collect_modifier_writes<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    function: &'hir hir::Function<'hir>,
-    candidates: &HashSet<hir::VariableId>,
-    argument_writes: &mut HashSet<hir::VariableId>,
-    body_writes: &mut HashSet<hir::VariableId>,
-    visited_modifiers: &mut HashSet<hir::FunctionId>,
-) {
-    for modifier in function.modifiers {
-        for expr in modifier.args.exprs() {
-            collect_expr_writes(expr, candidates, argument_writes);
-        }
-
-        let Some(modifier_id) = modifier.id.as_function() else { continue };
-        if !visited_modifiers.insert(modifier_id) {
-            continue;
-        }
-
-        let modifier = hir.function(modifier_id);
-        let mut nested_argument_writes = HashSet::new();
-        collect_modifier_writes(
-            hir,
-            modifier,
-            candidates,
-            &mut nested_argument_writes,
-            body_writes,
-            visited_modifiers,
-        );
-        body_writes.extend(nested_argument_writes);
-        if let Some(body) = modifier.body {
-            collect_state_writes(hir, body, candidates, body_writes);
-        }
-    }
-}
-
-fn is_immutable_candidate_type(var: &hir::Variable<'_>) -> bool {
-    var.is_state_variable()
-        && var.mutability.is_none()
-        && match var.ty.kind {
-            TypeKind::Elementary(ty) => ty.is_value_type(),
-            TypeKind::Custom(hir::ItemId::Contract(_)) => true,
-            _ => false,
-        }
-}
-
-/// Constants accept any elementary type (value types plus `string`/`bytes`) and contract types.
-fn is_constant_candidate_type(var: &hir::Variable<'_>) -> bool {
-    var.is_state_variable()
-        && var.mutability.is_none()
-        && matches!(
-            var.ty.kind,
-            TypeKind::Elementary(_) | TypeKind::Custom(hir::ItemId::Contract(_))
-        )
-}
-
-fn contract_contains_assembly_or_unknown_stmt<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    contract: &'hir hir::Contract<'hir>,
-) -> bool {
-    contract.linearized_bases.iter().any(|&contract_id| {
-        hir.contract(contract_id).all_functions().any(|function_id| {
-            hir.function(function_id)
-                .body
-                .is_some_and(|body| block_contains_assembly_or_unknown_stmt(body))
-        })
-    })
-}
-
-fn block_contains_assembly_or_unknown_stmt(block: hir::Block<'_>) -> bool {
-    block.stmts.iter().any(stmt_contains_assembly_or_unknown_stmt)
-}
-
-fn stmt_contains_assembly_or_unknown_stmt(stmt: &hir::Stmt<'_>) -> bool {
+fn has_assembly_or_unknown(stmt: &Stmt<'_>) -> bool {
     match &stmt.kind {
         StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => true,
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-            block_contains_assembly_or_unknown_stmt(*block)
+        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) | StmtKind::Loop(b, _) => {
+            b.stmts.iter().any(has_assembly_or_unknown)
         }
-        StmtKind::If(_, then_stmt, else_stmt) => {
-            stmt_contains_assembly_or_unknown_stmt(then_stmt)
-                || else_stmt.is_some_and(stmt_contains_assembly_or_unknown_stmt)
+        StmtKind::If(_, t, e) => {
+            has_assembly_or_unknown(t) || e.is_some_and(has_assembly_or_unknown)
         }
-        StmtKind::Try(stmt_try) => stmt_try
-            .clauses
-            .iter()
-            .any(|clause| block_contains_assembly_or_unknown_stmt(clause.block)),
-        StmtKind::DeclSingle(_)
-        | StmtKind::DeclMulti(_, _)
-        | StmtKind::Emit(_)
-        | StmtKind::Revert(_)
-        | StmtKind::Return(_)
-        | StmtKind::Break
-        | StmtKind::Continue
-        | StmtKind::Expr(_)
-        | StmtKind::Placeholder => false,
-    }
-}
-
-fn collect_state_writes<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    block: hir::Block<'hir>,
-    candidates: &HashSet<hir::VariableId>,
-    writes: &mut HashSet<hir::VariableId>,
-) {
-    for stmt in block.stmts {
-        collect_stmt_writes(hir, stmt, candidates, writes);
-    }
-}
-
-fn collect_stmt_writes<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    stmt: &'hir hir::Stmt<'hir>,
-    candidates: &HashSet<hir::VariableId>,
-    writes: &mut HashSet<hir::VariableId>,
-) {
-    match &stmt.kind {
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-            collect_state_writes(hir, *block, candidates, writes);
-        }
-        StmtKind::If(condition, then_stmt, else_stmt) => {
-            collect_expr_writes(condition, candidates, writes);
-            collect_stmt_writes(hir, then_stmt, candidates, writes);
-            if let Some(else_stmt) = else_stmt {
-                collect_stmt_writes(hir, else_stmt, candidates, writes);
-            }
-        }
-        StmtKind::Try(stmt_try) => {
-            collect_expr_writes(&stmt_try.expr, candidates, writes);
-            for clause in stmt_try.clauses {
-                collect_state_writes(hir, clause.block, candidates, writes);
-            }
-        }
-        StmtKind::DeclSingle(var_id) => {
-            if let Some(initializer) = hir.variable(*var_id).initializer {
-                collect_expr_writes(initializer, candidates, writes);
-            }
-        }
-        StmtKind::DeclMulti(_, expr)
-        | StmtKind::Emit(expr)
-        | StmtKind::Revert(expr)
-        | StmtKind::Return(Some(expr))
-        | StmtKind::Expr(expr) => collect_expr_writes(expr, candidates, writes),
-        StmtKind::Return(None)
-        | StmtKind::Break
-        | StmtKind::Continue
-        | StmtKind::Placeholder
-        | StmtKind::AssemblyBlock(_)
-        | StmtKind::Switch(_)
-        | StmtKind::Err(_) => {}
-    }
-}
-
-fn collect_expr_writes<'hir>(
-    expr: &'hir hir::Expr<'hir>,
-    candidates: &HashSet<hir::VariableId>,
-    writes: &mut HashSet<hir::VariableId>,
-) {
-    match &expr.kind {
-        ExprKind::Assign(lhs, _, rhs) => {
-            collect_lvalue_writes(lhs, candidates, writes);
-            collect_expr_writes(lhs, candidates, writes);
-            collect_expr_writes(rhs, candidates, writes);
-        }
-        ExprKind::Delete(inner) => {
-            collect_lvalue_writes(inner, candidates, writes);
-            collect_expr_writes(inner, candidates, writes);
-        }
-        ExprKind::Unary(op, inner) => {
-            if op.kind.has_side_effects() {
-                collect_lvalue_writes(inner, candidates, writes);
-            }
-            collect_expr_writes(inner, candidates, writes);
-        }
-        ExprKind::Array(exprs) => {
-            for expr in *exprs {
-                collect_expr_writes(expr, candidates, writes);
-            }
-        }
-        ExprKind::Binary(lhs, _, rhs) => {
-            collect_expr_writes(lhs, candidates, writes);
-            collect_expr_writes(rhs, candidates, writes);
-        }
-        ExprKind::Call(callee, args, named_args) => {
-            collect_expr_writes(callee, candidates, writes);
-            for expr in args.exprs() {
-                collect_expr_writes(expr, candidates, writes);
-            }
-            if let Some(named_args) = named_args {
-                for arg in named_args.args {
-                    collect_expr_writes(&arg.value, candidates, writes);
-                }
-            }
-        }
-        ExprKind::Index(base, index) => {
-            collect_expr_writes(base, candidates, writes);
-            if let Some(index) = index {
-                collect_expr_writes(index, candidates, writes);
-            }
-        }
-        ExprKind::Slice(base, start, end) => {
-            collect_expr_writes(base, candidates, writes);
-            if let Some(start) = start {
-                collect_expr_writes(start, candidates, writes);
-            }
-            if let Some(end) = end {
-                collect_expr_writes(end, candidates, writes);
-            }
-        }
-        ExprKind::Member(base, _) | ExprKind::Payable(base) => {
-            collect_expr_writes(base, candidates, writes);
-        }
-        ExprKind::Ternary(condition, then_expr, else_expr) => {
-            collect_expr_writes(condition, candidates, writes);
-            collect_expr_writes(then_expr, candidates, writes);
-            collect_expr_writes(else_expr, candidates, writes);
-        }
-        ExprKind::Tuple(exprs) => {
-            for expr in exprs.iter().flatten() {
-                collect_expr_writes(expr, candidates, writes);
-            }
-        }
-        ExprKind::Ident(_)
-        | ExprKind::Lit(_)
-        | ExprKind::New(_)
-        | ExprKind::TypeCall(_)
-        | ExprKind::Type(_)
-        | ExprKind::YulMember(..)
-        | ExprKind::Err(_) => {}
-    }
-}
-
-fn collect_lvalue_writes(
-    expr: &hir::Expr<'_>,
-    candidates: &HashSet<hir::VariableId>,
-    writes: &mut HashSet<hir::VariableId>,
-) {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident([Res::Item(hir::ItemId::Variable(id)), ..]) if candidates.contains(id) => {
-            writes.insert(*id);
-        }
-        ExprKind::Tuple(exprs) => {
-            for expr in exprs.iter().flatten() {
-                collect_lvalue_writes(expr, candidates, writes);
-            }
-        }
-        ExprKind::Index(base, _)
-        | ExprKind::Slice(base, _, _)
-        | ExprKind::Member(base, _)
-        | ExprKind::Payable(base) => collect_lvalue_writes(base, candidates, writes),
-        _ => {}
-    }
-}
-
-fn is_compile_time_constant(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
-    match &expr.kind {
-        ExprKind::Lit(_) | ExprKind::Type(_) | ExprKind::TypeCall(_) => true,
-        ExprKind::Ident(resolutions) => {
-            let mut has_const_var = false;
-            let all_safe = resolutions.iter().all(|res| match res {
-                Res::Item(hir::ItemId::Variable(var_id)) => {
-                    let is_const = hir.variable(*var_id).is_constant();
-                    has_const_var |= is_const;
-                    is_const
-                }
-                Res::Item(hir::ItemId::Function(_)) => true,
-                _ => false,
-            });
-            all_safe && has_const_var
-        }
-        ExprKind::Unary(op, inner) => {
-            !matches!(
-                op.kind,
-                UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
-            ) && is_compile_time_constant(hir, inner)
-        }
-        ExprKind::Binary(lhs, _, rhs) => {
-            is_compile_time_constant(hir, lhs) && is_compile_time_constant(hir, rhs)
-        }
-        ExprKind::Call(callee, args, named_args) => {
-            is_allowed_constant_call(callee)
-                && args.exprs().all(|expr| is_compile_time_constant(hir, expr))
-                && named_args.is_none_or(|args| {
-                    args.args.iter().all(|arg| is_compile_time_constant(hir, &arg.value))
-                })
-        }
-        ExprKind::Ternary(condition, then_expr, else_expr) => {
-            is_compile_time_constant(hir, condition)
-                && is_compile_time_constant(hir, then_expr)
-                && is_compile_time_constant(hir, else_expr)
-        }
-        ExprKind::Tuple(exprs) => {
-            exprs.iter().flatten().all(|expr| is_compile_time_constant(hir, expr))
-        }
-        // `type(T).min`/`type(T).max` for integer/enum types; `type(T).interfaceId` for
-        // interface types.
-        ExprKind::Member(base, member) => match (&base.kind, member.as_str()) {
-            (ExprKind::TypeCall(ty), "min" | "max") => matches!(
-                ty.kind,
-                TypeKind::Elementary(ast::ElementaryType::Int(_) | ast::ElementaryType::UInt(_))
-                    | TypeKind::Custom(hir::ItemId::Enum(_))
-            ),
-            (ExprKind::TypeCall(ty), "interfaceId") => matches!(
-                ty.kind,
-                TypeKind::Custom(hir::ItemId::Contract(cid))
-                    if hir.contract(cid).kind == ast::ContractKind::Interface
-            ),
-            _ => false,
-        },
-        ExprKind::Array(_)
-        | ExprKind::Assign(_, _, _)
-        | ExprKind::Delete(_)
-        | ExprKind::Index(_, _)
-        | ExprKind::Slice(_, _, _)
-        | ExprKind::New(_)
-        | ExprKind::Payable(_)
-        | ExprKind::YulMember(..)
-        | ExprKind::Err(_) => false,
-    }
-}
-
-fn is_allowed_constant_call(callee: &hir::Expr<'_>) -> bool {
-    match &callee.kind {
-        // Type casts: `address(0xCAFE)`, `uint256(x)`, etc.
-        ExprKind::Type(_) => true,
-        // Contract/interface casts: `IToken(address(0xCAFE))`.
-        ExprKind::Ident([Res::Item(hir::ItemId::Contract(_)), ..]) => true,
-        ExprKind::Ident([Res::Builtin(builtin), ..]) => {
-            let name = builtin.name();
-            name == kw::Keccak256
-                || name == kw::Addmod
-                || name == kw::Mulmod
-                || name == sym::sha256
-                || name == sym::ripemd160
-                || name == sym::ecrecover
+        StmtKind::Try(t) => {
+            t.clauses.iter().any(|c| c.block.stmts.iter().any(has_assembly_or_unknown))
         }
         _ => false,
     }
+}
+
+/// Collects every variable at the root of an assigned, deleted or incremented lvalue.
+struct WriteCollector<'hir> {
+    hir: &'hir hir::Hir<'hir>,
+    writes: HashSet<VariableId>,
+}
+
+impl<'hir> hir::Visit<'hir> for WriteCollector<'hir> {
+    type BreakValue = Never;
+
+    fn hir(&self) -> &'hir hir::Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        let lvalue = match &expr.kind {
+            ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => Some(lhs),
+            ExprKind::Unary(op, inner) if op.kind.has_side_effects() => Some(inner),
+            _ => None,
+        };
+        if let Some(lvalue) = lvalue {
+            for_each_lhs_var(lvalue, &mut |v| {
+                self.writes.insert(v);
+            });
+        }
+        self.walk_expr(expr)
+    }
+}
+
+fn is_compile_time_constant(hir: &hir::Hir<'_>, expr: &Expr<'_>) -> bool {
+    let is_const = |e: &Expr<'_>| is_compile_time_constant(hir, e);
+    match &expr.kind {
+        ExprKind::Lit(_) | ExprKind::Type(_) | ExprKind::TypeCall(_) => true,
+        // A constant variable, possibly sharing its name with functions.
+        ExprKind::Ident(reses) => {
+            reses.iter().any(|r| r.as_variable().is_some())
+                && reses.iter().all(|r| {
+                    matches!(r, Res::Item(ItemId::Function(_)))
+                        || r.as_variable().is_some_and(|v| hir.variable(v).is_constant())
+                })
+        }
+        ExprKind::Unary(op, inner) => !op.kind.has_side_effects() && is_const(inner),
+        ExprKind::Binary(lhs, _, rhs) => is_const(lhs) && is_const(rhs),
+        ExprKind::Ternary(c, t, f) => is_const(c) && is_const(t) && is_const(f),
+        ExprKind::Tuple(exprs) => exprs.iter().flatten().all(|e| is_const(e)),
+        ExprKind::Call(callee, args, opts) => {
+            is_constant_call(callee)
+                && args.exprs().all(is_const)
+                && opts.is_none_or(|opts| opts.args.iter().all(|arg| is_const(&arg.value)))
+        }
+        // `type(T).min`/`type(T).max` for integer/enum types; `type(I).interfaceId` for
+        // interface types.
+        ExprKind::Member(base, member) => match (&base.kind, member.name) {
+            (ExprKind::TypeCall(ty), sym::min | sym::max) => matches!(
+                ty.kind,
+                TypeKind::Elementary(ElementaryType::Int(_) | ElementaryType::UInt(_))
+                    | TypeKind::Custom(ItemId::Enum(_))
+            ),
+            (ExprKind::TypeCall(ty), sym::interfaceId) => matches!(
+                ty.kind,
+                TypeKind::Custom(ItemId::Contract(cid))
+                    if hir.contract(cid).kind == ContractKind::Interface
+            ),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Type casts (`address(0xCAFE)`, `IToken(addr)`) and the hashing / modular arithmetic builtins.
+fn is_constant_call(callee: &Expr<'_>) -> bool {
+    matches!(callee.kind, ExprKind::Type(_))
+        || is_contract_cast(callee)
+        || builtins(callee).any(|b| {
+            matches!(
+                b.name(),
+                kw::Keccak256
+                    | kw::Addmod
+                    | kw::Mulmod
+                    | sym::sha256
+                    | sym::ripemd160
+                    | sym::ecrecover
+            )
+        })
 }

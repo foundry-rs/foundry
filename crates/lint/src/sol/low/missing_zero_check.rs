@@ -3,19 +3,21 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::primitives::{
+        analysis::{
             address_call_receiver, branch_always_exits, is_address_type, is_require_or_assert,
+            lhs_local_var, underlying_var,
         },
     },
 };
 use solar::{
     ast,
     interface::data_structures::Never,
-    sema::hir::{self, ExprKind, ItemId, Res, StmtKind, Visit},
+    sema::hir::{self, ExprKind, StmtKind, VariableId, Visit},
 };
 use std::{
     collections::{HashMap, HashSet},
     ops::ControlFlow,
+    slice,
 };
 
 declare_forge_lint!(
@@ -33,28 +35,42 @@ impl<'hir> LateLintPass<'hir> for MissingZeroCheck {
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
-        if !is_entry_point(func) {
-            return;
-        }
+        let is_entry_point = !matches!(
+            func.state_mutability,
+            ast::StateMutability::Pure | ast::StateMutability::View
+        ) && (func.is_constructor()
+            || (func.kind.is_function()
+                && matches!(func.visibility, ast::Visibility::Public | ast::Visibility::External)));
+        let Some(body) = func.body.filter(|_| is_entry_point) else { return };
 
-        let params: HashSet<hir::VariableId> =
-            func.parameters.iter().copied().filter(|id| is_address_type(hir, *id)).collect();
-
+        let params: HashSet<_> =
+            func.parameters.iter().copied().filter(|&id| is_address_type(hir, id)).collect();
         if params.is_empty() {
             return;
         }
 
-        let Some(body) = func.body else { return };
-
         let mut a = Analyzer::new(hir, &params);
-
         for m in func.modifiers {
-            collect_modifier_guards(hir, m, &params, &mut a.guarded);
+            let Some(modifier_id) = m.id.as_function() else { continue };
+            let modifier = hir.function(modifier_id);
+            // Map each direct-ident argument back to the caller's parameter and analyze the
+            // modifier body as if it were a prefix of the function.
+            let mapping: HashMap<_, _> = modifier
+                .parameters
+                .iter()
+                .zip(m.args.exprs())
+                .filter_map(|(&mp, arg)| {
+                    let caller = underlying_var(arg).filter(|v| params.contains(v))?;
+                    Some((mp, caller))
+                })
+                .collect();
+            if let Some(body) = modifier.body.filter(|_| !mapping.is_empty()) {
+                let mut ma = Analyzer::new(hir, &mapping.keys().copied().collect());
+                ma.visit_stmts(body.stmts);
+                a.guarded.extend(ma.guarded.iter().filter_map(|mp| mapping.get(mp)));
+            }
         }
-
-        for stmt in body.stmts {
-            let _ = a.visit_stmt(stmt);
-        }
+        a.visit_stmts(body.stmts);
 
         for &p in &params {
             if a.sinks.contains(&p) {
@@ -64,41 +80,25 @@ impl<'hir> LateLintPass<'hir> for MissingZeroCheck {
     }
 }
 
-/// Externally callable, state-mutating functions and constructors.
-fn is_entry_point(func: &hir::Function<'_>) -> bool {
-    if matches!(func.state_mutability, ast::StateMutability::Pure | ast::StateMutability::View) {
-        return false;
-    }
-    if func.is_constructor() {
-        return true;
-    }
-    func.kind.is_function()
-        && matches!(func.visibility, ast::Visibility::Public | ast::Visibility::External)
-}
-
 /// Tracks address-parameter taint, sinks reached, and guards observed in a function body.
 struct Analyzer<'hir> {
     hir: &'hir hir::Hir<'hir>,
     /// Variables transitively derived from candidate parameters, mapped to their sources.
     /// Each parameter is initially mapped to itself.
-    taint: HashMap<hir::VariableId, HashSet<hir::VariableId>>,
+    taint: HashMap<VariableId, HashSet<VariableId>>,
     /// Source parameters that reached a sink.
-    sinks: HashSet<hir::VariableId>,
+    sinks: HashSet<VariableId>,
     /// Source parameters read inside an `if`/`require`/`assert` predicate.
-    guarded: HashSet<hir::VariableId>,
+    guarded: HashSet<VariableId>,
     guard_depth: u32,
     sink_depth: u32,
 }
 
 impl<'hir> Analyzer<'hir> {
-    fn new(hir: &'hir hir::Hir<'hir>, params: &HashSet<hir::VariableId>) -> Self {
-        let mut taint = HashMap::with_capacity(params.len());
-        for &p in params {
-            taint.insert(p, HashSet::from([p]));
-        }
+    fn new(hir: &'hir hir::Hir<'hir>, params: &HashSet<VariableId>) -> Self {
         Self {
             hir,
-            taint,
+            taint: params.iter().map(|&p| (p, HashSet::from([p]))).collect(),
             sinks: HashSet::new(),
             guarded: HashSet::new(),
             guard_depth: 0,
@@ -106,81 +106,42 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn taint_sources(&self, expr: &hir::Expr<'_>) -> HashSet<hir::VariableId> {
+    fn visit_stmts(&mut self, stmts: &'hir [hir::Stmt<'hir>]) {
+        for s in stmts {
+            let _ = self.visit_stmt(s);
+        }
+    }
+
+    /// Guards added while visiting `stmts`, leaving `self.guarded` untouched.
+    fn scoped_guards(&mut self, stmts: &'hir [hir::Stmt<'hir>]) -> HashSet<VariableId> {
+        let baseline = self.guarded.clone();
+        self.visit_stmts(stmts);
+        let added = &self.guarded - &baseline;
+        self.guarded = baseline;
+        added
+    }
+
+    fn taint_sources(&self, expr: &hir::Expr<'_>) -> HashSet<VariableId> {
         let mut out = HashSet::new();
-        collect_taint_sources(&self.taint, expr, &mut out);
+        let _ = expr.visit(&mut |e| {
+            if let Some(srcs) = underlying_var(e).and_then(|v| self.taint.get(&v)) {
+                out.extend(srcs);
+            }
+            ControlFlow::<Never>::Continue(())
+        });
         out
     }
-}
 
-fn collect_taint_sources(
-    taint: &HashMap<hir::VariableId, HashSet<hir::VariableId>>,
-    expr: &hir::Expr<'_>,
-    out: &mut HashSet<hir::VariableId>,
-) {
-    match &expr.kind {
-        ExprKind::Ident(reses) => {
-            for res in *reses {
-                if let Res::Item(ItemId::Variable(vid)) = res
-                    && let Some(srcs) = taint.get(vid)
-                {
-                    out.extend(srcs.iter().copied());
-                }
-            }
-        }
-        ExprKind::Assign(_, _, rhs) => collect_taint_sources(taint, rhs, out),
-        ExprKind::Binary(lhs, _, rhs) => {
-            collect_taint_sources(taint, lhs, out);
-            collect_taint_sources(taint, rhs, out);
-        }
-        ExprKind::Unary(_, e)
-        | ExprKind::Delete(e)
-        | ExprKind::Member(e, _)
-        | ExprKind::Payable(e) => collect_taint_sources(taint, e, out),
-        ExprKind::Ternary(_, t, f) => {
-            collect_taint_sources(taint, t, out);
-            collect_taint_sources(taint, f, out);
-        }
-        ExprKind::Tuple(elems) => {
-            for e in elems.iter().copied().flatten() {
-                collect_taint_sources(taint, e, out);
-            }
-        }
-        ExprKind::Array(elems) => {
-            for e in *elems {
-                collect_taint_sources(taint, e, out);
-            }
-        }
-        ExprKind::Index(base, idx) => {
-            collect_taint_sources(taint, base, out);
-            if let Some(i) = idx {
-                collect_taint_sources(taint, i, out);
-            }
-        }
-        // Covers type casts (`address(x)`), method calls, and ordinary calls; conservative.
-        ExprKind::Call(callee, args, _) => {
-            collect_taint_sources(taint, callee, out);
-            for a in args.exprs() {
-                collect_taint_sources(taint, a, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Returns the underlying local `VariableId` if `lhs` is a direct identifier reference to a
-/// non-state variable.
-fn lhs_local_var(hir: &hir::Hir<'_>, lhs: &hir::Expr<'_>) -> Option<hir::VariableId> {
-    if let ExprKind::Ident(reses) = &lhs.kind {
-        for res in *reses {
-            if let Res::Item(ItemId::Variable(vid)) = res
-                && !hir.variable(*vid).kind.is_state()
-            {
-                return Some(*vid);
+    fn propagate(&mut self, local: VariableId, value: &hir::Expr<'_>) {
+        // Propagate taint through address-typed locals only; this avoids marking unrelated
+        // values (e.g. `bool ok = a.send(1)`) as derived from `a`.
+        if is_address_type(self.hir, local) {
+            let srcs = self.taint_sources(value);
+            if !srcs.is_empty() {
+                self.taint.entry(local).or_default().extend(srcs);
             }
         }
     }
-    None
 }
 
 impl<'hir> Visit<'hir> for Analyzer<'hir> {
@@ -197,65 +158,38 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 let _ = self.visit_expr(cond);
                 self.guard_depth -= 1;
 
-                let baseline = self.guarded.clone();
-                let _ = self.visit_stmt(then);
-                let then_added: HashSet<hir::VariableId> =
-                    self.guarded.difference(&baseline).copied().collect();
+                let then_added = self.scoped_guards(slice::from_ref(then));
+                let else_added =
+                    else_.map(|e| self.scoped_guards(slice::from_ref(e))).unwrap_or_default();
+                // A guard in an exiting branch holds for everything after the `if`; otherwise it
+                // must hold on both branches.
                 let then_exits = branch_always_exits(then);
-
-                let (else_added, else_exits) = if let Some(e) = else_ {
-                    self.guarded = baseline.clone();
-                    let _ = self.visit_stmt(e);
-                    let added: HashSet<hir::VariableId> =
-                        self.guarded.difference(&baseline).copied().collect();
-                    (added, branch_always_exits(e))
-                } else {
-                    (HashSet::new(), false)
-                };
-
-                self.guarded = baseline;
-                let to_add: HashSet<hir::VariableId> = match (then_exits, else_exits) {
-                    (true, true) => then_added.union(&else_added).copied().collect(),
+                let else_exits = else_.is_some_and(branch_always_exits);
+                let to_add: HashSet<_> = match (then_exits, else_exits) {
+                    (true, true) => &then_added | &else_added,
                     (true, false) => else_added,
                     (false, true) => then_added,
-                    (false, false) => then_added.intersection(&else_added).copied().collect(),
+                    (false, false) => &then_added & &else_added,
                 };
                 self.guarded.extend(to_add);
-
                 return ControlFlow::Continue(());
             }
             // Loop bodies may execute zero times, so guards inside must not persist.
             StmtKind::Loop(block, _) => {
-                let baseline = self.guarded.clone();
-                for s in block.stmts {
-                    let _ = self.visit_stmt(s);
-                }
-                self.guarded = baseline;
+                self.scoped_guards(block.stmts);
                 return ControlFlow::Continue(());
             }
             // Each try/catch clause is taken on a single path; discard clause-local guards.
             StmtKind::Try(t) => {
                 let _ = self.visit_expr(&t.expr);
                 for clause in t.clauses {
-                    let baseline = self.guarded.clone();
-                    for s in clause.block.stmts {
-                        let _ = self.visit_stmt(s);
-                    }
-                    self.guarded = baseline;
+                    self.scoped_guards(clause.block.stmts);
                 }
                 return ControlFlow::Continue(());
             }
-            // Propagate taint through address-typed local declarations only; this avoids
-            // marking unrelated values (e.g. `bool ok = a.send(1)`) as derived from `a`.
             StmtKind::DeclSingle(var_id) => {
-                let v = self.hir.variable(var_id);
-                if let Some(init) = v.initializer
-                    && is_address_type(self.hir, var_id)
-                {
-                    let srcs = self.taint_sources(init);
-                    if !srcs.is_empty() {
-                        self.taint.entry(var_id).or_default().extend(srcs);
-                    }
+                if let Some(init) = self.hir.variable(var_id).initializer {
+                    self.propagate(var_id, init);
                 }
             }
             _ => {}
@@ -278,122 +212,43 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 }
                 return ControlFlow::Continue(());
             }
-
             // `<addr>.call/.delegatecall/.transfer/.send(..)`: receiver is the sink.
             ExprKind::Call(callee, args, _) => {
                 if let Some(receiver) = address_call_receiver(callee) {
                     self.sink_depth += 1;
                     let _ = self.visit_expr(receiver);
                     self.sink_depth -= 1;
-                    let _ = self.visit_call_args(args);
-                    return ControlFlow::Continue(());
+                    return self.visit_call_args(args);
                 }
             }
-
             ExprKind::Assign(lhs, _, rhs) => {
                 // Sink: assignment to an address state variable.
-                if is_address_state_var_lhs(self.hir, lhs) {
-                    let _ = self.visit_expr(lhs);
+                if let Some(v) = underlying_var(lhs)
+                    && self.hir.variable(v).kind.is_state()
+                    && is_address_type(self.hir, v)
+                {
                     self.sink_depth += 1;
                     let _ = self.visit_expr(rhs);
                     self.sink_depth -= 1;
                     return ControlFlow::Continue(());
                 }
-                // Taint propagation: assignment to an address local.
-                if let Some(local) = lhs_local_var(self.hir, lhs)
-                    && is_address_type(self.hir, local)
-                {
-                    let srcs = self.taint_sources(rhs);
-                    if !srcs.is_empty() {
-                        self.taint.entry(local).or_default().extend(srcs);
-                    }
+                if let Some(local) = lhs_local_var(self.hir, lhs) {
+                    self.propagate(local, rhs);
                 }
             }
-
             // Identifier reads contribute to whichever contexts are currently active.
-            ExprKind::Ident(reses) => {
-                for res in *reses {
-                    if let Res::Item(ItemId::Variable(vid)) = res
-                        && let Some(srcs) = self.taint.get(vid)
-                    {
-                        if self.guard_depth > 0 {
-                            self.guarded.extend(srcs.iter().copied());
-                        }
-                        if self.sink_depth > 0 {
-                            for &src in srcs {
-                                if !self.guarded.contains(&src) {
-                                    self.sinks.insert(src);
-                                }
-                            }
-                        }
+            ExprKind::Ident(_) => {
+                if let Some(srcs) = underlying_var(expr).and_then(|v| self.taint.get(&v)) {
+                    if self.guard_depth > 0 {
+                        self.guarded.extend(srcs);
+                    }
+                    if self.sink_depth > 0 {
+                        self.sinks.extend(srcs.iter().filter(|src| !self.guarded.contains(src)));
                     }
                 }
             }
-
             _ => {}
         }
         self.walk_expr(expr)
-    }
-}
-
-fn is_address_state_var_lhs(hir: &hir::Hir<'_>, lhs: &hir::Expr<'_>) -> bool {
-    if let ExprKind::Ident(reses) = &lhs.kind {
-        for res in *reses {
-            if let Res::Item(ItemId::Variable(vid)) = res
-                && hir.variable(*vid).kind.is_state()
-                && is_address_type(hir, *vid)
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Maps each direct-ident modifier argument back to its caller-side parameter, runs the same guard
-/// analysis on the modifier body, and records any caller params whose mapped modifier parameter is
-/// guarded.
-fn collect_modifier_guards<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    invocation: &hir::Modifier<'hir>,
-    caller_params: &HashSet<hir::VariableId>,
-    guarded: &mut HashSet<hir::VariableId>,
-) {
-    let ItemId::Function(fid) = invocation.id else { return };
-    let modifier = hir.function(fid);
-    if !matches!(modifier.kind, hir::FunctionKind::Modifier) {
-        return;
-    }
-
-    let mod_params = modifier.parameters;
-    let mut mapping: HashSet<hir::VariableId> = HashSet::new();
-    let mut caller_for_modparam: HashMap<hir::VariableId, hir::VariableId> = HashMap::new();
-    for (i, arg_expr) in invocation.args.exprs().enumerate() {
-        if let ExprKind::Ident(reses) = &arg_expr.kind {
-            for res in *reses {
-                if let Res::Item(ItemId::Variable(vid)) = res
-                    && caller_params.contains(vid)
-                    && let Some(&mp) = mod_params.get(i)
-                {
-                    caller_for_modparam.insert(mp, *vid);
-                    mapping.insert(mp);
-                }
-            }
-        }
-    }
-    if mapping.is_empty() {
-        return;
-    }
-
-    let Some(body) = modifier.body else { return };
-    let mut a = Analyzer::new(hir, &mapping);
-    for stmt in body.stmts {
-        let _ = a.visit_stmt(stmt);
-    }
-
-    for mp in a.guarded {
-        if let Some(caller_vid) = caller_for_modparam.get(&mp) {
-            guarded.insert(*caller_vid);
-        }
     }
 }

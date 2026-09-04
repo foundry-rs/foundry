@@ -14,19 +14,12 @@ declare_forge_lint!(
 
 impl<'ast> EarlyLintPass<'ast> for DangerousUnaryOperator {
     fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
-        // `x =- 1` lexes as `x` `=` `-` `1` and parses as a plain assignment of `-1`, identical to
-        // the intentional `x = -1`, yet it reads like the compound `x -= 1` it was probably meant
-        // to be. Solidity has no `~=` operator either, so `x =~ y` is the same trap.
-        // The fused unary can also lead a larger RHS: `x =- a + 1` parses as `x = (-a) + 1`, whose
-        // RHS is a `Binary` (or `Ternary`) with the `-a` unary as its leftmost operand. Follow the
-        // left spine to that leading unary so those forms are caught too, not only `x =- a`.
-        // Because the parsed node matches the legitimate spaced form, only flag when the source
-        // fuses `=` to the leading unary (`=-` / `=~`), never `= -`. The gap between the LHS and
-        // `rhs.span` (which starts at that unary) holds only whitespace, comments and the `=`
-        // token, and no comment can end with `=` (block comments end with `*/`, line comments
-        // with a newline), so the gap ends with `=` exactly when the pair is fused. `=+` never
-        // reaches here: unary `+` was removed in Solidity 0.5.0, and solar drops it during
-        // parsing without producing a node.
+        // `x =- 1` parses exactly like the intentional `x = -1`, so the AST cannot tell them
+        // apart: only flag when the source fuses `=` to the unary. The gap between the LHS and
+        // `rhs.span` (which starts at the leading unary) holds only whitespace, comments and the
+        // `=` token, and no comment can end with `=`, so the gap ends with `=` exactly when the
+        // pair is fused. Solidity has no `~=` either, so `=~` is the same trap; unary `+` was
+        // removed in 0.5.0 and never produces a node.
         if let ExprKind::Assign(lhs, None, rhs) = &expr.kind
             && leads_with_fusable_unary(rhs)
             && ctx.span_to_snippet(lhs.span.between(rhs.span)).is_some_and(|gap| gap.ends_with('='))
@@ -37,13 +30,11 @@ impl<'ast> EarlyLintPass<'ast> for DangerousUnaryOperator {
 }
 
 /// Whether the leftmost operand of `expr` is a `-` or `~` unary, following the left spine of
-/// binary and ternary expressions. `rhs.span` begins at that leading unary, so a fused `=-` / `=~`
-/// is caught whether the unary is the whole RHS (`x =- a`) or only leads it (`x =- a + 1`).
+/// binary and ternary expressions so `x =- a + 1` (`x = (-a) + 1`) is caught as well.
 fn leads_with_fusable_unary(expr: &Expr<'_>) -> bool {
     match &expr.kind {
         ExprKind::Unary(op, _) => matches!(op.kind, UnOpKind::Neg | UnOpKind::BitNot),
-        ExprKind::Binary(lhs, _, _) => leads_with_fusable_unary(lhs),
-        ExprKind::Ternary(cond, _, _) => leads_with_fusable_unary(cond),
+        ExprKind::Binary(lhs, _, _) | ExprKind::Ternary(lhs, _, _) => leads_with_fusable_unary(lhs),
         _ => false,
     }
 }
