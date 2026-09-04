@@ -298,9 +298,6 @@ alloy-json-abi.opt-level = "s"
 
 [workspace.dependencies]
 anvil = { path = "crates/anvil", default-features = false }
-cast = { path = "crates/cast", default-features = false }
-chisel = { path = "crates/chisel", default-features = false }
-forge = { path = "crates/forge", default-features = false }
 
 forge-doc = { path = "crates/doc", default-features = false }
 forge-fmt = { path = "crates/fmt", default-features = false }
@@ -369,14 +366,8 @@ alloy-rpc-types-eth = { version = "2.4.0", default-features = false }
 alloy-rpc-types-mev = { version = "2.4.0", default-features = false }
 alloy-serde = { version = "2.4.0", default-features = false }
 alloy-signer = { version = "2.4.0", default-features = false }
-alloy-signer-aws = { version = "2.4.0", default-features = false }
-alloy-signer-gcp = { version = "2.4.0", default-features = false }
-alloy-signer-ledger = { version = "2.4.0", default-features = false }
 alloy-signer-local = { version = "2.4.0", default-features = false }
-alloy-signer-trezor = { version = "2.4.0", default-features = false }
-alloy-signer-turnkey = { version = "2.4.0", default-features = false }
 alloy-transport = { version = "2.4.0", default-features = false }
-alloy-transport-http = { version = "2.4.0", default-features = false }
 alloy-transport-ipc = { version = "2.4.0", default-features = false }
 alloy-transport-ws = { version = "2.4.0", default-features = false }
 alloy-hardforks = { version = "0.4.8", default-features = false }
@@ -495,7 +486,6 @@ soldeer-core = { version = "=0.11.0", features = ["serde"] }
 strum = "0.28"
 tempfile = "3.23"
 tokio = "1"
-tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 toml = "1.1"
 toml_edit = "0.25"
 tower = "0.5"
