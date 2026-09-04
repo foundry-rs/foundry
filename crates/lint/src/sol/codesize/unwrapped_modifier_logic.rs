@@ -24,13 +24,8 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
+        let hir = &gcx.hir;
         let (FunctionKind::Modifier, Some(body), Some(name)) = (func.kind, func.body, func.name)
         else {
             return;

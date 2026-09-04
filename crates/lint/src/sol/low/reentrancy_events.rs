@@ -8,7 +8,7 @@ use crate::{
         Severity, SolLint,
         analysis::{
             DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache, for_each_child, is_exit_call,
-            resolved_internal_function_ids,
+            loop_stmts, loop_update, resolved_internal_function_ids,
         },
     },
 };
@@ -17,8 +17,8 @@ use solar::{
     sema::{
         Gcx,
         hir::{
-            self, BinOpKind, Block, ContractId, Expr, ExprKind, Function, FunctionId, Hir, Stmt,
-            StmtKind,
+            self, BinOpKind, Block, ContractId, Expr, ExprKind, Function, FunctionId, LoopSource,
+            Stmt, StmtKind,
         },
     },
 };
@@ -32,13 +32,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for ReentrancyEvents {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
         let Some(body) = func.body else { return };
         Analyzer::new(ctx, gcx, func.contract).analyze_callable(func, body, false);
     }
@@ -182,6 +176,21 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         exits
     }
 
+    /// Analyzes one loop iteration: the body, then the `for` update on the paths that complete it.
+    fn analyze_iteration(
+        &mut self,
+        block: Block<'hir>,
+        source: LoopSource<'hir>,
+        placeholder: Placeholder<'hir>,
+        entry: bool,
+    ) -> Exits {
+        let mut exits = self.analyze_block(block, placeholder, entry);
+        if let (Some(update), Some(state)) = (loop_update(source), exits.fallthrough.take()) {
+            exits.merge(self.analyze_stmt(update, placeholder, state));
+        }
+        exits
+    }
+
     fn analyze_block(
         &mut self,
         block: Block<'hir>,
@@ -248,17 +257,17 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             StmtKind::Break => Exits::break_(entry),
             StmtKind::Continue => Exits::continue_(entry),
-            StmtKind::Loop(block, _) => {
+            StmtKind::Loop(block, source) => {
                 // Two passes suffice: the one-bit state can only go from clean to tainted around
                 // the back-edge, so a second pass from the merged entry catches emits tainted
                 // only on later iterations. `emitted` dedupes the diagnostics.
-                let first = self.analyze_block(block, placeholder, entry);
+                let first = self.analyze_iteration(block, source, placeholder, entry);
                 let back_edge =
                     entry || first.fallthrough.unwrap_or(false) || first.continue_.unwrap_or(false);
                 let body = if back_edge == entry {
                     first
                 } else {
-                    self.analyze_block(block, placeholder, back_edge)
+                    self.analyze_iteration(block, source, placeholder, back_edge)
                 };
                 // Zero iterations, the end of the body, `break` and `continue` all reach the exit.
                 let post = entry
@@ -460,8 +469,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             StmtKind::Return(expr) => {
                 expr.is_some_and(|expr| self.expr_may_reach_external_call(expr, seen))
             }
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
                 block.stmts.iter().any(|stmt| self.stmt_may_reach_external_call(stmt, seen))
+            }
+            StmtKind::Loop(block, source) => {
+                loop_stmts(block, source).any(|stmt| self.stmt_may_reach_external_call(stmt, seen))
             }
             StmtKind::If(cond, then_stmt, else_stmt) => {
                 self.expr_may_reach_external_call(cond, seen)

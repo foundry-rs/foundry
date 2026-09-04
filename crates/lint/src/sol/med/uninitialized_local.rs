@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{branch_always_exits, for_each_lhs_var},
+        analysis::{branch_always_exits, for_each_lhs_var, loop_stmts},
     },
 };
 use solar::{
@@ -29,13 +29,8 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for UninitializedLocal {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
+        let hir = &gcx.hir;
         let Some(body) = func.body else { return };
         let mut checker = Checker { hir, uninitialized: HashSet::new(), findings: HashMap::new() };
         for stmt in body.stmts {
@@ -104,10 +99,10 @@ impl<'hir> Visit<'hir> for Checker<'hir> {
             // zero times, so theirs are discarded.
             StmtKind::Loop(block, source) => {
                 let before = self.uninitialized.clone();
-                for s in block.stmts {
+                for s in loop_stmts(*block, *source) {
                     self.visit_stmt(s)?;
                 }
-                if *source != LoopSource::DoWhile {
+                if !matches!(source, LoopSource::DoWhile) {
                     self.uninitialized = before;
                 }
                 return ControlFlow::Continue(());

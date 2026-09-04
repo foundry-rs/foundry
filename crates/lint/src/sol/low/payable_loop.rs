@@ -4,7 +4,7 @@
 //! its modifier chain through `_` and inlining the internal helpers it calls (including `super`
 //! dispatch, resolved against the contract the entry point belongs to).
 
-use crate::sol::analysis::{is_builtin, is_contract_cast};
+use crate::sol::analysis::{is_builtin, is_contract_cast, loop_stmts};
 use solar::{
     ast::{StateMutability, Visibility},
     interface::{Symbol, sym},
@@ -172,9 +172,9 @@ impl<'hir, F: FnMut(LoopItem<'hir>)> Visit<'hir> for LoopWalker<'hir, F> {
             (self.f)(LoopItem::Stmt(stmt));
         }
         match stmt.kind {
-            StmtKind::Loop(block, _) => {
+            StmtKind::Loop(block, source) => {
                 self.loop_depth += 1;
-                for stmt in block.stmts {
+                for stmt in loop_stmts(block, source) {
                     self.visit_stmt(stmt)?;
                 }
                 self.loop_depth -= 1;

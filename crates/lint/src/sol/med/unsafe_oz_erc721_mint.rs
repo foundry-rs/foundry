@@ -5,8 +5,8 @@ use crate::{
         Severity, SolLint,
         analysis::{
             OPENZEPPELIN_ROOTS, arg_for_param, for_each_lhs_var, is_address_type, is_builtin,
-            is_literal_false, is_require_or_assert, resolved_function, source_in_package,
-            underlying_var, unique, write_target,
+            is_literal_false, is_require_or_assert, loop_stmts, resolved_function,
+            source_in_package, underlying_var, unique, write_target,
         },
     },
 };
@@ -37,9 +37,9 @@ impl<'hir> LateLintPass<'hir> for UnsafeOzErc721Mint {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
+        let hir = &gcx.hir;
         let cx = Cx { gcx };
         // Only the canonical OZ `_safeMint` wrapper is exempt: it legitimately calls `_mint`
         // next to its receiver check. A user-defined `_safeMint` override stays analyzed, since
@@ -496,9 +496,12 @@ impl<'hir> Cx<'hir> {
     fn may_return(self, stmt: &'hir Stmt<'hir>) -> bool {
         self.contains_frame_ending_assembly(slice::from_ref(stmt), &mut Vec::new())
             || match &stmt.kind {
-                StmtKind::Block(block)
-                | StmtKind::UncheckedBlock(block)
-                | StmtKind::Loop(block, _) => block.stmts.iter().any(|stmt| self.may_return(stmt)),
+                StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+                    block.stmts.iter().any(|stmt| self.may_return(stmt))
+                }
+                StmtKind::Loop(block, source) => {
+                    loop_stmts(*block, *source).any(|stmt| self.may_return(stmt))
+                }
                 StmtKind::If(_, then, otherwise) => {
                     self.may_return(then) || otherwise.is_some_and(|stmt| self.may_return(stmt))
                 }

@@ -7,8 +7,8 @@ use crate::{
             DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache, arg_for_param,
             branch_always_exits, count_placeholders, for_each_child, for_each_lhs_var,
             function_ids, is_address_cast, is_address_like, is_builtin, is_inc_dec,
-            is_require_or_assert, lhs_local_var, state_lhs_vars, stmts_before_placeholder,
-            tuple_elems, unique,
+            is_require_or_assert, lhs_local_var, loop_update, state_lhs_vars,
+            stmts_before_placeholder, tuple_elems, unique,
         },
     },
 };
@@ -19,8 +19,8 @@ use solar::{
     sema::{
         Gcx,
         hir::{
-            self, CallArgs, CallOptions, Expr, ExprKind, FunctionId, ItemId, Res, Stmt, StmtKind,
-            VariableId, Visit,
+            self, CallArgs, CallOptions, Expr, ExprKind, FunctionId, ItemId, LoopSource, Res, Stmt,
+            StmtKind, VariableId, Visit,
         },
         ty::{TyFnKind, TyKind},
     },
@@ -59,7 +59,6 @@ impl<'hir> LateLintPass<'hir> for ReentrancyEth {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
         let Some(body) = func.body.filter(|_| is_entry_point(func)) else { return };
@@ -392,6 +391,19 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         falls_through
     }
 
+    /// Analyzes one loop iteration: the body, then the `for` update if the body completes.
+    fn analyze_iteration(
+        &mut self,
+        block: hir::Block<'hir>,
+        source: LoopSource<'hir>,
+        placeholder: Option<ModifierContinuation<'hir>>,
+        state: &mut FlowState,
+    ) -> bool {
+        self.analyze_block(block, placeholder, state)
+            && loop_update(source)
+                .is_none_or(|update| self.analyze_stmt(update, placeholder, state))
+    }
+
     fn analyze_block(
         &mut self,
         block: hir::Block<'hir>,
@@ -449,16 +461,16 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 false
             }
             StmtKind::Break | StmtKind::Continue => false,
-            StmtKind::Loop(block, _) => {
+            StmtKind::Loop(block, source) => {
                 let before_loop = state.clone();
                 let mut body_state = state.clone();
-                self.analyze_block(block, placeholder, &mut body_state);
+                self.analyze_iteration(block, source, placeholder, &mut body_state);
                 // One bounded second iteration exposes loop-carried balance checks while leaving
                 // the established ETH and no-ETH analysis unchanged.
                 let second_iteration = self.reentrancy_balance_enabled.then(|| {
                     let mut second = body_state.balance_only();
                     self.analyze_with_only_balance(|this| {
-                        this.analyze_block(block, placeholder, &mut second)
+                        this.analyze_iteration(block, source, placeholder, &mut second)
                     });
                     second
                 });

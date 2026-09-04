@@ -19,10 +19,10 @@ impl<'hir> LateLintPass<'hir> for RedundantBaseConstructorCall {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: Gcx<'hir>,
         contract: &'hir hir::Contract<'hir>,
     ) {
+        let hir = &gcx.hir;
         // `contract X is A(), B()` clauses: removing only the `()` is enough, `is A` is valid.
         for m in contract.bases_args {
             try_emit(ctx, hir, m, m.args.span);
@@ -32,10 +32,10 @@ impl<'hir> LateLintPass<'hir> for RedundantBaseConstructorCall {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: Gcx<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
+        let hir = &gcx.hir;
         // `constructor() A() {}` modifier-style base calls. The bare base name `A` is not valid
         // in a constructor's modifier list, so the whole `A()` must be removed, along with one
         // leading whitespace char to avoid leaving a double space.

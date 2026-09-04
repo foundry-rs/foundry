@@ -14,7 +14,7 @@ use solar::{
     interface::{kw, sym},
     sema::{
         Gcx, Ty,
-        hir::{ContractId, Expr, ExprKind, Function, FunctionId, Hir},
+        hir::{ContractId, Expr, ExprKind, Function, FunctionId},
         ty::TyKind,
     },
 };
@@ -22,13 +22,7 @@ use solar::{
 declare_forge_lint!(CALLS_LOOP, Severity::Low, "calls-loop", "external call inside a loop");
 
 impl<'hir> LateLintPass<'hir> for CallsLoop {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
         for_each_loop_item(gcx, func, false, |item| {
             if let LoopItem::Expr(expr) = item
                 && let ExprKind::Call(callee, ..) = &expr.kind

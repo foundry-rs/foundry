@@ -4,7 +4,8 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            any_subexpr, branch_always_exits, builtins, function_ids, is_builtin, tuple_elems,
+            any_subexpr, branch_always_exits, builtins, function_ids, is_builtin, loop_stmts,
+            tuple_elems,
         },
     },
 };
@@ -29,13 +30,8 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for BlockTimestamp {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
+        let hir = &gcx.hir;
         let Some(body) = func.body else { return };
         // The contract's own internal helpers that return `block.timestamp` directly.
         let helpers = func
@@ -65,7 +61,7 @@ struct Checker<'a, 's, 'c, 'hir> {
 
 impl<'hir> Checker<'_, '_, '_, 'hir> {
     /// Walks statements in order, stopping at the first one control cannot continue past.
-    fn block(&mut self, stmts: &'hir [Stmt<'hir>]) {
+    fn block(&mut self, stmts: impl IntoIterator<Item = &'hir Stmt<'hir>>) {
         for stmt in stmts {
             let _ = self.visit_stmt(stmt);
             if branch_always_exits(stmt) {
@@ -79,13 +75,13 @@ impl<'hir> Checker<'_, '_, '_, 'hir> {
     fn arm(
         &mut self,
         merged: &mut HashSet<VariableId>,
-        stmts: &'hir [Stmt<'hir>],
+        stmts: impl IntoIterator<Item = &'hir Stmt<'hir>>,
         walk: impl FnOnce(&mut Self),
     ) {
         let saved = self.aliases.clone();
         walk(self);
         let aliases = std::mem::replace(&mut self.aliases, saved);
-        if !stmts.iter().any(branch_always_exits) {
+        if !stmts.into_iter().any(branch_always_exits) {
             merged.extend(aliases);
         }
     }
@@ -199,9 +195,10 @@ impl<'hir> Visit<'hir> for Checker<'_, '_, '_, 'hir> {
                 }
                 self.aliases = merged;
             }
-            StmtKind::Loop(block, _) => {
+            StmtKind::Loop(block, source) => {
                 let mut merged = self.aliases.clone();
-                self.arm(&mut merged, block.stmts, |s| s.block(block.stmts));
+                let stmts = loop_stmts(*block, *source);
+                self.arm(&mut merged, stmts.clone(), |s| s.block(stmts));
                 self.aliases = merged;
             }
             StmtKind::Try(try_stmt) => {

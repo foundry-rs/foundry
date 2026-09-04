@@ -11,7 +11,7 @@ use crate::{
         Severity, SolLint,
         analysis::{
             branch_always_exits, builtins, function_ids, is_builtin, is_loop_termination_if,
-            lhs_local_var, runtime_entry_points, unique,
+            lhs_local_var, loop_update, runtime_entry_points, unique,
         },
     },
 };
@@ -45,9 +45,9 @@ impl<'hir> LateLintPass<'hir> for ProtectedVars {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
         contract_id: ContractId,
     ) {
+        let hir = &gcx.hir;
         let contract = hir.contract(contract_id);
         if !matches!(contract.kind, ContractKind::Contract | ContractKind::AbstractContract)
             || contract.linearization_failed()
@@ -662,16 +662,18 @@ impl<'hir> EntryAnalyzer<'hir> {
 
     /// Iterates the loop body from the joined loop-head state until the alias/guard state stops
     /// changing. Returns whether the loop can be left normally.
-    fn analyze_loop(&mut self, block: hir::Block<'hir>, source: LoopSource) -> bool {
+    fn analyze_loop(&mut self, block: hir::Block<'hir>, source: LoopSource<'hir>) -> bool {
         let mut head = self.flow_state();
         let mut exits = None;
         loop {
             self.set_flow_state(head.clone());
-            let (mut breaks, continues, completes) =
-                self.analyze_loop_stmts(|this| this.analyze_block(block));
+            let (mut breaks, continues, completes) = self.analyze_loop_stmts(|this| {
+                this.analyze_block(block)
+                    && loop_update(source).is_none_or(|update| this.analyze_stmt(update))
+            });
             let mut backedges = completes.then(|| self.flow_state());
             // `continue` in a do-while still evaluates the lowered `if (!cond) break;`.
-            let epilogue = (source == LoopSource::DoWhile)
+            let epilogue = matches!(source, LoopSource::DoWhile)
                 .then(|| block.stmts.last())
                 .flatten()
                 .filter(|epilogue| is_loop_termination_if(epilogue));

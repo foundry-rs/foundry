@@ -21,13 +21,8 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for TypeBasedTautology {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        expr: &'hir Expr<'hir>,
-    ) {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) {
+        let hir = &gcx.hir;
         let ExprKind::Binary(left, op, right) = &expr.kind else { return };
 
         // A pair of comparisons can cover the complete type range even when neither is

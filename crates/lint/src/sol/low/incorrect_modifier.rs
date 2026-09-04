@@ -5,7 +5,7 @@ use crate::{
 };
 use solar::{
     ast::FunctionKind,
-    sema::{Gcx, Hir, hir::Function},
+    sema::{Gcx, hir::Function},
 };
 
 declare_forge_lint!(
@@ -16,13 +16,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for IncorrectModifier {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+    fn check_function(&mut self, ctx: &LintContext, _gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
         if func.kind == FunctionKind::Modifier
             && func.body.is_some_and(|body| block_outcome(body).can_skip_placeholder())
         {

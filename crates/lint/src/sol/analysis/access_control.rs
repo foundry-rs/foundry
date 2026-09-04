@@ -3,7 +3,7 @@
 
 use super::{
     branch_always_exits, function_ids, is_require_or_assert, is_sender_member, lhs_local_var,
-    stmt_expr, underlying_var, visit_stmts,
+    loop_stmts, stmt_expr, underlying_var, visit_stmts,
 };
 use solar::sema::hir::{
     self, BinOpKind, Expr, ExprKind, FunctionId, Stmt, StmtKind, UnOpKind, VariableId,
@@ -288,15 +288,16 @@ fn for_each_guard<'hir>(
 /// Collects into `out` the statements that run unconditionally before the `_` placeholder (all of
 /// them for functions), descending into blocks and loops. Breaks when the placeholder is reached.
 fn dominating_stmts<'hir>(
-    stmts: &'hir [Stmt<'hir>],
+    stmts: impl IntoIterator<Item = &'hir Stmt<'hir>>,
     out: &mut Vec<&'hir Stmt<'hir>>,
 ) -> ControlFlow<()> {
     for stmt in stmts {
         match stmt.kind {
             StmtKind::Placeholder => return ControlFlow::Break(()),
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
                 dominating_stmts(block.stmts, out)?;
             }
+            StmtKind::Loop(block, source) => dominating_stmts(loop_stmts(block, source), out)?,
             _ => out.push(stmt),
         }
     }

@@ -33,10 +33,10 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
+        gcx: Gcx<'hir>,
         contract_id: ContractId,
     ) {
+        let hir = &gcx.hir;
         let contract = hir.contract(contract_id);
         // Abstract contracts and interfaces are not deployed; a failed C3 linearization leaves
         // `linearized_bases` incomplete, so skip rather than produce unsound results.

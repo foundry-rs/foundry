@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{builtins, for_each_lhs_var, is_contract_cast},
+        analysis::{builtins, for_each_lhs_var, is_contract_cast, loop_stmts},
     },
 };
 use solar::{
@@ -36,10 +36,10 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: Gcx<'hir>,
         contract_id: hir::ContractId,
     ) {
+        let hir = &gcx.hir;
         let contract = hir.contract(contract_id);
         // Only the most derived contract sees every write of its inheritance chain.
         if contract.kind == ContractKind::Interface
@@ -126,9 +126,10 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
 fn has_assembly_or_unknown(stmt: &Stmt<'_>) -> bool {
     match &stmt.kind {
         StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => true,
-        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) | StmtKind::Loop(b, _) => {
+        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => {
             b.stmts.iter().any(has_assembly_or_unknown)
         }
+        StmtKind::Loop(b, source) => loop_stmts(*b, *source).any(has_assembly_or_unknown),
         StmtKind::If(_, t, e) => {
             has_assembly_or_unknown(t) || e.is_some_and(has_assembly_or_unknown)
         }

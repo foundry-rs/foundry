@@ -7,7 +7,7 @@ use solar::{
     interface::diagnostics::Applicability,
     sema::{
         Gcx,
-        hir::{CallArgs, CallArgsKind, Expr, ExprKind, Hir, ItemId, Res},
+        hir::{CallArgs, CallArgsKind, Expr, ExprKind, ItemId, Res},
     },
 };
 
@@ -19,13 +19,8 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for NamedStructFields {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        expr: &'hir Expr<'hir>,
-    ) {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) {
+        let hir = &gcx.hir;
         let ExprKind::Call(
             Expr { kind: ExprKind::Ident([Res::Item(ItemId::Struct(struct_id))]), span, .. },
             CallArgs { kind: CallArgsKind::Unnamed(args), .. },

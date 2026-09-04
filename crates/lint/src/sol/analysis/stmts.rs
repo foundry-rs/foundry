@@ -76,6 +76,22 @@ pub fn branch_always_exits(stmt: &Stmt<'_>) -> bool {
     }
 }
 
+/// The `for` update statement of a loop, which runs after every iteration.
+pub const fn loop_update<'hir>(source: LoopSource<'hir>) -> Option<&'hir Stmt<'hir>> {
+    match source {
+        LoopSource::For { update } => update,
+        LoopSource::While | LoopSource::DoWhile => None,
+    }
+}
+
+/// The statements of one loop iteration: the body followed by the `for` update, if any.
+pub fn loop_stmts<'hir>(
+    block: hir::Block<'hir>,
+    source: LoopSource<'hir>,
+) -> impl Iterator<Item = &'hir Stmt<'hir>> + Clone {
+    block.stmts.iter().chain(loop_update(source))
+}
+
 /// Number of `_` placeholders in `stmts`, recursing into nested control flow.
 pub fn count_placeholders(stmts: &[Stmt<'_>]) -> usize {
     stmts.iter().map(count_placeholders_in_stmt).sum()
@@ -84,9 +100,8 @@ pub fn count_placeholders(stmts: &[Stmt<'_>]) -> usize {
 fn count_placeholders_in_stmt(stmt: &Stmt<'_>) -> usize {
     match &stmt.kind {
         StmtKind::Placeholder => 1,
-        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) | StmtKind::Loop(b, _) => {
-            count_placeholders(b.stmts)
-        }
+        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => count_placeholders(b.stmts),
+        StmtKind::Loop(b, source) => loop_stmts(*b, *source).map(count_placeholders_in_stmt).sum(),
         StmtKind::If(_, t, e) => {
             count_placeholders_in_stmt(t) + e.as_ref().map_or(0, |e| count_placeholders_in_stmt(e))
         }

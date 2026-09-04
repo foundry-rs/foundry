@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{is_exit_call, is_inc_dec, is_require_or_assert, tuple_elems},
+        analysis::{is_exit_call, is_inc_dec, is_require_or_assert, loop_update, tuple_elems},
     },
 };
 use alloy_primitives::{U256, uint};
@@ -43,7 +43,6 @@ impl<'hir> LateLintPass<'hir> for Ecrecover {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
         let Some(body) = func.body else { return };
@@ -167,8 +166,8 @@ struct Analyzer<'hir> {
     deferred: HashMap<ExprId, Option<PendingRecovery>>,
     /// States reaching `break`/`continue` or the end of the innermost loop body.
     loop_exits: Vec<FlowState>,
-    /// Update expression of the innermost `for` loop, which `continue` still executes.
-    loop_next: Option<&'hir Expr<'hir>>,
+    /// Update statement of the innermost `for` loop, which `continue` still executes.
+    loop_next: Option<&'hir Stmt<'hir>>,
 }
 
 impl<'hir> Analyzer<'hir> {
@@ -675,7 +674,7 @@ impl<'hir> Analyzer<'hir> {
                 if matches!(stmt.kind, StmtKind::Continue)
                     && let Some(next) = self.loop_next
                 {
-                    let _ = self.visit_expr(next);
+                    self.run_stmt(next);
                 }
                 self.loop_exits.push(self.state.clone());
                 false
@@ -728,10 +727,8 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn run_loop(&mut self, block: &'hir hir::Block<'hir>, source: LoopSource) -> bool {
-        let next = matches!(source, LoopSource::ForWithUpdate)
-            .then(|| for_loop_next_expr(block))
-            .flatten();
+    fn run_loop(&mut self, block: &'hir hir::Block<'hir>, source: LoopSource<'hir>) -> bool {
+        let next = loop_update(source);
         let outer_exits = mem::take(&mut self.loop_exits);
         let outer_next = mem::replace(&mut self.loop_next, next);
         // `do { .. } while (false)` runs exactly once. Any other loop may carry the effects of
@@ -756,7 +753,7 @@ impl<'hir> Analyzer<'hir> {
     }
 
     fn run_loop_body(&mut self, block: &'hir hir::Block<'hir>) {
-        if self.run_block(block.stmts) {
+        if self.run_block(block.stmts) && self.loop_next.is_none_or(|next| self.run_stmt(next)) {
             self.loop_exits.push(self.state.clone());
         }
     }
@@ -898,20 +895,6 @@ fn var_of(expr: &Expr<'_>) -> Option<VariableId> {
         ExprKind::Call(callee, args, _) if is_transparent_cast(callee) && args.len() == 1 => {
             args.exprs().next().and_then(var_of)
         }
-        _ => None,
-    }
-}
-
-/// The `<next>` expression of a lowered `for (..; ..; <next>)` loop body.
-fn for_loop_next_expr<'hir>(block: &'hir hir::Block<'hir>) -> Option<&'hir Expr<'hir>> {
-    let [stmt] = block.stmts else { return None };
-    let stmt = match &stmt.kind {
-        StmtKind::If(_, then, _) => *then,
-        _ => stmt,
-    };
-    let StmtKind::Block(inner) = &stmt.kind else { return None };
-    match inner.stmts {
-        [_, Stmt { kind: StmtKind::Expr(next), .. }] if inner.span == block.span => Some(next),
         _ => None,
     }
 }

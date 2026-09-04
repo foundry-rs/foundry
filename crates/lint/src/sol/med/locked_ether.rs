@@ -35,9 +35,9 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
         contract_id: ContractId,
     ) {
+        let hir = &gcx.hir;
         let contract = hir.contract(contract_id);
         // Libraries and interfaces cannot hold ETH.
         if !ctx.is_lint_enabled(LOCKED_ETHER.id)

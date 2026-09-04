@@ -24,13 +24,8 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for FunctionInitState {
-    fn check_nested_contract(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        id: ContractId,
-    ) {
+    fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, id: ContractId) {
+        let hir = &gcx.hir;
         // State variable initializers run at construction, before the constructor body, in
         // base-to-derived order: reading another non-constant state variable or calling a
         // non-pure function there observes that partial state. Constants are fixed at compile

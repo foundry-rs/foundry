@@ -30,10 +30,10 @@ impl<'hir> LateLintPass<'hir> for IncorrectERC721Interface {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: solar::sema::Gcx<'hir>,
         contract: &'hir hir::Contract<'hir>,
     ) {
+        let hir = &gcx.hir;
         if !contract
             .linearized_bases
             .iter()

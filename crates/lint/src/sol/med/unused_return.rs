@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use solar::sema::{
-    Gcx, Hir,
+    Gcx,
     hir::{Expr, ExprKind, Stmt, StmtKind},
 };
 
@@ -19,13 +19,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for UnusedReturn {
-    fn check_stmt(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        stmt: &'hir Stmt<'hir>,
-    ) {
+    fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, stmt: &'hir Stmt<'hir>) {
         let (call, span) = match &stmt.kind {
             StmtKind::Expr(expr) => match &expr.peel_parens().kind {
                 // `(x, ) = call()` with an ignored slot.

@@ -23,13 +23,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for ReturnBomb {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
-        expr: &'hir hir::Expr<'hir>,
-    ) {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) {
         // Flag gas-limited calls that can force the caller to copy unbounded returndata: a
         // low-level call on an address, or a call returning dynamic data.
         let expr = expr.peel_parens();

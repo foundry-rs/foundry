@@ -24,10 +24,10 @@ impl<'hir> LateLintPass<'hir> for VarReadUsingThis {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: Gcx<'hir>,
         contract_id: hir::ContractId,
     ) {
+        let hir = &gcx.hir;
         let contract = hir.contract(contract_id);
         // `this` only exists in (abstract) contracts: libraries have none, interfaces no bodies.
         if !matches!(contract.kind, ContractKind::Contract | ContractKind::AbstractContract) {

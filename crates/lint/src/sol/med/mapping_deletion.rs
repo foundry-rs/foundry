@@ -17,13 +17,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for MappingDeletion {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
-        expr: &'hir hir::Expr<'hir>,
-    ) {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) {
         if let ExprKind::Delete(operand) = &expr.kind
             && let Some(ty) = gcx.type_of_expr(operand.peel_parens().id)
             && ty_contains_mapping(gcx, ty, &mut Vec::new())

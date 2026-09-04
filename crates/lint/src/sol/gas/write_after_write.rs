@@ -1,7 +1,7 @@
 use super::WriteAfterWrite;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::loop_update},
 };
 use solar::{
     interface::Span,
@@ -23,13 +23,8 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for WriteAfterWrite {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
+        let hir = &gcx.hir;
         if let Some(body) = func.body {
             Analyzer { ctx, hir, pending: HashMap::new() }.check_block(body);
         }
@@ -94,8 +89,11 @@ impl Analyzer<'_, '_> {
                 }
             }
             // A loop may run zero times, so it never stops the outer flow.
-            StmtKind::Loop(block, _) => {
-                self.isolated(|this| this.check_block(*block));
+            StmtKind::Loop(block, source) => {
+                self.isolated(|this| {
+                    this.check_block(*block)
+                        && loop_update(*source).is_none_or(|update| this.check_stmt(update))
+                });
             }
             StmtKind::Try(try_stmt) => {
                 self.reads(&try_stmt.expr);

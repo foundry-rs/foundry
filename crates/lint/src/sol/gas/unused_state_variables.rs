@@ -24,10 +24,10 @@ impl<'hir> LateLintPass<'hir> for UnusedStateVariables {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: Gcx<'hir>,
         contract: &'hir hir::Contract<'hir>,
     ) {
+        let hir = &gcx.hir;
         if contract.kind == ContractKind::Interface {
             return;
         }

@@ -26,10 +26,10 @@ impl<'hir> LateLintPass<'hir> for IncorrectERC20Interface {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: solar::sema::Gcx<'hir>,
         contract: &'hir hir::Contract<'hir>,
     ) {
+        let hir = &gcx.hir;
         let inherits = |names: &[&str]| {
             contract
                 .linearized_bases

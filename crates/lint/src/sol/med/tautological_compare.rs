@@ -20,13 +20,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for TautologicalCompare {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
-        expr: &'hir hir::Expr<'hir>,
-    ) {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) {
         // A UDVT can only be compared through a user-defined operator (`using {f as ==} for T`),
         // which dispatches to an arbitrary function, so `x == x` is not tautological for it.
         if let ExprKind::Binary(left, op, right) = &expr.kind

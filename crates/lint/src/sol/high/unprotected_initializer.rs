@@ -29,9 +29,9 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
         contract_id: ContractId,
     ) {
+        let hir = &gcx.hir;
         let contract = hir.contract(contract_id);
         if contract.kind != ContractKind::Contract || contract.linearization_failed() {
             return;

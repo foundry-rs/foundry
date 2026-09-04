@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{branch_always_exits, resolved_function, write_target},
+        analysis::{branch_always_exits, loop_update, resolved_function, write_target},
     },
 };
 use alloy_primitives::U256;
@@ -39,7 +39,6 @@ impl<'hir> LateLintPass<'hir> for EnumerableLoopRemoval {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
         if let Some(body) = func.body {
@@ -62,7 +61,7 @@ struct LoopFinder<'ctx, 's, 'c, 'hir> {
 }
 
 impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
-    fn walk_body(&mut self, stmts: &'hir [Stmt<'hir>]) {
+    fn walk_body(&mut self, stmts: impl IntoIterator<Item = &'hir Stmt<'hir>>) {
         for stmt in stmts {
             self.walk_stmt(stmt);
         }
@@ -73,15 +72,15 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
         // which runs once, on the straight line entering the loop.
         if let StmtKind::Block(block) = &stmt.kind
             && let Some((last, init)) = block.stmts.split_last()
-            && let StmtKind::Loop(body, LoopSource::For | LoopSource::ForWithUpdate) = &last.kind
+            && let StmtKind::Loop(body, source @ LoopSource::For { .. }) = &last.kind
         {
             self.walk_body(init);
-            return self.enter_loop(init, body.stmts);
+            return self.enter_loop(init, body.stmts, loop_update(*source));
         }
         match &stmt.kind {
             // A bare block runs on the straight line: what it binds stays bound past it.
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => self.walk_body(block.stmts),
-            StmtKind::Loop(body, _) => self.enter_loop(&[], body.stmts),
+            StmtKind::Loop(body, source) => self.enter_loop(&[], body.stmts, loop_update(*source)),
             // Which branch ran is not tracked: everything the statement writes stops naming one
             // thing, and what a branch binds for its own statements ends with the branch.
             StmtKind::If(_, then, else_) => {
@@ -110,12 +109,17 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
     /// may have run on an earlier turn by the time any of its statements runs again, so
     /// everything the loop writes, init included, stops naming one thing before the loop is
     /// judged, and stays so past it.
-    fn enter_loop(&mut self, init: &'hir [Stmt<'hir>], body: &'hir [Stmt<'hir>]) {
+    fn enter_loop(
+        &mut self,
+        init: &'hir [Stmt<'hir>],
+        body: &'hir [Stmt<'hir>],
+        update: Option<&'hir Stmt<'hir>>,
+    ) {
         self.poison_writes(init);
-        self.poison_writes(body);
-        self.analyze_loop(user_body(body));
+        self.poison_writes(body.iter().chain(update));
+        self.analyze_loop(user_body(body).iter().chain(update));
         let mark = self.bindings.len();
-        self.walk_body(body);
+        self.walk_body(body.iter().chain(update));
         self.bindings.truncate(mark);
     }
 
@@ -151,7 +155,7 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
     }
 
     /// Marks everything the statements write as no longer naming one thing.
-    fn poison_writes(&mut self, stmts: &'hir [Stmt<'hir>]) {
+    fn poison_writes(&mut self, stmts: impl IntoIterator<Item = &'hir Stmt<'hir>>) {
         let mut written = Vec::new();
         collect_writes(&self.gcx.hir, stmts, &mut written);
         self.bindings.extend(written.into_iter().map(|var| (var, None)));
@@ -159,13 +163,13 @@ impl<'hir> LoopFinder<'_, '_, '_, 'hir> {
 
     /// Flags the removals in a straight-line loop body that remove from a set the loop reads with
     /// `at` at an unconditional ascending cadence.
-    fn analyze_loop(&mut self, body: &'hir [Stmt<'hir>]) {
+    fn analyze_loop(&mut self, body: impl Iterator<Item = &'hir Stmt<'hir>> + Clone) {
         // Control flow would make the corruption depend on the path taken, which is not tracked;
         // without an ascending index there is no upward walk for swap-and-pop to disturb.
-        if !body_is_straight_line(body) {
+        if !body_is_straight_line(body.clone()) {
             return;
         }
-        let cadence = ascending_cadence(&self.gcx.hir, body);
+        let cadence = ascending_cadence(&self.gcx.hir, body.clone());
         if cadence.is_empty() {
             return;
         }
@@ -283,8 +287,8 @@ fn user_body<'hir>(body: &'hir [Stmt<'hir>]) -> &'hir [Stmt<'hir>] {
 /// statement, inline assembly or nested loop (bare blocks are transparent). Any of these could
 /// let control skip a removal or the cadence step, or leave the loop before a shifted slot is
 /// read, none of which this detector tracks.
-fn body_is_straight_line(stmts: &[Stmt<'_>]) -> bool {
-    stmts.iter().all(|stmt| {
+fn body_is_straight_line<'hir>(stmts: impl IntoIterator<Item = &'hir Stmt<'hir>>) -> bool {
+    stmts.into_iter().all(|stmt| {
         !branch_always_exits(stmt)
             && match &stmt.kind {
                 StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
@@ -304,7 +308,10 @@ fn body_is_straight_line(stmts: &[Stmt<'_>]) -> bool {
 /// The loop's own indices that step upward unconditionally: bare identifiers whose every write
 /// on the straight line of the body (bare blocks included) is a supported ascending step. A
 /// reset, a no-op step, a decrement or composite arithmetic disqualifies the variable.
-fn ascending_cadence<'hir>(hir: &'hir Hir<'hir>, body: &'hir [Stmt<'hir>]) -> Vec<VariableId> {
+fn ascending_cadence<'hir>(
+    hir: &'hir Hir<'hir>,
+    body: impl IntoIterator<Item = &'hir Stmt<'hir>>,
+) -> Vec<VariableId> {
     let (mut cadence, mut other_writes) = (Vec::new(), Vec::new());
     collect_cadence_writes(hir, body, &mut cadence, &mut other_writes);
     cadence.retain(|var| !other_writes.contains(var));
@@ -313,7 +320,7 @@ fn ascending_cadence<'hir>(hir: &'hir Hir<'hir>, body: &'hir [Stmt<'hir>]) -> Ve
 
 fn collect_cadence_writes<'hir>(
     hir: &'hir Hir<'hir>,
-    stmts: &'hir [Stmt<'hir>],
+    stmts: impl IntoIterator<Item = &'hir Stmt<'hir>>,
     cadence: &mut Vec<VariableId>,
     other_writes: &mut Vec<VariableId>,
 ) {
@@ -386,7 +393,7 @@ fn literal_bool(expr: &Expr<'_>) -> Option<bool> {
 /// targets do not write their base variable.
 fn collect_writes<'hir>(
     hir: &'hir Hir<'hir>,
-    stmts: &'hir [Stmt<'hir>],
+    stmts: impl IntoIterator<Item = &'hir Stmt<'hir>>,
     out: &mut Vec<VariableId>,
 ) {
     fn lvalue_variables(expr: &Expr<'_>, out: &mut Vec<VariableId>) {

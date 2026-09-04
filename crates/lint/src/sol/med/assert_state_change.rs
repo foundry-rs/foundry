@@ -13,7 +13,7 @@ use solar::{
     ast::{DataLocation, ElementaryType},
     interface::{kw, sym},
     sema::{
-        Gcx, Hir,
+        Gcx,
         hir::{CallArgs, ContractId, Expr, ExprKind},
         ty::TyKind,
     },
@@ -28,13 +28,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for AssertStateChange {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        expr: &'hir Expr<'hir>,
-    ) {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) {
         let ExprKind::Call(callee, args, _) = &expr.kind else { return };
         if !is_builtin(callee, sym::assert) {
             return;

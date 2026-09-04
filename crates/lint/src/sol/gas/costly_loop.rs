@@ -17,13 +17,7 @@ use std::ops::ControlFlow;
 declare_forge_lint!(COSTLY_LOOP, Severity::Gas, "costly-loop", "storage write inside a loop");
 
 impl<'hir> LateLintPass<'hir> for CostlyLoop {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
         let mut finder = LoopWriteFinder { ctx, gcx, loop_depth: 0 };
         let _ = finder.visit_function(func);
     }

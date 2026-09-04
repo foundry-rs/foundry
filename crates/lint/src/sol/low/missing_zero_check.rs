@@ -5,7 +5,7 @@ use crate::{
         Severity, SolLint,
         analysis::{
             address_call_receiver, branch_always_exits, is_address_type, is_require_or_assert,
-            lhs_local_var, underlying_var,
+            lhs_local_var, loop_stmts, underlying_var,
         },
     },
 };
@@ -35,9 +35,9 @@ impl<'hir> LateLintPass<'hir> for MissingZeroCheck {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
+        let hir = &gcx.hir;
         let is_entry_point = !matches!(
             func.state_mutability,
             ast::StateMutability::Pure | ast::StateMutability::View
@@ -109,14 +109,17 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn visit_stmts(&mut self, stmts: &'hir [hir::Stmt<'hir>]) {
+    fn visit_stmts(&mut self, stmts: impl IntoIterator<Item = &'hir hir::Stmt<'hir>>) {
         for s in stmts {
             let _ = self.visit_stmt(s);
         }
     }
 
     /// Guards added while visiting `stmts`, leaving `self.guarded` untouched.
-    fn scoped_guards(&mut self, stmts: &'hir [hir::Stmt<'hir>]) -> HashSet<VariableId> {
+    fn scoped_guards(
+        &mut self,
+        stmts: impl IntoIterator<Item = &'hir hir::Stmt<'hir>>,
+    ) -> HashSet<VariableId> {
         let baseline = self.guarded.clone();
         self.visit_stmts(stmts);
         let added = &self.guarded - &baseline;
@@ -178,8 +181,8 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 return ControlFlow::Continue(());
             }
             // Loop bodies may execute zero times, so guards inside must not persist.
-            StmtKind::Loop(block, _) => {
-                self.scoped_guards(block.stmts);
+            StmtKind::Loop(block, source) => {
+                self.scoped_guards(loop_stmts(block, source));
                 return ControlFlow::Continue(());
             }
             // Each try/catch clause is taken on a single path; discard clause-local guards.

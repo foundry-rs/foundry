@@ -4,7 +4,7 @@ use crate::{
     sol::{
         Severity, SolLint,
         analysis::{
-            builtins, dispatched_function, is_protected, lhs_local_var, state_lhs_vars,
+            builtins, dispatched_function, is_protected, lhs_local_var, loop_stmts, state_lhs_vars,
             underlying_var,
         },
     },
@@ -38,9 +38,9 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
         contract_id: ContractId,
     ) {
+        let hir = &gcx.hir;
         let contract = hir.contract(contract_id);
         if contract.kind != ContractKind::Contract || contract.linearization_failed() {
             return;
@@ -404,7 +404,11 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
         flow
     }
 
-    fn analyze_stmts(&mut self, stmts: &'hir [hir::Stmt<'hir>], state: WriteState) -> Flow {
+    fn analyze_stmts(
+        &mut self,
+        stmts: impl IntoIterator<Item = &'hir hir::Stmt<'hir>>,
+        state: WriteState,
+    ) -> Flow {
         let mut flow = Flow::fallthrough(state);
         for stmt in stmts {
             let Some(state) = flow.fallthrough.take() else { break };
@@ -431,9 +435,10 @@ impl<'hir> WriteAnalyzer<'_, 'hir> {
                 }
                 Flow::fallthrough(state)
             }
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
                 self.analyze_stmts(block.stmts, state)
             }
+            StmtKind::Loop(block, source) => self.analyze_stmts(loop_stmts(block, source), state),
             StmtKind::If(cond, then_stmt, else_stmt) => {
                 self.analyze_expr(cond, &mut state);
                 let then_flow = self.analyze_stmt(then_stmt, state.clone());

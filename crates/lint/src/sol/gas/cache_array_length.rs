@@ -28,18 +28,10 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for CacheArrayLength {
-    fn check_stmt(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
-        stmt: &'hir Stmt<'hir>,
-    ) {
-        let StmtKind::Loop(block, LoopSource::For | LoopSource::ForWithUpdate) = &stmt.kind else {
-            return;
-        };
-        // `for (init; cond; update) body` lowers to `loop { if (cond) { body; update } else break
-        // }`.
+    fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, stmt: &'hir Stmt<'hir>) {
+        let StmtKind::Loop(block, LoopSource::For { .. }) = &stmt.kind else { return };
+        // `for (init; cond; update) body` lowers to `loop { if (cond) { body } else break }` with
+        // the update kept on the loop source.
         let Some(Stmt { kind: StmtKind::If(condition, _, Some(else_stmt)), .. }) =
             block.stmts.first()
         else {

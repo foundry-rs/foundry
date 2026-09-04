@@ -7,7 +7,7 @@ use crate::{
     sol::{Severity, SolLint, analysis::builtins},
 };
 use solar::sema::{
-    Gcx, Hir,
+    Gcx,
     builtins::Builtin,
     hir::{Expr, ExprKind, Function, StmtKind},
 };
@@ -20,13 +20,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for RequireRevertInLoop {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
         for_each_loop_item(gcx, func, false, |item| {
             let reported = match item {
                 LoopItem::Stmt(stmt) => match stmt.kind {

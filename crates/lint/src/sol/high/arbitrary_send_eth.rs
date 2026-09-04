@@ -8,8 +8,8 @@ use crate::{
             branch_always_exits, builtins, callee_fids, callee_no_arg_returns, expr_is_address,
             expr_ty, function_ids, function_no_arg_returns, is_address_like_cast, is_address_self,
             is_builtin, is_contract_cast, is_literal_zero, is_msg_sender, is_require_or_assert,
-            modifier_prefix, referenced_item, tuple_elems, underlying_var, unique,
-            var_is_address_like,
+            loop_stmts, loop_update, modifier_prefix, referenced_item, tuple_elems, underlying_var,
+            unique, var_is_address_like,
         },
     },
 };
@@ -50,9 +50,9 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendEth {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
+        let hir = &gcx.hir;
         if matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
             || func.is_constructor()
             || func.contract.is_some_and(|cid| hir.contract(cid).kind == ContractKind::Library)
@@ -299,7 +299,9 @@ impl<'hir> Analyzer<'hir> {
                 // all; `do-while` bodies run at least once.
                 let baseline = (!matches!(source, LoopSource::DoWhile)).then(|| self.state.clone());
                 self.loop_exits.push(baseline.into_iter().collect());
-                if self.visit_stmts(block.stmts) {
+                if self.visit_stmts(block.stmts)
+                    && loop_update(*source).is_none_or(|update| self.stmt(update))
+                {
                     let state = self.state.clone();
                     self.loop_exits.last_mut().expect("pushed above").push(state);
                 }
@@ -937,9 +939,10 @@ fn index_is_static(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
 fn stmt_contains_return(stmt: &Stmt<'_>) -> bool {
     match &stmt.kind {
         StmtKind::Return(_) => true,
-        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) | StmtKind::Loop(b, _) => {
+        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => {
             b.stmts.iter().any(stmt_contains_return)
         }
+        StmtKind::Loop(b, source) => loop_stmts(*b, *source).any(stmt_contains_return),
         StmtKind::If(_, t, e) => {
             stmt_contains_return(t) || e.is_some_and(|e| stmt_contains_return(e))
         }

@@ -10,7 +10,7 @@ use solar::{
     ast::BinOpKind,
     interface::kw,
     sema::{
-        Gcx, Hir,
+        Gcx,
         hir::{Expr, ExprKind, ItemId},
     },
 };
@@ -24,13 +24,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for IncorrectStrictEquality {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        expr: &'hir Expr<'hir>,
-    ) {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) {
         if let ExprKind::Binary(lhs, op, rhs) = &expr.kind
             && matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne)
             && [lhs, rhs].into_iter().any(|side| {

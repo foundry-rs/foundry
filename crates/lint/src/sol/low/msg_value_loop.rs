@@ -7,7 +7,7 @@ use solar::{
     interface::sym,
     sema::{
         Gcx,
-        hir::{ExprKind, Function, Hir},
+        hir::{ExprKind, Function},
     },
 };
 
@@ -19,13 +19,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for MsgValueLoop {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
         for_each_payable_loop_expr(gcx, func, |expr| {
             if let ExprKind::Member(base, member) = &expr.peel_parens().kind
                 && member.name == sym::value

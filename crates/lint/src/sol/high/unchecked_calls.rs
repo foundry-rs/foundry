@@ -31,13 +31,7 @@ declare_forge_lint!(
 /// WARN: can issue false positives, as it doesn't check that the contract being called sticks to
 /// the full ERC20 specification.
 impl<'hir> LateLintPass<'hir> for UncheckedTransferERC20 {
-    fn check_stmt(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
-        stmt: &'hir hir::Stmt<'hir>,
-    ) {
+    fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, stmt: &'hir hir::Stmt<'hir>) {
         // Only expression statements can contain unchecked transfers.
         if let hir::StmtKind::Expr(expr) = &stmt.kind
             && is_erc20_transfer_call(gcx, expr)

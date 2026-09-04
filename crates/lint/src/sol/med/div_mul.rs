@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{builtins, is_revert_call, tuple_elems},
+        analysis::{builtins, is_revert_call, loop_update, tuple_elems},
     },
 };
 use solar::sema::{
@@ -24,13 +24,8 @@ declare_forge_lint!(
 type Tainted = HashSet<VariableId>;
 
 impl<'hir> LateLintPass<'hir> for DivideBeforeMultiply {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
+        let hir = &gcx.hir;
         if let Some(body) = func.body {
             check_block(ctx, hir, body, &mut Tainted::new());
         }
@@ -117,8 +112,14 @@ fn check_stmt<'hir>(
             }
             falls_through
         }
-        StmtKind::Loop(block, _) => {
-            check_branches(ctx, hir, std::iter::once(*block), tainted);
+        StmtKind::Loop(block, source) => {
+            let mut branch = tainted.clone();
+            if check_block(ctx, hir, *block, &mut branch)
+                && loop_update(*source)
+                    .is_none_or(|update| check_stmt(ctx, hir, update, &mut branch))
+            {
+                tainted.extend(branch);
+            }
             true
         }
         StmtKind::Try(try_stmt) => {

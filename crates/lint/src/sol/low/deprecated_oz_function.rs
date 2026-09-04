@@ -8,7 +8,7 @@ use crate::{
 };
 use solar::sema::{
     Gcx,
-    hir::{Expr, ExprKind, FunctionId, Hir},
+    hir::{Expr, ExprKind, FunctionId},
 };
 
 declare_forge_lint!(
@@ -19,13 +19,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for DeprecatedOzFunction {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        expr: &'hir Expr<'hir>,
-    ) {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) {
         // A name or member expression typed as a function is a resolved reference, called or
         // used as a value: judge the single declaration the type checker selected (overloads,
         // overrides, `super.`, `using for` and import aliases already accounted for).

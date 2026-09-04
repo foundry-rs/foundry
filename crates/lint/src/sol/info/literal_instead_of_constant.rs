@@ -23,13 +23,8 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for LiteralInsteadOfConstant {
-    fn check_nested_contract(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        id: hir::ContractId,
-    ) {
+    fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, id: hir::ContractId) {
+        let hir = &gcx.hir;
         // Group the literals of the contract's own functions and modifiers by semantic value;
         // inherited items group with their declaring contract. Collection covers the executable
         // expressions: the body statements, and the modifier and base-constructor arguments of

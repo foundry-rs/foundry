@@ -38,13 +38,8 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for FunctionSelectorCollision {
-    fn check_nested_contract(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        proxy_id: ContractId,
-    ) {
+    fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, proxy_id: ContractId) {
+        let hir = &gcx.hir;
         let proxy = hir.contract(proxy_id);
         if proxy.kind != ContractKind::Contract || proxy.linearization_failed() {
             return;
@@ -445,26 +440,20 @@ impl<'hir> DelegateTargetCollector<'hir> {
     /// One iteration of a lowered `for (; cond; update) body`, which is `if (cond) { body; update }
     /// else break` (or just `{ body; update }` without a condition). Returns the back-edge paths
     /// and the loop-exit paths.
+    /// One iteration of a `for` loop with an update statement: `if (cond) { body } else break`
+    /// followed by the update, which `continue` also reaches.
     fn visit_for_iteration(
         &mut self,
         block: &hir::Block<'hir>,
+        update: &'hir Stmt<'hir>,
     ) -> Option<(Vec<PathState>, Vec<PathState>)> {
         let [stmt] = block.stmts else { return None };
         let (condition, body, else_stmt) = match &stmt.kind {
             StmtKind::If(condition, then_stmt, else_stmt) => {
-                let StmtKind::Block(body) = &then_stmt.kind else { return None };
-                (Some(*condition), body, *else_stmt)
+                (Some(*condition), *then_stmt, *else_stmt)
             }
-            StmtKind::Block(body) => (None, body, None),
-            _ => return None,
+            _ => (None, stmt, None),
         };
-        if body.span != block.span {
-            return None;
-        }
-        let (update, body) = body.stmts.split_last()?;
-        if !matches!(update.kind, StmtKind::Expr(_)) {
-            return None;
-        }
 
         let mut exits = Vec::new();
         if let Some(condition) = condition {
@@ -480,13 +469,13 @@ impl<'hir> DelegateTargetCollector<'hir> {
             self.paths = true_paths;
         }
 
-        self.paths = self.visit_loop_stmts(body, &mut exits);
+        self.paths = self.visit_loop_stmts(std::slice::from_ref(body), &mut exits);
         let _ = self.visit_stmt(update);
         Some((std::mem::take(&mut self.paths), exits))
     }
 
     /// Iterates the loop body to a fixpoint over the set of distinct entry states.
-    fn visit_loop(&mut self, block: &hir::Block<'hir>, source: LoopSource) {
+    fn visit_loop(&mut self, block: &hir::Block<'hir>, source: LoopSource<'hir>) {
         let mut pending = std::mem::take(&mut self.paths);
         let mut seen = HashSet::new();
         let mut exits = Vec::new();
@@ -498,12 +487,12 @@ impl<'hir> DelegateTargetCollector<'hir> {
             }
 
             self.paths = std::mem::take(&mut pending);
-            let next = if source == LoopSource::ForWithUpdate
-                && let Some((next, for_exits)) = self.visit_for_iteration(block)
+            let next = if let LoopSource::For { update: Some(update) } = source
+                && let Some((next, for_exits)) = self.visit_for_iteration(block, update)
             {
                 extend_unique(&mut exits, for_exits);
                 next
-            } else if source == LoopSource::DoWhile
+            } else if matches!(source, LoopSource::DoWhile)
                 && let Some((condition, body)) = block.stmts.split_last()
             {
                 // `continue` in a do-while body still evaluates the condition.

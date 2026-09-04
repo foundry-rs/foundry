@@ -7,7 +7,7 @@ use solar::{
     interface::kw,
     sema::{
         Gcx,
-        hir::{ExprKind, Function, Hir},
+        hir::{ExprKind, Function},
     },
 };
 
@@ -19,13 +19,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, func: &'hir Function<'hir>) {
         for_each_payable_loop_expr(gcx, func, |expr| {
             // Only `<address>.delegatecall(..)`: user functions named `delegatecall` on
             // contract-typed receivers are ordinary calls.

@@ -20,13 +20,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for IncorrectExp {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
-        expr: &'hir hir::Expr<'hir>,
-    ) {
+    fn check_expr(&mut self, ctx: &LintContext, _gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) {
         // `a ^ b` between integer literals is almost always a mistake for `a ** b`: `^` is bitwise
         // xor in Solidity, so `10 ^ 18` is `24`, not `10 ** 18`.
         //

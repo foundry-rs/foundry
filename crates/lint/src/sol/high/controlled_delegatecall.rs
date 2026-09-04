@@ -6,7 +6,7 @@ use crate::{
         analysis::{
             arg_for_param, branch_always_exits, count_placeholders, do_while_user_stmts,
             expr_is_address, function_ids, has_side_effect, is_address_like_cast,
-            is_loop_termination_if, is_require_or_assert, stmts_before_placeholder,
+            is_loop_termination_if, is_require_or_assert, loop_update, stmts_before_placeholder,
             stmts_break_or_continue, tuple_elems, unique, var_is_address_like,
         },
     },
@@ -39,7 +39,6 @@ impl<'hir> LateLintPass<'hir> for ControlledDelegatecall {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
         let Some(body) = func.body else { return };
@@ -279,11 +278,13 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 }
                 ControlFlow::Continue(())
             }
-            StmtKind::Loop(block, _) => {
+            StmtKind::Loop(block, source) => {
                 // The state after the loop is what holds on every way out: never entering the
                 // body, each `break`/`continue`, and falling off the end of an iteration.
                 self.loop_exits.push(vec![self.safe_vars.clone()]);
-                let falls_through = self.visit_stmts(block.stmts).is_continue();
+                let falls_through = self.visit_stmts(block.stmts).is_continue()
+                    && loop_update(*source)
+                        .is_none_or(|update| self.visit_stmt(update).is_continue());
                 let mut exits = self.loop_exits.pop().expect("loop frame");
                 if falls_through {
                     exits.push(self.safe_vars.clone());

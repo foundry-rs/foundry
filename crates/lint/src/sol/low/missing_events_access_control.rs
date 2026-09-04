@@ -37,9 +37,9 @@ impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
         contract: &'hir hir::Contract<'hir>,
     ) {
+        let hir = &gcx.hir;
         if !matches!(contract.kind, ContractKind::Contract | ContractKind::AbstractContract) {
             return;
         }

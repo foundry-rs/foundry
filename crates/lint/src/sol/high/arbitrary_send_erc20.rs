@@ -6,8 +6,8 @@ use crate::{
         analysis::{
             arg_for_param, branch_always_exits, expr_is_address, function_ids,
             is_address_like_cast, is_address_self, is_address_type, is_elementary, is_msg_sender,
-            is_require_or_assert, modifier_prefix, receiver_contract_id, state_lhs_vars,
-            tuple_elems, underlying_var,
+            is_require_or_assert, loop_update, modifier_prefix, receiver_contract_id,
+            state_lhs_vars, tuple_elems, underlying_var,
         },
     },
 };
@@ -53,9 +53,9 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
+        let hir = &gcx.hir;
         // Library functions forward `from` from their caller; the call site is flagged instead.
         if matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
             || func.is_constructor()
@@ -552,7 +552,9 @@ impl<'hir> Analyzer<'hir> {
                 // all; `do-while` bodies run at least once.
                 let baseline = (!matches!(source, LoopSource::DoWhile)).then(|| self.state.clone());
                 self.loop_exits.push(baseline.into_iter().collect());
-                if self.visit_stmts(block.stmts) {
+                if self.visit_stmts(block.stmts)
+                    && loop_update(*source).is_none_or(|update| self.stmt(update))
+                {
                     let state = self.state.clone();
                     self.loop_exits.last_mut().expect("pushed above").push(state);
                 }

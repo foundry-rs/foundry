@@ -100,10 +100,10 @@ impl<'hir> LateLintPass<'hir> for ExternalFunction {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: Gcx<'hir>,
         contract_id: ContractId,
     ) {
+        let hir = &gcx.hir;
         let contract = hir.contract(contract_id);
         // Libraries have different `external` semantics (delegatecall vs inlining); interfaces
         // have no bodies.

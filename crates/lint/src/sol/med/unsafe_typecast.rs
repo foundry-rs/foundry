@@ -20,13 +20,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
-        expr: &'hir hir::Expr<'hir>,
-    ) {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir hir::Expr<'hir>) {
         if let ExprKind::Call(call, args, _) = &expr.kind
             && let Some(ty) = cast_type(call)
             && args.len() == 1

@@ -24,10 +24,10 @@ impl<'hir> LateLintPass<'hir> for CyclomaticComplexity {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
+        gcx: Gcx<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
+        let hir = &gcx.hir;
         // Modifier definitions are never reported, matching Slither which iterates only
         // declared and top-level functions. Yul helpers declared inside `assembly {}` DO
         // report: Slither scores them as functions of their own.

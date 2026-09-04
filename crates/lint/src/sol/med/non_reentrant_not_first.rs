@@ -19,10 +19,10 @@ impl<'hir> LateLintPass<'hir> for NonReentrantNotFirst {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: Gcx<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
+        let hir = &gcx.hir;
         if !matches!(
             func.kind,
             FunctionKind::Function | FunctionKind::Fallback | FunctionKind::Receive

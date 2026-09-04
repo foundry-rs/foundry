@@ -7,7 +7,7 @@ use solar::{
     ast::DataLocation,
     sema::{
         Gcx,
-        hir::{self, Hir, UsingDirective, UsingEntryKind},
+        hir::{self, UsingDirective, UsingEntryKind},
     },
 };
 
@@ -19,25 +19,15 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for IncorrectUsingFor {
-    fn check_nested_source(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        id: hir::SourceId,
-    ) {
+    fn check_nested_source(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, id: hir::SourceId) {
+        let hir = &gcx.hir;
         for directive in hir.source(id).usings {
             check_directive(ctx, gcx, directive);
         }
     }
 
-    fn check_nested_contract(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        id: hir::ContractId,
-    ) {
+    fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, id: hir::ContractId) {
+        let hir = &gcx.hir;
         for directive in hir.contract(id).usings {
             check_directive(ctx, gcx, directive);
         }

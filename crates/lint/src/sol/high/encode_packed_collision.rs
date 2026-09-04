@@ -11,7 +11,7 @@ use solar::{
     interface::sym,
     sema::{
         Gcx,
-        hir::{Expr, ExprKind, Hir},
+        hir::{Expr, ExprKind},
     },
 };
 
@@ -23,13 +23,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for EncodedPackedCollision {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        expr: &'hir Expr<'hir>,
-    ) {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'hir>, expr: &'hir Expr<'hir>) {
         let ExprKind::Call(callee, args, _) = &expr.kind else { return };
         let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return };
         if member.name != sym::encodePacked || !is_builtin(base, sym::abi) {
