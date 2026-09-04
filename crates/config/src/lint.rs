@@ -12,7 +12,7 @@ use yansi::Paint;
 pub struct LinterConfig {
     /// Specifies which lints to run based on severity.
     ///
-    /// If uninformed, all severities are checked.
+    /// Defaults to high, medium, and low severity lints.
     pub severity: Vec<Severity>,
 
     /// Deny specific lints based on their ID (e.g. "mixed-case-function").
@@ -34,7 +34,7 @@ impl Default for LinterConfig {
     fn default() -> Self {
         Self {
             lint_on_build: true,
-            severity: Vec::new(),
+            severity: vec![Severity::High, Severity::Med, Severity::Low],
             exclude_lints: Vec::new(),
             ignore: Vec::new(),
             lint_specific: LintSpecificConfig::default(),
