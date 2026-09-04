@@ -128,21 +128,6 @@ fn check_mixed_case(s: &str, is_fn: bool, allowed_patterns: &[String]) -> Option
     check_mixed_case_pure(s)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exception_preserves_at_most_one_underscore() {
-        let allowed_patterns = ["ERC".to_string()];
-
-        assert!(check_mixed_case("_rescueERC20", true, &allowed_patterns).is_none());
-        assert!(check_mixed_case("rescueERC20_", true, &allowed_patterns).is_none());
-        assert!(check_mixed_case("__rescueERC20", true, &allowed_patterns).is_some());
-        assert!(check_mixed_case("rescueERC20__", true, &allowed_patterns).is_some());
-    }
-}
-
 /// Checks if a function getter is a valid constant getter with a heuristic:
 ///  * name is `SCREAMING_SNAKE_CASE`
 ///  * external view visibility and mutability.
@@ -159,4 +144,19 @@ fn is_constant_getter(header: &FunctionHeader<'_>) -> bool {
             .first()
             .is_some_and(|ret| ret.ty.kind.is_elementary() || ret.ty.kind.is_custom())
         && check_screaming_snake_case(header.name.unwrap().as_str()).is_none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exception_preserves_at_most_one_underscore() {
+        let allowed_patterns = ["ERC".to_string()];
+
+        assert!(check_mixed_case("_rescueERC20", true, &allowed_patterns).is_none());
+        assert!(check_mixed_case("rescueERC20_", true, &allowed_patterns).is_none());
+        assert!(check_mixed_case("__rescueERC20", true, &allowed_patterns).is_some());
+        assert!(check_mixed_case("rescueERC20__", true, &allowed_patterns).is_some());
+    }
 }

@@ -3,10 +3,7 @@
 use clap::ValueEnum;
 use core::fmt;
 use serde::{Deserialize, Deserializer, Serialize};
-use solar::{
-    ast::{self as ast},
-    interface::diagnostics::Level,
-};
+use solar::{ast, interface::diagnostics::Level};
 use std::str::FromStr;
 use yansi::Paint;
 
