@@ -22,10 +22,9 @@ impl<'gcx> LateLintPass<'gcx> for RedundantBaseConstructorCall {
         gcx: Gcx<'gcx>,
         contract: &'gcx hir::Contract<'gcx>,
     ) {
-        let hir = &gcx.hir;
         // `contract X is A(), B()` clauses: removing only the `()` is enough, `is A` is valid.
         for m in contract.bases_args {
-            try_emit(ctx, hir, m, m.args.span);
+            try_emit(ctx, &gcx.hir, m, m.args.span);
         }
     }
 
@@ -35,13 +34,12 @@ impl<'gcx> LateLintPass<'gcx> for RedundantBaseConstructorCall {
         gcx: Gcx<'gcx>,
         func: &'gcx hir::Function<'gcx>,
     ) {
-        let hir = &gcx.hir;
         // `constructor() A() {}` modifier-style base calls. The bare base name `A` is not valid
         // in a constructor's modifier list, so the whole `A()` must be removed, along with one
         // leading whitespace char to avoid leaving a double space.
         if func.kind == hir::FunctionKind::Constructor {
             for m in func.modifiers {
-                try_emit(ctx, hir, m, expand_to_leading_ws(ctx, m.span));
+                try_emit(ctx, &gcx.hir, m, expand_to_leading_ws(ctx, m.span));
             }
         }
     }

@@ -25,7 +25,6 @@ declare_forge_lint!(
 
 impl<'gcx> LateLintPass<'gcx> for UnwrappedModifierLogic {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
-        let hir = &gcx.hir;
         let (FunctionKind::Modifier, Some(body), Some(name)) = (func.kind, func.body, func.name)
         else {
             return;
@@ -43,7 +42,7 @@ impl<'gcx> LateLintPass<'gcx> for UnwrappedModifierLogic {
             return;
         };
         let (before, after) = (&body.stmts[..idx], &body.stmts[idx + 1..]);
-        if let Some(suggestion) = snippet(ctx, hir, func, name.as_str(), before, after) {
+        if let Some(suggestion) = snippet(ctx, &gcx.hir, func, name.as_str(), before, after) {
             ctx.emit_with_suggestion(
                 &UNWRAPPED_MODIFIER_LOGIC,
                 func.span.to(func.body_span),

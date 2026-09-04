@@ -37,7 +37,6 @@ impl<'gcx> LateLintPass<'gcx> for MissingZeroCheck {
         gcx: Gcx<'gcx>,
         func: &'gcx hir::Function<'gcx>,
     ) {
-        let hir = &gcx.hir;
         let is_entry_point = !matches!(
             func.state_mutability,
             ast::StateMutability::Pure | ast::StateMutability::View
@@ -47,7 +46,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingZeroCheck {
         let Some(body) = func.body.filter(|_| is_entry_point) else { return };
 
         let params: HashSet<_> =
-            func.parameters.iter().copied().filter(|&id| is_address_type(hir, id)).collect();
+            func.parameters.iter().copied().filter(|&id| is_address_type(&gcx.hir, id)).collect();
         if params.is_empty() {
             return;
         }
@@ -55,7 +54,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingZeroCheck {
         let mut a = Analyzer::new(gcx, &params);
         for m in func.modifiers {
             let Some(modifier_id) = m.id.as_function() else { continue };
-            let modifier = hir.function(modifier_id);
+            let modifier = gcx.hir.function(modifier_id);
             // Map each direct-ident argument back to the caller's parameter and analyze the
             // modifier body as if it were a prefix of the function.
             let mapping: HashMap<_, _> = modifier
@@ -77,7 +76,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingZeroCheck {
 
         for &p in &params {
             if a.sinks.contains(&p) {
-                ctx.emit(&MISSING_ZERO_CHECK, hir.variable(p).span);
+                ctx.emit(&MISSING_ZERO_CHECK, gcx.hir.variable(p).span);
             }
         }
     }

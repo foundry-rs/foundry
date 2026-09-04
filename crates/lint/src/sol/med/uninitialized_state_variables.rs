@@ -36,8 +36,7 @@ impl<'gcx> LateLintPass<'gcx> for UninitializedStateVariables {
         gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
-        let hir = &gcx.hir;
-        let contract = hir.contract(contract_id);
+        let contract = gcx.hir.contract(contract_id);
         // Abstract contracts and interfaces are not deployed; a failed C3 linearization leaves
         // `linearized_bases` incomplete, so skip rather than produce unsound results.
         if matches!(contract.kind, ContractKind::Interface | ContractKind::AbstractContract)
@@ -50,19 +49,20 @@ impl<'gcx> LateLintPass<'gcx> for UninitializedStateVariables {
         // contract itself) determines whether a variable is ever written.
         let bases = contract.linearized_bases;
         let mut collector = Collector {
-            hir,
+            hir: &gcx.hir,
             bases,
             read: HashSet::new(),
             written: HashSet::new(),
             aliases: HashMap::new(),
         };
         // Inline assembly can write storage directly; bail out conservatively.
-        if bases.iter().any(|&cid| collector.visit_contract_items(hir.contract(cid)).is_break()) {
+        if bases.iter().any(|&cid| collector.visit_contract_items(gcx.hir.contract(cid)).is_break())
+        {
             return;
         }
 
-        for var_id in bases.iter().flat_map(|&cid| hir.contract(cid).variables()) {
-            let var = hir.variable(var_id);
+        for var_id in bases.iter().flat_map(|&cid| gcx.hir.contract(cid).variables()) {
+            let var = gcx.hir.variable(var_id);
             if !var.is_constant()
                 && !var.is_immutable()
                 && !matches!(var.ty.kind, TypeKind::Mapping(_))
@@ -119,10 +119,9 @@ impl<'gcx> Collector<'gcx> {
     /// place. Overloads are not resolved, so an argument counts as written when *any* candidate
     /// of the callee's name has a `storage` parameter in that position (or of that name).
     fn mark_storage_args(&mut self, callee: &'gcx Expr<'gcx>, args: &'gcx CallArgs<'gcx>) {
-        let hir = self.hir;
         let funcs = self.callee_candidates(callee);
         let is_storage =
-            |pid: &VariableId| hir.variable(*pid).data_location == Some(DataLocation::Storage);
+            |pid: &VariableId| self.hir.variable(*pid).data_location == Some(DataLocation::Storage);
         match args.kind {
             CallArgsKind::Unnamed(exprs) => {
                 for (i, arg) in exprs.iter().enumerate() {
@@ -135,7 +134,7 @@ impl<'gcx> Collector<'gcx> {
                 for arg in named {
                     if funcs.iter().any(|f| {
                         f.parameters.iter().any(|pid| {
-                            hir.variable(*pid).name.is_some_and(|n| n.name == arg.name.name)
+                            self.hir.variable(*pid).name.is_some_and(|n| n.name == arg.name.name)
                                 && is_storage(pid)
                         })
                     }) {
@@ -149,10 +148,9 @@ impl<'gcx> Collector<'gcx> {
     /// Functions a call may dispatch to: `f(..)`, `Contract.f(..)`, or `super.f(..)`, which
     /// resolves through the parent MRO entries only (never the current contract).
     fn callee_candidates(&self, callee: &'gcx Expr<'gcx>) -> Vec<&'gcx Function<'gcx>> {
-        let hir = self.hir;
         match &callee.kind {
             ExprKind::Ident(reses) => {
-                reses.iter().filter_map(Res::as_function).map(|f| hir.function(f)).collect()
+                reses.iter().filter_map(Res::as_function).map(|f| self.hir.function(f)).collect()
             }
             ExprKind::Member(base, method) => {
                 let contracts = if is_builtin(base, sym::super_) {
@@ -171,8 +169,8 @@ impl<'gcx> Collector<'gcx> {
                 };
                 contracts
                     .iter()
-                    .flat_map(|&cid| hir.contract(cid).all_functions())
-                    .map(|fid| hir.function(fid))
+                    .flat_map(|&cid| self.hir.contract(cid).all_functions())
+                    .map(|fid| self.hir.function(fid))
                     .filter(|f| f.name.is_some_and(|n| n.name == method.name))
                     .collect()
             }

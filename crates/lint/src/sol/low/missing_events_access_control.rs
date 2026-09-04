@@ -39,30 +39,30 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsAccessControl {
         gcx: Gcx<'gcx>,
         contract: &'gcx hir::Contract<'gcx>,
     ) {
-        let hir = &gcx.hir;
         if !matches!(contract.kind, ContractKind::Contract | ContractKind::AbstractContract) {
             return;
         }
 
         // Every state variable some access check in the contract depends on.
         let functions: Vec<_> = contract.all_functions().collect();
-        let targets: HashSet<_> = functions.iter().flat_map(|&id| guard_vars(hir, id)).collect();
+        let targets: HashSet<_> =
+            functions.iter().flat_map(|&id| guard_vars(&gcx.hir, id)).collect();
         if targets.is_empty() {
             return;
         }
 
         for func_id in functions {
-            let func = hir.function(func_id);
+            let func = gcx.hir.function(func_id);
             let is_entry_point = func.kind.is_function()
                 && matches!(func.visibility, Visibility::Public | Visibility::External)
                 && !func.is_constructor()
                 && !func.is_special()
                 && !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View);
-            if !is_entry_point || !is_protected(hir, func_id) {
+            if !is_entry_point || !is_protected(&gcx.hir, func_id) {
                 continue;
             }
 
-            let guard_targets = guard_vars(hir, func_id);
+            let guard_targets = guard_vars(&gcx.hir, func_id);
             let mut analyzer = WriteAnalyzer {
                 gcx,
                 targets: &targets,
@@ -84,7 +84,8 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsAccessControl {
                 if write.evented || !emitted.insert(write.var_id) {
                     continue;
                 }
-                let name = hir
+                let name = gcx
+                    .hir
                     .variable(write.var_id)
                     .name
                     .map_or_else(|| "state variable".to_string(), |name| name.to_string());
@@ -443,16 +444,15 @@ fn emitted_event_id(expr: &Expr<'_>) -> Option<EventId> {
 /// Whether the event name or one of its parameter names mentions the state variable: its
 /// normalized name, its singular form, or a role keyword it contains.
 fn event_mentions_state_var(gcx: Gcx<'_>, event_id: EventId, var_id: VariableId) -> bool {
-    let hir = &gcx.hir;
-    let Some(var_name) = hir.variable(var_id).name else { return false };
+    let Some(var_name) = gcx.hir.variable(var_id).name else { return false };
     let var_name = normalize(var_name.as_str());
     let mut keywords = vec![var_name.as_str()];
     keywords.extend(var_name.strip_suffix('s').filter(|singular| !singular.is_empty()));
     let roles = ["owner", "admin", "guardian", "manager", "role"];
     keywords.extend(roles.into_iter().filter(|role| var_name.contains(role)));
 
-    let event = hir.event(event_id);
-    let param_names = event.parameters.iter().filter_map(|&p| hir.variable(p).name);
+    let event = gcx.hir.event(event_id);
+    let param_names = event.parameters.iter().filter_map(|&p| gcx.hir.variable(p).name);
     iter::once(event.name).chain(param_names).any(|name| {
         let name = normalize(name.as_str());
         keywords.iter().any(|keyword| !keyword.is_empty() && name.contains(keyword))

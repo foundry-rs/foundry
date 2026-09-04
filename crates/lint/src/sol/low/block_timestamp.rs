@@ -31,16 +31,15 @@ declare_forge_lint!(
 
 impl<'gcx> LateLintPass<'gcx> for BlockTimestamp {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
-        let hir = &gcx.hir;
         let Some(body) = func.body else { return };
         // The contract's own internal helpers that return `block.timestamp` directly.
         let helpers = func
             .contract
-            .map(|c| hir.contract(c).functions())
+            .map(|c| gcx.hir.contract(c).functions())
             .into_iter()
             .flatten()
             .filter(|&id| {
-                let helper = hir.function(id);
+                let helper = gcx.hir.function(id);
                 matches!(helper.visibility, Visibility::Internal | Visibility::Private)
                     && helper.body.is_some_and(|body| returns_timestamp(body.stmts))
             })

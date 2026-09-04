@@ -55,11 +55,10 @@ impl<'gcx> LateLintPass<'gcx> for ArbitrarySendErc20 {
         gcx: Gcx<'gcx>,
         func: &'gcx hir::Function<'gcx>,
     ) {
-        let hir = &gcx.hir;
         // Library functions forward `from` from their caller; the call site is flagged instead.
         if matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
             || func.is_constructor()
-            || func.contract.is_some_and(|cid| hir.contract(cid).kind == ContractKind::Library)
+            || func.contract.is_some_and(|cid| gcx.hir.contract(cid).kind == ContractKind::Library)
         {
             return;
         }
@@ -67,12 +66,12 @@ impl<'gcx> LateLintPass<'gcx> for ArbitrarySendErc20 {
         // A modifier prefix that always exits makes the body unreachable.
         if func.modifiers.iter().any(|m| {
             m.id.as_function()
-                .and_then(|fid| modifier_prefix(hir, fid))
+                .and_then(|fid| modifier_prefix(&gcx.hir, fid))
                 .is_some_and(|p| p.iter().any(|s| branch_always_exits(s)))
         }) {
             return;
         }
-        let mut a = Analyzer::new(gcx, has_solady_safe_transfer_lib(hir));
+        let mut a = Analyzer::new(gcx, has_solady_safe_transfer_lib(&gcx.hir));
         if let Some(cid) = func.contract {
             a.seed_immutable_facts(cid);
         }
@@ -204,9 +203,8 @@ impl<'gcx> Analyzer<'gcx> {
     /// Seeds facts about `immutable`/`constant` state of `cid` from declaration initializers and
     /// the constructor body.
     fn seed_immutable_facts(&mut self, cid: ContractId) {
-        let hir = &self.gcx.hir;
-        for v in hir.contract(cid).variables() {
-            let var = hir.variable(v);
+        for v in self.gcx.hir.contract(cid).variables() {
+            let var = self.gcx.hir.variable(v);
             if (var.is_immutable() || var.is_constant())
                 && let Some(init) = var.initializer
             {
@@ -218,12 +216,12 @@ impl<'gcx> Analyzer<'gcx> {
                 }
             }
         }
-        if let Some(ctor) = hir.contract(cid).ctor
-            && let Some(body) = hir.function(ctor).body
+        if let Some(ctor) = self.gcx.hir.contract(cid).ctor
+            && let Some(body) = self.gcx.hir.function(ctor).body
         {
             let mut a = Self::new(self.gcx, self.has_solady_lib);
             a.visit_stmts(body.stmts);
-            let is_state = |v: &&VariableId| hir.variable(**v).kind.is_state();
+            let is_state = |v: &&VariableId| self.gcx.hir.variable(**v).kind.is_state();
             self.state.safe_vars.extend(a.state.safe_vars.iter().filter(is_state));
             self.state.self_vars.extend(a.state.self_vars.iter().filter(is_state));
         }
@@ -235,9 +233,9 @@ impl<'gcx> Analyzer<'gcx> {
         if !is_internal_only(func) {
             return;
         }
-        let hir = &self.gcx.hir;
-        let index = callsite_index(hir);
-        let Some((fid, _)) = hir.functions_enumerated().find(|(_, f)| std::ptr::eq(*f, func))
+        let index = callsite_index(&self.gcx.hir);
+        let Some((fid, _)) =
+            self.gcx.hir.functions_enumerated().find(|(_, f)| std::ptr::eq(*f, func))
         else {
             return;
         };
@@ -255,10 +253,9 @@ impl<'gcx> Analyzer<'gcx> {
     /// Hoists `require(param == msg.sender | address(this))` guards from the prefix of modifier
     /// `m` onto the caller's argument variables.
     fn hoist_modifier_facts(&mut self, m: &'gcx Modifier<'gcx>) {
-        let hir = &self.gcx.hir;
         let Some(fid) = m.id.as_function() else { return };
-        let Some(prefix) = modifier_prefix(hir, fid) else { return };
-        let modifier = hir.function(fid);
+        let Some(prefix) = modifier_prefix(&self.gcx.hir, fid) else { return };
+        let modifier = self.gcx.hir.function(fid);
         let mut a = Self::new(self.gcx, self.has_solady_lib);
         for stmt in prefix {
             a.stmt(stmt);
@@ -267,7 +264,7 @@ impl<'gcx> Analyzer<'gcx> {
             // A fact about a rewritten parameter says nothing about the caller's variable.
             if !a.written.contains(&param)
                 && let Some(caller) =
-                    arg_for_param(hir, modifier, param, &m.args).and_then(underlying_var)
+                    arg_for_param(&self.gcx.hir, modifier, param, &m.args).and_then(underlying_var)
                 && self.is_safe_target(caller)
             {
                 if a.state.safe_vars.contains(&param) {
@@ -791,14 +788,14 @@ fn match_sink<'gcx>(
     has_solady_lib: bool,
     expr: &'gcx Expr<'gcx>,
 ) -> Option<Sink<'gcx>> {
-    let hir = &gcx.hir;
     let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
     let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
     let name = ident.name.as_str();
     if matches!(name, "transferFrom" | "safeTransferFrom")
         && let Some(a) = canonical_args(args, &[&["from"], &["to"], &["value", "amount"]])
     {
-        let erc20 = receiver_contract_id(gcx, recv).is_some_and(|cid| has_transfer_from(hir, cid));
+        let erc20 =
+            receiver_contract_id(gcx, recv).is_some_and(|cid| has_transfer_from(&gcx.hir, cid));
         // The HIR does not expose `using` bindings, so the `address` receiver form is accepted
         // only when a Solady-shaped library is compiled in.
         if erc20 || (name == "safeTransferFrom" && has_solady_lib && expr_is_address(gcx, recv)) {
@@ -809,8 +806,8 @@ fn match_sink<'gcx>(
         && let Some(a) =
             canonical_args(args, &[&["token"], &["from"], &["to"], &["value", "amount"]])
         && let Some(cid) = receiver_contract_id(gcx, recv)
-        && hir.contract(cid).kind == ContractKind::Library
-        && library_has_safe_transfer_from(hir, cid)
+        && gcx.hir.contract(cid).kind == ContractKind::Library
+        && library_has_safe_transfer_from(&gcx.hir, cid)
     {
         return Some(Sink { from: a[1], to: a[2], amount: a[3], token: token_key(a[0]) });
     }

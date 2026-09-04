@@ -97,15 +97,14 @@ pub(super) fn resolved_super_function_ids<'gcx>(
     callee: &'gcx Expr<'gcx>,
     explicit_arg_count: usize,
 ) -> impl Iterator<Item = FunctionId> + 'gcx {
-    let hir = &gcx.hir;
     let target = || {
         let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return None };
         if !is_builtin(base, sym::super_) {
             return None;
         }
-        let bases = hir.contract(enclosing_contract?).linearized_bases;
-        bases.iter().skip(1).flat_map(|&id| hir.contract(id).functions()).find(|&id| {
-            let func = hir.function(id);
+        let bases = gcx.hir.contract(enclosing_contract?).linearized_bases;
+        bases.iter().skip(1).flat_map(|&id| gcx.hir.contract(id).functions()).find(|&id| {
+            let func = gcx.hir.function(id);
             func.name.is_some_and(|name| name.name == member.name)
                 && func.parameters.len() == explicit_arg_count
                 && matches!(func.visibility, Visibility::Internal | Visibility::Public)

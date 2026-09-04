@@ -52,10 +52,9 @@ impl<'gcx> LateLintPass<'gcx> for ArbitrarySendEth {
         gcx: Gcx<'gcx>,
         func: &'gcx hir::Function<'gcx>,
     ) {
-        let hir = &gcx.hir;
         if matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
             || func.is_constructor()
-            || func.contract.is_some_and(|cid| hir.contract(cid).kind == ContractKind::Library)
+            || func.contract.is_some_and(|cid| gcx.hir.contract(cid).kind == ContractKind::Library)
         {
             return;
         }
@@ -127,10 +126,9 @@ impl<'gcx> Analyzer<'gcx> {
     /// Hoists `require(param == msg.sender)`-style guards from the prefix of modifier `m` onto
     /// the caller's argument variables.
     fn hoist_modifier_facts(&mut self, m: &'gcx Modifier<'gcx>) {
-        let hir = &self.gcx.hir;
         let ItemId::Function(fid) = m.id else { return };
-        let Some(prefix) = modifier_prefix(hir, fid) else { return };
-        let modifier = hir.function(fid);
+        let Some(prefix) = modifier_prefix(&self.gcx.hir, fid) else { return };
+        let modifier = self.gcx.hir.function(fid);
         let mut a = Self::new(self.gcx);
         for stmt in prefix {
             a.stmt(stmt);
@@ -139,7 +137,7 @@ impl<'gcx> Analyzer<'gcx> {
             if a.state.safe_vars.contains(&param)
                 && !a.written.contains(&param)
                 && let Some(caller) =
-                    arg_for_param(hir, modifier, param, &m.args).and_then(underlying_var)
+                    arg_for_param(&self.gcx.hir, modifier, param, &m.args).and_then(underlying_var)
                 && self.is_safe_target(caller)
             {
                 self.state.safe_vars.insert(caller);
@@ -627,12 +625,11 @@ impl<'gcx> CallerGuards<'gcx> {
             return false;
         }
         self.alias_cache.start(key);
-        let hir = &self.gcx.hir;
         let aliases = var
             .initializer
             .is_some_and(|init| self.rhs_carries_self(var, init, depth - 1, &HashSet::new()))
             || var.contract.is_some_and(|cid| {
-                hir.contracts_enumerated().any(|(c, contract)| {
+                self.gcx.hir.contracts_enumerated().any(|(c, contract)| {
                     (c == cid || contract.linearized_bases.contains(&cid))
                         && self.contract_assigns_self(c, v, depth - 1)
                 })
@@ -697,9 +694,8 @@ impl<'gcx> CallerGuards<'gcx> {
                 lhs_root_var(expr).is_some_and(|v| self.state_var_aliases_self(v, depth))
             }
             ExprKind::Call(callee, args, _) if args.exprs().next().is_none() => {
-                let hir = &self.gcx.hir;
-                callee_fids(hir, callee).into_iter().any(|fid| {
-                    function_no_arg_returns(hir, fid, &mut |e| {
+                callee_fids(&self.gcx.hir, callee).into_iter().any(|fid| {
+                    function_no_arg_returns(&self.gcx.hir, fid, &mut |e| {
                         self.expr_resolves_to_self(e, depth - 1)
                     })
                 })
@@ -716,8 +712,7 @@ impl<'gcx> CallerGuards<'gcx> {
 
     /// Scans every function of `cid` for an assignment that may plant `address(this)` in `v`.
     fn contract_assigns_self(&mut self, cid: ContractId, v: VariableId, depth: u8) -> bool {
-        let hir = &self.gcx.hir;
-        hir.contract(cid).all_functions().any(|fid| {
+        self.gcx.hir.contract(cid).all_functions().any(|fid| {
             let mut scan = SelfAssignScan {
                 guards: &mut *self,
                 target: v,
@@ -780,12 +775,12 @@ impl<'gcx> SelfAssignScan<'_, 'gcx> {
         if self.found || self.stack.len() >= HELPER_CALL_DEPTH || self.stack.contains(&fid) {
             return;
         }
-        let hir = &self.guards.gcx.hir;
-        let f = hir.function(fid);
+        let f = self.guards.gcx.hir.function(fid);
         let Some(body) = f.body else { return };
         let saved = self.locals.clone();
         for &param in f.parameters {
-            if let Some(arg) = args.and_then(|args| arg_for_param(hir, f, param, args))
+            if let Some(arg) =
+                args.and_then(|args| arg_for_param(&self.guards.gcx.hir, f, param, args))
                 && self.may_contain_self(arg)
             {
                 self.locals.insert(param);
@@ -793,7 +788,7 @@ impl<'gcx> SelfAssignScan<'_, 'gcx> {
         }
         self.stack.push(fid);
         for m in f.modifiers {
-            if let Some(invoked) = invoked_function(hir, m) {
+            if let Some(invoked) = invoked_function(&self.guards.gcx.hir, m) {
                 self.scan_function(invoked, Some(&m.args));
             }
         }

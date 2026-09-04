@@ -25,9 +25,8 @@ type Tainted = HashSet<VariableId>;
 
 impl<'gcx> LateLintPass<'gcx> for DivideBeforeMultiply {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
-        let hir = &gcx.hir;
         if let Some(body) = func.body {
-            check_block(ctx, hir, body, &mut Tainted::new());
+            check_block(ctx, &gcx.hir, body, &mut Tainted::new());
         }
     }
 }

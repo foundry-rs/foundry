@@ -30,9 +30,9 @@ declare_forge_lint!(
 
 impl<'gcx> LateLintPass<'gcx> for UninitializedLocal {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
-        let hir = &gcx.hir;
         let Some(body) = func.body else { return };
-        let mut checker = Checker { hir, uninitialized: HashSet::new(), findings: HashMap::new() };
+        let mut checker =
+            Checker { hir: &gcx.hir, uninitialized: HashSet::new(), findings: HashMap::new() };
         for stmt in body.stmts {
             let _ = checker.visit_stmt(stmt);
         }

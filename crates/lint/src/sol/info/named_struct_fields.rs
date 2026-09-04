@@ -20,7 +20,6 @@ declare_forge_lint!(
 
 impl<'gcx> LateLintPass<'gcx> for NamedStructFields {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
-        let hir = &gcx.hir;
         let ExprKind::Call(
             Expr { kind: ExprKind::Ident([Res::Item(ItemId::Struct(struct_id))]), span, .. },
             CallArgs { kind: CallArgsKind::Unnamed(args), .. },
@@ -31,7 +30,7 @@ impl<'gcx> LateLintPass<'gcx> for NamedStructFields {
         };
         // A fix needs one argument per field and every snippet available; otherwise the
         // diagnostic is emitted without a suggestion.
-        let fields = hir.strukt(*struct_id).fields;
+        let fields = gcx.hir.strukt(*struct_id).fields;
         let fix = (!fields.is_empty() && fields.len() == args.len()).then(|| {
             let assignments = fields
                 .iter()
@@ -39,7 +38,7 @@ impl<'gcx> LateLintPass<'gcx> for NamedStructFields {
                 .map(|(field, arg)| {
                     Some(format!(
                         "{}: {}",
-                        hir.variable(*field).name?,
+                        gcx.hir.variable(*field).name?,
                         ctx.span_to_snippet(arg.span)?
                     ))
                 })

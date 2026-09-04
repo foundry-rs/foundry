@@ -24,15 +24,14 @@ declare_forge_lint!(
 
 impl<'gcx> LateLintPass<'gcx> for LiteralInsteadOfConstant {
     fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, id: hir::ContractId) {
-        let hir = &gcx.hir;
         // Group the literals of the contract's own functions and modifiers by semantic value;
         // inherited items group with their declaring contract. Collection covers the executable
         // expressions: the body statements, and the modifier and base-constructor arguments of
         // the header. Parameter and return types stay out, so a fixed array size in a signature
         // is a type annotation rather than a repeated value.
         let mut collector = LiteralCollector { gcx, groups: HashMap::new() };
-        let functions = hir.contract(id).items.iter().filter_map(|item| item.as_function());
-        for function in functions.map(|id| hir.function(id)) {
+        let functions = gcx.hir.contract(id).items.iter().filter_map(|item| item.as_function());
+        for function in functions.map(|id| gcx.hir.function(id)) {
             for modifier in function.modifiers {
                 let _ = collector.visit_modifier(modifier);
             }

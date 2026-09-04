@@ -24,9 +24,8 @@ declare_forge_lint!(
 
 impl<'gcx> LateLintPass<'gcx> for WriteAfterWrite {
     fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
-        let hir = &gcx.hir;
         if let Some(body) = func.body {
-            Analyzer { ctx, hir, pending: HashMap::new() }.check_block(body);
+            Analyzer { ctx, hir: &gcx.hir, pending: HashMap::new() }.check_block(body);
         }
     }
 }

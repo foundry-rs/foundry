@@ -274,12 +274,11 @@ pub const fn write_target<'gcx>(expr: &'gcx Expr<'gcx>) -> Option<&'gcx Expr<'gc
 /// The functions reachable through the runtime dispatch of a most-derived contract: its
 /// interface functions plus the inherited `fallback`/`receive`, if any.
 pub fn runtime_entry_points(gcx: Gcx<'_>, contract_id: hir::ContractId) -> Vec<FunctionId> {
-    let hir = &gcx.hir;
-    let bases = hir.contract(contract_id).linearized_bases;
+    let bases = gcx.hir.contract(contract_id).linearized_bases;
     let mut entries: Vec<_> =
         gcx.interface_functions(contract_id).all().iter().map(|f| f.id).collect();
-    entries.extend(bases.iter().find_map(|&cid| hir.contract(cid).fallback));
-    entries.extend(bases.iter().find_map(|&cid| hir.contract(cid).receive));
+    entries.extend(bases.iter().find_map(|&cid| gcx.hir.contract(cid).fallback));
+    entries.extend(bases.iter().find_map(|&cid| gcx.hir.contract(cid).receive));
     entries
 }
 

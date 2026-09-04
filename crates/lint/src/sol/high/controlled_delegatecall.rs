@@ -456,9 +456,8 @@ fn modifier_safe_vars<'gcx>(
     gcx: Gcx<'gcx>,
     invocation: &'gcx hir::Modifier<'gcx>,
 ) -> Vec<VariableId> {
-    let hir = &gcx.hir;
     let Some(fid) = invocation.id.as_function() else { return Vec::new() };
-    let modifier = hir.function(fid);
+    let modifier = gcx.hir.function(fid);
     let Some(body) = modifier.body else { return Vec::new() };
     let mut prefix = Vec::new();
     if modifier.kind != FunctionKind::Modifier
@@ -471,7 +470,7 @@ fn modifier_safe_vars<'gcx>(
         .parameters
         .iter()
         .filter_map(|&param| {
-            let arg = arg_for_param(hir, modifier, param, &invocation.args)?;
+            let arg = arg_for_param(&gcx.hir, modifier, param, &invocation.args)?;
             Some((param, underlying_var(arg)?))
         })
         .collect();

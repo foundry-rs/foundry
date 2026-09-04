@@ -39,13 +39,12 @@ declare_forge_lint!(
 
 impl<'gcx> LateLintPass<'gcx> for FunctionSelectorCollision {
     fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, proxy_id: ContractId) {
-        let hir = &gcx.hir;
-        let proxy = hir.contract(proxy_id);
+        let proxy = gcx.hir.contract(proxy_id);
         if proxy.kind != ContractKind::Contract || proxy.linearization_failed() {
             return;
         }
         let Some(fallback_id) = proxy.fallback else { return };
-        let fallback = hir.function(fallback_id);
+        let fallback = gcx.hir.function(fallback_id);
         let Some(body) = fallback.body else { return };
 
         let mut collector = DelegateTargetCollector {
@@ -70,7 +69,7 @@ impl<'gcx> LateLintPass<'gcx> for FunctionSelectorCollision {
 
         let proxy_functions = gcx.interface_functions(proxy_id);
         for target in collector.targets {
-            let implementation = hir.contract(target.contract);
+            let implementation = gcx.hir.contract(target.contract);
             if target.contract == proxy_id
                 || implementation.kind == ContractKind::Library
                 || implementation.linearization_failed()
@@ -229,7 +228,6 @@ struct DelegateTargetCollector<'gcx> {
 
 impl<'gcx> DelegateTargetCollector<'gcx> {
     fn visit_modifier_chain(&mut self, cont: Continuation<'gcx>) {
-        let hir = &self.gcx.hir;
         let previous_inputs =
             std::mem::replace(&mut self.current_inputs, cont.body_input.into_iter().collect());
         if let Some(invocation) = cont.modifiers.get(cont.index) {
@@ -237,9 +235,9 @@ impl<'gcx> DelegateTargetCollector<'gcx> {
                 let _ = self.visit_expr(arg);
             }
             if let Some(modifier_id) = invocation.id.as_function()
-                && let Some(modifier_body) = hir.function(modifier_id).body
+                && let Some(modifier_body) = self.gcx.hir.function(modifier_id).body
             {
-                let modifier = hir.function(modifier_id);
+                let modifier = self.gcx.hir.function(modifier_id);
                 let params: Vec<_> = modifier
                     .parameters
                     .iter()
@@ -249,7 +247,8 @@ impl<'gcx> DelegateTargetCollector<'gcx> {
                 let bindings: Vec<_> = params
                     .iter()
                     .filter_map(|&param| {
-                        let arg = arg_for_param(hir, modifier, param.var, &invocation.args)?;
+                        let arg =
+                            arg_for_param(&self.gcx.hir, modifier, param.var, &invocation.args)?;
                         Some((param, full_calldata_source(arg, &self.current_inputs)?))
                     })
                     .collect();

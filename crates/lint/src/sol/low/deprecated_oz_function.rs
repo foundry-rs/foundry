@@ -38,13 +38,12 @@ impl<'gcx> LateLintPass<'gcx> for DeprecatedOzFunction {
 /// a same-name function of an unrelated contract or library stays out, and so does a same-name
 /// local declaration, which fails the provenance check.
 fn is_deprecated_oz(gcx: Gcx<'_>, function_id: FunctionId) -> bool {
-    let hir = &gcx.hir;
-    let function = hir.function(function_id);
+    let function = gcx.hir.function(function_id);
     let (Some(name), Some(contract_id)) = (function.name, function.contract) else { return false };
-    if !source_in_package(hir, function.source, OPENZEPPELIN_ROOTS) {
+    if !source_in_package(&gcx.hir, function.source, OPENZEPPELIN_ROOTS) {
         return false;
     }
-    let contract = hir.contract(contract_id);
+    let contract = gcx.hir.contract(contract_id);
     matches!(
         (name.as_str(), contract.kind.is_library(), contract.name.as_str()),
         ("safeApprove", true, "SafeERC20" | "SafeERC20Upgradeable")

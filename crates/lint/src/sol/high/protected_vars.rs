@@ -47,11 +47,10 @@ impl<'gcx> LateLintPass<'gcx> for ProtectedVars {
         gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
-        let hir = &gcx.hir;
-        let contract = hir.contract(contract_id);
+        let contract = gcx.hir.contract(contract_id);
         if !matches!(contract.kind, ContractKind::Contract | ContractKind::AbstractContract)
             || contract.linearization_failed()
-            || !is_most_derived_contract(hir, contract_id)
+            || !is_most_derived_contract(&gcx.hir, contract_id)
         {
             return;
         }
@@ -68,7 +67,7 @@ impl<'gcx> LateLintPass<'gcx> for ProtectedVars {
         let entries = runtime_entry_points(gcx, contract_id);
 
         for entry_id in entries {
-            let entry = hir.function(entry_id);
+            let entry = gcx.hir.function(entry_id);
             let span = entry.name.map_or(entry.keyword_span(), |name| name.span);
             let context = if entry.contract == Some(contract_id) {
                 String::new()
@@ -79,8 +78,11 @@ impl<'gcx> LateLintPass<'gcx> for ProtectedVars {
             writes.sort_unstable_by_key(|(var_id, _)| *var_id);
             for (var_id, guards) in writes {
                 let Some(requirements) = protected.get(&var_id) else { continue };
-                let variable =
-                    hir.variable(var_id).name.map_or("<unnamed>".to_string(), |n| n.to_string());
+                let variable = gcx
+                    .hir
+                    .variable(var_id)
+                    .name
+                    .map_or("<unnamed>".to_string(), |n| n.to_string());
                 for requirement in requirements {
                     let msg = match requirement {
                         Some(signature) => {
@@ -118,10 +120,9 @@ fn protected_variables(
     gcx: Gcx<'_>,
     bases: &[ContractId],
 ) -> HashMap<VariableId, Vec<Option<String>>> {
-    let hir = &gcx.hir;
     let mut protected = HashMap::new();
-    for var_id in bases.iter().flat_map(|&cid| hir.contract(cid).variables()) {
-        let var = hir.variable(var_id);
+    for var_id in bases.iter().flat_map(|&cid| gcx.hir.contract(cid).variables()) {
+        let var = gcx.hir.variable(var_id);
         if !var.kind.is_state() {
             continue;
         }
@@ -163,11 +164,10 @@ fn write_protection_token(content: &str) -> Option<usize> {
 /// Guard functions and modifiers by Slither signature. Functions take precedence over modifiers;
 /// within a kind, linearization order keeps the most-derived declaration and drops shadowed ones.
 fn protection_targets(gcx: Gcx<'_>, bases: &[ContractId]) -> HashMap<String, FunctionId> {
-    let hir = &gcx.hir;
     let mut targets = HashMap::new();
     for kind in [FunctionKind::Function, FunctionKind::Modifier] {
-        for fid in bases.iter().flat_map(|&cid| hir.contract(cid).functions()) {
-            let function = hir.function(fid);
+        for fid in bases.iter().flat_map(|&cid| gcx.hir.contract(cid).functions()) {
+            let function = gcx.hir.function(fid);
             if function.kind == kind && function.name.is_some() {
                 targets.entry(callable_signature(gcx, fid)).or_insert(fid);
             }
@@ -1050,17 +1050,16 @@ impl<'gcx> EntryAnalyzer<'gcx> {
 
     /// The most-derived override of a virtual function or modifier in the analyzed hierarchy.
     fn dispatch_function(&self, function_id: FunctionId) -> FunctionId {
-        let hir = &self.gcx.hir;
-        let function = hir.function(function_id);
+        let function = self.gcx.hir.function(function_id);
         if !function.virtual_ {
             return function_id;
         }
         let signature = callable_signature(self.gcx, function_id);
         self.bases
             .iter()
-            .flat_map(|&contract_id| hir.contract(contract_id).functions())
+            .flat_map(|&contract_id| self.gcx.hir.contract(contract_id).functions())
             .find(|&candidate_id| {
-                hir.function(candidate_id).kind == function.kind
+                self.gcx.hir.function(candidate_id).kind == function.kind
                     && callable_signature(self.gcx, candidate_id) == signature
             })
             .unwrap_or(function_id)

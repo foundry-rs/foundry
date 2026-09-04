@@ -45,7 +45,6 @@ impl<'gcx> LateLintPass<'gcx> for UncheckedTransferERC20 {
 /// * `function transfer(address to, uint256 amount) external returns (bool);`
 /// * `function transferFrom(address from, address to, uint256 amount) external returns (bool);`
 fn is_erc20_transfer_call<'gcx>(gcx: Gcx<'gcx>, expr: &hir::Expr<'gcx>) -> bool {
-    let hir = &gcx.hir;
     let hir::ExprKind::Call(callee, call_args, ..) = &expr.kind else { return false };
     let hir::ExprKind::Member(receiver, func_ident) = &callee.kind else { return false };
     let params: &[&str] = match (func_ident.as_str(), call_args.len()) {
@@ -54,14 +53,14 @@ fn is_erc20_transfer_call<'gcx>(gcx: Gcx<'gcx>, expr: &hir::Expr<'gcx>) -> bool 
         _ => return false,
     };
     let Some(cid) = receiver_contract_id(gcx, receiver) else { return false };
-    hir.contract_item_ids(cid).filter_map(|item| item.as_function()).any(|fid| {
-        let func = hir.function(fid);
+    gcx.hir.contract_item_ids(cid).filter_map(|item| item.as_function()).any(|fid| {
+        let func = gcx.hir.function(fid);
         func.name.is_some_and(|name| name.name == func_ident.name)
             && func.kind.is_function()
             && func.mutates_state()
             && func.parameters.len() == params.len()
-            && func.parameters.iter().zip(params).all(|(id, ty)| is_elementary(hir, *id, ty))
-            && matches!(func.returns, [ret] if is_elementary(hir, *ret, "bool"))
+            && func.parameters.iter().zip(params).all(|(id, ty)| is_elementary(&gcx.hir, *id, ty))
+            && matches!(func.returns, [ret] if is_elementary(&gcx.hir, *ret, "bool"))
     })
 }
 

@@ -41,12 +41,11 @@ impl<'gcx> LateLintPass<'gcx> for SolmateSafeTransferLib {
 /// rather than a substring keeps a vendored or patched copy under a misleading path such as
 /// `vendor/solmate-fixed/` from being recognized.
 fn is_unchecked_token_op(gcx: Gcx<'_>, function_id: FunctionId) -> bool {
-    let hir = &gcx.hir;
-    let function = hir.function(function_id);
+    let function = gcx.hir.function(function_id);
     let (Some(name), Some(contract_id)) = (function.name, function.contract) else { return false };
-    let contract = hir.contract(contract_id);
+    let contract = gcx.hir.contract(contract_id);
     matches!(name.as_str(), "safeTransfer" | "safeTransferFrom" | "safeApprove")
         && contract.kind.is_library()
         && contract.name.as_str() == "SafeTransferLib"
-        && source_in_package(hir, function.source, &["solmate"])
+        && source_in_package(&gcx.hir, function.source, &["solmate"])
 }

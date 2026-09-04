@@ -103,8 +103,7 @@ impl<'gcx> LateLintPass<'gcx> for ExternalFunction {
         gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
-        let hir = &gcx.hir;
-        let contract = hir.contract(contract_id);
+        let contract = gcx.hir.contract(contract_id);
         // Libraries have different `external` semantics (delegatecall vs inlining); interfaces
         // have no bodies.
         if !ctx.is_lint_enabled(EXTERNAL_FUNCTION.id)
@@ -113,10 +112,10 @@ impl<'gcx> LateLintPass<'gcx> for ExternalFunction {
         {
             return;
         }
-        let index = project_index(hir);
+        let index = project_index(&gcx.hir);
 
         for fid in contract.functions() {
-            let func = hir.function(fid);
+            let func = gcx.hir.function(fid);
             // Overrides can only widen visibility (`external` -> `public`), so the base chain is
             // flagged instead; abstract declarations must stay `public` to be overridable.
             let Some(name) = func.name else { continue };
@@ -128,10 +127,10 @@ impl<'gcx> LateLintPass<'gcx> for ExternalFunction {
                 continue;
             }
             // Only reference parameters currently in `memory` yield meaningful savings.
-            if !func.parameters.iter().any(|&p| is_memory_reference(hir.variable(p))) {
+            if !func.parameters.iter().any(|&p| is_memory_reference(gcx.hir.variable(p))) {
                 continue;
             }
-            let mut finder = ParamEscapeFinder { hir, params: func.parameters };
+            let mut finder = ParamEscapeFinder { hir: &gcx.hir, params: func.parameters };
             if finder.visit_function(func).is_break() {
                 continue;
             }
@@ -139,19 +138,20 @@ impl<'gcx> LateLintPass<'gcx> for ExternalFunction {
             let super_called = index.super_called.get(&name.name).is_some_and(|callers| {
                 callers.iter().any(|&caller| {
                     caller != contract_id
-                        && hir.contract(caller).linearized_bases.contains(&contract_id)
+                        && gcx.hir.contract(caller).linearized_bases.contains(&contract_id)
                 })
             });
             // A referenced same-name/arity function in this contract or a derivative conceptually
             // targets the base's slot. Same-arity overloads are conflated (HIR types have no
             // structural equality), yielding only false negatives.
-            let override_referenced = hir
+            let override_referenced = gcx
+                .hir
                 .contracts_enumerated()
                 .filter(|(cid, c)| *cid == contract_id || c.linearized_bases.contains(&contract_id))
                 .flat_map(|(_, c)| c.functions())
                 .filter(|fid| index.referenced.contains(fid))
                 .any(|fid| {
-                    let other = hir.function(fid);
+                    let other = gcx.hir.function(fid);
                     other.name.is_some_and(|n| n.name == name.name)
                         && other.parameters.len() == func.parameters.len()
                 });

@@ -33,20 +33,19 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectERC721Interface {
         gcx: solar::sema::Gcx<'gcx>,
         contract: &'gcx hir::Contract<'gcx>,
     ) {
-        let hir = &gcx.hir;
         if !contract
             .linearized_bases
             .iter()
-            .any(|base| matches!(hir.contract(*base).name.as_str(), "ERC721" | "IERC721"))
+            .any(|base| matches!(gcx.hir.contract(*base).name.as_str(), "ERC721" | "IERC721"))
         {
             return;
         }
         let matches = |vars: &[hir::VariableId], expected: &[&str]| {
             vars.len() == expected.len()
-                && vars.iter().zip(expected).all(|(&id, &ty)| is_elementary(hir, id, ty))
+                && vars.iter().zip(expected).all(|(&id, &ty)| is_elementary(&gcx.hir, id, ty))
         };
         let functions = contract.items.iter().filter_map(|id| id.as_function());
-        for func in functions.map(|id| hir.function(id)) {
+        for func in functions.map(|id| gcx.hir.function(id)) {
             let Some(name) = func.name.filter(|_| func.kind.is_function()) else { continue };
             if ERC721_FUNCTIONS.iter().any(|(n, params, returns)| {
                 *n == name.as_str()

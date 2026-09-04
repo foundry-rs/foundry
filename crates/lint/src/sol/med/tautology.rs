@@ -22,17 +22,16 @@ declare_forge_lint!(
 
 impl<'gcx> LateLintPass<'gcx> for TypeBasedTautology {
     fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
-        let hir = &gcx.hir;
         let ExprKind::Binary(left, op, right) = &expr.kind else { return };
 
         // A pair of comparisons can cover the complete type range even when neither is
         // tautological on its own, e.g. `x > 0 || x == 0` for `uint`.
         let is_tautology = if op.kind == BinOpKind::Or {
-            matches!((comparison_of(hir, left), comparison_of(hir, right)),
+            matches!((comparison_of(&gcx.hir, left), comparison_of(&gcx.hir, right)),
                 (Some(l), Some(r)) if is_boundary_composition(&l, &r))
         } else {
             split_comparison(expr).is_some_and(|(operand, val, op)| {
-                elem_type_of(hir, operand)
+                elem_type_of(&gcx.hir, operand)
                     .and_then(integer_bounds)
                     .is_some_and(|range| is_tautology(range, val, op))
             })

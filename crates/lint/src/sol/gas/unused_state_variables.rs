@@ -27,14 +27,13 @@ impl<'gcx> LateLintPass<'gcx> for UnusedStateVariables {
         gcx: Gcx<'gcx>,
         contract: &'gcx hir::Contract<'gcx>,
     ) {
-        let hir = &gcx.hir;
         if contract.kind == ContractKind::Interface {
             return;
         }
 
         // Functions (including modifier call args) and state variable initializers cover every
         // variable reference in the contract.
-        let mut collector = UsedVarCollector { hir, used: HashSet::new() };
+        let mut collector = UsedVarCollector { hir: &gcx.hir, used: HashSet::new() };
         for func_id in contract.all_functions() {
             let _ = collector.visit_nested_function(func_id);
         }
@@ -44,7 +43,7 @@ impl<'gcx> LateLintPass<'gcx> for UnusedStateVariables {
 
         // Constants and immutables do not occupy storage slots.
         for var_id in contract.variables() {
-            let var = hir.variable(var_id);
+            let var = gcx.hir.variable(var_id);
             if !var.is_constant() && !var.is_immutable() && !collector.used.contains(&var_id) {
                 ctx.emit(&UNUSED_STATE_VARIABLES, var.span);
             }

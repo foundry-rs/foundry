@@ -79,7 +79,6 @@ pub fn variable_data_location(hir: &hir::Hir<'_>, var_id: VariableId) -> Option<
 /// reconstructs the type structurally from the HIR (locations of storage-rooted lvalues are
 /// preserved). `this`/`super` and unresolvable expressions yield `None`.
 pub fn expr_ty<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> Option<Ty<'gcx>> {
-    let hir = &gcx.hir;
     let expr = expr.peel_parens();
     if !is_this_or_super(expr)
         && let Some(ty) = gcx.type_of_expr(expr.id)
@@ -108,7 +107,7 @@ pub fn expr_ty<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> Option<Ty<'gcx>> {
             }
             let ty = gcx.type_of_res(res);
             Some(match res.as_variable() {
-                Some(v) => ty.with_loc_if_ref_opt(gcx, variable_data_location(hir, v)),
+                Some(v) => ty.with_loc_if_ref_opt(gcx, variable_data_location(&gcx.hir, v)),
                 None => ty,
             })
         }
@@ -187,13 +186,12 @@ pub fn member_ty<'gcx>(gcx: Gcx<'gcx>, base: &Expr<'gcx>, member: Symbol) -> Opt
     if is_this_or_super(base) {
         return None;
     }
-    let hir = &gcx.hir;
     let base_ty = expr_ty(gcx, base)?;
     let item = referenced_item(base);
     let source = item
-        .map(|id| hir.item(id).source())
-        .unwrap_or_else(|| hir.sources_enumerated().next().expect("HIR has a source").0);
-    let contract = item.and_then(|id| hir.item(id).contract());
+        .map(|id| gcx.hir.item(id).source())
+        .unwrap_or_else(|| gcx.hir.sources_enumerated().next().expect("HIR has a source").0);
+    let contract = item.and_then(|id| gcx.hir.item(id).contract());
     unique(gcx.members_of(base_ty, source, contract).filter(|m| m.name == member).map(|m| m.ty))
 }
 

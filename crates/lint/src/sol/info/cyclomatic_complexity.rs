@@ -27,7 +27,6 @@ impl<'gcx> LateLintPass<'gcx> for CyclomaticComplexity {
         gcx: Gcx<'gcx>,
         func: &'gcx hir::Function<'gcx>,
     ) {
-        let hir = &gcx.hir;
         // Modifier definitions are never reported, matching Slither which iterates only
         // declared and top-level functions. Yul helpers declared inside `assembly {}` DO
         // report: Slither scores them as functions of their own.
@@ -37,7 +36,7 @@ impl<'gcx> LateLintPass<'gcx> for CyclomaticComplexity {
         // Visiting the whole function rather than only the body statements also counts
         // decision points in modifier-invocation and base-constructor call arguments. For a
         // structured program the complexity is one plus the decision points.
-        let mut counter = DecisionCounter { hir, decisions: 0 };
+        let mut counter = DecisionCounter { hir: &gcx.hir, decisions: 0 };
         let _ = counter.visit_function(func);
         if counter.decisions + 1 > MAX_COMPLEXITY {
             // A Yul helper's span starts at its name rather than a `function` keyword.

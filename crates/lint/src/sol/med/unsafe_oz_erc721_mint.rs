@@ -39,14 +39,15 @@ impl<'gcx> LateLintPass<'gcx> for UnsafeOzErc721Mint {
         gcx: Gcx<'gcx>,
         func: &'gcx hir::Function<'gcx>,
     ) {
-        let hir = &gcx.hir;
         let cx = Cx { gcx };
         // Only the canonical OZ `_safeMint` wrapper is exempt: it legitimately calls `_mint`
         // next to its receiver check. A user-defined `_safeMint` override stays analyzed, since
         // it can call `_mint` directly without any check.
         if named(func, "_safeMint")
-            && func.contract.is_some_and(|id| is_canonical_erc721(hir.contract(id).name.as_str()))
-            && source_in_package(hir, func.source, OPENZEPPELIN_ROOTS)
+            && func
+                .contract
+                .is_some_and(|id| is_canonical_erc721(gcx.hir.contract(id).name.as_str()))
+            && source_in_package(&gcx.hir, func.source, OPENZEPPELIN_ROOTS)
         {
             return;
         }
@@ -65,7 +66,7 @@ impl<'gcx> LateLintPass<'gcx> for UnsafeOzErc721Mint {
         // `super._mint(...)`.
         let Some(body) = &func.body else { return };
         for (callee, _, span) in cx.calls(body.stmts) {
-            let helper = cx.is_override_delegation_helper(hir.function(callee));
+            let helper = cx.is_override_delegation_helper(gcx.hir.function(callee));
             if cx.unsafe_mint_target(callee, helper, &mut Vec::new()).is_some() {
                 ctx.emit(&UNSAFE_OZ_ERC721_MINT, span);
             }
@@ -96,23 +97,24 @@ impl<'gcx> Cx<'gcx> {
     /// Whether an internal/private function is reached from a user `_mint` override of a
     /// derived contract, making it part of the mint primitive rather than a call site.
     fn is_override_delegation_helper(self, function: &'gcx hir::Function<'gcx>) -> bool {
-        let hir = &self.gcx.hir;
         if !is_internal(function) || (function.override_ && named(function, "_mint")) {
             return false;
         }
         let Some(contract_id) = function.contract else { return false };
-        let Some(function_id) = hir
+        let Some(function_id) = self
+            .gcx
+            .hir
             .contract(contract_id)
             .all_functions()
-            .find(|&id| std::ptr::eq(hir.function(id), function))
+            .find(|&id| std::ptr::eq(self.gcx.hir.function(id), function))
         else {
             return false;
         };
-        hir.contract_ids().any(|candidate| {
-            let candidate = hir.contract(candidate);
+        self.gcx.hir.contract_ids().any(|candidate| {
+            let candidate = self.gcx.hir.contract(candidate);
             candidate.linearized_bases.contains(&contract_id)
                 && candidate.all_functions().any(|id| {
-                    let f = hir.function(id);
+                    let f = self.gcx.hir.function(id);
                     f.override_
                         && named(f, "_mint")
                         && self.function_reaches(id, function_id, &mut Vec::new())
@@ -156,18 +158,17 @@ impl<'gcx> Cx<'gcx> {
             return None;
         }
         seen.push(function_id);
-        let hir = &self.gcx.hir;
-        let function = hir.function(function_id);
+        let function = self.gcx.hir.function(function_id);
         let is_mint = named(function, "_mint");
         if !(is_mint || (helper && is_internal(function))) {
             return None;
         }
-        let contract = hir.contract(function.contract?);
+        let contract = self.gcx.hir.contract(function.contract?);
         if contract.kind.is_library() {
             return None;
         }
         let canonical = is_canonical_erc721(contract.name.as_str())
-            && source_in_package(hir, function.source, OPENZEPPELIN_ROOTS);
+            && source_in_package(&self.gcx.hir, function.source, OPENZEPPELIN_ROOTS);
         if canonical && named(function, "_safeMint") {
             return None;
         }
@@ -185,7 +186,8 @@ impl<'gcx> Cx<'gcx> {
         }
         let body = function.body.as_ref()?;
         // The minted recipient is the override's first address-typed parameter.
-        let recipient = function.parameters.iter().copied().find(|&vid| is_address_type(hir, vid));
+        let recipient =
+            function.parameters.iter().copied().find(|&vid| is_address_type(&self.gcx.hir, vid));
         let calls = self.calls(body.stmts);
         // Each distinct callee is judged once, with its own copy of `seen`: a cycle is a property
         // of one path, and two siblings sharing a transitive target would otherwise silence the
@@ -387,16 +389,15 @@ impl<'gcx> Cx<'gcx> {
     /// different selector, and an attached library or free function runs in the minting
     /// contract without any external call.
     fn is_receiver_hook(self, function_id: FunctionId) -> bool {
-        let hir = &self.gcx.hir;
-        let function = hir.function(function_id);
+        let function = self.gcx.hir.function(function_id);
         let Some(contract) = function.contract else { return false };
         let &[from, to, id, data] = function.parameters else { return false };
-        let kind = |vid: VariableId| &hir.variable(vid).ty.kind;
+        let kind = |vid: VariableId| &self.gcx.hir.variable(vid).ty.kind;
         named(function, "onERC721Received")
-            && !hir.contract(contract).kind.is_library()
+            && !self.gcx.hir.contract(contract).kind.is_library()
             && matches!(function.visibility, Visibility::Public | Visibility::External)
-            && is_address_type(hir, from)
-            && is_address_type(hir, to)
+            && is_address_type(&self.gcx.hir, from)
+            && is_address_type(&self.gcx.hir, to)
             && matches!(kind(id), TypeKind::Elementary(ElementaryType::UInt(_)))
             && matches!(kind(data), TypeKind::Elementary(ElementaryType::Bytes))
     }
@@ -750,7 +751,6 @@ impl<'gcx> Cx<'gcx> {
         token: VariableId,
         seed: GuardCoverage,
     ) -> GuardWalk {
-        let hir = &self.gcx.hir;
         let mut state = GuardWalk { coverage: seed, future_coverage: seed, ..GuardWalk::default() };
         let body_bypass = function
             .body
@@ -772,7 +772,7 @@ impl<'gcx> Cx<'gcx> {
                     .any(|arg| self.expr_may_change_account_code(arg, &[], &[], &mut Vec::new()))
             });
             let ItemId::Function(modifier_id) = modifier.id else { continue };
-            let Some(body) = &hir.function(modifier_id).body else { continue };
+            let Some(body) = &self.gcx.hir.function(modifier_id).body else { continue };
             let Some((prefix, suffix)) = modifier_body_sides(body.stmts) else {
                 // Without a single top-level placeholder, the precise prefix is unknown. Still
                 // retire an inherited snapshot when any path through the modifier may change

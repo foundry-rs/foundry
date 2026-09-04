@@ -45,19 +45,19 @@ impl<'gcx> LateLintPass<'gcx> for UnusedReturn {
 /// arity) has return values, excluding ERC20 `transfer`/`transferFrom` (covered by
 /// `erc20-unchecked-transfer`).
 fn is_unused_return_call<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
-    let hir = &gcx.hir;
     let ExprKind::Call(callee, args, ..) = &expr.peel_parens().kind else { return false };
     let ExprKind::Member(receiver, name) = &callee.peel_parens().kind else { return false };
     let Some(cid) = receiver_contract_id(gcx, receiver) else { return false };
 
     let sig = |vars: &[_], expected: &[&str]| {
         vars.len() == expected.len()
-            && vars.iter().zip(expected).all(|(&id, &ty)| is_elementary(hir, id, ty))
+            && vars.iter().zip(expected).all(|(&id, &ty)| is_elementary(&gcx.hir, id, ty))
     };
-    let mut candidates = hir
+    let mut candidates = gcx
+        .hir
         .contract_item_ids(cid)
         .filter_map(|item| item.as_function())
-        .map(|fid| hir.function(fid))
+        .map(|fid| gcx.hir.function(fid))
         .filter(|f| {
             f.kind.is_function()
                 && f.name.is_some_and(|n| n.name == name.name)

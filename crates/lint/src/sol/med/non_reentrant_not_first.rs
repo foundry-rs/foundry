@@ -22,7 +22,6 @@ impl<'gcx> LateLintPass<'gcx> for NonReentrantNotFirst {
         gcx: Gcx<'gcx>,
         func: &'gcx hir::Function<'gcx>,
     ) {
-        let hir = &gcx.hir;
         if !matches!(
             func.kind,
             FunctionKind::Function | FunctionKind::Fallback | FunctionKind::Receive
@@ -31,7 +30,7 @@ impl<'gcx> LateLintPass<'gcx> for NonReentrantNotFirst {
         }
         for modifier in func.modifiers.iter().skip(1) {
             let is_non_reentrant = modifier.id.as_function().is_some_and(|id| {
-                hir.function(id).name.is_some_and(|name| name.as_str() == "nonReentrant")
+                gcx.hir.function(id).name.is_some_and(|name| name.as_str() == "nonReentrant")
             });
             if is_non_reentrant {
                 ctx.emit(&NON_REENTRANT_NOT_FIRST, modifier.span);

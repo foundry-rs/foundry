@@ -20,9 +20,8 @@ declare_forge_lint!(
 
 impl<'gcx> LateLintPass<'gcx> for AsmKeccak256 {
     fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, stmt: &'gcx hir::Stmt<'gcx>) {
-        let hir = &gcx.hir;
         let expr = match stmt.kind {
-            StmtKind::DeclSingle(var_id) => hir.variable(var_id).initializer,
+            StmtKind::DeclSingle(var_id) => gcx.hir.variable(var_id).initializer,
             StmtKind::Expr(expr)
             | StmtKind::Emit(expr)
             | StmtKind::Revert(expr)

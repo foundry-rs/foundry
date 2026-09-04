@@ -40,8 +40,7 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {
         gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
-        let hir = &gcx.hir;
-        let contract = hir.contract(contract_id);
+        let contract = gcx.hir.contract(contract_id);
         if contract.kind != ContractKind::Contract || contract.linearization_failed() {
             return;
         }
@@ -51,9 +50,9 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {
         let candidates: HashSet<_> = contract
             .linearized_bases
             .iter()
-            .flat_map(|&cid| hir.contract(cid).variables())
+            .flat_map(|&cid| gcx.hir.contract(cid).variables())
             .filter(|&id| {
-                let var = hir.variable(id);
+                let var = gcx.hir.variable(id);
                 var.kind.is_state()
                     && !var.is_constant()
                     && !var.is_immutable()
@@ -74,12 +73,12 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {
             .all()
             .iter()
             .map(|func| func.id)
-            .partition(|&id| is_protected(hir, id));
+            .partition(|&id| is_protected(&gcx.hir, id));
         let entry_points: Vec<_> = protected
             .into_iter()
             .filter(|&id| {
                 !matches!(
-                    hir.function(id).state_mutability,
+                    gcx.hir.function(id).state_mutability,
                     StateMutability::Pure | StateMutability::View
                 )
             })
@@ -115,7 +114,8 @@ impl<'gcx> LateLintPass<'gcx> for MissingEventsArithmetic {
                 if !emitted.insert(write.var_id) {
                     continue;
                 }
-                let name = hir
+                let name = gcx
+                    .hir
                     .variable(write.var_id)
                     .name
                     .map_or_else(|| "state variable".to_string(), |name| name.to_string());

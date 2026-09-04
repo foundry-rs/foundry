@@ -31,8 +31,7 @@ impl<'gcx> LateLintPass<'gcx> for UnprotectedInitializer {
         gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
-        let hir = &gcx.hir;
-        let contract = hir.contract(contract_id);
+        let contract = gcx.hir.contract(contract_id);
         if contract.kind != ContractKind::Contract || contract.linearization_failed() {
             return;
         }
@@ -42,21 +41,22 @@ impl<'gcx> LateLintPass<'gcx> for UnprotectedInitializer {
         // fallback/receive functions.
         let entries = runtime_entry_points(gcx, contract_id);
 
-        let upgradeable =
-            bases.iter().any(|&cid| hir.contract(cid).name.as_str() == "Initializable")
-                || entries.iter().any(|&fid| has_initializer_modifier(hir, hir.function(fid)));
-        let locked = bases.iter().filter_map(|&cid| hir.contract(cid).ctor).any(|ctor| {
+        let upgradeable = bases
+            .iter()
+            .any(|&cid| gcx.hir.contract(cid).name.as_str() == "Initializable")
+            || entries.iter().any(|&fid| has_initializer_modifier(&gcx.hir, gcx.hir.function(fid)));
+        let locked = bases.iter().filter_map(|&cid| gcx.hir.contract(cid).ctor).any(|ctor| {
             reaches(gcx, bases, ctor, |expr| {
                 let ExprKind::Call(callee, ..) = &expr.kind else { return false };
-                callees(hir, callee, bases).into_iter().any(|fid| {
-                    let func = hir.function(fid);
+                callees(&gcx.hir, callee, bases).into_iter().any(|fid| {
+                    let func = gcx.hir.function(fid);
                     func.contract.is_some_and(|cid| bases.contains(&cid))
                         && func.name.is_some_and(|name| name.as_str() == "_disableInitializers")
                 })
             })
         });
         let destructive = entries.iter().any(|&fid| {
-            !has_modifier_named(hir, hir.function(fid), "onlyProxy")
+            !has_modifier_named(&gcx.hir, gcx.hir.function(fid), "onlyProxy")
                 && reaches(gcx, bases, fid, is_destructive_call)
         });
         if !upgradeable || locked || !destructive {
@@ -64,11 +64,11 @@ impl<'gcx> LateLintPass<'gcx> for UnprotectedInitializer {
         }
 
         for fid in entries {
-            let func = hir.function(fid);
+            let func = gcx.hir.function(fid);
             if func.is_part_of_external_interface()
                 && !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
-                && has_initializer_modifier(hir, func)
-                && !has_modifier_named(hir, func, "onlyProxy")
+                && has_initializer_modifier(&gcx.hir, func)
+                && !has_modifier_named(&gcx.hir, func, "onlyProxy")
                 && reaches(gcx, bases, fid, |expr| writes_state(gcx, expr))
             {
                 ctx.emit(&UNPROTECTED_INITIALIZER, func.name.map_or(func.span, |name| name.span));

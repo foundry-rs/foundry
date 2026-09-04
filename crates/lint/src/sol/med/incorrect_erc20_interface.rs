@@ -29,12 +29,11 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectERC20Interface {
         gcx: solar::sema::Gcx<'gcx>,
         contract: &'gcx hir::Contract<'gcx>,
     ) {
-        let hir = &gcx.hir;
         let inherits = |names: &[&str]| {
             contract
                 .linearized_bases
                 .iter()
-                .any(|base| names.contains(&hir.contract(*base).name.as_str()))
+                .any(|base| names.contains(&gcx.hir.contract(*base).name.as_str()))
         };
         // ERC721 tokens offer functions similar to ERC20 that are not compatible with it.
         if !inherits(&["ERC20", "IERC20"]) || inherits(&["ERC721", "IERC721"]) {
@@ -42,10 +41,10 @@ impl<'gcx> LateLintPass<'gcx> for IncorrectERC20Interface {
         }
         let matches = |vars: &[hir::VariableId], expected: &[&str]| {
             vars.len() == expected.len()
-                && vars.iter().zip(expected).all(|(&id, &ty)| is_elementary(hir, id, ty))
+                && vars.iter().zip(expected).all(|(&id, &ty)| is_elementary(&gcx.hir, id, ty))
         };
         let functions = contract.items.iter().filter_map(|id| id.as_function());
-        for func in functions.map(|id| hir.function(id)) {
+        for func in functions.map(|id| gcx.hir.function(id)) {
             let Some(name) = func.name.filter(|_| func.kind.is_function()) else { continue };
             if ERC20_FUNCTIONS.iter().any(|(n, params, returns)| {
                 *n == name.as_str()

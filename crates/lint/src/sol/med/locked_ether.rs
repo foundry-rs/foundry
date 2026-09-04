@@ -37,8 +37,7 @@ impl<'gcx> LateLintPass<'gcx> for LockedEther {
         gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
-        let hir = &gcx.hir;
-        let contract = hir.contract(contract_id);
+        let contract = gcx.hir.contract(contract_id);
         // Libraries and interfaces cannot hold ETH.
         if !ctx.is_lint_enabled(LOCKED_ETHER.id)
             || !matches!(contract.kind, ContractKind::Contract | ContractKind::AbstractContract)
@@ -48,7 +47,7 @@ impl<'gcx> LateLintPass<'gcx> for LockedEther {
         }
 
         let receives = |fid: FunctionId| {
-            let func = hir.function(fid);
+            let func = gcx.hir.function(fid);
             func.state_mutability == StateMutability::Payable && !always_reverts(gcx, func)
         };
         // Runtime entries and the constructor are separate inflow channels: only the leaf's own
@@ -63,7 +62,7 @@ impl<'gcx> LateLintPass<'gcx> for LockedEther {
         let mut visited = HashSet::new();
         let mut checker = SendChecker { gcx, bases: contract.linearized_bases, worklist: entries };
         while let Some(fid) = checker.worklist.pop() {
-            let func = hir.function(fid);
+            let func = gcx.hir.function(fid);
             // Any ETH movement inside an always-reverting function rolls back.
             if !visited.insert(fid) || always_reverts(gcx, func) {
                 continue;

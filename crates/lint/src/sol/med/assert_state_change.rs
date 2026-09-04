@@ -75,8 +75,7 @@ fn is_storage_lvalue(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
 }
 
 fn is_mutating_call<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>, args: &CallArgs<'gcx>) -> bool {
-    let hir = &gcx.hir;
-    let mutates = |fid| hir.function(fid).mutates_state();
+    let mutates = |fid| gcx.hir.function(fid).mutates_state();
     if let ExprKind::Member(base, method) = &callee.kind {
         // `arr.push(..)` / `arr.pop()` on a storage array or `bytes`. The type check keeps
         // contract methods that happen to be named push/pop out of this heuristic.
@@ -103,8 +102,8 @@ fn is_mutating_call<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>, args: &CallArgs<'
         // Member calls on a contract: flag when any overload with this name and arity mutates,
         // so a mutating overload is not hidden behind a view one of the same arity.
         if let Some(cid) = contract_id_of(gcx, base)
-            && hir.contract_item_ids(cid).filter_map(|item| item.as_function()).any(|fid| {
-                let f = hir.function(fid);
+            && gcx.hir.contract_item_ids(cid).filter_map(|item| item.as_function()).any(|fid| {
+                let f = gcx.hir.function(fid);
                 f.name.is_some_and(|n| n.name == method.name)
                     && f.parameters.len() == args.len()
                     && mutates(fid)
@@ -117,7 +116,7 @@ fn is_mutating_call<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>, args: &CallArgs<'
     // any-overload-mutates policy for bare internal calls.
     resolved_function(gcx, callee).is_some_and(mutates)
         || function_ids(callee)
-            .filter(|&fid| hir.function(fid).parameters.len() == args.len())
+            .filter(|&fid| gcx.hir.function(fid).parameters.len() == args.len())
             .any(mutates)
 }
 

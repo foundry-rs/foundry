@@ -559,7 +559,6 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
     }
 
     fn analyze_expr(&mut self, expr: &'gcx Expr<'gcx>, state: &mut FlowState) {
-        let hir = &self.gcx.hir;
         match &expr.kind {
             ExprKind::Assign(lhs, op, rhs) => {
                 if op.is_some() {
@@ -568,7 +567,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 self.analyze_expr(rhs, state);
                 self.analyze_lhs_indices(lhs, state);
                 self.record_write(lhs, state);
-                if let Some(var_id) = lhs_local_var(hir, lhs) {
+                if let Some(var_id) = lhs_local_var(&self.gcx.hir, lhs) {
                     if op.is_none() {
                         self.update_internal_function_target(state, var_id, rhs);
                     } else {
@@ -577,10 +576,11 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 }
                 if self.reentrancy_balance_enabled {
                     let targets = match tuple_elems(lhs) {
-                        Some(elems) => {
-                            elems.iter().map(|e| e.and_then(|e| lhs_local_var(hir, e))).collect()
-                        }
-                        None => vec![lhs_local_var(hir, lhs)],
+                        Some(elems) => elems
+                            .iter()
+                            .map(|e| e.and_then(|e| lhs_local_var(&self.gcx.hir, e)))
+                            .collect(),
+                        None => vec![lhs_local_var(&self.gcx.hir, lhs)],
                     };
                     self.bind_locals(state, &targets, rhs, op.is_some());
                 }
@@ -588,7 +588,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             ExprKind::Delete(inner) => {
                 self.analyze_lhs_indices(inner, state);
                 self.record_write(inner, state);
-                if let Some(var_id) = lhs_local_var(hir, inner) {
+                if let Some(var_id) = lhs_local_var(&self.gcx.hir, inner) {
                     state.internal_function_targets.remove(&var_id);
                     if self.reentrancy_balance_enabled {
                         self.clear_local(state, var_id);
@@ -600,7 +600,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 if is_inc_dec(op.kind) {
                     self.record_write(inner, state);
                     if self.reentrancy_balance_enabled
-                        && let Some(var_id) = lhs_local_var(hir, inner)
+                        && let Some(var_id) = lhs_local_var(&self.gcx.hir, inner)
                     {
                         self.set_self_address_paths(state, var_id, PathAlternatives::new());
                     }
@@ -645,7 +645,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     state.push_call(expr.span, kind);
                 }
                 if self.reentrancy_balance_enabled
-                    && call_options_allow_reentrancy(hir, *opts)
+                    && call_options_allow_reentrancy(&self.gcx.hir, *opts)
                     && callee_can_reenter(self.gcx, callee)
                     && !self.balance_guard_blocks_call(state, callee)
                 {
@@ -663,9 +663,9 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 let rhs_outcome = op.kind == BinOpKind::And;
                 let (mut short_state, mut rhs_state) = (state.clone(), state.clone());
                 let short_reachable =
-                    constrain_boolean_outcome(hir, lhs, !rhs_outcome, &mut short_state);
+                    constrain_boolean_outcome(&self.gcx.hir, lhs, !rhs_outcome, &mut short_state);
                 let rhs_reachable =
-                    constrain_boolean_outcome(hir, lhs, rhs_outcome, &mut rhs_state);
+                    constrain_boolean_outcome(&self.gcx.hir, lhs, rhs_outcome, &mut rhs_state);
                 if rhs_reachable {
                     self.analyze_expr(rhs, &mut rhs_state);
                 }
@@ -694,7 +694,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                 reses
                     .iter()
                     .filter_map(Res::as_variable)
-                    .filter(|v| hir.variable(*v).kind.is_state()),
+                    .filter(|v| self.gcx.hir.variable(*v).kind.is_state()),
             ),
             _ => for_each_child(expr, &mut |child| self.analyze_expr(child, state)),
         }
@@ -735,9 +735,8 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         state
             .invalidated_balance_guards
             .extend(written.iter().filter(|v| self.active_balance_guards.contains(v)));
-        let hir = &self.gcx.hir;
         for_each_lhs_var(lhs, &mut |var_id| {
-            if !hir.variable(var_id).kind.is_state() {
+            if !self.gcx.hir.variable(var_id).kind.is_state() {
                 forget_path_predicates(state, var_id);
             }
         });
@@ -749,8 +748,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         args: &CallArgs<'gcx>,
         state: &mut FlowState,
     ) -> Vec<BalanceValue> {
-        let hir = &self.gcx.hir;
-        let func = hir.function(func_id);
+        let func = self.gcx.hir.function(func_id);
         let Some(body) = func.body.filter(|_| !self.call_stack.contains(&func_id)) else {
             return Vec::new();
         };
@@ -760,7 +758,8 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             func.parameters
                 .iter()
                 .map(|&param| {
-                    arg_for_param(hir, func, param, args).and_then(|arg| path_predicate(hir, arg))
+                    arg_for_param(&self.gcx.hir, func, param, args)
+                        .and_then(|arg| path_predicate(&self.gcx.hir, arg))
                 })
                 .collect()
         } else {
@@ -962,9 +961,12 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     return true;
                 }
                 let mut rhs_state = state.clone();
-                let hir = &self.gcx.hir;
-                constrain_boolean_outcome(hir, lhs, op.kind == BinOpKind::And, &mut rhs_state)
-                    && recurse(rhs, &rhs_state)
+                constrain_boolean_outcome(
+                    &self.gcx.hir,
+                    lhs,
+                    op.kind == BinOpKind::And,
+                    &mut rhs_state,
+                ) && recurse(rhs, &rhs_state)
             }
             ExprKind::Binary(lhs, op, rhs) => {
                 let is_comparison = matches!(
@@ -1728,13 +1730,12 @@ fn balance_reentry_lock<'gcx>(
     gcx: Gcx<'gcx>,
     entry: &'gcx hir::Function<'gcx>,
 ) -> Option<VariableId> {
-    let hir = &gcx.hir;
-    let entry_id = hir.function_ids().find(|&id| std::ptr::eq(hir.function(id), entry))?;
+    let entry_id = gcx.hir.function_ids().find(|&id| std::ptr::eq(gcx.hir.function(id), entry))?;
     let defining_contract = entry.contract?;
-    guard_locks(hir, entry).into_iter().find(|&lock_var| {
+    guard_locks(&gcx.hir, entry).into_iter().find(|&lock_var| {
         let mut deployed = false;
-        for contract_id in hir.contract_ids() {
-            let contract = hir.contract(contract_id);
+        for contract_id in gcx.hir.contract_ids() {
+            let contract = gcx.hir.contract(contract_id);
             if !contract.can_be_deployed()
                 || contract.is_abstract()
                 || !contract.linearized_bases.contains(&defining_contract)
@@ -1749,10 +1750,10 @@ fn balance_reentry_lock<'gcx>(
             deployed = true;
             let guarded = interface
                 .iter()
-                .map(|f| hir.function(f.id))
+                .map(|f| gcx.hir.function(f.id))
                 .filter(|f| !is_view_or_pure(f.state_mutability))
-                .chain(special().map(|id| hir.function(id)))
-                .all(|f| guard_locks(hir, f).contains(&lock_var));
+                .chain(special().map(|id| gcx.hir.function(id)))
+                .all(|f| guard_locks(&gcx.hir, f).contains(&lock_var));
             if !guarded {
                 return false;
             }

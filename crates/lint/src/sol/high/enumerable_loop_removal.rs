@@ -129,15 +129,14 @@ impl<'gcx> LoopFinder<'_, '_, '_, 'gcx> {
     /// right-hand side reads does not reach back into this binding).
     fn apply_bindings(&mut self, stmt: &'gcx Stmt<'gcx>) {
         self.poison_writes(std::slice::from_ref(stmt));
-        let hir = &self.gcx.hir;
         let bindings = &mut self.bindings;
         let mut bind = |var: VariableId, value: &Expr<'_>| {
-            let path = set_path(hir, value, bindings, &mut Vec::new());
+            let path = set_path(&self.gcx.hir, value, bindings, &mut Vec::new());
             bindings.push((var, path));
         };
         match &stmt.kind {
             StmtKind::DeclSingle(var) => {
-                if let Some(init) = hir.variable(*var).initializer {
+                if let Some(init) = self.gcx.hir.variable(*var).initializer {
                     bind(*var, init);
                 }
             }
@@ -441,11 +440,10 @@ fn enumerable_set_call<'gcx>(
     bindings: &Bindings,
     expr: &'gcx Expr<'gcx>,
 ) -> Option<SetCall<'gcx>> {
-    let hir = &gcx.hir;
     let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
     let function_id = resolved_function(gcx, callee)?;
-    let function = hir.function(function_id);
-    let contract = hir.contract(function.contract?);
+    let function = gcx.hir.function(function_id);
+    let contract = gcx.hir.contract(function.contract?);
     if !contract.kind.is_library() || contract.name.as_str() != "EnumerableSet" {
         return None;
     }
@@ -460,12 +458,12 @@ fn enumerable_set_call<'gcx>(
         ExprKind::Member(receiver, _) if is_enumerable_set_value(gcx, receiver) => {
             (Some(&**receiver), 0)
         }
-        _ => (nth_argument(hir, function_id, args, 0, 0), 1),
+        _ => (nth_argument(&gcx.hir, function_id, args, 0, 0), 1),
     };
     Some(SetCall {
         op,
-        set: set_expr.and_then(|expr| set_path(hir, expr, bindings, &mut Vec::new())),
-        index: nth_argument(hir, function_id, args, index_arg, 1),
+        set: set_expr.and_then(|expr| set_path(&gcx.hir, expr, bindings, &mut Vec::new())),
+        index: nth_argument(&gcx.hir, function_id, args, index_arg, 1),
     })
 }
 
@@ -555,8 +553,10 @@ fn nth_argument<'gcx>(
 /// Whether `receiver` is a value of a struct declared in a library (or contract) named
 /// `EnumerableSet`, which tells the bound method form apart from the library-qualified form.
 fn is_enumerable_set_value(gcx: Gcx<'_>, receiver: &Expr<'_>) -> bool {
-    let hir = &gcx.hir;
     let Some(ty) = gcx.type_of_expr(receiver.peel_parens().id) else { return false };
     let TyKind::Struct(id) = ty.peel_refs().kind else { return false };
-    hir.strukt(id).contract.is_some_and(|c| hir.contract(c).name.as_str() == "EnumerableSet")
+    gcx.hir
+        .strukt(id)
+        .contract
+        .is_some_and(|c| gcx.hir.contract(c).name.as_str() == "EnumerableSet")
 }

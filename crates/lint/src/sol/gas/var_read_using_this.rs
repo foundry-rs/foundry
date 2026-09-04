@@ -27,8 +27,7 @@ impl<'gcx> LateLintPass<'gcx> for VarReadUsingThis {
         gcx: Gcx<'gcx>,
         contract_id: hir::ContractId,
     ) {
-        let hir = &gcx.hir;
-        let contract = hir.contract(contract_id);
+        let contract = gcx.hir.contract(contract_id);
         // `this` only exists in (abstract) contracts: libraries have none, interfaces no bodies.
         if !matches!(contract.kind, ContractKind::Contract | ContractKind::AbstractContract) {
             return;
@@ -37,8 +36,10 @@ impl<'gcx> LateLintPass<'gcx> for VarReadUsingThis {
         // Externally callable functions reachable through `this.<name>(...)`, grouped by name so
         // overloads and inherited overrides can be resolved by arity.
         let mut callable = HashMap::<_, Vec<_>>::new();
-        for fid in contract.linearized_bases.iter().flat_map(|&cid| hir.contract(cid).functions()) {
-            let func = hir.function(fid);
+        for fid in
+            contract.linearized_bases.iter().flat_map(|&cid| gcx.hir.contract(cid).functions())
+        {
+            let func = gcx.hir.function(fid);
             if let Some(name) = func.name
                 && func.is_part_of_external_interface()
             {
@@ -46,7 +47,7 @@ impl<'gcx> LateLintPass<'gcx> for VarReadUsingThis {
             }
         }
 
-        let mut finder = ThisReadFinder { ctx, hir, callable, try_target: None };
+        let mut finder = ThisReadFinder { ctx, hir: &gcx.hir, callable, try_target: None };
         // State variable initializers run in the synthesized constructor.
         for var_id in contract.variables() {
             let _ = finder.visit_nested_var(var_id);
