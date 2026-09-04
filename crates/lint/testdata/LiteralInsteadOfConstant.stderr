@@ -1,0 +1,320 @@
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         require(total < 500, "cap");
+   │                         ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         total = x * 500;
+   │                     ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         total = x + 0x64;
+   │                     ━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         total += x + 100;
+   │                      ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         total = 1 ether;
+   │                 ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         total += 1e18;
+   │                  ━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         return msg.sender == 0x1111111111111111111111111111111111111111;
+   │                              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         return a == 0x1111111111111111111111111111111111111111;
+   │                     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         return (hex"deadbeef", hex"deadbeef");
+   │                 ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         return (hex"deadbeef", hex"deadbeef");
+   │                                ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         return x * (-7) + (-7);
+   │                     ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         return x * (-7) + (-7);
+   │                            ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         return (x + ~9) * ~9;
+   │                     ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         return (x + ~9) * ~9;
+   │                           ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         acc = -(-(x + 500));
+   │                       ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         acc += 500;
+   │                ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         flags = ~~(f & 0xff) + 0xff;
+   │                        ━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         flags = ~~(f & 0xff) + 0xff;
+   │                                ━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         m[500] = 1;
+   │           ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         m[500] = 2;
+   │           ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         balances[0x2222222222222222222222222222222222222222] = 1;
+   │                  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         balances[0x2222222222222222222222222222222222222222] = 2;
+   │                  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         mm[500][600] = 1;
+   │            ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         mm[500][600] = 1;
+   │                 ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         mm[500][600] = 2;
+   │            ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         mm[500][600] = 2;
+   │                 ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         signedKeys[-5] = 1;
+   │                    ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         signedKeys[-5] = 2;
+   │                    ━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         bytes calldata cut = d[x + 555:600];
+   │                                    ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         return cut.length + 555;
+   │                             ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │             case 500 { r := 1 }
+   │                  ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         y = r + 500;
+   │                 ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         acc = (500 << n) + 500;
+   │                ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         acc = (500 << n) + 500;
+   │                            ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         acc = x << (n + 700);
+   │                         ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         acc += 700;
+   │                ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │     constructor() Capped(4242) {
+   │                          ━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         x = 4242;
+   │             ━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │     function f() internal withLimit(8888) {
+   │                                     ━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
+note[literal-instead-of-constant]: this literal appears multiple times in the contract; declare a named constant for it
+   ╭▸ ROOT/testdata/LiteralInsteadOfConstant.sol:LL:CC
+   │
+LL │         x = 8888;
+   │             ━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/literal-instead-of-constant
+
