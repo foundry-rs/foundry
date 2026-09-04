@@ -16,7 +16,14 @@ pub fn override_call_strat(
     dictionary_weight: u32,
     payable_value_weight: u32,
 ) -> impl Strategy<Value = CallDetails> + Send + Sync + 'static {
-    let contracts = Arc::new(contracts);
+    // Each generated call owns its function-selection strategy. Share the functions so
+    // constructing that strategy does not clone the entire target ABI on every call.
+    let contracts = Arc::new(
+        contracts
+            .into_iter()
+            .map(|(address, functions)| (address, Arc::new(functions)))
+            .collect::<Vec<_>>(),
+    );
     let contracts_ref = contracts.clone();
     proptest::prop_oneof![
         80 => proptest::strategy::LazyJust::new(move || *target.read()),
@@ -65,4 +72,54 @@ pub fn override_call_strat(
             )
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_dyn_abi::JsonAbiExt;
+    use proptest::{strategy::ValueTree, test_runner::TestRunner};
+
+    #[test]
+    fn override_uses_target_functions() {
+        let contracts = vec![
+            (
+                Address::repeat_byte(1),
+                vec![
+                    Function::parse("first(uint256)").unwrap(),
+                    Function::parse("second()").unwrap(),
+                ],
+            ),
+            (Address::repeat_byte(2), vec![Function::parse("third(address)").unwrap()]),
+        ];
+        let target = Arc::new(RwLock::new(contracts[0].0));
+        let strategy = override_call_strat(
+            EvmFuzzState::test(),
+            contracts.clone(),
+            Arc::clone(&target),
+            FuzzFixtures::default(),
+            40,
+            50,
+        );
+        let mut runner = TestRunner::deterministic();
+        // Exercise changes to the preferred target and the fallback for an unknown target.
+        for preferred in [contracts[0].0, contracts[1].0, Address::ZERO] {
+            *target.write() = preferred;
+            for _ in 0..64 {
+                let mut tree = strategy.new_tree(&mut runner).unwrap();
+                for _ in 0..16 {
+                    let call = tree.current();
+                    let (_, functions) = contracts.iter().find(|(a, _)| *a == call.target).unwrap();
+                    let function =
+                        functions.iter().find(|f| f.selector() == call.calldata[..4]).unwrap();
+                    let values = function.abi_decode_input(&call.calldata[4..]).unwrap();
+                    assert_eq!(function.abi_encode_input(&values).unwrap(), call.calldata);
+                    assert_eq!(call.value, None);
+                    if !tree.simplify() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
