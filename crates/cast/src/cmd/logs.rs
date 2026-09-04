@@ -1,19 +1,18 @@
 use crate::{Cast, encode_event_topic};
-use alloy_dyn_abi::{DynSolType, DynSolValue, Specifier};
+use alloy_dyn_abi::Specifier;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Event;
 use alloy_network::{AnyNetwork, Network};
-use alloy_primitives::{Address, B256, TxHash, hex::FromHex};
+use alloy_primitives::{Address, B256, TxHash};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, FilterSet, Topic};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, Topic};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::RpcOpts,
     utils::{self, LoadConfig},
 };
-use itertools::Itertools;
-use std::{io, str::FromStr};
+use std::str::FromStr;
 
 /// CLI arguments for `cast logs`.
 #[derive(Debug, Parser)]
@@ -95,11 +94,7 @@ impl LogsArgs {
         let provider = alloy_provider::ProviderBuilder::<_, _, AnyNetwork>::default()
             .connect(url.as_ref())
             .await?;
-        let cast = Cast::new(&provider);
-        let mut stdout = io::stdout();
-        cast.subscribe(filter, &mut stdout).await?;
-
-        Ok(())
+        Cast::new(&provider).subscribe(filter, &mut std::io::stdout()).await
     }
 }
 
@@ -120,20 +115,18 @@ impl LogQueryArgs {
     }
 
     /// Resolves names and block tags and builds the RPC filter.
-    pub async fn resolve<P, N>(self, provider: &P) -> Result<(Filter, Option<u64>)>
-    where
-        P: Provider<N> + Clone + Unpin,
-        N: Network,
-    {
+    pub async fn resolve<P: Provider<N>, N: Network>(
+        self,
+        provider: &P,
+    ) -> Result<(Filter, Option<u64>)> {
         let Self { from_block, to_block, address, sig_or_topic, topics_or_args, query_size } = self;
 
         let cast = Cast::new(&provider);
         let addresses = match address {
             Some(addresses) => Some(
-                futures::future::try_join_all(addresses.into_iter().map(|address| {
-                    let provider = provider.clone();
-                    async move { address.resolve(&provider).await }
-                }))
+                futures::future::try_join_all(
+                    addresses.iter().map(|address| address.resolve(provider)),
+                )
                 .await?,
             ),
             None => None,
@@ -158,382 +151,186 @@ fn build_filter(
     address: Option<Vec<Address>>,
     sig_or_topic: Option<String>,
     topics_or_args: Vec<String>,
-) -> Result<Filter, eyre::Error> {
-    let block_option = FilterBlockOption::Range { from_block, to_block };
-    let filter = match sig_or_topic {
-        // Try and parse the signature as an event signature
-        Some(sig_or_topic) => match foundry_common::abi::get_event(sig_or_topic.as_str()) {
-            Ok(event) => build_filter_event_sig(event, topics_or_args)?,
-            Err(_) => {
-                let topics = [vec![sig_or_topic], topics_or_args].concat();
-                build_filter_topics(topics)?
-            }
+) -> Result<Filter> {
+    let topics = match sig_or_topic {
+        Some(sig_or_topic) => match foundry_common::abi::get_event(&sig_or_topic) {
+            Ok(event) => event_topics(&event, &topics_or_args)?,
+            Err(_) => raw_topics([vec![sig_or_topic], topics_or_args].concat())?,
         },
-        None => Filter::default(),
+        None => Default::default(),
     };
 
-    let mut filter = filter.select(block_option);
-
+    let mut filter = Filter {
+        block_option: FilterBlockOption::Range { from_block, to_block },
+        topics,
+        ..Default::default()
+    };
     if let Some(address) = address {
-        filter = filter.address(address)
+        filter = filter.address(address);
     }
-
     Ok(filter)
 }
 
-/// Creates a [Filter] from the given event signature and arguments.
-fn build_filter_event_sig(event: Event, args: Vec<String>) -> Result<Filter, eyre::Error> {
-    let args = args.iter().map(|arg| arg.as_str()).collect::<Vec<_>>();
-
-    // Match the args to indexed inputs. Enumerate so that the ordering can be restored
-    // when merging the inputs with arguments and without arguments
-    let (with_args, without_args): (Vec<_>, Vec<_>) = event
-        .inputs
-        .iter()
-        .filter(|input| input.indexed)
-        .zip(args)
-        .map(|(input, arg)| {
-            let kind = input.resolve()?;
-            Ok((kind, arg))
-        })
-        .collect::<Result<Vec<(DynSolType, &str)>>>()?
-        .into_iter()
-        .enumerate()
-        .partition(|(_, (_, arg))| !arg.is_empty());
-
-    // Only parse the inputs with arguments
-    let indexed_tokens = with_args
-        .iter()
-        .map(|(_, (kind, arg))| kind.coerce_str(arg))
-        .collect::<Result<Vec<DynSolValue>, _>>()?;
-
-    // Merge the inputs restoring the original ordering
-    let mut topics = with_args
-        .into_iter()
-        .zip(indexed_tokens)
-        .map(|((i, _), t)| (i, Some(t)))
-        .chain(without_args.into_iter().map(|(i, _)| (i, None)))
-        .sorted_by(|(i1, _), (i2, _)| i1.cmp(i2))
-        .map(|(_, token)| {
-            token.map(|token| Topic::from(encode_event_topic(&token))).unwrap_or(Topic::default())
-        })
-        .collect::<Vec<Topic>>();
-
-    topics.resize(3, Topic::default());
-
-    let filter = Filter::new()
-        .event_signature(event.selector())
-        .topic1(topics[0].clone())
-        .topic2(topics[1].clone())
-        .topic3(topics[2].clone());
-
-    Ok(filter)
+/// Encodes `args` as the indexed topics of `event`; empty arguments match any value.
+fn event_topics(event: &Event, args: &[String]) -> Result<[Topic; 4]> {
+    let mut topics = vec![Topic::from(event.selector())];
+    for (input, arg) in event.inputs.iter().filter(|input| input.indexed).zip(args) {
+        let kind = input.resolve()?;
+        topics.push(if arg.is_empty() {
+            Topic::default()
+        } else {
+            Topic::from(encode_event_topic(&kind.coerce_str(arg)?))
+        });
+    }
+    topics.resize(4, Topic::default());
+    Ok(topics.try_into().unwrap())
 }
 
-/// Creates a [Filter] from raw topic hashes.
-fn build_filter_topics(topics: Vec<String>) -> Result<Filter, eyre::Error> {
+/// Parses raw topic hashes; empty topics match any value.
+fn raw_topics(topics: Vec<String>) -> Result<[Topic; 4]> {
     let mut topics = topics
         .into_iter()
         .map(|topic| {
-            if topic.is_empty() {
-                Ok(Topic::default())
+            Ok(if topic.is_empty() {
+                Topic::default()
             } else {
-                Ok(Topic::from(B256::from_hex(topic.as_str())?))
-            }
+                Topic::from(B256::from_str(&topic)?)
+            })
         })
-        .collect::<Result<Vec<FilterSet<_>>>>()?;
-
+        .collect::<Result<Vec<_>>>()?;
     topics.resize(4, Topic::default());
-
-    let filter = Filter::new()
-        .event_signature(topics[0].clone())
-        .topic1(topics[1].clone())
-        .topic2(topics[2].clone())
-        .topic3(topics[3].clone());
-
-    Ok(filter)
+    Ok(topics.try_into().unwrap())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{U160, U256, keccak256};
-    use alloy_rpc_types::ValueOrArray;
+    use alloy_primitives::keccak256;
 
     const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
     const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";
     const TRANSFER_TOPIC: &str =
         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
+    fn filter(sig_or_topic: &str, args: &[&str]) -> Result<Filter> {
+        build_filter(
+            None,
+            None,
+            None,
+            Some(sig_or_topic.to_string()),
+            args.iter().map(|s| s.to_string()).collect(),
+        )
+    }
+
+    fn topics(topics: [Topic; 4]) -> Filter {
+        Filter { topics, ..Default::default() }
+    }
+
     #[test]
-    fn test_build_filter_basic() {
+    fn builds_filters() {
+        let transfer_topic = B256::from_str(TRANSFER_TOPIC).unwrap();
+        let addr: Address = ADDRESS.parse().unwrap();
+        let addr_topic = Topic::from(B256::left_padding_from(addr.as_slice()));
+        let any = Topic::default;
+
         let from_block = Some(BlockNumberOrTag::from(1337));
         let to_block = Some(BlockNumberOrTag::Latest);
-        let address = Address::from_str(ADDRESS).ok();
-        let expected = Filter {
-            block_option: FilterBlockOption::Range { from_block, to_block },
-            address: ValueOrArray::Value(address.unwrap()).into(),
-            topics: [vec![].into(), vec![].into(), vec![].into(), vec![].into()],
-        };
-        let filter =
-            build_filter(from_block, to_block, address.map(|addr| vec![addr]), None, vec![])
-                .unwrap();
-        assert_eq!(filter, expected)
-    }
+        let basic = build_filter(from_block, to_block, Some(vec![addr]), None, vec![]).unwrap();
+        assert_eq!(
+            basic,
+            Filter {
+                block_option: FilterBlockOption::Range { from_block, to_block },
+                address: addr.into(),
+                topics: Default::default(),
+            }
+        );
 
-    #[test]
-    fn test_build_filter_sig() {
-        let expected = Filter {
-            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: vec![].into(),
-            topics: [
-                B256::from_str(TRANSFER_TOPIC).unwrap().into(),
-                vec![].into(),
-                vec![].into(),
-                vec![].into(),
-            ],
-        };
-        let filter =
-            build_filter(None, None, None, Some(TRANSFER_SIG.to_string()), vec![]).unwrap();
-        assert_eq!(filter, expected)
-    }
+        let cases: [(&str, &[&str], [Topic; 4]); 8] = [
+            (TRANSFER_SIG, &[], [transfer_topic.into(), any(), any(), any()]),
+            (TRANSFER_SIG, &[ADDRESS], [transfer_topic.into(), addr_topic.clone(), any(), any()]),
+            (TRANSFER_SIG, &["", ADDRESS], [transfer_topic.into(), any(), addr_topic, any()]),
+            (
+                TRANSFER_TOPIC,
+                &[TRANSFER_TOPIC],
+                [transfer_topic.into(), transfer_topic.into(), any(), any()],
+            ),
+            (
+                TRANSFER_TOPIC,
+                &["", TRANSFER_TOPIC],
+                [transfer_topic.into(), any(), transfer_topic.into(), any()],
+            ),
+            (
+                "event Owned(uint256 value, address indexed owner)",
+                &[ADDRESS],
+                [
+                    Event::parse("event Owned(uint256 value, address indexed owner)")
+                        .unwrap()
+                        .selector()
+                        .into(),
+                    B256::left_padding_from(addr.as_slice()).into(),
+                    any(),
+                    any(),
+                ],
+            ),
+            (
+                "event Message(string indexed value)",
+                &["hello"],
+                [
+                    Event::parse("event Message(string indexed value)").unwrap().selector().into(),
+                    keccak256("hello").into(),
+                    any(),
+                    any(),
+                ],
+            ),
+            (
+                "Swap(address indexed from, address indexed to, uint256 value)",
+                &[],
+                [
+                    Event::parse(
+                        "event Swap(address indexed from, address indexed to, uint256 value)",
+                    )
+                    .unwrap()
+                    .selector()
+                    .into(),
+                    any(),
+                    any(),
+                    any(),
+                ],
+            ),
+        ];
+        for (sig_or_topic, args, expected) in cases {
+            assert_eq!(filter(sig_or_topic, args).unwrap(), topics(expected), "{sig_or_topic}");
+        }
 
-    #[test]
-    fn test_build_filter_mismatch() {
-        let expected = Filter {
-            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: vec![].into(),
-            topics: [
-                B256::from_str(TRANSFER_TOPIC).unwrap().into(),
-                vec![].into(),
-                vec![].into(),
-                vec![].into(),
-            ],
-        };
-        let filter = build_filter(
+        let multiple = build_filter(
             None,
             None,
-            None,
-            Some("Swap(address indexed from, address indexed to, uint256 value)".to_string()), // Change signature, should result in error
-            vec![],
-        )
-        .unwrap();
-        assert_ne!(filter, expected)
-    }
-
-    #[test]
-    fn test_build_filter_sig_with_arguments() {
-        let addr = Address::from_str(ADDRESS).unwrap();
-        let addr = U256::from(U160::from_be_bytes(addr.0.0));
-        let expected = Filter {
-            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: vec![].into(),
-            topics: [
-                B256::from_str(TRANSFER_TOPIC).unwrap().into(),
-                addr.into(),
-                vec![].into(),
-                vec![].into(),
-            ],
-        };
-        let filter = build_filter(
-            None,
-            None,
-            None,
-            Some(TRANSFER_SIG.to_string()),
-            vec![ADDRESS.to_string()],
-        )
-        .unwrap();
-        assert_eq!(filter, expected)
-    }
-
-    #[test]
-    fn test_build_filter_sig_with_non_indexed_input_first() {
-        let event = Event::parse("event Owned(uint256 value, address indexed owner)").unwrap();
-        let address = Address::from_str(ADDRESS).unwrap();
-        let expected = Filter {
-            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: vec![].into(),
-            topics: [
-                event.selector().into(),
-                B256::left_padding_from(address.as_slice()).into(),
-                vec![].into(),
-                vec![].into(),
-            ],
-        };
-
-        let filter = build_filter_event_sig(event, vec![ADDRESS.to_string()]).unwrap();
-
-        assert_eq!(filter, expected);
-    }
-
-    #[test]
-    fn test_build_filter_sig_with_dynamic_indexed_input() {
-        let event = Event::parse("event Message(string indexed value)").unwrap();
-        let expected = Filter {
-            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: vec![].into(),
-            topics: [
-                event.selector().into(),
-                keccak256("hello").into(),
-                vec![].into(),
-                vec![].into(),
-            ],
-        };
-
-        let filter = build_filter_event_sig(event, vec!["hello".to_string()]).unwrap();
-
-        assert_eq!(filter, expected);
-    }
-
-    #[test]
-    fn test_build_filter_sig_with_skipped_arguments() {
-        let addr = Address::from_str(ADDRESS).unwrap();
-        let addr = U256::from(U160::from_be_bytes(addr.0.0));
-        let expected = Filter {
-            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: vec![].into(),
-            topics: [
-                vec![B256::from_str(TRANSFER_TOPIC).unwrap()].into(),
-                vec![].into(),
-                addr.into(),
-                vec![].into(),
-            ],
-        };
-        let filter = build_filter(
-            None,
-            None,
-            None,
-            Some(TRANSFER_SIG.to_string()),
-            vec![String::new(), ADDRESS.to_string()],
-        )
-        .unwrap();
-        assert_eq!(filter, expected)
-    }
-
-    #[test]
-    fn test_build_filter_with_topics() {
-        let expected = Filter {
-            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: vec![].into(),
-            topics: [
-                vec![B256::from_str(TRANSFER_TOPIC).unwrap()].into(),
-                vec![B256::from_str(TRANSFER_TOPIC).unwrap()].into(),
-                vec![].into(),
-                vec![].into(),
-            ],
-        };
-        let filter = build_filter(
-            None,
-            None,
-            None,
-            Some(TRANSFER_TOPIC.to_string()),
-            vec![TRANSFER_TOPIC.to_string()],
-        )
-        .unwrap();
-
-        assert_eq!(filter, expected)
-    }
-
-    #[test]
-    fn test_build_filter_with_skipped_topic() {
-        let expected = Filter {
-            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: vec![].into(),
-            topics: [
-                vec![B256::from_str(TRANSFER_TOPIC).unwrap()].into(),
-                vec![].into(),
-                vec![B256::from_str(TRANSFER_TOPIC).unwrap()].into(),
-                vec![].into(),
-            ],
-        };
-        let filter = build_filter(
-            None,
-            None,
-            None,
-            Some(TRANSFER_TOPIC.to_string()),
-            vec![String::new(), TRANSFER_TOPIC.to_string()],
-        )
-        .unwrap();
-
-        assert_eq!(filter, expected)
-    }
-
-    #[test]
-    fn test_build_filter_with_multiple_addresses() {
-        let expected = Filter {
-            block_option: FilterBlockOption::Range { from_block: None, to_block: None },
-            address: vec![Address::ZERO, ADDRESS.parse().unwrap()].into(),
-            topics: [
-                vec![TRANSFER_TOPIC.parse().unwrap()].into(),
-                vec![].into(),
-                vec![].into(),
-                vec![].into(),
-            ],
-        };
-        let filter = build_filter(
-            None,
-            None,
-            Some(vec![Address::ZERO, ADDRESS.parse().unwrap()]),
+            Some(vec![Address::ZERO, addr]),
             Some(TRANSFER_TOPIC.to_string()),
             vec![],
         )
         .unwrap();
-        assert_eq!(filter, expected)
+        assert_eq!(
+            multiple,
+            Filter {
+                address: vec![Address::ZERO, addr].into(),
+                topics: [transfer_topic.into(), any(), any(), any()],
+                ..Default::default()
+            }
+        );
     }
 
     #[test]
-    fn test_build_filter_sig_with_mismatched_argument() {
-        let err = build_filter(
-            None,
-            None,
-            None,
-            Some(TRANSFER_SIG.to_string()),
-            vec!["1234".to_string()],
-        )
-        .err()
-        .unwrap()
-        .to_string()
-        .to_lowercase();
-
-        assert_eq!(err, "parser error:\n1234\n^\ninvalid string length");
-    }
-
-    #[test]
-    fn test_build_filter_with_invalid_sig_or_topic() {
-        let err = build_filter(None, None, None, Some("asdasdasd".to_string()), vec![])
-            .err()
-            .unwrap()
-            .to_string()
-            .to_lowercase();
-
-        assert_eq!(err, "odd number of digits");
-    }
-
-    #[test]
-    fn test_build_filter_with_invalid_sig_or_topic_hex() {
-        let err = build_filter(None, None, None, Some(ADDRESS.to_string()), vec![])
-            .err()
-            .unwrap()
-            .to_string()
-            .to_lowercase();
-
-        assert_eq!(err, "invalid string length");
-    }
-
-    #[test]
-    fn test_build_filter_with_invalid_topic() {
-        let err = build_filter(
-            None,
-            None,
-            None,
-            Some(TRANSFER_TOPIC.to_string()),
-            vec!["1234".to_string()],
-        )
-        .err()
-        .unwrap()
-        .to_string()
-        .to_lowercase();
-
-        assert_eq!(err, "invalid string length");
+    fn rejects_invalid_arguments_and_topics() {
+        let cases = [
+            (TRANSFER_SIG, &["1234"][..], "parser error:\n1234\n^\ninvalid string length"),
+            ("asdasdasd", &[], "odd number of digits"),
+            (ADDRESS, &[], "invalid string length"),
+            (TRANSFER_TOPIC, &["1234"], "invalid string length"),
+        ];
+        for (sig_or_topic, args, expected) in cases {
+            let err = filter(sig_or_topic, args).unwrap_err().to_string().to_lowercase();
+            assert_eq!(err, expected, "{sig_or_topic}");
+        }
     }
 }
