@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{branch_always_exits, is_require_or_assert},
+        analysis::{is_exit_call, is_require_or_assert, tuple_elems},
     },
 };
 use alloy_primitives::{U256, uint};
@@ -15,13 +15,15 @@ use solar::{
         builtins::Builtin,
         eval::ConstValue,
         hir::{
-            self, ExprKind, ItemId, LoopSource, Res, StateMutability, StmtKind, TypeKind, Visit,
+            self, Expr, ExprId, ExprKind, ItemId, LoopSource, Res, StateMutability, Stmt,
+            StmtKind, TypeKind, VariableId, Visit,
         },
         ty::TyKind,
     },
 };
 use std::{
     collections::{HashMap, HashSet},
+    mem,
     ops::ControlFlow,
 };
 
@@ -45,16 +47,18 @@ impl<'hir> LateLintPass<'hir> for Ecrecover {
         func: &'hir hir::Function<'hir>,
     ) {
         let Some(body) = func.body else { return };
-        let mut analyzer = Analyzer::new(gcx, hir, func.returns);
-        let mut falls_through = true;
-        for stmt in body.stmts {
-            let _ = analyzer.visit_stmt(stmt);
-            if analyzer.stmt_always_exits(stmt) {
-                falls_through = false;
-                break;
-            }
-        }
-        if falls_through {
+        let mut analyzer = Analyzer {
+            gcx,
+            hir,
+            returns: func.returns,
+            state: FlowState::default(),
+            next_value: 0,
+            hits: Vec::new(),
+            deferred: HashMap::new(),
+            loop_exits: Vec::new(),
+            loop_next: None,
+        };
+        if analyzer.run_block(body.stmts) {
             analyzer.use_return_values();
         }
         for span in analyzer.hits {
@@ -63,19 +67,15 @@ impl<'hir> LateLintPass<'hir> for Ecrecover {
     }
 }
 
+/// Symbolic identity of a value: a variable's incoming value or the result of an assignment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum ValueId {
-    Initial(hir::VariableId),
+    Initial(VariableId),
     Assigned(u32),
 }
 
-#[derive(Clone, Copy, Default)]
-struct AssignedValue {
-    value: Option<ValueId>,
-    low_s: bool,
-}
-
-#[derive(Clone, Copy)]
+/// An `ecrecover` result held in a local that has been neither observed nor validated yet.
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct PendingRecovery {
     signature: Option<ValueId>,
     span: Span,
@@ -83,73 +83,48 @@ struct PendingRecovery {
 
 #[derive(Clone, Default)]
 struct FlowState {
-    values: HashMap<hir::VariableId, ValueId>,
+    values: HashMap<VariableId, ValueId>,
+    /// Values proven to be a canonical (low) `s`.
     low_s: HashSet<ValueId>,
     pending: HashMap<ValueId, Vec<PendingRecovery>>,
 }
 
-#[derive(Clone, Default)]
-struct LoopEffects {
-    values: HashSet<hir::VariableId>,
-    mutable_state: bool,
-    all_values: bool,
-}
-
-impl LoopEffects {
-    fn merge(&mut self, other: Self) {
-        self.values.extend(other.values);
-        self.mutable_state |= other.mutable_state;
-        self.all_values |= other.all_values;
-    }
-}
-
 impl FlowState {
-    fn value(&self, var: hir::VariableId) -> ValueId {
+    fn value(&self, var: VariableId) -> ValueId {
         self.values.get(&var).copied().unwrap_or(ValueId::Initial(var))
     }
+
+    fn add_pending(&mut self, value: ValueId, recovery: PendingRecovery) {
+        let recoveries = self.pending.entry(value).or_default();
+        if !recoveries.contains(&recovery) {
+            recoveries.push(recovery);
+        }
+    }
 }
+
+/// A local variable written by an assignment, paired with the expression it receives.
+type Pair<'hir> = (Option<VariableId>, Option<&'hir Expr<'hir>>);
 
 struct Analyzer<'hir> {
     gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
-    returns: &'hir [hir::VariableId],
+    returns: &'hir [VariableId],
     state: FlowState,
     next_value: u32,
     hits: Vec<Span>,
-    ignored_reads: HashSet<ValueId>,
-    deferred_calls: HashSet<hir::ExprId>,
-    captured_recoveries: HashMap<hir::ExprId, PendingRecovery>,
-    stored_results: HashSet<hir::ExprId>,
+    /// `ecrecover` calls whose result is being stored into a local. Their recovery is captured
+    /// here instead of being reported at the call site.
+    deferred: HashMap<ExprId, Option<PendingRecovery>>,
+    /// States reaching `break`/`continue` or the end of the innermost loop body.
+    loop_exits: Vec<FlowState>,
+    /// Update expression of the innermost `for` loop, which `continue` still executes.
+    loop_next: Option<&'hir Expr<'hir>>,
 }
 
 impl<'hir> Analyzer<'hir> {
-    fn new(gcx: Gcx<'hir>, hir: &'hir hir::Hir<'hir>, returns: &'hir [hir::VariableId]) -> Self {
-        Self {
-            gcx,
-            hir,
-            returns,
-            state: FlowState::default(),
-            next_value: 0,
-            hits: Vec::new(),
-            ignored_reads: HashSet::new(),
-            deferred_calls: HashSet::new(),
-            captured_recoveries: HashMap::new(),
-            stored_results: HashSet::new(),
-        }
-    }
-
     const fn fresh_value(&mut self) -> ValueId {
-        let value = ValueId::Assigned(self.next_value);
         self.next_value += 1;
-        value
-    }
-
-    fn snapshot(&self) -> FlowState {
-        self.state.clone()
-    }
-
-    fn restore(&mut self, state: FlowState) {
-        self.state = state;
+        ValueId::Assigned(self.next_value)
     }
 
     fn join(&mut self, left: FlowState, right: FlowState) -> FlowState {
@@ -157,45 +132,33 @@ impl<'hir> Analyzer<'hir> {
             low_s: left.low_s.intersection(&right.low_s).copied().collect(),
             ..FlowState::default()
         };
+        let mut merged = HashMap::new();
         let vars: HashSet<_> = left.values.keys().chain(right.values.keys()).copied().collect();
-        let mut joined_values = HashMap::new();
-
-        for var in &vars {
-            let var = *var;
-            let left_value = left.value(var);
-            let right_value = right.value(var);
-            if left_value == right_value {
-                joined.values.insert(var, left_value);
-                continue;
-            }
-
-            let value = *joined_values
-                .entry((left_value, right_value))
-                .or_insert_with(|| self.fresh_value());
-            if left.low_s.contains(&left_value) && right.low_s.contains(&right_value) {
-                joined.low_s.insert(value);
-            }
-            joined.values.insert(var, value);
-        }
         for var in vars {
-            let value = joined.value(var);
-            for recovery in left
-                .pending
-                .get(&left.value(var))
-                .into_iter()
-                .flatten()
-                .chain(right.pending.get(&right.value(var)).into_iter().flatten())
-                .copied()
-            {
-                let recoveries = joined.pending.entry(value).or_default();
-                if !recoveries.iter().any(|existing| {
-                    existing.span == recovery.span && existing.signature == recovery.signature
-                }) {
-                    recoveries.push(recovery);
+            let (l, r) = (left.value(var), right.value(var));
+            let value = if l == r {
+                l
+            } else {
+                let value = *merged.entry((l, r)).or_insert_with(|| self.fresh_value());
+                if left.low_s.contains(&l) && right.low_s.contains(&r) {
+                    joined.low_s.insert(value);
                 }
+                value
+            };
+            joined.values.insert(var, value);
+            for recovery in left.pending.get(&l).into_iter().chain(right.pending.get(&r)).flatten()
+            {
+                joined.add_pending(value, *recovery);
             }
         }
         joined
+    }
+
+    /// Continues from the join of `states`; returns `false` when no path continues.
+    fn join_all(&mut self, states: Vec<FlowState>) -> bool {
+        let Some(joined) = states.into_iter().reduce(|l, r| self.join(l, r)) else { return false };
+        self.state = joined;
+        true
     }
 
     fn emit_hit(&mut self, span: Span) {
@@ -204,783 +167,460 @@ impl<'hir> Analyzer<'hir> {
         }
     }
 
-    fn record_pending(&mut self, var: hir::VariableId, recovery: PendingRecovery) {
-        let value = self.state.value(var);
-        let recoveries = self.state.pending.entry(value).or_default();
-        if !recoveries.iter().any(|existing| {
-            existing.span == recovery.span && existing.signature == recovery.signature
-        }) {
-            recoveries.push(recovery);
-        }
-    }
-
     fn use_value(&mut self, value: ValueId) {
-        if self.ignored_reads.contains(&value) {
-            return;
-        }
-        if let Some(recoveries) = self.state.pending.remove(&value) {
-            for recovery in recoveries {
-                self.emit_hit(recovery.span);
-            }
+        for recovery in self.state.pending.remove(&value).unwrap_or_default() {
+            self.emit_hit(recovery.span);
         }
     }
 
     fn use_return_values(&mut self) {
-        let values: Vec<_> = self.returns.iter().map(|var| self.state.value(*var)).collect();
-        for value in values {
-            self.use_value(value);
+        for &var in self.returns {
+            self.use_value(self.state.value(var));
         }
     }
 
     fn use_all_pending(&mut self) {
-        for recoveries in std::mem::take(&mut self.state.pending).into_values() {
+        for recoveries in mem::take(&mut self.state.pending).into_values() {
             for recovery in recoveries {
                 self.emit_hit(recovery.span);
             }
         }
     }
 
+    /// Drops pending recoveries whose signature has since been proven canonical.
     fn validate_pending(&mut self) {
         let low_s = &self.state.low_s;
         self.state.pending.retain(|_, recoveries| {
-            recoveries.retain(|recovery| {
-                !recovery.signature.is_some_and(|signature| low_s.contains(&signature))
-            });
+            recoveries.retain(|r| !r.signature.is_some_and(|s| low_s.contains(&s)));
             !recoveries.is_empty()
         });
     }
 
-    fn current_value(&self, expr: &'hir hir::Expr<'hir>) -> Option<ValueId> {
+    fn current_value(&self, expr: &Expr<'_>) -> Option<ValueId> {
         match &expr.peel_parens().kind {
-            ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-                Res::Item(ItemId::Variable(var)) => Some(self.state.value(*var)),
-                _ => None,
-            }),
-            ExprKind::Call(callee, args, _)
-                if is_transparent_signature_cast(callee) && args.len() == 1 =>
-            {
-                args.exprs().next().and_then(|arg| self.current_value(arg))
-            }
             ExprKind::Assign(lhs, None, _) => self.current_value(lhs),
-            _ => None,
+            _ => var_of(expr).map(|var| self.state.value(var)),
         }
     }
 
-    fn deferable_target(&self, expr: &'hir hir::Expr<'hir>) -> Option<hir::VariableId> {
-        underlying_var(expr).filter(|var| self.hir.variable(*var).is_local_variable())
+    fn is_local(&self, var: VariableId) -> bool {
+        self.hir.variable(var).is_local_variable()
     }
 
-    fn ecrecover_call_id(&self, expr: &'hir hir::Expr<'hir>) -> Option<hir::ExprId> {
+    /// The call expression and signature argument of a builtin `ecrecover` call.
+    fn ecrecover_call(&self, expr: &'hir Expr<'hir>) -> Option<(&'hir Expr<'hir>, &'hir Expr<'hir>)> {
         let expr = expr.peel_parens();
         let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
-        (is_ecrecover_builtin(self.gcx, callee) && args.len() == 4).then_some(expr.id)
+        let is_ecrecover = self.gcx.resolved_builtin(callee.peel_parens()) == Some(Builtin::EcRecover);
+        (is_ecrecover && args.len() == 4).then_some(expr).zip(args.exprs().nth(3))
     }
 
-    fn collect_result_calls(&self, expr: &'hir hir::Expr<'hir>, calls: &mut HashSet<hir::ExprId>) {
+    fn pending_recovery(&self, expr: &'hir Expr<'hir>) -> Option<PendingRecovery> {
+        let (call, signature) = self.ecrecover_call(expr)?;
+        (!self.is_proven_low_s(signature))
+            .then(|| PendingRecovery { signature: self.current_value(signature), span: call.span })
+    }
+
+    /// The arms of `cond ? then : otherwise` that may execute.
+    fn live_arms<T>(&self, cond: &Expr<'_>, then: T, otherwise: T) -> impl Iterator<Item = T> {
+        match self.const_bool(cond) {
+            Some(true) => [Some(then), None],
+            Some(false) => [None, Some(otherwise)],
+            None => [Some(then), Some(otherwise)],
+        }
+        .into_iter()
+        .flatten()
+    }
+
+    /// `ecrecover` calls whose result becomes the value of `expr`.
+    fn result_calls(&self, expr: &'hir Expr<'hir>, out: &mut Vec<ExprId>) {
         let expr = expr.peel_parens();
-        if let Some(call) = self.ecrecover_call_id(expr) {
-            calls.insert(call);
-            return;
+        if self.ecrecover_call(expr).is_some() {
+            out.push(expr.id);
         }
         match &expr.kind {
-            ExprKind::Ternary(condition, then_expr, else_expr) => {
-                match self.const_bool(condition) {
-                    Some(true) => self.collect_result_calls(then_expr, calls),
-                    Some(false) => self.collect_result_calls(else_expr, calls),
-                    None => {
-                        self.collect_result_calls(then_expr, calls);
-                        self.collect_result_calls(else_expr, calls);
-                    }
+            ExprKind::Ternary(cond, then, otherwise) => {
+                for arm in self.live_arms(cond, *then, *otherwise) {
+                    self.result_calls(arm, out);
                 }
             }
-            ExprKind::Assign(_, None, rhs) => self.collect_result_calls(rhs, calls),
+            ExprKind::Assign(_, None, rhs) => self.result_calls(rhs, out),
             _ => {}
         }
     }
 
-    fn collect_recovery_targets(
-        &self,
-        lhs: &'hir hir::Expr<'hir>,
-        rhs: &'hir hir::Expr<'hir>,
-        targets: &mut HashMap<hir::ExprId, hir::VariableId>,
-        observable: &mut HashSet<hir::ExprId>,
-    ) {
-        if let ExprKind::Tuple(lhs_elems) = &lhs.peel_parens().kind
-            && let ExprKind::Tuple(rhs_elems) = &rhs.peel_parens().kind
-        {
-            for (lhs, rhs) in lhs_elems.iter().zip(rhs_elems.iter()) {
-                if let (Some(lhs), Some(rhs)) = (lhs, rhs) {
-                    self.collect_recovery_targets(lhs, rhs, targets, observable);
-                }
+    fn const_value(&self, expr: &Expr<'_>) -> Option<U256> {
+        let expr = expr.peel_parens();
+        match &expr.kind {
+            ExprKind::Call(callee, args, _) if is_transparent_cast(callee) && args.len() == 1 => {
+                self.const_value(args.exprs().next()?)
             }
-        } else {
-            let mut calls = HashSet::new();
-            self.collect_result_calls(rhs, &mut calls);
-            if let Some(var) = self.deferable_target(lhs) {
-                targets.extend(calls.into_iter().map(|call| (call, var)));
-            } else {
-                observable.extend(calls);
+            // Fold arithmetic with wrapping semantics so `unchecked` bounds evaluate.
+            ExprKind::Binary(lhs, op, rhs)
+                if matches!(op.kind, BinOpKind::Add | BinOpKind::Sub | BinOpKind::Mul) =>
+            {
+                let (lhs, rhs) = (self.const_value(lhs)?, self.const_value(rhs)?);
+                Some(match op.kind {
+                    BinOpKind::Add => lhs.wrapping_add(rhs),
+                    BinOpKind::Sub => lhs.wrapping_sub(rhs),
+                    _ => lhs.wrapping_mul(rhs),
+                })
             }
-        }
-    }
-
-    fn visit_stored_expr(
-        &mut self,
-        expr: &'hir hir::Expr<'hir>,
-        store_locally: bool,
-        targets: &HashMap<hir::ExprId, hir::VariableId>,
-    ) -> Vec<(hir::VariableId, PendingRecovery)> {
-        let ignored_reads = self.ignored_reads.clone();
-        let deferred_calls = self.deferred_calls.clone();
-        let stored_results = self.stored_results.clone();
-        if store_locally {
-            // Local copies are not observable, and `ecrecover` itself is pure. Keep the
-            // recovered value pending until it is validated or actually read.
-            if let Some(value) = self.current_value(expr) {
-                self.ignored_reads.insert(value);
+            _ if self.gcx.resolved_builtin(expr) == Some(Builtin::TypeMax) => {
+                let TyKind::Elementary(ElementaryType::UInt(size)) =
+                    self.gcx.type_of_expr(expr.id)?.kind
+                else {
+                    return None;
+                };
+                Some(U256::MAX >> (256 - size.bits()))
             }
-            self.deferred_calls.extend(targets.keys().copied());
-            if matches!(expr.peel_parens().kind, ExprKind::Assign(..)) {
-                self.stored_results.insert(expr.peel_parens().id);
-            }
-        }
-        let _ = self.visit_expr(expr);
-        let recoveries = targets
-            .iter()
-            .filter_map(|(call, var)| {
-                self.captured_recoveries.remove(call).map(|recovery| (*var, recovery))
-            })
-            .collect();
-        self.ignored_reads = ignored_reads;
-        self.deferred_calls = deferred_calls;
-        self.stored_results = stored_results;
-        recoveries
-    }
-
-    fn visit_discarded_expr(&mut self, expr: &'hir hir::Expr<'hir>) {
-        let stored_results = self.stored_results.clone();
-        if matches!(expr.peel_parens().kind, ExprKind::Assign(..)) {
-            self.stored_results.insert(expr.peel_parens().id);
-        }
-        let _ = self.visit_expr(expr);
-        self.stored_results = stored_results;
-    }
-
-    fn visit_assignment_lhs(&mut self, lhs: &'hir hir::Expr<'hir>) {
-        let ignored_reads = self.ignored_reads.clone();
-        let mut vars = HashSet::new();
-        collect_lhs_vars(lhs, &mut vars);
-        for var in vars {
-            self.ignored_reads.insert(self.state.value(var));
-        }
-        let _ = self.visit_expr(lhs);
-        self.ignored_reads = ignored_reads;
-    }
-
-    fn const_value(&self, expr: &'hir hir::Expr<'hir>) -> Option<U256> {
-        if let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind
-            && is_transparent_signature_cast(callee)
-            && args.len() == 1
-        {
-            return args.exprs().next().and_then(|arg| self.const_value(arg));
-        }
-        if self.gcx.resolved_builtin(expr) == Some(Builtin::TypeMax)
-            && let Some(ty) = self.gcx.type_of_expr(expr.peel_parens().id)
-            && let TyKind::Elementary(ElementaryType::UInt(size)) = ty.kind
-        {
-            return Some(U256::MAX >> (256 - size.bits()));
-        }
-        if let ExprKind::Binary(lhs, op, rhs) = &expr.peel_parens().kind
-            && matches!(op.kind, BinOpKind::Add | BinOpKind::Sub | BinOpKind::Mul)
-        {
-            let lhs = self.const_value(lhs)?;
-            let rhs = self.const_value(rhs)?;
-            return match op.kind {
-                BinOpKind::Add => Some(lhs.wrapping_add(rhs)),
-                BinOpKind::Sub => Some(lhs.wrapping_sub(rhs)),
-                BinOpKind::Mul => Some(lhs.wrapping_mul(rhs)),
-                _ => unreachable!(),
-            };
-        }
-        if let Some(value) = self.gcx.try_eval_const(expr).ok().and_then(|value| value.as_u256()) {
-            return Some(value);
-        }
-        None
-    }
-
-    fn const_bool(&self, expr: &'hir hir::Expr<'hir>) -> Option<bool> {
-        constant_bool(self.gcx, expr)
-    }
-
-    fn stmt_always_exits(&self, stmt: &'hir hir::Stmt<'hir>) -> bool {
-        match &stmt.kind {
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-                block.stmts.iter().any(|stmt| self.stmt_always_exits(stmt))
-            }
-            StmtKind::If(condition, then_stmt, else_stmt) => match self.const_bool(condition) {
-                Some(true) => self.stmt_always_exits(then_stmt),
-                Some(false) => else_stmt.is_some_and(|else_stmt| self.stmt_always_exits(else_stmt)),
-                None => {
-                    self.stmt_always_exits(then_stmt)
-                        && else_stmt.is_some_and(|else_stmt| self.stmt_always_exits(else_stmt))
-                }
-            },
-            _ => branch_always_exits(stmt),
+            _ => self.gcx.try_eval_const(expr).ok()?.as_u256(),
         }
     }
 
-    fn is_proven_low_s(&self, expr: &'hir hir::Expr<'hir>) -> bool {
+    fn const_bool(&self, expr: &Expr<'_>) -> Option<bool> {
+        match self.gcx.try_eval_const_value(expr).ok()? {
+            ConstValue::Bool(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    fn is_proven_low_s(&self, expr: &'hir Expr<'hir>) -> bool {
         self.const_value(expr).is_some_and(|value| value <= SECP256K1_HALF_ORDER)
             || self.current_value(expr).is_some_and(|value| self.state.low_s.contains(&value))
-            || match &expr.peel_parens().kind {
-                ExprKind::Ternary(condition, then_expr, else_expr) => {
-                    match self.const_bool(condition) {
-                        Some(true) => self.is_proven_low_s(then_expr),
-                        Some(false) => self.is_proven_low_s(else_expr),
-                        None => self.is_proven_low_s(then_expr) && self.is_proven_low_s(else_expr),
-                    }
-                }
-                _ => false,
-            }
+            || matches!(&expr.peel_parens().kind, ExprKind::Ternary(cond, then, otherwise)
+                if self.live_arms(cond, *then, *otherwise).all(|arm| self.is_proven_low_s(arm)))
     }
 
-    fn assigned_value(&self, rhs: Option<&'hir hir::Expr<'hir>>) -> AssignedValue {
-        AssignedValue {
-            value: rhs.and_then(|rhs| self.current_value(rhs)),
-            low_s: rhs.is_some_and(|rhs| self.is_proven_low_s(rhs)),
-        }
+    /// The `(value, proven low)` a variable takes when assigned `rhs`.
+    fn assigned(&self, rhs: Option<&'hir Expr<'hir>>) -> (Option<ValueId>, bool) {
+        (
+            rhs.and_then(|rhs| self.current_value(rhs)),
+            rhs.is_some_and(|rhs| self.is_proven_low_s(rhs)),
+        )
     }
 
-    fn assign_var_value(&mut self, var: hir::VariableId, assigned: AssignedValue) {
-        let value = assigned.value.unwrap_or_else(|| self.fresh_value());
-        if assigned.low_s {
+    fn assign(&mut self, var: VariableId, (value, low_s): (Option<ValueId>, bool)) {
+        let value = value.unwrap_or_else(|| self.fresh_value());
+        if low_s {
             self.state.low_s.insert(value);
         }
         self.state.values.insert(var, value);
     }
 
-    fn assign_var(&mut self, var: hir::VariableId, rhs: Option<&'hir hir::Expr<'hir>>) {
-        self.assign_var_value(var, self.assigned_value(rhs));
-    }
-
-    fn assign_lhs(&mut self, lhs: &'hir hir::Expr<'hir>, rhs: Option<&'hir hir::Expr<'hir>>) {
-        let mut assignments = Vec::new();
-        self.collect_assignments(lhs, rhs, &mut assignments);
-        for (var, assigned) in assignments {
-            self.assign_var_value(var, assigned);
-        }
-    }
-
-    fn collect_assignments(
-        &self,
-        lhs: &'hir hir::Expr<'hir>,
-        rhs: Option<&'hir hir::Expr<'hir>>,
-        assignments: &mut Vec<(hir::VariableId, AssignedValue)>,
-    ) {
-        if let ExprKind::Tuple(lhs_elems) = &lhs.peel_parens().kind {
-            let rhs_elems = match rhs.map(|rhs| &rhs.peel_parens().kind) {
-                Some(ExprKind::Tuple(elems)) => Some(*elems),
-                _ => None,
-            };
-            for (index, lhs) in lhs_elems.iter().enumerate() {
-                let Some(lhs) = lhs else { continue };
-                let rhs = rhs_elems.and_then(|elems| elems.get(index)).copied().flatten();
-                self.collect_assignments(lhs, rhs, assignments);
+    /// Pairs every variable written by `lhs` with the expression it receives.
+    fn pairs(&self, lhs: &'hir Expr<'hir>, rhs: Option<&'hir Expr<'hir>>, out: &mut Vec<Pair<'hir>>) {
+        let Some(elems) = tuple_elems(lhs) else { return out.push((var_of(lhs), rhs)) };
+        let rhs_elems = rhs.and_then(tuple_elems);
+        for (i, lhs) in elems.iter().enumerate() {
+            let rhs = rhs_elems.and_then(|elems| elems.get(i).copied().flatten());
+            match lhs {
+                Some(lhs) => self.pairs(lhs, rhs, out),
+                None => out.push((None, rhs)),
             }
-        } else if let Some(var) = underlying_var(lhs) {
-            assignments.push((var, self.assigned_value(rhs)));
         }
     }
 
-    fn mark_deleted(&mut self, target: &'hir hir::Expr<'hir>) {
-        let Some(var) = underlying_var(target) else { return };
-        let value = self.fresh_value();
-        self.state.values.insert(var, value);
-        self.state.low_s.insert(value);
+    /// Assigns every pair, reading all right-hand sides first so tuple swaps are exact.
+    fn assign_pairs(&mut self, pairs: &[Pair<'hir>]) {
+        let assigned: Vec<_> =
+            pairs.iter().filter_map(|(var, rhs)| Some(((*var)?, self.assigned(*rhs)))).collect();
+        for (var, assigned) in assigned {
+            self.assign(var, assigned);
+        }
     }
 
-    fn invalidate(&mut self, target: &'hir hir::Expr<'hir>) {
-        let Some(var) = underlying_var(target) else { return };
-        self.invalidate_var(var);
+    fn assign_lhs(&mut self, lhs: &'hir Expr<'hir>, rhs: Option<&'hir Expr<'hir>>) {
+        let mut pairs = Vec::new();
+        self.pairs(lhs, rhs, &mut pairs);
+        self.assign_pairs(&pairs);
     }
 
-    fn invalidate_var(&mut self, var: hir::VariableId) {
-        let value = self.fresh_value();
-        self.state.values.insert(var, value);
+    /// Models a statement-level store of `rhs` into `pairs`. Recoveries stored into locals stay
+    /// pending until the local is read or the signature validated; any other destination
+    /// observes the result immediately.
+    fn store(&mut self, pairs: &[Pair<'hir>], rhs: Option<&'hir Expr<'hir>>) {
+        let mut calls = Vec::new();
+        for &(var, rhs) in pairs {
+            let local = var.filter(|var| self.is_local(*var));
+            let mut result_calls = Vec::new();
+            if let Some(rhs) = rhs {
+                self.result_calls(rhs, &mut result_calls);
+            }
+            for call in result_calls {
+                match local {
+                    Some(_) => self.deferred.insert(call, None),
+                    None => self.deferred.remove(&call),
+                };
+                calls.push((call, local));
+            }
+        }
+        let local_target = matches!(pairs, [(Some(var), _)] if self.is_local(*var));
+        if let Some(rhs) = rhs {
+            match &rhs.peel_parens().kind {
+                ExprKind::Assign(lhs, None, inner) if local_target => self.store_expr(lhs, inner),
+                // Copying a variable into a local does not observe its value.
+                _ if local_target && self.current_value(rhs).is_some() => {}
+                _ => {
+                    let _ = self.visit_expr(rhs);
+                }
+            }
+        }
+        self.assign_pairs(pairs);
+        for (call, var) in calls {
+            if let (Some(var), Some(Some(recovery))) = (var, self.deferred.remove(&call)) {
+                let value = self.state.value(var);
+                self.state.add_pending(value, recovery);
+            }
+        }
     }
 
-    fn tracked_vars(&self) -> HashSet<hir::VariableId> {
-        self.state
-            .values
-            .keys()
-            .copied()
-            .chain(self.state.low_s.iter().filter_map(|value| match value {
-                ValueId::Initial(var) => Some(*var),
-                ValueId::Assigned(_) => None,
-            }))
-            .collect()
+    fn store_expr(&mut self, lhs: &'hir Expr<'hir>, rhs: &'hir Expr<'hir>) {
+        let mut pairs = Vec::new();
+        self.pairs(lhs, Some(rhs), &mut pairs);
+        self.store(&pairs, Some(rhs));
+    }
+
+    /// Visits an lvalue without treating the written variables as reads.
+    fn visit_lhs(&mut self, lhs: &'hir Expr<'hir>) {
+        if let Some(elems) = tuple_elems(lhs) {
+            for elem in elems.iter().flatten() {
+                self.visit_lhs(elem);
+            }
+        } else if var_of(lhs).is_none() {
+            let _ = self.visit_expr(lhs);
+        }
     }
 
     fn invalidate_mutable_state(&mut self) {
+        let initial = self.state.low_s.iter().filter_map(|value| match value {
+            ValueId::Initial(var) => Some(*var),
+            ValueId::Assigned(_) => None,
+        });
         let vars: Vec<_> = self
-            .tracked_vars()
-            .into_iter()
-            .filter(|var| {
-                let var = self.hir.variable(*var);
-                var.kind.is_state() && !var.is_constant() && !var.is_immutable()
+            .state
+            .values
+            .keys()
+            .copied()
+            .chain(initial)
+            .filter(|&var| {
+                let var = self.hir.variable(var);
+                var.kind.is_state() && var.mutability.is_none()
             })
             .collect();
         for var in vars {
-            self.invalidate_var(var);
+            self.assign(var, (None, false));
         }
     }
 
-    fn invalidate_loop_carried(&mut self, block: &'hir hir::Block<'hir>, source: LoopSource) {
-        if matches!(source, LoopSource::DoWhile)
-            && block.stmts.last().is_some_and(|stmt| {
-                matches!(
-                    &stmt.kind,
-                    StmtKind::If(condition, _, _) if self.const_bool(condition) == Some(false)
-                )
-            })
-        {
-            return;
-        }
-
-        let mut backedges = Vec::new();
-        if let Some(fallthrough) =
-            self.collect_loop_effects_stmts(block.stmts, LoopEffects::default(), &mut backedges)
-        {
-            backedges.push(fallthrough);
-        }
-        let Some(mut effects) = backedges.into_iter().reduce(|mut left, right| {
-            left.merge(right);
-            left
-        }) else {
-            return;
-        };
-        if matches!(source, LoopSource::ForWithUpdate)
-            && let Some(next) = for_loop_next_expr(block)
-        {
-            self.add_expr_effects(next, &mut effects);
-        }
-
-        if effects.all_values {
-            effects.values.extend(self.tracked_vars());
-        }
-        if effects.mutable_state {
-            self.invalidate_mutable_state();
-        }
-        for var in effects.values {
-            self.invalidate_var(var);
-        }
+    fn has_side_effect(&self, expr: &'hir Expr<'hir>) -> bool {
+        SideEffects(self).visit_expr(expr).is_break()
     }
 
-    fn collect_loop_effects_stmts(
-        &self,
-        stmts: &'hir [hir::Stmt<'hir>],
-        mut effects: LoopEffects,
-        backedges: &mut Vec<LoopEffects>,
-    ) -> Option<LoopEffects> {
-        for stmt in stmts {
-            effects = self.collect_loop_effects_stmt(stmt, effects, backedges)?;
-        }
-        Some(effects)
+    fn assume(&mut self, predicate: &'hir Expr<'hir>, negate: bool) {
+        self.add_facts(predicate, negate);
+        self.validate_pending();
     }
 
-    fn collect_loop_effects_stmt(
-        &self,
-        stmt: &'hir hir::Stmt<'hir>,
-        mut effects: LoopEffects,
-        backedges: &mut Vec<LoopEffects>,
-    ) -> Option<LoopEffects> {
-        match &stmt.kind {
-            StmtKind::Break => None,
-            StmtKind::Continue => {
-                backedges.push(effects);
-                None
-            }
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-                self.collect_loop_effects_stmts(block.stmts, effects, backedges)
-            }
-            StmtKind::If(condition, then_stmt, else_stmt) => {
-                self.add_expr_effects(condition, &mut effects);
-                match self.const_bool(condition) {
-                    Some(true) => self.collect_loop_effects_stmt(then_stmt, effects, backedges),
-                    Some(false) => {
-                        if let Some(else_stmt) = else_stmt {
-                            self.collect_loop_effects_stmt(else_stmt, effects, backedges)
-                        } else {
-                            Some(effects)
-                        }
-                    }
-                    None => {
-                        let after_then =
-                            self.collect_loop_effects_stmt(then_stmt, effects.clone(), backedges);
-                        let after_else = if let Some(else_stmt) = else_stmt {
-                            self.collect_loop_effects_stmt(else_stmt, effects, backedges)
-                        } else {
-                            Some(effects)
-                        };
-                        merge_loop_effect_paths(after_then, after_else)
-                    }
-                }
-            }
-            StmtKind::Try(stmt_try) => {
-                self.add_expr_effects(&stmt_try.expr, &mut effects);
-                let mut fallthrough = None;
-                for clause in stmt_try.clauses {
-                    let clause_effects = self.collect_loop_effects_stmts(
-                        clause.block.stmts,
-                        effects.clone(),
-                        backedges,
-                    );
-                    fallthrough = merge_loop_effect_paths(fallthrough, clause_effects);
-                }
-                fallthrough
-            }
-            StmtKind::Loop(..) => {
-                self.add_stmt_effects(stmt, &mut effects);
-                Some(effects)
-            }
-            StmtKind::Return(expr) => {
-                if let Some(expr) = expr {
-                    self.add_expr_effects(expr, &mut effects);
-                }
-                None
-            }
-            StmtKind::Revert(expr) => {
-                self.add_expr_effects(expr, &mut effects);
-                None
-            }
-            StmtKind::AssemblyBlock(_) | StmtKind::Err(_) => {
-                effects.all_values = true;
-                Some(effects)
-            }
-            _ => {
-                self.add_stmt_effects(stmt, &mut effects);
-                (!self.stmt_always_exits(stmt)).then_some(effects)
-            }
-        }
-    }
-
-    fn add_stmt_effects(&self, stmt: &'hir hir::Stmt<'hir>, effects: &mut LoopEffects) {
-        match &stmt.kind {
-            StmtKind::DeclSingle(var) => {
-                if let Some(initializer) = self.hir.variable(*var).initializer {
-                    self.add_expr_effects(initializer, effects);
-                }
-            }
-            StmtKind::DeclMulti(_, initializer)
-            | StmtKind::Emit(initializer)
-            | StmtKind::Revert(initializer)
-            | StmtKind::Expr(initializer) => self.add_expr_effects(initializer, effects),
-            StmtKind::Return(Some(expr)) => self.add_expr_effects(expr, effects),
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-                for stmt in block.stmts {
-                    self.add_stmt_effects(stmt, effects);
-                }
-            }
-            StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => {
-                effects.all_values = true;
-            }
-            StmtKind::If(condition, then_stmt, else_stmt) => {
-                self.add_expr_effects(condition, effects);
-                self.add_stmt_effects(then_stmt, effects);
-                if let Some(else_stmt) = else_stmt {
-                    self.add_stmt_effects(else_stmt, effects);
-                }
-            }
-            StmtKind::Try(stmt_try) => {
-                self.add_expr_effects(&stmt_try.expr, effects);
-                for clause in stmt_try.clauses {
-                    for stmt in clause.block.stmts {
-                        self.add_stmt_effects(stmt, effects);
-                    }
-                }
-            }
-            StmtKind::Return(None)
-            | StmtKind::Break
-            | StmtKind::Continue
-            | StmtKind::Placeholder => {}
-        }
-    }
-
-    fn add_expr_effects(&self, expr: &'hir hir::Expr<'hir>, effects: &mut LoopEffects) {
-        match &expr.peel_parens().kind {
-            ExprKind::Assign(lhs, _, rhs) => {
-                self.add_expr_effects(lhs, effects);
-                self.add_expr_effects(rhs, effects);
-                collect_lhs_vars(lhs, &mut effects.values);
-            }
-            ExprKind::Delete(target) => {
-                self.add_expr_effects(target, effects);
-                collect_lhs_vars(target, &mut effects.values);
-            }
-            ExprKind::Unary(op, target) => {
-                self.add_expr_effects(target, effects);
-                if matches!(
-                    op.kind,
-                    UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
-                ) {
-                    collect_lhs_vars(target, &mut effects.values);
-                }
-            }
-            ExprKind::Array(exprs) => {
-                for expr in *exprs {
-                    self.add_expr_effects(expr, effects);
-                }
-            }
-            ExprKind::Binary(lhs, op, rhs) => {
-                self.add_expr_effects(lhs, effects);
-                let short_circuits = matches!(op.kind, BinOpKind::And | BinOpKind::Or)
-                    && self
-                        .const_bool(lhs)
-                        .is_some_and(|value| matches!(op.kind, BinOpKind::And) != value);
-                if !short_circuits {
-                    self.add_expr_effects(rhs, effects);
-                }
-            }
-            ExprKind::Call(callee, args, options) => {
-                self.add_expr_effects(callee, effects);
-                for arg in args.exprs() {
-                    self.add_expr_effects(arg, effects);
-                }
-                if let Some(options) = options {
-                    for arg in options.args {
-                        self.add_expr_effects(&arg.value, effects);
-                    }
-                }
-                effects.mutable_state |= call_may_mutate_state(self.gcx, self.hir, callee);
-            }
-            ExprKind::Index(base, index) => {
-                self.add_expr_effects(base, effects);
-                if let Some(index) = index {
-                    self.add_expr_effects(index, effects);
-                }
-            }
-            ExprKind::Slice(base, start, end) => {
-                self.add_expr_effects(base, effects);
-                if let Some(start) = start {
-                    self.add_expr_effects(start, effects);
-                }
-                if let Some(end) = end {
-                    self.add_expr_effects(end, effects);
-                }
-            }
-            ExprKind::Member(base, _) | ExprKind::Payable(base) | ExprKind::YulMember(base, _) => {
-                self.add_expr_effects(base, effects);
-            }
-            ExprKind::Ternary(condition, then_expr, else_expr) => {
-                self.add_expr_effects(condition, effects);
-                match self.const_bool(condition) {
-                    Some(true) => self.add_expr_effects(then_expr, effects),
-                    Some(false) => self.add_expr_effects(else_expr, effects),
-                    None => {
-                        self.add_expr_effects(then_expr, effects);
-                        self.add_expr_effects(else_expr, effects);
-                    }
-                }
-            }
-            ExprKind::Tuple(exprs) => {
-                for expr in exprs.iter().flatten() {
-                    self.add_expr_effects(expr, effects);
-                }
-            }
-            ExprKind::Lit(_)
-            | ExprKind::Ident(_)
-            | ExprKind::New(_)
-            | ExprKind::TypeCall(_)
-            | ExprKind::Type(_)
-            | ExprKind::Err(_) => {}
-        }
-    }
-
-    fn add_facts(&mut self, predicate: &'hir hir::Expr<'hir>, negate: bool) {
-        if expr_has_fact_side_effect(self.gcx, self.hir, predicate) {
+    fn add_facts(&mut self, predicate: &'hir Expr<'hir>, negate: bool) {
+        // Facts are derived from the current values, which a side effect may have replaced.
+        if self.has_side_effect(predicate) {
             return;
         }
         match &predicate.peel_parens().kind {
-            ExprKind::Ternary(condition, then_expr, else_expr) => {
-                if let Some(value) = self.const_bool(condition) {
-                    self.add_facts(if value { then_expr } else { else_expr }, negate);
+            ExprKind::Ternary(cond, then, otherwise) => {
+                if let Some(value) = self.const_bool(cond) {
+                    self.add_facts(if value { then } else { otherwise }, negate);
+                }
+            }
+            ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => self.add_facts(inner, !negate),
+            ExprKind::Binary(lhs, op, rhs)
+                if matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
+            {
+                let is_and = op.kind == BinOpKind::And;
+                // A constant operand either decides the result or defers to the other operand.
+                for (side, other) in [(lhs, rhs), (rhs, lhs)] {
+                    if let Some(value) = self.const_bool(side) {
+                        if is_and == value {
+                            self.add_facts(other, negate);
+                        }
+                        return;
+                    }
+                }
+                if is_and == negate {
+                    // Only facts established by both operands hold.
+                    let baseline = self.state.low_s.clone();
+                    self.add_facts(lhs, negate);
+                    let from_lhs = mem::replace(&mut self.state.low_s, baseline.clone());
+                    self.add_facts(rhs, negate);
+                    let from_rhs = mem::replace(&mut self.state.low_s, baseline);
+                    self.state.low_s.extend(from_lhs.intersection(&from_rhs));
+                } else {
+                    self.add_facts(lhs, negate);
+                    self.add_facts(rhs, negate);
                 }
             }
             ExprKind::Binary(lhs, op, rhs) => {
-                if matches!(op.kind, BinOpKind::And | BinOpKind::Or) {
-                    if let Some(value) = self.const_bool(lhs) {
-                        let determines_result = matches!(op.kind, BinOpKind::And) != value;
-                        if !determines_result {
-                            self.add_facts(rhs, negate);
-                        }
-                        return;
-                    }
-                    if let Some(value) = self.const_bool(rhs) {
-                        let determines_result = matches!(op.kind, BinOpKind::And) != value;
-                        if !determines_result {
-                            self.add_facts(lhs, negate);
-                        }
-                        return;
+                let op = if negate { negate_comparison(op.kind) } else { op.kind };
+                for (candidate, bound, op) in [(lhs, rhs, op), (rhs, lhs, reverse_comparison(op))] {
+                    let (Some(value), Some(bound)) =
+                        (self.current_value(candidate), self.const_value(bound))
+                    else {
+                        continue;
+                    };
+                    let proves_low = match op {
+                        BinOpKind::Lt => bound <= SECP256K1_HALF_ORDER + U256::from(1),
+                        BinOpKind::Le | BinOpKind::Eq => bound <= SECP256K1_HALF_ORDER,
+                        _ => false,
+                    };
+                    if proves_low {
+                        self.state.low_s.insert(value);
                     }
                 }
-                let conjunctive =
-                    matches!((op.kind, negate), (BinOpKind::And, false) | (BinOpKind::Or, true));
-                let disjunctive =
-                    matches!((op.kind, negate), (BinOpKind::Or, false) | (BinOpKind::And, true));
-                if conjunctive {
-                    self.add_facts(lhs, negate);
-                    self.add_facts(rhs, negate);
-                } else if disjunctive {
-                    self.add_disjunctive_facts(lhs, rhs, negate);
-                } else {
-                    self.add_comparison_fact(lhs, op.kind, rhs, negate);
-                }
-            }
-            ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => {
-                self.add_facts(inner, !negate);
             }
             _ => {}
         }
     }
 
-    fn assume(&mut self, predicate: &'hir hir::Expr<'hir>, negate: bool) {
-        self.add_facts(predicate, negate);
-        self.validate_pending();
-    }
-
-    fn add_disjunctive_facts(
+    /// Runs `then` and `otherwise` under the respective assumptions on the already visited
+    /// `cond`, then continues from the join of the arms that did not exit.
+    fn branch(
         &mut self,
-        lhs: &'hir hir::Expr<'hir>,
-        rhs: &'hir hir::Expr<'hir>,
-        negate: bool,
-    ) {
-        let baseline = self.state.low_s.clone();
-        self.add_facts(lhs, negate);
-        let lhs_added: HashSet<_> = self.state.low_s.difference(&baseline).copied().collect();
-        self.state.low_s.clone_from(&baseline);
-        self.add_facts(rhs, negate);
-        let rhs_added: HashSet<_> = self.state.low_s.difference(&baseline).copied().collect();
-        self.state.low_s = baseline;
-        self.state.low_s.extend(lhs_added.intersection(&rhs_added).copied());
-    }
-
-    fn add_comparison_fact(
-        &mut self,
-        lhs: &'hir hir::Expr<'hir>,
-        op: BinOpKind,
-        rhs: &'hir hir::Expr<'hir>,
-        negate: bool,
-    ) {
-        let op = if negate { negate_comparison(op) } else { op };
-        for (candidate, bound, op) in [(lhs, rhs, op), (rhs, lhs, reverse_comparison(op))] {
-            let Some(value) = self.current_value(candidate) else { continue };
-            let Some(bound) = self.const_value(bound) else { continue };
-            let proves_low = match op {
-                BinOpKind::Lt => bound <= SECP256K1_HALF_ORDER + U256::from(1),
-                BinOpKind::Le => bound <= SECP256K1_HALF_ORDER,
-                BinOpKind::Eq => bound <= SECP256K1_HALF_ORDER,
-                _ => false,
-            };
-            if proves_low {
-                self.state.low_s.insert(value);
-            }
+        cond: &'hir Expr<'hir>,
+        then: impl FnOnce(&mut Self) -> bool,
+        otherwise: impl FnOnce(&mut Self) -> bool,
+    ) -> bool {
+        if let Some(value) = self.const_bool(cond) {
+            self.assume(cond, !value);
+            return if value { then(self) } else { otherwise(self) };
         }
-    }
-
-    fn pending_recovery(&self, expr: &'hir hir::Expr<'hir>) -> Option<PendingRecovery> {
-        let expr = expr.peel_parens();
-        let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
-        if !is_ecrecover_builtin(self.gcx, callee) || args.len() != 4 {
-            return None;
+        let baseline = self.state.clone();
+        self.assume(cond, false);
+        let then_live = then(self);
+        let after_then = mem::replace(&mut self.state, baseline);
+        self.assume(cond, true);
+        let else_live = otherwise(self);
+        if then_live && else_live {
+            let after_else = mem::take(&mut self.state);
+            self.state = self.join(after_then, after_else);
+        } else if then_live {
+            self.state = after_then;
         }
-        let signature = args.exprs().nth(3)?;
-        (!self.is_proven_low_s(signature))
-            .then(|| PendingRecovery { signature: self.current_value(signature), span: expr.span })
+        then_live || else_live
     }
 
-    fn join_all(&mut self, states: Vec<FlowState>) -> Option<FlowState> {
-        states.into_iter().reduce(|left, right| self.join(left, right))
+    fn run_block(&mut self, stmts: &'hir [Stmt<'hir>]) -> bool {
+        stmts.iter().all(|stmt| self.run_stmt(stmt))
     }
 
-    fn visit_loop_stmts(
-        &mut self,
-        stmts: &'hir [hir::Stmt<'hir>],
-        exits: &mut Vec<FlowState>,
-    ) -> Option<FlowState> {
-        for stmt in stmts {
-            self.visit_loop_stmt(stmt, exits)?;
-        }
-        Some(self.snapshot())
-    }
-
-    fn visit_loop_stmt(
-        &mut self,
-        stmt: &'hir hir::Stmt<'hir>,
-        exits: &mut Vec<FlowState>,
-    ) -> Option<FlowState> {
+    /// Runs `stmt`; returns `false` when control cannot continue past it.
+    fn run_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> bool {
         match &stmt.kind {
-            StmtKind::Break | StmtKind::Continue => {
-                exits.push(self.snapshot());
-                None
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => self.run_block(block.stmts),
+            StmtKind::If(cond, then, otherwise) => {
+                let _ = self.visit_expr(cond);
+                self.branch(
+                    cond,
+                    |this| this.run_stmt(then),
+                    |this| otherwise.is_none_or(|otherwise| this.run_stmt(otherwise)),
+                )
             }
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-                self.visit_loop_stmts(block.stmts, exits)
-            }
-            StmtKind::If(condition, then_stmt, else_stmt) => {
-                let constant = self.const_bool(condition);
-                let _ = self.visit_expr(condition);
-                if let Some(value) = constant {
-                    self.assume(condition, !value);
-                    return if value {
-                        self.visit_loop_stmt(then_stmt, exits)
-                    } else if let Some(else_stmt) = else_stmt {
-                        self.visit_loop_stmt(else_stmt, exits)
-                    } else {
-                        Some(self.snapshot())
-                    };
-                }
-                let baseline = self.snapshot();
-
-                self.assume(condition, false);
-                let after_then = self.visit_loop_stmt(then_stmt, exits);
-
-                self.restore(baseline);
-                self.assume(condition, true);
-                let after_else = if let Some(else_stmt) = else_stmt {
-                    self.visit_loop_stmt(else_stmt, exits)
-                } else {
-                    Some(self.snapshot())
-                };
-
-                let joined = match (after_then, after_else) {
-                    (Some(then_state), Some(else_state)) => self.join(then_state, else_state),
-                    (Some(state), None) | (None, Some(state)) => state,
-                    (None, None) => return None,
-                };
-                self.restore(joined.clone());
-                Some(joined)
-            }
+            StmtKind::Loop(block, source) => self.run_loop(block, *source),
             StmtKind::Try(stmt_try) => {
                 let _ = self.visit_expr(&stmt_try.expr);
-                let after_call = self.snapshot();
-                let mut fallthrough = Vec::new();
+                let after_call = self.state.clone();
+                let mut live = Vec::new();
                 for clause in stmt_try.clauses {
-                    // Argument expressions execute in the caller even when the external call
-                    // reverts, so caught paths must retain their effects. Keeping the call's
-                    // effects too is conservative for mutable state.
-                    self.restore(after_call.clone());
-                    if let Some(state) = self.visit_loop_stmts(clause.block.stmts, exits) {
-                        fallthrough.push(state);
+                    self.state = after_call.clone();
+                    if self.run_block(clause.block.stmts) {
+                        live.push(self.state.clone());
                     }
                 }
-                let joined = self.join_all(fallthrough)?;
-                self.restore(joined.clone());
-                Some(joined)
+                self.join_all(live)
+            }
+            StmtKind::Break | StmtKind::Continue => {
+                if matches!(stmt.kind, StmtKind::Continue)
+                    && let Some(next) = self.loop_next
+                {
+                    let _ = self.visit_expr(next);
+                }
+                self.loop_exits.push(self.state.clone());
+                false
+            }
+            StmtKind::DeclSingle(var) => {
+                let init = self.hir.variable(*var).initializer;
+                self.store(&[(Some(*var), init)], init);
+                true
+            }
+            StmtKind::DeclMulti(vars, init) => {
+                let pairs: Vec<_> = match tuple_elems(init) {
+                    Some(elems) => vars.iter().zip(elems).map(|(var, rhs)| (*var, *rhs)).collect(),
+                    None => vars.iter().map(|var| (*var, None)).collect(),
+                };
+                self.store(&pairs, Some(init));
+                true
+            }
+            StmtKind::Expr(expr) => {
+                match &expr.peel_parens().kind {
+                    ExprKind::Assign(lhs, None, rhs) => self.store_expr(lhs, rhs),
+                    _ => {
+                        let _ = self.visit_expr(expr);
+                    }
+                }
+                !is_exit_call(expr)
+            }
+            StmtKind::AssemblyBlock(_) | StmtKind::Err(_) => {
+                // Inline assembly is opaque and may observe any local before changing it. Flush
+                // deferred recoveries before discarding facts so assembly cannot hide a warning.
+                self.use_all_pending();
+                self.state = FlowState::default();
+                true
+            }
+            StmtKind::Return(None) => {
+                self.use_return_values();
+                false
+            }
+            StmtKind::Return(Some(expr)) | StmtKind::Revert(expr) => {
+                let _ = self.visit_expr(expr);
+                false
             }
             _ => {
-                let _ = self.visit_stmt(stmt);
-                (!self.stmt_always_exits(stmt)).then(|| self.snapshot())
+                let _ = self.walk_stmt(stmt);
+                true
             }
+        }
+    }
+
+    fn run_loop(&mut self, block: &'hir hir::Block<'hir>, source: LoopSource) -> bool {
+        let next = matches!(source, LoopSource::ForWithUpdate)
+            .then(|| for_loop_next_expr(block))
+            .flatten();
+        let outer_exits = mem::take(&mut self.loop_exits);
+        let outer_next = mem::replace(&mut self.loop_next, next);
+        // `do { .. } while (false)` runs exactly once. Any other loop may carry the effects of
+        // one iteration into the next, so run the body once silently and start over from the
+        // join of the entry state with every state reaching the back edge.
+        let single_iteration = matches!(source, LoopSource::DoWhile)
+            && matches!(block.stmts.last().map(|stmt| &stmt.kind),
+                Some(StmtKind::If(cond, ..)) if self.const_bool(cond) == Some(false));
+        if !single_iteration {
+            let entry = self.state.clone();
+            let hits = self.hits.len();
+            self.run_loop_body(block);
+            self.hits.truncate(hits);
+            let mut states = mem::take(&mut self.loop_exits);
+            states.push(entry);
+            self.join_all(states);
+        }
+        self.run_loop_body(block);
+        let exits = mem::replace(&mut self.loop_exits, outer_exits);
+        self.loop_next = outer_next;
+        self.join_all(exits)
+    }
+
+    fn run_loop_body(&mut self, block: &'hir hir::Block<'hir>) {
+        if self.run_block(block.stmts) {
+            self.loop_exits.push(self.state.clone());
         }
     }
 }
@@ -992,328 +632,153 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
         self.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
-        match &stmt.kind {
-            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-                for stmt in block.stmts {
-                    let _ = self.visit_stmt(stmt);
-                    if self.stmt_always_exits(stmt) {
-                        break;
-                    }
-                }
-                return ControlFlow::Continue(());
-            }
-            StmtKind::If(condition, then_stmt, else_stmt) => {
-                let constant = self.const_bool(condition);
-                let _ = self.visit_expr(condition);
-                if let Some(value) = constant {
-                    self.assume(condition, !value);
-                    if value {
-                        let _ = self.visit_stmt(then_stmt);
-                    } else if let Some(else_stmt) = else_stmt {
-                        let _ = self.visit_stmt(else_stmt);
-                    }
-                    return ControlFlow::Continue(());
-                }
-                let baseline = self.snapshot();
-
-                self.assume(condition, false);
-                let _ = self.visit_stmt(then_stmt);
-                let then_exits = self.stmt_always_exits(then_stmt);
-                let after_then = self.snapshot();
-
-                self.restore(baseline);
-                self.assume(condition, true);
-                let else_exits = if let Some(else_stmt) = else_stmt {
-                    let _ = self.visit_stmt(else_stmt);
-                    self.stmt_always_exits(else_stmt)
-                } else {
-                    false
-                };
-                let after_else = self.snapshot();
-
-                let joined = match (then_exits, else_exits) {
-                    (true, false) => after_else,
-                    (false, true) => after_then,
-                    _ => self.join(after_then, after_else),
-                };
-                self.restore(joined);
-                return ControlFlow::Continue(());
-            }
-            StmtKind::Loop(block, source) => {
-                let baseline = self.snapshot();
-                self.invalidate_loop_carried(block, *source);
-                let mut exits = Vec::new();
-                if let Some(fallthrough) = self.visit_loop_stmts(block.stmts, &mut exits) {
-                    exits.push(fallthrough);
-                }
-                let joined = self.join_all(exits).unwrap_or(baseline);
-                self.restore(joined);
-                return ControlFlow::Continue(());
-            }
-            StmtKind::Try(stmt_try) => {
-                let _ = self.visit_expr(&stmt_try.expr);
-                let after_call = self.snapshot();
-                let mut fallthrough = Vec::new();
-                for clause in stmt_try.clauses {
-                    self.restore(after_call.clone());
-                    for stmt in clause.block.stmts {
-                        let _ = self.visit_stmt(stmt);
-                        if self.stmt_always_exits(stmt) {
-                            break;
-                        }
-                    }
-                    if !clause.block.stmts.iter().any(|stmt| self.stmt_always_exits(stmt)) {
-                        fallthrough.push(self.snapshot());
-                    }
-                }
-                let joined = fallthrough
-                    .into_iter()
-                    .reduce(|left, right| self.join(left, right))
-                    .unwrap_or(after_call);
-                self.restore(joined);
-                return ControlFlow::Continue(());
-            }
-            StmtKind::DeclSingle(var) => {
-                let init = self.hir.variable(*var).initializer;
-                if let Some(init) = init {
-                    let mut calls = HashSet::new();
-                    self.collect_result_calls(init, &mut calls);
-                    let targets: HashMap<_, _> =
-                        calls.into_iter().map(|call| (call, *var)).collect();
-                    let recoveries = self.visit_stored_expr(init, true, &targets);
-                    self.assign_var(*var, Some(init));
-                    for (var, recovery) in recoveries {
-                        self.record_pending(var, recovery);
-                    }
-                } else {
-                    self.assign_var(*var, None);
-                }
-                return ControlFlow::Continue(());
-            }
-            StmtKind::DeclMulti(vars, init) => {
-                let mut targets = HashMap::new();
-                if let ExprKind::Tuple(exprs) = &init.peel_parens().kind {
-                    for (var, expr) in vars.iter().zip(exprs.iter()) {
-                        if let (Some(var), Some(expr)) = (var, expr) {
-                            let mut calls = HashSet::new();
-                            self.collect_result_calls(expr, &mut calls);
-                            targets.extend(calls.into_iter().map(|call| (call, *var)));
-                        }
-                    }
-                }
-                let recoveries = self.visit_stored_expr(init, !targets.is_empty(), &targets);
-                if let ExprKind::Tuple(exprs) = &init.peel_parens().kind {
-                    for (var, expr) in vars.iter().zip(exprs.iter()) {
-                        if let Some(var) = var {
-                            self.assign_var(*var, *expr);
-                        }
-                    }
-                } else {
-                    for var in vars.iter().flatten() {
-                        self.assign_var(*var, None);
-                    }
-                }
-                for (var, recovery) in recoveries {
-                    self.record_pending(var, recovery);
-                }
-                return ControlFlow::Continue(());
-            }
-            StmtKind::Expr(expr) => {
-                self.visit_discarded_expr(expr);
-                return ControlFlow::Continue(());
-            }
-            StmtKind::Err(_) | StmtKind::AssemblyBlock(_) => {
-                // Inline assembly is opaque and may observe any local before changing it. Flush
-                // deferred recoveries before discarding facts so assembly cannot hide a warning.
-                self.use_all_pending();
-                self.state = FlowState::default();
-            }
-            StmtKind::Return(None) => {
-                self.use_return_values();
-            }
-            _ => {}
-        }
-        self.walk_stmt(stmt)
-    }
-
-    fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        if matches!(expr.kind, ExprKind::Ident(_))
-            && let Some(value) = self.current_value(expr)
-        {
-            self.use_value(value);
-        }
-        if let ExprKind::Binary(lhs, op, rhs) = &expr.kind
-            && matches!(op.kind, BinOpKind::And | BinOpKind::Or)
-        {
-            let constant = self.const_bool(lhs);
-            let _ = self.visit_expr(lhs);
-            if let Some(value) = constant {
-                let short_circuits = matches!(op.kind, BinOpKind::And) != value;
-                if !short_circuits {
-                    self.assume(lhs, !value);
-                    let _ = self.visit_expr(rhs);
-                }
-                return ControlFlow::Continue(());
-            }
-            let skipped_rhs = self.snapshot();
-            self.assume(lhs, op.kind == BinOpKind::Or);
-            let _ = self.visit_expr(rhs);
-            let ran_rhs = self.snapshot();
-            let joined = self.join(skipped_rhs, ran_rhs);
-            self.restore(joined);
-            return ControlFlow::Continue(());
-        }
-        if let ExprKind::Ternary(condition, then_expr, else_expr) = &expr.kind {
-            let constant = self.const_bool(condition);
-            let _ = self.visit_expr(condition);
-            if let Some(value) = constant {
-                self.assume(condition, !value);
-                let _ = self.visit_expr(if value { then_expr } else { else_expr });
-                return ControlFlow::Continue(());
-            }
-            let baseline = self.snapshot();
-            self.assume(condition, false);
-            let _ = self.visit_expr(then_expr);
-            let after_then = self.snapshot();
-            self.restore(baseline);
-            self.assume(condition, true);
-            let _ = self.visit_expr(else_expr);
-            let after_else = self.snapshot();
-            let joined = self.join(after_then, after_else);
-            self.restore(joined);
-            return ControlFlow::Continue(());
-        }
-
+    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
         match &expr.kind {
-            ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
-                let result = self.walk_expr(expr);
-                if let Some(condition) = args.exprs().next() {
-                    self.assume(condition, false);
+            ExprKind::Ident(_) => {
+                if let Some(value) = self.current_value(expr) {
+                    self.use_value(value);
                 }
-                return result;
             }
-            ExprKind::Assign(lhs, op, rhs) => {
-                if op.is_none() {
-                    let target = self.deferable_target(lhs);
-                    let mut targets = HashMap::new();
-                    let mut observable = HashSet::new();
-                    self.collect_recovery_targets(lhs, rhs, &mut targets, &mut observable);
-                    let result_is_stored = self.stored_results.contains(&expr.peel_parens().id);
-                    self.visit_assignment_lhs(lhs);
-                    let deferred_calls = self.deferred_calls.clone();
-                    self.deferred_calls.retain(|call| !observable.contains(call));
-                    let recoveries = self.visit_stored_expr(
-                        rhs,
-                        !targets.is_empty() || target.is_some(),
-                        &targets,
-                    );
-                    self.deferred_calls = deferred_calls;
-                    self.assign_lhs(lhs, Some(rhs));
-                    for (var, recovery) in recoveries {
-                        self.record_pending(var, recovery);
-                    }
-                    if let Some(target) = target
-                        && !result_is_stored
-                    {
-                        self.use_value(self.state.value(target));
-                    }
-                    return ControlFlow::Continue(());
+            ExprKind::Binary(lhs, op, rhs)
+                if matches!(op.kind, BinOpKind::And | BinOpKind::Or) =>
+            {
+                let _ = self.visit_expr(lhs);
+                let run_rhs = |this: &mut Self| {
+                    let _ = this.visit_expr(rhs);
+                    true
+                };
+                let skip_rhs = |_: &mut Self| true;
+                if op.kind == BinOpKind::And {
+                    self.branch(lhs, run_rhs, skip_rhs);
+                } else {
+                    self.branch(lhs, skip_rhs, run_rhs);
                 }
-                let result = self.walk_expr(expr);
+            }
+            ExprKind::Ternary(cond, then, otherwise) => {
+                let _ = self.visit_expr(cond);
+                self.branch(
+                    cond,
+                    |this| {
+                        let _ = this.visit_expr(then);
+                        true
+                    },
+                    |this| {
+                        let _ = this.visit_expr(otherwise);
+                        true
+                    },
+                );
+            }
+            ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
+                let _ = self.walk_expr(expr);
+                if let Some(cond) = args.exprs().next() {
+                    self.assume(cond, false);
+                }
+            }
+            ExprKind::Assign(lhs, None, rhs) => {
+                self.visit_lhs(lhs);
+                let _ = self.visit_expr(rhs);
+                self.assign_lhs(lhs, Some(rhs));
+            }
+            ExprKind::Assign(lhs, Some(_), _) => {
+                let _ = self.walk_expr(expr);
                 self.assign_lhs(lhs, None);
-                return result;
             }
             ExprKind::Delete(target) => {
-                self.visit_assignment_lhs(target);
-                self.mark_deleted(target);
-                return ControlFlow::Continue(());
+                self.visit_lhs(target);
+                if let Some(var) = var_of(target) {
+                    self.assign(var, (None, true));
+                }
             }
-            ExprKind::Unary(op, target)
-                if matches!(
-                    op.kind,
-                    UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
-                ) =>
-            {
-                let result = self.walk_expr(expr);
-                self.invalidate(target);
-                return result;
+            ExprKind::Unary(op, target) if is_inc_dec(op.kind) => {
+                let _ = self.walk_expr(expr);
+                if let Some(var) = var_of(target) {
+                    self.assign(var, (None, false));
+                }
             }
-            _ => {}
-        }
-
-        let result = self.walk_expr(expr);
-        if let ExprKind::Call(callee, _, _) = &expr.kind
-            && call_may_mutate_state(self.gcx, self.hir, callee)
-        {
-            self.invalidate_mutable_state();
-        }
-        if let Some(recovery) = self.pending_recovery(expr) {
-            if self.deferred_calls.contains(&expr.peel_parens().id) {
-                self.captured_recoveries.insert(expr.peel_parens().id, recovery);
-            } else {
-                self.emit_hit(recovery.span);
+            ExprKind::Call(callee, ..) => {
+                let _ = self.walk_expr(expr);
+                if call_may_mutate_state(self.gcx, self.hir, callee) {
+                    self.invalidate_mutable_state();
+                }
+                if let Some(recovery) = self.pending_recovery(expr) {
+                    match self.deferred.get_mut(&expr.id) {
+                        Some(captured) => *captured = Some(recovery),
+                        None => self.emit_hit(recovery.span),
+                    }
+                }
+            }
+            _ => {
+                let _ = self.walk_expr(expr);
             }
         }
-        result
+        ControlFlow::Continue(())
     }
 }
 
-fn underlying_var(expr: &hir::Expr<'_>) -> Option<hir::VariableId> {
+/// Finds writes and state-mutating calls that run when an expression is evaluated.
+struct SideEffects<'a, 'hir>(&'a Analyzer<'hir>);
+
+impl<'hir> Visit<'hir> for SideEffects<'_, 'hir> {
+    type BreakValue = ();
+
+    fn hir(&self) -> &'hir hir::Hir<'hir> {
+        self.0.hir
+    }
+
+    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
+        match &expr.kind {
+            ExprKind::Assign(..) | ExprKind::Delete(_) => ControlFlow::Break(()),
+            ExprKind::Unary(op, _) if is_inc_dec(op.kind) => ControlFlow::Break(()),
+            ExprKind::Call(callee, ..) if call_may_mutate_state(self.0.gcx, self.0.hir, callee) => {
+                ControlFlow::Break(())
+            }
+            ExprKind::Ternary(cond, then, otherwise) => {
+                self.visit_expr(cond)?;
+                for arm in self.0.live_arms(cond, *then, *otherwise) {
+                    self.visit_expr(arm)?;
+                }
+                ControlFlow::Continue(())
+            }
+            ExprKind::Binary(lhs, op, _)
+                if matches!(op.kind, BinOpKind::And | BinOpKind::Or)
+                    && self
+                        .0
+                        .const_bool(lhs)
+                        .is_some_and(|value| (op.kind == BinOpKind::And) != value) =>
+            {
+                self.visit_expr(lhs)
+            }
+            _ => self.walk_expr(expr),
+        }
+    }
+}
+
+/// The variable an expression denotes, through parens and `uint256(..)`/`bytes32(..)` casts.
+fn var_of(expr: &Expr<'_>) -> Option<VariableId> {
     match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-            Res::Item(ItemId::Variable(var)) => Some(*var),
-            _ => None,
-        }),
-        ExprKind::Call(callee, args, _)
-            if is_transparent_signature_cast(callee) && args.len() == 1 =>
-        {
-            args.exprs().next().and_then(underlying_var)
+        ExprKind::Ident(reses) => reses.iter().find_map(Res::as_variable),
+        ExprKind::Call(callee, args, _) if is_transparent_cast(callee) && args.len() == 1 => {
+            args.exprs().next().and_then(var_of)
         }
         _ => None,
     }
 }
 
-fn collect_lhs_vars(expr: &hir::Expr<'_>, vars: &mut HashSet<hir::VariableId>) {
-    if let ExprKind::Tuple(exprs) = &expr.peel_parens().kind {
-        for expr in exprs.iter().flatten() {
-            collect_lhs_vars(expr, vars);
-        }
-    } else if let Some(var) = underlying_var(expr) {
-        vars.insert(var);
-    }
-}
-
-fn for_loop_next_expr<'hir>(block: &'hir hir::Block<'hir>) -> Option<&'hir hir::Expr<'hir>> {
+/// The `<next>` expression of a lowered `for (..; ..; <next>)` loop body.
+fn for_loop_next_expr<'hir>(block: &'hir hir::Block<'hir>) -> Option<&'hir Expr<'hir>> {
     let [stmt] = block.stmts else { return None };
     let stmt = match &stmt.kind {
-        StmtKind::If(_, then_stmt, _) => *then_stmt,
+        StmtKind::If(_, then, _) => *then,
         _ => stmt,
     };
     let StmtKind::Block(inner) = &stmt.kind else { return None };
-    if inner.span != block.span {
-        return None;
-    }
-    let [_, next] = inner.stmts else { return None };
-    let StmtKind::Expr(next) = &next.kind else { return None };
-    Some(*next)
-}
-
-fn merge_loop_effect_paths(
-    left: Option<LoopEffects>,
-    right: Option<LoopEffects>,
-) -> Option<LoopEffects> {
-    match (left, right) {
-        (Some(mut left), Some(right)) => {
-            left.merge(right);
-            Some(left)
-        }
-        (Some(effects), None) | (None, Some(effects)) => Some(effects),
-        (None, None) => None,
+    match inner.stmts {
+        [_, Stmt { kind: StmtKind::Expr(next), .. }] if inner.span == block.span => Some(next),
+        _ => None,
     }
 }
 
-fn is_transparent_signature_cast(callee: &hir::Expr<'_>) -> bool {
+fn is_transparent_cast(callee: &Expr<'_>) -> bool {
     matches!(
         &callee.peel_parens().kind,
         ExprKind::Type(hir::Type {
@@ -1325,15 +790,8 @@ fn is_transparent_signature_cast(callee: &hir::Expr<'_>) -> bool {
     )
 }
 
-fn is_ecrecover_builtin(gcx: Gcx<'_>, callee: &hir::Expr<'_>) -> bool {
-    if let Some(resolved) = gcx.resolved_callee(callee.peel_parens().id) {
-        return matches!(resolved.res, Res::Builtin(Builtin::EcRecover));
-    }
-    matches!(
-        &callee.peel_parens().kind,
-        ExprKind::Ident(reses)
-            if reses.iter().any(|res| matches!(res, Res::Builtin(Builtin::EcRecover)))
-    )
+const fn is_inc_dec(op: UnOpKind) -> bool {
+    matches!(op, UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec)
 }
 
 const fn negate_comparison(op: BinOpKind) -> BinOpKind {
@@ -1358,7 +816,7 @@ const fn reverse_comparison(op: BinOpKind) -> BinOpKind {
     }
 }
 
-fn call_may_mutate_state(gcx: Gcx<'_>, hir: &hir::Hir<'_>, callee: &hir::Expr<'_>) -> bool {
+fn call_may_mutate_state(gcx: Gcx<'_>, hir: &hir::Hir<'_>, callee: &Expr<'_>) -> bool {
     let callee = callee.peel_parens();
     if matches!(callee.kind, ExprKind::Type(_)) {
         return false;
@@ -1371,84 +829,11 @@ fn call_may_mutate_state(gcx: Gcx<'_>, hir: &hir::Hir<'_>, callee: &hir::Expr<'_
     match &callee.kind {
         ExprKind::Ident(reses) => !reses.iter().all(|res| match res {
             Res::Builtin(_) => true,
-            Res::Item(ItemId::Function(function)) => {
-                hir.function(*function).state_mutability <= StateMutability::View
+            Res::Item(ItemId::Function(id)) => {
+                hir.function(*id).state_mutability <= StateMutability::View
             }
             _ => false,
         }),
         _ => true,
-    }
-}
-
-fn constant_bool(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> Option<bool> {
-    match gcx.try_eval_const_value(expr).ok()? {
-        ConstValue::Bool(value) => Some(*value),
-        _ => None,
-    }
-}
-
-fn expr_has_fact_side_effect(gcx: Gcx<'_>, hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
-    match &expr.peel_parens().kind {
-        ExprKind::Assign(..) | ExprKind::Delete(_) => true,
-        ExprKind::Unary(op, inner) => {
-            matches!(
-                op.kind,
-                UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
-            ) || expr_has_fact_side_effect(gcx, hir, inner)
-        }
-        ExprKind::Array(exprs) => {
-            exprs.iter().any(|expr| expr_has_fact_side_effect(gcx, hir, expr))
-        }
-        ExprKind::Binary(lhs, op, rhs) => {
-            if expr_has_fact_side_effect(gcx, hir, lhs) {
-                return true;
-            }
-            let short_circuits = matches!(op.kind, BinOpKind::And | BinOpKind::Or)
-                && constant_bool(gcx, lhs)
-                    .is_some_and(|value| matches!(op.kind, BinOpKind::And) != value);
-            !short_circuits && expr_has_fact_side_effect(gcx, hir, rhs)
-        }
-        ExprKind::Call(callee, args, options) => {
-            call_may_mutate_state(gcx, hir, callee)
-                || expr_has_fact_side_effect(gcx, hir, callee)
-                || args.exprs().any(|expr| expr_has_fact_side_effect(gcx, hir, expr))
-                || options.is_some_and(|options| {
-                    options.args.iter().any(|arg| expr_has_fact_side_effect(gcx, hir, &arg.value))
-                })
-        }
-        ExprKind::Index(base, index) => {
-            expr_has_fact_side_effect(gcx, hir, base)
-                || index.is_some_and(|expr| expr_has_fact_side_effect(gcx, hir, expr))
-        }
-        ExprKind::Slice(base, start, end) => {
-            expr_has_fact_side_effect(gcx, hir, base)
-                || start.is_some_and(|expr| expr_has_fact_side_effect(gcx, hir, expr))
-                || end.is_some_and(|expr| expr_has_fact_side_effect(gcx, hir, expr))
-        }
-        ExprKind::Member(base, _) | ExprKind::Payable(base) | ExprKind::YulMember(base, _) => {
-            expr_has_fact_side_effect(gcx, hir, base)
-        }
-        ExprKind::Ternary(condition, then_expr, else_expr) => {
-            if expr_has_fact_side_effect(gcx, hir, condition) {
-                return true;
-            }
-            match constant_bool(gcx, condition) {
-                Some(true) => expr_has_fact_side_effect(gcx, hir, then_expr),
-                Some(false) => expr_has_fact_side_effect(gcx, hir, else_expr),
-                None => {
-                    expr_has_fact_side_effect(gcx, hir, then_expr)
-                        || expr_has_fact_side_effect(gcx, hir, else_expr)
-                }
-            }
-        }
-        ExprKind::Tuple(exprs) => {
-            exprs.iter().flatten().any(|expr| expr_has_fact_side_effect(gcx, hir, expr))
-        }
-        ExprKind::Lit(_)
-        | ExprKind::Ident(_)
-        | ExprKind::New(_)
-        | ExprKind::TypeCall(_)
-        | ExprKind::Type(_)
-        | ExprKind::Err(_) => false,
     }
 }
