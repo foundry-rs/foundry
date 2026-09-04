@@ -136,7 +136,6 @@ impl FoundryEvmFactory for BaseEvmFactory {
         let mut base_evm = factory.create_evm_with_inspector(db, evm_env, inspector);
         base_evm.ctx_mut().chain = chain_context;
         base_evm.ctx_mut().cfg.tx_chain_id_check = true;
-        base_evm.inspector().get_networks().inject_precompiles(base_evm.precompiles_mut());
         plant_code_sentinels(&mut base_evm);
         base_evm
     }
