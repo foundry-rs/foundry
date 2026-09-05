@@ -2726,6 +2726,55 @@ contract SymbolicExpectCall is Test {
         );
         assertEq(target.ping{gas: 50000}(15), 16);
     }
+
+    function checkExpectCallAdditive(uint256) public {
+        bytes memory data =
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(2));
+        vm.expectCall(address(target), data);
+        vm.expectCall(address(target), data);
+        assertEq(target.ping(2), 3);
+        assertEq(target.ping(2), 3);
+    }
+
+    function checkExpectCallCountedDuplicateReverts(uint256) public {
+        bytes memory data =
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(3));
+        vm.expectCall(address(target), data, 1);
+        (bool ok, bytes memory ret) = address(vm).call(
+            abi.encodeWithSignature("expectCall(address,bytes,uint64)", address(target), data, uint64(1))
+        );
+        assertFalse(ok);
+        assertEq(
+            keccak256(ret),
+            keccak256(
+                abi.encodeWithSelector(
+                    bytes4(keccak256("CheatcodeError(string)")),
+                    "counted expected calls can only bet set once"
+                )
+            )
+        );
+        assertEq(target.ping(3), 4);
+    }
+
+    function checkExpectCallNonCountedOverCountedReverts(uint256) public {
+        bytes memory data =
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(4));
+        vm.expectCall(address(target), data, 1);
+        (bool ok, bytes memory ret) = address(vm).call(
+            abi.encodeWithSignature("expectCall(address,bytes)", address(target), data)
+        );
+        assertFalse(ok);
+        assertEq(
+            keccak256(ret),
+            keccak256(
+                abi.encodeWithSelector(
+                    bytes4(keccak256("CheatcodeError(string)")),
+                    "cannot overwrite a counted expectCall with a non-counted expectCall"
+                )
+            )
+        );
+        assertEq(target.ping(4), 5);
+    }
 }
 "#,
     );
@@ -2832,6 +2881,25 @@ checkSymbolicCalleeExpectedCallMismatch(address)
 checkExpectCallMinGasMissing(uint256)
 "#]],
     );
+
+    let stdout = prj
+        .forge_command()
+        .args(["test", "--symbolic", "--match-test", "checkExpectCallAdditive"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectCallAdditive(uint256)
+"#]],
+    );
+
+    for test in
+        ["checkExpectCallCountedDuplicateReverts", "checkExpectCallNonCountedOverCountedReverts"]
+    {
+        prj.forge_command().args(["test", "--symbolic", "--match-test", test]).assert_success();
+    }
 });
 
 forgetest_init!(symbolic_vm_mock_call_returns_and_reverts, |prj, cmd| {

@@ -1,0 +1,64 @@
+warning[calls-loop]: external call inside a loop
+   ╭▸ ROOT/testdata/CallsLoopAllocations.sol:LL:CC
+   │
+LL │             uint256[] memory numbers = new uint256[](source.nextLength());
+   │                                                      ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/CallsLoopAllocations.sol:LL:CC
+   │
+LL │             emit Allocated();
+   │             ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[calls-loop]: external call inside a loop
+   ╭▸ ROOT/testdata/CallsLoopAllocations.sol:LL:CC
+   │
+LL │             uint256[] memory numbers = new uint256[](source.length());
+   │                                                      ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/CallsLoopAllocations.sol:LL:CC
+   │
+LL │         emit Allocated();
+   │         ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[calls-loop]: external call inside a loop
+   ╭▸ ROOT/testdata/CallsLoopAllocations.sol:LL:CC
+   │
+LL │             new Child();
+   │             ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+   ╭▸ ROOT/testdata/CallsLoopAllocations.sol:LL:CC
+   │
+LL │             new Child{salt: bytes32(i)}();
+   │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/CallsLoopAllocations.sol:LL:CC
+   │
+LL │             emit Allocated();
+   │             ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   ╭▸ ROOT/testdata/CallsLoopAllocations.sol:LL:CC
+   │
+LL │             emit Allocated();
+   │             ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+

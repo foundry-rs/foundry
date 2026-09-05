@@ -23,9 +23,7 @@ pub(crate) use expr::*;
 pub(crate) use memory::*;
 pub(crate) use precompiles::*;
 pub use solver::PortfolioDiagnostics;
-pub(crate) use solver::{
-    SmtLibSubprocessSolver, SymbolicSolver, solver_portfolio_availability_warning,
-};
+pub(crate) use solver::{SmtLibSubprocessSolver, solver_portfolio_availability_warning};
 #[cfg(test)]
 pub(crate) use solver::{
     SolverCommand, SolverConfigError, SolverOutcome, SolverRunSummary, fallback_single_var_model,

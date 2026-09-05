@@ -59,8 +59,13 @@ impl SymbolicExecutor {
         data: SymBytes,
         count: Option<u64>,
     ) -> CheatcodeOutcome {
-        state.expected_calls.push(ExpectedCall::new(callee, value, gas, min_gas, data, count));
-        CheatcodeOutcome::Continue(Vec::new())
+        let expected = ExpectedCall::new(callee, value, gas, min_gas, data, count);
+        match register_expected_call(&mut state.expected_calls, &mut self.cx, expected) {
+            Ok(()) => CheatcodeOutcome::Continue(Vec::new()),
+            Err(message) => {
+                CheatcodeOutcome::Revert(error_string_return_data(&mut self.cx, message))
+            }
+        }
     }
 
     pub(super) fn set_expected_create(
@@ -171,7 +176,7 @@ impl SymbolicExecutor {
             CallFrame::new(&mut self.cx, created, created, state.address, zero, false, calldata);
         frame.address_word = created_word.clone();
         frame.caller_word = state.address_word.clone();
-        let mut child = state.external_call_child(frame);
+        let mut child = state.child(frame);
         let pending_expected_creates = std::mem::take(&mut child.expected_creates);
         child.world = failure_world.clone();
         child.world.mark_current_transaction_created(created);

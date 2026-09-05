@@ -150,7 +150,7 @@ impl SymbolicExecutor {
         let call_input = in_size.read_from_memory(&mut self.cx, &state.memory, in_offset.clone());
         // Gas is not modeled, so calldata derived from `GAS` / `gasleft()` must fail closed instead
         // of handing the callee a fabricated gas value.
-        if call_input.contains_gasleft() {
+        if call_input.contains_gasleft(&mut self.cx) {
             return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
         }
 
@@ -1061,7 +1061,7 @@ impl SymbolicExecutor {
         };
 
         let original_world = state.world.clone();
-        let mut child = state.external_call_child(frame);
+        let mut child = state.child(frame);
         if let Some((origin, origin_word)) = pranked_origin {
             child.origin = origin;
             child.origin_word = origin_word;
