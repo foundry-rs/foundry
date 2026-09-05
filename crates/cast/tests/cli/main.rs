@@ -9682,3 +9682,8 @@ casttest!(max_int, |_prj, cmd| {
         "115792089237316195423570985008687907853269984665640564039457584007913129639935\n",
     );
 });
+
+casttest!(min_int, |_prj, cmd| {
+    cmd.cast_fuse().args(["min-int", "int32"]).assert_success().stdout_eq("-2147483648\n");
+    cmd.cast_fuse().args(["min-int", "uint256"]).assert_success().stdout_eq("0\n");
+});

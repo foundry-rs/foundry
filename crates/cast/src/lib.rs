@@ -67,23 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Returns the maximum value of the given integer type
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_primitives::{I256, U256};
-    /// use cast::SimpleCast;
-    ///
-    /// assert_eq!(SimpleCast::min_int("uint256")?, "0");
-    /// assert_eq!(SimpleCast::min_int("int256")?, I256::MIN.to_string());
-    /// assert_eq!(SimpleCast::min_int("int32")?, i32::MIN.to_string());
-    /// # Ok::<(), eyre::Report>(())
-    /// ```
-    pub fn min_int(s: &str) -> Result<String> {
-        args::int_bound(s, false)
-    }
-
     /// Converts UTF-8 text input to hex
     ///
     /// # Example

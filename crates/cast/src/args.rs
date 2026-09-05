@@ -98,7 +98,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::MaxInt { r#type } | CastSubcommand::MaxUint { r#type } => {
             print_scalar(int_bound(&r#type, true)?)?;
         }
-        CastSubcommand::MinInt { r#type } => print_scalar(SimpleCast::min_int(&r#type)?)?,
+        CastSubcommand::MinInt { r#type } => print_scalar(int_bound(&r#type, false)?)?,
         CastSubcommand::AddressZero => print_scalar(format!("{:?}", Address::ZERO))?,
         CastSubcommand::HashZero => print_scalar(format!("{:?}", B256::ZERO))?,
 
@@ -1151,7 +1151,7 @@ where
     })
 }
 
-pub(super) fn int_bound(s: &str, max: bool) -> Result<String> {
+fn int_bound(s: &str, max: bool) -> Result<String> {
     let ty = DynSolType::parse(s).wrap_err("Invalid type, expected `(u)int<bit size>`")?;
     match ty {
         DynSolType::Int(n) => {
