@@ -129,6 +129,24 @@ struct FuzzBranchFrontierOperands {
     result: bool,
 }
 
+fn select_stateful_frontiers(
+    mut frontiers: Vec<FuzzBranchFrontierRecord>,
+    limit: usize,
+) -> Vec<FuzzBranchFrontierRecord> {
+    frontiers.sort_unstable_by_key(|frontier| (frontier.call_index, frontier.id));
+    if frontiers.len() <= limit {
+        return frontiers;
+    }
+
+    let deep_count = limit / 5;
+    let shallow_count = limit - deep_count;
+    let mut deep = frontiers.split_off(frontiers.len() - deep_count);
+    frontiers.truncate(shallow_count);
+    deep.reverse();
+    frontiers.extend(deep);
+    frontiers
+}
+
 fn comparison_result(opcode: u8, lhs: U256, rhs: U256) -> Option<bool> {
     match opcode {
         opcode::EQ => Some(lhs == rhs),
@@ -368,6 +386,33 @@ mod tests {
         assert!(same_sequence_failure(&outcome(site(1, 1)), &expected));
         assert!(!same_sequence_failure(&outcome(site(2, 1)), &expected));
         assert!(!same_sequence_failure(&outcome(site(1, 2)), &expected));
+    }
+
+    #[test]
+    fn stateful_frontiers_reserve_one_fifth_for_long_prefixes() {
+        let frontiers =
+            [(6, 7), (0, 1), (8, 9), (3, 4), (9, 9), (2, 3), (5, 6), (1, 2), (7, 8), (4, 5)]
+                .into_iter()
+                .map(|(id, call_index)| FuzzBranchFrontierRecord {
+                    id,
+                    call_index,
+                    sequence: Vec::new(),
+                    sequence_index: None,
+                    site: FuzzBranchFrontierSite {
+                        address: Address::ZERO,
+                        pc: id as usize,
+                        opcode: opcode::EQ,
+                    },
+                    operands: FuzzBranchFrontierOperands { result: false },
+                })
+                .collect();
+
+        let ids = select_stateful_frontiers(frontiers, 5)
+            .into_iter()
+            .map(|frontier| frontier.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, [0, 1, 2, 3, 9]);
     }
 
     #[test]
@@ -2324,8 +2369,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             !(select_frontier_selectors
                 && selector.is_none_or(|selector| !parsed_selectors.contains(&selector)))
         });
-        frontiers.sort_unstable_by_key(|frontier| (frontier.call_index, frontier.id));
-        frontiers.truncate(limit);
+        let frontiers = select_stateful_frontiers(frontiers, limit);
 
         let mut imported = Vec::with_capacity(frontiers.len());
         for frontier in frontiers {

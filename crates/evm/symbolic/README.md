@@ -234,8 +234,9 @@ forge test --match-test test_hard_branch \
 `symbolic.frontier_selectors` default to `[]`, meaning any value for that
 dimension. Non-empty filters compose conjunctively, so the example imports only
 records matching one of the requested IDs, one of the requested PCs, and one of
-the requested selectors. Stateless imports keep artifact order; stateful
-imports prefer shorter replay prefixes. Forge imports up to
+the requested selectors. Stateless imports keep artifact order. Stateful
+imports keep four fifths of a bounded selection shortest-first and reserve one
+fifth for the longest transaction prefixes. Forge imports up to
 `symbolic.frontier_limit` matching records and warns if a requested stateless
 target cannot be imported.
 
