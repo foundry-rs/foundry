@@ -10,7 +10,7 @@ use alloy_dyn_abi::{ErrorExt, EventExt};
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_ens::{NameOrAddress, ProviderEnsExt, namehash};
 use alloy_network::{Ethereum, eip2718::Decodable2718};
-use alloy_primitives::{Address, B256, Bytes, eip191_hash_message, hex, keccak256};
+use alloy_primitives::{Address, B256, Bytes, b256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::{CommandFactory, Parser};

@@ -19,7 +19,7 @@ use alloy_ens::NameOrAddress;
 use alloy_json_rpc::RpcError;
 use alloy_network::{AnyNetwork, BlockResponse, Network};
 use alloy_primitives::{
-    Address, B256, I256, Keccak256, LogData, Selector, TxHash, U64, U256, b256, hex,
+    Address, B256, I256, Keccak256, LogData, Selector, TxHash, U64, U256, hex,
     utils::{ParseUnits, Unit, keccak256},
 };
 use alloy_provider::{Provider, network::eip2718::Decodable2718};
@@ -46,7 +46,6 @@ use op_alloy_consensus as _;
 use rayon::prelude::*;
 use serde::Serialize;
 use std::{
-    borrow::Cow,
     fmt::Write,
     io,
     marker::PhantomData,
@@ -212,51 +211,20 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
 
         // `buffered` preserves input order, so results stay ordered by block. `try_collect` stops
         // early and surfaces the error if any chunk ultimately fails.
-        let chunks: Vec<Vec<Log>> = futures::stream::iter(chunk_ranges)
-            .map(|(start, end)| {
-                let filter = filter.clone();
-                let provider = self.provider.clone();
-                async move { Self::get_logs_bisecting(&provider, &filter, start, end).await }
-            })
-            .buffered(MAX_CONCURRENT_RPC_REQUESTS)
-            .try_collect()
-            .await?;
+        let chunks: Vec<Vec<Log>> =
+            futures::stream::iter(chunk_ranges)
+                .map(|(start, end)| {
+                    let filter = filter.clone();
+                    let provider = self.provider.clone();
+                    async move {
+                        crate::cmd::logs::get_logs_bisecting(&provider, &filter, start, end).await
+                    }
+                })
+                .buffered(MAX_CONCURRENT_RPC_REQUESTS)
+                .try_collect()
+                .await?;
 
         Ok(chunks.into_iter().flatten().collect())
-    }
-
-    /// Fetches logs for the inclusive `[from, to]` range, recursively bisecting on failure.
-    fn get_logs_bisecting<'a>(
-        provider: &'a P,
-        filter: &'a Filter,
-        from: u64,
-        to: u64,
-    ) -> futures::future::BoxFuture<'a, Result<Vec<Log>>>
-    where
-        P: Clone + Unpin,
-    {
-        Box::pin(async move {
-            let range_filter = filter.clone().from_block(from).to_block(to);
-            match provider.get_logs(&range_filter).await {
-                Ok(logs) => Ok(logs),
-                Err(e) => {
-                    // Only bisect range-limit errors with room left to split; surface anything
-                    // else immediately.
-                    if from >= to || !is_range_limit_error(&e) {
-                        return Err(e.into());
-                    }
-
-                    // Bisect sequentially: this path is only reached after a provider failure, so
-                    // fanning out concurrently here would risk amplifying rate-limit errors and
-                    // would defeat the top-level concurrency cap.
-                    let mid = from + (to - from) / 2;
-                    let mut left = Self::get_logs_bisecting(provider, filter, from, mid).await?;
-                    let right = Self::get_logs_bisecting(provider, filter, mid + 1, to).await?;
-                    left.extend(right);
-                    Ok(left)
-                }
-            }
-        })
     }
 
     /// Converts a block identifier into a block number.
@@ -2101,7 +2069,8 @@ mod logs_bisecting {
         let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
             .connect_client(RpcClient::new(transport, true));
 
-        let logs = Cast::get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap();
+        let logs =
+            crate::cmd::logs::get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap();
         let blocks: Vec<_> = logs.iter().map(|l| l.block_number).collect();
         assert_eq!(blocks, vec![Some(0), Some(2)]);
 
@@ -2126,7 +2095,9 @@ mod logs_bisecting {
         let provider =
             ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter);
 
-        let err = Cast::get_logs_bisecting(&provider, &Filter::new(), 5, 5).await.unwrap_err();
+        let err = crate::cmd::logs::get_logs_bisecting(&provider, &Filter::new(), 5, 5)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("more than 10000 results"), "got: {err}");
     }
 
@@ -2139,7 +2110,9 @@ mod logs_bisecting {
         let provider =
             ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter);
 
-        let err = Cast::get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap_err();
+        let err = crate::cmd::logs::get_logs_bisecting(&provider, &Filter::new(), 0, 3)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains("unauthorized"), "got: {err}");
     }
 }

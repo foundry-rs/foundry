@@ -1,18 +1,24 @@
-use crate::{Cast, encode_event_topic};
+use crate::{
+    Cast, MAX_CONCURRENT_RPC_REQUESTS, encode_event_topic, is_range_limit_error, pretty_log,
+};
+use alloy_consensus::BlockHeader;
 use alloy_dyn_abi::Specifier;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Event;
-use alloy_network::{AnyNetwork, Network};
+use alloy_network::{AnyNetwork, BlockResponse, Network};
 use alloy_primitives::{Address, B256, TxHash};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, Topic};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, Log, Topic};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::RpcOpts,
     utils::{self, LoadConfig},
 };
-use std::str::FromStr;
+use foundry_common::{fmt::UIfmt, shell};
+use futures::{FutureExt, StreamExt, TryStreamExt, future::Either};
+use std::{io, str::FromStr};
+use tokio::signal::ctrl_c;
 
 /// CLI arguments for `cast logs`.
 #[derive(Debug, Parser)]
@@ -333,4 +339,37 @@ mod tests {
             assert_eq!(err, expected, "{sig_or_topic}");
         }
     }
+}
+
+pub(crate) fn get_logs_bisecting<'a, P: Provider<N>, N: Network>(
+    provider: &'a P,
+    filter: &'a Filter,
+    from: u64,
+    to: u64,
+) -> futures::future::BoxFuture<'a, Result<Vec<Log>>>
+where
+    P: Clone + Unpin,
+{
+    Box::pin(async move {
+        let range_filter = filter.clone().from_block(from).to_block(to);
+        match provider.get_logs(&range_filter).await {
+            Ok(logs) => Ok(logs),
+            Err(e) => {
+                // Only bisect range-limit errors with room left to split; surface anything
+                // else immediately.
+                if from >= to || !is_range_limit_error(&e) {
+                    return Err(e.into());
+                }
+
+                // Bisect sequentially: this path is only reached after a provider failure, so
+                // fanning out concurrently here would risk amplifying rate-limit errors and
+                // would defeat the top-level concurrency cap.
+                let mid = from + (to - from) / 2;
+                let mut left = get_logs_bisecting(provider, filter, from, mid).await?;
+                let right = get_logs_bisecting(provider, filter, mid + 1, to).await?;
+                left.extend(right);
+                Ok(left)
+            }
+        }
+    })
 }
