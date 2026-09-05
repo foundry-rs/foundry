@@ -9825,3 +9825,14 @@ casttest!(parse_bytes32_string, |_prj, cmd| {
         .assert_success()
         .stdout_eq("hello\n");
 });
+
+casttest!(abi_decode_output, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args([
+            "abi-decode",
+            "f()(uint256)",
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
+        ])
+        .assert_success()
+        .stdout_eq("1\n");
+});

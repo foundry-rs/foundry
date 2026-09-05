@@ -67,49 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Decodes abi-encoded hex input or output
-    ///
-    /// When `input=true`, `calldata` string MUST not be prefixed with function selector
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    /// use alloy_primitives::hex;
-    ///
-    ///     // Passing `input = false` will decode the data as the output type.
-    ///     // The input data types and the full function sig are ignored, i.e.
-    ///     // you could also pass `balanceOf()(uint256)` and it'd still work.
-    ///     let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
-    ///     let sig = "balanceOf(address, uint256)(uint256)";
-    ///     let decoded = Cast::abi_decode(sig, data, false)?[0].as_uint().unwrap().0.to_string();
-    ///     assert_eq!(decoded, "1");
-    ///
-    ///     // Passing `input = true` will decode the data with the input function signature.
-    ///     // We exclude the "prefixed" function selector from the data field (the first 4 bytes).
-    ///     let data = "0x0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
-    ///     let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
-    ///     let decoded = Cast::abi_decode(sig, data, true)?;
-    ///     let decoded = [
-    ///         decoded[0].as_address().unwrap().to_string().to_lowercase(),
-    ///         decoded[1].as_address().unwrap().to_string().to_lowercase(),
-    ///         decoded[2].as_uint().unwrap().0.to_string(),
-    ///         decoded[3].as_uint().unwrap().0.to_string(),
-    ///         hex::encode(decoded[4].as_bytes().unwrap())
-    ///     ]
-    ///     .into_iter()
-    ///     .collect::<Vec<_>>();
-    ///
-    ///     assert_eq!(
-    ///         decoded,
-    ///         vec!["0x8dbd1b711dc621e1404633da156fcc779e1c6f3e", "0xd9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "42", "1", ""]
-    ///     );
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn abi_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<DynSolValue>> {
-        foundry_common::abi::abi_decode_calldata(sig, calldata, input, false)
-    }
-
     /// Decodes calldata-encoded hex input or output
     ///
     /// Similar to `abi_decode`, but `calldata` string MUST be prefixed with function selector

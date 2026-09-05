@@ -27,7 +27,10 @@ use foundry_cli::{
     utils::{self, LoadConfig},
 };
 use foundry_common::{
-    abi::{get_error, get_event},
+    abi::{
+        abi_decode_calldata, encode_function_args, encode_function_args_packed, get_error,
+        get_event, get_func,
+    },
     fmt::{UIfmt, UIfmtSignatureExt, format_uint_exp, get_pretty_block_attr, get_pretty_tx_attr},
     fs,
     provider::{ProviderBuilder, RetryProvider},
@@ -311,7 +314,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 
         // ABI encoding & decoding
         CastSubcommand::DecodeAbi { sig, calldata, input } => {
-            print_tokens(&SimpleCast::abi_decode(&sig, &calldata, input)?)?;
+            print_tokens(&abi_decode_calldata(&sig, &calldata, input, false)?)?;
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
             let out = if packed {
