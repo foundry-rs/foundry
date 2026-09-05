@@ -1,5 +1,6 @@
 ---
 forge: patch
+foundry-evm-symbolic: patch
 ---
 
-Fixed the symbolic engine (`--symbolic`) silently continuing past `RETURNDATACOPY` instead of reverting when the offset is already out of range and the size is a genuinely-symbolic value provably bounded to 0.
+Fixed symbolic `RETURNDATACOPY` to explore both valid and out-of-bounds ranges and to clear return data when an out-of-bounds copy reverts.
