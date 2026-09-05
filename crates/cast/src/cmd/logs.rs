@@ -1,6 +1,4 @@
-use crate::{
-    Cast, MAX_CONCURRENT_RPC_REQUESTS, encode_event_topic, is_range_limit_error, pretty_log,
-};
+use crate::{MAX_CONCURRENT_RPC_REQUESTS, encode_event_topic, is_range_limit_error, pretty_log};
 use alloy_consensus::BlockHeader;
 use alloy_dyn_abi::Specifier;
 use alloy_ens::NameOrAddress;
@@ -80,7 +78,6 @@ impl LogsArgs {
         let config = rpc.load_config()?;
         let provider = utils::get_provider(&config)?;
         let (filter, query_size) = query.resolve(&provider).await?;
-        let cast = Cast::new(&provider);
 
         if !subscribe {
             let logs = match query_size {
@@ -102,7 +99,55 @@ impl LogsArgs {
         let provider = alloy_provider::ProviderBuilder::<_, _, AnyNetwork>::default()
             .connect(url.as_ref())
             .await?;
-        Cast::new(&provider).subscribe(filter, &mut std::io::stdout()).await
+        let output = &mut std::io::stdout();
+        let mut subscription = provider.subscribe_logs(&filter).await?.into_stream();
+
+        // Subscribe to blocks when a `to_block` is set so the stream ends once it is passed.
+        let to_block_number = filter.get_to_block();
+        let mut block_subscription = match to_block_number {
+            Some(_) => Some(provider.subscribe_blocks().await?.into_stream()),
+            None => None,
+        };
+
+        let format_json = shell::is_json();
+        if format_json {
+            write!(output, "[")?;
+        }
+
+        let mut first = true;
+        loop {
+            tokio::select! {
+                block = match &mut block_subscription {
+                    Some(bs) => Either::Left(bs.next().fuse()),
+                    None => Either::Right(futures::future::pending()),
+                } => {
+                    if let (Some(block), Some(to_block)) = (block, to_block_number)
+                        && block.number() > to_block
+                    {
+                        break;
+                    }
+                },
+                log = subscription.next() => {
+                    if format_json {
+                        if !first {
+                            write!(output, ",")?;
+                        }
+                        first = false;
+                        write!(output, "{}", serde_json::to_string(&log).unwrap())?;
+                    } else {
+                        writeln!(output, "{}", pretty_log(&log))?;
+                    }
+                },
+                // Break on the cancel signal so the JSON array is still closed.
+                _ = ctrl_c() => break,
+                else => break,
+            }
+        }
+
+        if format_json {
+            write!(output, "]")?;
+        }
+        Ok(())
     }
 }
 
@@ -129,7 +174,6 @@ impl LogQueryArgs {
     ) -> Result<(Filter, Option<u64>)> {
         let Self { from_block, to_block, address, sig_or_topic, topics_or_args, query_size } = self;
 
-        let cast = Cast::new(&provider);
         let addresses = match address {
             Some(addresses) => Some(
                 futures::future::try_join_all(
