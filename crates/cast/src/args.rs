@@ -751,7 +751,35 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Selectors { bytecode, resolve } => {
             let bytecode = stdin::unwrap_line(bytecode)?;
-            let functions = SimpleCast::extract_functions(&bytecode)?;
+            let code = hex::decode(&bytecode)?;
+            let info = evmole::contract_info(
+                evmole::ContractInfoArgs::new(&code)
+                    .with_selectors()
+                    .with_arguments()
+                    .with_state_mutability(),
+            );
+            let functions = info
+                .functions
+                .expect("functions extraction was requested")
+                .into_iter()
+                .filter(|f| f.dispatch == evmole::SelectorDispatch::Abi)
+                .map(|f| {
+                    let arguments = f
+                        .arguments
+                        .expect("arguments extraction was requested")
+                        .iter()
+                        .map(|t| t.sol_type_name())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let mutability =
+                        f.state_mutability.expect("state_mutability extraction was requested");
+                    (
+                        alloy_primitives::Selector::from(f.selector),
+                        arguments,
+                        mutability.as_json_str(),
+                    )
+                })
+                .collect::<Vec<_>>();
 
             let resolve_results: Vec<String> = if resolve {
                 let selectors = functions

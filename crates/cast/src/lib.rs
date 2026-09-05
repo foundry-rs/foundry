@@ -223,47 +223,6 @@ impl SimpleCast {
             .ok_or_eyre("No selector found")
     }
 
-    /// Extracts function selectors, arguments and state mutability from bytecode
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_primitives::fixed_bytes;
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// let bytecode = "6080604052348015600e575f80fd5b50600436106026575f3560e01c80632125b65b14602a575b5f80fd5b603a6035366004603c565b505050565b005b5f805f60608486031215604d575f80fd5b833563ffffffff81168114605f575f80fd5b925060208401356001600160a01b03811681146079575f80fd5b915060408401356001600160e01b03811681146093575f80fd5b80915050925092509256";
-    /// let functions = Cast::extract_functions(bytecode)?;
-    /// assert_eq!(functions, vec![(fixed_bytes!("0x2125b65b"), "uint32,address,uint224".to_string(), "pure")]);
-    /// # Ok::<(), eyre::Report>(())
-    /// ```
-    pub fn extract_functions(bytecode: &str) -> Result<Vec<(Selector, String, &str)>> {
-        let code = hex::decode(bytecode)?;
-        let info = evmole::contract_info(
-            evmole::ContractInfoArgs::new(&code)
-                .with_selectors()
-                .with_arguments()
-                .with_state_mutability(),
-        );
-        Ok(info
-            .functions
-            .expect("functions extraction was requested")
-            .into_iter()
-            .filter(|f| f.dispatch == evmole::SelectorDispatch::Abi)
-            .map(|f| {
-                let arguments = f
-                    .arguments
-                    .expect("arguments extraction was requested")
-                    .iter()
-                    .map(|t| t.sol_type_name())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                let mutability =
-                    f.state_mutability.expect("state_mutability extraction was requested");
-                (f.selector.into(), arguments, mutability.as_json_str())
-            })
-            .collect())
-    }
-
     /// Decodes a raw EIP2718 transaction payload
     /// Returns details about the typed transaction and ECSDA signature components
     ///
