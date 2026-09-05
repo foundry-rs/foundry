@@ -127,37 +127,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         }
     }
 
-    /// Resolves the filter's block range to concrete block numbers.
-    ///
-    /// Returns `None` when the filter does not target a block-number range (e.g. it filters by
-    /// block hash), in which case chunking is not possible. Tags such as `latest` and `earliest`
-    /// are resolved against the provider so that the common case (`--to-block` defaulting to
-    /// `latest`) can still be chunked.
-    async fn resolve_block_range(&self, filter: &Filter) -> Result<Option<(u64, u64)>> {
-        let FilterBlockOption::Range { from_block, to_block } = &filter.block_option else {
-            return Ok(None);
-        };
-
-        let from_tag = from_block.unwrap_or(BlockNumberOrTag::Earliest);
-        let to_tag = to_block.unwrap_or(BlockNumberOrTag::Latest);
-
-        // `pending` is not a concrete canonical range boundary; don't chunk it, so the single
-        // request preserves the provider's native `pending` semantics.
-        if from_tag.is_pending() || to_tag.is_pending() {
-            return Ok(None);
-        }
-
-        let from = crate::cmd::logs::resolve_block_tag(&self.provider, from_tag).await?;
-        // Resolve identical tags only once so a moving head (e.g. `latest`..`latest`) can't yield
-        // an inconsistent range.
-        let to = if from_tag == to_tag {
-            from
-        } else {
-            crate::cmd::logs::resolve_block_tag(&self.provider, to_tag).await?
-        };
-        Ok(Some((from, to)))
-    }
-
     /// Retrieves logs, splitting the request into fixed-size block chunks when needed.
     pub async fn get_logs_chunked(&self, filter: &Filter, chunk_size: u64) -> Result<Vec<Log>>
     where
@@ -165,7 +134,9 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     {
         // Only chunk a finite block-number range larger than one chunk; `chunk_size == 0`
         // disables chunking and falls back to a single request.
-        let Some((from, to)) = self.resolve_block_range(filter).await? else {
+        let Some((from, to)) =
+            crate::cmd::logs::resolve_block_range(&self.provider, filter).await?
+        else {
             return self.provider.get_logs(filter).await.map_err(Into::into);
         };
         // Inverted range yields no logs; warn instead of returning empty silently.

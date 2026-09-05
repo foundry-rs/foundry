@@ -422,3 +422,31 @@ pub(crate) async fn resolve_block_tag<P: Provider<N> + Clone + Unpin, N: Network
         }
     }
 }
+
+pub(crate) async fn resolve_block_range<P: Provider<N> + Clone + Unpin, N: Network>(
+    provider: &P,
+    filter: &Filter,
+) -> Result<Option<(u64, u64)>> {
+    let FilterBlockOption::Range { from_block, to_block } = &filter.block_option else {
+        return Ok(None);
+    };
+
+    let from_tag = from_block.unwrap_or(BlockNumberOrTag::Earliest);
+    let to_tag = to_block.unwrap_or(BlockNumberOrTag::Latest);
+
+    // `pending` is not a concrete canonical range boundary; don't chunk it, so the single
+    // request preserves the provider's native `pending` semantics.
+    if from_tag.is_pending() || to_tag.is_pending() {
+        return Ok(None);
+    }
+
+    let from = crate::cmd::logs::resolve_block_tag(provider, from_tag).await?;
+    // Resolve identical tags only once so a moving head (e.g. `latest`..`latest`) can't yield
+    // an inconsistent range.
+    let to = if from_tag == to_tag {
+        from
+    } else {
+        crate::cmd::logs::resolve_block_tag(provider, to_tag).await?
+    };
+    Ok(Some((from, to)))
+}
