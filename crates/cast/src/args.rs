@@ -260,7 +260,16 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(SimpleCast::pad(&stdin::unwrap_line(data)?, right, len)?)?;
         }
         CastSubcommand::FormatBytes32String { string } => {
-            print_scalar(SimpleCast::format_bytes32_string(&stdin::unwrap_line(string)?)?)?;
+            let s = stdin::unwrap_line(string)?;
+            let str_bytes: &[u8] = s.as_bytes();
+            eyre::ensure!(
+                str_bytes.len() <= 32,
+                "bytes32 strings must not exceed 32 bytes in length"
+            );
+
+            let mut bytes32: [u8; 32] = [0u8; 32];
+            bytes32[..str_bytes.len()].copy_from_slice(str_bytes);
+            print_scalar(hex::encode_prefixed(bytes32))?;
         }
         CastSubcommand::ParseBytes32String { bytes } => {
             print_scalar(SimpleCast::parse_bytes32_string(&stdin::unwrap_line(bytes)?)?)?;

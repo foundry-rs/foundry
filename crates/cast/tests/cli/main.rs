@@ -9791,3 +9791,10 @@ casttest!(to_bytes_memory_boundaries, |_prj, cmd| {
     cmd.cast_fuse().args(["to-bytes-memory", "0xabababababababababababababababababababababababababababababababab"]).assert_success().stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000020abababababababababababababababababababababababababababababababab\n");
     cmd.cast_fuse().args(["to-bytes-memory", "0xababababababababababababababababababababababababababababababababab"]).assert_success().stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000021ababababababababababababababababababababababababababababababababab00000000000000000000000000000000000000000000000000000000000000\n");
 });
+
+casttest!(format_bytes32_string, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args(["format-bytes32-string", "hello"])
+        .assert_success()
+        .stdout_eq("0x68656c6c6f000000000000000000000000000000000000000000000000000000\n");
+});

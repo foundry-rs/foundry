@@ -67,16 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Encodes string into bytes32 value
-    pub fn format_bytes32_string(s: &str) -> Result<String> {
-        let str_bytes: &[u8] = s.as_bytes();
-        eyre::ensure!(str_bytes.len() <= 32, "bytes32 strings must not exceed 32 bytes in length");
-
-        let mut bytes32: [u8; 32] = [0u8; 32];
-        bytes32[..str_bytes.len()].copy_from_slice(str_bytes);
-        Ok(hex::encode_prefixed(bytes32))
-    }
-
     /// Pads hex data to a specified length
     ///
     /// # Example
