@@ -369,6 +369,66 @@ incomplete symbolic execution (Stuck): unsupported symbolic execution feature: G
     );
 });
 
+// Only the bytes that actually reach the callee matter: the 31 high bytes of a word whose
+// low byte depends on `gasleft()` are provably zero, so copying just those into CALL input
+// must stay supported.
+forgetest_init!(symbolic_gas_excluded_call_calldata_bytes_supported, |prj, cmd| {
+    skip_unless_z3!("symbolic_gas_excluded_call_calldata_bytes_supported");
+
+    prj.add_test(
+        "SymbolicGasExcludedCallData.t.sol",
+        r#"
+contract SymbolicGasExcludedCallDataTarget {
+    fallback() external {}
+}
+
+contract SymbolicGasExcludedCallData {
+    SymbolicGasExcludedCallDataTarget target;
+
+    function setUp() public {
+        target = new SymbolicGasExcludedCallDataTarget();
+    }
+
+    function checkGasExcludedFromCallData() public view {
+        address targetAddress = address(target);
+        bool ok;
+        assembly {
+            let ptr := mload(0x40)
+            mstore(ptr, and(gas(), 0xff))
+            ok := staticcall(gas(), targetAddress, ptr, 31, 0, 0)
+        }
+        assert(ok);
+    }
+
+    function checkGasIncludedInCallData() public view {
+        address targetAddress = address(target);
+        bool ok;
+        assembly {
+            let ptr := mload(0x40)
+            mstore(ptr, and(gas(), 0xff))
+            ok := staticcall(gas(), targetAddress, ptr, 32, 0, 0)
+        }
+        assert(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicGasExcludedCallData"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkGasExcludedFromCallData()
+incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled] checkGasIncludedInCallData()
+"#]],
+    );
+});
+
 forgetest_init!(symbolic_gas_in_call_calldata_reports_unsupported, |prj, cmd| {
     skip_unless_z3!("symbolic_gas_in_call_calldata_reports_unsupported");
 
