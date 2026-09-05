@@ -1,6 +1,6 @@
 use crate::{
     SimpleCast,
-    base::NumberWithBase,
+    base::{Base, NumberWithBase},
     cmd::{erc20::IERC20, rpc_provider},
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
@@ -224,15 +224,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::ToHex(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
-            print_scalar(SimpleCast::to_base(&value, base_in.as_deref(), "hex")?)?;
+            print_scalar(to_base(&value, base_in.as_deref(), "hex")?)?;
         }
         CastSubcommand::ToDec(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
-            print_scalar(SimpleCast::to_base(&value, base_in.as_deref(), "dec")?)?;
+            print_scalar(to_base(&value, base_in.as_deref(), "dec")?)?;
         }
         CastSubcommand::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
             let (value, base_out) = stdin::unwrap2(value, base_out)?;
-            print_scalar(SimpleCast::to_base(&value, base_in.as_deref(), &base_out)?)?;
+            print_scalar(to_base(&value, base_in.as_deref(), &base_out)?)?;
         }
         CastSubcommand::ToBytes32 { bytes } => {
             print_scalar(SimpleCast::to_bytes32(&stdin::unwrap_line(bytes)?)?)?;
@@ -1254,4 +1254,14 @@ pub(super) fn format_units(value: &str, unit: u8) -> Result<String> {
     let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
     let parsed = signed_parse_units(&value)?;
     Ok(format_unit_as_string(parsed, unit))
+}
+
+fn to_base(value: &str, base_in: Option<&str>, base_out: &str) -> Result<String> {
+    let base_in = Base::unwrap_or_detect(base_in, value)?;
+    let base_out = base_out.parse()?;
+    if base_in == base_out {
+        return Ok(value.to_string());
+    }
+    let n = NumberWithBase::parse_int_in(value, base_in)?.with_base(base_out);
+    Ok(format!("{n:#?}"))
 }

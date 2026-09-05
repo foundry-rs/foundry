@@ -67,44 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Converts a number of one base to another
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_primitives::I256;
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(Cast::to_base("100", Some("10"), "16")?, "0x64");
-    /// assert_eq!(Cast::to_base("100", Some("10"), "oct")?, "0o144");
-    /// assert_eq!(Cast::to_base("100", Some("10"), "binary")?, "0b1100100");
-    ///
-    /// assert_eq!(Cast::to_base("0xffffffffffffffff", None, "10")?, u64::MAX.to_string());
-    /// assert_eq!(
-    ///     Cast::to_base("0xffffffffffffffffffffffffffffffff", None, "dec")?,
-    ///     u128::MAX.to_string()
-    /// );
-    /// // U256::MAX overflows as internally it is being parsed as I256
-    /// assert_eq!(
-    ///     Cast::to_base(
-    ///         "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-    ///         None,
-    ///         "decimal"
-    ///     )?,
-    ///     I256::MAX.to_string()
-    /// );
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn to_base(value: &str, base_in: Option<&str>, base_out: &str) -> Result<String> {
-        let base_in = Base::unwrap_or_detect(base_in, value)?;
-        let base_out = base_out.parse()?;
-        if base_in == base_out {
-            return Ok(value.to_string());
-        }
-        let n = NumberWithBase::parse_int_in(value, base_in)?.with_base(base_out);
-        Ok(format!("{n:#?}"))
-    }
-
     /// Converts hexdata into bytes32 value
     ///
     /// # Example
@@ -1092,14 +1054,6 @@ mod tests {
         }
 
         assert!(Cast::to_bytes_memory("0x1").is_err());
-    }
-
-    #[test]
-    fn to_base_accepts_uppercase_prefixes() {
-        assert_eq!(Cast::to_base("0B10", None, "dec").unwrap(), "2");
-        assert_eq!(Cast::to_base("0O10", None, "dec").unwrap(), "8");
-        assert_eq!(Cast::to_base("0X10", None, "dec").unwrap(), "16");
-        assert_eq!(Cast::to_base("-0X10", None, "dec").unwrap(), "-16");
     }
 
     #[test]
