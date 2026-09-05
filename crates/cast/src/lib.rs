@@ -109,35 +109,6 @@ where
     N::TxEnvelope: Serialize + UIfmtSignatureExt,
     N::TransactionResponse: UIfmt,
 {
-    pub(crate) async fn transaction_response(
-        &self,
-        tx_hash: Option<String>,
-        from: Option<NameOrAddress>,
-        nonce: Option<u64>,
-    ) -> Result<N::TransactionResponse> {
-        if let Some(tx_hash) = tx_hash {
-            let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
-            self.provider
-                .get_transaction_by_hash(tx_hash)
-                .await?
-                .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))
-        } else if let Some(from) = from {
-            let nonce = U64::from(nonce.unwrap_or_default());
-            let from = from.resolve(self.provider.root()).await?;
-            self.provider
-                .raw_request::<_, Option<N::TransactionResponse>>(
-                    "eth_getTransactionBySenderAndNonce".into(),
-                    (from, nonce),
-                )
-                .await?
-                .ok_or_else(|| {
-                    eyre::eyre!("tx not found for sender {from} and nonce {:?}", nonce.to::<u64>())
-                })
-        } else {
-            eyre::bail!("tx hash or from address is required")
-        }
-    }
-
     /// # Example
     ///
     /// ```
@@ -163,7 +134,7 @@ where
         raw: bool,
         to_request: bool,
     ) -> Result<String> {
-        let tx = self.transaction_response(tx_hash, from, nonce).await?;
+        let tx = args::transaction_response(&self.provider, tx_hash, from, nonce).await?;
 
         Ok(if raw {
             hex::encode_prefixed(tx.as_ref().encoded_2718())

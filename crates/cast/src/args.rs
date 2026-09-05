@@ -10,7 +10,9 @@ use alloy_dyn_abi::{ErrorExt, EventExt};
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_ens::{NameOrAddress, ProviderEnsExt, namehash};
 use alloy_network::{BlockResponse, Ethereum, Network, eip2718::Decodable2718};
-use alloy_primitives::{Address, B256, Bytes, b256, eip191_hash_message, hex, keccak256};
+use alloy_primitives::{
+    Address, B256, Bytes, TxHash, U64, b256, eip191_hash_message, hex, keccak256,
+};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::{CommandFactory, Parser};
@@ -38,7 +40,7 @@ use foundry_evm_networks::NetworkVariant;
 use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
-use std::time::Instant;
+use std::{str::FromStr, time::Instant};
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS};
 
@@ -785,13 +787,13 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     &config,
                     |provider| {
                         let tx =
-                            Cast::new(&provider).transaction_response(tx_hash, from, nonce).await?;
+                            transaction_response(&provider, tx_hash, from, nonce).await?;
                         tx.as_ref().encoded_2718().into()
                     },
                     _ => {
                         let provider = utils::get_provider(&config)?;
                         let tx =
-                            Cast::new(&provider).transaction_response(tx_hash, from, nonce).await?;
+                            transaction_response(&provider, tx_hash, from, nonce).await?;
                         FoundryTxEnvelope::encode_rpc_2718(&tx).wrap_err_with(|| {
                             format!("Cannot EIP-2718 encode transaction type 0x{:x}", tx.ty())
                         })?
@@ -1087,4 +1089,33 @@ async fn address_at_slot<N: alloy_network::Network>(
     let value =
         provider.get_storage_at(who, slot.into()).block_id(block.unwrap_or_default()).await?;
     Ok(format!("{:?}", Address::from_word(value.into())))
+}
+
+pub(super) async fn transaction_response<N: Network>(
+    provider: &impl Provider<N>,
+    tx_hash: Option<String>,
+    from: Option<NameOrAddress>,
+    nonce: Option<u64>,
+) -> Result<N::TransactionResponse> {
+    if let Some(tx_hash) = tx_hash {
+        let tx_hash = TxHash::from_str(&tx_hash).wrap_err("invalid tx hash")?;
+        provider
+            .get_transaction_by_hash(tx_hash)
+            .await?
+            .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))
+    } else if let Some(from) = from {
+        let nonce = U64::from(nonce.unwrap_or_default());
+        let from = from.resolve(provider.root()).await?;
+        provider
+            .raw_request::<_, Option<N::TransactionResponse>>(
+                "eth_getTransactionBySenderAndNonce".into(),
+                (from, nonce),
+            )
+            .await?
+            .ok_or_else(|| {
+                eyre::eyre!("tx not found for sender {from} and nonce {:?}", nonce.to::<u64>())
+            })
+    } else {
+        eyre::bail!("tx hash or from address is required")
+    }
 }
