@@ -2797,10 +2797,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             tx.call_details.target
                         ));
                     }
-                    if (!sender_filters.targeted.is_empty()
-                        && !sender_filters.targeted.contains(&tx.sender))
-                        || sender_filters.excluded.contains(&tx.sender)
-                    {
+                    if !sender_filters.allows(tx.sender) {
                         return Err(format!(
                             "sequence symbolic artifact call {} uses forbidden sender {}",
                             idx + 1,
@@ -3113,6 +3110,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self,
         invariant_contract: &InvariantContract<'_>,
         invariant_config: &InvariantConfig,
+        sender_filters: &SenderFilters,
         targeted_contracts: &FuzzRunIdentifiedContracts,
         dynamic_target_ctx: &DynamicTargetCtx<'_>,
     ) {
@@ -3152,6 +3150,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 targeted_contracts.is_updatable,
             );
             let prefix_result = sequence[..call_index].iter().try_for_each(|prefix_call| {
+                if !prefix_targets.targets().can_replay(prefix_call)
+                    || !sender_filters.allows(prefix_call.sender)
+                {
+                    return Err(eyre::eyre!(
+                        "frontier prefix call is not eligible for this campaign"
+                    ));
+                }
                 execute_tx_and_register_created(
                     &mut prefix_executor,
                     prefix_call,
@@ -3162,6 +3167,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             });
             if let Err(err) = prefix_result {
                 debug!(%err, id, "failed to replay invariant frontier prefix");
+                continue;
+            }
+            if !sender_filters.allows(call.sender) {
+                debug!(id, sender = %call.sender, "skipping invariant frontier with forbidden sender");
                 continue;
             }
             let invariant_target = {
@@ -3840,6 +3849,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.try_seed_invariant_corpus_from_frontiers(
                 &invariant_contract,
                 &invariant_config,
+                &sender_filters,
                 &targeted,
                 &dynamic_target_ctx,
             );

@@ -3469,6 +3469,58 @@ contract SymbolicInvariantFrontierSeed is Test {
         "nonzero-value frontier unexpectedly produced a corpus seed"
     );
 
+    for (frontier_dir, corpus_dir, forbidden_call_index) in [
+        ("forbidden_prefix_frontiers", "forbidden_prefix_corpus", 0),
+        ("forbidden_suffix_frontiers", "forbidden_suffix_corpus", call_index),
+    ] {
+        let forbidden_frontier_path = prj
+            .root()
+            .join(frontier_dir)
+            .join("SymbolicInvariantFrontierSeed")
+            .join("branch-frontiers.json");
+        std::fs::create_dir_all(forbidden_frontier_path.parent().unwrap()).unwrap();
+        let mut forbidden_artifact = artifact.clone();
+        forbidden_artifact["sequences"][sequence_index][forbidden_call_index]["sender"] =
+            Value::String("0x0000000000000000000000000000000000000000".to_string());
+        std::fs::write(
+            &forbidden_frontier_path,
+            serde_json::to_vec_pretty(&forbidden_artifact).unwrap(),
+        )
+        .unwrap_or_else(|err| {
+            panic!("failed to write {}: {err}", forbidden_frontier_path.display())
+        });
+
+        cmd.forge_fuse();
+        cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+        cmd.args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantFrontierSeed",
+            "--invariant-depth",
+            "1",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            frontier_dir,
+            "--invariant-corpus-dir",
+            corpus_dir,
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+        ])
+        .assert_success();
+        let corpus = prj
+            .root()
+            .join(corpus_dir)
+            .join("SymbolicInvariantFrontierSeed")
+            .join("worker0")
+            .join("corpus");
+        assert!(
+            !corpus.exists() || corpus.read_dir().unwrap().next().is_none(),
+            "forbidden-sender frontier unexpectedly produced a corpus seed"
+        );
+    }
+
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
     cmd.args([
