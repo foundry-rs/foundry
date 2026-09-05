@@ -1209,3 +1209,15 @@ pub(super) fn signed_parse_units(value: &NumberWithBase) -> Result<ParseUnits> {
     }
     Ok(ParseUnits::I256(signed))
 }
+
+pub(super) fn format_unit_as_string(value: ParseUnits, unit: Unit) -> String {
+    let mut formatted = value.format_units(unit);
+    // Trim empty fractional part.
+    if let Some(dot) = formatted.find('.') {
+        let fractional = &formatted[dot + 1..];
+        if fractional.chars().all(|c: char| c == '0') {
+            formatted = formatted[..dot].to_string();
+        }
+    }
+    formatted
+}
