@@ -258,7 +258,8 @@ fn raw_topics(topics: Vec<String>) -> Result<[Topic; 4]> {
     Ok(topics.try_into().unwrap())
 }
 
-fn get_logs_bisecting<'a, P: Provider<N> + Clone + Unpin, N: Network>(
+/// Fetches logs for the inclusive `[from, to]` range, recursively bisecting on failure.
+fn get_logs_bisecting<'a, P: Provider<N>, N: Network>(
     provider: &'a P,
     filter: &'a Filter,
     from: u64,
@@ -288,7 +289,8 @@ fn get_logs_bisecting<'a, P: Provider<N> + Clone + Unpin, N: Network>(
     })
 }
 
-async fn get_logs_chunked_concurrent<P: Provider<N> + Clone + Unpin, N: Network>(
+/// Retrieves logs for the inclusive `[from, to]` range using concurrent chunked requests.
+async fn get_logs_chunked_concurrent<P: Provider<N>, N: Network>(
     provider: &P,
     filter: &Filter,
     from: u64,
@@ -302,11 +304,7 @@ async fn get_logs_chunked_concurrent<P: Provider<N> + Clone + Unpin, N: Network>
     // `buffered` preserves input order, so results stay ordered by block. `try_collect` stops
     // early and surfaces the error if any chunk ultimately fails.
     let chunks: Vec<Vec<Log>> = futures::stream::iter(chunk_ranges)
-        .map(|(start, end)| {
-            let filter = filter.clone();
-            let provider = provider.clone();
-            async move { get_logs_bisecting(&provider, &filter, start, end).await }
-        })
+        .map(|(start, end)| get_logs_bisecting(provider, filter, start, end))
         .buffered(MAX_CONCURRENT_RPC_REQUESTS)
         .try_collect()
         .await?;
@@ -314,7 +312,8 @@ async fn get_logs_chunked_concurrent<P: Provider<N> + Clone + Unpin, N: Network>
     Ok(chunks.into_iter().flatten().collect())
 }
 
-async fn resolve_block_tag<P: Provider<N> + Clone + Unpin, N: Network>(
+/// Resolves a [`BlockNumberOrTag`] to a concrete block number, querying the provider for tags.
+async fn resolve_block_tag<P: Provider<N>, N: Network>(
     provider: &P,
     tag: BlockNumberOrTag,
 ) -> Result<u64> {
@@ -331,7 +330,13 @@ async fn resolve_block_tag<P: Provider<N> + Clone + Unpin, N: Network>(
     }
 }
 
-async fn resolve_block_range<P: Provider<N> + Clone + Unpin, N: Network>(
+/// Resolves the filter's block range to concrete block numbers.
+///
+/// Returns `None` when the filter does not target a block-number range (e.g. it filters by
+/// block hash), in which case chunking is not possible. Tags such as `latest` and `earliest`
+/// are resolved against the provider so that the common case (`--to-block` defaulting to
+/// `latest`) can still be chunked.
+async fn resolve_block_range<P: Provider<N>, N: Network>(
     provider: &P,
     filter: &Filter,
 ) -> Result<Option<(u64, u64)>> {
@@ -355,7 +360,8 @@ async fn resolve_block_range<P: Provider<N> + Clone + Unpin, N: Network>(
     Ok(Some((from, to)))
 }
 
-pub(super) async fn get_logs_chunked<P: Provider<N> + Clone + Unpin, N: Network>(
+/// Retrieves logs, splitting the request into fixed-size block chunks when needed.
+pub(super) async fn get_logs_chunked<P: Provider<N>, N: Network>(
     provider: &P,
     filter: &Filter,
     chunk_size: u64,
@@ -379,7 +385,7 @@ pub(super) async fn get_logs_chunked<P: Provider<N> + Clone + Unpin, N: Network>
     get_logs_chunked_concurrent(provider, filter, from, to, chunk_size).await
 }
 
-async fn convert_block_number<P: Provider<N> + Clone + Unpin, N: Network>(
+async fn convert_block_number<P: Provider<N>, N: Network>(
     provider: &P,
     block: Option<BlockId>,
 ) -> Result<Option<BlockNumberOrTag>> {
@@ -577,10 +583,8 @@ mod tests {
 mod logs_bisecting {
     use super::*;
     use alloy_json_rpc::{RequestPacket, ResponsePacket, SerializedRequest};
-    use alloy_network::AnyNetwork;
     use alloy_provider::ProviderBuilder;
     use alloy_rpc_client::RpcClient;
-    use alloy_rpc_types::{Filter, Log};
     use alloy_transport::{
         TransportError, TransportFut,
         mock::{Asserter, MockTransport},

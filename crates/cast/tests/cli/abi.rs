@@ -321,7 +321,7 @@ casttest!(calldata_decode_nested_json, |_prj, cmd| {
         "0xAF9d27ffe4d51eD54AC8eEc78f2785D7E11E5ab1",
         "0x334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5"
     ]);
-    cmd.args(["calldata-decode", sig, calldata, "--json"]).assert_success().assert_json_stdout(&json!({"schema_version": 1, "success": true, "data": expected, "errors": [], "warnings": []}));
+    cmd.args(["calldata-decode", sig, calldata, "--json"]).assert_json_stdout(json!({"schema_version": 1, "success": true, "data": expected, "errors": [], "warnings": []}).to_string());
 });
 
 casttest!(abi_encode, |_prj, cmd| {

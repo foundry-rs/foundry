@@ -251,7 +251,7 @@ casttest!(to_ascii, |_prj, cmd| {
 });
 
 casttest!(from_fixed_point, |_prj, cmd| {
-    cmd.cast_fuse().args(["from-fixed-point", "0.010", "3"]).assert_success().stdout_eq("10\n");
+    cmd.cast_fuse().args(["from-fixed-point", "3", "0.010"]).assert_success().stdout_eq("10\n");
 });
 
 casttest!(concat_hex, |_prj, cmd| {
@@ -273,25 +273,25 @@ casttest!(to_int256, |_prj, cmd| {
 });
 
 casttest!(to_fixed_point, |_prj, cmd| {
-    cmd.cast_fuse().args(["to-fixed-point", "10", "2"]).assert_success().stdout_eq("0.10\n");
-    cmd.cast_fuse().args(["to-fixed-point", "-10", "3"]).assert_success().stdout_eq("-0.010\n");
-    cmd.cast_fuse().args(["to-fixed-point", "10", "0"]).assert_success().stdout_eq("10.\n");
+    cmd.cast_fuse().args(["to-fixed-point", "2", "10"]).assert_success().stdout_eq("0.10\n");
+    cmd.cast_fuse().args(["to-fixed-point", "3", "-10"]).assert_success().stdout_eq("-0.010\n");
+    cmd.cast_fuse().args(["to-fixed-point", "0", "10"]).assert_success().stdout_eq("10.\n");
 });
 
 casttest!(to_fixed_point_overflow_18446744073709551616, |_prj, cmd| {
-    cmd.args(["to-fixed-point", "10", "18446744073709551616"])
+    cmd.args(["to-fixed-point", "18446744073709551616", "10"])
         .assert_failure()
         .stderr_eq("Error: decimals out of range: 18446744073709551616\n");
 });
 
 casttest!(to_fixed_point_overflow_70000, |_prj, cmd| {
-    cmd.args(["to-fixed-point", "10", "70000"])
+    cmd.args(["to-fixed-point", "70000", "10"])
         .assert_failure()
         .stderr_eq("Error: decimals out of range: 70000\n");
 });
 
 casttest!(to_fixed_point_overflow_65536, |_prj, cmd| {
-    cmd.args(["to-fixed-point", "10", "65536"])
+    cmd.args(["to-fixed-point", "65536", "10"])
         .assert_failure()
         .stderr_eq("Error: decimals out of range: 65536\n");
 });
@@ -376,11 +376,11 @@ casttest!(parse_bytes32_string, |_prj, cmd| {
 });
 
 casttest!(left_shift, |_prj, cmd| {
-    cmd.cast_fuse().args(["left-shift", "16", "1"]).assert_success().stdout_eq("0x20\n");
+    cmd.cast_fuse().args(["shl", "16", "1"]).assert_success().stdout_eq("0x20\n");
 });
 
 casttest!(right_shift, |_prj, cmd| {
-    cmd.cast_fuse().args(["right-shift", "16", "1"]).assert_success().stdout_eq("0x8\n");
+    cmd.cast_fuse().args(["shr", "16", "1"]).assert_success().stdout_eq("0x8\n");
 });
 
 // `--debug-trace-call` must render a multi-node trace (a call that emits a log AND makes a
@@ -416,4 +416,17 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
+});
+
+casttest!(pad_rejects_length_overflow, |_prj, cmd| {
+    let len = usize::MAX.to_string();
+    cmd.args(["pad", "abcd", "--len", &len])
+        .assert_failure()
+        .stderr_eq(format!("Error: len out of range: {len}\n"));
+});
+
+casttest!(to_bytes_memory_rejects_odd_hex, |_prj, cmd| {
+    cmd.args(["to-bytes-memory", "0x1"])
+        .assert_failure()
+        .stderr_eq("Error: Could not decode hex\n\nContext:\n- odd number of digits\n");
 });

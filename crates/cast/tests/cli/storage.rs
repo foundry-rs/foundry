@@ -419,3 +419,13 @@ casttest!(admin_empty, async |_prj, cmd| {
     .assert_success()
     .stdout_eq("0x0000000000000000000000000000000000000000\n");
 });
+
+casttest!(index_mapping, |_prj, cmd| {
+    cmd.args(["index", "uint256", "42", "6"])
+        .assert_success()
+        .stdout_eq("0xfc808b0f31a1e6b9cf25ff6289feae9b51017b392cc8e25620a94a38dcdafcc1\n");
+    cmd.cast_fuse()
+        .args(["index", "string", "hello", "1"])
+        .assert_success()
+        .stdout_eq("0x8404bb4d805e9ca2bd5dd5c43a107e935c8ec393caa7851b353b3192cd5379ae\n");
+});

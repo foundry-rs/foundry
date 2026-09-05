@@ -158,12 +158,14 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(format!("{sign}{value}"))?;
         }
         CastSubcommand::ConcatHex { data } => {
-            let data = if data.is_empty() {
-                stdin::read(true)?.split_whitespace().map(String::from).collect()
+            let input;
+            let values = if data.is_empty() {
+                input = stdin::read(true)?;
+                itertools::Either::Left(input.split_whitespace())
             } else {
-                data
+                itertools::Either::Right(data.iter().map(String::as_str))
             };
-            let out = data.iter().map(|s| strip_0x(s)).collect::<String>();
+            let out = values.map(strip_0x).collect::<String>();
             print_scalar(format!("0x{out}"))?;
         }
         CastSubcommand::FromBin => {
@@ -231,8 +233,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::ToRlp { value } => {
             let value = stdin::unwrap_line(value)?;
-            let val = serde_json::from_str(&value)
-                .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
+            let val =
+                serde_json::from_str(&value).unwrap_or_else(|_| serde_json::Value::String(value));
             let item = crate::rlp_converter::Item::value_to_item(&val)?;
             print_scalar(format!("0x{}", hex::encode(alloy_rlp::encode(item))))?;
         }
@@ -330,11 +332,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::AbiEncode { sig, packed, args } => {
             let out = if packed {
                 // If the signature is a tuple, we need to prefix it to make it a function
-                let sig = if sig.trim_start().starts_with('(') {
-                    format!("foo{sig}")
-                } else {
-                    sig.to_string()
-                };
+                let sig = if sig.trim_start().starts_with('(') { format!("foo{sig}") } else { sig };
 
                 let func = get_func(&sig)?;
                 let encoded = encode_function_args_packed(&func, &args).map_err(|e| {
@@ -987,7 +985,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
         }
         CastSubcommand::Receipt { tx_hash, field, cast_async, confirmations, rpc } => {
-            // JSON: Output is already formatted by `Cast::format_receipt()`
+            // JSON: The receipt helper already formats the output.
             sh_println!(
                 "{}",
                 CastTxSender::new(rpc_provider(&rpc)?)
@@ -1399,6 +1397,13 @@ fn int_bound(s: &str, max: bool) -> Result<String> {
     }
 }
 
+/// Converts a parsed, possibly-negative [`NumberWithBase`] into a [`ParseUnits`], preserving
+/// its sign.
+///
+/// `NumberWithBase::number()` returns the two's-complement bits of a negative value modulo
+/// 2^256, which is a wider range than [`I256`] can represent (magnitudes up to 2^255 only).
+/// A magnitude beyond that range would silently reinterpret as a small *positive* [`I256`]
+/// if constructed unconditionally via [`I256::from_raw`] -- reject it instead.
 fn signed_parse_units(value: &NumberWithBase) -> Result<ParseUnits> {
     if value.is_nonnegative() {
         return Ok(ParseUnits::U256(value.number()));
@@ -1439,6 +1444,8 @@ fn to_base(value: &str, base_in: Option<&str>, base_out: &str) -> Result<String>
     Ok(format!("{n:#?}"))
 }
 
+/// Parses `value` and `bits`, applies `shift` and formats the result with the `base_out`
+/// prefix.
 fn shift(
     value: &str,
     bits: &str,
@@ -1569,7 +1576,6 @@ fn encode_event_topic_preimage(value: &DynSolValue, out: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{Address, Bytes, U256};
     use alloy_sol_types::{EventTopic, sol_data};
 
     /// Compares [`super::encode_event_topic`] against alloy's static [`EventTopic`]

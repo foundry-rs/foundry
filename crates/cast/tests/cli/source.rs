@@ -1,6 +1,7 @@
 //! CLI tests for source commands.
 
 use super::*;
+use axum::{Json, Router, routing::get};
 
 // tests that `cast interface` excludes the constructor
 // <https://github.com/alloy-rs/core/issues/555>
@@ -321,4 +322,38 @@ contract WETH9 {
     string public symbol   = "WETH";
     uint8  public decimals = 18;
 ..."#]]);
+});
+
+casttest!(source_plain_and_directory, async |prj, cmd| {
+    let source = "pragma solidity ^0.8.0; contract Example {}";
+    let response = json!({
+        "status": "1", "message": "OK", "result": [{
+            "SourceCode": source, "ABI": "[]", "ContractName": "Example",
+            "CompilerVersion": "v0.8.30+commit.73712a01", "OptimizationUsed": "0",
+            "Runs": "200", "EVMVersion": "Default", "Proxy": "0"
+        }]
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let app = Router::new().route(
+        "/api",
+        get(move || {
+            let response = response.clone();
+            async move { Json(response) }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let args = [
+        "source",
+        "0x0000000000000000000000000000000000000001",
+        "--explorer-api-url",
+        &format!("{url}/api"),
+        "--explorer-url",
+        &url,
+    ];
+    cmd.args(args).assert_success().stdout_eq(format!("{source}\n"));
+    let directory = prj.root().join("sources");
+    cmd.cast_fuse().args(args).arg("-d").arg(&directory).assert_empty_stdout();
+    assert_eq!(fs::read_to_string(directory.join("Example/Contract.sol")).unwrap(), source);
+    server.abort();
 });
