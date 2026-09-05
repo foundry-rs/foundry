@@ -60,26 +60,27 @@ impl Checker<'_> {
     }
 }
 
-/// Recognizes an unsigned counter whose implicit zero is intentional in a conventional `for`
-/// header. Matching the lowered wrapper's span keeps declarations outside the header distinct.
-fn defaulted_counter_loop<'hir>(
-    hir: &Hir<'hir>,
-    block: &'hir Block<'hir>,
-) -> Option<&'hir Stmt<'hir>> {
+/// The loop statement of a conventional `for (uint i; i < n; i++)` header whose counter relies on
+/// its implicit zero. The header lowers to `{ decl; loop { if cond { body } else break } }` with
+/// the update on the loop source; matching the wrapper's span keeps declarations outside the
+/// header distinct.
+fn defaulted_counter_loop<'gcx>(
+    hir: &Hir<'gcx>,
+    block: &'gcx Block<'gcx>,
+) -> Option<&'gcx Stmt<'gcx>> {
     if let [Stmt { kind: StmtKind::DeclSingle(vid), .. }, loop_stmt] = block.stmts
-        && let StmtKind::Loop(body, LoopSource::ForWithUpdate) = &loop_stmt.kind
         && block.span == loop_stmt.span
-        && hir.variable(*vid).initializer.is_none()
-        && matches!(hir.variable(*vid).ty.kind, TypeKind::Elementary(ElementaryType::UInt(_)))
-        && let [Stmt { kind: StmtKind::If(condition, then, Some(else_)), .. }] = body.stmts
+        && let StmtKind::Loop(body, LoopSource::For { update: Some(update) }) = &loop_stmt.kind
+        && let var = hir.variable(*vid)
+        && var.initializer.is_none()
+        && matches!(var.ty.kind, TypeKind::Elementary(ElementaryType::UInt(_)))
+        && let [Stmt { kind: StmtKind::If(cond, _, Some(else_)), .. }] = body.stmts
         && matches!(else_.kind, StmtKind::Break)
-        && let ExprKind::Binary(left, op, right) = &condition.peel_parens().kind
+        && let ExprKind::Binary(left, op, right) = &cond.peel_parens().kind
         && ((matches!(op.kind, BinOpKind::Lt | BinOpKind::Le) && left.as_variable() == Some(*vid))
             || (matches!(op.kind, BinOpKind::Gt | BinOpKind::Ge)
                 && right.as_variable() == Some(*vid)))
-        && let StmtKind::Block(inner) = &then.kind
-        && inner.span == body.span
-        && let [_, Stmt { kind: StmtKind::Expr(update), .. }] = inner.stmts
+        && let StmtKind::Expr(update) = &update.kind
         && let ExprKind::Unary(op, target) = &update.peel_parens().kind
         && matches!(op.kind, UnOpKind::PreInc | UnOpKind::PostInc)
         && target.as_variable() == Some(*vid)
