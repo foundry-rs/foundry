@@ -107,12 +107,12 @@ impl StorageArgs {
 
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = base_slot {
-            let slot = U256::from_be_bytes(slot.0).saturating_add(offset).into();
+            let slot = U256::from_be_bytes(slot.0).saturating_add(offset);
             sh_println!(
                 "{}",
                 B256::from(
                     provider
-                        .get_storage_at(address, slot.into())
+                        .get_storage_at(address, slot)
                         .block_id(block.unwrap_or_default())
                         .await?
                 )
@@ -341,10 +341,8 @@ async fn fetch_and_print_storage<P: Provider<AnyNetwork>>(
     };
     let values = futures::future::try_join_all(layout.storage.iter().map(|storage_slot| async {
         let slot = B256::from(U256::from_str(&storage_slot.slot)?);
-        let raw_slot_value = provider
-            .get_storage_at(address, slot.into())
-            .block_id(block.unwrap_or_default())
-            .await?;
+        let raw_slot_value =
+            provider.get_storage_at(address, slot).block_id(block.unwrap_or_default()).await?;
         let storage_type = layout.types.get(&storage_slot.storage_type);
         let value = StorageValue { slot, raw_slot_value: raw_slot_value.into() }.value(
             storage_slot.offset,

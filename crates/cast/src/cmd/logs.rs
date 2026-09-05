@@ -3,10 +3,12 @@ use alloy_consensus::BlockHeader;
 use alloy_dyn_abi::Specifier;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Event;
+use alloy_json_rpc::RpcError;
 use alloy_network::{AnyNetwork, BlockResponse, Network};
 use alloy_primitives::{Address, B256, TxHash};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, Log, Topic};
+use alloy_transport::TransportErrorKind;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
@@ -15,7 +17,7 @@ use foundry_cli::{
 };
 use foundry_common::{fmt::UIfmt, shell};
 use futures::{FutureExt, StreamExt, TryStreamExt, future::Either};
-use std::{io, str::FromStr};
+use std::{io::Write, str::FromStr};
 use tokio::signal::ctrl_c;
 
 /// CLI arguments for `cast logs`.
@@ -388,7 +390,7 @@ mod tests {
     }
 }
 
-pub(crate) fn get_logs_bisecting<'a, P: Provider<N>, N: Network>(
+fn get_logs_bisecting<'a, P: Provider<N>, N: Network>(
     provider: &'a P,
     filter: &'a Filter,
     from: u64,
@@ -421,7 +423,7 @@ where
     })
 }
 
-pub(crate) async fn get_logs_chunked_concurrent<P: Provider<N> + Clone + Unpin, N: Network>(
+async fn get_logs_chunked_concurrent<P: Provider<N> + Clone + Unpin, N: Network>(
     provider: &P,
     filter: &Filter,
     from: u64,
@@ -437,23 +439,20 @@ where
 
     // `buffered` preserves input order, so results stay ordered by block. `try_collect` stops
     // early and surfaces the error if any chunk ultimately fails.
-    let chunks: Vec<Vec<Log>> =
-        futures::stream::iter(chunk_ranges)
-            .map(|(start, end)| {
-                let filter = filter.clone();
-                let provider = provider.clone();
-                async move {
-                    crate::cmd::logs::get_logs_bisecting(&provider, &filter, start, end).await
-                }
-            })
-            .buffered(MAX_CONCURRENT_RPC_REQUESTS)
-            .try_collect()
-            .await?;
+    let chunks: Vec<Vec<Log>> = futures::stream::iter(chunk_ranges)
+        .map(|(start, end)| {
+            let filter = filter.clone();
+            let provider = provider.clone();
+            async move { get_logs_bisecting(&provider, &filter, start, end).await }
+        })
+        .buffered(MAX_CONCURRENT_RPC_REQUESTS)
+        .try_collect()
+        .await?;
 
     Ok(chunks.into_iter().flatten().collect())
 }
 
-pub(crate) async fn resolve_block_tag<P: Provider<N> + Clone + Unpin, N: Network>(
+async fn resolve_block_tag<P: Provider<N> + Clone + Unpin, N: Network>(
     provider: &P,
     tag: BlockNumberOrTag,
 ) -> Result<u64> {
@@ -470,7 +469,7 @@ pub(crate) async fn resolve_block_tag<P: Provider<N> + Clone + Unpin, N: Network
     }
 }
 
-pub(crate) async fn resolve_block_range<P: Provider<N> + Clone + Unpin, N: Network>(
+async fn resolve_block_range<P: Provider<N> + Clone + Unpin, N: Network>(
     provider: &P,
     filter: &Filter,
 ) -> Result<Option<(u64, u64)>> {
@@ -487,18 +486,14 @@ pub(crate) async fn resolve_block_range<P: Provider<N> + Clone + Unpin, N: Netwo
         return Ok(None);
     }
 
-    let from = crate::cmd::logs::resolve_block_tag(provider, from_tag).await?;
+    let from = resolve_block_tag(provider, from_tag).await?;
     // Resolve identical tags only once so a moving head (e.g. `latest`..`latest`) can't yield
     // an inconsistent range.
-    let to = if from_tag == to_tag {
-        from
-    } else {
-        crate::cmd::logs::resolve_block_tag(provider, to_tag).await?
-    };
+    let to = if from_tag == to_tag { from } else { resolve_block_tag(provider, to_tag).await? };
     Ok(Some((from, to)))
 }
 
-pub(crate) async fn get_logs_chunked<P: Provider<N> + Clone + Unpin, N: Network>(
+pub(super) async fn get_logs_chunked<P: Provider<N> + Clone + Unpin, N: Network>(
     provider: &P,
     filter: &Filter,
     chunk_size: u64,
@@ -525,7 +520,7 @@ where
     get_logs_chunked_concurrent(provider, filter, from, to, chunk_size).await
 }
 
-pub(crate) async fn convert_block_number<P: Provider<N> + Clone + Unpin, N: Network>(
+async fn convert_block_number<P: Provider<N> + Clone + Unpin, N: Network>(
     provider: &P,
     block: Option<BlockId>,
 ) -> Result<Option<BlockNumberOrTag>> {
@@ -539,10 +534,139 @@ pub(crate) async fn convert_block_number<P: Provider<N> + Clone + Unpin, N: Netw
     }
 }
 
-pub(crate) fn format_logs(logs: Vec<Log>) -> Result<String> {
+fn format_logs(logs: Vec<Log>) -> Result<String> {
     if shell::is_json() {
         Ok(serde_json::to_string(&logs)?)
     } else {
         Ok(logs.iter().map(pretty_log).collect::<Vec<_>>().join("\n"))
+    }
+}
+
+/// Renders a log as an indented list item.
+fn pretty_log(log: &impl UIfmt) -> String {
+    log.pretty()
+        .replacen('\n', "- ", 1) // Remove empty first line
+        .replace('\n', "\n  ") // Indent
+}
+
+#[cfg(test)]
+mod logs_bisecting {
+    use super::*;
+    use alloy_json_rpc::{RequestPacket, ResponsePacket, SerializedRequest};
+    use alloy_network::AnyNetwork;
+    use alloy_provider::ProviderBuilder;
+    use alloy_rpc_client::RpcClient;
+    use alloy_rpc_types::{Filter, Log};
+    use alloy_transport::{
+        TransportError, TransportFut,
+        mock::{Asserter, MockTransport},
+    };
+    use std::{
+        sync::{Arc, Mutex},
+        task::{Context, Poll},
+    };
+    use tower::Service;
+
+    fn log_at(block: u64) -> Log {
+        Log { block_number: Some(block), ..Default::default() }
+    }
+
+    /// Mock transport that records the `eth_getLogs` `[fromBlock, toBlock]` ranges it is asked for
+    /// while delegating the actual responses to a FIFO [`Asserter`].
+    #[derive(Clone)]
+    struct RecordingTransport {
+        inner: MockTransport,
+        ranges: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    impl RecordingTransport {
+        fn new(asserter: Asserter) -> Self {
+            Self { inner: MockTransport::new(asserter), ranges: Arc::new(Mutex::new(Vec::new())) }
+        }
+
+        fn record(&self, req: &SerializedRequest) {
+            if req.method() != "eth_getLogs" {
+                return;
+            }
+            let Some(params) = req.params() else { return };
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(params.get()) else { return };
+            let Some(filter) = value.get(0) else { return };
+            let field =
+                |name| filter.get(name).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            self.ranges.lock().unwrap().push((field("fromBlock"), field("toBlock")));
+        }
+    }
+
+    impl Service<RequestPacket> for RecordingTransport {
+        type Response = ResponsePacket;
+        type Error = TransportError;
+        type Future = TransportFut<'static>;
+
+        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, req: RequestPacket) -> Self::Future {
+            match &req {
+                RequestPacket::Single(req) => self.record(req),
+                RequestPacket::Batch(reqs) => reqs.iter().for_each(|req| self.record(req)),
+            }
+            self.inner.call(req)
+        }
+    }
+
+    // A range-limit failure splits depth-first into [0,1]/[2,3] and aggregates in range order.
+    #[tokio::test]
+    async fn bisects_failed_range_and_aggregates_in_order() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("query returned more than 10000 results");
+        asserter.push_success(&vec![log_at(0)]);
+        asserter.push_success(&vec![log_at(2)]);
+
+        let transport = RecordingTransport::new(asserter);
+        let ranges = transport.ranges.clone();
+        let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
+            .connect_client(RpcClient::new(transport, true));
+
+        let logs = get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap();
+        let blocks: Vec<_> = logs.iter().map(|l| l.block_number).collect();
+        assert_eq!(blocks, vec![Some(0), Some(2)]);
+
+        // The original range fails, then bisection requests exactly the two halves in order.
+        let ranges = ranges.lock().unwrap();
+        assert_eq!(
+            *ranges,
+            vec![
+                ("0x0".to_string(), "0x3".to_string()),
+                ("0x0".to_string(), "0x1".to_string()),
+                ("0x2".to_string(), "0x3".to_string()),
+            ]
+        );
+    }
+
+    // A single-block failure can't be split, so the error is surfaced.
+    #[tokio::test]
+    async fn surfaces_single_block_failure() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("query returned more than 10000 results");
+
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter);
+
+        let err = get_logs_bisecting(&provider, &Filter::new(), 5, 5).await.unwrap_err();
+        assert!(err.to_string().contains("more than 10000 results"), "got: {err}");
+    }
+
+    // A non-range error fails after one request instead of bisecting.
+    #[tokio::test]
+    async fn does_not_bisect_non_range_errors() {
+        let asserter = Asserter::new();
+        asserter.push_failure_msg("unauthorized: invalid api key");
+
+        let provider =
+            ProviderBuilder::<_, _, AnyNetwork>::default().connect_mocked_client(asserter);
+
+        let err = get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap_err();
+        assert!(err.to_string().contains("unauthorized"), "got: {err}");
     }
 }
