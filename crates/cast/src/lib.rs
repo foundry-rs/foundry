@@ -67,22 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Converts UTF-8 text input to hex
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(Cast::from_utf8("yo"), "0x796f");
-    /// assert_eq!(Cast::from_utf8("Hello, World!"), "0x48656c6c6f2c20576f726c6421");
-    /// assert_eq!(Cast::from_utf8("TurboDappTools"), "0x547572626f44617070546f6f6c73");
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn from_utf8(s: &str) -> String {
-        hex::encode_prefixed(s)
-    }
-
     /// Converts hex input to UTF-8 text
     ///
     /// # Example

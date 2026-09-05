@@ -104,7 +104,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 
         // Conversions & transformations
         CastSubcommand::FromUtf8 { text } => {
-            print_scalar(SimpleCast::from_utf8(&stdin::unwrap(text, false)?))?;
+            print_scalar(hex::encode_prefixed(stdin::unwrap(text, false)?))?;
         }
         CastSubcommand::ToAscii { hexdata } => {
             print_scalar(SimpleCast::to_ascii(stdin::unwrap(hexdata, false)?.trim())?)?;

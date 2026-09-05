@@ -9687,3 +9687,7 @@ casttest!(min_int, |_prj, cmd| {
     cmd.cast_fuse().args(["min-int", "int32"]).assert_success().stdout_eq("-2147483648\n");
     cmd.cast_fuse().args(["min-int", "uint256"]).assert_success().stdout_eq("0\n");
 });
+
+casttest!(from_utf8, |_prj, cmd| {
+    cmd.cast_fuse().args(["from-utf8", "你好"]).assert_success().stdout_eq("0xe4bda0e5a5bd\n");
+});
