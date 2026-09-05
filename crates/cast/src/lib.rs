@@ -198,36 +198,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         Ok(format!("{:?}", Address::from_word(value.into())))
     }
 
-    /// Perform a raw JSON-RPC request
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let result = cast
-    ///     .rpc("eth_getBalance", &["0xc94770007dda54cF92009BFF0dE90c06F603a09f", "latest"])
-    ///     .await?;
-    /// println!("{}", result);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn rpc<V>(&self, method: &str, params: V) -> Result<String>
-    where
-        V: alloy_json_rpc::RpcSend,
-    {
-        let res = self
-            .provider
-            .raw_request::<V, serde_json::Value>(Cow::Owned(method.to_string()), params)
-            .await?;
-        Ok(serde_json::to_string(&res)?)
-    }
-
     pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
         let logs = self.get_logs(&filter).await?;
         Self::format_logs(logs)
