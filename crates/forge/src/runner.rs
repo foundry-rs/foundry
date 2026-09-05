@@ -28,7 +28,7 @@ use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::{Function, JsonAbi, StateMutability};
 use alloy_primitives::{
     Address, B256, Bytes, I256, Selector, U256, address, hex, keccak256,
-    map::{Entry, HashMap},
+    map::{Entry, HashMap, HashSet},
 };
 use eyre::Result;
 use foundry_common::{
@@ -3127,6 +3127,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return;
         }
 
+        let mut checked_property_calls = HashSet::<(usize, usize)>::default();
         for (frontier, sequence) in
             self.import_symbolic_invariant_frontiers(invariant_contract.anchor(), invariant_config)
         {
@@ -3188,6 +3189,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             let input =
                 SymbolicConcreteInput { args, calldata: call.call_details.calldata.clone() };
             if self.config.symbolic.check_invariant_frontiers
+                && checked_property_calls.insert((
+                    frontier.sequence_index.expect("frontier sequence index was validated"),
+                    call_index,
+                ))
                 && let Some(solved_sequence) = self.solve_invariant_from_frontier_prefix(
                     invariant_contract,
                     &prefix_executor,
