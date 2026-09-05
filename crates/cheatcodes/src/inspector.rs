@@ -3920,9 +3920,15 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             if to == CHEATCODE_ADDRESS {
                                 let args_offset = try_or_return!(interpreter.stack.peek(3)).saturating_to::<usize>();
                                 let args_size = try_or_return!(interpreter.stack.peek(4)).saturating_to::<usize>();
-                                let memory_word = interpreter.memory.slice_len(args_offset, args_size);
-                                if memory_word[..SELECTOR_LEN] == stopExpectSafeMemoryCall::SELECTOR {
-                                    return
+                                // CALL expands its input memory after this hook runs, so only inspect
+                                // calldata already within the current memory.
+                                if args_size >= SELECTOR_LEN
+                                    && args_offset.saturating_add(args_size) <= interpreter.memory.size()
+                                {
+                                    let memory_word = interpreter.memory.slice_len(args_offset, args_size);
+                                    if memory_word[..SELECTOR_LEN] == stopExpectSafeMemoryCall::SELECTOR {
+                                        return
+                                    }
                                 }
                             }
 

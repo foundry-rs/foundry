@@ -160,6 +160,43 @@ contract MemSafetyTest is Test {
     }
 
     ////////////////////////////////////////////////////////////////
+    //        CALL with short/out-of-range calldata to `vm`        //
+    ////////////////////////////////////////////////////////////////
+
+    /// @dev Tests that a disallowed `CALL` to the cheatcode address with calldata shorter
+    ///      than a selector (4 bytes) is rejected as a normal unsafe memory write, instead
+    ///      of panicking while checking whether it's a `stopExpectSafeMemory()` call.
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testExpectSafeMemory_CALL_shortCalldataToCheatcodeAddress() public {
+        vm.expectSafeMemory(0x80, 0xA0);
+
+        vm.expectRevert();
+
+        // Call the cheatcode address with 0-byte calldata (too short to be a selector) and
+        // write the return data outside the allowed range, so the disallowed-write path is
+        // taken and must check the calldata without panicking.
+        assembly {
+            pop(call(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x00, 0x00, 0x00, 0x200, 0x20))
+        }
+    }
+
+    /// @dev Tests that a disallowed `CALL` to the cheatcode address whose calldata range
+    ///      reaches past memory that hasn't been expanded yet is rejected as a normal
+    ///      unsafe memory write, instead of panicking/UB while reading it.
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testExpectSafeMemory_CALL_unexpandedCalldataToCheatcodeAddress() public {
+        vm.expectSafeMemory(0x80, 0xA0);
+
+        vm.expectRevert();
+
+        // Call the cheatcode address with calldata pointing at memory well past what has
+        // been expanded so far, and write the return data outside the allowed range.
+        assembly {
+            pop(call(gas(), 0x7109709ECfa91a80626fF3989D68f67F5b1DD12D, 0x00, 0x100000, 0x04, 0x200, 0x20))
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////
     //                          CALLCODE                          //
     ////////////////////////////////////////////////////////////////
 
