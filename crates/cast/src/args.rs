@@ -804,7 +804,39 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(rpc_provider(&rpc)?.get_gas_price().await?.to_string())?;
         }
         CastSubcommand::Index { key_type, key, slot_number } => {
-            print_scalar(SimpleCast::index(&key_type, &key, &slot_number)?)?;
+            let mut hasher = Keccak256::new();
+
+            let k_ty = DynSolType::parse(&key_type).wrap_err("Could not parse type")?;
+            let k = k_ty.coerce_str(&key).wrap_err("Could not parse value")?;
+            match k_ty {
+                // For value types, `h` pads the value to 32 bytes in the same way as when storing
+                // the value in memory.
+                DynSolType::Bool
+                | DynSolType::Int(_)
+                | DynSolType::Uint(_)
+                | DynSolType::FixedBytes(_)
+                | DynSolType::Address
+                | DynSolType::Function => hasher.update(k.as_word().unwrap()),
+
+                // For strings and byte arrays, `h(k)` is just the unpadded data.
+                DynSolType::String | DynSolType::Bytes => hasher.update(k.as_packed_seq().unwrap()),
+
+                DynSolType::Array(..)
+                | DynSolType::FixedArray(..)
+                | DynSolType::Tuple(..)
+                | DynSolType::CustomStruct { .. } => {
+                    eyre::bail!("Type `{k_ty}` is not supported as a mapping key");
+                }
+            }
+
+            let p = DynSolType::Uint(256)
+                .coerce_str(&slot_number)
+                .wrap_err("Could not parse slot number")?;
+            let p = p.as_word().unwrap();
+            hasher.update(p);
+
+            let location = hasher.finalize();
+            print_scalar(location.to_string())?;
         }
         CastSubcommand::IndexErc7201 { id, formula_id } => {
             eyre::ensure!(formula_id == "erc7201", "unsupported formula ID: {formula_id}");
