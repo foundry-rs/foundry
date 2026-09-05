@@ -412,7 +412,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 address.create2(salt, keccak256(hex::decode(init_code)?))
             } else {
                 // CREATE addresses depend on the deployer nonce, which is fetched over RPC.
-                Cast::new(rpc_provider(&rpc)?).compute_address(address, nonce).await?
+                let nonce = match nonce {
+                    Some(nonce) => nonce,
+                    None => rpc_provider(&rpc)?.get_transaction_count(address).await?,
+                };
+                address.create(nonce)
             };
             print_scalar(computed.to_checksum(None))?;
         }

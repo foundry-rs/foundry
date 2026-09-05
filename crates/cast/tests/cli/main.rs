@@ -9558,3 +9558,17 @@ Transaction successfully executed.
 "#]]);
     });
 }
+
+casttest!(compute_address, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    cmd.args([
+        "compute-address",
+        "0x0000000000000000000000000000000000000000",
+        "--nonce",
+        "0",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(format!("{}\n", Address::ZERO.create(0).to_checksum(None)));
+});

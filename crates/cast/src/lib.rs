@@ -266,32 +266,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// # Example
     ///
     /// ```
-    /// use alloy_primitives::{Address, U256};
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    /// use std::str::FromStr;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let addr = Address::from_str("7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
-    /// let computed_address = cast.compute_address(addr, None).await?;
-    /// println!("Computed address for address {addr}: {computed_address}");
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn compute_address(&self, address: Address, nonce: Option<u64>) -> Result<Address> {
-        let nonce = match nonce {
-            Some(nonce) => nonce,
-            None => self.provider.get_transaction_count(address).await?,
-        };
-        Ok(address.create(nonce))
-    }
-
-    /// # Example
-    ///
-    /// ```
     /// use alloy_primitives::Address;
     /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
     /// use cast::Cast;
