@@ -590,3 +590,225 @@ incomplete symbolic execution (Error): solver error: solver model does not satis
         "expected Keccak-heuristic taint or warning in output, got:\n{stdout}"
     );
 });
+
+// EVM only validates/uses a JUMPI destination when the jump is actually
+// taken (revm's `jumpi` calls `jump_inner` only inside `if !cond.is_zero()`).
+// A falsy condition must fall through regardless of what garbage sits in the
+// destination slot on the stack. Solidity's strict-assembly mode forbids raw
+// `jump`/`jumpi`, so this needs hand-assembled bytecode via `vm.etch`.
+forgetest_init!(symbolic_jumpi_falsy_condition_skips_dest_validation, |prj, cmd| {
+    skip_unless_z3!("symbolic_jumpi_falsy_condition_skips_dest_validation");
+
+    prj.add_test(
+        "SymbolicJumpiOrdering.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicJumpiFalsyCondition is Test {
+    function checkFalsyConditionSkipsDestValidation() public {
+        address target = address(0xBEEF);
+        // PUSH1 0x00 (cond, falsy)  PUSH1 0x01 (dest, NOT a JUMPDEST)  JUMPI  STOP
+        // dest sits on top of the stack (popped first), cond below it (popped
+        // second) - see runtime/evm.rs `ensure_jumpdest` / opcodes.rs JUMPI.
+        vm.etch(target, hex"600060015700");
+        (bool ok, ) = target.call("");
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkFalsyConditionSkipsDestValidation"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkFalsyConditionSkipsDestValidation()
+"#]],
+    );
+    assert!(!stdout.contains("invalid jump destination"), "{stdout}");
+});
+
+// Companion to the falsy-condition case above: a JUMPI with an invalid
+// destination and a TRUTHY condition must still be rejected. This guards
+// against a fix that accidentally stops validating the destination
+// altogether instead of only skipping it on the not-taken path.
+forgetest_init!(symbolic_jumpi_truthy_condition_still_validates_dest, |prj, cmd| {
+    skip_unless_z3!("symbolic_jumpi_truthy_condition_still_validates_dest");
+
+    prj.add_test(
+        "SymbolicJumpiOrderingTruthy.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicJumpiTruthyCondition is Test {
+    function checkTruthyConditionStillValidatesDest() public {
+        address target = address(0xBEEF);
+        // PUSH1 0x01 (cond, truthy)  PUSH1 0x01 (dest, NOT a JUMPDEST)  JUMPI  STOP
+        vm.etch(target, hex"600160015700");
+        (bool ok, ) = target.call("");
+        assertFalse(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkTruthyConditionStillValidatesDest"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+incomplete symbolic execution (Error): invalid jump destination 1
+"#]],
+    );
+});
+
+// Stronger version of the falsy-condition case: the destination here is
+// genuinely symbolic (derived from calldata), not just a concrete invalid
+// value. Before the fix this hit `expect_constrained_usize`'s "symbolic
+// JUMPI destination" Unsupported error unconditionally; with the falsy
+// condition never touching the destination, resolution must be skipped
+// entirely, symbolic or not.
+forgetest_init!(symbolic_jumpi_falsy_condition_skips_symbolic_dest_resolution, |prj, cmd| {
+    skip_unless_z3!("symbolic_jumpi_falsy_condition_skips_symbolic_dest_resolution");
+
+    prj.add_test(
+        "SymbolicJumpiOrderingSymbolicDest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicJumpiSymbolicDest is Test {
+    function checkFalsyConditionSkipsSymbolicDestResolution(uint256 dest) public {
+        address target = address(0xBEEF);
+        // PUSH1 0x00 (cond, falsy)  PUSH1 0x00  CALLDATALOAD (dest, symbolic)  JUMPI  STOP
+        vm.etch(target, hex"60006000355700");
+        (bool ok, ) = target.call(abi.encode(dest));
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--match-test",
+            "checkFalsyConditionSkipsSymbolicDestResolution",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkFalsyConditionSkipsSymbolicDestResolution(uint256)
+"#]],
+    );
+    assert!(!stdout.contains("symbolic JUMPI destination"), "{stdout}");
+    assert!(!stdout.contains("invalid jump destination"), "{stdout}");
+});
+
+// The `None` (symbolic condition) branch resolves and validates the
+// destination unconditionally, since both the true and false forks are
+// explored and the true fork needs a concrete valid destination. That is
+// unchanged by this fix (only the concrete-condition arms were reordered) -
+// pin it so a future refactor can't silently start skipping validation here.
+forgetest_init!(symbolic_jumpi_symbolic_condition_still_validates_dest, |prj, cmd| {
+    skip_unless_z3!("symbolic_jumpi_symbolic_condition_still_validates_dest");
+
+    prj.add_test(
+        "SymbolicJumpiOrderingSymbolicCond.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicJumpiSymbolicCondition is Test {
+    function checkSymbolicConditionStillValidatesDest(uint256 cond) public {
+        address target = address(0xBEEF);
+        // PUSH1 0x00  CALLDATALOAD (cond, symbolic)  PUSH1 0x01 (dest, NOT a JUMPDEST)  JUMPI  STOP
+        vm.etch(target, hex"60003560015700");
+        (bool ok, ) = target.call(abi.encode(cond));
+        assertFalse(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkSymbolicConditionStillValidatesDest"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+incomplete symbolic execution (Error): invalid jump destination 1
+"#]],
+    );
+});
+
+// Sanity check that unconditional JUMP (a sibling opcode, textually adjacent
+// in the same match statement) was not accidentally touched by this fix:
+// an invalid destination must still always be rejected, and a valid one
+// must still always succeed.
+forgetest_init!(symbolic_jump_unconditional_dest_validation_unaffected, |prj, cmd| {
+    skip_unless_z3!("symbolic_jump_unconditional_dest_validation_unaffected");
+
+    prj.add_test(
+        "SymbolicJumpUnaffected.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicJumpUnaffected is Test {
+    function checkInvalidJumpStillRejected() public {
+        address invalidTarget = address(0xBEEF);
+        // PUSH1 0x01 (dest, NOT a JUMPDEST)  JUMP  STOP
+        vm.etch(invalidTarget, hex"60015600");
+        (bool ok, ) = invalidTarget.call("");
+        assertFalse(ok);
+    }
+
+    function checkValidJumpStillSucceeds() public {
+        address validTarget = address(0xC0FE);
+        // PUSH1 0x03 (dest)  JUMP  JUMPDEST  STOP
+        vm.etch(validTarget, hex"6003565b00");
+        (bool ok, ) = validTarget.call("");
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--match-test",
+            "checkInvalidJumpStillRejected|checkValidJumpStillSucceeds",
+        ])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkValidJumpStillSucceeds()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+incomplete symbolic execution (Error): invalid jump destination 1
+"#]],
+    );
+});

@@ -1100,15 +1100,19 @@ impl SymbolicExecutor {
             }
             opcode::JUMPI => {
                 let dest = state.stack.pop()?;
-                let dest = state.expect_constrained_usize(
-                    &mut self.cx,
-                    dest,
-                    "symbolic JUMPI destination",
-                )?;
-                ensure_jumpdest(dest, jumpdests)?;
                 let cond = state.stack.pop()?;
                 match cond.truth() {
+                    // EVM only validates/uses the destination when the jump is actually taken
+                    // (see revm's `jumpi`, which calls `jump_inner` only inside
+                    // `if !cond.is_zero()`). A falsy condition must fall through regardless of
+                    // what garbage sits in the destination slot.
                     Some(true) => {
+                        let dest = state.expect_constrained_usize(
+                            &mut self.cx,
+                            dest,
+                            "symbolic JUMPI destination",
+                        )?;
+                        ensure_jumpdest(dest, jumpdests)?;
                         if !self.take_loop_jump(state, state.pc, dest) {
                             return Ok(StepOutcome::AssumeRejected);
                         }
@@ -1116,6 +1120,12 @@ impl SymbolicExecutor {
                     }
                     Some(false) => {}
                     None => {
+                        let dest = state.expect_constrained_usize(
+                            &mut self.cx,
+                            dest,
+                            "symbolic JUMPI destination",
+                        )?;
+                        ensure_jumpdest(dest, jumpdests)?;
                         let op_pc = state.pc.saturating_sub(1);
                         let _branch_span = trace_span!("jumpi_branch", pc = op_pc, dest).entered();
                         let true_cond = cond.nonzero_bool(&mut self.cx);
