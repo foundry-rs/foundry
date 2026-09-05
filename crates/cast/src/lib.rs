@@ -67,44 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Fetches the source code of verified contracts from etherscan and expands the resulting
-    /// files to a directory for easy perusal.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use cast::SimpleCast as Cast;
-    /// # use foundry_config::NamedChain;
-    /// # use std::path::PathBuf;
-    /// # async fn expand() -> eyre::Result<()> {
-    /// Cast::expand_etherscan_source_to_directory(
-    ///     NamedChain::Mainnet.into(),
-    ///     "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
-    ///     Some("<etherscan_api_key>".to_string()),
-    ///     PathBuf::from("output_dir"),
-    ///     None,
-    ///     None,
-    /// )
-    /// .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn expand_etherscan_source_to_directory(
-        chain: Chain,
-        contract_address: String,
-        etherscan_api_key: Option<String>,
-        output_directory: PathBuf,
-        explorer_api_url: Option<String>,
-        explorer_url: Option<String>,
-    ) -> eyre::Result<()> {
-        let client =
-            args::explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
-        let meta = client.contract_source_code(contract_address.parse()?).await?;
-        let source_tree = meta.source_tree();
-        source_tree.write_to(&output_directory)?;
-        Ok(())
-    }
-
     /// Fetches the source code of verified contracts from etherscan, flattens it and writes it to
     /// the given path or stdout.
     pub async fn etherscan_source_flatten(
