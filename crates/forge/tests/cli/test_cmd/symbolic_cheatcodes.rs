@@ -2504,6 +2504,11 @@ contract SymbolicEmitter {
     function fire(address who, uint256 id, uint256 value) external {
         emit Seen(who, id, value);
     }
+
+    function fireTwice(address who, uint256 id, uint256 value) external {
+        emit Seen(who, id, value);
+        emit Seen(who, id, value);
+    }
 }
 
 contract SymbolicExpectEmit is Test {
@@ -2527,6 +2532,24 @@ contract SymbolicExpectEmit is Test {
         emit Seen(address(0xB0B), 7, 9);
         emitter.fire(address(0xB0B), 7, 9);
     }
+
+    function checkExpectEmitCountOverloads(uint256) public {
+        vm.expectEmit(uint64(2));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fireTwice(address(0xB0B), 7, 9);
+
+        vm.expectEmit(address(emitter), uint64(2));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fireTwice(address(0xB0B), 7, 9);
+
+        vm.expectEmit(true, true, false, true, uint64(2));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fireTwice(address(0xB0B), 7, 9);
+
+        vm.expectEmit(true, true, false, true, address(emitter), uint64(2));
+        emit Seen(address(0xB0B), 7, 9);
+        emitter.fireTwice(address(0xB0B), 7, 9);
+    }
 }
 "#,
     );
@@ -2547,6 +2570,12 @@ contract SymbolicExpectEmit is Test {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkExpectEmitSymbolicEmitter(address)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectEmitCountOverloads(uint256)
 "#]],
     );
     assert!(!stdout.contains("symbolic vm.expectEmit"), "{stdout}");
