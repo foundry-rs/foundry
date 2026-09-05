@@ -15,7 +15,6 @@ use alloy_consensus::{
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue, Specifier};
 use alloy_eips::Encodable2718;
-use alloy_ens::NameOrAddress;
 use alloy_network::{AnyNetwork, BlockResponse, Network};
 use alloy_primitives::{
     Address, B256, I256, Keccak256, LogData, Selector, TxHash, U64, U256, hex,
@@ -23,7 +22,6 @@ use alloy_primitives::{
 };
 use alloy_provider::{Provider, network::eip2718::Decodable2718};
 use alloy_rlp::{Decodable, Encodable};
-use alloy_rpc_types::BlockId;
 use base::{Base, NumberWithBase};
 use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
@@ -43,7 +41,6 @@ use rayon::prelude::*;
 use serde::Serialize;
 use std::{
     fmt::Write,
-    marker::PhantomData,
     path::PathBuf,
     str::FromStr,
     sync::atomic::{AtomicBool, Ordering},
@@ -66,100 +63,6 @@ pub mod tx;
 use rlp_converter::Item;
 
 const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
-
-// TODO: CastContract with common contract initializers? Same for CastProviders?
-
-pub struct Cast<P, N = AnyNetwork> {
-    provider: P,
-    _phantom: PhantomData<N>,
-}
-
-impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
-    /// Creates a new Cast instance from the provided client
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub const fn new(provider: P) -> Self {
-        Self { provider, _phantom: PhantomData }
-    }
-}
-
-impl<P: Provider<N>, N: Network> Cast<P, N>
-where
-    N::HeaderResponse: UIfmtHeaderExt,
-    N::BlockResponse: UIfmt,
-{
-}
-
-impl<P: Provider<N>, N: Network> Cast<P, N> where N::Header: Encodable {}
-
-impl<P: Provider<N>, N: Network> Cast<P, N>
-where
-    N::TxEnvelope: Serialize + UIfmtSignatureExt,
-    N::TransactionResponse: UIfmt,
-{
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false).await?;
-    /// println!("{}", tx);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn transaction(
-        &self,
-        tx_hash: Option<String>,
-        from: Option<NameOrAddress>,
-        nonce: Option<u64>,
-        field: Option<String>,
-        raw: bool,
-        to_request: bool,
-    ) -> Result<String> {
-        let tx = args::transaction_response(&self.provider, tx_hash, from, nonce).await?;
-
-        Ok(if raw {
-            hex::encode_prefixed(tx.as_ref().encoded_2718())
-        } else if let Some(field) = field {
-            if let Some(value) = get_pretty_tx_attr::<N>(&tx, &field) {
-                value
-            } else {
-                let tx_json = serde_json::to_value(&tx)?;
-                let value =
-                    tx_json.get(&field).ok_or_else(|| eyre::eyre!("invalid tx field: {field}"))?;
-                match value {
-                    serde_json::Value::String(value) => value.clone(),
-                    value => value.to_string(),
-                }
-            }
-        } else if shell::is_json() {
-            // to_value first to sort json object keys
-            serde_json::to_value(&tx)?.to_string()
-        } else if to_request {
-            serde_json::to_string_pretty(&Into::<N::TransactionRequest>::into(tx))?
-        } else {
-            tx.pretty()
-        })
-    }
-}
 
 pub struct SimpleCast;
 

@@ -1,5 +1,5 @@
 use crate::{
-    Cast, SimpleCast,
+    SimpleCast,
     cmd::{erc20::IERC20, rpc_provider},
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
@@ -25,7 +25,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     abi::{get_error, get_event},
-    fmt::{UIfmt, UIfmtHeaderExt, format_uint_exp, get_pretty_block_attr},
+    fmt::{UIfmt, UIfmtSignatureExt, format_uint_exp, get_pretty_block_attr, get_pretty_tx_attr},
     fs,
     provider::{ProviderBuilder, RetryProvider},
     selectors::{
@@ -813,9 +813,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     &config,
                     utils::get_provider(&config)?,
                     |provider| {
-                        Cast::new(&provider)
-                            .transaction(tx_hash, from, nonce, field, false, to_request)
-                            .await?
+                        let tx = transaction_response(&provider, tx_hash, from, nonce).await?;
+                        format_transaction(&provider, tx, field, to_request)?
                     }
                 )
             };
@@ -1091,7 +1090,7 @@ async fn address_at_slot<N: alloy_network::Network>(
     Ok(format!("{:?}", Address::from_word(value.into())))
 }
 
-pub(super) async fn transaction_response<N: Network>(
+async fn transaction_response<N: Network>(
     provider: &impl Provider<N>,
     tx_hash: Option<String>,
     from: Option<NameOrAddress>,
@@ -1118,4 +1117,36 @@ pub(super) async fn transaction_response<N: Network>(
     } else {
         eyre::bail!("tx hash or from address is required")
     }
+}
+
+fn format_transaction<N: Network>(
+    _provider: &impl Provider<N>,
+    tx: N::TransactionResponse,
+    field: Option<String>,
+    to_request: bool,
+) -> Result<String>
+where
+    N::TransactionResponse: UIfmt,
+    N::TxEnvelope: UIfmtSignatureExt,
+{
+    Ok(if let Some(field) = field {
+        if let Some(value) = get_pretty_tx_attr::<N>(&tx, &field) {
+            value
+        } else {
+            let tx_json = serde_json::to_value(&tx)?;
+            let value =
+                tx_json.get(&field).ok_or_else(|| eyre::eyre!("invalid tx field: {field}"))?;
+            match value {
+                serde_json::Value::String(value) => value.clone(),
+                value => value.to_string(),
+            }
+        }
+    } else if shell::is_json() {
+        // to_value first to sort json object keys
+        serde_json::to_value(&tx)?.to_string()
+    } else if to_request {
+        serde_json::to_string_pretty(&Into::<N::TransactionRequest>::into(tx))?
+    } else {
+        tx.pretty()
+    })
 }
