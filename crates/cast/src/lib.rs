@@ -127,55 +127,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         }
     }
 
-    /// Converts a block identifier into a block number.
-    ///
-    /// If the block identifier is a block number, then this function returns the block number. If
-    /// the block identifier is a block hash, then this function returns the block number of
-    /// that block hash. If the block identifier is `None`, then this function returns `None`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_primitives::fixed_bytes;
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use alloy_rpc_types::{BlockId, BlockNumberOrTag};
-    /// use cast::Cast;
-    /// use std::{convert::TryFrom, str::FromStr};
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    ///
-    /// let block_number = cast.convert_block_number(Some(BlockId::number(5))).await?;
-    /// assert_eq!(block_number, Some(BlockNumberOrTag::Number(5)));
-    ///
-    /// let block_number = cast
-    ///     .convert_block_number(Some(BlockId::hash(fixed_bytes!(
-    ///         "0000000000000000000000000000000000000000000000000000000000001234"
-    ///     ))))
-    ///     .await?;
-    /// assert_eq!(block_number, Some(BlockNumberOrTag::Number(4660)));
-    ///
-    /// let block_number = cast.convert_block_number(None).await?;
-    /// assert_eq!(block_number, None);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn convert_block_number(
-        &self,
-        block: Option<BlockId>,
-    ) -> Result<Option<BlockNumberOrTag>> {
-        match block {
-            Some(BlockId::Number(number)) => Ok(Some(number)),
-            Some(BlockId::Hash(hash)) => {
-                let block = self.provider.get_block_by_hash(hash.block_hash).await?;
-                Ok(block.map(|block| block.header().number().into()))
-            }
-            None => Ok(None),
-        }
-    }
-
     /// Sets up a subscription to the given filter and writes the logs to the given output.
     ///
     /// # Example

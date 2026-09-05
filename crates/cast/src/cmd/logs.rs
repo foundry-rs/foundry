@@ -139,9 +139,10 @@ impl LogQueryArgs {
         };
 
         let from_block =
-            cast.convert_block_number(Some(from_block.unwrap_or_else(BlockId::earliest))).await?;
+            convert_block_number(&provider, Some(from_block.unwrap_or_else(BlockId::earliest)))
+                .await?;
         let to_block =
-            cast.convert_block_number(Some(to_block.unwrap_or_else(BlockId::latest))).await?;
+            convert_block_number(&provider, Some(to_block.unwrap_or_else(BlockId::latest))).await?;
         let filter = build_filter(from_block, to_block, addresses, sig_or_topic, topics_or_args)?;
 
         Ok((filter, query_size))
@@ -476,4 +477,18 @@ where
     }
 
     get_logs_chunked_concurrent(provider, filter, from, to, chunk_size).await
+}
+
+pub(crate) async fn convert_block_number<P: Provider<N> + Clone + Unpin, N: Network>(
+    provider: &P,
+    block: Option<BlockId>,
+) -> Result<Option<BlockNumberOrTag>> {
+    match block {
+        Some(BlockId::Number(number)) => Ok(Some(number)),
+        Some(BlockId::Hash(hash)) => {
+            let block = provider.get_block_by_hash(hash.block_hash).await?;
+            Ok(block.map(|block| block.header().number().into()))
+        }
+        None => Ok(None),
+    }
 }
