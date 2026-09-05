@@ -9781,3 +9781,13 @@ casttest!(to_bytes32_too_long, |_prj, cmd| {
         .assert_failure()
         .stderr_eq("Error: string >32 bytes\n");
 });
+
+casttest!(to_bytes_memory_boundaries, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args(["to-bytes-memory", "0x"])
+        .assert_success()
+        .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000000\n");
+    cmd.cast_fuse().args(["to-bytes-memory", "0xababababababababababababababababababababababababababababababab"]).assert_success().stdout_eq("0x000000000000000000000000000000000000000000000000000000000000001fababababababababababababababababababababababababababababababab00\n");
+    cmd.cast_fuse().args(["to-bytes-memory", "0xabababababababababababababababababababababababababababababababab"]).assert_success().stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000020abababababababababababababababababababababababababababababababab\n");
+    cmd.cast_fuse().args(["to-bytes-memory", "0xababababababababababababababababababababababababababababababababab"]).assert_success().stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000021ababababababababababababababababababababababababababababababababab00000000000000000000000000000000000000000000000000000000000000\n");
+});

@@ -67,34 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Converts hex data to the word-aligned layout of a Solidity `bytes memory` value.
-    ///
-    /// The output contains a 32-byte big-endian length prefix followed by the data, right-padded
-    /// with zeros to a whole number of 32-byte words.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(
-    ///     Cast::to_bytes_memory("0x1234")?,
-    ///     "0x00000000000000000000000000000000000000000000000000000000000000021234000000000000000000000000000000000000000000000000000000000000"
-    /// );
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn to_bytes_memory(data: &str) -> Result<String> {
-        const WORD: usize = 32;
-
-        let data = hex::decode(data).wrap_err("Could not decode hex")?;
-        let padded_len = data.len().next_multiple_of(WORD);
-        let mut out = Vec::with_capacity(WORD + padded_len);
-        out.extend_from_slice(&U256::from(data.len()).to_be_bytes::<WORD>());
-        out.extend_from_slice(&data);
-        out.resize(WORD + padded_len, 0);
-        Ok(hex::encode_prefixed(out))
-    }
-
     /// Encodes string into bytes32 value
     pub fn format_bytes32_string(s: &str) -> Result<String> {
         let str_bytes: &[u8] = s.as_bytes();
@@ -1012,22 +984,6 @@ mod tests {
             "0x334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5"
         ]);
         assert_eq!(json_value, expected);
-    }
-
-    #[test]
-    fn to_bytes_memory() {
-        for len in [0, 31, 32, 33] {
-            let data = vec![0xab; len];
-            let out = Cast::to_bytes_memory(&hex::encode_prefixed(&data)).unwrap();
-            let out = hex::decode(out).unwrap();
-
-            assert_eq!(out.len(), 32 + len.next_multiple_of(32));
-            assert_eq!(U256::from_be_slice(&out[..32]), U256::from(len));
-            assert_eq!(&out[32..32 + len], data);
-            assert!(out[32 + len..].iter().all(|byte| *byte == 0));
-        }
-
-        assert!(Cast::to_bytes_memory("0x1").is_err());
     }
 
     #[test]

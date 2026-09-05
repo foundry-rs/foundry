@@ -245,7 +245,16 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(padded.parse::<B256>()?.to_string())?;
         }
         CastSubcommand::ToBytesMemory { data } => {
-            print_scalar(SimpleCast::to_bytes_memory(&stdin::unwrap_line(data)?)?)?;
+            let data = stdin::unwrap_line(data)?;
+            const WORD: usize = 32;
+
+            let data = hex::decode(data).wrap_err("Could not decode hex")?;
+            let padded_len = data.len().next_multiple_of(WORD);
+            let mut out = Vec::with_capacity(WORD + padded_len);
+            out.extend_from_slice(&U256::from(data.len()).to_be_bytes::<WORD>());
+            out.extend_from_slice(&data);
+            out.resize(WORD + padded_len, 0);
+            print_scalar(hex::encode_prefixed(out))?;
         }
         CastSubcommand::Pad { data, right, left: _, len } => {
             print_scalar(SimpleCast::pad(&stdin::unwrap_line(data)?, right, len)?)?;
