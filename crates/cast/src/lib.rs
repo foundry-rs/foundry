@@ -67,30 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Format a number from smallest unit to decimal with arbitrary decimals.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// # fn main() -> eyre::Result<()> {
-    /// assert_eq!(Cast::format_units("1000000", 6)?, "1"); // USDC (6 decimals)
-    /// assert_eq!(Cast::format_units("2500000", 6)?, "2.500000");
-    /// assert_eq!(Cast::format_units("1000000000000", 12)?, "1"); // 12 decimals
-    /// assert_eq!(Cast::format_units("1230", 3)?, "1.230"); // 3 decimals
-    /// assert_eq!(Cast::format_units("-1000000", 6)?, "-1"); // negative value
-    ///
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn format_units(value: &str, unit: u8) -> Result<String> {
-        let value = NumberWithBase::parse_int(value, None)?;
-        let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
-        let parsed = args::signed_parse_units(&value)?;
-        Ok(args::format_unit_as_string(parsed, unit))
-    }
-
     /// Converts wei into an eth amount
     ///
     /// # Example

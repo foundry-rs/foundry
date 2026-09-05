@@ -190,7 +190,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(ParseUnits::parse_units(&value, unit)?.to_string())?;
         }
         CastSubcommand::FormatUnits { value, unit } => {
-            print_scalar(SimpleCast::format_units(&stdin::unwrap_line(value)?, unit)?)?;
+            print_scalar(format_units(&stdin::unwrap_line(value)?, unit)?)?;
         }
         CastSubcommand::FromWei { value, unit } => {
             print_scalar(SimpleCast::from_wei(&stdin::unwrap_line(value)?, &unit)?)?;
@@ -1229,4 +1229,11 @@ pub(super) fn format_unit_as_string(value: ParseUnits, unit: Unit) -> String {
         }
     }
     formatted
+}
+
+pub(super) fn format_units(value: &str, unit: u8) -> Result<String> {
+    let value = NumberWithBase::parse_int(value, None)?;
+    let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
+    let parsed = signed_parse_units(&value)?;
+    Ok(format_unit_as_string(parsed, unit))
 }
