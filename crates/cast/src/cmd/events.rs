@@ -1,6 +1,6 @@
 use super::{fetch_code_via_rpc, logs::LogQueryArgs};
 use crate::{
-    Cast, MAX_CONCURRENT_RPC_REQUESTS,
+    MAX_CONCURRENT_RPC_REQUESTS,
     traces::{
         CallTraceDecoderBuilder, DecodedEvent,
         identifier::{ExternalIdentifier, SignaturesIdentifier},
@@ -89,9 +89,14 @@ impl EventsArgs {
         let (decoder_chain, explorer_chain) = resolve_chains(config.chain, rpc_chain);
         config.chain = Some(decoder_chain);
 
-        let cast = Cast::new(&provider);
         let logs = if let Some(tx_hash) = tx_hash {
-            cast.get_transaction_logs(tx_hash).await?
+            provider
+                .get_transaction_receipt(tx_hash)
+                .await?
+                .ok_or_else(|| eyre::eyre!("tx receipt not found: {tx_hash}"))?
+                .inner
+                .logs()
+                .to_vec()
         } else {
             let (filter, query_size) = query.resolve(&provider).await?;
             match query_size {
