@@ -474,7 +474,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::FindBlock(cmd) => cmd.run().await?,
         CastSubcommand::GasPrice { rpc } => {
-            print_scalar(Cast::new(rpc_provider(&rpc)?).gas_price().await?.to_string())?;
+            print_scalar(rpc_provider(&rpc)?.get_gas_price().await?.to_string())?;
         }
         CastSubcommand::Index { key_type, key, slot_number } => {
             print_scalar(SimpleCast::index(&key_type, &key, &slot_number)?)?;

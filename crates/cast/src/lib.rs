@@ -125,10 +125,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         Ok(self.provider.send_raw_transaction(&tx).await?)
     }
 
-    pub async fn gas_price(&self) -> Result<u128> {
-        Ok(self.provider.get_gas_price().await?)
-    }
-
     /// # Example
     ///
     /// ```
