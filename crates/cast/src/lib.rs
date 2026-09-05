@@ -67,18 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Decodes checksummed address from bytes32 value
-    pub fn parse_bytes32_address(s: &str) -> Result<String> {
-        let s = strip_0x(s);
-        if s.len() != 64 {
-            eyre::bail!("expected 64 byte hex-string, got {s}");
-        }
-        let Some(s) = s.strip_prefix("000000000000000000000000") else {
-            eyre::bail!("Not convertible to address, there are non-zero bytes");
-        };
-        Ok(Address::from_str(s)?.to_checksum(None))
-    }
-
     /// Decodes abi-encoded hex input or output
     ///
     /// When `input=true`, `calldata` string MUST not be prefixed with function selector

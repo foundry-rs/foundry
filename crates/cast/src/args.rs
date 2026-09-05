@@ -298,7 +298,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(std::str::from_utf8(&bytes[..len])?)?;
         }
         CastSubcommand::ParseBytes32Address { bytes } => {
-            print_scalar(SimpleCast::parse_bytes32_address(&stdin::unwrap_line(bytes)?)?)?;
+            let s = stdin::unwrap_line(bytes)?;
+            let s = crate::strip_0x(&s);
+            if s.len() != 64 {
+                eyre::bail!("expected 64 byte hex-string, got {s}");
+            }
+            let Some(s) = s.strip_prefix("000000000000000000000000") else {
+                eyre::bail!("Not convertible to address, there are non-zero bytes");
+            };
+            print_scalar(Address::from_str(s)?.to_checksum(None))?;
         }
 
         // ABI encoding & decoding
