@@ -326,7 +326,7 @@ casttest!(age_rejects_timestamp_overflow, async |_prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test().with_genesis_timestamp(Some(u64::MAX))).await;
     cmd.args(["age", "0", "--rpc-url", &handle.http_endpoint()])
         .assert_failure()
-        .stderr_eq("Error: number too large to fit in target type\n");
+        .stderr_eq("Error: invalid timestamp\n");
 });
 
 casttest!(base_fee, async |_prj, cmd| {

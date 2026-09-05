@@ -372,6 +372,7 @@ Traces:
     ├─ emit NvStuck(param0: 0x6e6C36B970f8862bA3F148DEdAB8F98f5ed8b426, param1: 46698476594582387 [4.669e16], param2: 1762205003 [1.762e9])
     └─ ← [Stop]
 
+
 Transaction successfully executed.
 [GAS]
 

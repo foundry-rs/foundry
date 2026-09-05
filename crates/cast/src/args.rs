@@ -492,7 +492,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 .ok_or_eyre("block not found")?
                 .header
                 .timestamp;
-            let age = chrono::DateTime::from_timestamp(timestamp.try_into()?, 0)
+            let age = i64::try_from(timestamp)
+                .ok()
+                .and_then(|timestamp| chrono::DateTime::from_timestamp(timestamp, 0))
                 .ok_or_eyre("invalid timestamp")?
                 .format("%a %b %e %H:%M:%S %Y");
             print_scalar(format!("{age} UTC"))?;
