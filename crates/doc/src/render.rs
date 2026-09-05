@@ -165,28 +165,8 @@ fn render_contract<'ast, 'gcx>(
                 });
                 let sanitize =
                     |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
-                if let Some(ref base_doc) = inherited {
-                    if c.notices.is_empty() {
-                        let inherited_notices: Vec<String> =
-                            base_doc.notices.iter().map(|s| sanitize(s)).collect();
-                        let mut new_desc: Vec<Description> = inherited_notices
-                            .iter()
-                            .map(|s| Description { kind: DescKind::Notice, content: s.clone() })
-                            .collect();
-                        new_desc.append(&mut c.descriptions);
-                        c.descriptions = new_desc;
-                        c.notices.extend(inherited_notices);
-                    }
-                    if c.devs.is_empty() {
-                        let inherited_devs: Vec<String> =
-                            base_doc.devs.iter().map(|s| sanitize(s)).collect();
-                        c.descriptions.extend(
-                            inherited_devs
-                                .iter()
-                                .map(|s| Description { kind: DescKind::Dev, content: s.clone() }),
-                        );
-                        c.devs.extend(inherited_devs);
-                    }
+                if let Some(base_doc) = &inherited {
+                    c.inherit_descriptions(base_doc, &sanitize);
                 }
                 write_comment_block(out, &c);
                 write_code_block(out, &ctx.dedented_snippet(*span));
@@ -532,26 +512,7 @@ fn render_function_section(
     // Merge inherited natspec for missing tags.
     if let Some(inherited) = inherited {
         let sanitize = |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path, local);
-        let inherited_notices: Vec<String> =
-            inherited.notices.iter().map(|s| sanitize(s)).collect();
-        let inherited_devs: Vec<String> = inherited.devs.iter().map(|s| sanitize(s)).collect();
-        if c.notices.is_empty() {
-            let mut new_desc: Vec<Description> = inherited_notices
-                .iter()
-                .map(|s| Description { kind: DescKind::Notice, content: s.clone() })
-                .collect();
-            new_desc.append(&mut c.descriptions);
-            c.descriptions = new_desc;
-            c.notices.extend_from_slice(&inherited_notices);
-        }
-        if c.devs.is_empty() {
-            c.devs.extend_from_slice(&inherited_devs);
-            c.descriptions.extend(
-                inherited_devs
-                    .iter()
-                    .map(|s| Description { kind: DescKind::Dev, content: s.clone() }),
-            );
-        }
+        c.inherit_descriptions(inherited, &sanitize);
         if c.params.is_empty() {
             let params = inherited.params.iter().map(|desc| sanitize(desc)).collect::<Vec<_>>();
             for (index, desc) in params.iter().enumerate() {
@@ -650,6 +611,32 @@ struct CommentData {
     customs: Vec<(String, String)>,
     /// `@custom:name <name>` values, used to fill in unnamed function parameters.
     unnamed_param_names: Vec<String>,
+}
+
+impl CommentData {
+    /// Fill missing notice/dev tags, keeping inherited notices before local descriptions.
+    fn inherit_descriptions(
+        &mut self,
+        inherited: &hir_ext::NatSpecDoc,
+        sanitize: &impl Fn(&str) -> String,
+    ) {
+        if self.notices.is_empty() {
+            self.notices = inherited.notices.iter().map(|s| sanitize(s)).collect();
+            let mut descriptions = self
+                .notices
+                .iter()
+                .map(|s| Description { kind: DescKind::Notice, content: s.clone() })
+                .collect::<Vec<_>>();
+            descriptions.append(&mut self.descriptions);
+            self.descriptions = descriptions;
+        }
+        if self.devs.is_empty() {
+            self.devs = inherited.devs.iter().map(|s| sanitize(s)).collect();
+            self.descriptions.extend(
+                self.devs.iter().map(|s| Description { kind: DescKind::Dev, content: s.clone() }),
+            );
+        }
+    }
 }
 
 /// Collect natspec from doc comments, applying inline link replacement.
