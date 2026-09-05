@@ -106,52 +106,6 @@ impl SimpleCast {
         Ok(format!("{sign}{value}"))
     }
 
-    /// Converts a number into int256 hex string with 0x prefix
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(
-    ///     Cast::to_int256("0")?,
-    ///     "0x0000000000000000000000000000000000000000000000000000000000000000"
-    /// );
-    /// assert_eq!(
-    ///     Cast::to_int256("100")?,
-    ///     "0x0000000000000000000000000000000000000000000000000000000000000064"
-    /// );
-    /// assert_eq!(
-    ///     Cast::to_int256("-100")?,
-    ///     "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff9c"
-    /// );
-    /// assert_eq!(
-    ///     Cast::to_int256("192038293923")?,
-    ///     "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3"
-    /// );
-    /// assert_eq!(
-    ///     Cast::to_int256("-192038293923")?,
-    ///     "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffd349a02e5d"
-    /// );
-    /// assert_eq!(
-    ///     Cast::to_int256(
-    ///         "57896044618658097711785492504343953926634992332820282019728792003956564819967"
-    ///     )?,
-    ///     "0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-    /// );
-    /// assert_eq!(
-    ///     Cast::to_int256(
-    ///         "-57896044618658097711785492504343953926634992332820282019728792003956564819968"
-    ///     )?,
-    ///     "0x8000000000000000000000000000000000000000000000000000000000000000"
-    /// );
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn to_int256(value: &str) -> Result<String> {
-        let n = NumberWithBase::parse_int(value, None)?;
-        Ok(format!("{n:#066x}"))
-    }
-
     /// Converts an eth amount into a specified unit
     ///
     /// # Example

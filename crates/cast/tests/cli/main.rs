@@ -9715,3 +9715,10 @@ casttest!(to_uint256, |_prj, cmd| {
         .assert_success()
         .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000064\n");
 });
+
+casttest!(to_int256, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args(["to-int256", "100"])
+        .assert_success()
+        .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000064\n");
+});

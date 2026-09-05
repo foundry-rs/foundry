@@ -154,7 +154,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(format!("{n:#066x}"))?;
         }
         CastSubcommand::ToInt256 { value } => {
-            print_scalar(SimpleCast::to_int256(&stdin::unwrap_line(value)?)?)?;
+            let n = NumberWithBase::parse_int(&stdin::unwrap_line(value)?, None)?;
+            print_scalar(format!("{n:#066x}"))?;
         }
         CastSubcommand::ToUnit { value, unit } => {
             print_scalar(SimpleCast::to_unit(&stdin::unwrap_line(value)?, &unit)?)?;
