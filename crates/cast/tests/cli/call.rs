@@ -1,6 +1,291 @@
-//! Tests for `cast call`.
+//! CLI tests for call commands.
 
 use super::*;
+
+forgetest_async!(cast_call_custom_override, |prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+    prj.add_source(
+        "Counter",
+        r#"
+contract Counter {
+    uint256 public number;
+
+    function getBalance(address target) public returns (uint256) {
+        return target.balance;
+    }
+}
+   "#,
+    );
+
+    // Deploy counter contract.
+    cmd.args([
+        "script",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "CounterScript",
+    ])
+    .assert_success();
+
+    // Override state, `number()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+4660
+
+"#]]);
+
+    // Override state, `number()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x1234",
+            "number()(uint256)",
+            "--trace",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] 0x5FbDB2315678afecb367f032d93F642f64180aa3::number()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+
+    // Override balance, `getBalance()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-balance",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x1111",
+            "getBalance(address)(uint256)",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+4369
+
+"#]]);
+
+    // Override balance, `getBalance()` should return overridden value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-balance",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x1111",
+            "getBalance(address)(uint256)",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--trace",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [747] 0x5FbDB2315678afecb367f032d93F642f64180aa3::getBalance(0x5FbDB2315678afecb367f032d93F642f64180aa3)
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001111
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+
+    // Override code with
+    // contract Counter {
+    //     uint256 public number1;
+    // }
+    // Calling `number()` should fail.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "number()(uint256)",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: server returned an error response: error code 3: execution reverted, data: "0x"
+
+"#]]);
+
+    // Override code with
+    // contract Counter {
+    //     uint256 public number1;
+    // }
+    // Calling `number()` should revert.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "number()(uint256)",
+            "--trace"
+        ])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Error: Transaction failed.
+
+"#]]);
+
+    // Calling `number1()` with overridden state should return new value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x2222",
+            "number1()(uint256)",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+8738
+
+"#]]);
+
+    // Calling `number1()` with overridden state should return new value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "--override-state",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x2222",
+            "number1()(uint256)",
+            "--trace"
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] 0x5FbDB2315678afecb367f032d93F642f64180aa3::number1()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000002222
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+
+    // Calling `number1()` with overridden state should return new value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "--override-state-diff",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x2222",
+            "number1()(uint256)",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+8738
+
+"#]]);
+
+    // Calling `number1()` with overridden state should return new value.
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--override-code",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x6080604052348015600e575f5ffd5b50600436106026575f3560e01c8063c223a39e14602a575b5f5ffd5b60306044565b604051603b9190605f565b60405180910390f35b5f5481565b5f819050919050565b6059816049565b82525050565b5f60208201905060705f8301846052565b9291505056fea26469706673582212202a0acfb9083efed3e0e9f27177b090731d4392cf196d58e27e05088f59008d0964736f6c634300081d0033",
+            "--override-state-diff",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3:0x0:0x2222",
+            "number1()(uint256)",
+            "--trace",
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [2402] 0x5FbDB2315678afecb367f032d93F642f64180aa3::number1()
+    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000002222
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});
+
+casttest!(correct_json_serialization, |_prj, cmd| {
+    let rpc = next_http_archive_rpc_url();
+    // cast calldata "decimals()"
+    let calldata = "0x313ce567";
+    let tokens = [
+        "0xdac17f958d2ee523a2206206994597c13d831ec7", // USDT
+        "0x6b175474e89094c44da98b954eedeac495271d0f", // DAI
+        "0x6b175474e89094c44da98b954eedeac495271d0f", // WETH
+    ];
+    let calldata_args = format!(
+        "[{}]",
+        tokens
+            .iter()
+            .map(|token| format!("({token},false,{calldata})"))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let args = vec![
+        "call",
+        "--json",
+        "--rpc-url",
+        rpc.as_str(),
+        "0xcA11bde05977b3631167028862bE2a173976CA11",
+        "aggregate3((address,bool,bytes)[])((bool,bytes)[])",
+        &calldata_args,
+    ];
+    let expected_output = json!([[
+        [true, "0x0000000000000000000000000000000000000000000000000000000000000006"],
+        [true, "0x0000000000000000000000000000000000000000000000000000000000000012"],
+        [true, "0x0000000000000000000000000000000000000000000000000000000000000012"]
+    ]]);
+    let output: serde_json::Value =
+        serde_json::from_slice(&cmd.args(args).assert_success().get_output().stdout)
+            .expect("not valid json");
+    assert_eq!(output, expected_output);
+});
 
 casttest!(call_eip7702_auth_disclosure_declined, |_prj, cmd| {
     cmd.args([
@@ -196,183 +481,6 @@ Error: EIP-7702 authorization disclosure requires confirmation; pass `--force` t
     cmd.cast_fuse().args(base_args).arg("--curl").assert_success().stderr_eq(str![""]);
 });
 
-casttest!(cast_call_disables_external_identification, async |prj, cmd| {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
-    // Leave the listener unserved: correct flag propagation prevents a connection, while an
-    // enabled identifier connects before exhausting the configured timeout.
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.set_nonblocking(true).unwrap();
-    let etherscan_url = format!("http://{}", listener.local_addr().unwrap());
-    let target = Address::random().to_string();
-    let override_code = format!("{target}:0x60006000f3");
-    fs::write(
-        prj.root().join("foundry.toml"),
-        format!(
-            r#"[profile.default]
-etherscan_api_key = "local"
-eth_rpc_no_proxy = true
-offline = false
-
-[tracing]
-external_identification_timeout = 1
-
-[etherscan]
-local = {{ key = "test", url = "{etherscan_url}" }}
-"#,
-        ),
-    )
-    .unwrap();
-
-    for var in [
-        "ETHERSCAN_API_KEY",
-        "FOUNDRY_CONFIG",
-        "FOUNDRY_ETHERSCAN_API_KEY",
-        "FOUNDRY_OFFLINE",
-        "FOUNDRY_TRACING_EXTERNAL_IDENTIFICATION_TIMEOUT",
-    ] {
-        cmd.unset_env(var);
-    }
-    let assert = cmd
-        .args([
-            "call",
-            &target,
-            "--rpc-url",
-            &handle.http_endpoint(),
-            "--override-code",
-            &override_code,
-            "--trace",
-            "--disable-external-identification",
-        ])
-        .assert_success();
-    let stdout = assert.get_output().stdout_lossy().to_lowercase();
-    assert!(
-        stdout.contains("traces:") && stdout.contains(&target.to_lowercase()),
-        "expected trace for {target}, got:\n{stdout}"
-    );
-
-    match listener.accept() {
-        Err(err) if err.kind() == ErrorKind::WouldBlock => {}
-        Ok(_) => panic!("external identification made an Etherscan request"),
-        Err(err) => panic!("failed to inspect mock Etherscan listener: {err}"),
-    }
-});
-
-// https://github.com/foundry-rs/foundry/issues/10189
-// `cast call --debug-trace-call` fetches the call trace from the node via `debug_traceCall`
-// (callTracer) and renders it with the same decoding/rendering machinery as `--trace`. The call
-// targets the identity precompile so the test needs no deployed contract.
-casttest!(cast_call_debug_trace_call, async |prj, cmd| {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
-
-    fs::write(
-        prj.root().join("foundry.toml"),
-        r#"[labels]
-        0x0000000000000000000000000000000000000001 = "unused"
-
-        [tracing]
-        decode_internal = true
-        "#,
-    )
-    .unwrap();
-
-    cmd.cast_fuse();
-    cmd.set_current_dir(prj.root());
-    cmd
-        .args([
-            "call",
-            "0x0000000000000000000000000000000000000004",
-            "--data",
-            "0xdeadbeef",
-            "--debug-trace-call",
-            "--rpc-url",
-            &handle.http_endpoint(),
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-Traces:
-  [21160] PRECOMPILES::identity(0xdeadbeef)
-    └─ ← [Return] 0xdeadbeef
-
-
-Transaction successfully executed.
-[GAS]
-
-"#]])
-        .stderr_eq(str![[r#"
-Warning: Key `[labels]` is being deprecated in favor of `[tracing.labels]`. It will be removed in future versions.
-
-"#]]);
-});
-
-// `--debug-trace-call` must honour state overrides: here we override the code of an address with a
-// tiny runtime that returns storage slot 0, and override slot 0 itself, then check the traced call
-// returns the overridden value. If the overrides were not forwarded to `debug_traceCall`, the
-// address would have no code and the return would not be the overridden value, so this test can
-// fail.
-casttest!(cast_call_debug_trace_call_applies_overrides, async |_prj, cmd| {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
-
-    cmd.cast_fuse()
-        .args([
-            "call",
-            "0x00000000000000000000000000000000000000aa",
-            "number()(uint256)",
-            "--debug-trace-call",
-            // runtime: PUSH1 0 SLOAD PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
-            "--override-code",
-            "0x00000000000000000000000000000000000000aa:0x60005460005260206000f3",
-            "--override-state",
-            "0x00000000000000000000000000000000000000aa:0x0:0x1234",
-            "--rpc-url",
-            &handle.http_endpoint(),
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-Traces:
-  [23182] 0x00000000000000000000000000000000000000AA::number()
-    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
-
-
-Transaction successfully executed.
-[GAS]
-
-"#]]);
-});
-
-// `--debug-trace-call` must also forward block overrides: override an address with a runtime that
-// returns `block.number` and pass `--block.number`, then check the traced call returns that number.
-// If `with_block_overrides` were not forwarded to `debug_traceCall`, the call would run at anvil's
-// real block number and the return would differ, so this test can fail.
-casttest!(cast_call_debug_trace_call_applies_block_overrides, async |_prj, cmd| {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
-
-    cmd.cast_fuse()
-        .args([
-            "call",
-            "0x00000000000000000000000000000000000000bb",
-            "number()(uint256)",
-            "--debug-trace-call",
-            // runtime: NUMBER PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
-            "--override-code",
-            "0x00000000000000000000000000000000000000bb:0x4360005260206000f3",
-            "--block.number",
-            "1234",
-            "--rpc-url",
-            &handle.http_endpoint(),
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-Traces:
-  [21160] 0x00000000000000000000000000000000000000bb::number()
-    └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000004d2
-
-
-Transaction successfully executed.
-[GAS]
-
-"#]]);
-});
-
 // https://github.com/foundry-rs/foundry/issues/11521
 // `--delegate` must run the destination's code against the sender's storage. The destination's
 // runtime returns slot 0, and only the sender holds a value there, so a plain call returns zero
@@ -498,47 +606,6 @@ casttest!(cast_call_delegate_fetches_code_from_node, async |_prj, cmd| {
         .stderr_eq(str![""]);
 });
 
-// The motivating invocation in issue #11521 is `cast call --trace --from <safe> <to>`, so the
-// delegate override must reach the local tracing executor as well. The trace shows the call
-// executing at the sender address, which is where the delegated code runs.
-casttest!(cast_call_delegate_trace_uses_sender_storage, async |_prj, cmd| {
-    let (api, handle) = anvil::spawn(NodeConfig::test()).await;
-    let from = "0x00000000000000000000000000000000000000d7";
-    let to = "0x00000000000000000000000000000000000000d8";
-
-    // runtime: PUSH1 0 SLOAD PUSH1 0 MSTORE PUSH1 0x20 PUSH1 0 RETURN
-    api.anvil_set_code(to.parse().unwrap(), "0x60005460005260206000f3".parse().unwrap())
-        .await
-        .unwrap();
-    api.anvil_set_storage_at(from.parse().unwrap(), U256::ZERO, B256::from(U256::from(0x1234)))
-        .await
-        .unwrap();
-
-    cmd.cast_fuse()
-        .args([
-            "call",
-            to,
-            "number()(uint256)",
-            "--from",
-            from,
-            "--delegate",
-            "--trace",
-            "--rpc-url",
-            &handle.http_endpoint(),
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-Traces:
-  [..] 0x00000000000000000000000000000000000000d7::number()
-    └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000001234
-
-
-Transaction successfully executed.
-[GAS]
-
-"#]]);
-});
-
 // Documents the identity semantics: the delegated code observes the sender itself as
 // `msg.sender`, not the delegating contract's caller as an on-chain `delegatecall` would.
 casttest!(cast_call_delegate_msg_sender_is_from, async |_prj, cmd| {
@@ -603,70 +670,6 @@ casttest!(cast_call_delegate_rejects_curl, |_prj, cmd| {
     .assert_failure()
     .stderr_eq(str![[r#"
 Error: --delegate cannot be combined with --curl
-
-"#]]);
-});
-
-// `--debug-trace-call` must render a multi-node trace (a call that emits a log AND makes a
-// sub-call), exercising the log/sub-call interleaving and nesting through the real pipeline, not
-// just in the unit tests. The overridden runtime emits a LOG0 then STATICCALLs the identity
-// precompile, so the trace has a child call ordered after the log.
-casttest!(cast_call_debug_trace_call_renders_nested_call_and_log, async |_prj, cmd| {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
-
-    cmd.cast_fuse()
-        .args([
-            "call",
-            "0x00000000000000000000000000000000000000cc",
-            "run()",
-            "--debug-trace-call",
-            // runtime: LOG0(0,0); STATICCALL(gas, 0x4, 0,0,0,0); POP; STOP
-            "--override-code",
-            "0x00000000000000000000000000000000000000cc:0x60006000a060006000600060007300000000000000000000000000000000000000045afa5000",
-            "--rpc-url",
-            &handle.http_endpoint(),
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-Traces:
-  [21579] 0x00000000000000000000000000000000000000cc::run()
-    ├─           data: 0x
-    ├─ [15] PRECOMPILES::identity(0x) [staticcall]
-    │   └─ ← [Return] 0x
-    └─ ← [Return]
-
-
-Transaction successfully executed.
-[GAS]
-
-"#]]);
-});
-
-// `--debug-trace-call` must render a reverting call as `[Revert]` (success = false), exercising
-// `status_from_frame` and the failure rendering end-to-end. The overridden runtime just reverts.
-casttest!(cast_call_debug_trace_call_renders_revert, async |_prj, cmd| {
-    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
-
-    cmd.cast_fuse()
-        .args([
-            "call",
-            "0x00000000000000000000000000000000000000dd",
-            "run()",
-            "--debug-trace-call",
-            // runtime: PUSH1 0 PUSH1 0 REVERT
-            "--override-code",
-            "0x00000000000000000000000000000000000000dd:0x60006000fd",
-            "--rpc-url",
-            &handle.http_endpoint(),
-        ])
-        .assert_success()
-        .stdout_eq(str![[r#"
-Traces:
-  [21160] 0x00000000000000000000000000000000000000dd::run()
-    └─ ← [Revert] execution reverted
-
-
-[GAS]
 
 "#]]);
 });
@@ -976,152 +979,6 @@ casttest!(curl_call_with_jwt, |_prj, cmd| {
         .expect("malformed Authorization header");
     let secret = JwtSecret::from_hex(jwt_secret).unwrap();
     secret.validate(jwt).unwrap();
-});
-
-// tests that `--debug-trace-call --curl` emits a `debug_traceCall` request with the
-// callTracer, not a plain `eth_call`
-casttest!(curl_call_debug_trace_call, |_prj, cmd| {
-    let rpc = "https://eth.example.com";
-    let to = "0xdead000000000000000000000000000000000000";
-
-    let output = cmd
-        .args(["call", to, "number()(uint256)", "--rpc-url", rpc, "--debug-trace-call", "--curl"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    // Verify curl command structure
-    assert!(output.contains("curl -X POST"));
-    assert!(output.contains(rpc));
-    assert!(output.contains("debug_traceCall"), "expected debug_traceCall method:\n{output}");
-    assert!(output.contains("callTracer"), "expected callTracer tracer param:\n{output}");
-    assert!(!output.contains("eth_call"), "unexpected eth_call request:\n{output}");
-});
-
-// tests that `--debug-trace-call --curl` forwards state and block overrides in the request,
-// like the non-curl path does, so the printed request traces the same state
-casttest!(curl_call_debug_trace_call_forwards_overrides, |_prj, cmd| {
-    let rpc = "https://eth.example.com";
-    let to = "0xdead000000000000000000000000000000000000";
-
-    let output = cmd
-        .args([
-            "call",
-            to,
-            "number()(uint256)",
-            "--rpc-url",
-            rpc,
-            "--debug-trace-call",
-            "--override-code",
-            "0x00000000000000000000000000000000000000aa:0x60005460005260206000f3",
-            "--block.number",
-            "1234",
-            "--curl",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert!(output.contains("debug_traceCall"), "expected debug_traceCall method:\n{output}");
-    assert!(output.contains("stateOverrides"), "expected state overrides in params:\n{output}");
-    assert!(
-        output.contains("0x60005460005260206000f3"),
-        "expected the override code in params:\n{output}"
-    );
-    assert!(output.contains("blockOverrides"), "expected block overrides in params:\n{output}");
-});
-
-// tests that `--curl` forwards the scalar transaction fields into the call object, so the
-// printed request runs the same call as the non-curl command
-casttest!(curl_call_debug_trace_call_forwards_tx_fields, |_prj, cmd| {
-    let rpc = "https://eth.example.com";
-    let to = "0xdead000000000000000000000000000000000000";
-
-    let output = cmd
-        .args([
-            "call",
-            to,
-            "number()(uint256)",
-            "--rpc-url",
-            rpc,
-            "--debug-trace-call",
-            "--from",
-            "0x000000000000000000000000000000000000beef",
-            "--value",
-            "1ether",
-            "--gas-limit",
-            "12345",
-            "--nonce",
-            "7",
-            "--curl",
-        ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert!(output.contains("debug_traceCall"), "expected debug_traceCall method:\n{output}");
-    assert!(
-        output.contains("0x000000000000000000000000000000000000beef"),
-        "expected the from address in params:\n{output}"
-    );
-    assert!(
-        output.contains("0xde0b6b3a7640000"),
-        "expected the value (1 ether) in params:\n{output}"
-    );
-    assert!(output.contains("0x3039"), "expected the gas limit (12345) in params:\n{output}");
-    assert!(output.contains("nonce"), "expected the nonce in params:\n{output}");
-});
-
-casttest!(curl_call_rejects_browser_wallet, |_prj, cmd| {
-    let stderr = cmd
-        .args(["call", "0xdead000000000000000000000000000000000000", "--browser", "--curl"])
-        .assert_failure()
-        .get_output()
-        .stderr_lossy();
-
-    assert!(
-        stderr.contains("--browser cannot be combined with --curl; use --from <ADDRESS>"),
-        "unexpected stderr:\n{stderr}"
-    );
-});
-
-// tests that `--labels` / `--disable-labels` are accepted with `--debug-trace-call`, which
-// forwards them to the trace renderer like `--trace` does
-casttest!(call_labels_accepted_with_debug_trace_call, |_prj, cmd| {
-    let rpc = "https://eth.example.com";
-    let to = "0xdead000000000000000000000000000000000000";
-
-    cmd.args([
-        "call",
-        to,
-        "number()(uint256)",
-        "--rpc-url",
-        rpc,
-        "--debug-trace-call",
-        "--labels",
-        "0xdead000000000000000000000000000000000000:Counter",
-        "--disable-labels",
-        "--curl",
-    ])
-    .assert_success();
-});
-
-// tests that `--labels` still requires one of the trace modes
-casttest!(call_labels_rejected_without_trace_mode, |_prj, cmd| {
-    let rpc = "https://eth.example.com";
-    let to = "0xdead000000000000000000000000000000000000";
-
-    cmd.args([
-        "call",
-        to,
-        "number()(uint256)",
-        "--rpc-url",
-        rpc,
-        "--labels",
-        "0xdead000000000000000000000000000000000000:Counter",
-        "--curl",
-    ])
-    .assert_failure();
 });
 
 // tests that the --curl flag outputs a valid curl command for cast call

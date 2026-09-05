@@ -258,15 +258,12 @@ fn raw_topics(topics: Vec<String>) -> Result<[Topic; 4]> {
     Ok(topics.try_into().unwrap())
 }
 
-fn get_logs_bisecting<'a, P: Provider<N>, N: Network>(
+fn get_logs_bisecting<'a, P: Provider<N> + Clone + Unpin, N: Network>(
     provider: &'a P,
     filter: &'a Filter,
     from: u64,
     to: u64,
-) -> futures::future::BoxFuture<'a, Result<Vec<Log>>>
-where
-    P: Clone + Unpin,
-{
+) -> futures::future::BoxFuture<'a, Result<Vec<Log>>> {
     Box::pin(async move {
         let range_filter = filter.clone().from_block(from).to_block(to);
         match provider.get_logs(&range_filter).await {
@@ -297,10 +294,7 @@ async fn get_logs_chunked_concurrent<P: Provider<N> + Clone + Unpin, N: Network>
     from: u64,
     to: u64,
     chunk_size: u64,
-) -> Result<Vec<Log>>
-where
-    P: Clone + Unpin,
-{
+) -> Result<Vec<Log>> {
     let chunk_ranges = (from..=to)
         .step_by(chunk_size as usize)
         .map(|start| (start, start.saturating_add(chunk_size - 1).min(to)));
@@ -365,10 +359,7 @@ pub(super) async fn get_logs_chunked<P: Provider<N> + Clone + Unpin, N: Network>
     provider: &P,
     filter: &Filter,
     chunk_size: u64,
-) -> Result<Vec<Log>>
-where
-    P: Clone + Unpin,
-{
+) -> Result<Vec<Log>> {
     // Only chunk a finite block-number range larger than one chunk; `chunk_size == 0`
     // disables chunking and falls back to a single request.
     let Some((from, to)) = resolve_block_range(provider, filter).await? else {
