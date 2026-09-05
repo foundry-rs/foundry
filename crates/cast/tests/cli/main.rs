@@ -9875,3 +9875,10 @@ casttest!(calldata_decode_nested_json, |_prj, cmd| {
     ]);
     cmd.args(["calldata-decode", sig, calldata, "--json"]).assert_success().assert_json_stdout(&json!({"schema_version": 1, "success": true, "data": expected, "errors": [], "warnings": []}));
 });
+
+casttest!(abi_encode, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args(["abi-encode", "f(uint256)", "1"])
+        .assert_success()
+        .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000001\n");
+});

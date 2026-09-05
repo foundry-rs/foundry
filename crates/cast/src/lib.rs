@@ -67,31 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Performs ABI encoding based off of the function signature. Does not include
-    /// the function selector in the result.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(
-    ///     "0x0000000000000000000000000000000000000000000000000000000000000001",
-    ///     Cast::abi_encode("f(uint a)", &["1"]).unwrap().as_str()
-    /// );
-    /// assert_eq!(
-    ///     "0x0000000000000000000000000000000000000000000000000000000000000001",
-    ///     Cast::abi_encode("constructor(uint a)", &["1"]).unwrap().as_str()
-    /// );
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = get_func(sig)?;
-        let encoded = encode_function_args(&func, args)
-            .map_err(|e| eyre::eyre!("Could not ABI encode the function and arguments: {e}"))?;
-        Ok(hex::encode_prefixed(&encoded[4..]))
-    }
-
     /// Performs packed ABI encoding based off of the function signature or tuple.
     ///
     /// # Examplez

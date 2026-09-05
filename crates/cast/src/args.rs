@@ -320,7 +320,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let out = if packed {
                 SimpleCast::abi_encode_packed(&sig, &args)?
             } else {
-                SimpleCast::abi_encode(&sig, &args)?
+                let func = get_func(&sig)?;
+                let encoded = encode_function_args(&func, &args).map_err(|e| {
+                    eyre::eyre!("Could not ABI encode the function and arguments: {e}")
+                })?;
+                hex::encode_prefixed(&encoded[4..])
             };
             print_scalar(out)?;
         }
