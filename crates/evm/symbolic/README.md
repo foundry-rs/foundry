@@ -188,9 +188,11 @@ forge test --match-test invariant_ \
 
 Forge replays each recorded prefix into a fresh EVM, symbolically solves only
 the call that reached a comparison for which the artifact observed only one
-result, replays the resulting sequence concretely, and writes replayable
-candidates to the normal invariant corpus. Replay the resulting corpus to check
-every persisted sequence deterministically:
+result, and writes a candidate only when concrete replay observes the opposite
+result at that exact comparison site. Target calls carrying nonzero value are
+currently skipped because symbolic root calls do not yet apply the corresponding
+balance transfer. Replay the resulting corpus to check every persisted sequence
+deterministically:
 
 ```sh
 forge fuzz replay --match-test invariant_ --corpus-dir fuzz_corpus

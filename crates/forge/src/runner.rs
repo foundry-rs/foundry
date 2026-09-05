@@ -65,7 +65,7 @@ use foundry_evm::{
         },
         strategies::EvmFuzzState,
     },
-    inspectors::cheatcodes::Vm::AccountAccess,
+    inspectors::{CmpOperands, cheatcodes::Vm::AccountAccess},
     revm::{bytecode::opcode, primitives::hardfork::SpecId},
     traces::{TraceKind, TraceRequirements, load_contracts},
 };
@@ -117,7 +117,7 @@ struct FuzzBranchFrontierRecord {
     operands: FuzzBranchFrontierOperands,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Deserialize)]
 struct FuzzBranchFrontierSite {
     address: Address,
     pc: usize,
@@ -145,6 +145,32 @@ fn select_stateful_frontiers(
     deep.reverse();
     frontiers.extend(deep);
     frontiers
+}
+
+fn comparison_result(opcode: u8, lhs: U256, rhs: U256) -> Option<bool> {
+    match opcode {
+        opcode::EQ => Some(lhs == rhs),
+        opcode::LT => Some(lhs < rhs),
+        opcode::GT => Some(lhs > rhs),
+        opcode::SLT => Some(I256::from_raw(lhs) < I256::from_raw(rhs)),
+        opcode::SGT => Some(I256::from_raw(lhs) > I256::from_raw(rhs)),
+        opcode::ISZERO => Some(lhs.is_zero()),
+        _ => None,
+    }
+}
+
+fn frontier_comparison_flipped(
+    site: FuzzBranchFrontierSite,
+    observed_result: bool,
+    comparisons: &[CmpOperands],
+) -> bool {
+    comparisons.iter().any(|comparison| {
+        comparison.address == site.address
+            && comparison.pc == site.pc
+            && comparison.opcode == site.opcode
+            && comparison_result(comparison.opcode, comparison.op1, comparison.op2)
+                == Some(!observed_result)
+    })
 }
 
 pub(crate) struct InvariantCampaignScope<'a> {
@@ -360,6 +386,28 @@ mod tests {
         assert!(same_sequence_failure(&outcome(site(1, 1)), &expected));
         assert!(!same_sequence_failure(&outcome(site(2, 1)), &expected));
         assert!(!same_sequence_failure(&outcome(site(1, 2)), &expected));
+    }
+
+    #[test]
+    fn stateful_frontier_replay_requires_opposite_result_at_same_site() {
+        let address = Address::with_last_byte(1);
+        let site = FuzzBranchFrontierSite { address, pc: 7, opcode: opcode::LT };
+        let comparison = |address, pc, op1, op2| CmpOperands {
+            address,
+            pc,
+            opcode: opcode::LT,
+            op1: U256::from(op1),
+            op2: U256::from(op2),
+        };
+
+        assert!(frontier_comparison_flipped(site, true, &[comparison(address, 7, 2, 1)]));
+        assert!(!frontier_comparison_flipped(site, true, &[comparison(address, 7, 1, 2)]));
+        assert!(!frontier_comparison_flipped(
+            site,
+            true,
+            &[comparison(Address::with_last_byte(2), 7, 2, 1)]
+        ));
+        assert!(!frontier_comparison_flipped(site, true, &[comparison(address, 8, 2, 1)]));
     }
 
     #[test]
@@ -2209,7 +2257,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self,
         func: &Function,
         invariant_config: &InvariantConfig,
-    ) -> Vec<(u64, usize, Arc<[BasicTxDetails]>, SymbolicBranchTarget)> {
+    ) -> Vec<(FuzzBranchFrontierRecord, Arc<[BasicTxDetails]>)> {
         let limit = self.config.symbolic.frontier_limit;
         if limit == 0 {
             return Vec::new();
@@ -2306,6 +2354,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 );
                 return false;
             };
+            if call.warp.is_some_and(|warp| !warp.is_zero())
+                || call.roll.is_some_and(|roll| !roll.is_zero())
+                || call.call_details.value.is_some_and(|value| !value.is_zero())
+            {
+                return false;
+            }
             let selector = call
                 .call_details
                 .calldata
@@ -2326,17 +2380,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             let sequence = sequences
                 .get(frontier.sequence_index.expect("frontier sequence index was validated"))
                 .expect("frontier sequence was validated");
-            imported.push((
-                frontier.id,
-                frontier.call_index,
-                Arc::clone(sequence),
-                SymbolicBranchTarget::new(
-                    frontier.site.address,
-                    frontier.site.pc,
-                    frontier.site.opcode,
-                    frontier.operands.result,
-                ),
-            ));
+            imported.push((frontier, Arc::clone(sequence)));
         }
 
         debug!(
@@ -3047,21 +3091,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return;
         }
 
-        for (id, call_index, sequence, target) in
-            self.import_symbolic_invariant_frontiers(func, invariant_config)
+        for (frontier, sequence) in self.import_symbolic_invariant_frontiers(func, invariant_config)
         {
+            let id = frontier.id;
+            let call_index = frontier.call_index;
             let Some(call) = sequence.get(call_index) else {
                 continue;
             };
-            if call.warp.is_some_and(|warp| !warp.is_zero())
-                || call.roll.is_some_and(|roll| !roll.is_zero())
-            {
-                debug!(
-                    id,
-                    "skipping invariant frontier whose target call changes the block environment"
-                );
-                continue;
-            }
             let Some(selector) = call
                 .call_details
                 .calldata
@@ -3108,23 +3144,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
             let input =
                 SymbolicConcreteInput { args, calldata: call.call_details.calldata.clone() };
-            let value = match call.call_details.value {
-                Some(requested) if !requested.is_zero() => {
-                    let Ok(balance) = prefix_executor.get_balance(call.sender) else {
-                        debug!(id, sender = %call.sender, "failed to read frontier sender balance");
-                        continue;
-                    };
-                    requested.min(balance)
-                }
-                _ => U256::ZERO,
-            };
             let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
+            let target = SymbolicBranchTarget::new(
+                frontier.site.address,
+                frontier.site.pc,
+                frontier.site.opcode,
+                frontier.operands.result,
+            );
             let result = symbolic.run(SymbolicRunInput {
                 executor: &prefix_executor,
                 target: call.call_details.target,
                 sender: call.sender,
                 function: &function,
-                value,
+                value: U256::ZERO,
                 ffi_enabled: self.config.ffi,
                 collect_success_input: true,
                 corpus_seeds: vec![input],
@@ -3147,23 +3179,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
             let mut solved_sequence = sequence[..=call_index].to_vec();
             solved_sequence[call_index].call_details.calldata = solved_input.calldata;
-            let mut replay_executor = self.clone_executor();
-            let replay_targets = FuzzRunIdentifiedContracts::new(
-                targeted_contracts.targets().clone(),
-                targeted_contracts.is_updatable,
-            );
-            let mut replay_created_contracts = Vec::new();
-            let replay_result = solved_sequence.iter().try_for_each(|replay_call| {
-                execute_tx_and_register_created(
-                    &mut replay_executor,
-                    replay_call,
-                    &replay_targets,
-                    dynamic_target_ctx,
-                    &mut replay_created_contracts,
-                )
-            });
-            if let Err(err) = replay_result {
-                debug!(%err, id, "failed to replay solved invariant frontier");
+            let mut replay_executor = prefix_executor.clone();
+            replay_executor.inspector_mut().collect_evm_cmp_log(true);
+            let replay_result = match execute_tx(&mut replay_executor, &solved_sequence[call_index])
+            {
+                Ok(result) => result,
+                Err(err) => {
+                    debug!(%err, id, "failed to replay solved invariant frontier");
+                    continue;
+                }
+            };
+            let comparisons = replay_result.evm_cmp_values.as_deref().unwrap_or_default();
+            if !frontier_comparison_flipped(frontier.site, frontier.operands.result, comparisons) {
+                debug!(id, "solved invariant frontier did not flip during concrete replay");
                 continue;
             }
 
