@@ -85,7 +85,7 @@ impl LogsArgs {
         if !subscribe {
             let logs = match query_size {
                 Some(chunk_size) => cast.filter_logs_chunked(filter, chunk_size).await?,
-                None => cast.filter_logs(filter).await?,
+                None => format_logs(provider.get_logs(&filter).await?)?,
             };
             sh_println!("{logs}")?;
             return Ok(());

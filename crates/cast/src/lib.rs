@@ -100,11 +100,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         Self { provider, _phantom: PhantomData }
     }
 
-    pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
-        let logs = self.get_logs(&filter).await?;
-        crate::cmd::logs::format_logs(logs)
-    }
-
     /// Retrieves logs matching the filter.
     pub async fn get_logs(&self, filter: &Filter) -> Result<Vec<Log>> {
         self.provider.get_logs(filter).await.map_err(Into::into)
