@@ -313,3 +313,25 @@ casttest!(chain_unknown, async |_prj, cmd| {
         .assert_success()
         .stdout_eq("unknown\n");
 });
+
+casttest!(age, async |_prj, cmd| {
+    let (_, handle) =
+        anvil::spawn(NodeConfig::test().with_genesis_timestamp(Some(1_645_099_200u64))).await;
+    cmd.args(["age", "0", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq("Thu Feb 17 12:00:00 2022 UTC\n");
+});
+
+casttest!(age_rejects_timestamp_overflow, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_genesis_timestamp(Some(u64::MAX))).await;
+    cmd.args(["age", "0", "--rpc-url", &handle.http_endpoint()])
+        .assert_failure()
+        .stderr_eq("Error: number too large to fit in target type\n");
+});
+
+casttest!(base_fee, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test().with_base_fee(Some(123_456_789))).await;
+    cmd.args(["base-fee", "0", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq("123456789\n");
+});
