@@ -110,7 +110,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(SimpleCast::to_ascii(stdin::unwrap(hexdata, false)?.trim())?)?;
         }
         CastSubcommand::ToUtf8 { hexdata } => {
-            print_scalar(SimpleCast::to_utf8(&stdin::unwrap(hexdata, false)?)?)?;
+            let bytes = hex::decode(stdin::unwrap(hexdata, false)?)?;
+            print_scalar(String::from_utf8_lossy(&bytes).into_owned())?;
         }
         CastSubcommand::FromFixedPoint { value, decimals } => {
             let (value, decimals) = stdin::unwrap2(value, decimals)?;

@@ -9691,3 +9691,8 @@ casttest!(min_int, |_prj, cmd| {
 casttest!(from_utf8, |_prj, cmd| {
     cmd.cast_fuse().args(["from-utf8", "你好"]).assert_success().stdout_eq("0xe4bda0e5a5bd\n");
 });
+
+casttest!(to_utf8, |_prj, cmd| {
+    cmd.cast_fuse().args(["to-utf8", "0xe4bda0e5a5bd"]).assert_success().stdout_eq("你好\n");
+    cmd.cast_fuse().args(["to-utf8", "0xff"]).assert_success().stdout_eq("�\n");
+});
