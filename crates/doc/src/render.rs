@@ -94,11 +94,7 @@ fn render_contract<'ast, 'gcx>(
     let local = Some(&local);
 
     let comments = collect_comments(docs, name_to_page, page_path, local);
-    let mut out = String::new();
-    write_frontmatter(&mut out, name, first_notice(&comments).as_deref());
-    writeln!(out, "# {name}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(name, first_notice(&comments).as_deref(), git_url);
     write_deployments_table(&mut out, deployments);
 
     // inheritance links.
@@ -338,11 +334,7 @@ fn render_free_functions(
 ) -> String {
     let title = if name.is_empty() { "function" } else { name };
     let first_comments = collect_comments(overloads[0].2, name_to_page, page_path, None);
-    let mut out = String::new();
-    write_frontmatter(&mut out, title, first_notice(&first_comments).as_deref());
-    writeln!(out, "# {title}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(title, first_notice(&first_comments).as_deref(), git_url);
     for (span, f, docs) in overloads {
         render_function_section(&mut out, *span, f, docs, ctx, name_to_page, page_path, None, None);
     }
@@ -360,11 +352,7 @@ fn render_constants(
     git_url: Option<&str>,
 ) -> String {
     let title = format!("{stem} Constants");
-    let mut out = String::new();
-    write_frontmatter(&mut out, &title, None);
-    writeln!(out, "# {title}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(&title, None, git_url);
     for (span, v, docs) in vars {
         let name = v.name.map(|n| n.as_str().to_string()).unwrap_or_else(|| "_".to_string());
         writeln!(out, "## {name}").unwrap();
@@ -389,11 +377,7 @@ fn render_struct<'ast>(
 ) -> String {
     let name = s.name.as_str();
     let c = collect_comments(docs, name_to_page, page_path, None);
-    let mut out = String::new();
-    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
-    writeln!(out, "# {name}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(name, first_notice(&c).as_deref(), git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &ctx.dedented_snippet(span));
     write_struct_properties_table(&mut out, s.fields, &c, ctx);
@@ -411,11 +395,7 @@ fn render_enum<'ast>(
 ) -> String {
     let name = e.name.as_str();
     let c = collect_comments(docs, name_to_page, page_path, None);
-    let mut out = String::new();
-    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
-    writeln!(out, "# {name}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(name, first_notice(&c).as_deref(), git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &ctx.dedented_snippet(span));
     write_enum_variants_table(&mut out, e.variants, &c);
@@ -433,11 +413,7 @@ fn render_udvt<'ast>(
 ) -> String {
     let name = u.name.as_str();
     let c = collect_comments(docs, name_to_page, page_path, None);
-    let mut out = String::new();
-    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
-    writeln!(out, "# {name}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(name, first_notice(&c).as_deref(), git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &format!("{};", ctx.dedented_snippet(span)));
     out
@@ -454,11 +430,7 @@ fn render_error<'ast>(
 ) -> String {
     let name = e.name.as_str();
     let c = collect_comments(docs, name_to_page, page_path, None);
-    let mut out = String::new();
-    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
-    writeln!(out, "# {name}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(name, first_notice(&c).as_deref(), git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &ctx.dedented_snippet(span));
     write_param_table(&mut out, "Parameters", &e.parameters, &c, None, ctx);
@@ -476,11 +448,7 @@ fn render_event<'ast>(
 ) -> String {
     let name = e.name.as_str();
     let c = collect_comments(docs, name_to_page, page_path, None);
-    let mut out = String::new();
-    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
-    writeln!(out, "# {name}").unwrap();
-    writeln!(out).unwrap();
-    write_git_source(&mut out, git_url);
+    let mut out = write_page_header(name, first_notice(&c).as_deref(), git_url);
     write_comment_block(&mut out, &c);
     write_code_block(&mut out, &ctx.dedented_snippet(span));
     write_param_table(&mut out, "Parameters", &e.parameters, &c, None, ctx);
@@ -1022,6 +990,15 @@ fn write_code_block(out: &mut String, snippet: &str) {
     writeln!(out, "{}", snippet.trim_end()).unwrap();
     writeln!(out, "```").unwrap();
     writeln!(out).unwrap();
+}
+
+fn write_page_header(title: &str, description: Option<&str>, git_url: Option<&str>) -> String {
+    let mut out = String::new();
+    write_frontmatter(&mut out, title, description);
+    writeln!(out, "# {title}").unwrap();
+    writeln!(out).unwrap();
+    write_git_source(&mut out, git_url);
+    out
 }
 
 /// Write link if `git_url` is set.
