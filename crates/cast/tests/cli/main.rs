@@ -28,7 +28,6 @@ use foundry_test_utils::{
 use rexpect::{Encoding, process::wait::WaitStatus, reader::Options, spawn_with_options};
 use serde_json::json;
 use std::{fs, io::ErrorKind, net::TcpListener, path::Path, process::Command, str::FromStr};
-use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS;
 use tempo_primitives::{
     TempoTxEnvelope,
     transaction::{KeychainVersion, TempoSignature},
@@ -48,25 +47,6 @@ mod selectors;
 mod tempo;
 
 const PRESIGNED_EIP7702_AUTH: &str = "0xf85c827a6994f39fd6e51aad88f6f4ce6ab8827279cfffb922668001a03e1a66234e71242afcc7bc46c8950c3b2997b102db257774865f1232d2e7bf48a045e252dad189b27b2306792047745eba86bff0dd18aca813dbf3fba8c4e94576";
-
-#[cfg(feature = "monad")]
-const MONAD_RESERVE_BALANCE_ADDRESS: Address =
-    address!("0x0000000000000000000000000000000000001001");
-#[cfg(feature = "monad")]
-const MONAD_STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
-#[cfg(feature = "monad")]
-const MONAD_SYSTEM_ADDRESS: Address = address!("0x6f49a8f621353f12378d0046e7d7e4b9b249dc9e");
-#[cfg(feature = "monad")]
-const MONAD_TESTNET_CHAIN_ID: u64 = 10_143;
-#[cfg(feature = "monad")]
-const MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP: u64 = 1_773_153_000;
-#[cfg(feature = "monad")]
-const MONAD_DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
-#[cfg(feature = "monad")]
-const MONAD_RESERVE_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002000");
-#[cfg(feature = "monad")]
-const MONAD_RESERVE_RETURN_PROBE_CODE: [u8; 25] =
-    hex!("633a61584e5f5260205f6004601c5f6110015af15060205ff3");
 
 fn valid_touch_id_sidecar_fixture(version: u32, policy: &str) -> String {
     let sealed_password = format!("04{}", "00".repeat(92));
@@ -126,11 +106,6 @@ async fn deploy_counter_and_set_number(
         .unwrap()
         .unwrap()
         .tx_hash()
-}
-
-#[cfg(feature = "monad")]
-fn mon(value: u64) -> U256 {
-    U256::from(value) * U256::from(1_000_000_000_000_000_000u128)
 }
 
 mod abi;

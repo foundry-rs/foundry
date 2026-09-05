@@ -1016,3 +1016,50 @@ Error: Invalid hex calldata '0X1': odd number of digits
 
 "#]]);
 });
+
+// https://github.com/foundry-rs/foundry/issues/11584
+// Tests that invalid hex calldata (odd length) produces a clear error message
+casttest!(cast_call_invalid_hex_calldata_error, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    cmd.args([
+        "call",
+        "0xdead000000000000000000000000000000000000",
+        "--data",
+        "0x0", // Invalid: odd length hex
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: Invalid hex calldata '0x0': odd number of digits
+
+"#]]);
+});
+
+// https://github.com/foundry-rs/foundry/issues/11584
+// Tests that valid hex calldata works correctly
+casttest!(cast_call_valid_hex_calldata, |_prj, cmd| {
+    let rpc = next_rpc_endpoint(NamedChain::Mainnet);
+    cmd.args([
+        "call",
+        "0xdead000000000000000000000000000000000000",
+        "--data",
+        "0x00", // Valid: even length hex
+        "--rpc-url",
+        rpc.as_str(),
+    ])
+    .assert_success();
+});
+
+casttest!(curl_call_rejects_browser_wallet, |_prj, cmd| {
+    let stderr = cmd
+        .args(["call", "0xdead000000000000000000000000000000000000", "--browser", "--curl"])
+        .assert_failure()
+        .get_output()
+        .stderr_lossy();
+
+    assert!(
+        stderr.contains("--browser cannot be combined with --curl; use --from <ADDRESS>"),
+        "unexpected stderr:\n{stderr}"
+    );
+});

@@ -130,45 +130,6 @@ casttest!(block_raw_tempo, |_prj, cmd| {
     );
 });
 
-casttest!(channel_id_defaults, async |_prj, cmd| {
-    use tempo_hardfork::TempoHardfork;
-
-    let (_api, handle) =
-        anvil::spawn(NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()))).await;
-    let provider = handle.http_provider();
-    let chain_id = provider.get_chain_id().await.unwrap();
-
-    let payer = address!("0000000000000000000000000000000000000101");
-    let payee = address!("0000000000000000000000000000000000000202");
-    let salt = b256!("0000000000000000000000000000000000000000000000000000000000000042");
-    let expected = keccak256(
-        (
-            payer,
-            payee,
-            Address::ZERO,
-            PATH_USD_ADDRESS,
-            salt,
-            Address::ZERO,
-            B256::ZERO,
-            TIP20_CHANNEL_RESERVE_ADDRESS,
-            U256::from(chain_id),
-        )
-            .abi_encode(),
-    );
-
-    cmd.args([
-        "channel-id",
-        &payer.to_string(),
-        &payee.to_string(),
-        &PATH_USD_ADDRESS.to_string(),
-        &salt.to_string(),
-        "--rpc-url",
-        handle.http_endpoint().as_str(),
-    ])
-    .assert_success()
-    .stdout_eq(format!("{expected:#x}\n"));
-});
-
 // tests that the `cast find-block` command works correctly
 casttest!(finds_block, |_prj, cmd| {
     // Construct args

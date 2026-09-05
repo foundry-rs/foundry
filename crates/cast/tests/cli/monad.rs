@@ -2,6 +2,21 @@
 
 use super::*;
 
+const MONAD_RESERVE_BALANCE_ADDRESS: Address =
+    address!("0x0000000000000000000000000000000000001001");
+const MONAD_STAKING_ADDRESS: Address = address!("0x0000000000000000000000000000000000001000");
+const MONAD_SYSTEM_ADDRESS: Address = address!("0x6f49a8f621353f12378d0046e7d7e4b9b249dc9e");
+const MONAD_TESTNET_CHAIN_ID: u64 = 10_143;
+const MONAD_NINE_TESTNET_ACTIVATION_TIMESTAMP: u64 = 1_773_153_000;
+const MONAD_DIPPED_INTO_RESERVE_SELECTOR: [u8; 4] = hex!("3a61584e");
+const MONAD_RESERVE_PROBE_ADDRESS: Address = address!("0x0000000000000000000000000000000000002000");
+const MONAD_RESERVE_RETURN_PROBE_CODE: [u8; 25] =
+    hex!("633a61584e5f5260205f6004601c5f6110015af15060205ff3");
+
+fn mon(value: u64) -> U256 {
+    U256::from(value) * U256::from(1_000_000_000_000_000_000u128)
+}
+
 #[cfg(feature = "monad")]
 casttest!(monad_call_trace_uses_monad_evm_network, async |_prj, cmd| {
     let config = NodeConfig::test_monad()

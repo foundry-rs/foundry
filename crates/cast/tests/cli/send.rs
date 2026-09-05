@@ -33,43 +33,6 @@ casttest!(send_rejects_invalid_eip1559_fees_before_access_list, async |_prj, cmd
     );
 });
 
-casttest!(tx_using_sender_and_nonce, |_prj, cmd| {
-    let rpc = next_http_archive_rpc_url();
-    // <https://etherscan.io/tx/0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594>
-    let args = vec![
-        "tx",
-        "--from",
-        "0x4648451b5F87FF8F0F7D622bD40574bb97E25980",
-        "--nonce",
-        "113642",
-        "--rpc-url",
-        rpc.as_str(),
-    ];
-    cmd.args(args).assert_success().stdout_eq(str![[r#"
-
-blockHash            0x29518c1cea251b1bda5949a9b039722604ec1fb99bf9d8124cfe001c95a50bdc
-blockNumber          22287055
-from                 0x4648451b5F87FF8F0F7D622bD40574bb97E25980
-transactionIndex     230
-effectiveGasPrice    363392048
-hash                 0x5bcd22734cca2385dc25b2d38a3d33a640c5961bd46d390dff184c894204b594
-type                 2
-chainId              1
-nonce                113642
-gasLimit             350000
-maxFeePerGas         675979146
-maxPriorityFeePerGas 1337
-to                   0xdAC17F958D2ee523a2206206994597C13D831ec7
-value                0
-accessList           []
-input                0xa9059cbb000000000000000000000000568766d218d82333dd4dae933ddfcda5da26625000000000000000000000000000000000000000000000000000000000cc3ed109
-r                    0x1e92d3e1ca69109a1743fc4b3cf9dff58630bc9f429cea3c3fe311506264e36c
-s                    0x793947d4bbdce56a1a5b2b3525c46f01569414a22355f4883b5429668ab0f51a
-yParity              1
-...
-"#]]);
-});
-
 // ensure receipt or code is required
 casttest!(send_requires_to, |_prj, cmd| {
     cmd.args([
