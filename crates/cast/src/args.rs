@@ -125,12 +125,13 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(SimpleCast::to_fixed_point(&value, &decimals)?)?;
         }
         CastSubcommand::ConcatHex { data } => {
-            let out = if data.is_empty() {
-                SimpleCast::concat_hex(stdin::read(true)?.split_whitespace())
+            let data = if data.is_empty() {
+                stdin::read(true)?.split_whitespace().map(String::from).collect()
             } else {
-                SimpleCast::concat_hex(data)
+                data
             };
-            print_scalar(out)?;
+            let out = data.iter().map(|s| crate::strip_0x(s)).collect::<String>();
+            print_scalar(format!("0x{out}"))?;
         }
         CastSubcommand::FromBin => {
             print_scalar(hex::encode_prefixed(stdin::read_bytes(false)?))?;

@@ -9704,3 +9704,7 @@ casttest!(to_ascii, |_prj, cmd| {
 casttest!(from_fixed_point, |_prj, cmd| {
     cmd.cast_fuse().args(["from-fixed-point", "0.010", "3"]).assert_success().stdout_eq("10\n");
 });
+
+casttest!(concat_hex, |_prj, cmd| {
+    cmd.cast_fuse().args(["concat-hex", "0x00", "0x01"]).assert_success().stdout_eq("0x0001\n");
+});

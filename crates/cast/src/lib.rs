@@ -106,22 +106,6 @@ impl SimpleCast {
         Ok(format!("{sign}{value}"))
     }
 
-    /// Concatenates hex strings
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(Cast::concat_hex(["0x00", "0x01"]), "0x0001");
-    /// assert_eq!(Cast::concat_hex(["1", "2"]), "0x12");
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn concat_hex<T: AsRef<str>>(values: impl IntoIterator<Item = T>) -> String {
-        let out = values.into_iter().map(|s| strip_0x(s.as_ref()).to_string()).collect::<String>();
-        format!("0x{out}")
-    }
-
     /// Converts a number into uint256 hex string with 0x prefix
     ///
     /// # Example
