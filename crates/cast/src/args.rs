@@ -1210,14 +1210,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 }
                 (None, false) => sh_println!(
                     "{}",
-                    SimpleCast::etherscan_source(
-                        chain,
-                        address,
-                        api_key,
-                        explorer_api_url,
-                        explorer_url
-                    )
-                    .await?
+                    explorer_client(chain, api_key, explorer_api_url, explorer_url)?
+                        .contract_source_code(address.parse()?)
+                        .await?
+                        .source_code()
                 )?,
                 (dir, true) => {
                     SimpleCast::etherscan_source_flatten(

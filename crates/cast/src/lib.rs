@@ -67,45 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Fetches source code of verified contracts from etherscan.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use cast::SimpleCast as Cast;
-    /// # use foundry_config::NamedChain;
-    /// # async fn foo() -> eyre::Result<()> {
-    /// assert_eq!(
-    ///     "/*
-    ///             - Bytecode Verification performed was compared on second iteration -
-    ///             This file is part of the DAO.....",
-    ///     Cast::etherscan_source(
-    ///         NamedChain::Mainnet.into(),
-    ///         "0xBB9bc244D798123fDe783fCc1C72d3Bb8C189413".to_string(),
-    ///         Some("<etherscan_api_key>".to_string()),
-    ///         None,
-    ///         None
-    ///     )
-    ///     .await
-    ///     .unwrap()
-    ///     .as_str()
-    /// );
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn etherscan_source(
-        chain: Chain,
-        contract_address: String,
-        etherscan_api_key: Option<String>,
-        explorer_api_url: Option<String>,
-        explorer_url: Option<String>,
-    ) -> Result<String> {
-        let client =
-            args::explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
-        let metadata = client.contract_source_code(contract_address.parse()?).await?;
-        Ok(metadata.source_code())
-    }
-
     /// Fetches the source code of verified contracts from etherscan and expands the resulting
     /// files to a directory for easy perusal.
     ///
