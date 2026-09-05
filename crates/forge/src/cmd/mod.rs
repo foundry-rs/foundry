@@ -14,6 +14,7 @@ pub mod compiler;
 pub mod config;
 pub mod coverage;
 pub mod create;
+pub mod dependencies;
 pub mod doc;
 pub mod eip712;
 pub mod flatten;

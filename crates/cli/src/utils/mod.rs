@@ -797,17 +797,41 @@ ignore them in the `.gitignore` file."
         self.cmd().args(["submodule", "status"]).get_stdout_lossy().map(|stdout| stdout.parse())?
     }
 
-    /// Returns submodules at or below `path`, with paths relative to this Git root.
-    pub fn submodules_in(&self, path: &Path) -> Result<Vec<SubmoduleCheckout>> {
-        self.submodules_in_worktree(path, self.root, Path::new(""))
+    /// Parses one line of `git submodule status`'s output (a single leading status char,
+    /// optional, then the checkout's rev) into a status/rev pair.
+    fn parse_submodule_status_line(line: &str) -> Result<(SubmoduleCheckoutStatus, &str)> {
+        let (status, rev) = match line.as_bytes().first() {
+            Some(b'-') => (SubmoduleCheckoutStatus::Uninitialized, &line[1..]),
+            Some(b'+') => (SubmoduleCheckoutStatus::Modified, &line[1..]),
+            Some(b'U') => (SubmoduleCheckoutStatus::Conflicted, &line[1..]),
+            Some(_) => (SubmoduleCheckoutStatus::Current, line),
+            None => return Err(eyre::eyre!("missing submodule status")),
+        };
+        let rev = rev
+            .split_ascii_whitespace()
+            .next()
+            .ok_or_else(|| eyre::eyre!("invalid submodule status"))?;
+        Ok((status, rev))
     }
 
-    /// Returns submodules at or below `path`, with paths relative to this Git root, using mappings
-    /// from the enclosing worktree.
+    /// Returns submodules at or below `path`, with each `SubmoduleCheckout::path` relative to
+    /// `self.root` (this `Git` instance's own working directory - see [`Git::cmd`]), not the
+    /// worktree `mappings` were resolved against. `mappings` is the set of paths `.gitmodules`
+    /// records (see [`Git::submodule_gitmodules_entries`]'s keys) - callers looping this over
+    /// multiple `path`s against the same worktree should compute it once and reuse it, rather
+    /// than letting each call re-parse `.gitmodules` via a fresh subprocess: verified empirically
+    /// with a `libs = ["libA", "libB", "libC"]` repro (a subprocess spy logging every `git`
+    /// invocation) that re-deriving `mappings` internally here, once per caller-side loop
+    /// iteration with byte-identical arguments every time, was exactly this redundant pattern.
+    /// `worktree_prefix` is still needed separately - it's used to convert each submodule's
+    /// `self.root`-relative path into the worktree-relative form `mappings`' paths are keyed by
+    /// (this can differ from `self.root` in a nested-monorepo layout, where a project
+    /// subdirectory is its own logical root but `.gitmodules` still lives at the actual Git
+    /// repository root).
     pub fn submodules_in_worktree(
         &self,
         path: &Path,
-        worktree_root: &Path,
+        mappings: &BTreeSet<PathBuf>,
         worktree_prefix: &Path,
     ) -> Result<Vec<SubmoduleCheckout>> {
         let pathspec = if path.as_os_str().is_empty() { Path::new(".") } else { path };
@@ -816,8 +840,15 @@ ignore them in the `.gitignore` file."
             .args(["--literal-pathspecs", "ls-files", "--stage", "-z", "--"])
             .arg(pathspec)
             .exec()?;
-        let (_, mappings) = self.submodule_mappings_at(worktree_root)?;
         let mut gitlinks = BTreeMap::new();
+        // Paths whose status still needs a `git submodule status` lookup, collected in the same
+        // order `git ls-files` emits them - always sorted by path, since that's how the Git index
+        // itself is ordered. Deferred to a single batched call after this loop instead of one
+        // subprocess spawn per submodule: for a repo with 25 submodules, N individual `git
+        // submodule status` calls measured ~2.5s versus ~1s for one batched call covering all of
+        // them - O(N) subprocess spawns instead of O(1), which extrapolates to 10+ seconds on a
+        // 100+-submodule monorepo for what's meant to be a quick status lookup.
+        let mut pending = Vec::new();
         for entry in output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty()) {
             let Some(separator) = entry.iter().position(|byte| *byte == b'\t') else {
                 return Err(eyre::eyre!("invalid index entry"));
@@ -865,27 +896,39 @@ ignore them in the `.gitignore` file."
                 continue;
             }
 
-            let status = self
+            pending.push(submodule_path);
+        }
+
+        if !pending.is_empty() {
+            // Verified empirically: `git submodule status -- <p1> <p2> ...` always emits output
+            // sorted by path, regardless of the order the pathspecs are given as arguments -
+            // matching `pending`'s own order (ls-files's index-sorted iteration above), so a
+            // positional zip is safe without re-parsing each line's path back out (which would
+            // reopen exactly the whitespace/space-in-path ambiguity a NUL-delimited `ls-files`
+            // parse exists to avoid in the first place). The explicit length check below still
+            // guards against that assumption ever proving wrong for some pathological input.
+            let output = self
                 .cmd()
                 .args(["--literal-pathspecs", "submodule", "status", "--"])
-                .arg(&submodule_path)
+                .args(&pending)
                 .get_stdout_lossy()?;
-            let (status, rev) = match status.as_bytes().first() {
-                Some(b'-') => (SubmoduleCheckoutStatus::Uninitialized, &status[1..]),
-                Some(b'+') => (SubmoduleCheckoutStatus::Modified, &status[1..]),
-                Some(b'U') => (SubmoduleCheckoutStatus::Conflicted, &status[1..]),
-                Some(_) => (SubmoduleCheckoutStatus::Current, status.as_str()),
-                None => return Err(eyre::eyre!("missing submodule status")),
-            };
-            let rev = rev
-                .split_ascii_whitespace()
-                .next()
-                .ok_or_else(|| eyre::eyre!("invalid submodule status"))?;
-            gitlinks.insert(
-                submodule_path.clone(),
-                SubmoduleCheckout { status, rev: rev.to_string(), path: submodule_path },
-            );
+            let lines: Vec<&str> = output.lines().collect();
+            if lines.len() != pending.len() {
+                return Err(eyre::eyre!(
+                    "expected {} submodule status lines, got {}",
+                    pending.len(),
+                    lines.len()
+                ));
+            }
+            for (submodule_path, line) in pending.into_iter().zip(lines) {
+                let (status, rev) = Self::parse_submodule_status_line(line)?;
+                gitlinks.insert(
+                    submodule_path.clone(),
+                    SubmoduleCheckout { status, rev: rev.to_string(), path: submodule_path },
+                );
+            }
         }
+
         Ok(gitlinks.into_values().collect())
     }
 
@@ -899,6 +942,115 @@ ignore them in the `.gitignore` file."
             .args(["config", "--get", &format!("submodule.{}.url", path.to_slash_lossy())])
             .get_stdout_lossy()
             .map(|url| Some(url.trim().to_string()))
+    }
+
+    /// Parses `.gitmodules` once into a map of submodule path -> (section name, url if
+    /// `.gitmodules` itself carries one). `git_root` is the directory containing `.gitmodules`.
+    ///
+    /// A submodule's `.gitmodules` section name isn't required to match its `path` field (e.g.
+    /// `git submodule add --name openzeppelin <url> lib/openzeppelin` records `path =
+    /// lib/openzeppelin` under section `openzeppelin`), so the section name is kept alongside
+    /// the path for callers that need to resolve a URL by section name as a fallback - see
+    /// [`Git::submodule_url_for_path`]. Call this once per invocation and reuse the result across
+    /// every submodule, rather than re-parsing `.gitmodules` per submodule.
+    pub fn submodule_gitmodules_entries(
+        self,
+        git_root: &Path,
+    ) -> Result<BTreeMap<PathBuf, (String, Option<String>)>> {
+        let gitmodules = git_root.join(".gitmodules");
+        if !gitmodules.exists() {
+            return Ok(BTreeMap::new());
+        }
+
+        let output = self
+            .cmd()
+            .args(["config", "--null", "--file"])
+            .arg(&gitmodules)
+            .args(["--get-regexp", r"^submodule\..*\.(path|url)$"])
+            .output()?;
+        // `git config --get-regexp` exits 1 when nothing matches the pattern - a genuinely empty
+        // `.gitmodules` (or one with no `path`/`url` keys), which is not an error. Any OTHER
+        // non-zero exit (128 for a syntactically malformed `.gitmodules`, for one) is a real
+        // parse failure and must not be collapsed into the same "empty" result - this function's
+        // return value now also drives `MissingMapping` classification for every submodule in a
+        // project (see callers), not just the cosmetic URL lookup it originally served. Verified
+        // empirically: with `.gitmodules` hand-corrupted (unterminated `[submodule "..."` header,
+        // `git config` exits 128), treating that the same as "no entries" silently flipped a
+        // fully healthy, checked-out submodule to "orphaned" with no url and no indication
+        // `.gitmodules` itself was broken - actively misleading rather than merely incomplete.
+        // Matches `submodule_mappings_at`'s existing `Some(0)`/`Some(1)`/`_` handling.
+        match output.status.code() {
+            Some(0) => {}
+            Some(1) => return Ok(BTreeMap::new()),
+            _ => {
+                return Err(eyre::eyre!(
+                    "failed to parse {}: {}",
+                    gitmodules.display(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ));
+            }
+        }
+
+        // Collect both fields per section - `--get-regexp`'s output order isn't guaranteed to
+        // put `path` before `url` for the same section, so a single-pass match-then-break can
+        // miss the url.
+        let mut sections: BTreeMap<String, (Option<PathBuf>, Option<String>)> = BTreeMap::new();
+        for entry in output.stdout.split(|byte| *byte == 0).filter(|entry| !entry.is_empty()) {
+            let Some(separator) = entry.iter().position(|byte| *byte == b'\n') else { continue };
+            let key = std::str::from_utf8(&entry[..separator])?;
+            let value = std::str::from_utf8(&entry[separator + 1..])?;
+            let Some(rest) = key.strip_prefix("submodule.") else { continue };
+            let Some((name, field)) = rest.rsplit_once('.') else { continue };
+            let slot = sections.entry(name.to_string()).or_default();
+            match field {
+                "path" => slot.0 = Some(PathBuf::from(value)),
+                "url" => slot.1 = Some(value.to_string()),
+                _ => {}
+            }
+        }
+
+        Ok(sections
+            .into_iter()
+            .filter_map(|(name, (path, url))| path.map(|path| (path, (name, url))))
+            .collect())
+    }
+
+    /// Resolves a submodule's URL by its recorded `path`, given the `.gitmodules` entries
+    /// already parsed via a single [`Git::submodule_gitmodules_entries`] call.
+    pub fn submodule_url_for_path(
+        self,
+        entries: &BTreeMap<PathBuf, (String, Option<String>)>,
+        path: &Path,
+    ) -> Result<Option<String>> {
+        let Some((name, gitmodules_url)) = entries.get(path) else { return Ok(None) };
+
+        // The repository-local `submodule.<name>.url` is the URL git itself actually fetches
+        // from once a submodule is initialized - it can intentionally diverge from `.gitmodules`
+        // (a manually pinned internal mirror, an `insteadOf` rewrite recorded via `git config`,
+        // anything not re-exported with `git submodule sync`), and *that* divergence is exactly
+        // what `.gitmodules`-first used to hide. Verified empirically: with local config and
+        // `.gitmodules` pointing at different remotes, a fresh `git submodule update --init`
+        // clones from the local config's URL, not `.gitmodules`'s - so local config wins when
+        // both are present. Fall back to `.gitmodules`'s copy only when local config has no entry
+        // for this submodule at all (never had `git submodule init` run).
+        //
+        // An explicitly-empty local override (`git config submodule.<name>.url ""`) is treated
+        // the same as no entry, falling back to `.gitmodules` - this is a display choice, not a
+        // claim about what git would actually do: an empty local URL is itself a broken config
+        // state (`update --init` would try to clone from "" and fail), so there's no truthful
+        // single answer here either way. Showing `.gitmodules`'s value is simply the least
+        // misleading of two inaccurate options.
+        if let Ok(url) = self
+            .cmd()
+            .args(["config", "--get", &format!("submodule.{name}.url")])
+            .get_stdout_lossy()
+        {
+            let url = url.trim();
+            if !url.is_empty() {
+                return Ok(Some(url.to_string()));
+            }
+        }
+        Ok(gitmodules_url.clone())
     }
 
     /// Returns whether `.gitmodules` contains the default section name or an exact path mapping.

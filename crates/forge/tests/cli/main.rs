@@ -19,6 +19,7 @@ mod context;
 mod coverage;
 mod create;
 mod debug;
+mod dependencies;
 mod doc;
 mod eip712;
 mod failure_assertions;
