@@ -527,7 +527,14 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::StorageRoot { block, who, slots, rpc } => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
-            print_scalar(Cast::new(provider).storage_root(who, slots, block).await?)?;
+            print_scalar(
+                provider
+                    .get_proof(who, slots)
+                    .block_id(block.unwrap_or_default())
+                    .await?
+                    .storage_hash
+                    .to_string(),
+            )?;
         }
         CastSubcommand::ChannelId {
             payer,

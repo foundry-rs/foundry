@@ -9608,3 +9608,15 @@ casttest!(codehash_empty, async |_prj, cmd| {
     .assert_success()
     .stdout_eq(format!("{}\n", keccak256([])));
 });
+
+casttest!(storage_root_empty, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    cmd.args([
+        "storage-root",
+        "0x0000000000000000000000000000000000000000",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421\n");
+});
