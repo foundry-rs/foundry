@@ -150,6 +150,8 @@ struct State {
     /// Storage-pointer locals and the state variable they alias.
     storage_aliases: HashMap<VariableId, VariableId>,
     writes: Vec<StateWrite>,
+    /// Events emitted so far, not yet matched against every write reachable at this point.
+    emits: Vec<(EventId, Sources)>,
 }
 
 /// Collects writes to `targets` reachable from an entry point and marks those an `emit` covers.
@@ -180,6 +182,7 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
         for stmt in body.stmts {
             let _ = self.visit_stmt(stmt);
         }
+        self.correlate_pending();
         self.call_stack.pop();
     }
 
@@ -279,17 +282,29 @@ impl<'gcx> WriteAnalyzer<'_, 'gcx> {
         };
     }
 
-    /// Marks pending writes covered by `emit`: the event must mention the variable and share a
-    /// source with the write (or the write must be a fixed clear).
-    fn mark_event(&mut self, expr: &Expr<'_>) {
+    /// Records an `emit` as pending, to be matched against writes by `correlate_pending`. Emits
+    /// are matched independent of statement order within the same straight-line scope, so an
+    /// `emit` written before the state change it documents is still recognized.
+    fn record_emit(&mut self, expr: &Expr<'_>) {
         let Some(event_id) = emitted_event_id(expr) else { return };
         let event_sources = self.value_sources(expr);
-        for write in &mut self.state.writes {
-            if !write.evented
-                && (write.fixed_clear || !write.sources.is_disjoint(&event_sources))
-                && event_mentions_state_var(self.gcx, event_id, write.var_id)
-            {
-                write.evented = true;
+        self.state.emits.push((event_id, event_sources));
+    }
+
+    /// Matches every pending emit against every not-yet-evented write reachable so far: the
+    /// event must mention the variable and share a source with the write (or the write must be
+    /// a fixed clear).
+    fn correlate_pending(&mut self) {
+        let gcx = self.gcx;
+        let State { emits, writes, .. } = &mut self.state;
+        for (event_id, event_sources) in emits.iter() {
+            for write in writes.iter_mut() {
+                if !write.evented
+                    && (write.fixed_clear || !write.sources.is_disjoint(event_sources))
+                    && event_mentions_state_var(gcx, *event_id, write.var_id)
+                {
+                    write.evented = true;
+                }
             }
         }
     }
@@ -322,9 +337,11 @@ impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
                 self.visit_expr(cond)?;
                 let base = self.state.clone();
                 self.visit_stmt(then_stmt)?;
+                self.correlate_pending();
                 let then_state = std::mem::replace(&mut self.state, base.clone());
                 if let Some(else_stmt) = else_stmt {
                     self.visit_stmt(else_stmt)?;
+                    self.correlate_pending();
                 }
                 let else_state = std::mem::take(&mut self.state);
                 self.state = merge_branches(
@@ -337,7 +354,46 @@ impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
             }
             StmtKind::Emit(expr) => {
                 self.visit_expr(expr)?;
-                self.mark_event(expr);
+                self.record_emit(expr);
+            }
+            StmtKind::Loop(block, _source) => {
+                // A loop body may not run to completion on the iteration containing an emit — a
+                // `for`/`while` may run zero times, and even a `do-while` (which always starts
+                // its body) can `break`/`continue`/`revert` past the emit on that first pass — so
+                // an emit inside any loop must not survive to satisfy a write after the loop, and
+                // must not retroactively mark a write from BEFORE the loop as evented either.
+                let n = self.state.writes.len();
+                let evented_before: Vec<bool> =
+                    self.state.writes.iter().map(|w| w.evented).collect();
+                let emits_before = self.state.emits.clone();
+                for stmt in block.stmts {
+                    self.visit_stmt(stmt)?;
+                }
+                self.correlate_pending();
+                for (write, was_evented) in self.state.writes[..n].iter_mut().zip(evented_before) {
+                    write.evented = was_evented;
+                }
+                self.state.emits = emits_before;
+            }
+            StmtKind::Try(try_stmt) => {
+                self.visit_expr(&try_stmt.expr)?;
+                // Clauses are mutually exclusive: at most one runs. Each gets its own isolated
+                // copy of the pre-try state so one clause's emit can neither satisfy another
+                // clause's write nor a write from before the try; `merge_try_clauses` recombines
+                // them the same way `merge_branches` recombines an `if`'s two arms.
+                let base = self.state.clone();
+                let mut clause_states = Vec::with_capacity(try_stmt.clauses.len());
+                let mut continues = Vec::with_capacity(try_stmt.clauses.len());
+                for clause in try_stmt.clauses {
+                    self.state = base.clone();
+                    for stmt in clause.block.stmts {
+                        self.visit_stmt(stmt)?;
+                    }
+                    self.correlate_pending();
+                    clause_states.push(std::mem::take(&mut self.state));
+                    continues.push(!clause.block.stmts.iter().any(branch_always_exits));
+                }
+                self.state = merge_try_clauses(base, clause_states, continues);
             }
             _ => return self.walk_stmt(stmt),
         }
@@ -379,7 +435,11 @@ impl<'gcx> Visit<'gcx> for WriteAnalyzer<'_, 'gcx> {
 }
 
 /// Joins the two arms of an `if`: a pending write stays covered only if both arms emitted for it,
-/// while taint and aliases come from whichever arms can continue past the `if`.
+/// while taint and aliases come from whichever arms can continue past the `if`. Emits recorded
+/// inside either arm are dropped rather than carried past the merge: `correlate_pending` already
+/// resolved them against that arm's own writes before this runs, and code after the `if` executes
+/// whichever branch ran (or neither), so an emit conditional on one arm must not retroactively
+/// satisfy a write reachable only outside it.
 fn merge_branches(
     base: State,
     then_state: State,
@@ -387,6 +447,7 @@ fn merge_branches(
     then_exits: bool,
     else_exits: bool,
 ) -> State {
+    let emits = base.emits.clone();
     let mut writes = base.writes;
     for (i, write) in writes.iter_mut().enumerate() {
         write.evented = then_state.writes[i].evented && else_state.writes[i].evented;
@@ -412,7 +473,55 @@ fn merge_branches(
             (taint, storage_aliases)
         }
     };
-    State { taint, storage_aliases, writes }
+    State { taint, storage_aliases, writes, emits }
+}
+
+/// Joins try/catch clauses, each analyzed from its own isolated copy of the pre-try state:
+/// clauses are mutually exclusive (at most one runs), so a write existing before the try stays
+/// covered only if EVERY clause's own analysis covers it - deliberately including one that
+/// `branch_always_exits` via `revert` (which undoes the write, so the credit question is moot
+/// anyway) or `return` (which does NOT undo it, so the write genuinely needs its own event on
+/// that path too). Taint/aliases, which only describe what later code inside the SAME function
+/// call can observe, are unioned/intersected only across clauses that actually continue past the
+/// try - a clause whose body always exits never reaches that later code, the same way
+/// `merge_branches` excludes an exiting `if`/`else` arm from its taint/alias merge. Emits
+/// recorded inside any clause never survive past the try. If every clause exits, no taint/alias
+/// changes from any of them are observable afterwards, so the pre-try versions pass through
+/// unchanged - matching `merge_branches`'s `(true, true)` case.
+fn merge_try_clauses(base: State, clause_states: Vec<State>, continues: Vec<bool>) -> State {
+    let n = base.writes.len();
+    let mut writes = base.writes;
+    for (i, write) in writes.iter_mut().enumerate() {
+        write.evented = clause_states.iter().all(|state| state.writes[i].evented);
+    }
+    for state in &clause_states {
+        writes.extend_from_slice(&state.writes[n..]);
+    }
+
+    let continuing = || clause_states.iter().zip(&continues).filter(|&(_, &c)| c).map(|(s, _)| s);
+
+    let (taint, storage_aliases) = match continuing().next() {
+        None => (base.taint, base.storage_aliases),
+        Some(first) => {
+            let mut taint = HashMap::new();
+            for state in continuing() {
+                for (&var_id, sources) in &state.taint {
+                    taint
+                        .entry(var_id)
+                        .or_insert_with(Sources::new)
+                        .extend(sources.iter().copied());
+                }
+            }
+            let mut storage_aliases = first.storage_aliases.clone();
+            for state in continuing().skip(1) {
+                storage_aliases
+                    .retain(|alias, root| state.storage_aliases.get(alias) == Some(root));
+            }
+            (taint, storage_aliases)
+        }
+    };
+
+    State { taint, storage_aliases, writes, emits: base.emits }
 }
 
 fn emitted_event_id(expr: &Expr<'_>) -> Option<EventId> {
