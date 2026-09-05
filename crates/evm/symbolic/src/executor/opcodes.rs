@@ -890,22 +890,30 @@ impl SymbolicExecutor {
                                     "symbolic RETURNDATACOPY size",
                                 )
                             })?;
-                        if max_size != 0 {
-                            if !self.assume_returndata_copy_in_bounds(
-                                state,
-                                offset.clone(),
-                                size.clone(),
-                            )? {
-                                return Ok(StepOutcome::Revert);
-                            }
-                            state.copy_return_data_symbolic_size(
-                                &mut self.cx,
-                                dest,
-                                offset,
-                                size,
-                                max_size,
-                            )?;
+                        // This must run unconditionally (not just when `max_size != 0`): an
+                        // out-of-range offset with a size that can only be 0 (max_size == 0)
+                        // must still revert, matching EVM's unconditional
+                        // `offset + size <= returndatasize` check. The nonzero-`max_size`
+                        // behavior below is unchanged from before this fix. The newly
+                        // exercised `max_size == 0` case cannot wrap `offset + size`: `size`
+                        // is proven exactly 0 to reach it (not just bounded), so `end` reduces
+                        // to `offset` with no addition performed at all.
+                        if !self.assume_returndata_copy_in_bounds(
+                            state,
+                            offset.clone(),
+                            size.clone(),
+                        )? {
+                            return Ok(StepOutcome::Revert);
                         }
+                        // Self-guards on `max_size == 0` (no-op copy), matching a size that
+                        // is provably 0.
+                        state.copy_return_data_symbolic_size(
+                            &mut self.cx,
+                            dest,
+                            offset,
+                            size,
+                            max_size,
+                        )?;
                     }
                 }
             }

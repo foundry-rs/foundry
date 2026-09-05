@@ -1142,6 +1142,115 @@ contract SymbolicReturndataCopySize is Test {
     assert!(!stdout.contains("symbolic RETURNDATACOPY size"), "{stdout}");
 });
 
+forgetest_init!(
+    symbolic_returndatacopy_reverts_on_out_of_bounds_offset_with_symbolic_size,
+    |prj, cmd| {
+        if !z3_available() {
+            let _ = sh_eprintln!(
+                "skipping symbolic_returndatacopy_reverts_on_out_of_bounds_offset_with_symbolic_size because z3 is not available"
+            );
+            return;
+        }
+
+        prj.add_test(
+            "SymbolicReturndataCopyOobOffset.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+contract SymbolicReturndataCopyOobOffsetHelper {
+    function pair(uint256 marker) external pure returns (uint256, uint256) {
+        return (11, marker);
+    }
+}
+
+contract SymbolicReturndataCopyOobOffsetTrigger {
+    SymbolicReturndataCopyOobOffsetHelper public helper;
+
+    constructor(SymbolicReturndataCopyOobOffsetHelper _helper) {
+        helper = _helper;
+    }
+
+    // returndatasize() == 64 after the staticcall; offset 65 is out of range even
+    // though size is forced to 0 -- real EVM reverts on offset alone (data_end =
+    // offset + size = 65 > 64), matching revm's RETURNDATACOPY bounds check.
+    function triggerOutOfBoundsOffset(uint256 size) external {
+        bytes4 selector = SymbolicReturndataCopyOobOffsetHelper.pair.selector;
+        address target = address(helper);
+        bool ok;
+        assembly {
+            mstore(0x80, selector)
+            mstore(0x84, 0)
+            ok := staticcall(gas(), target, 0x80, 36, 0, 0)
+            returndatacopy(0, 65, size)
+        }
+    }
+
+    // offset == returndatasize() (64) exactly: only size == 0 is in-bounds
+    // (data_end == 64 == returndatasize()), any size > 0 must revert.
+    function triggerAtBoundary(uint256 size) external returns (bool ok) {
+        bytes4 selector = SymbolicReturndataCopyOobOffsetHelper.pair.selector;
+        address target = address(helper);
+        assembly {
+            mstore(0x80, selector)
+            mstore(0x84, 0)
+            ok := staticcall(gas(), target, 0x80, 36, 0, 0)
+            returndatacopy(0, 64, size)
+        }
+    }
+}
+
+contract SymbolicReturndataCopyOobOffset is Test {
+    SymbolicReturndataCopyOobOffsetHelper helper;
+    SymbolicReturndataCopyOobOffsetTrigger trigger;
+
+    function setUp() public {
+        helper = new SymbolicReturndataCopyOobOffsetHelper();
+        trigger = new SymbolicReturndataCopyOobOffsetTrigger(helper);
+    }
+
+    function checkOutOfBoundsOffsetForcedZeroSizeReverts(uint256 size) public {
+        // A range bound (`<= 0`), not an equality (`== 0`): an equality constraint lets
+        // the executor resolve `size` to a single concrete value and take the
+        // already-correct concrete-size code path, masking the bug this test targets.
+        // A range bound keeps `size` on the genuinely-symbolic path, where only the
+        // upper-bound proof (not equality) determines `size <= max_limit`.
+        vm.assume(size <= 0);
+        vm.expectRevert();
+        trigger.triggerOutOfBoundsOffset(size);
+    }
+
+    // offset == returndatasize() exactly, with size constrained (not equated) to 0,
+    // must NOT revert -- pins the off-by-one boundary this fix must not disturb.
+    function checkAtBoundaryOffsetZeroSizeDoesNotRevert(uint256 size) public {
+        vm.assume(size <= 0);
+        bool ok = trigger.triggerAtBoundary(size);
+        assertTrue(ok);
+    }
+}
+"#,
+        );
+
+        let stdout = cmd
+        .args([
+            "test",
+            "--symbolic",
+            "--match-test",
+            "checkOutOfBoundsOffsetForcedZeroSizeReverts|checkAtBoundaryOffsetZeroSizeDoesNotRevert",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+        assert_relevant_lines(
+            &stdout,
+            foundry_test_utils::str![[r#"
+[PASS] checkAtBoundaryOffsetZeroSizeDoesNotRevert(uint256)
+[PASS] checkOutOfBoundsOffsetForcedZeroSizeReverts(uint256)
+"#]],
+        );
+    }
+);
+
 forgetest_init!(symbolic_return_revert_accept_symbolic_offset, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
