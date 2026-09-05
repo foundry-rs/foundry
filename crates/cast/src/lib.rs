@@ -263,34 +263,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         Ok(format!("{:?}", Address::from_word(value.into())))
     }
 
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_primitives::Address;
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    /// use std::str::FromStr;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let addr = Address::from_str("0x00000000219ab540356cbb839cbe05303d7705fa")?;
-    /// let code = cast.code(addr, None, false).await?;
-    /// println!("{}", code);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn code(
-        &self,
-        who: Address,
-        block: Option<BlockId>,
-        disassemble: bool,
-    ) -> Result<String> {
-        let code = self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?;
-        if disassemble { SimpleCast::disassemble(&code) } else { Ok(code.to_string()) }
-    }
-
     /// Example
     ///
     /// ```

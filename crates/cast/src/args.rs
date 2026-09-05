@@ -397,7 +397,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Code { block, who, disassemble, rpc } => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
-            print_scalar(Cast::new(provider).code(who, block, disassemble).await?)?;
+            let code = provider.get_code_at(who).block_id(block.unwrap_or_default()).await?;
+            print_scalar(if disassemble {
+                SimpleCast::disassemble(&code)?
+            } else {
+                code.to_string()
+            })?;
         }
         CastSubcommand::Codesize { block, who, rpc } => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
