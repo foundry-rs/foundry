@@ -67,45 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Converts integers with specified decimals into fixed point numbers
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_primitives::U256;
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(Cast::to_fixed_point("10", "0")?, "10.");
-    /// assert_eq!(Cast::to_fixed_point("10", "1")?, "1.0");
-    /// assert_eq!(Cast::to_fixed_point("10", "2")?, "0.10");
-    /// assert_eq!(Cast::to_fixed_point("10", "3")?, "0.010");
-    ///
-    /// assert_eq!(Cast::to_fixed_point("-10", "0")?, "-10.");
-    /// assert_eq!(Cast::to_fixed_point("-10", "1")?, "-1.0");
-    /// assert_eq!(Cast::to_fixed_point("-10", "2")?, "-0.10");
-    /// assert_eq!(Cast::to_fixed_point("-10", "3")?, "-0.010");
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn to_fixed_point(value: &str, decimals: &str) -> Result<String> {
-        let number = NumberWithBase::parse_int(value, None)?;
-        let sign = if number.is_nonnegative() { "" } else { "-" };
-        let mut value = number.to_string().trim_start_matches('-').to_string();
-        let value_len = value.len();
-        let decimals_num = NumberWithBase::parse_uint(decimals, None)?.number();
-        let decimals: usize = decimals_num
-            .try_into()
-            .ok()
-            .filter(|&d: &usize| d <= u16::MAX as usize)
-            .ok_or_else(|| eyre::eyre!("decimals out of range: {decimals_num}"))?;
-
-        if decimals >= value_len {
-            value = format!("0.{value:0>decimals$}");
-        } else {
-            value.insert(value_len - decimals, '.');
-        }
-        Ok(format!("{sign}{value}"))
-    }
-
     /// Converts an eth amount into a specified unit
     ///
     /// # Example
@@ -1358,17 +1319,6 @@ mod tests {
     }
 
     #[test]
-    fn to_fixed_point_rejects_decimals_too_large_to_convert() {
-        assert!(Cast::to_fixed_point("10", "18446744073709551616").is_err());
-    }
-
-    #[test]
-    fn to_fixed_point_rejects_decimals_above_format_width_limit() {
-        assert!(Cast::to_fixed_point("12345", "70000").is_err());
-        assert!(Cast::to_fixed_point("12345", "65536").is_err());
-    }
-
-    #[test]
     fn pad_rejects_len_above_format_width_limit() {
         assert!(Cast::pad("abcd", false, 32768).is_err());
         assert!(Cast::pad("abcd", false, usize::MAX).is_err());
@@ -1380,6 +1330,5 @@ mod tests {
             Cast::pad("abcd", false, 20).unwrap(),
             "0x000000000000000000000000000000000000abcd"
         );
-        assert_eq!(Cast::to_fixed_point("10", "2").unwrap(), "0.10");
     }
 }

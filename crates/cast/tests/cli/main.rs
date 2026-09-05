@@ -9722,3 +9722,27 @@ casttest!(to_int256, |_prj, cmd| {
         .assert_success()
         .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000064\n");
 });
+
+casttest!(to_fixed_point, |_prj, cmd| {
+    cmd.cast_fuse().args(["to-fixed-point", "10", "2"]).assert_success().stdout_eq("0.10\n");
+    cmd.cast_fuse().args(["to-fixed-point", "-10", "3"]).assert_success().stdout_eq("-0.010\n");
+    cmd.cast_fuse().args(["to-fixed-point", "10", "0"]).assert_success().stdout_eq("10.\n");
+});
+
+casttest!(to_fixed_point_overflow_18446744073709551616, |_prj, cmd| {
+    cmd.args(["to-fixed-point", "10", "18446744073709551616"])
+        .assert_failure()
+        .stderr_eq("Error: decimals out of range: 18446744073709551616\n");
+});
+
+casttest!(to_fixed_point_overflow_70000, |_prj, cmd| {
+    cmd.args(["to-fixed-point", "10", "70000"])
+        .assert_failure()
+        .stderr_eq("Error: decimals out of range: 70000\n");
+});
+
+casttest!(to_fixed_point_overflow_65536, |_prj, cmd| {
+    cmd.args(["to-fixed-point", "10", "65536"])
+        .assert_failure()
+        .stderr_eq("Error: decimals out of range: 65536\n");
+});

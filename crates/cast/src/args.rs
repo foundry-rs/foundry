@@ -123,7 +123,24 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::ToFixedPoint { value, decimals } => {
             let (value, decimals) = stdin::unwrap2(value, decimals)?;
-            print_scalar(SimpleCast::to_fixed_point(&value, &decimals)?)?;
+
+            let number = NumberWithBase::parse_int(&value, None)?;
+            let sign = if number.is_nonnegative() { "" } else { "-" };
+            let mut value = number.to_string().trim_start_matches('-').to_string();
+            let value_len = value.len();
+            let decimals_num = NumberWithBase::parse_uint(&decimals, None)?.number();
+            let decimals: usize = decimals_num
+                .try_into()
+                .ok()
+                .filter(|&d: &usize| d <= u16::MAX as usize)
+                .ok_or_else(|| eyre::eyre!("decimals out of range: {decimals_num}"))?;
+
+            if decimals >= value_len {
+                value = format!("0.{value:0>decimals$}");
+            } else {
+                value.insert(value_len - decimals, '.');
+            }
+            print_scalar(format!("{sign}{value}"))?;
         }
         CastSubcommand::ConcatHex { data } => {
             let data = if data.is_empty() {
