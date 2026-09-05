@@ -67,26 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Encodes hex data or list of hex data to hexadecimal rlp
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(Cast::to_rlp("[]").unwrap(), "0xc0".to_string());
-    /// assert_eq!(Cast::to_rlp("0x22").unwrap(), "0x22".to_string());
-    /// assert_eq!(Cast::to_rlp("[\"0x61\"]",).unwrap(), "0xc161".to_string());
-    /// assert_eq!(Cast::to_rlp("[\"0xf1\", \"f2\"]").unwrap(), "0xc481f181f2".to_string());
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn to_rlp(value: &str) -> Result<String> {
-        let val = serde_json::from_str(value)
-            .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
-        let item = Item::value_to_item(&val)?;
-        Ok(format!("0x{}", hex::encode(alloy_rlp::encode(item))))
-    }
-
     /// Converts a number of one base to another
     ///
     /// # Example

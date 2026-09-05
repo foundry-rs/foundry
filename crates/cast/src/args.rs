@@ -216,7 +216,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(value)?;
         }
         CastSubcommand::ToRlp { value } => {
-            print_scalar(SimpleCast::to_rlp(&stdin::unwrap_line(value)?)?)?;
+            let value = stdin::unwrap_line(value)?;
+            let val = serde_json::from_str(&value)
+                .unwrap_or_else(|_| serde_json::Value::String(value.to_string()));
+            let item = crate::rlp_converter::Item::value_to_item(&val)?;
+            print_scalar(format!("0x{}", hex::encode(alloy_rlp::encode(item))))?;
         }
         CastSubcommand::ToHex(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
