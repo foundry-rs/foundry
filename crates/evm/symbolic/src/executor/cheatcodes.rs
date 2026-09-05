@@ -37,15 +37,31 @@ impl SymbolicExecutor {
         CheatcodeOutcome::Continue(Vec::new())
     }
 
-    pub(super) fn set_expected_emit(
+    fn expect_emit_from_args(
         &mut self,
         state: &mut PathState,
+        args_offset: usize,
         checks: ExpectedEmitChecks,
-        emitter: Option<SymExpr>,
-        remaining: u64,
-    ) -> CheatcodeOutcome {
+        emitter_arg: Option<usize>,
+        count_arg: Option<usize>,
+    ) -> Result<CheatcodeOutcome, SymbolicError> {
+        let emitter = emitter_arg
+            .map(|index| read_abi_word_arg(&mut self.cx, &state.memory, args_offset, index))
+            .transpose()?;
+        let remaining = count_arg
+            .map(|index| {
+                read_abi_u64_arg(
+                    &mut self.cx,
+                    &state.memory,
+                    args_offset,
+                    index,
+                    "symbolic vm.expectEmit",
+                )
+            })
+            .transpose()?
+            .unwrap_or(1);
         state.expected_emit = Some(ExpectedEmit::new(checks, emitter, remaining));
-        CheatcodeOutcome::Continue(Vec::new())
+        Ok(CheatcodeOutcome::Continue(Vec::new()))
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -815,52 +831,40 @@ impl SymbolicExecutor {
                 ));
             }
             expectEmit_2Call::SELECTOR => {
-                return Ok(self.set_expected_emit(
+                return self.expect_emit_from_args(
                     state,
+                    args_offset,
                     ExpectedEmitChecks::default_non_anonymous(),
                     None,
-                    1,
-                ));
+                    None,
+                );
             }
             expectEmit_3Call::SELECTOR => {
-                let emitter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
-                return Ok(self.set_expected_emit(
+                return self.expect_emit_from_args(
                     state,
+                    args_offset,
                     ExpectedEmitChecks::default_non_anonymous(),
-                    Some(emitter),
-                    1,
-                ));
+                    Some(0),
+                    None,
+                );
             }
             expectEmit_6Call::SELECTOR => {
-                let count = read_abi_u64_arg(
-                    &mut self.cx,
-                    &state.memory,
-                    args_offset,
-                    0,
-                    "symbolic vm.expectEmit",
-                )?;
-                return Ok(self.set_expected_emit(
+                return self.expect_emit_from_args(
                     state,
+                    args_offset,
                     ExpectedEmitChecks::default_non_anonymous(),
                     None,
-                    count,
-                ));
+                    Some(0),
+                );
             }
             expectEmit_7Call::SELECTOR => {
-                let emitter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
-                let count = read_abi_u64_arg(
-                    &mut self.cx,
-                    &state.memory,
-                    args_offset,
-                    1,
-                    "symbolic vm.expectEmit",
-                )?;
-                return Ok(self.set_expected_emit(
+                return self.expect_emit_from_args(
                     state,
+                    args_offset,
                     ExpectedEmitChecks::default_non_anonymous(),
-                    Some(emitter),
-                    count,
-                ));
+                    Some(0),
+                    Some(1),
+                );
             }
             expectEmit_0Call::SELECTOR => {
                 let checks = ExpectedEmitChecks::from_non_anonymous_args(
@@ -868,7 +872,7 @@ impl SymbolicExecutor {
                     &state.memory,
                     args_offset,
                 )?;
-                return Ok(self.set_expected_emit(state, checks, None, 1));
+                return self.expect_emit_from_args(state, args_offset, checks, None, None);
             }
             expectEmit_1Call::SELECTOR => {
                 let checks = ExpectedEmitChecks::from_non_anonymous_args(
@@ -876,8 +880,7 @@ impl SymbolicExecutor {
                     &state.memory,
                     args_offset,
                 )?;
-                let emitter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 4)?;
-                return Ok(self.set_expected_emit(state, checks, Some(emitter), 1));
+                return self.expect_emit_from_args(state, args_offset, checks, Some(4), None);
             }
             expectEmit_4Call::SELECTOR => {
                 let checks = ExpectedEmitChecks::from_non_anonymous_args(
@@ -885,14 +888,7 @@ impl SymbolicExecutor {
                     &state.memory,
                     args_offset,
                 )?;
-                let count = read_abi_u64_arg(
-                    &mut self.cx,
-                    &state.memory,
-                    args_offset,
-                    4,
-                    "symbolic vm.expectEmit",
-                )?;
-                return Ok(self.set_expected_emit(state, checks, None, count));
+                return self.expect_emit_from_args(state, args_offset, checks, None, Some(4));
             }
             expectEmit_5Call::SELECTOR => {
                 let checks = ExpectedEmitChecks::from_non_anonymous_args(
@@ -900,32 +896,25 @@ impl SymbolicExecutor {
                     &state.memory,
                     args_offset,
                 )?;
-                let emitter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 4)?;
-                let count = read_abi_u64_arg(
-                    &mut self.cx,
-                    &state.memory,
-                    args_offset,
-                    5,
-                    "symbolic vm.expectEmit",
-                )?;
-                return Ok(self.set_expected_emit(state, checks, Some(emitter), count));
+                return self.expect_emit_from_args(state, args_offset, checks, Some(4), Some(5));
             }
             expectEmitAnonymous_2Call::SELECTOR => {
-                return Ok(self.set_expected_emit(
+                return self.expect_emit_from_args(
                     state,
+                    args_offset,
                     ExpectedEmitChecks::default_anonymous(),
                     None,
-                    1,
-                ));
+                    None,
+                );
             }
             expectEmitAnonymous_3Call::SELECTOR => {
-                let emitter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
-                return Ok(self.set_expected_emit(
+                return self.expect_emit_from_args(
                     state,
+                    args_offset,
                     ExpectedEmitChecks::default_anonymous(),
-                    Some(emitter),
-                    1,
-                ));
+                    Some(0),
+                    None,
+                );
             }
             expectEmitAnonymous_0Call::SELECTOR => {
                 let checks = ExpectedEmitChecks::from_anonymous_args(
@@ -933,7 +922,7 @@ impl SymbolicExecutor {
                     &state.memory,
                     args_offset,
                 )?;
-                return Ok(self.set_expected_emit(state, checks, None, 1));
+                return self.expect_emit_from_args(state, args_offset, checks, None, None);
             }
             expectEmitAnonymous_1Call::SELECTOR => {
                 let checks = ExpectedEmitChecks::from_anonymous_args(
@@ -941,8 +930,7 @@ impl SymbolicExecutor {
                     &state.memory,
                     args_offset,
                 )?;
-                let emitter = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 5)?;
-                return Ok(self.set_expected_emit(state, checks, Some(emitter), 1));
+                return self.expect_emit_from_args(state, args_offset, checks, Some(5), None);
             }
             expectCall_0Call::SELECTOR => {
                 let callee = read_abi_word_arg(&mut self.cx, &state.memory, args_offset, 0)?;
