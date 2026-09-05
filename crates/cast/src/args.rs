@@ -503,7 +503,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Implementation { block, beacon, who, rpc } => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
-            print_scalar(Cast::new(provider).implementation(who, beacon, block).await?)?;
+            // bytes32(uint256(keccak256('eip1967.proxy.beacon')) - 1)
+            const BEACON_SLOT: B256 =
+                b256!("0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50");
+            // bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)
+            const IMPLEMENTATION_SLOT: B256 =
+                b256!("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc");
+
+            let slot = if beacon { BEACON_SLOT } else { IMPLEMENTATION_SLOT };
+            print_scalar(address_at_slot(&provider, who, slot, block).await?)?;
         }
         CastSubcommand::Admin { block, who, rpc } => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;

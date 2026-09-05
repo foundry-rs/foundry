@@ -136,41 +136,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
-    /// let implementation = cast.implementation(addr, false, None).await?;
-    /// println!("{}", implementation);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn implementation(
-        &self,
-        who: Address,
-        is_beacon: bool,
-        block: Option<BlockId>,
-    ) -> Result<String> {
-        // bytes32(uint256(keccak256('eip1967.proxy.beacon')) - 1)
-        const BEACON_SLOT: B256 =
-            b256!("0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50");
-        // bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)
-        const IMPLEMENTATION_SLOT: B256 =
-            b256!("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc");
-
-        let slot = if is_beacon { BEACON_SLOT } else { IMPLEMENTATION_SLOT };
-        args::address_at_slot(&self.provider, who, slot, block).await
-    }
-
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_primitives::Address;
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    /// use std::str::FromStr;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let admin = cast.admin(addr, None).await?;
     /// println!("{}", admin);
     /// # Ok(())
