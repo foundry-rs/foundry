@@ -337,6 +337,11 @@ impl SmtLibSubprocessSolver {
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
     ) -> Result<SymbolicModel, SymbolicError> {
+        // Local witnesses may decide the feasibility of gas-dependent branches, but a model assigns
+        // `gasleft()` a concrete value the engine cannot replay faithfully, so fail closed here.
+        if constraints.iter().any(SymBoolExpr::contains_gasleft) {
+            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        }
         self.model_queries += 1;
         let smt_constraints =
             normalize_constraints_for_solver_cached(cx, constraints, &mut self.normalization_cache);

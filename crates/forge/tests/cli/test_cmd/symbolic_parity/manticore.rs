@@ -47,14 +47,16 @@ contract ManticoreMultiTx is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/ManticoreMultiTx.t.sol:ManticoreMultiTx
-[FAIL: symbolic invariant counterexample]
+[FAIL: panic: assertion failed (0x01)]
 	[Sequence] (original: 1, shrunk: 1)
-		[SENDER] addr=[test/ManticoreMultiTx.t.sol:ArmTarget]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=arm(uint256) [ARGS]
+		[SENDER] [SENDER] calldata=arm(uint256) [ARGS]
  invariant_neverArmed() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });

@@ -2567,6 +2567,8 @@ forgetest_init!(symbolic_json_reports_minimized_sequence_counterexample, |prj, c
         return;
     }
 
+    // `check_interval = 0` makes the symbolic engine check the invariant only at the terminal
+    // depth, so the symbolic sequence budget is kept at two calls to stay within `max_paths`.
     prj.add_test(
         "SymbolicInvariantSequenceMinimize.t.sol",
         r#"
@@ -2606,6 +2608,7 @@ contract SymbolicInvariantSequenceMinimize is Test {
         targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
     }
 
+    /// forge-config: default.symbolic.invariant_depth = 2
     /// forge-config: default.invariant.runs = 1
     /// forge-config: default.invariant.depth = 20
     /// forge-config: default.invariant.check_interval = 0
