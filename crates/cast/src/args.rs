@@ -406,7 +406,14 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Codesize { block, who, rpc } => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
-            print_scalar(Cast::new(provider).codesize(who, block).await?)?;
+            print_scalar(
+                provider
+                    .get_code_at(who)
+                    .block_id(block.unwrap_or_default())
+                    .await?
+                    .len()
+                    .to_string(),
+            )?;
         }
         CastSubcommand::ComputeAddress { address, nonce, salt, init_code, init_code_hash, rpc } => {
             let address = stdin::unwrap_line(address)?;
