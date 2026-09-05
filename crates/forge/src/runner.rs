@@ -109,6 +109,8 @@ struct FuzzBranchFrontierArtifact {
 #[derive(Deserialize)]
 struct FuzzBranchFrontierRecord {
     id: u64,
+    #[serde(skip)]
+    both_results_observed: bool,
     call_index: usize,
     #[serde(default)]
     sequence: Vec<BasicTxDetails>,
@@ -130,21 +132,58 @@ struct FuzzBranchFrontierOperands {
 }
 
 fn select_stateful_frontiers(
-    mut frontiers: Vec<FuzzBranchFrontierRecord>,
+    frontiers: Vec<FuzzBranchFrontierRecord>,
     limit: usize,
+    explicit_selection: bool,
 ) -> Vec<FuzzBranchFrontierRecord> {
-    frontiers.sort_unstable_by_key(|frontier| (frontier.call_index, frontier.id));
-    if frontiers.len() <= limit {
-        return frontiers;
+    if limit == 0 {
+        return Vec::new();
     }
 
-    let deep_count = limit / 5;
-    let shallow_count = limit - deep_count;
-    let mut deep = frontiers.split_off(frontiers.len() - deep_count);
-    frontiers.truncate(shallow_count);
-    deep.reverse();
-    frontiers.extend(deep);
-    frontiers
+    let mut candidates = Vec::with_capacity(frontiers.len());
+    let mut deep_context = Option::<FuzzBranchFrontierRecord>::None;
+    for frontier in frontiers {
+        if !explicit_selection && frontier.both_results_observed {
+            if deep_context.as_ref().is_none_or(|current| {
+                (frontier.call_index, frontier.id) > (current.call_index, current.id)
+            }) {
+                deep_context = Some(frontier);
+            }
+        } else {
+            candidates.push(frontier);
+        }
+    }
+
+    candidates.sort_unstable_by_key(|frontier| (frontier.call_index, frontier.id));
+    let total = candidates.len();
+    let mut selected = if total <= limit {
+        candidates
+    } else {
+        let denominator = 2 * limit as u128;
+        let mut indexes = (0..limit)
+            .map(|index| (((2 * index + 1) as u128 * total as u128) / denominator) as usize);
+        let mut next = indexes.next();
+        candidates
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, frontier)| {
+                (Some(index) == next).then(|| {
+                    next = indexes.next();
+                    frontier
+                })
+            })
+            .collect()
+    };
+
+    if let Some(deep_context) = deep_context
+        && (selected.is_empty() || limit > 1)
+    {
+        if selected.len() == limit {
+            selected.pop();
+        }
+        selected.push(deep_context);
+    }
+    selected
 }
 
 fn comparison_result(opcode: u8, lhs: U256, rhs: U256) -> Option<bool> {
@@ -389,12 +428,13 @@ mod tests {
     }
 
     #[test]
-    fn stateful_frontiers_reserve_one_fifth_for_long_prefixes() {
+    fn stateful_frontiers_sample_sequence_depth() {
         let frontiers =
             [(6, 7), (0, 1), (8, 9), (3, 4), (9, 9), (2, 3), (5, 6), (1, 2), (7, 8), (4, 5)]
                 .into_iter()
                 .map(|(id, call_index)| FuzzBranchFrontierRecord {
                     id,
+                    both_results_observed: false,
                     call_index,
                     sequence: Vec::new(),
                     sequence_index: None,
@@ -407,12 +447,43 @@ mod tests {
                 })
                 .collect();
 
-        let ids = select_stateful_frontiers(frontiers, 5)
+        let ids = select_stateful_frontiers(frontiers, 5, false)
             .into_iter()
             .map(|frontier| frontier.id)
             .collect::<Vec<_>>();
 
-        assert_eq!(ids, [0, 1, 2, 3, 9]);
+        assert_eq!(ids, [1, 3, 5, 7, 9]);
+    }
+
+    #[test]
+    fn stateful_frontiers_reserve_deep_observed_context() {
+        let frontiers = || {
+            (0..12)
+                .map(|id| FuzzBranchFrontierRecord {
+                    id,
+                    both_results_observed: id >= 10,
+                    call_index: id as usize,
+                    sequence: Vec::new(),
+                    sequence_index: None,
+                    site: FuzzBranchFrontierSite {
+                        address: Address::ZERO,
+                        pc: id as usize,
+                        opcode: opcode::EQ,
+                    },
+                    operands: FuzzBranchFrontierOperands { result: false },
+                })
+                .collect()
+        };
+
+        let single_id = select_stateful_frontiers(frontiers(), 1, false)[0].id;
+        assert_eq!(single_id, 5);
+
+        let ids = select_stateful_frontiers(frontiers(), 5, false)
+            .into_iter()
+            .map(|frontier| frontier.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, [1, 3, 5, 7, 11]);
     }
 
     #[test]
@@ -2321,13 +2392,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             let result_bit = if frontier.operands.result { 2 } else { 1 };
             *observed_results.entry(key).or_default() |= result_bit;
         }
-        frontiers.retain(|frontier| {
-            if observed_results
+        for frontier in &mut frontiers {
+            frontier.both_results_observed = observed_results
                 .get(&(frontier.site.address, frontier.site.pc, frontier.site.opcode))
-                .is_none_or(|results| *results == 3)
-            {
-                return false;
-            }
+                .is_some_and(|results| *results == 3);
+        }
+        frontiers.retain(|frontier| {
             if select_frontier_ids && !requested_ids.contains(&frontier.id) {
                 return false;
             }
@@ -2369,7 +2439,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             !(select_frontier_selectors
                 && selector.is_none_or(|selector| !parsed_selectors.contains(&selector)))
         });
-        let frontiers = select_stateful_frontiers(frontiers, limit);
+        let explicit_selection =
+            select_frontier_ids || select_frontier_pcs || select_frontier_selectors;
+        let frontiers = select_stateful_frontiers(frontiers, limit, explicit_selection);
 
         let mut imported = Vec::with_capacity(frontiers.len());
         for frontier in frontiers {

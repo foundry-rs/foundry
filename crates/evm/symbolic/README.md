@@ -235,10 +235,14 @@ forge test --match-test test_hard_branch \
 dimension. Non-empty filters compose conjunctively, so the example imports only
 records matching one of the requested IDs, one of the requested PCs, and one of
 the requested selectors. Stateless imports keep artifact order. Stateful
-imports keep four fifths of a bounded selection shortest-first and reserve one
-fifth for the longest transaction prefixes. Forge imports up to
-`symbolic.frontier_limit` matching records and warns if a requested stateless
-target cannot be imported.
+imports sample evenly across concrete transaction-prefix lengths so the bounded
+solver budget does not crowd out either shallow or deep states. Automatic
+stateful imports also reserve one slot for the deepest context at a comparison
+site whose two outcomes appeared under different concrete sequences, since
+global edge coverage does not imply that both continuations are reachable from
+the same state. Explicit frontier filters use the matching records directly.
+Forge imports up to `symbolic.frontier_limit` matching records and warns if a
+requested stateless target cannot be imported.
 
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use

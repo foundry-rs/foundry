@@ -3384,6 +3384,7 @@ contract SymbolicInvariantFrontierSeed is Test {
     let mut covered_artifact = artifact.clone();
     let mut opposite_frontier = target_frontier.clone();
     let result = opposite_frontier["operands"]["result"].as_bool().unwrap();
+    opposite_frontier["id"] = Value::from(target_frontier["id"].as_u64().unwrap() + 1);
     opposite_frontier["operands"]["result"] = Value::Bool(!result);
     covered_artifact["frontiers"].as_array_mut().unwrap().push(opposite_frontier);
     std::fs::write(&covered_frontier_path, serde_json::to_vec_pretty(&covered_artifact).unwrap())
@@ -3435,7 +3436,7 @@ contract SymbolicInvariantFrontierSeed is Test {
             "--corpus-dir",
             "covered_invariant_corpus",
         ])
-        .assert_success();
+        .assert_failure();
 
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
