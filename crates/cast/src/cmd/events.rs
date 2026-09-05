@@ -98,7 +98,7 @@ impl EventsArgs {
                 Some(chunk_size) => {
                     crate::cmd::logs::get_logs_chunked(&provider, &filter, chunk_size).await?
                 }
-                None => cast.get_logs(&filter).await?,
+                None => provider.get_logs(&filter).await?,
             }
         };
 

@@ -100,11 +100,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         Self { provider, _phantom: PhantomData }
     }
 
-    /// Retrieves logs matching the filter.
-    pub async fn get_logs(&self, filter: &Filter) -> Result<Vec<Log>> {
-        self.provider.get_logs(filter).await.map_err(Into::into)
-    }
-
     /// Sets up a subscription to the given filter and writes the logs to the given output.
     ///
     /// # Example
