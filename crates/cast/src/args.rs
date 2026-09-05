@@ -1,5 +1,4 @@
 use crate::{
-    SimpleCast,
     base::{Base, NumberWithBase},
     cmd::{erc20::IERC20, rpc_provider},
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
@@ -1212,15 +1211,25 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                         .source_code()
                 )?,
                 (dir, true) => {
-                    SimpleCast::etherscan_source_flatten(
-                        chain,
-                        address,
-                        api_key,
-                        dir,
-                        explorer_api_url,
-                        explorer_url,
-                    )
-                    .await?;
+                    let client = explorer_client(chain, api_key, explorer_api_url, explorer_url)?;
+                    let metadata = client.contract_source_code(address.parse()?).await?;
+                    let Some(metadata) = metadata.items.first() else {
+                        eyre::bail!("Empty contract source code");
+                    };
+
+                    let tmp = tempfile::tempdir()?;
+                    let project = foundry_common::compile::etherscan_project(metadata, tmp.path())?;
+                    let target_path = project.find_contract_path(&metadata.contract_name)?;
+
+                    let flattened = foundry_common::flatten(project, &target_path)?;
+
+                    if let Some(path) = dir {
+                        fs::create_dir_all(path.parent().unwrap())?;
+                        fs::write(&path, flattened)?;
+                        sh_status!("Flattened file written at {}", path.display())?
+                    } else {
+                        sh_println!("{flattened}")?
+                    }
                 }
             }
         }
@@ -1453,7 +1462,7 @@ fn shift(
     Ok(format!("{:#?}", NumberWithBase::from(shift(value, bits)).with_base(base_out)))
 }
 
-pub(super) fn explorer_client(
+fn explorer_client(
     chain: Chain,
     api_key: Option<String>,
     api_url: Option<String>,

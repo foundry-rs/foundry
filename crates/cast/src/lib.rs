@@ -64,44 +64,6 @@ use rlp_converter::Item;
 
 const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 
-pub struct SimpleCast;
-
-impl SimpleCast {
-    /// Fetches the source code of verified contracts from etherscan, flattens it and writes it to
-    /// the given path or stdout.
-    pub async fn etherscan_source_flatten(
-        chain: Chain,
-        contract_address: String,
-        etherscan_api_key: Option<String>,
-        output_path: Option<PathBuf>,
-        explorer_api_url: Option<String>,
-        explorer_url: Option<String>,
-    ) -> Result<()> {
-        let client =
-            args::explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
-        let metadata = client.contract_source_code(contract_address.parse()?).await?;
-        let Some(metadata) = metadata.items.first() else {
-            eyre::bail!("Empty contract source code");
-        };
-
-        let tmp = tempfile::tempdir()?;
-        let project = etherscan_project(metadata, tmp.path())?;
-        let target_path = project.find_contract_path(&metadata.contract_name)?;
-
-        let flattened = flatten(project, &target_path)?;
-
-        if let Some(path) = output_path {
-            fs::create_dir_all(path.parent().unwrap())?;
-            fs::write(&path, flattened)?;
-            sh_status!("Flattened file written at {}", path.display())?
-        } else {
-            sh_println!("{flattened}")?
-        }
-
-        Ok(())
-    }
-}
-
 pub(crate) fn strip_0x(s: &str) -> &str {
     s.strip_prefix("0x").unwrap_or(s)
 }
