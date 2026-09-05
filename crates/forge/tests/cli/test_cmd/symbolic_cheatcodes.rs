@@ -2947,11 +2947,7 @@ contract SymbolicMockCall is Test {
         );
         assertEq(IMockedTarget(target).value(1), 10);
 
-        // Re-mock the IDENTICAL (callee, calldata) pair with a new return value -- this
-        // must REPLACE the prior registration, matching the concrete cheatcode's
-        // map-insert semantics (see `testMockCallWithValue` in `MockCall.t.sol`), not
-        // stack a second entry that a specificity tie then resolves in favor of the
-        // first-inserted (stale) one.
+        // Re-registering the same mock replaces its return value.
         vm.mockCall(
             target,
             abi.encodeWithSelector(IMockedTarget.value.selector, uint256(1)),

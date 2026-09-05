@@ -409,17 +409,12 @@ impl SymbolicExecutor {
         returns: Vec<SymReturnData>,
         reverts: bool,
     ) -> CheatcodeOutcome {
-        // Re-registering the same (callee, value, calldata) mock must REPLACE the prior
-        // entry, matching the concrete cheatcode's map-insert semantics
-        // (`cheatcodes/src/evm/mock.rs`'s `mocked_calls.entry(..).insert(..)`), not append
-        // a second entry behind it. Selection resolves ties on `specificity()` by keeping
-        // the earliest-inserted candidate (see `calls.rs`), so an unconditional push here
-        // would leave the stale mock permanently winning over its own replacement.
-        if let Some(existing) = state
-            .call_mocks
-            .iter_mut()
-            .find(|mock| mock.matches_definition(&mut self.cx, &callee, value, &data))
-        {
+        // Replace identical definitions in place to preserve mock precedence.
+        if let Some(existing) = state.call_mocks.iter_mut().find(|mock| {
+            mock.callee == callee
+                && mock.value() == value
+                && mock.data.same_bytes(&mut self.cx, &data)
+        }) {
             *existing = CallMock::new(callee, value, data, returns, reverts);
         } else {
             state.call_mocks.push(CallMock::new(callee, value, data, returns, reverts));

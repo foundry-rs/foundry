@@ -1139,9 +1139,9 @@ impl ExpectedCall {
 
 #[derive(Clone, Debug)]
 pub(crate) struct CallMock {
-    callee: SymExpr,
+    pub(crate) callee: SymExpr,
     value: Option<U256>,
-    data: SymBytes,
+    pub(crate) data: SymBytes,
     returns: Vec<SymReturnData>,
     reverts: bool,
     calls: usize,
@@ -1160,20 +1160,6 @@ impl CallMock {
 
     pub(crate) const fn value(&self) -> Option<U256> {
         self.value
-    }
-
-    /// Structural-equality check used to dedupe re-registrations of the same mock at
-    /// insert time (mirrors the concrete cheatcode's `BTreeMap`-keyed replace semantics,
-    /// see `add_call_mock`). Only recognizes syntactically identical `callee`/`data`; two
-    /// semantically-equal-but-differently-expressed symbolic expressions won't dedupe.
-    pub(crate) fn matches_definition(
-        &self,
-        cx: &mut SymCx,
-        callee: &SymExpr,
-        value: Option<U256>,
-        data: &SymBytes,
-    ) -> bool {
-        self.callee == *callee && self.value == value && self.data.same_bytes(cx, data)
     }
 
     pub(crate) fn specificity(&self) -> (usize, bool) {
