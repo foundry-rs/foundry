@@ -430,6 +430,111 @@ note[unused-import]: unused imports should be removed
 "#]]);
 });
 
+forgetest!(skip_test_and_script_lints, |prj, cmd| {
+    let fixture = r#"
+contract Initializer {
+    address bob = makeAddr("bob");
+
+    function makeAddr(string memory name) internal returns (address) {
+        return address(uint160(uint256(keccak256(bytes(name)))));
+    }
+
+    function incorrectShift(uint256 value) public pure {
+        assembly { pop(shr(value, 1)) }
+    }
+}
+"#;
+    prj.add_test("Initializer", fixture);
+    prj.add_script("Initializer", fixture);
+
+    cmd.args(["build"]).assert_success().stderr_eq("");
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq("");
+    cmd.forge_fuse()
+        .args(["lint", "--severity", "high", "med", "low", "info", "gas", "code-size"])
+        .assert_success()
+        .stderr_eq("");
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "function-init-state", "incorrect-shift"])
+        .assert_success()
+        .stderr_eq("");
+
+    std::fs::rename(prj.root().join("test"), prj.root().join("checks")).unwrap();
+    std::fs::rename(prj.root().join("script"), prj.root().join("deploy")).unwrap();
+    prj.update_config(|config| {
+        config.test = "checks".into();
+        config.script = "deploy".into();
+    });
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "function-init-state", "incorrect-shift"])
+        .assert_success()
+        .stderr_eq("");
+
+    prj.add_source("Initializer", fixture);
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "function-init-state"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+note[function-init-state]: state variable initializer depends on a non-pure function or another state variable
+  [FILE]:5:5
+  │
+5 │     address bob = makeAddr("bob");
+  │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/function-init-state
+
+
+"#]]);
+});
+
+forgetest!(unsafe_cheatcode_lints_tests_and_scripts, |prj, cmd| {
+    let fixture = r#"
+interface Vm {
+    function readFile(string calldata path) external returns (string memory);
+}
+
+contract Unsafe {
+    function read(Vm vm) external {
+        vm.readFile("input.txt");
+    }
+}
+"#;
+    let test = prj.add_test("Unsafe", fixture);
+    let script = prj.add_script("Unsafe", fixture);
+
+    cmd.arg("lint").assert_success().stderr_eq("");
+    for path in [test, script] {
+        cmd.forge_fuse()
+            .arg("lint")
+            .arg(path)
+            .args(["--only-lint", "unsafe-cheatcode"])
+            .assert_success()
+            .stderr_eq(str![[r#"
+note[unsafe-cheatcode]: usage of unsafe cheatcodes that can perform dangerous operations
+   [FILE]:10:12
+   │
+10 │         vm.readFile("input.txt");
+   │            ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unsafe-cheatcode
+
+
+"#]]);
+    }
+
+    prj.update_config(|config| {
+        config.lint.severity = vec![LintSeverity::Info];
+        config.lint.exclude_lints = vec!["unsafe-cheatcode".into()];
+    });
+    cmd.forge_fuse().arg("lint").assert_success().stderr_eq("");
+});
+
+forgetest!(skip_test_and_script_project_lints, |prj, cmd| {
+    prj.add_test("Test", "pragma solidity ^0.8.0; contract Test {}");
+    prj.add_script("Script", "pragma solidity >=0.8.0; contract Script {}");
+
+    cmd.args(["lint", "--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq("");
+});
+
 forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContract", OTHER_CONTRACT);
