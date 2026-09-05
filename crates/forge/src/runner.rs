@@ -3199,7 +3199,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 match persist_corpus_seed(&invariant_config.corpus, solved_sequence) {
                     Ok(Some(path)) => {
                         debug!(id, path = %path.display(), "persisted property-directed invariant frontier seed");
-                        continue;
+                        return;
                     }
                     Ok(None) => continue,
                     Err(err) => {
