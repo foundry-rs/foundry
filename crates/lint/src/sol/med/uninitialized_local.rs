@@ -7,12 +7,13 @@ use crate::{
     },
 };
 use solar::{
+    ast::ElementaryType,
     interface::{Span, data_structures::Never},
     sema::{
         Gcx, Hir,
         hir::{
-            Expr, ExprKind, Function, LoopSource, Res, Stmt, StmtKind, TypeKind, VarKind,
-            VariableId, Visit,
+            BinOpKind, Block, Expr, ExprKind, Function, LoopSource, Res, Stmt, StmtKind, TypeKind,
+            UnOpKind, VarKind, VariableId, Visit,
         },
     },
 };
@@ -64,6 +65,36 @@ impl Checker<'_> {
     }
 }
 
+/// Recognizes an unsigned counter whose implicit zero is intentional in a conventional `for`
+/// header. Matching the lowered wrapper's span keeps declarations outside the header distinct.
+fn defaulted_counter_loop<'hir>(
+    hir: &Hir<'hir>,
+    block: &'hir Block<'hir>,
+) -> Option<&'hir Stmt<'hir>> {
+    if let [Stmt { kind: StmtKind::DeclSingle(vid), .. }, loop_stmt] = block.stmts
+        && let StmtKind::Loop(body, LoopSource::ForWithUpdate) = &loop_stmt.kind
+        && block.span == loop_stmt.span
+        && hir.variable(*vid).initializer.is_none()
+        && matches!(hir.variable(*vid).ty.kind, TypeKind::Elementary(ElementaryType::UInt(_)))
+        && let [Stmt { kind: StmtKind::If(condition, then, Some(else_)), .. }] = body.stmts
+        && matches!(else_.kind, StmtKind::Break)
+        && let ExprKind::Binary(left, op, right) = &condition.peel_parens().kind
+        && ((matches!(op.kind, BinOpKind::Lt | BinOpKind::Le) && left.as_variable() == Some(*vid))
+            || (matches!(op.kind, BinOpKind::Gt | BinOpKind::Ge)
+                && right.as_variable() == Some(*vid)))
+        && let StmtKind::Block(inner) = &then.kind
+        && inner.span == body.span
+        && let [_, Stmt { kind: StmtKind::Expr(update), .. }] = inner.stmts
+        && let ExprKind::Unary(op, target) = &update.peel_parens().kind
+        && matches!(op.kind, UnOpKind::PreInc | UnOpKind::PostInc)
+        && target.as_variable() == Some(*vid)
+    {
+        Some(loop_stmt)
+    } else {
+        None
+    }
+}
+
 impl<'hir> Visit<'hir> for Checker<'hir> {
     type BreakValue = Never;
 
@@ -73,6 +104,13 @@ impl<'hir> Visit<'hir> for Checker<'hir> {
 
     fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
         match &stmt.kind {
+            StmtKind::Block(block) => {
+                if let Some(loop_stmt) = defaulted_counter_loop(self.hir, block) {
+                    // Skip only the counter's declaration; all reads in the loop still run
+                    // through the ordinary checker, including reads of other locals.
+                    return self.visit_stmt(loop_stmt);
+                }
+            }
             StmtKind::DeclSingle(vid) => {
                 let v = self.hir.variable(*vid);
                 if v.kind == VarKind::Statement
