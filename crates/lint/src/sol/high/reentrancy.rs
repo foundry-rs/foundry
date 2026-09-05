@@ -7,8 +7,8 @@ use crate::{
             DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache, arg_for_param,
             branch_always_exits, count_placeholders, for_each_child, for_each_lhs_var,
             function_ids, is_address_cast, is_address_like, is_builtin, is_inc_dec,
-            is_require_or_assert, lhs_local_var, state_lhs_vars, stmts_before_placeholder,
-            tuple_elems, unique,
+            is_require_or_assert, lhs_local_var, loop_update, state_lhs_vars,
+            stmts_before_placeholder, tuple_elems, unique,
         },
     },
 };
@@ -19,8 +19,8 @@ use solar::{
     sema::{
         Gcx,
         hir::{
-            self, CallArgs, CallOptions, Expr, ExprKind, FunctionId, ItemId, Res, Stmt, StmtKind,
-            VariableId, Visit,
+            self, CallArgs, CallOptions, Expr, ExprKind, FunctionId, ItemId, LoopSource, Res, Stmt,
+            StmtKind, VariableId, Visit,
         },
         ty::{TyFnKind, TyKind},
     },
@@ -54,16 +54,15 @@ declare_forge_lint!(
     "state read before external call is written after the call"
 );
 
-impl<'hir> LateLintPass<'hir> for ReentrancyEth {
+impl<'gcx> LateLintPass<'gcx> for ReentrancyEth {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        func: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        func: &'gcx hir::Function<'gcx>,
     ) {
         let Some(body) = func.body.filter(|_| is_entry_point(func)) else { return };
-        let mut analyzer = Analyzer::new(ctx, gcx, hir, func);
+        let mut analyzer = Analyzer::new(ctx, gcx, func);
         if analyzer.has_enabled_lints() {
             analyzer.analyze_callable(func, body, &mut FlowState::default());
         }
@@ -270,10 +269,9 @@ fn join_branches(
     reachable
 }
 
-struct Analyzer<'ctx, 's, 'c, 'hir> {
+struct Analyzer<'ctx, 's, 'c, 'gcx> {
     ctx: &'ctx LintContext<'s, 'c>,
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
+    gcx: Gcx<'gcx>,
     emitted: HashSet<Span>,
     emitted_balance: HashSet<Span>,
     call_stack: Vec<FunctionId>,
@@ -309,21 +307,19 @@ struct InlineCallKey {
 
 /// What to analyse when a modifier's `_` is reached: the remaining modifiers, the function body
 /// and the reentrancy-guard lock the current modifier holds.
-type ModifierContinuation<'hir> =
-    (&'hir [hir::Modifier<'hir>], usize, hir::Block<'hir>, Option<VariableId>);
+type ModifierContinuation<'gcx> =
+    (&'gcx [hir::Modifier<'gcx>], usize, hir::Block<'gcx>, Option<VariableId>);
 
-impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
+impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
     fn new(
         ctx: &'ctx LintContext<'s, 'c>,
-        gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        entry: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        entry: &'gcx hir::Function<'gcx>,
     ) -> Self {
         let reentrancy_balance_enabled = ctx.is_lint_enabled(REENTRANCY_BALANCE.id);
         Self {
             ctx,
             gcx,
-            hir,
             emitted: HashSet::new(),
             emitted_balance: HashSet::new(),
             call_stack: Vec::new(),
@@ -338,7 +334,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             return_collectors: Vec::new(),
             active_balance_guards: Vec::new(),
             balance_reentry_lock: reentrancy_balance_enabled
-                .then(|| balance_reentry_lock(gcx, hir, entry))
+                .then(|| balance_reentry_lock(gcx, entry))
                 .flatten(),
         }
     }
@@ -352,8 +348,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     /// Analyses `func` (modifiers first, then `body`); returns whether it can fall through.
     fn analyze_callable(
         &mut self,
-        func: &'hir hir::Function<'hir>,
-        body: hir::Block<'hir>,
+        func: &'gcx hir::Function<'gcx>,
+        body: hir::Block<'gcx>,
         state: &mut FlowState,
     ) -> bool {
         self.analyze_modifier_chain(func.modifiers, 0, body, state)
@@ -361,9 +357,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
     fn analyze_modifier_chain(
         &mut self,
-        modifiers: &'hir [hir::Modifier<'hir>],
+        modifiers: &'gcx [hir::Modifier<'gcx>],
         index: usize,
-        body: hir::Block<'hir>,
+        body: hir::Block<'gcx>,
         state: &mut FlowState,
     ) -> bool {
         let Some(modifier) = modifiers.get(index) else {
@@ -376,7 +372,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             .id
             .as_function()
             .filter(|id| !self.call_stack.contains(id))
-            .map(|id| (id, self.hir.function(id)))
+            .map(|id| (id, self.gcx.hir.function(id)))
             .and_then(|(id, func)| Some((id, func, func.body?)))
         else {
             return self.analyze_modifier_chain(modifiers, index + 1, body, state);
@@ -386,7 +382,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         self.call_stack.push(modifier_id);
         let balance_guard = self
             .reentrancy_balance_enabled
-            .then(|| standard_reentrancy_guard_lock(self.hir, modifier_func))
+            .then(|| standard_reentrancy_guard_lock(&self.gcx.hir, modifier_func))
             .flatten();
         let continuation = Some((modifiers, index + 1, body, balance_guard));
         let falls_through = self.analyze_block(modifier_body, continuation, state);
@@ -395,10 +391,23 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         falls_through
     }
 
+    /// Analyzes one loop iteration: the body, then the `for` update if the body completes.
+    fn analyze_iteration(
+        &mut self,
+        block: hir::Block<'gcx>,
+        source: LoopSource<'gcx>,
+        placeholder: Option<ModifierContinuation<'gcx>>,
+        state: &mut FlowState,
+    ) -> bool {
+        self.analyze_block(block, placeholder, state)
+            && loop_update(source)
+                .is_none_or(|update| self.analyze_stmt(update, placeholder, state))
+    }
+
     fn analyze_block(
         &mut self,
-        block: hir::Block<'hir>,
-        placeholder: Option<ModifierContinuation<'hir>>,
+        block: hir::Block<'gcx>,
+        placeholder: Option<ModifierContinuation<'gcx>>,
         state: &mut FlowState,
     ) -> bool {
         block.stmts.iter().all(|stmt| self.analyze_stmt(stmt, placeholder, state))
@@ -407,13 +416,13 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     /// Analyses `stmt`; returns whether control can continue past it.
     fn analyze_stmt(
         &mut self,
-        stmt: &'hir Stmt<'hir>,
-        placeholder: Option<ModifierContinuation<'hir>>,
+        stmt: &'gcx Stmt<'gcx>,
+        placeholder: Option<ModifierContinuation<'gcx>>,
         state: &mut FlowState,
     ) -> bool {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
-                if let Some(init) = self.hir.variable(var_id).initializer {
+                if let Some(init) = self.gcx.hir.variable(var_id).initializer {
                     self.analyze_expr(init, state);
                     self.update_internal_function_target(state, var_id, init);
                     if self.reentrancy_balance_enabled {
@@ -452,16 +461,16 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 false
             }
             StmtKind::Break | StmtKind::Continue => false,
-            StmtKind::Loop(block, _) => {
+            StmtKind::Loop(block, source) => {
                 let before_loop = state.clone();
                 let mut body_state = state.clone();
-                self.analyze_block(block, placeholder, &mut body_state);
+                self.analyze_iteration(block, source, placeholder, &mut body_state);
                 // One bounded second iteration exposes loop-carried balance checks while leaving
                 // the established ETH and no-ETH analysis unchanged.
                 let second_iteration = self.reentrancy_balance_enabled.then(|| {
                     let mut second = body_state.balance_only();
                     self.analyze_with_only_balance(|this| {
-                        this.analyze_block(block, placeholder, &mut second)
+                        this.analyze_iteration(block, source, placeholder, &mut second)
                     });
                     second
                 });
@@ -536,12 +545,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     /// Constrains the branch states of a conditional on `cond`; returns whether each is reachable.
     fn split_on(
         &self,
-        cond: &'hir Expr<'hir>,
+        cond: &'gcx Expr<'gcx>,
         then_state: &mut FlowState,
         else_state: &mut FlowState,
     ) -> (bool, bool) {
         let predicate =
-            self.reentrancy_balance_enabled.then(|| path_predicate(self.hir, cond)).flatten();
+            self.reentrancy_balance_enabled.then(|| path_predicate(&self.gcx.hir, cond)).flatten();
         let Some((predicate, value)) = predicate else { return (true, true) };
         (
             then_state.constrain_path((predicate, value)),
@@ -549,7 +558,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         )
     }
 
-    fn analyze_expr(&mut self, expr: &'hir Expr<'hir>, state: &mut FlowState) {
+    fn analyze_expr(&mut self, expr: &'gcx Expr<'gcx>, state: &mut FlowState) {
         match &expr.kind {
             ExprKind::Assign(lhs, op, rhs) => {
                 if op.is_some() {
@@ -558,7 +567,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 self.analyze_expr(rhs, state);
                 self.analyze_lhs_indices(lhs, state);
                 self.record_write(lhs, state);
-                if let Some(var_id) = lhs_local_var(self.hir, lhs) {
+                if let Some(var_id) = lhs_local_var(&self.gcx.hir, lhs) {
                     if op.is_none() {
                         self.update_internal_function_target(state, var_id, rhs);
                     } else {
@@ -569,9 +578,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     let targets = match tuple_elems(lhs) {
                         Some(elems) => elems
                             .iter()
-                            .map(|e| e.and_then(|e| lhs_local_var(self.hir, e)))
+                            .map(|e| e.and_then(|e| lhs_local_var(&self.gcx.hir, e)))
                             .collect(),
-                        None => vec![lhs_local_var(self.hir, lhs)],
+                        None => vec![lhs_local_var(&self.gcx.hir, lhs)],
                     };
                     self.bind_locals(state, &targets, rhs, op.is_some());
                 }
@@ -579,7 +588,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             ExprKind::Delete(inner) => {
                 self.analyze_lhs_indices(inner, state);
                 self.record_write(inner, state);
-                if let Some(var_id) = lhs_local_var(self.hir, inner) {
+                if let Some(var_id) = lhs_local_var(&self.gcx.hir, inner) {
                     state.internal_function_targets.remove(&var_id);
                     if self.reentrancy_balance_enabled {
                         self.clear_local(state, var_id);
@@ -591,7 +600,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 if is_inc_dec(op.kind) {
                     self.record_write(inner, state);
                     if self.reentrancy_balance_enabled
-                        && let Some(var_id) = lhs_local_var(self.hir, inner)
+                        && let Some(var_id) = lhs_local_var(&self.gcx.hir, inner)
                     {
                         self.set_self_address_paths(state, var_id, PathAlternatives::new());
                     }
@@ -636,7 +645,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     state.push_call(expr.span, kind);
                 }
                 if self.reentrancy_balance_enabled
-                    && call_options_allow_reentrancy(self.hir, *opts)
+                    && call_options_allow_reentrancy(&self.gcx.hir, *opts)
                     && callee_can_reenter(self.gcx, callee)
                     && !self.balance_guard_blocks_call(state, callee)
                 {
@@ -654,9 +663,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 let rhs_outcome = op.kind == BinOpKind::And;
                 let (mut short_state, mut rhs_state) = (state.clone(), state.clone());
                 let short_reachable =
-                    constrain_boolean_outcome(self.hir, lhs, !rhs_outcome, &mut short_state);
+                    constrain_boolean_outcome(&self.gcx.hir, lhs, !rhs_outcome, &mut short_state);
                 let rhs_reachable =
-                    constrain_boolean_outcome(self.hir, lhs, rhs_outcome, &mut rhs_state);
+                    constrain_boolean_outcome(&self.gcx.hir, lhs, rhs_outcome, &mut rhs_state);
                 if rhs_reachable {
                     self.analyze_expr(rhs, &mut rhs_state);
                 }
@@ -685,14 +694,14 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 reses
                     .iter()
                     .filter_map(Res::as_variable)
-                    .filter(|v| self.hir.variable(*v).kind.is_state()),
+                    .filter(|v| self.gcx.hir.variable(*v).kind.is_state()),
             ),
             _ => for_each_child(expr, &mut |child| self.analyze_expr(child, state)),
         }
     }
 
     /// Evaluates the index and slice operands of an lvalue; the written root itself is no read.
-    fn analyze_lhs_indices(&mut self, expr: &'hir Expr<'hir>, state: &mut FlowState) {
+    fn analyze_lhs_indices(&mut self, expr: &'gcx Expr<'gcx>, state: &mut FlowState) {
         match &expr.kind {
             ExprKind::Index(base, index) => {
                 self.analyze_lhs_indices(base, state);
@@ -720,15 +729,14 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
     /// Handles a write to `lhs`: reports pending reentrant calls that read the written state,
     /// invalidates written guard locks and forgets path facts about written locals.
-    fn record_write(&mut self, lhs: &'hir Expr<'hir>, state: &mut FlowState) {
-        let written = state_lhs_vars(self.hir, lhs);
+    fn record_write(&mut self, lhs: &'gcx Expr<'gcx>, state: &mut FlowState) {
+        let written = state_lhs_vars(&self.gcx.hir, lhs);
         self.emit_pending_calls(state, &written);
         state
             .invalidated_balance_guards
             .extend(written.iter().filter(|v| self.active_balance_guards.contains(v)));
-        let hir = self.hir;
         for_each_lhs_var(lhs, &mut |var_id| {
-            if !hir.variable(var_id).kind.is_state() {
+            if !self.gcx.hir.variable(var_id).kind.is_state() {
                 forget_path_predicates(state, var_id);
             }
         });
@@ -737,10 +745,10 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     fn analyze_internal_call(
         &mut self,
         func_id: FunctionId,
-        args: &CallArgs<'hir>,
+        args: &CallArgs<'gcx>,
         state: &mut FlowState,
     ) -> Vec<BalanceValue> {
-        let func = self.hir.function(func_id);
+        let func = self.gcx.hir.function(func_id);
         let Some(body) = func.body.filter(|_| !self.call_stack.contains(&func_id)) else {
             return Vec::new();
         };
@@ -750,8 +758,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             func.parameters
                 .iter()
                 .map(|&param| {
-                    arg_for_param(self.hir, func, param, args)
-                        .and_then(|arg| path_predicate(self.hir, arg))
+                    arg_for_param(&self.gcx.hir, func, param, args)
+                        .and_then(|arg| path_predicate(&self.gcx.hir, arg))
                 })
                 .collect()
         } else {
@@ -792,7 +800,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             returns = self.return_collectors.pop().expect("return collector is active").1;
             remap_return_paths(
-                self.hir,
+                &self.gcx.hir,
                 func_id,
                 func.parameters,
                 &parameter_predicates,
@@ -812,11 +820,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     /// Internal functions a call through `callee` may reach, following function-typed locals.
     fn internal_callees(
         &self,
-        callee: &'hir Expr<'hir>,
+        callee: &'gcx Expr<'gcx>,
         state: &FlowState,
     ) -> BTreeSet<FunctionId> {
-        if let Some(targets) =
-            lhs_local_var(self.hir, callee).and_then(|v| state.internal_function_targets.get(&v))
+        if let Some(targets) = lhs_local_var(&self.gcx.hir, callee)
+            .and_then(|v| state.internal_function_targets.get(&v))
         {
             return targets.clone();
         }
@@ -827,7 +835,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         &self,
         state: &mut FlowState,
         var_id: VariableId,
-        value: &'hir Expr<'hir>,
+        value: &'gcx Expr<'gcx>,
     ) {
         let targets = self.internal_callees(value, state);
         state.internal_function_targets.remove(&var_id);
@@ -897,8 +905,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         if let Some(calls) = self.direct_internal_calls.get(&func_id) {
             return calls.clone();
         }
-        let mut collector = CallCollector { gcx: self.gcx, hir: self.hir, calls: BTreeSet::new() };
-        let _ = collector.visit_function(self.hir.function(func_id));
+        let mut collector = CallCollector { gcx: self.gcx, calls: BTreeSet::new() };
+        let _ = collector.visit_function(self.gcx.hir.function(func_id));
         let calls = collector.calls.into_iter().collect::<Vec<_>>();
         self.direct_internal_calls.insert(func_id, calls.clone());
         calls
@@ -915,6 +923,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 ReentrantCallKind::NoEth => (&REENTRANCY_NO_ETH, "external call"),
             };
             let name = self
+                .gcx
                 .hir
                 .variable(*var_id)
                 .name
@@ -925,7 +934,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 
     /// Reports pending balance calls whose stale balance `guard` compares against.
-    fn emit_balance_calls(&mut self, guard: &'hir Expr<'hir>, state: &FlowState) {
+    fn emit_balance_calls(&mut self, guard: &'gcx Expr<'gcx>, state: &FlowState) {
         for (&span, call) in &state.pending_balance_calls {
             if !self.emitted_balance.contains(&span)
                 && self.guard_has_stale_balance_comparison(guard, span, call, state)
@@ -939,7 +948,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     /// True if `expr` compares a balance read before the pending `call` against one read after.
     fn guard_has_stale_balance_comparison(
         &self,
-        expr: &'hir Expr<'hir>,
+        expr: &'gcx Expr<'gcx>,
         span: Span,
         call: &PendingBalanceCall,
         state: &FlowState,
@@ -952,8 +961,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     return true;
                 }
                 let mut rhs_state = state.clone();
-                constrain_boolean_outcome(self.hir, lhs, op.kind == BinOpKind::And, &mut rhs_state)
-                    && recurse(rhs, &rhs_state)
+                constrain_boolean_outcome(
+                    &self.gcx.hir,
+                    lhs,
+                    op.kind == BinOpKind::And,
+                    &mut rhs_state,
+                ) && recurse(rhs, &rhs_state)
             }
             ExprKind::Binary(lhs, op, rhs) => {
                 let is_comparison = matches!(
@@ -998,7 +1011,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         &mut self,
         state: &mut FlowState,
         targets: &[Option<VariableId>],
-        rhs: &'hir Expr<'hir>,
+        rhs: &'gcx Expr<'gcx>,
         reads_old_value: bool,
     ) {
         if targets.iter().all(Option::is_none) {
@@ -1062,7 +1075,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 
     /// Balance facts of each component of `rhs`, one per destructuring target.
-    fn balance_values(&self, rhs: &'hir Expr<'hir>, state: &FlowState) -> Vec<BalanceValue> {
+    fn balance_values(&self, rhs: &'gcx Expr<'gcx>, state: &FlowState) -> Vec<BalanceValue> {
         if let Some(elems) = tuple_elems(rhs) {
             return elems
                 .iter()
@@ -1077,7 +1090,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         }
     }
 
-    fn balance_dependency(&self, expr: &'hir Expr<'hir>, state: &FlowState) -> BalanceValue {
+    fn balance_dependency(&self, expr: &'gcx Expr<'gcx>, state: &FlowState) -> BalanceValue {
         let pending = &state.pending_balance_calls;
         BalanceValue {
             balance_paths: self.expr_balance_paths(expr, state),
@@ -1137,7 +1150,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 
     /// Predicates under which `expr` derives from the contract's own balance.
-    fn expr_balance_paths(&self, expr: &'hir Expr<'hir>, state: &FlowState) -> PathAlternatives {
+    fn expr_balance_paths(&self, expr: &'gcx Expr<'gcx>, state: &FlowState) -> PathAlternatives {
         let expr = expr.peel_parens();
         let self_balance = self.self_balance_paths(expr, state);
         if !self_balance.is_empty() {
@@ -1174,7 +1187,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     /// or as it is after it, directly or through a local.
     fn expr_depends_on_balance(
         &self,
-        expr: &'hir Expr<'hir>,
+        expr: &'gcx Expr<'gcx>,
         span: Span,
         call: &PendingBalanceCall,
         stale: bool,
@@ -1219,15 +1232,15 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     /// Binds the balance facts of the call arguments to the callee's parameters.
     fn seed_balance_parameters(
         &mut self,
-        func: &'hir hir::Function<'hir>,
-        args: &CallArgs<'hir>,
+        func: &'gcx hir::Function<'gcx>,
+        args: &CallArgs<'gcx>,
         state: &mut FlowState,
     ) {
         if !self.reentrancy_balance_enabled {
             return;
         }
         for &param in func.parameters {
-            match arg_for_param(self.hir, func, param, args) {
+            match arg_for_param(&self.gcx.hir, func, param, args) {
                 Some(arg) => self.bind_locals(state, &[Some(param)], arg, false),
                 None => self.clear_local(state, param),
             }
@@ -1241,11 +1254,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
     /// Accumulates the values returned by `return expr;` (or the named return variables when
     /// the function falls through) into the innermost return collector.
-    fn record_return(&mut self, expr: Option<&'hir Expr<'hir>>, state: &FlowState) {
+    fn record_return(&mut self, expr: Option<&'gcx Expr<'gcx>>, state: &FlowState) {
         let Some(&(func_id, _)) = self.return_collectors.last() else { return };
         let values = match expr {
             Some(expr) => self.balance_values(expr, state),
             None => self
+                .gcx
                 .hir
                 .function(func_id)
                 .returns
@@ -1284,7 +1298,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
     /// Drops every fact about locals of `func_id` once its inlined body is left.
     fn clear_function_locals(&self, func_id: FunctionId, state: &mut FlowState) {
-        let owned = owned_by(self.hir, func_id);
+        let owned = owned_by(&self.gcx.hir, func_id);
         state.internal_function_targets.retain(|v, _| !owned(*v));
         state.self_address_local_paths.retain(|v, _| !owned(*v));
         state.balance_local_paths.retain(|v, _| !owned(*v));
@@ -1297,13 +1311,13 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
     fn reentrant_call_kind(
         &self,
-        callee: &'hir Expr<'hir>,
-        opts: Option<&CallOptions<'hir>>,
+        callee: &'gcx Expr<'gcx>,
+        opts: Option<&CallOptions<'gcx>>,
     ) -> Option<ReentrantCallKind> {
-        if self.reentrancy_eth_enabled && is_uncapped_value_call(self.hir, callee, opts) {
+        if self.reentrancy_eth_enabled && is_uncapped_value_call(&self.gcx.hir, callee, opts) {
             Some(ReentrantCallKind::Eth)
         } else if self.reentrancy_no_eth_enabled
-            && !call_sends_eth(self.hir, opts)
+            && !call_sends_eth(&self.gcx.hir, opts)
             && callee_can_reenter(self.gcx, callee)
         {
             Some(ReentrantCallKind::NoEth)
@@ -1313,7 +1327,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 
     /// True if the contract-wide reentrancy lock is held and intact around the call.
-    fn balance_guard_blocks_call(&self, state: &FlowState, callee: &'hir Expr<'hir>) -> bool {
+    fn balance_guard_blocks_call(&self, state: &FlowState, callee: &'gcx Expr<'gcx>) -> bool {
         !call_uses_delegate_context(self.gcx, callee)
             && self.balance_reentry_lock.is_some_and(|lock| {
                 self.active_balance_guards.contains(&lock)
@@ -1323,28 +1337,27 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 }
 
 /// Collects the internal functions and modifiers a function invokes directly.
-struct CallCollector<'hir> {
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
+struct CallCollector<'gcx> {
+    gcx: Gcx<'gcx>,
     calls: BTreeSet<FunctionId>,
 }
 
-impl<'hir> Visit<'hir> for CallCollector<'hir> {
+impl<'gcx> Visit<'gcx> for CallCollector<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+        &self.gcx.hir
     }
 
     fn visit_modifier(
         &mut self,
-        modifier: &'hir hir::Modifier<'hir>,
+        modifier: &'gcx hir::Modifier<'gcx>,
     ) -> ControlFlow<Self::BreakValue> {
         self.calls.extend(modifier.id.as_function());
         self.visit_call_args(&modifier.args)
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         collect_internal_calls(self.gcx, expr, &mut self.calls);
         ControlFlow::Continue(())
     }
@@ -1713,17 +1726,16 @@ fn const_value(
 
 /// The reentrancy-guard lock, if any, that protects every entry point of every deployable
 /// contract exposing `entry`.
-fn balance_reentry_lock<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &'hir hir::Hir<'hir>,
-    entry: &'hir hir::Function<'hir>,
+fn balance_reentry_lock<'gcx>(
+    gcx: Gcx<'gcx>,
+    entry: &'gcx hir::Function<'gcx>,
 ) -> Option<VariableId> {
-    let entry_id = hir.function_ids().find(|&id| std::ptr::eq(hir.function(id), entry))?;
+    let entry_id = gcx.hir.function_ids().find(|&id| std::ptr::eq(gcx.hir.function(id), entry))?;
     let defining_contract = entry.contract?;
-    guard_locks(hir, entry).into_iter().find(|&lock_var| {
+    guard_locks(&gcx.hir, entry).into_iter().find(|&lock_var| {
         let mut deployed = false;
-        for contract_id in hir.contract_ids() {
-            let contract = hir.contract(contract_id);
+        for contract_id in gcx.hir.contract_ids() {
+            let contract = gcx.hir.contract(contract_id);
             if !contract.can_be_deployed()
                 || contract.is_abstract()
                 || !contract.linearized_bases.contains(&defining_contract)
@@ -1738,10 +1750,10 @@ fn balance_reentry_lock<'hir>(
             deployed = true;
             let guarded = interface
                 .iter()
-                .map(|f| hir.function(f.id))
+                .map(|f| gcx.hir.function(f.id))
                 .filter(|f| !is_view_or_pure(f.state_mutability))
-                .chain(special().map(|id| hir.function(id)))
-                .all(|f| guard_locks(hir, f).contains(&lock_var));
+                .chain(special().map(|id| gcx.hir.function(id)))
+                .all(|f| guard_locks(&gcx.hir, f).contains(&lock_var));
             if !guarded {
                 return false;
             }
@@ -1773,7 +1785,7 @@ fn call_uses_delegate_context(gcx: Gcx<'_>, callee: &Expr<'_>) -> bool {
 
 /// An external call that hands control to another contract: a low-level `call`/`callcode`/
 /// `delegatecall` on an address, or a state-changing external function call.
-fn callee_can_reenter<'hir>(gcx: Gcx<'hir>, callee: &Expr<'hir>) -> bool {
+fn callee_can_reenter<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>) -> bool {
     let callee = callee.peel_parens();
     match &callee.kind {
         ExprKind::Member(receiver, member)

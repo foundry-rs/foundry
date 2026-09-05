@@ -29,15 +29,14 @@ declare_forge_lint!(
     "state variable is read but never written"
 );
 
-impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
+impl<'gcx> LateLintPass<'gcx> for UninitializedStateVariables {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
+        gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
-        let contract = hir.contract(contract_id);
+        let contract = gcx.hir.contract(contract_id);
         // Abstract contracts and interfaces are not deployed; a failed C3 linearization leaves
         // `linearized_bases` incomplete, so skip rather than produce unsound results.
         if matches!(contract.kind, ContractKind::Interface | ContractKind::AbstractContract)
@@ -50,19 +49,20 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
         // contract itself) determines whether a variable is ever written.
         let bases = contract.linearized_bases;
         let mut collector = Collector {
-            hir,
+            hir: &gcx.hir,
             bases,
             read: HashSet::new(),
             written: HashSet::new(),
             aliases: HashMap::new(),
         };
         // Inline assembly can write storage directly; bail out conservatively.
-        if bases.iter().any(|&cid| collector.visit_contract_items(hir.contract(cid)).is_break()) {
+        if bases.iter().any(|&cid| collector.visit_contract_items(gcx.hir.contract(cid)).is_break())
+        {
             return;
         }
 
-        for var_id in bases.iter().flat_map(|&cid| hir.contract(cid).variables()) {
-            let var = hir.variable(var_id);
+        for var_id in bases.iter().flat_map(|&cid| gcx.hir.contract(cid).variables()) {
+            let var = gcx.hir.variable(var_id);
             if !var.is_constant()
                 && !var.is_immutable()
                 && !matches!(var.ty.kind, TypeKind::Mapping(_))
@@ -76,9 +76,9 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
     }
 }
 
-struct Collector<'hir> {
-    hir: &'hir Hir<'hir>,
-    bases: &'hir [ContractId],
+struct Collector<'gcx> {
+    hir: &'gcx Hir<'gcx>,
+    bases: &'gcx [ContractId],
     read: HashSet<VariableId>,
     written: HashSet<VariableId>,
     /// State variables each local `storage` pointer of the current function may reference.
@@ -88,8 +88,8 @@ struct Collector<'hir> {
 /// Maps local `storage` pointers to the state variables they may reference.
 type Aliases = HashMap<VariableId, HashSet<VariableId>>;
 
-impl<'hir> Collector<'hir> {
-    fn visit_contract_items(&mut self, contract: &'hir Contract<'hir>) -> ControlFlow<()> {
+impl<'gcx> Collector<'gcx> {
+    fn visit_contract_items(&mut self, contract: &'gcx Contract<'gcx>) -> ControlFlow<()> {
         contract.all_functions().try_for_each(|fid| self.visit_nested_function(fid))?;
         contract.variables().try_for_each(|vid| self.visit_nested_var(vid))?;
         contract.bases_args.iter().try_for_each(|m| self.visit_modifier(m))
@@ -118,11 +118,10 @@ impl<'hir> Collector<'hir> {
     /// Internal functions that take a `storage` parameter mutate the corresponding argument in
     /// place. Overloads are not resolved, so an argument counts as written when *any* candidate
     /// of the callee's name has a `storage` parameter in that position (or of that name).
-    fn mark_storage_args(&mut self, callee: &'hir Expr<'hir>, args: &'hir CallArgs<'hir>) {
-        let hir = self.hir;
+    fn mark_storage_args(&mut self, callee: &'gcx Expr<'gcx>, args: &'gcx CallArgs<'gcx>) {
         let funcs = self.callee_candidates(callee);
         let is_storage =
-            |pid: &VariableId| hir.variable(*pid).data_location == Some(DataLocation::Storage);
+            |pid: &VariableId| self.hir.variable(*pid).data_location == Some(DataLocation::Storage);
         match args.kind {
             CallArgsKind::Unnamed(exprs) => {
                 for (i, arg) in exprs.iter().enumerate() {
@@ -135,7 +134,7 @@ impl<'hir> Collector<'hir> {
                 for arg in named {
                     if funcs.iter().any(|f| {
                         f.parameters.iter().any(|pid| {
-                            hir.variable(*pid).name.is_some_and(|n| n.name == arg.name.name)
+                            self.hir.variable(*pid).name.is_some_and(|n| n.name == arg.name.name)
                                 && is_storage(pid)
                         })
                     }) {
@@ -148,11 +147,10 @@ impl<'hir> Collector<'hir> {
 
     /// Functions a call may dispatch to: `f(..)`, `Contract.f(..)`, or `super.f(..)`, which
     /// resolves through the parent MRO entries only (never the current contract).
-    fn callee_candidates(&self, callee: &'hir Expr<'hir>) -> Vec<&'hir Function<'hir>> {
-        let hir = self.hir;
+    fn callee_candidates(&self, callee: &'gcx Expr<'gcx>) -> Vec<&'gcx Function<'gcx>> {
         match &callee.kind {
             ExprKind::Ident(reses) => {
-                reses.iter().filter_map(Res::as_function).map(|f| hir.function(f)).collect()
+                reses.iter().filter_map(Res::as_function).map(|f| self.hir.function(f)).collect()
             }
             ExprKind::Member(base, method) => {
                 let contracts = if is_builtin(base, sym::super_) {
@@ -171,8 +169,8 @@ impl<'hir> Collector<'hir> {
                 };
                 contracts
                     .iter()
-                    .flat_map(|&cid| hir.contract(cid).all_functions())
-                    .map(|fid| hir.function(fid))
+                    .flat_map(|&cid| self.hir.contract(cid).all_functions())
+                    .map(|fid| self.hir.function(fid))
                     .filter(|f| f.name.is_some_and(|n| n.name == method.name))
                     .collect()
             }
@@ -181,20 +179,20 @@ impl<'hir> Collector<'hir> {
     }
 }
 
-impl<'hir> Visit<'hir> for Collector<'hir> {
+impl<'gcx> Visit<'gcx> for Collector<'gcx> {
     type BreakValue = ();
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         self.hir
     }
 
-    fn visit_function(&mut self, func: &'hir Function<'hir>) -> ControlFlow<()> {
+    fn visit_function(&mut self, func: &'gcx Function<'gcx>) -> ControlFlow<()> {
         self.aliases = storage_aliases(self.hir, func);
         func.modifiers.iter().try_for_each(|m| self.visit_modifier(m))?;
         func.body.iter().flat_map(|body| body.stmts).try_for_each(|stmt| self.visit_stmt(stmt))
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<()> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<()> {
         match stmt.kind {
             StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => {
                 ControlFlow::Break(())
@@ -203,7 +201,7 @@ impl<'hir> Visit<'hir> for Collector<'hir> {
         }
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<()> {
         match &expr.kind {
             ExprKind::Ident(reses) => self.read.extend(reses.iter().filter_map(Res::as_variable)),
             // Reassigning a bare storage pointer repoints it rather than writing its target.
@@ -229,9 +227,9 @@ impl<'hir> Visit<'hir> for Collector<'hir> {
 /// Collects, flow-insensitively, the state variables each local `storage` pointer declared in
 /// `func` may reference: every assignment contributes to the pointer's target set, and pointers
 /// assigned from other pointers are resolved transitively.
-fn storage_aliases<'hir>(hir: &'hir Hir<'hir>, func: &'hir Function<'hir>) -> Aliases {
-    struct Edges<'hir> {
-        hir: &'hir Hir<'hir>,
+fn storage_aliases<'gcx>(hir: &'gcx Hir<'gcx>, func: &'gcx Function<'gcx>) -> Aliases {
+    struct Edges<'gcx> {
+        hir: &'gcx Hir<'gcx>,
         edges: HashMap<VariableId, HashSet<VariableId>>,
     }
 
@@ -261,14 +259,14 @@ fn storage_aliases<'hir>(hir: &'hir Hir<'hir>, func: &'hir Function<'hir>) -> Al
         }
     }
 
-    impl<'hir> Visit<'hir> for Edges<'hir> {
+    impl<'gcx> Visit<'gcx> for Edges<'gcx> {
         type BreakValue = Never;
 
-        fn hir(&self) -> &'hir Hir<'hir> {
+        fn hir(&self) -> &'gcx Hir<'gcx> {
             self.hir
         }
 
-        fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
+        fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Never> {
             match &stmt.kind {
                 StmtKind::DeclSingle(var) => {
                     if let Some(init) = self.hir.variable(*var).initializer {
@@ -287,7 +285,7 @@ fn storage_aliases<'hir>(hir: &'hir Hir<'hir>, func: &'hir Function<'hir>) -> Al
             self.walk_stmt(stmt)
         }
 
-        fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+        fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
             if let ExprKind::Assign(lhs, None, rhs) = &expr.kind {
                 self.record(lhs, rhs);
             }

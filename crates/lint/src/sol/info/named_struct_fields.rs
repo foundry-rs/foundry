@@ -7,7 +7,7 @@ use solar::{
     interface::diagnostics::Applicability,
     sema::{
         Gcx,
-        hir::{CallArgs, CallArgsKind, Expr, ExprKind, Hir, ItemId, Res},
+        hir::{CallArgs, CallArgsKind, Expr, ExprKind, ItemId, Res},
     },
 };
 
@@ -18,14 +18,8 @@ declare_forge_lint!(
     "prefer initializing structs with named fields"
 );
 
-impl<'hir> LateLintPass<'hir> for NamedStructFields {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        expr: &'hir Expr<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for NamedStructFields {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
         let ExprKind::Call(
             Expr { kind: ExprKind::Ident([Res::Item(ItemId::Struct(struct_id))]), span, .. },
             CallArgs { kind: CallArgsKind::Unnamed(args), .. },
@@ -36,7 +30,7 @@ impl<'hir> LateLintPass<'hir> for NamedStructFields {
         };
         // A fix needs one argument per field and every snippet available; otherwise the
         // diagnostic is emitted without a suggestion.
-        let fields = hir.strukt(*struct_id).fields;
+        let fields = gcx.hir.strukt(*struct_id).fields;
         let fix = (!fields.is_empty() && fields.len() == args.len()).then(|| {
             let assignments = fields
                 .iter()
@@ -44,7 +38,7 @@ impl<'hir> LateLintPass<'hir> for NamedStructFields {
                 .map(|(field, arg)| {
                     Some(format!(
                         "{}: {}",
-                        hir.variable(*field).name?,
+                        gcx.hir.variable(*field).name?,
                         ctx.span_to_snippet(arg.span)?
                     ))
                 })

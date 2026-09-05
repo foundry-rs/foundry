@@ -22,9 +22,9 @@ impl<'ast> ProjectLintPass<'ast> for InconsistentTypeNames {
             return;
         }
         let gcx = ctx.gcx();
-        let hir = &gcx.hir;
         let source_map = gcx.sess.source_map();
-        let input_sources: HashMap<_, _> = hir
+        let input_sources: HashMap<_, _> = gcx
+            .hir
             .sources_enumerated()
             .filter_map(|(sid, src)| {
                 let FileName::Real(path) = &src.file.name else { return None };
@@ -34,7 +34,7 @@ impl<'ast> ProjectLintPass<'ast> for InconsistentTypeNames {
 
         // The spellings each contract uses across all of its variables.
         let mut contracts = HashMap::<hir::ContractId, Vec<&str>>::new();
-        for variable in hir.variables() {
+        for variable in gcx.hir.variables() {
             if let Some(contract_id) = variable.contract
                 && input_sources.contains_key(&variable.source)
             {
@@ -43,7 +43,7 @@ impl<'ast> ProjectLintPass<'ast> for InconsistentTypeNames {
         }
 
         // HIR variable order is stable, so diagnostics remain deterministic across runs.
-        for variable in hir.variables() {
+        for variable in gcx.hir.variables() {
             let Some(contract_id) = variable.contract else { continue };
             let Some(&source_idx) = input_sources.get(&variable.source) else { continue };
             let Some(contract_names) = contracts.get(&contract_id) else { continue };

@@ -23,21 +23,17 @@ declare_forge_lint!(
     "state variable initializer depends on a non-pure function or another state variable"
 );
 
-impl<'hir> LateLintPass<'hir> for FunctionInitState {
-    fn check_nested_contract(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        id: ContractId,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for FunctionInitState {
+    fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, id: ContractId) {
         // State variable initializers run at construction, before the constructor body, in
         // base-to-derived order: reading another non-constant state variable or calling a
         // non-pure function there observes that partial state. Constants are fixed at compile
         // time, so both constant declarations and references to constants are fine.
-        let contract = hir.contract(id);
+        let contract = gcx.hir.contract(id);
         for item_id in contract.items {
-            let Some(variable) = item_id.as_variable().map(|v| hir.variable(v)) else { continue };
+            let Some(variable) = item_id.as_variable().map(|v| gcx.hir.variable(v)) else {
+                continue;
+            };
             if variable.is_state_variable()
                 && !variable.is_constant()
                 && let Some(initializer) = variable.initializer
@@ -60,8 +56,8 @@ impl<'hir> LateLintPass<'hir> for FunctionInitState {
 
 /// Looks for a reference to a non-constant state variable or to a non-pure function anywhere in
 /// an initializer expression, arguments of nested calls included.
-struct ImpureRefFinder<'hir> {
-    gcx: Gcx<'hir>,
+struct ImpureRefFinder<'gcx> {
+    gcx: Gcx<'gcx>,
     /// The source and contract of the initializer, the viewpoint for `using for` lookups.
     source: hir::SourceId,
     contract: ContractId,
@@ -71,14 +67,14 @@ struct ImpureRefFinder<'hir> {
     found: bool,
 }
 
-impl<'hir> Visit<'hir> for ImpureRefFinder<'hir> {
+impl<'gcx> Visit<'gcx> for ImpureRefFinder<'gcx> {
     type BreakValue = Infallible;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         &self.gcx.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         let is_callee = self.callee == Some(expr.id);
         match &expr.kind {
             // The type checker already resolved the one function a call dispatches to (overload
@@ -122,21 +118,20 @@ impl ImpureRefFinder<'_> {
     /// carries no resolution, so type the base and scan by name.
     fn judge_member(&mut self, base: &Expr<'_>, member: Symbol) {
         let gcx = self.gcx;
-        let hir = &gcx.hir;
         let Some(ty) = gcx.type_of_expr(base.peel_parens().id) else { return };
         if let Some(contract_id) = ty_contract_id(ty) {
             // Walk the linearization: an inherited function or getter is not among the
             // contract's own items.
-            for &base_id in hir.contract(contract_id).linearized_bases {
-                for &item_id in hir.contract(base_id).items {
+            for &base_id in gcx.hir.contract(contract_id).linearized_bases {
+                for &item_id in gcx.hir.contract(base_id).items {
                     match item_id {
                         ItemId::Variable(id)
-                            if hir.variable(id).name.is_some_and(|n| n.name == member) =>
+                            if gcx.hir.variable(id).name.is_some_and(|n| n.name == member) =>
                         {
                             self.judge_variable(id)
                         }
                         ItemId::Function(id)
-                            if hir.function(id).name.is_some_and(|n| n.name == member) =>
+                            if gcx.hir.function(id).name.is_some_and(|n| n.name == member) =>
                         {
                             self.judge_function(id)
                         }

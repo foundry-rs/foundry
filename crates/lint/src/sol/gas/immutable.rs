@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{builtins, for_each_lhs_var, is_contract_cast},
+        analysis::{builtins, for_each_lhs_var, is_contract_cast, loop_stmts},
     },
 };
 use solar::{
@@ -32,40 +32,40 @@ declare_forge_lint!(
     "state variable could be declared constant"
 );
 
-impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
+impl<'gcx> LateLintPass<'gcx> for UnchangedStateVariables {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: Gcx<'gcx>,
         contract_id: hir::ContractId,
     ) {
-        let contract = hir.contract(contract_id);
+        let contract = gcx.hir.contract(contract_id);
         // Only the most derived contract sees every write of its inheritance chain.
         if contract.kind == ContractKind::Interface
-            || hir.contracts().any(|c| c.linearized_bases[1..].contains(&contract_id))
+            || gcx.hir.contracts().any(|c| c.linearized_bases[1..].contains(&contract_id))
         {
             return;
         }
 
         // Constants accept any elementary type (value types plus `string`/`bytes`) and contract
         // types, which is the broader filter and covers both lints.
-        let candidates =
-            contract.linearized_bases.iter().flat_map(|&id| hir.contract(id).variables()).filter(
-                |&id| {
-                    let var = hir.variable(id);
-                    var.mutability.is_none()
-                        && matches!(
-                            var.ty.kind,
-                            TypeKind::Elementary(_) | TypeKind::Custom(ItemId::Contract(_))
-                        )
-                },
-            );
+        let candidates = contract
+            .linearized_bases
+            .iter()
+            .flat_map(|&id| gcx.hir.contract(id).variables())
+            .filter(|&id| {
+                let var = gcx.hir.variable(id);
+                var.mutability.is_none()
+                    && matches!(
+                        var.ty.kind,
+                        TypeKind::Elementary(_) | TypeKind::Custom(ItemId::Contract(_))
+                    )
+            });
         let functions = contract
             .linearized_bases
             .iter()
-            .flat_map(|&id| hir.contract(id).all_functions())
-            .map(|id| hir.function(id));
+            .flat_map(|&id| gcx.hir.contract(id).all_functions())
+            .map(|id| gcx.hir.function(id));
 
         // Inline assembly can write arbitrary storage slots.
         if functions
@@ -77,15 +77,15 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
 
         // Writes performed as side effects of state variable initializers block `constant` but are
         // not valid `immutable` assignments, so they are tracked separately.
-        let mut initializer_writes = WriteCollector { hir, writes: HashSet::new() };
+        let mut initializer_writes = WriteCollector { hir: &gcx.hir, writes: HashSet::new() };
         for id in candidates.clone() {
-            if let Some(init) = hir.variable(id).initializer {
+            if let Some(init) = gcx.hir.variable(id).initializer {
                 let _ = initializer_writes.visit_expr(init);
             }
         }
         // Modifier bodies are visited as ordinary functions, so their writes count as runtime.
-        let mut constructor_writes = WriteCollector { hir, writes: HashSet::new() };
-        let mut runtime_writes = WriteCollector { hir, writes: HashSet::new() };
+        let mut constructor_writes = WriteCollector { hir: &gcx.hir, writes: HashSet::new() };
+        let mut runtime_writes = WriteCollector { hir: &gcx.hir, writes: HashSet::new() };
         for function in functions {
             let collector = if function.is_constructor() {
                 &mut constructor_writes
@@ -99,10 +99,10 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
             if runtime_writes.writes.contains(&var_id) {
                 continue;
             }
-            let var = hir.variable(var_id);
+            let var = gcx.hir.variable(var_id);
             let span = var.name.map_or(var.span, |name| name.span);
             let constant_initializer =
-                var.initializer.is_some_and(|expr| is_compile_time_constant(hir, expr));
+                var.initializer.is_some_and(|expr| is_compile_time_constant(&gcx.hir, expr));
             let written_in_constructor = constructor_writes.writes.contains(&var_id);
             let immutable_type = match var.ty.kind {
                 TypeKind::Elementary(ty) => ty.is_value_type(),
@@ -126,9 +126,10 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
 fn has_assembly_or_unknown(stmt: &Stmt<'_>) -> bool {
     match &stmt.kind {
         StmtKind::AssemblyBlock(_) | StmtKind::Switch(_) | StmtKind::Err(_) => true,
-        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) | StmtKind::Loop(b, _) => {
+        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => {
             b.stmts.iter().any(has_assembly_or_unknown)
         }
+        StmtKind::Loop(b, source) => loop_stmts(*b, *source).any(has_assembly_or_unknown),
         StmtKind::If(_, t, e) => {
             has_assembly_or_unknown(t) || e.is_some_and(has_assembly_or_unknown)
         }
@@ -140,19 +141,19 @@ fn has_assembly_or_unknown(stmt: &Stmt<'_>) -> bool {
 }
 
 /// Collects every variable at the root of an assigned, deleted or incremented lvalue.
-struct WriteCollector<'hir> {
-    hir: &'hir hir::Hir<'hir>,
+struct WriteCollector<'gcx> {
+    hir: &'gcx hir::Hir<'gcx>,
     writes: HashSet<VariableId>,
 }
 
-impl<'hir> hir::Visit<'hir> for WriteCollector<'hir> {
+impl<'gcx> hir::Visit<'gcx> for WriteCollector<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         self.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         let lvalue = match &expr.kind {
             ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => Some(lhs),
             ExprKind::Unary(op, inner) if op.kind.has_side_effects() => Some(inner),
