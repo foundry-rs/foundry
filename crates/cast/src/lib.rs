@@ -67,27 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Converts an eth amount into a specified unit
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(Cast::to_unit("1 wei", "wei")?, "1");
-    /// assert_eq!(Cast::to_unit("1", "wei")?, "1");
-    /// assert_eq!(Cast::to_unit("1ether", "wei")?, "1000000000000000000");
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn to_unit(value: &str, unit: &str) -> Result<String> {
-        let value = DynSolType::coerce_str(&DynSolType::Uint(256), value)?
-            .as_uint()
-            .wrap_err("Could not convert to uint")?
-            .0;
-        let unit = unit.parse().wrap_err("could not parse units")?;
-        Ok(args::format_unit_as_string(ParseUnits::U256(value), unit))
-    }
-
     /// Convert a number into a uint with arbitrary decimals.
     ///
     /// # Example

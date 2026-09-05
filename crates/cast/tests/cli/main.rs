@@ -9746,3 +9746,10 @@ casttest!(to_fixed_point_overflow_65536, |_prj, cmd| {
         .assert_failure()
         .stderr_eq("Error: decimals out of range: 65536\n");
 });
+
+casttest!(to_unit, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args(["to-unit", "1ether", "wei"])
+        .assert_success()
+        .stdout_eq("1000000000000000000\n");
+});

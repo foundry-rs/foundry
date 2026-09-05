@@ -19,7 +19,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use eyre::{OptionExt, Result, WrapErr};
+use eyre::{ContextCompat, OptionExt, Result, WrapErr};
 use foundry_cli::{
     json::{print_json_object, print_json_value_or_scalar, print_list, print_scalar, print_tokens},
     opts::RpcOpts,
@@ -175,7 +175,13 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(format!("{n:#066x}"))?;
         }
         CastSubcommand::ToUnit { value, unit } => {
-            print_scalar(SimpleCast::to_unit(&stdin::unwrap_line(value)?, &unit)?)?;
+            let value = stdin::unwrap_line(value)?;
+            let value = DynSolType::coerce_str(&DynSolType::Uint(256), &value)?
+                .as_uint()
+                .wrap_err("Could not convert to uint")?
+                .0;
+            let unit = unit.parse().wrap_err("could not parse units")?;
+            print_scalar(format_unit_as_string(ParseUnits::U256(value), unit))?;
         }
         CastSubcommand::ParseUnits { value, unit } => {
             print_scalar(SimpleCast::parse_units(&stdin::unwrap_line(value)?, unit)?)?;
