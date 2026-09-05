@@ -59,8 +59,13 @@ impl SymbolicExecutor {
         data: SymBytes,
         count: Option<u64>,
     ) -> CheatcodeOutcome {
-        state.expected_calls.push(ExpectedCall::new(callee, value, gas, min_gas, data, count));
-        CheatcodeOutcome::Continue(Vec::new())
+        let expected = ExpectedCall::new(callee, value, gas, min_gas, data, count);
+        match register_expected_call(&mut state.expected_calls, &mut self.cx, expected) {
+            Ok(()) => CheatcodeOutcome::Continue(Vec::new()),
+            Err(message) => {
+                CheatcodeOutcome::Revert(error_string_return_data(&mut self.cx, message))
+            }
+        }
     }
 
     pub(super) fn set_expected_create(
