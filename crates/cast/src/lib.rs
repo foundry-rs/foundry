@@ -106,34 +106,6 @@ impl SimpleCast {
         Ok(format!("{sign}{value}"))
     }
 
-    /// Converts a number into uint256 hex string with 0x prefix
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(
-    ///     Cast::to_uint256("100")?,
-    ///     "0x0000000000000000000000000000000000000000000000000000000000000064"
-    /// );
-    /// assert_eq!(
-    ///     Cast::to_uint256("192038293923")?,
-    ///     "0x0000000000000000000000000000000000000000000000000000002cb65fd1a3"
-    /// );
-    /// assert_eq!(
-    ///     Cast::to_uint256(
-    ///         "115792089237316195423570985008687907853269984665640564039457584007913129639935"
-    ///     )?,
-    ///     "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-    /// );
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn to_uint256(value: &str) -> Result<String> {
-        let n = NumberWithBase::parse_uint(value, None)?;
-        Ok(format!("{n:#066x}"))
-    }
-
     /// Converts a number into int256 hex string with 0x prefix
     ///
     /// # Example

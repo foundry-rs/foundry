@@ -1,5 +1,6 @@
 use crate::{
     SimpleCast,
+    base::NumberWithBase,
     cmd::{erc20::IERC20, rpc_provider},
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
@@ -149,7 +150,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(stdin::unwrap_line(address)?.to_checksum(chain_id))?;
         }
         CastSubcommand::ToUint256 { value } => {
-            print_scalar(SimpleCast::to_uint256(&stdin::unwrap_line(value)?)?)?;
+            let n = NumberWithBase::parse_uint(&stdin::unwrap_line(value)?, None)?;
+            print_scalar(format!("{n:#066x}"))?;
         }
         CastSubcommand::ToInt256 { value } => {
             print_scalar(SimpleCast::to_int256(&stdin::unwrap_line(value)?)?)?;

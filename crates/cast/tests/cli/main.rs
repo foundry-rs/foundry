@@ -9708,3 +9708,10 @@ casttest!(from_fixed_point, |_prj, cmd| {
 casttest!(concat_hex, |_prj, cmd| {
     cmd.cast_fuse().args(["concat-hex", "0x00", "0x01"]).assert_success().stdout_eq("0x0001\n");
 });
+
+casttest!(to_uint256, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args(["to-uint256", "100"])
+        .assert_success()
+        .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000064\n");
+});
