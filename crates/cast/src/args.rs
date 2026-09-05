@@ -107,7 +107,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(hex::encode_prefixed(stdin::unwrap(text, false)?))?;
         }
         CastSubcommand::ToAscii { hexdata } => {
-            print_scalar(SimpleCast::to_ascii(stdin::unwrap(hexdata, false)?.trim())?)?;
+            let bytes = hex::decode(stdin::unwrap(hexdata, false)?.trim())?;
+            eyre::ensure!(bytes.iter().all(u8::is_ascii), "Invalid ASCII bytes");
+            print_scalar(String::from_utf8(bytes).unwrap())?;
         }
         CastSubcommand::ToUtf8 { hexdata } => {
             let bytes = hex::decode(stdin::unwrap(hexdata, false)?)?;

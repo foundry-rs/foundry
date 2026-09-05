@@ -9696,3 +9696,7 @@ casttest!(to_utf8, |_prj, cmd| {
     cmd.cast_fuse().args(["to-utf8", "0xe4bda0e5a5bd"]).assert_success().stdout_eq("你好\n");
     cmd.cast_fuse().args(["to-utf8", "0xff"]).assert_success().stdout_eq("�\n");
 });
+
+casttest!(to_ascii, |_prj, cmd| {
+    cmd.cast_fuse().args(["to-ascii", "0x796f"]).assert_success().stdout_eq("yo\n");
+});

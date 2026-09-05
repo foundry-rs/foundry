@@ -67,26 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Converts hex data into text data
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(Cast::to_ascii("0x796f")?, "yo");
-    /// assert_eq!(Cast::to_ascii("48656c6c6f2c20576f726c6421")?, "Hello, World!");
-    /// assert_eq!(Cast::to_ascii("0x547572626f44617070546f6f6c73")?, "TurboDappTools");
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn to_ascii(hex: &str) -> Result<String> {
-        let bytes = hex::decode(hex)?;
-        if !bytes.iter().all(u8::is_ascii) {
-            return Err(eyre::eyre!("Invalid ASCII bytes"));
-        }
-        Ok(String::from_utf8(bytes).unwrap())
-    }
-
     /// Converts fixed point number into specified number of decimals
     /// ```
     /// use alloy_primitives::U256;
