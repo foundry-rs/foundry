@@ -5,9 +5,9 @@ use crate::{
         Severity, SolLint,
         analysis::{
             DEFAULT_HELPER_ANALYSIS_CACHE_LIMIT, HelperAnalysisCache, arg_for_param,
-            branch_always_exits, count_placeholders, for_each_child, for_each_lhs_var,
-            function_ids, is_address_cast, is_address_like, is_builtin, is_inc_dec,
-            is_require_or_assert, lhs_local_var, loop_update, state_lhs_vars,
+            branch_always_exits, cast_type, count_placeholders, expr_ty, for_each_child,
+            for_each_lhs_var, function_ids, is_address_cast, is_address_like, is_builtin,
+            is_inc_dec, is_require_or_assert, lhs_local_var, loop_update, state_lhs_vars,
             stmts_before_placeholder, tuple_elems, unique,
         },
     },
@@ -19,8 +19,8 @@ use solar::{
     sema::{
         Gcx,
         hir::{
-            self, CallArgs, CallOptions, Expr, ExprKind, FunctionId, ItemId, LoopSource, Res, Stmt,
-            StmtKind, VariableId, Visit,
+            self, CallArgs, CallOptions, ElementaryType, Expr, ExprKind, FunctionId, ItemId,
+            LoopSource, Res, Stmt, StmtKind, VariableId, Visit,
         },
         ty::{TyFnKind, TyKind},
     },
@@ -100,21 +100,16 @@ struct FlowState {
     self_address_local_paths: BTreeMap<VariableId, PathAlternatives>,
     /// Locals derived from `address(this).balance`, with the predicates under which they are.
     balance_local_paths: BTreeMap<VariableId, PathAlternatives>,
+    /// Supported arithmetic forms of local values; an empty set means unknown.
+    balance_local_forms: BTreeMap<VariableId, BTreeSet<BalanceForm>>,
     /// Locals holding a comparison against a balance made stale by the given calls.
     balance_comparison_locals: BTreeMap<VariableId, BTreeSet<Span>>,
     /// External calls after which cached balance locals are stale.
-    pending_balance_calls: BTreeMap<Span, PendingBalanceCall>,
+    pending_balance_calls: BTreeMap<Span, PathAlternatives>,
     /// Reentrancy-guard locks written or bypassed while active.
     invalidated_balance_guards: BTreeSet<VariableId>,
     /// Boolean facts known to hold on this path.
     path_predicates: PathPredicates,
-}
-
-/// Balance locals made stale by an external call, and the predicates under which it was made.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-struct PendingBalanceCall {
-    stale_locals: BTreeSet<VariableId>,
-    paths: PathAlternatives,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -148,30 +143,71 @@ enum ReentrantCallKind {
     NoEth,
 }
 
+/// One signed balance read, retaining the calls across which it was cached.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct BalanceTerm {
+    negative: bool,
+    stale_calls: BTreeSet<Span>,
+}
+
+/// A supported additive source pattern on one path. An empty term list is balance-independent.
+/// At most two balance terms are retained: a stale/current comparison needs one of each. More
+/// terms are rejected rather than cancelled, since Solidity arithmetic may wrap or revert.
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct BalanceForm {
+    terms: Vec<BalanceTerm>,
+    path: PathPredicates,
+}
+
+impl BalanceForm {
+    fn combine(&self, rhs: &Self, subtract: bool) -> Option<Self> {
+        if self.terms.len() + rhs.terms.len() > 2 || !paths_compatible(&self.path, &rhs.path) {
+            return None;
+        }
+        let mut terms = self.terms.clone();
+        terms.extend(rhs.terms.iter().cloned().map(|mut term| {
+            term.negative ^= subtract;
+            term
+        }));
+        Some(Self {
+            terms,
+            path: self.path.iter().chain(&rhs.path).map(|(p, v)| (*p, *v)).collect(),
+        })
+    }
+
+    fn constrained(&self, active: &PathPredicates) -> Option<Self> {
+        paths_compatible(&self.path, active).then(|| Self {
+            terms: self.terms.clone(),
+            path: self.path.iter().chain(active).map(|(p, v)| (*p, *v)).collect(),
+        })
+    }
+}
+
 /// Balance-related facts about a value flowing into a local, parameter or return slot.
 #[derive(Clone, Debug, Default)]
 struct BalanceValue {
+    /// Supported arithmetic forms, separate from occurrence-based dependencies.
+    forms: BTreeSet<BalanceForm>,
     /// Predicates under which the value derives from `address(this).balance`.
     balance_paths: PathAlternatives,
     /// Predicates under which the value is `address(this)`.
     self_address_paths: PathAlternatives,
-    /// Calls after which the balance the value derives from went stale.
-    stale_calls: BTreeSet<Span>,
     /// Calls whose stale balance the value compares against.
     stale_comparisons: BTreeSet<Span>,
 }
 
 impl BalanceValue {
     fn merge(&mut self, other: Self) {
+        self.forms.extend(other.forms);
         self.balance_paths.extend(other.balance_paths);
         self.self_address_paths.extend(other.self_address_paths);
-        self.stale_calls.extend(other.stale_calls);
         self.stale_comparisons.extend(other.stale_comparisons);
     }
 
     /// The same value seen from a path on which `predicates` hold.
     fn constrained(&self, predicates: &PathPredicates) -> Self {
         Self {
+            forms: self.forms.iter().filter_map(|form| form.constrained(predicates)).collect(),
             balance_paths: constrain_paths(&self.balance_paths, predicates),
             self_address_paths: constrain_paths(&self.self_address_paths, predicates),
             ..self.clone()
@@ -187,18 +223,28 @@ impl FlowState {
     }
 
     fn push_balance_call(&mut self, span: Span) {
-        let stale_locals = self
+        if self
             .balance_local_paths
-            .iter()
-            .filter(|(_, paths)| {
-                paths.iter().any(|path| paths_compatible(path, &self.path_predicates))
-            })
-            .map(|(var_id, _)| *var_id)
-            .collect::<BTreeSet<_>>();
-        if !stale_locals.is_empty() {
-            let call = self.pending_balance_calls.entry(span).or_default();
-            call.stale_locals.extend(stale_locals);
-            call.paths.insert(self.path_predicates.clone());
+            .values()
+            .any(|paths| paths.iter().any(|path| paths_compatible(path, &self.path_predicates)))
+        {
+            self.pending_balance_calls
+                .entry(span)
+                .or_default()
+                .insert(self.path_predicates.clone());
+            for forms in self.balance_local_forms.values_mut() {
+                *forms = std::mem::take(forms)
+                    .into_iter()
+                    .map(|mut form| {
+                        if paths_compatible(&form.path, &self.path_predicates) {
+                            for term in &mut form.terms {
+                                term.stale_calls.insert(span);
+                            }
+                        }
+                        form
+                    })
+                    .collect();
+            }
         }
     }
 
@@ -212,13 +258,10 @@ impl FlowState {
         merge_maps(&mut self.internal_function_targets, &other.internal_function_targets);
         merge_maps(&mut self.self_address_local_paths, &other.self_address_local_paths);
         merge_maps(&mut self.balance_local_paths, &other.balance_local_paths);
+        merge_maps(&mut self.balance_local_forms, &other.balance_local_forms);
         merge_maps(&mut self.balance_comparison_locals, &other.balance_comparison_locals);
         self.invalidated_balance_guards.extend(&other.invalidated_balance_guards);
-        for (span, other_call) in &other.pending_balance_calls {
-            let call = self.pending_balance_calls.entry(*span).or_default();
-            call.stale_locals.extend(&other_call.stale_locals);
-            call.paths.extend(other_call.paths.iter().cloned());
-        }
+        merge_maps(&mut self.pending_balance_calls, &other.pending_balance_calls);
     }
 
     fn balance_only(&self) -> Self {
@@ -426,7 +469,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                     self.analyze_expr(init, state);
                     self.update_internal_function_target(state, var_id, init);
                     if self.reentrancy_balance_enabled {
-                        self.bind_locals(state, &[Some(var_id)], init, false);
+                        self.bind_locals(state, &[Some(var_id)], init, None);
                     }
                 } else if self.reentrancy_balance_enabled {
                     self.set_self_address_paths(state, var_id, PathAlternatives::new());
@@ -436,7 +479,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
             StmtKind::DeclMulti(vars, expr) => {
                 self.analyze_expr(expr, state);
                 if self.reentrancy_balance_enabled {
-                    self.bind_locals(state, vars, expr, false);
+                    self.bind_locals(state, vars, expr, None);
                 }
                 true
             }
@@ -582,7 +625,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                             .collect(),
                         None => vec![lhs_local_var(&self.gcx.hir, lhs)],
                     };
-                    self.bind_locals(state, &targets, rhs, op.is_some());
+                    self.bind_locals(state, &targets, rhs, op.map(|op| op.kind));
                 }
             }
             ExprKind::Delete(inner) => {
@@ -950,7 +993,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         &self,
         expr: &'gcx Expr<'gcx>,
         span: Span,
-        call: &PendingBalanceCall,
+        call: &PathAlternatives,
         state: &FlowState,
     ) -> bool {
         let expr = expr.peel_parens();
@@ -978,12 +1021,18 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                         | BinOpKind::Eq
                         | BinOpKind::Ne
                 );
-                let depends = |e, stale| self.expr_depends_on_balance(e, span, call, stale, state);
-                (is_comparison
-                    && [(lhs, rhs), (rhs, lhs)]
-                        .into_iter()
-                        .any(|(current, stale)| depends(current, false) && depends(stale, true)))
-                    || recurse(lhs, state)
+                (is_comparison && {
+                    let lhs = self.balance_forms(lhs, state);
+                    let rhs = self.balance_forms(rhs, state);
+                    lhs.iter().any(|lhs| {
+                        rhs.iter().filter_map(|rhs| lhs.combine(rhs, true)).any(|form| {
+                            let [a, b] = form.terms.as_slice() else { return false };
+                            a.negative != b.negative
+                                && a.stale_calls.contains(&span) != b.stale_calls.contains(&span)
+                                && call.iter().any(|path| paths_compatible(path, &form.path))
+                        })
+                    })
+                }) || recurse(lhs, state)
                     || recurse(rhs, state)
             }
             ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => recurse(inner, state),
@@ -1012,7 +1061,7 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         state: &mut FlowState,
         targets: &[Option<VariableId>],
         rhs: &'gcx Expr<'gcx>,
-        reads_old_value: bool,
+        op: Option<BinOpKind>,
     ) {
         if targets.iter().all(Option::is_none) {
             return;
@@ -1020,9 +1069,9 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         let values = self.balance_values(rhs, state);
         for (var_id, value) in targets.iter().zip(values) {
             let Some(var_id) = *var_id else { continue };
-            self.set_balance_local(state, var_id, &value, reads_old_value);
+            self.set_balance_local(state, var_id, &value, op);
             let paths =
-                if reads_old_value { PathAlternatives::new() } else { value.self_address_paths };
+                if op.is_some() { PathAlternatives::new() } else { value.self_address_paths };
             self.set_self_address_paths(state, var_id, paths);
         }
     }
@@ -1045,24 +1094,29 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         state: &mut FlowState,
         var_id: VariableId,
         value: &BalanceValue,
-        reads_old_value: bool,
+        op: Option<BinOpKind>,
     ) {
+        let forms = match op {
+            None => value.forms.clone(),
+            Some(op @ (BinOpKind::Add | BinOpKind::Sub)) => state
+                .balance_local_forms
+                .get(&var_id)
+                .into_iter()
+                .flatten()
+                .flat_map(|lhs| {
+                    value.forms.iter().filter_map(move |rhs| lhs.combine(rhs, op == BinOpKind::Sub))
+                })
+                .collect(),
+            Some(_) => BTreeSet::new(),
+        };
+        state.balance_local_forms.insert(var_id, forms);
         let mut balance_paths = value.balance_paths.clone();
         let mut stale_comparisons = value.stale_comparisons.clone();
-        if reads_old_value {
+        if op.is_some() {
             balance_paths
                 .extend(state.balance_local_paths.get(&var_id).into_iter().flatten().cloned());
             stale_comparisons
                 .extend(state.balance_comparison_locals.get(&var_id).into_iter().flatten());
-        }
-        for (span, call) in &mut state.pending_balance_calls {
-            if value.stale_calls.contains(span)
-                || (reads_old_value && call.stale_locals.contains(&var_id))
-            {
-                call.stale_locals.insert(var_id);
-            } else {
-                call.stale_locals.remove(&var_id);
-            }
         }
         state.balance_local_paths.remove(&var_id);
         state.balance_comparison_locals.remove(&var_id);
@@ -1093,15 +1147,9 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
     fn balance_dependency(&self, expr: &'gcx Expr<'gcx>, state: &FlowState) -> BalanceValue {
         let pending = &state.pending_balance_calls;
         BalanceValue {
+            forms: self.balance_forms(expr, state),
             balance_paths: self.expr_balance_paths(expr, state),
             self_address_paths: self.self_address_path(expr, state),
-            stale_calls: pending
-                .iter()
-                .filter(|(span, call)| {
-                    self.expr_depends_on_balance(expr, **span, call, true, state)
-                })
-                .map(|(span, _)| *span)
-                .collect(),
             stale_comparisons: pending
                 .iter()
                 .filter(|(span, call)| {
@@ -1183,49 +1231,89 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         }
     }
 
-    /// True if `expr` reads the contract balance as it was before the pending `call` (`stale`)
-    /// or as it is after it, directly or through a local.
-    fn expr_depends_on_balance(
-        &self,
-        expr: &'gcx Expr<'gcx>,
-        span: Span,
-        call: &PendingBalanceCall,
-        stale: bool,
-        state: &FlowState,
-    ) -> bool {
+    /// Preserves balance terms through addition/subtraction and value-preserving integer casts.
+    /// Other operators may form independent offsets, but cannot transform balance terms.
+    /// Unsupported expressions return no forms, rather than an independent offset.
+    fn balance_forms(&self, expr: &'gcx Expr<'gcx>, state: &FlowState) -> BTreeSet<BalanceForm> {
         let expr = expr.peel_parens();
-        let self_balance = self.self_balance_paths(expr, state);
-        if !self_balance.is_empty() {
-            return !stale
-                && self_balance
-                    .iter()
-                    .any(|lhs| call.paths.iter().any(|rhs| paths_compatible(lhs, rhs)));
+        let paths = self.self_balance_paths(expr, state);
+        if !paths.is_empty() {
+            return paths
+                .into_iter()
+                .map(|path| BalanceForm {
+                    terms: vec![BalanceTerm { negative: false, stale_calls: BTreeSet::new() }],
+                    path,
+                })
+                .collect();
         }
-        let recurse = |e| self.expr_depends_on_balance(e, span, call, stale, state);
+        let independent = || {
+            BTreeSet::from([BalanceForm {
+                path: state.path_predicates.clone(),
+                ..BalanceForm::default()
+            }])
+        };
         match &expr.kind {
-            ExprKind::Ident(reses) => reses.iter().filter_map(Res::as_variable).any(|v| {
-                let is_stale = call.stale_locals.contains(&v);
-                if stale {
-                    is_stale
-                } else {
-                    !is_stale && state.balance_local_paths.contains_key(&v)
+            ExprKind::Lit(_) => independent(),
+            ExprKind::Ident(reses) => {
+                let Some(var) = unique(reses.iter().filter_map(Res::as_variable)) else {
+                    return BTreeSet::new();
+                };
+                match state.balance_local_forms.get(&var) {
+                    Some(forms) => forms
+                        .iter()
+                        .filter_map(|form| form.constrained(&state.path_predicates))
+                        .collect(),
+                    None => independent(),
                 }
-            }),
-            ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => recurse(inner),
-            ExprKind::Binary(lhs, _, rhs) => recurse(lhs) || recurse(rhs),
-            ExprKind::Ternary(cond, true_expr, false_expr) => {
-                [*cond, *true_expr, *false_expr].into_iter().any(recurse)
             }
-            ExprKind::Call(..) => match cast_args(expr) {
-                Some(args) => args.exprs().any(recurse),
-                None => self.call_balance_values.get(&expr.span).is_some_and(|values| {
-                    values.iter().any(|value| {
-                        let is_stale = value.stale_calls.contains(&span);
-                        if stale { is_stale } else { !is_stale && !value.balance_paths.is_empty() }
+            ExprKind::Binary(lhs, op, rhs) => {
+                let lhs = self.balance_forms(lhs, state);
+                let rhs = self.balance_forms(rhs, state);
+                lhs.iter()
+                    .flat_map(|lhs| {
+                        rhs.iter().filter_map(|rhs| {
+                            if matches!(op.kind, BinOpKind::Add | BinOpKind::Sub)
+                                || (lhs.terms.is_empty() && rhs.terms.is_empty())
+                            {
+                                lhs.combine(rhs, op.kind == BinOpKind::Sub)
+                            } else {
+                                None
+                            }
+                        })
                     })
-                }),
-            },
-            _ => false,
+                    .collect()
+            }
+            ExprKind::Call(callee, args, _) if cast_type(callee).is_some() && args.len() == 1 => {
+                let inner = args.exprs().next().expect("one argument");
+                let preserving = match (expr_ty(self.gcx, inner), expr_ty(self.gcx, expr)) {
+                    (Some(from), Some(to)) => match (from.kind, to.kind) {
+                        (
+                            TyKind::Elementary(ElementaryType::UInt(from)),
+                            TyKind::Elementary(ElementaryType::UInt(to)),
+                        )
+                        | (
+                            TyKind::Elementary(ElementaryType::Int(from)),
+                            TyKind::Elementary(ElementaryType::Int(to)),
+                        ) => from.bits() <= to.bits(),
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                self.balance_forms(inner, state)
+                    .into_iter()
+                    .filter(|form| preserving || form.terms.is_empty())
+                    .collect()
+            }
+            ExprKind::Call(..) => self
+                .call_balance_values
+                .get(&expr.span)
+                .into_iter()
+                .flatten()
+                .flat_map(|value| {
+                    value.forms.iter().filter_map(|form| form.constrained(&state.path_predicates))
+                })
+                .collect(),
+            _ => BTreeSet::new(),
         }
     }
 
@@ -1241,14 +1329,14 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         }
         for &param in func.parameters {
             match arg_for_param(&self.gcx.hir, func, param, args) {
-                Some(arg) => self.bind_locals(state, &[Some(param)], arg, false),
+                Some(arg) => self.bind_locals(state, &[Some(param)], arg, None),
                 None => self.clear_local(state, param),
             }
         }
     }
 
     fn clear_local(&self, state: &mut FlowState, var_id: VariableId) {
-        self.set_balance_local(state, var_id, &BalanceValue::default(), false);
+        self.set_balance_local(state, var_id, &BalanceValue::default(), None);
         self.set_self_address_paths(state, var_id, PathAlternatives::new());
     }
 
@@ -1276,18 +1364,13 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
     /// The balance facts currently recorded for the local `var_id`.
     fn local_value(&self, var_id: VariableId, state: &FlowState) -> BalanceValue {
         BalanceValue {
+            forms: state.balance_local_forms.get(&var_id).cloned().unwrap_or_default(),
             balance_paths: state.balance_local_paths.get(&var_id).cloned().unwrap_or_default(),
             self_address_paths: state
                 .self_address_local_paths
                 .get(&var_id)
                 .cloned()
                 .unwrap_or_default(),
-            stale_calls: state
-                .pending_balance_calls
-                .iter()
-                .filter(|(_, call)| call.stale_locals.contains(&var_id))
-                .map(|(span, _)| *span)
-                .collect(),
             stale_comparisons: state
                 .balance_comparison_locals
                 .get(&var_id)
@@ -1302,11 +1385,9 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         state.internal_function_targets.retain(|v, _| !owned(*v));
         state.self_address_local_paths.retain(|v, _| !owned(*v));
         state.balance_local_paths.retain(|v, _| !owned(*v));
+        state.balance_local_forms.retain(|v, _| !owned(*v));
         state.balance_comparison_locals.retain(|v, _| !owned(*v));
         state.path_predicates.retain(|predicate, _| !predicate.mentions(&owned));
-        for call in state.pending_balance_calls.values_mut() {
-            call.stale_locals.retain(|v| !owned(*v));
-        }
     }
 
     fn reentrant_call_kind(
@@ -1466,31 +1547,31 @@ fn remap_return_paths(
     values: &mut [BalanceValue],
 ) {
     let owned = owned_by(hir, func_id);
-    let remap = |paths: &PathAlternatives| -> PathAlternatives {
-        paths
-            .iter()
-            .filter_map(|path| {
-                let mut path = path.clone();
-                for (&parameter, &argument) in parameters.iter().zip(parameter_predicates) {
-                    let Some(parameter_value) = path.remove(&PathPredicate::Boolean(parameter))
-                    else {
-                        continue;
-                    };
-                    let Some((predicate, argument_value)) = argument else { continue };
-                    let mapped = parameter_value == argument_value;
-                    if path.get(&predicate).is_some_and(|existing| *existing != mapped) {
-                        return None;
-                    }
-                    path.insert(predicate, mapped);
+    let remap = |mut path: PathPredicates| {
+        for (&parameter, &argument) in parameters.iter().zip(parameter_predicates) {
+            let Some(parameter_value) = path.remove(&PathPredicate::Boolean(parameter)) else {
+                continue;
+            };
+            if let Some((predicate, argument_value)) = argument {
+                let mapped = parameter_value == argument_value;
+                if path.get(&predicate).is_some_and(|existing| *existing != mapped) {
+                    return None;
                 }
-                path.retain(|predicate, _| !predicate.mentions(&owned));
-                Some(path)
-            })
-            .collect()
+                path.insert(predicate, mapped);
+            }
+        }
+        path.retain(|predicate, _| !predicate.mentions(&owned));
+        Some(path)
     };
     for value in values {
-        value.balance_paths = remap(&value.balance_paths);
-        value.self_address_paths = remap(&value.self_address_paths);
+        value.balance_paths =
+            std::mem::take(&mut value.balance_paths).into_iter().filter_map(remap).collect();
+        value.self_address_paths =
+            std::mem::take(&mut value.self_address_paths).into_iter().filter_map(remap).collect();
+        value.forms = std::mem::take(&mut value.forms)
+            .into_iter()
+            .filter_map(|form| Some(BalanceForm { path: remap(form.path)?, ..form }))
+            .collect();
     }
 }
 
@@ -1504,9 +1585,18 @@ fn forget_path_predicates(state: &mut FlowState, var_id: VariableId) {
             .map(|path| path.iter().filter(|(p, _)| !mentions(p)).map(|(p, v)| (*p, *v)).collect())
             .collect();
     };
+    for forms in state.balance_local_forms.values_mut() {
+        *forms = std::mem::take(forms)
+            .into_iter()
+            .map(|mut form| {
+                form.path.retain(|p, _| !mentions(p));
+                form
+            })
+            .collect();
+    }
     state.balance_local_paths.values_mut().for_each(strip);
     state.self_address_local_paths.values_mut().for_each(strip);
-    state.pending_balance_calls.values_mut().for_each(|call| strip(&mut call.paths));
+    state.pending_balance_calls.values_mut().for_each(strip);
 }
 
 /// Arguments of a plain type conversion such as `uint256(x)` or `address(x)`.

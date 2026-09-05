@@ -49,7 +49,7 @@ contract ReentrancyBalance {
 
     function assertAfterLowLevelCall(address target, uint256 amount) external {
         uint256 balanceBefore = address(this).balance;
-        (bool ok,) = target.call("");
+        (bool ok,) = target.call(""); //~WARN: external call can be reentered before a stale contract balance is checked
         require(ok, "call failed");
         assert(address(this).balance - balanceBefore >= amount);
     }
