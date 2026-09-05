@@ -1022,16 +1022,35 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                         | BinOpKind::Ne
                 );
                 (is_comparison && {
+                    let lhs_dependencies = self.balance_operand_dependencies(lhs, state);
+                    let rhs_dependencies = self.balance_operand_dependencies(rhs, state);
+                    let direct = lhs_dependencies.iter().any(|lhs| {
+                        rhs_dependencies.iter().any(|rhs| {
+                            paths_compatible(&lhs.path, &rhs.path)
+                                && call.iter().any(|path| {
+                                    paths_compatible(path, &lhs.path)
+                                        && paths_compatible(path, &rhs.path)
+                                })
+                                && lhs.terms.iter().any(|a| {
+                                    rhs.terms.iter().any(|b| {
+                                        a.stale_calls.contains(&span)
+                                            != b.stale_calls.contains(&span)
+                                    })
+                                })
+                        })
+                    });
                     let lhs = self.balance_forms(lhs, state);
                     let rhs = self.balance_forms(rhs, state);
-                    lhs.iter().any(|lhs| {
-                        rhs.iter().filter_map(|rhs| lhs.combine(rhs, true)).any(|form| {
-                            let [a, b] = form.terms.as_slice() else { return false };
-                            a.negative != b.negative
-                                && a.stale_calls.contains(&span) != b.stale_calls.contains(&span)
-                                && call.iter().any(|path| paths_compatible(path, &form.path))
+                    direct
+                        || lhs.iter().any(|lhs| {
+                            rhs.iter().filter_map(|rhs| lhs.combine(rhs, true)).any(|form| {
+                                let [a, b] = form.terms.as_slice() else { return false };
+                                a.negative != b.negative
+                                    && a.stale_calls.contains(&span)
+                                        != b.stale_calls.contains(&span)
+                                    && call.iter().any(|path| paths_compatible(path, &form.path))
+                            })
                         })
-                    })
                 }) || recurse(lhs, state)
                     || recurse(rhs, state)
             }
@@ -1231,6 +1250,35 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
         }
     }
 
+    /// Retains balance occurrences across comparison operands without assuming arithmetic
+    /// identities.
+    fn balance_operand_dependencies(
+        &self,
+        expr: &'gcx Expr<'gcx>,
+        state: &FlowState,
+    ) -> BTreeSet<BalanceForm> {
+        let recurse = |expr| self.balance_operand_dependencies(expr, state);
+        match &expr.peel_parens().kind {
+            ExprKind::Binary(lhs, _, rhs) => [*lhs, *rhs].into_iter().flat_map(recurse).collect(),
+            ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => recurse(inner),
+            ExprKind::Ternary(cond, true_expr, false_expr) => {
+                let mut then_state = state.clone();
+                let mut else_state = state.clone();
+                let (then_reachable, else_reachable) =
+                    self.split_on(cond, &mut then_state, &mut else_state);
+                [(true_expr, then_state, then_reachable), (false_expr, else_state, else_reachable)]
+                    .into_iter()
+                    .filter(|(_, _, reachable)| *reachable)
+                    .flat_map(|(expr, state, _)| self.balance_operand_dependencies(expr, &state))
+                    .collect()
+            }
+            ExprKind::Call(..) if let Some(args) = cast_args(expr) => {
+                args.exprs().flat_map(recurse).collect()
+            }
+            _ => self.balance_forms(expr, state),
+        }
+    }
+
     /// Preserves balance terms through addition/subtraction and value-preserving integer casts.
     /// Other operators may form independent offsets, but cannot transform balance terms.
     /// Unsupported expressions return no forms, rather than an independent offset.
@@ -1265,6 +1313,17 @@ impl<'ctx, 's, 'c, 'gcx> Analyzer<'ctx, 's, 'c, 'gcx> {
                         .collect(),
                     None => independent(),
                 }
+            }
+            ExprKind::Ternary(cond, true_expr, false_expr) => {
+                let mut then_state = state.clone();
+                let mut else_state = state.clone();
+                let (then_reachable, else_reachable) =
+                    self.split_on(cond, &mut then_state, &mut else_state);
+                [(true_expr, then_state, then_reachable), (false_expr, else_state, else_reachable)]
+                    .into_iter()
+                    .filter(|(_, _, reachable)| *reachable)
+                    .flat_map(|(expr, state, _)| self.balance_forms(expr, &state))
+                    .collect()
             }
             ExprKind::Binary(lhs, op, rhs) => {
                 let lhs = self.balance_forms(lhs, state);
