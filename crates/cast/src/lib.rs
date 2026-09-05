@@ -103,63 +103,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         Self { provider, _phantom: PhantomData }
     }
 
-    /// Generates an access list for the specified transaction
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::{Cast};
-    /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest};
-    /// use alloy_serde::WithOtherFields;
-    /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
-    /// use std::str::FromStr;
-    /// use alloy_sol_types::{sol, SolCall};
-    ///
-    /// sol!(
-    ///     function greeting(uint256 i) public returns (string);
-    /// );
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
-    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
-    /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
-    /// let bytes = Bytes::from_iter(greeting.iter());
-    /// let tx = TransactionRequest::default().to(to).input(bytes.into());
-    /// let tx = WithOtherFields::new(tx);
-    /// let cast = Cast::new(&provider);
-    /// let access_list = cast.access_list(&tx, None).await?;
-    /// println!("{}", access_list);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn access_list(
-        &self,
-        req: &N::TransactionRequest,
-        block: Option<BlockId>,
-    ) -> Result<String> {
-        let access_list =
-            self.provider.create_access_list(req).block_id(block.unwrap_or_default()).await?;
-        let res = if shell::is_json() {
-            serde_json::to_string(&access_list)?
-        } else {
-            let mut s =
-                vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
-            for al in access_list.access_list.0 {
-                s.push(format!("- address: {}", al.address.to_checksum(None)));
-                if !al.storage_keys.is_empty() {
-                    s.push("  keys:".to_string());
-                    for key in al.storage_keys {
-                        s.push(format!("    {key:?}"));
-                    }
-                }
-            }
-            s.join("\n")
-        };
-
-        Ok(res)
-    }
-
     pub async fn balance(&self, who: Address, block: Option<BlockId>) -> Result<U256> {
         Ok(self.provider.get_balance(who).block_id(block.unwrap_or_default()).await?)
     }
