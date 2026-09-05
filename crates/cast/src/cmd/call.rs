@@ -887,6 +887,19 @@ mod tests {
     }
 
     #[test]
+    fn remote_trace_block_must_remain_canonical() {
+        let expected = BlockNumHash::new(42, B256::repeat_byte(0x55));
+        ensure_remote_trace_block_is_canonical(expected, Some(expected)).unwrap();
+
+        let err = ensure_remote_trace_block_is_canonical(expected, None).unwrap_err();
+        assert!(err.to_string().contains("no longer reports that height"), "{err}");
+
+        let reorged = BlockNumHash::new(42, B256::repeat_byte(0x66));
+        let err = ensure_remote_trace_block_is_canonical(expected, Some(reorged)).unwrap_err();
+        assert!(err.to_string().contains("changed canonicality"), "{err}");
+    }
+
+    #[test]
     fn chain_is_merged_into_config() {
         let args = CallArgs::parse_from(["foundry-cli", "--chain", "1"]);
         let config = Config::from_provider(Config::figment().merge(&args)).unwrap();

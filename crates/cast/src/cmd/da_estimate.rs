@@ -63,3 +63,20 @@ async fn da_estimate<N: Network>(config: &Config, block_id: BlockId) -> Result<(
     sh_println!("{da_estimate}")?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn rejects_networks_without_blob_transactions() {
+        let args = DAEstimateArgs {
+            block: BlockId::latest(),
+            rpc: RpcOpts::default(),
+            network: Some(NetworkVariant::Tempo),
+        };
+        let err = args.run().await.unwrap_err().to_string();
+        assert!(err.contains("Tempo"), "{err}");
+        assert!(err.contains("EIP-4844"), "{err}");
+    }
+}

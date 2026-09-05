@@ -630,15 +630,8 @@ impl WalletSubcommands {
                 }
             }
             Self::Verify { message, signature, address, data, from_file, no_hash } => {
-                let recovered_address = if data {
-                    let typed_data = parse_typed_data(&message, from_file)?;
-                    signature.recover_address_from_prehash(&typed_data.eip712_signing_hash()?)?
-                } else if no_hash {
-                    signature
-                        .recover_address_from_prehash(&hex::decode(&message)?[..].try_into()?)?
-                } else {
-                    signature.recover_address_from_msg(hex_str_to_bytes(&message)?)?
-                };
+                let recovered_address =
+                    recover_signer(&message, &signature, data, from_file, no_hash)?;
 
                 if address != recovered_address {
                     eyre::bail!("Validation failed. Address {address} did not sign this message.");
@@ -1262,6 +1255,25 @@ fn ensure_touch_id_sidecar_available(keystore_path: &Path) -> Result<()> {
     }
 }
 
+/// Recovers the signer of `message`, interpreted as EIP-712 typed data (`data`), a prehashed
+/// digest (`no_hash`) or a plain message.
+fn recover_signer(
+    message: &str,
+    signature: &Signature,
+    data: bool,
+    from_file: bool,
+    no_hash: bool,
+) -> Result<Address> {
+    Ok(if data {
+        let typed_data = parse_typed_data(message, from_file)?;
+        signature.recover_address_from_prehash(&typed_data.eip712_signing_hash()?)?
+    } else if no_hash {
+        signature.recover_address_from_prehash(&hex::decode(message)?[..].try_into()?)?
+    } else {
+        signature.recover_address_from_msg(hex_str_to_bytes(message)?)?
+    })
+}
+
 fn indexed_account_name(base: &str, number: u32, index: u32) -> String {
     if number == 1 { base.to_string() } else { format!("{base}_{}", index + 1) }
 }
@@ -1345,6 +1357,8 @@ fn touch_id_enrollment_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::address;
+    use std::str::FromStr;
 
     fn sidecar_json(version: u32, policy: &str, se_key: &str, sealed_password: &str) -> String {
         json!({
@@ -1358,6 +1372,40 @@ mod tests {
 
     fn sealed_password(prefix: &str, len: usize) -> String {
         format!("{prefix}{}", "00".repeat(len - 1))
+    }
+
+    #[test]
+    fn recovers_signer_for_each_message_kind() {
+        let address = address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"); // private key = 1
+
+        let prehash = alloy_primitives::keccak256("hello");
+        let signature = Signature::from_str("433ec3d37e4f1253df15e2dea412fed8e915737730f74b3dfb1353268f932ef5557c9158e0b34bce39de28d11797b42e9b1acb2749230885fe075aedc3e491a41b").unwrap();
+        assert_eq!(
+            recover_signer(&hex::encode(prehash), &signature, false, false, true).unwrap(),
+            address
+        );
+
+        let typed_data = r#"{"domain":{"name":"Test","version":"1","chainId":1,"verifyingContract":"0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"},"message":{"value":123},"primaryType":"Data","types":{"Data":[{"name":"value","type":"uint256"}]}}"#;
+        let signature = Signature::from_str("0285ff83b93bd01c14e201943af7454fe2bc6c98be707a73888c397d6ae3b0b92f73ca559f81cbb19fe4e0f1dc4105bd7b647c6a84b033057977cf2ec982daf71b").unwrap();
+        assert_eq!(recover_signer(typed_data, &signature, true, false, false).unwrap(), address);
+    }
+
+    #[test]
+    fn new_keystores_preflight_every_touch_id_sidecar() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = dir.path().join("batch_2.touchid");
+        std::fs::write(&sidecar, r#"{"version":3,"crypto":{}}"#).unwrap();
+
+        let error = new_keystores(dir.path(), Some("batch"), Some("pw".into()), 2, false, true)
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "refusing Touch ID enrollment because {} is an existing keystore",
+                sidecar.display()
+            )
+        );
+        assert!(!dir.path().join("batch_1").exists());
     }
 
     #[test]

@@ -85,10 +85,9 @@ impl EventsArgs {
             eyre::bail!("--with-local-artifacts is only supported with a transaction hash");
         }
         let provider = utils::get_provider(&config)?;
-        // Decode against the RPC chain, but look ABIs up on the configured explorer chain.
         let rpc_chain = Chain::from(provider.get_chain_id().await?);
-        let explorer_chain = config.chain.unwrap_or(rpc_chain);
-        config.chain = Some(rpc_chain);
+        let (decoder_chain, explorer_chain) = resolve_chains(config.chain, rpc_chain);
+        config.chain = Some(decoder_chain);
 
         let cast = Cast::new(&provider);
         let logs = if let Some(tx_hash) = tx_hash {
@@ -300,10 +299,25 @@ fn format_events(events: &[EventOutput]) -> String {
     output
 }
 
+/// Decodes against the RPC chain, but looks ABIs up on the configured explorer chain.
+fn resolve_chains(configured: Option<Chain>, rpc_chain: Chain) -> (Chain, Chain) {
+    (rpc_chain, configured.unwrap_or(rpc_chain))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_primitives::{Function, U256};
+
+    #[test]
+    fn configured_chain_controls_explorer_lookup() {
+        let rpc_chain = Chain::from(31337);
+        assert_eq!(
+            resolve_chains(Some(Chain::mainnet()), rpc_chain),
+            (rpc_chain, Chain::mainnet())
+        );
+        assert_eq!(resolve_chains(None, rpc_chain), (rpc_chain, rpc_chain));
+    }
 
     #[test]
     fn validates_event_sources() {

@@ -2367,6 +2367,7 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
+    /// assert_eq!(Cast::get_selector("foo()", 0)?.0, String::from("0xc2985578"));
     /// assert_eq!(Cast::get_selector("foo(address,uint256)", 0)?.0, String::from("0xbd0d639f"));
     /// # Ok::<(), eyre::Error>(())
     /// ```

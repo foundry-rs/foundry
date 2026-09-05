@@ -838,6 +838,13 @@ mod tests {
     }
 
     #[test]
+    fn local_revoke_is_idempotent_when_missing() {
+        with_tempo_home(|| {
+            assert!(!retire_session_entry(B256::from([0x42; 32])).unwrap());
+        });
+    }
+
+    #[test]
     fn create_and_local_revoke_session_entry_round_trips() {
         with_tempo_home(|| {
             let runtime = tokio::runtime::Runtime::new().unwrap();

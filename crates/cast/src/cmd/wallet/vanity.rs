@@ -285,6 +285,12 @@ mod tests {
 
         // regex patterns stay supported
         assert!(parse_pattern("a.c", true).is_ok());
+
+        // exact suffixes match the end of the address only
+        assert!(matches!(parse_pattern("00", false).unwrap(), Pattern::Exact(_)));
+        assert!(single("00", false).is_match(&address(0, 0xff)));
+        assert!(!single("00", false).is_match(&address(19, 0x01)));
+        assert!(!single("dead", true).is_match(&address(19, 0xde)));
     }
 
     #[test]

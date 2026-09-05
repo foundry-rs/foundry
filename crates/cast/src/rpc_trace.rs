@@ -211,7 +211,7 @@ fn call_log(log: &CallLogFrame) -> CallLog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, bytes};
+    use alloy_primitives::{B256, address, bytes};
 
     /// A geth `callTracer` `SELFDESTRUCT` frame encodes `from` as the destructed contract, `to` as
     /// the refund target and `value` as the transferred balance (the inverse of
@@ -417,5 +417,41 @@ mod tests {
             root.ordering,
             vec![TraceMemberOrder::Call(0), TraceMemberOrder::Log(0), TraceMemberOrder::Call(1),]
         );
+    }
+
+    #[test]
+    fn maps_call_kind() {
+        for (typ, kind) in [
+            ("CALL", CallKind::Call),
+            ("STATICCALL", CallKind::StaticCall),
+            ("DELEGATECALL", CallKind::DelegateCall),
+            ("CALLCODE", CallKind::CallCode),
+            ("AUTHCALL", CallKind::AuthCall),
+            ("CREATE", CallKind::Create),
+            ("CREATE2", CallKind::Create2),
+            // `SELFDESTRUCT` and unknown types render as a plain call.
+            ("SELFDESTRUCT", CallKind::Call),
+            ("NOT_A_REAL_TYPE", CallKind::Call),
+        ] {
+            assert_eq!(call_kind(typ), kind, "{typ}");
+        }
+    }
+
+    /// Distinct topics, data, position and index catch a swapped or dropped field.
+    #[test]
+    fn maps_call_log_fields() {
+        let topics = vec![B256::with_last_byte(0xaa), B256::with_last_byte(0xbb)];
+        let log = call_log(&CallLogFrame {
+            address: Some(Address::repeat_byte(0x33)),
+            topics: Some(topics.clone()),
+            data: Some(bytes!("dead")),
+            position: Some(2),
+            index: Some(5),
+        });
+        assert_eq!(log.address, Address::repeat_byte(0x33));
+        assert_eq!(log.raw_log.topics(), &topics[..]);
+        assert_eq!(log.raw_log.data, bytes!("dead"));
+        assert_eq!(log.position, 2);
+        assert_eq!(log.index, 5);
     }
 }

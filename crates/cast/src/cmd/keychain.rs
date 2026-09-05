@@ -3812,6 +3812,33 @@ mod tests {
     }
 
     #[test]
+    fn key_role_precedence() {
+        assert_eq!(key_role(true, false), "root");
+        assert_eq!(key_role(true, true), "root");
+        assert_eq!(key_role(false, true), "admin");
+        assert_eq!(key_role(false, false), "limited");
+    }
+
+    #[tokio::test]
+    async fn allowed_calls_hardfork_gates() {
+        let provider = alloy_provider::ProviderBuilder::new_with_network::<TempoNetwork>()
+            .connect_mocked_client(alloy_provider::mock::Asserter::new());
+        let subject = DoctorSubject {
+            root_account: addr(0x11),
+            key_address: addr(0x22),
+            entry: None,
+            explicit: true,
+        };
+        let step = check_allowed_calls(&provider, &subject, None, None, None, None, None).await;
+        assert_eq!(step.status, DoctorStatus::Warn);
+        assert_eq!(step.detail, "skipped; hardfork unknown");
+        let step =
+            check_allowed_calls(&provider, &subject, None, Some(false), None, None, None).await;
+        assert_eq!(step.status, DoctorStatus::Pass);
+        assert_eq!(step.detail, "TIP-1011 not enforced before T3");
+    }
+
+    #[test]
     fn expiry_uses_chain_timestamp() {
         let known = ChainTimestamp::Known(100);
         assert_eq!(check_expiry(Some(100), &known, "", "hint").status, DoctorStatus::Fail);

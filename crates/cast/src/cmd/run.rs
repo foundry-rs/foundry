@@ -951,6 +951,10 @@ mod tests {
             (NetworkConfigs::with_monad(), SpecId::PRAGUE, root, None),
             #[cfg(feature = "monad")]
             (NetworkConfigs::with_monad(), SpecId::OSAKA, root, None),
+            #[cfg(feature = "monad")]
+            (NetworkConfigs::with_monad(), SpecId::PRAGUE, None, None),
+            #[cfg(feature = "monad")]
+            (NetworkConfigs::with_monad(), SpecId::OSAKA, None, None),
         ] {
             assert_eq!(parent_beacon_block_root_for_network(networks, spec_id, root), expected);
         }

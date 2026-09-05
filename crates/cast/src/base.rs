@@ -274,6 +274,22 @@ mod tests {
     }
 
     #[test]
+    fn can_parse_base() {
+        for (aliases, base) in [
+            (["2", "b", "bin", "binary"], Binary),
+            (["8", "o", "oct", "octal"], Octal),
+            (["10", "d", "dec", "decimal"], Decimal),
+            (["16", "h", "hex", "hexadecimal"], Hexadecimal),
+        ] {
+            for alias in aliases {
+                assert_eq!(alias.parse::<Base>().unwrap(), base, "{alias}");
+                assert_eq!(alias.to_uppercase().parse::<Base>().unwrap(), base, "{alias}");
+            }
+        }
+        assert!("3".parse::<Base>().is_err());
+    }
+
+    #[test]
     fn can_detect_base() {
         assert_eq!(Base::detect("0b100").unwrap(), Binary);
         assert_eq!(Base::detect("0o100").unwrap(), Octal);
