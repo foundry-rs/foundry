@@ -67,47 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Decodes calldata-encoded hex input or output
-    ///
-    /// Similar to `abi_decode`, but `calldata` string MUST be prefixed with function selector
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    /// use alloy_primitives::hex;
-    ///
-    /// // Passing `input = false` will decode the data as the output type.
-    /// // The input data types and the full function sig are ignored, i.e.
-    /// // you could also pass `balanceOf()(uint256)` and it'd still work.
-    /// let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
-    /// let sig = "balanceOf(address, uint256)(uint256)";
-    /// let decoded = Cast::calldata_decode(sig, data, false)?[0].as_uint().unwrap().0.to_string();
-    /// assert_eq!(decoded, "1");
-    ///
-    ///     // Passing `input = true` will decode the data with the input function signature.
-    ///     let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
-    ///     let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
-    ///     let decoded = Cast::calldata_decode(sig, data, true)?;
-    ///     let decoded = [
-    ///         decoded[0].as_address().unwrap().to_string().to_lowercase(),
-    ///         decoded[1].as_address().unwrap().to_string().to_lowercase(),
-    ///         decoded[2].as_uint().unwrap().0.to_string(),
-    ///         decoded[3].as_uint().unwrap().0.to_string(),
-    ///         hex::encode(decoded[4].as_bytes().unwrap()),
-    ///    ]
-    ///    .into_iter()
-    ///    .collect::<Vec<_>>();
-    ///     assert_eq!(
-    ///         decoded,
-    ///         vec!["0x8dbd1b711dc621e1404633da156fcc779e1c6f3e", "0xd9f3c9cc99548bf3b44a43e0a2d07399eb918adc", "42", "1", ""]
-    ///     );
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn calldata_decode(sig: &str, calldata: &str, input: bool) -> Result<Vec<DynSolValue>> {
-        foundry_common::abi::abi_decode_calldata(sig, calldata, input, true)
-    }
-
     /// Performs ABI encoding based off of the function signature. Does not include
     /// the function selector in the result.
     ///
@@ -825,47 +784,6 @@ mod tests {
             "0x6fae94120000000000000000000000000000000000000000000000000000000000000000",
             Cast::calldata_encode("bar(bool)", &["false"]).unwrap().as_str()
         );
-    }
-
-    #[test]
-    fn calldata_decode_nested_json() {
-        let calldata = "0xdb5b0ed700000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000006772bf190000000000000000000000000000000000000000000000000000000000020716000000000000000000000000af9d27ffe4d51ed54ac8eec78f2785d7e11e5ab100000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000404366a6dc4b2f348a85e0066e46f0cc206fca6512e0ed7f17ca7afb88e9a4c27000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093922dee6e380c28a50c008ab167b7800bb24c2026cd1b22f1c6fb884ceed7400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060f85e59ecad6c1a6be343a945abedb7d5b5bfad7817c4d8cc668da7d391faf700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000093dfbf04395fbec1f1aed4ad0f9d3ba880ff58a60485df5d33f8f5e0fb73188600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000aa334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5";
-        let sig = "sequenceBatchesValidium((bytes32,bytes32,uint64,bytes32)[],uint64,uint64,address,bytes)";
-        let decoded = Cast::calldata_decode(sig, calldata, true).unwrap();
-        let json_value = serialize_value_as_json(DynSolValue::Array(decoded), None, true).unwrap();
-        let expected = serde_json::json!([
-            [
-                [
-                    "0x04366a6dc4b2f348a85e0066e46f0cc206fca6512e0ed7f17ca7afb88e9a4c27",
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                    "0x0000000000000000000000000000000000000000000000000000000000000000"
-                ],
-                [
-                    "0x093922dee6e380c28a50c008ab167b7800bb24c2026cd1b22f1c6fb884ceed74",
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                    "0x0000000000000000000000000000000000000000000000000000000000000000"
-                ],
-                [
-                    "0x60f85e59ecad6c1a6be343a945abedb7d5b5bfad7817c4d8cc668da7d391faf7",
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                    "0x0000000000000000000000000000000000000000000000000000000000000000"
-                ],
-                [
-                    "0x93dfbf04395fbec1f1aed4ad0f9d3ba880ff58a60485df5d33f8f5e0fb731886",
-                    "0x0000000000000000000000000000000000000000000000000000000000000000",
-                    0,
-                    "0x0000000000000000000000000000000000000000000000000000000000000000"
-                ]
-            ],
-            1735573273,
-            132886,
-            "0xAF9d27ffe4d51eD54AC8eEc78f2785D7E11E5ab1",
-            "0x334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5"
-        ]);
-        assert_eq!(json_value, expected);
     }
 
     #[test]

@@ -352,7 +352,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Some(file_path) => fs::read_to_string(&file_path)?.trim().to_string(),
                 None => calldata.unwrap(),
             };
-            print_tokens(&SimpleCast::calldata_decode(&sig, &raw_hex, true)?)?;
+            print_tokens(&abi_decode_calldata(&sig, &raw_hex, true, true)?)?;
         }
         CastSubcommand::CalldataEncode { sig, args, file } => {
             let args = match file {
@@ -367,7 +367,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(SimpleCast::calldata_encode(sig, &args)?)?;
         }
         CastSubcommand::DecodeString { data } => {
-            print_tokens(&SimpleCast::calldata_decode("Any(string)", &data, true)?)?;
+            print_tokens(&abi_decode_calldata("Any(string)", &data, true, true)?)?;
         }
         CastSubcommand::DecodeEvent { sig, data } => {
             let decoded_event = if let Some(event_sig) = sig {
@@ -972,7 +972,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 }
             };
 
-            print_tokens(&SimpleCast::calldata_decode(sig, &calldata, true)?)?;
+            print_tokens(&abi_decode_calldata(sig, &calldata, true, true)?)?;
         }
 
         CastSubcommand::FourByteEvent { topic } => {
