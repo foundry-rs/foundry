@@ -199,7 +199,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             )?;
         }
         CastSubcommand::ToWei { value, unit } => {
-            print_scalar(SimpleCast::to_wei(&stdin::unwrap_line(value)?, &unit)?)?;
+            let value = stdin::unwrap_line(value)?;
+            let unit = unit.parse().wrap_err("could not parse units")?;
+            print_scalar(ParseUnits::parse_units(&value, unit)?.to_string())?;
         }
         CastSubcommand::FromRlp { value, as_int } => {
             print_scalar(SimpleCast::from_rlp(stdin::unwrap_line(value)?, as_int)?)?;

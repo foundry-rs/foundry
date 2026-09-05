@@ -67,23 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Converts an eth amount into wei
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(Cast::to_wei("100", "gwei")?, "100000000000");
-    /// assert_eq!(Cast::to_wei("100", "eth")?, "100000000000000000000");
-    /// assert_eq!(Cast::to_wei("1000", "ether")?, "1000000000000000000000");
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn to_wei(value: &str, unit: &str) -> Result<String> {
-        let unit = unit.parse().wrap_err("could not parse units")?;
-        Ok(ParseUnits::parse_units(value, unit)?.to_string())
-    }
-
     // Decodes RLP encoded data with validation for canonical integer representation
     ///
     /// # Examples

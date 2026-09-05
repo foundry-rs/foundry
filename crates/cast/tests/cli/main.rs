@@ -9753,3 +9753,7 @@ casttest!(to_unit, |_prj, cmd| {
         .assert_success()
         .stdout_eq("1000000000000000000\n");
 });
+
+casttest!(to_wei, |_prj, cmd| {
+    cmd.cast_fuse().args(["to-wei", "100", "gwei"]).assert_success().stdout_eq("100000000000\n");
+});
