@@ -515,7 +515,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Admin { block, who, rpc } => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
-            print_scalar(Cast::new(provider).admin(who, block).await?)?;
+            // bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1)
+            const ADMIN_SLOT: B256 =
+                b256!("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103");
+            print_scalar(address_at_slot(&provider, who, ADMIN_SLOT, block).await?)?;
         }
         CastSubcommand::Nonce { block, who, rpc } => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;

@@ -123,31 +123,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         Ok(self.provider.send_raw_transaction(&tx).await?)
     }
 
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_primitives::Address;
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    /// use std::str::FromStr;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
-    /// let admin = cast.admin(addr, None).await?;
-    /// println!("{}", admin);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn admin(&self, who: Address, block: Option<BlockId>) -> Result<String> {
-        // bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1)
-        const ADMIN_SLOT: B256 =
-            b256!("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103");
-        args::address_at_slot(&self.provider, who, ADMIN_SLOT, block).await
-    }
-
     pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
         let logs = self.get_logs(&filter).await?;
         Self::format_logs(logs)
