@@ -184,7 +184,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(format_unit_as_string(ParseUnits::U256(value), unit))?;
         }
         CastSubcommand::ParseUnits { value, unit } => {
-            print_scalar(SimpleCast::parse_units(&stdin::unwrap_line(value)?, unit)?)?;
+            let value = stdin::unwrap_line(value)?;
+            let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
+
+            print_scalar(ParseUnits::parse_units(&value, unit)?.to_string())?;
         }
         CastSubcommand::FormatUnits { value, unit } => {
             print_scalar(SimpleCast::format_units(&stdin::unwrap_line(value)?, unit)?)?;

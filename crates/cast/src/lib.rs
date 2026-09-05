@@ -67,28 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Convert a number into a uint with arbitrary decimals.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// # fn main() -> eyre::Result<()> {
-    /// assert_eq!(Cast::parse_units("1.0", 6)?, "1000000"); // USDC (6 decimals)
-    /// assert_eq!(Cast::parse_units("2.5", 6)?, "2500000");
-    /// assert_eq!(Cast::parse_units("1.0", 12)?, "1000000000000"); // 12 decimals
-    /// assert_eq!(Cast::parse_units("1.23", 3)?, "1230"); // 3 decimals
-    ///
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn parse_units(value: &str, unit: u8) -> Result<String> {
-        let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
-
-        Ok(ParseUnits::parse_units(value, unit)?.to_string())
-    }
-
     /// Format a number from smallest unit to decimal with arbitrary decimals.
     ///
     /// # Example
