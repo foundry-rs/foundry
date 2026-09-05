@@ -60,7 +60,7 @@ use alloy_eips::{
     eip7685::EMPTY_REQUESTS_HASH,
     eip7840::BlobParams,
     eip7910::SystemContract,
-    eip7928::EMPTY_BLOCK_ACCESS_LIST_HASH,
+    eip7928::{EMPTY_BLOCK_ACCESS_LIST_HASH, compute_block_access_list_hash},
 };
 use alloy_evm::{
     Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromTxWithEncoded,
@@ -166,7 +166,10 @@ use revm::{
         result::{ExecutionResult, HaltReason, Output, ResultAndState},
         transaction::TransactionType,
     },
-    database::{AccountState, CacheDB, DbAccount, WrapDatabaseRef},
+    database::{
+        AccountState, CacheDB, DbAccount, WrapDatabaseRef,
+        bal::{BalDatabase, BalState},
+    },
     handler::{
         EthFrame, EvmTr, EvmTrError, FrameResult, FrameTr, Handler as EvmHandler, validation,
     },
@@ -2734,7 +2737,7 @@ impl<N: Network> Backend<N> {
         transitions: EthereumBlockTransitions,
     ) -> Result<(), BlockchainError>
     where
-        DB: StateDB<Error = DatabaseError>,
+        DB: StateDB,
     {
         let inspector = self.build_mining_inspector();
         let mut evm =
@@ -2753,7 +2756,7 @@ impl<N: Network> Backend<N> {
         receipts: &[FoundryReceiptEnvelope],
     ) -> Result<alloy_eips::eip7685::Requests, BlockchainError>
     where
-        DB: StateDB<Error = DatabaseError>,
+        DB: StateDB,
     {
         let inspector = self.build_mining_inspector();
         let mut evm =
@@ -7897,7 +7900,7 @@ impl Backend<FoundryNetwork> {
                 base_timestamp,
                 block_interval,
             )?;
-            let mut cache_db = CacheDB::new(state);
+            let mut cache_db = BalDatabase::new(CacheDB::new(state));
             cache_db.cache.block_hashes.insert(U256::from(base_number), base_hash);
             let mut block_res = Vec::with_capacity(block_state_calls.len());
             let mut parent_hash = base_hash;
@@ -8006,8 +8009,15 @@ impl Backend<FoundryNetwork> {
                         &cache_db.cache.accounts,
                         state_overrides.keys().copied(),
                     );
-                    apply_state_overrides(state_overrides, &mut cache_db)?;
+                    apply_state_overrides(state_overrides, &mut cache_db.db)?;
                     preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
+                }
+
+                // Overrides define the starting state, so only execution contributes BAL writes.
+                if ethereum_transitions
+                    .is_some_and(|transitions| transitions.hardfork >= EthereumHardfork::Amsterdam)
+                {
+                    cache_db.bal_state = BalState::new().with_bal_builder();
                 }
 
                 if let Some(transitions) = ethereum_transitions {
@@ -8018,6 +8028,8 @@ impl Backend<FoundryNetwork> {
                         transitions,
                     )?;
                 }
+
+                cache_db.bump_bal_index();
 
                 // execute all calls in that block
                 for (req_idx, mut request) in calls.into_iter().enumerate() {
@@ -8092,7 +8104,7 @@ impl Backend<FoundryNetwork> {
                     }
 
                     let caller = request.from.unwrap_or_default();
-                    let caller_nonce = RevmDatabase::basic(&mut cache_db, caller)?
+                    let caller_nonce = RevmDatabase::basic(&mut cache_db.db, caller)?
                         .map(|account| account.nonce)
                         .unwrap_or_default();
                     let tempo_nonce_key =
@@ -8102,7 +8114,7 @@ impl Backend<FoundryNetwork> {
                         });
                     if request.nonce.is_none() {
                         let nonce = tempo_nonce_key.map_or(Ok(caller_nonce), |nonce_key| {
-                            tempo_nonce(&cache_db, caller, nonce_key)
+                            tempo_nonce(&cache_db.db, caller, nonce_key)
                         })?;
                         request.nonce = Some(nonce);
                         if let Some(parsed_request) = &mut parsed_request {
@@ -8131,14 +8143,14 @@ impl Backend<FoundryNetwork> {
                     let PreparedCall { mut evm_env, mut tx_env, simulated_tempo_tx } =
                         if let Some(parsed_request) = parsed_request {
                             self.prepare_typed_call_env(
-                                &cache_db,
+                                &cache_db.db,
                                 parsed_request,
                                 fee_details,
                                 block_env.clone(),
                             )?
                         } else {
                             self.prepare_call_env(
-                                &cache_db,
+                                &cache_db.db,
                                 request.clone(),
                                 fee_details,
                                 block_env.clone(),
@@ -8182,7 +8194,7 @@ impl Backend<FoundryNetwork> {
                                 && tx_env.max_fee_per_blob_gas == 0 =>
                         {
                             self.transact_eth_simulation_with_inspector_ref(
-                                &cache_db,
+                                &cache_db.db,
                                 &evm_env,
                                 &mut inspector,
                                 tx_env,
@@ -8191,14 +8203,14 @@ impl Backend<FoundryNetwork> {
                         }
                         tx_env if precompile_overrides.moves.is_empty() => self
                             .transact_call_with_inspector_ref(
-                                &cache_db,
+                                &cache_db.db,
                                 &evm_env,
                                 &mut inspector,
                                 tx_env,
                                 monad_context.as_mut().map(next_monad_context),
                             ),
                         tx_env => self.transact_eth_with_inspector_ref_and_precompile_overrides(
-                            &cache_db,
+                            &cache_db.db,
                             &evm_env,
                             &mut inspector,
                             tx_env.into_base(),
@@ -8267,7 +8279,7 @@ impl Backend<FoundryNetwork> {
                     #[cfg(feature = "optimism")]
                     if optimism_jovian {
                         let tx_blob_gas = crate::eth::backend::executor::optimism::blob_gas_used(
-                            &mut cache_db,
+                            &mut cache_db.db,
                             tx.as_ref(),
                             true,
                         )
@@ -8285,6 +8297,7 @@ impl Backend<FoundryNetwork> {
                     // Commit after calculating the footprint so the scalar comes from pre-tx
                     // state, matching the upstream OP block executor.
                     cache_db.commit(state);
+                    cache_db.bump_bal_index();
                     preserve_deleted_storage(&mut cache_db.cache.accounts, previously_deleted);
                     #[cfg(feature = "optimism")]
                     let receipt = if tx.as_ref().is_deposit() {
@@ -8399,7 +8412,12 @@ impl Backend<FoundryNetwork> {
                     .maybe_full_db()
                     .map(|accounts| state_root(&accounts))
                     .unwrap_or_default();
+                let block_access_list_hash = cache_db
+                    .bal_state
+                    .take_built_alloy_bal()
+                    .map(|bal| compute_block_access_list_hash(bal.as_slice()));
                 let header = Header {
+                    block_access_list_hash,
                     logs_bloom: receipts.iter().fold(Bloom::ZERO, |mut bloom, receipt| {
                         bloom.accrue_bloom(receipt.logs_bloom());
                         bloom
