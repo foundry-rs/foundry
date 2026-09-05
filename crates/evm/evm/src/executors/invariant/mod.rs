@@ -1106,12 +1106,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // suite runner so parameterized `invariant_*` functions are rejected with a per-test
         // failure entry before any campaign runs.
         let config = invariant_worker_config(config, plan.worker_id, worker_count);
-        let frontier_limit =
-            if invariant_worker_collects_evm_cmp_log(&config, plan.worker_id, worker_count) {
-                config.corpus.frontier_limit
-            } else {
-                0
-            };
+        let frontier_limit = if config.corpus.capture_branch_frontiers()
+            && invariant_worker_collects_evm_cmp_log(&config, plan.worker_id, worker_count)
+        {
+            config.corpus.frontier_limit
+        } else {
+            0
+        };
         let mut frontier_recorder = FuzzFrontierRecorder::new(frontier_limit);
         executor.inspector_mut().set_execution_cancellation(campaign_state.cancellation().clone());
 

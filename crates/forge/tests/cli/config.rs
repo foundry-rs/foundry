@@ -263,6 +263,7 @@ seed_corpus = false
 use_fuzz_corpus = false
 corpus_seed_limit = 32
 use_fuzz_frontiers = false
+check_invariant_frontiers = false
 frontier_limit = 256
 solver = "z3"
 timeout = 30
@@ -384,6 +385,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             use_fuzz_corpus: true,
             corpus_seed_limit: 17,
             use_fuzz_frontiers: true,
+            check_invariant_frontiers: true,
             frontier_limit: 11,
             frontier_ids: vec![4, 9],
             frontier_pcs: vec![123, 456],
@@ -2278,6 +2280,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "use_fuzz_corpus": false,
     "corpus_seed_limit": 32,
     "use_fuzz_frontiers": false,
+    "check_invariant_frontiers": false,
     "frontier_limit": 256,
     "solver": "z3",
     "timeout": 30,
