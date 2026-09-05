@@ -9896,3 +9896,7 @@ casttest!(calldata_bool, |_prj, cmd| {
         .assert_success()
         .stdout_eq("0x6fae94120000000000000000000000000000000000000000000000000000000000000000\n");
 });
+
+casttest!(left_shift, |_prj, cmd| {
+    cmd.cast_fuse().args(["left-shift", "16", "1"]).assert_success().stdout_eq("0x20\n");
+});

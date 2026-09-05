@@ -67,27 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Performs the left shift operation (<<) on a number
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(Cast::left_shift("16", "10", Some("10"), "hex")?, "0x4000");
-    /// assert_eq!(Cast::left_shift("255", "16", Some("dec"), "hex")?, "0xff0000");
-    /// assert_eq!(Cast::left_shift("0xff", "16", None, "hex")?, "0xff0000");
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn left_shift(
-        value: &str,
-        bits: &str,
-        base_in: Option<&str>,
-        base_out: &str,
-    ) -> Result<String> {
-        args::shift(value, bits, base_in, base_out, |value, bits| value << bits)
-    }
-
     /// Performs the right shift operation (>>) on a number
     ///
     /// # Example

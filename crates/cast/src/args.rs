@@ -1136,7 +1136,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(format!("{:?}", event.selector()))?;
         }
         CastSubcommand::LeftShift { value, bits, base_in, base_out } => {
-            print_scalar(SimpleCast::left_shift(&value, &bits, base_in.as_deref(), &base_out)?)?;
+            print_scalar(shift(&value, &bits, base_in.as_deref(), &base_out, |value, bits| {
+                value << bits
+            })?)?;
         }
         CastSubcommand::RightShift { value, bits, base_in, base_out } => {
             print_scalar(SimpleCast::right_shift(&value, &bits, base_in.as_deref(), &base_out)?)?;
