@@ -193,7 +193,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(format_units(&stdin::unwrap_line(value)?, unit)?)?;
         }
         CastSubcommand::FromWei { value, unit } => {
-            print_scalar(SimpleCast::from_wei(&stdin::unwrap_line(value)?, &unit)?)?;
+            print_scalar(
+                signed_parse_units(&NumberWithBase::parse_int(&stdin::unwrap_line(value)?, None)?)?
+                    .format_units(unit.parse()?),
+            )?;
         }
         CastSubcommand::ToWei { value, unit } => {
             print_scalar(SimpleCast::to_wei(&stdin::unwrap_line(value)?, &unit)?)?;
@@ -388,7 +391,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                         .block_id(block.unwrap_or_default())
                         .await?;
                     let out = if ether {
-                        SimpleCast::from_wei(&value.to_string(), "eth")?
+                        ParseUnits::U256(value).format_units(Unit::ETHER)
                     } else {
                         value.to_string()
                     };
@@ -1208,7 +1211,7 @@ fn int_bound(s: &str, max: bool) -> Result<String> {
     }
 }
 
-pub(super) fn signed_parse_units(value: &NumberWithBase) -> Result<ParseUnits> {
+fn signed_parse_units(value: &NumberWithBase) -> Result<ParseUnits> {
     if value.is_nonnegative() {
         return Ok(ParseUnits::U256(value.number()));
     }
@@ -1219,7 +1222,7 @@ pub(super) fn signed_parse_units(value: &NumberWithBase) -> Result<ParseUnits> {
     Ok(ParseUnits::I256(signed))
 }
 
-pub(super) fn format_unit_as_string(value: ParseUnits, unit: Unit) -> String {
+fn format_unit_as_string(value: ParseUnits, unit: Unit) -> String {
     let mut formatted = value.format_units(unit);
     // Trim empty fractional part.
     if let Some(dot) = formatted.find('.') {

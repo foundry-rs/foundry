@@ -67,27 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Converts wei into an eth amount
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(Cast::from_wei("1", "gwei")?, "0.000000001");
-    /// assert_eq!(Cast::from_wei("12340000005", "gwei")?, "12.340000005");
-    /// assert_eq!(Cast::from_wei("10", "ether")?, "0.000000000000000010");
-    /// assert_eq!(Cast::from_wei("100", "eth")?, "0.000000000000000100");
-    /// assert_eq!(Cast::from_wei("17", "ether")?, "0.000000000000000017");
-    /// assert_eq!(Cast::from_wei("-1000000000000000000", "ether")?, "-1.000000000000000000");
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn from_wei(value: &str, unit: &str) -> Result<String> {
-        let value = NumberWithBase::parse_int(value, None)?;
-        let parsed = args::signed_parse_units(&value)?;
-        Ok(parsed.format_units(unit.parse()?))
-    }
-
     /// Converts an eth amount into wei
     ///
     /// # Example
