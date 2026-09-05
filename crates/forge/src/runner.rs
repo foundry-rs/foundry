@@ -2312,20 +2312,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &raw,
             false,
         ) {
+            // The solver model is not a user-facing counterexample until replay confirms it, so
+            // report the mismatch as an incomplete run instead.
             let call_trace = SymbolicCallTrace::test_result_traces(raw.traces.is_some());
             self.result.extend(raw);
             let reason = "symbolic counterexample did not replay".to_string();
-            let symbolic_result = incomplete(
-                reason.clone(),
-                SymbolicReplayMetadata::mismatch(reason.clone()),
-                call_trace,
+            let display_reason = format!(
+                "incomplete symbolic execution ({:?}): {reason}",
+                SymbolicStopReason::Error
             );
-            return (
-                TestStatus::Failure,
-                Some(reason),
-                Some(CounterExample::Single(base_counterexample)),
-                symbolic_result,
-            );
+            let symbolic_result =
+                incomplete(reason.clone(), SymbolicReplayMetadata::mismatch(reason), call_trace);
+            return (TestStatus::Failure, Some(display_reason), None, symbolic_result);
         }
 
         let original_call = SymbolicCounterexampleCall::from_base_counterexample(

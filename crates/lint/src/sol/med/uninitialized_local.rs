@@ -3,16 +3,17 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{branch_always_exits, for_each_lhs_var},
+        analysis::{branch_always_exits, for_each_lhs_var, loop_stmts},
     },
 };
 use solar::{
+    ast::ElementaryType,
     interface::{Span, data_structures::Never},
     sema::{
         Gcx, Hir,
         hir::{
-            Expr, ExprKind, Function, LoopSource, Res, Stmt, StmtKind, TypeKind, VarKind,
-            VariableId, Visit,
+            BinOpKind, Block, Expr, ExprKind, Function, LoopSource, Res, Stmt, StmtKind, TypeKind,
+            UnOpKind, VarKind, VariableId, Visit,
         },
     },
 };
@@ -28,16 +29,11 @@ declare_forge_lint!(
     "local variable is read before being initialized"
 );
 
-impl<'hir> LateLintPass<'hir> for UninitializedLocal {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for UninitializedLocal {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         let Some(body) = func.body else { return };
-        let mut checker = Checker { hir, uninitialized: HashSet::new(), findings: HashMap::new() };
+        let mut checker =
+            Checker { hir: &gcx.hir, uninitialized: HashSet::new(), findings: HashMap::new() };
         for stmt in body.stmts {
             let _ = checker.visit_stmt(stmt);
         }
@@ -47,8 +43,8 @@ impl<'hir> LateLintPass<'hir> for UninitializedLocal {
     }
 }
 
-struct Checker<'hir> {
-    hir: &'hir Hir<'hir>,
+struct Checker<'gcx> {
+    hir: &'gcx Hir<'gcx>,
     /// Value-type locals declared without an initializer that have not yet been written on
     /// every path.
     uninitialized: HashSet<VariableId>,
@@ -64,15 +60,53 @@ impl Checker<'_> {
     }
 }
 
-impl<'hir> Visit<'hir> for Checker<'hir> {
+/// The loop statement of a conventional `for (uint i; i < n; i++)` header whose counter relies on
+/// its implicit zero. The header lowers to `{ decl; loop { if cond { body } else break } }` with
+/// the update on the loop source; matching the wrapper's span keeps declarations outside the
+/// header distinct.
+fn defaulted_counter_loop<'gcx>(
+    hir: &Hir<'gcx>,
+    block: &'gcx Block<'gcx>,
+) -> Option<&'gcx Stmt<'gcx>> {
+    if let [Stmt { kind: StmtKind::DeclSingle(vid), .. }, loop_stmt] = block.stmts
+        && block.span == loop_stmt.span
+        && let StmtKind::Loop(body, LoopSource::For { update: Some(update) }) = &loop_stmt.kind
+        && let var = hir.variable(*vid)
+        && var.initializer.is_none()
+        && matches!(var.ty.kind, TypeKind::Elementary(ElementaryType::UInt(_)))
+        && let [Stmt { kind: StmtKind::If(cond, _, Some(else_)), .. }] = body.stmts
+        && matches!(else_.kind, StmtKind::Break)
+        && let ExprKind::Binary(left, op, right) = &cond.peel_parens().kind
+        && ((matches!(op.kind, BinOpKind::Lt | BinOpKind::Le) && left.as_variable() == Some(*vid))
+            || (matches!(op.kind, BinOpKind::Gt | BinOpKind::Ge)
+                && right.as_variable() == Some(*vid)))
+        && let StmtKind::Expr(update) = &update.kind
+        && let ExprKind::Unary(op, target) = &update.peel_parens().kind
+        && matches!(op.kind, UnOpKind::PreInc | UnOpKind::PostInc)
+        && target.as_variable() == Some(*vid)
+    {
+        Some(loop_stmt)
+    } else {
+        None
+    }
+}
+
+impl<'gcx> Visit<'gcx> for Checker<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         self.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Never> {
         match &stmt.kind {
+            StmtKind::Block(block) => {
+                if let Some(loop_stmt) = defaulted_counter_loop(self.hir, block) {
+                    // Skip only the counter's declaration; all reads in the loop still run
+                    // through the ordinary checker, including reads of other locals.
+                    return self.visit_stmt(loop_stmt);
+                }
+            }
             StmtKind::DeclSingle(vid) => {
                 let v = self.hir.variable(*vid);
                 if v.kind == VarKind::Statement
@@ -104,10 +138,10 @@ impl<'hir> Visit<'hir> for Checker<'hir> {
             // zero times, so theirs are discarded.
             StmtKind::Loop(block, source) => {
                 let before = self.uninitialized.clone();
-                for s in block.stmts {
+                for s in loop_stmts(*block, *source) {
                     self.visit_stmt(s)?;
                 }
-                if *source != LoopSource::DoWhile {
+                if !matches!(source, LoopSource::DoWhile) {
                     self.uninitialized = before;
                 }
                 return ControlFlow::Continue(());
@@ -132,7 +166,7 @@ impl<'hir> Visit<'hir> for Checker<'hir> {
         self.walk_stmt(stmt)
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         match &expr.kind {
             // Compound `op=` reads the lhs first; plain `=` reads only the rhs (catches `x = x`).
             // The lhs is still walked afterwards for reads inside e.g. an index expression.

@@ -2,7 +2,7 @@
 
 use super::{
     context::{
-        ActiveInternalCallCache, ActiveInternalCallLocation, StatusKind, TUIContext,
+        ActiveInternalCallCache, ActiveInternalCallLocation, Prompt, StatusKind, TUIContext,
         write_pretty_opcode,
     },
     storage::{StorageAccess, StorageSpace, hex_u256, storage_access_at, storage_values},
@@ -255,29 +255,24 @@ impl TUIContext<'_> {
     }
 
     fn footer_height(&self) -> u16 {
-        let status_or_input = if self.command_input.is_some() {
+        let status_or_input = if matches!(self.prompt, Some(Prompt::Command(_))) {
             3
         } else {
-            u16::from(
-                self.pc_input.is_some()
-                    || self.buffer_offset_input.is_some()
-                    || self.opcode_search_input.is_some()
-                    || self.status.is_some(),
-            )
+            u16::from(self.prompt.is_some() || self.status.is_some())
         };
         let shortcuts = if self.show_shortcuts { 3 } else { 0 };
         status_or_input + shortcuts
     }
 
     fn draw_footer(&self, f: &mut Frame<'_>, area: Rect) {
-        if let Some(input) = &self.command_input {
+        if let Some(Prompt::Command(input)) = &self.prompt {
             self.draw_command_prompt(f, area, input);
             return;
         }
 
         let mut lines = Vec::with_capacity(self.footer_height() as usize);
 
-        if let Some(input) = &self.pc_input {
+        if let Some(Prompt::Pc(input)) = &self.prompt {
             lines.push(Line::from(vec![
                 Span::styled(
                     "Goto PC: ",
@@ -290,7 +285,7 @@ impl TUIContext<'_> {
                     Style::new().add_modifier(Modifier::DIM),
                 ),
             ]));
-        } else if let Some(input) = &self.buffer_offset_input {
+        } else if let Some(Prompt::BufferOffset(input)) = &self.prompt {
             lines.push(Line::from(vec![
                 Span::styled(
                     format!("Goto {} offset: ", self.active_buffer_name()),
@@ -303,7 +298,7 @@ impl TUIContext<'_> {
                     Style::new().add_modifier(Modifier::DIM),
                 ),
             ]));
-        } else if let Some(input) = &self.opcode_search_input {
+        } else if let Some(Prompt::OpcodeSearch(input)) = &self.prompt {
             lines.push(Line::from(vec![
                 Span::styled(
                     "Search opcodes: /",
@@ -1450,7 +1445,7 @@ fn hex_digits(n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::TUIContext;
+    use super::{Prompt, TUIContext};
     use crate::{
         DebugNode, DebuggerLayout,
         debugger::{DebuggerContext, DebuggerStats},
@@ -1842,7 +1837,7 @@ mod tests {
     fn command_prompt_draws_in_bordered_block() {
         let mut context = context_with_arena(vec![debug_node(0, 0, vec![trace_step(Vec::new())])]);
         let mut tui = TUIContext::new(&mut context);
-        tui.command_input = Some("pc 0".to_string());
+        tui.prompt = Some(Prompt::Command("pc 0".to_string()));
         let backend = TestBackend::new(120, 6);
         let mut terminal = Terminal::new(backend).unwrap();
 

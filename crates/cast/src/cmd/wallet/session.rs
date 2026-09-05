@@ -6,7 +6,7 @@ use clap::{Args, Parser};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::{TEMPO_SESSION_ID_ENV, TransactionOpts},
-    utils::{LoadConfig, parse_fee_token_address},
+    utils::{LoadConfig, now, parse_fee_token_address},
 };
 use foundry_common::{
     provider::ProviderBuilder,
@@ -21,7 +21,6 @@ use serde_json::json;
 use std::{
     num::NonZeroU64,
     process::{Command, ExitStatus},
-    time::{SystemTime, UNIX_EPOCH},
 };
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::IAccountKeychain;
@@ -33,17 +32,16 @@ use crate::{
         keychain::{
             KeychainTxOutcome, resolve_keychain_root_signer, send_keychain_tx_with_root_signer,
         },
+        print_json_or,
         tempo_policy_args::{
             parse_period, parse_scope as parse_policy_scope, parse_selector_bytes,
         },
     },
+    tempo,
     tx::SendTxOpts,
 };
 
 use super::process_tree::ManagedChild;
-
-#[cfg(test)]
-use foundry_common::tempo::SessionStatus;
 
 const PRINT_SPONSOR_HASH_REVOKE_ERROR: &str = "--tempo.print-sponsor-hash only prints a sponsor hash and does not revoke the session on-chain";
 const SESSION_CHILD_SIGNER_ENV: &[&str] = &[
@@ -148,8 +146,34 @@ impl SessionArgs {
             send_tx.eth.wallet.clone(),
         )
         .await?;
+        let session_id = entry.session_id;
+        upsert_session_entry(entry)?;
 
-        run_for_command(entry, command, tx, send_tx, force).await
+        let child_result = command.run(session_id).await;
+
+        // Always retire the local key material, then revoke on-chain; the on-chain error takes
+        // precedence when both fail.
+        let retire_result = retire_session_entry(session_id)
+            .map(drop)
+            .wrap_err_with(|| format!("failed to retire local Tempo session {session_id:?}"));
+        let revoke_result =
+            revoke(session_id, false, tx, send_tx, UnprovisionedKeyPolicy::Fail, force).await;
+        let cleanup_result = match (retire_result, revoke_result) {
+            (Ok(()), result) | (result, Ok(())) => result,
+            (Err(retire_err), Err(revoke_err)) => Err(revoke_err
+                .wrap_err(format!("also failed to retire local Tempo session: {retire_err}"))),
+        };
+
+        // The inner command's error takes precedence over cleanup failures.
+        match (child_result, cleanup_result) {
+            (Ok(()), Err(cleanup_err)) => {
+                Err(cleanup_err.wrap_err("failed to clean up Tempo session after inner command"))
+            }
+            (Err(child_err), Err(cleanup_err)) => Err(child_err.wrap_err(format!(
+                "also failed to clean up Tempo session {session_id:?}: {cleanup_err}"
+            ))),
+            (child_result, Ok(())) => child_result,
+        }
     }
 }
 
@@ -208,73 +232,20 @@ impl SessionSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
             Self::Create { root_account, chain_id, expires, scope, spend_limits, wallet } => {
-                run_create(root_account, chain_id, expires, scope, spend_limits, *wallet).await
+                create(root_account, chain_id, expires, scope, spend_limits, *wallet).await
             }
             Self::Revoke { session_id, local, force, tx, send_tx } => {
-                run_revoke(session_id, local, *tx, *send_tx, force).await
+                revoke(
+                    session_id,
+                    local,
+                    *tx,
+                    *send_tx,
+                    UnprovisionedKeyPolicy::RevokeLocally,
+                    force,
+                )
+                .await
             }
         }
-    }
-}
-
-async fn run_for_command(
-    entry: SessionEntry,
-    command: InnerCommand,
-    tx: TransactionOpts,
-    send_tx: SendTxOpts,
-    force: bool,
-) -> Result<()> {
-    let session_id = entry.session_id;
-    upsert_session_entry(entry)?;
-
-    let child_result = command.run(session_id).await;
-    let cleanup_result = cleanup_session_run(session_id, tx, send_tx, force).await;
-
-    finish_session_run(session_id, child_result, cleanup_result)
-}
-
-async fn cleanup_session_run(
-    session_id: B256,
-    tx: TransactionOpts,
-    send_tx: SendTxOpts,
-    force: bool,
-) -> Result<()> {
-    let retire_result = retire_session_run_locally(session_id);
-    let revoke_result =
-        run_revoke_with_policy(session_id, false, tx, send_tx, UnprovisionedKeyPolicy::Fail, force)
-            .await;
-
-    match (retire_result, revoke_result) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(retire_err), Ok(())) => Err(retire_err),
-        (Ok(()), Err(revoke_err)) => Err(revoke_err),
-        (Err(retire_err), Err(revoke_err)) => {
-            Err(revoke_err
-                .wrap_err(format!("also failed to retire local Tempo session: {retire_err}")))
-        }
-    }
-}
-
-fn retire_session_run_locally(session_id: B256) -> Result<()> {
-    retire_session_entry(session_id)
-        .map(|_| ())
-        .wrap_err_with(|| format!("failed to retire local Tempo session {session_id:?}"))
-}
-
-fn finish_session_run(
-    session_id: B256,
-    child_result: Result<()>,
-    revoke_result: Result<()>,
-) -> Result<()> {
-    match (child_result, revoke_result) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(child_err), Ok(())) => Err(child_err),
-        (Ok(()), Err(revoke_err)) => {
-            Err(revoke_err.wrap_err("failed to clean up Tempo session after inner command"))
-        }
-        (Err(child_err), Err(revoke_err)) => Err(child_err.wrap_err(format!(
-            "also failed to clean up Tempo session {session_id:?}: {revoke_err}"
-        ))),
     }
 }
 
@@ -311,17 +282,14 @@ impl InnerCommand {
             })?,
             interrupt = interrupt => {
                 let _ = child.terminate_tree().await;
-
-                return match interrupt {
-                    Ok(interrupt) => Err(self.interrupted_error(interrupt)),
-                    Err(err) => Err(err),
-                };
+                let interrupt = interrupt?;
+                eyre::bail!("inner command `{}` interrupted by {interrupt}", self.raw);
             }
         };
 
         let _ = child.terminate_tree().await;
 
-        if status.success() { Ok(()) } else { Err(self.status_error(status)) }
+        self.check_status(status)
     }
 
     fn command(&self, session_id: B256) -> Command {
@@ -334,15 +302,14 @@ impl InnerCommand {
         command
     }
 
-    fn status_error(&self, status: ExitStatus) -> eyre::Report {
-        match status.code() {
-            Some(code) => eyre::eyre!("inner command `{}` exited with code {code}", self.raw),
-            None => eyre::eyre!("inner command `{}` terminated by a signal", self.raw),
+    fn check_status(&self, status: ExitStatus) -> Result<()> {
+        if status.success() {
+            return Ok(());
         }
-    }
-
-    fn interrupted_error(&self, interrupt: &'static str) -> eyre::Report {
-        eyre::eyre!("inner command `{}` interrupted by {interrupt}", self.raw)
+        match status.code() {
+            Some(code) => eyre::bail!("inner command `{}` exited with code {code}", self.raw),
+            None => eyre::bail!("inner command `{}` terminated by a signal", self.raw),
+        }
     }
 }
 
@@ -403,25 +370,23 @@ fn session_scope(
     target: Option<Address>,
     selectors: Vec<String>,
 ) -> Result<Vec<CallScope>> {
-    if !selectors.is_empty() && target.is_none() {
-        eyre::bail!("--selector requires --target");
-    }
-    if target.is_some() && selectors.is_empty() {
-        eyre::bail!(
+    match target {
+        None if !selectors.is_empty() => eyre::bail!("--selector requires --target"),
+        Some(_) if selectors.is_empty() => eyre::bail!(
             "--target requires at least one --selector; use --scope TARGET for target-wide access"
-        );
-    }
-
-    if let Some(target) = target {
-        let selector_rules = selectors
-            .into_iter()
-            .map(|selector| {
-                parse_selector_bytes(&selector)
-                    .map(|selector| SelectorRule { selector, recipients: vec![] })
-                    .map_err(|err| eyre::eyre!("{err}"))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        scope.push(CallScope { target, selector_rules });
+        ),
+        Some(target) => {
+            let selector_rules = selectors
+                .iter()
+                .map(|selector| {
+                    parse_selector_bytes(selector)
+                        .map(|selector| SelectorRule { selector, recipients: vec![] })
+                        .map_err(|err| eyre::eyre!("{err}"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            scope.push(CallScope { target, selector_rules });
+        }
+        None => {}
     }
 
     if scope.is_empty() {
@@ -498,7 +463,7 @@ fn split_for_command(command: &str) -> Result<Vec<String>> {
 }
 
 /// Creates a signed temporary access key in the Tempo Accounts store.
-async fn run_create(
+async fn create(
     root_account: Address,
     chain_id: u64,
     expires: u64,
@@ -508,66 +473,36 @@ async fn run_create(
 ) -> Result<()> {
     let entry =
         build_session_entry(root_account, chain_id, expires, scope, spend_limits, wallet).await?;
-    let session_id = entry.session_id;
-    let root_account = entry.root_account;
-    let chain_id = entry.chain_id;
-    let key_address = entry.key_address;
-    let expiry = entry.expiry;
-    let scope_count = entry.scope.as_ref().map_or(0, |scopes| scopes.len());
-    let spend_limit_count = entry.limits.as_ref().map_or(0, |limits| limits.len());
+    let json = json!({
+        "session_id": entry.session_id.to_string(),
+        "root_account": entry.root_account.to_string(),
+        "chain_id": entry.chain_id,
+        "key_address": entry.key_address.to_string(),
+        "expiry": entry.expiry,
+        "status": "active",
+        "scope_count": entry.scope.as_ref().map_or(0, Vec::len),
+        "spend_limit_count": entry.limits.as_ref().map_or(0, Vec::len),
+    });
+    let prose = format!(
+        "Created Tempo session {}\nRoot:  {}\nChain: {}\nKey:   {}\nExpiry: {}",
+        entry.session_id, entry.root_account, entry.chain_id, entry.key_address, entry.expiry
+    );
     upsert_session_entry(entry)?;
 
-    if shell::is_json() {
-        sh_println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "session_id": session_id.to_string(),
-                "root_account": root_account.to_string(),
-                "chain_id": chain_id,
-                "key_address": key_address.to_string(),
-                "expiry": expiry,
-                "status": "active",
-                "scope_count": scope_count,
-                "spend_limit_count": spend_limit_count,
-            }))?
-        )?;
-    } else {
-        sh_println!("Created Tempo session {}", session_id)?;
-        sh_println!("Root:  {}", root_account)?;
-        sh_println!("Chain: {}", chain_id)?;
-        sh_println!("Key:   {}", key_address)?;
-        sh_println!("Expiry: {}", expiry)?;
-    }
-
-    Ok(())
+    print_json_or(json, prose)
 }
 
-/// Revokes a session entry locally and on-chain when the key has been provisioned.
-async fn run_revoke(
-    session_id: B256,
-    local: bool,
-    tx: TransactionOpts,
-    send_tx: SendTxOpts,
-    force: bool,
-) -> Result<()> {
-    run_revoke_with_policy(
-        session_id,
-        local,
-        tx,
-        send_tx,
-        UnprovisionedKeyPolicy::RevokeLocally,
-        force,
-    )
-    .await
-}
-
+/// How to treat a session key that was never provisioned on-chain when revoking it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UnprovisionedKeyPolicy {
+    /// Explicit `revoke`: mark the key revoked locally.
     RevokeLocally,
+    /// Automatic `--for` cleanup: fail, since pending transactions may still provision it.
     Fail,
 }
 
-async fn run_revoke_with_policy(
+/// Revokes a session entry locally and on-chain when the key has been provisioned.
+async fn revoke(
     session_id: B256,
     local: bool,
     tx: TransactionOpts,
@@ -576,22 +511,19 @@ async fn run_revoke_with_policy(
     force: bool,
 ) -> Result<()> {
     let Some(entry) = read_session_entry(session_id)? else {
-        print_revoke_status(session_id, None, SessionRevokeStatus::NotFound)?;
-        return Ok(());
+        return print_revoke_status(session_id, None, SessionRevokeStatus::NotFound);
     };
 
     if local {
         retire_session_entry(session_id)?;
-        print_revoke_status(session_id, Some(&entry), SessionRevokeStatus::Local)?;
-        return Ok(());
+        return print_revoke_status(session_id, Some(&entry), SessionRevokeStatus::Local);
     }
 
     if tx.tempo.print_sponsor_hash {
         eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
     }
 
-    let config = send_tx.eth.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let (_, provider) = tempo::tempo_provider(&send_tx.eth)?;
     let rpc_chain_id = provider.get_chain_id().await?;
     if rpc_chain_id != entry.chain_id {
         eyre::bail!(
@@ -605,45 +537,52 @@ async fn run_revoke_with_policy(
     let info = provider.get_keychain_key(entry.root_account, entry.key_address).await?;
     if info.isRevoked {
         retire_session_entry(session_id)?;
-        print_revoke_status(session_id, Some(&entry), SessionRevokeStatus::AlreadyRevoked)?;
-        return Ok(());
+        return print_revoke_status(session_id, Some(&entry), SessionRevokeStatus::AlreadyRevoked);
     }
     if info.keyId == Address::ZERO {
-        return handle_unprovisioned_revoke(session_id, &entry, unprovisioned_policy);
+        return match unprovisioned_policy {
+            UnprovisionedKeyPolicy::RevokeLocally => {
+                retire_session_entry(session_id)?;
+                print_revoke_status(session_id, Some(&entry), SessionRevokeStatus::NotProvisioned)
+            }
+            UnprovisionedKeyPolicy::Fail => eyre::bail!(
+                "session key is not provisioned on-chain yet; pending transactions from the \
+                 wrapped command may still provision it. Wait for pending transactions to settle, \
+                 then run `cast wallet session revoke {session_id}`."
+            ),
+        };
     }
 
     let root_signer =
         resolve_keychain_root_signer(&send_tx, Some(entry.root_account), false).await?;
-    let revoke_result = async {
-        let calldata = IAccountKeychain::revokeKeyCall { keyId: entry.key_address }.abi_encode();
-        let before_submit = || {
-            retire_session_entry(session_id)?;
-            Ok(())
-        };
-        let outcome = send_keychain_tx_with_root_signer(
-            calldata,
-            tx,
-            &send_tx,
-            root_signer,
-            force,
-            before_submit,
-        )
-        .await?;
-        if outcome == KeychainTxOutcome::PrintedSponsorHash {
-            eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
-        }
-        Ok(outcome)
-    }
-    .await;
-    let revoke_outcome = match revoke_result {
+    let calldata = IAccountKeychain::revokeKeyCall { keyId: entry.key_address }.abi_encode();
+    let outcome =
+        send_keychain_tx_with_root_signer(calldata, tx, &send_tx, root_signer, force, || {
+            retire_session_entry(session_id).map(drop)
+        })
+        .await
+        .and_then(|outcome| {
+            if outcome == KeychainTxOutcome::PrintedSponsorHash {
+                eyre::bail!(PRINT_SPONSOR_HASH_REVOKE_ERROR);
+            }
+            Ok(outcome)
+        });
+    let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(err) => {
-            handle_revoke_error(&provider, session_id, &entry).await;
+            // The key may have been revoked despite the error; retire the local copy if so.
+            if provider
+                .get_keychain_key(entry.root_account, entry.key_address)
+                .await
+                .is_ok_and(|info| info.isRevoked)
+            {
+                let _ = retire_session_entry(session_id);
+            }
             return Err(err.wrap_err("failed to revoke Tempo session key on-chain"));
         }
     };
 
-    if revoke_outcome == KeychainTxOutcome::Aborted {
+    if outcome == KeychainTxOutcome::Aborted {
         // Automatic cleanup uses `Fail` and must report an aborted on-chain revoke.
         if unprovisioned_policy == UnprovisionedKeyPolicy::Fail {
             eyre::bail!("EIP-7702 authorization disclosure was declined");
@@ -652,44 +591,7 @@ async fn run_revoke_with_policy(
     }
 
     retire_session_entry(session_id)?;
-
     Ok(())
-}
-
-fn handle_unprovisioned_revoke(
-    session_id: B256,
-    entry: &SessionEntry,
-    policy: UnprovisionedKeyPolicy,
-) -> Result<()> {
-    match policy {
-        UnprovisionedKeyPolicy::RevokeLocally => {
-            retire_session_entry(session_id)?;
-            print_revoke_status(session_id, Some(entry), SessionRevokeStatus::NotProvisioned)?;
-            Ok(())
-        }
-        UnprovisionedKeyPolicy::Fail => {
-            eyre::bail!(
-                "session key is not provisioned on-chain yet; pending transactions from the \
-                 wrapped command may still provision it. Wait for pending transactions to settle, \
-                 then run `cast wallet session revoke {session_id}`."
-            );
-        }
-    }
-}
-
-async fn handle_revoke_error(
-    provider: &impl Provider<TempoNetwork>,
-    session_id: B256,
-    entry: &SessionEntry,
-) {
-    if provider
-        .get_keychain_key(entry.root_account, entry.key_address)
-        .await
-        .map(|info| info.isRevoked)
-        .unwrap_or(false)
-    {
-        let _ = retire_session_entry(session_id);
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -700,53 +602,46 @@ enum SessionRevokeStatus {
     AlreadyRevoked,
 }
 
+impl SessionRevokeStatus {
+    const fn reason(self) -> &'static str {
+        match self {
+            Self::NotFound => "not_found",
+            Self::Local => "local",
+            Self::NotProvisioned => "not_provisioned",
+            Self::AlreadyRevoked => "already_revoked",
+        }
+    }
+}
+
 fn print_revoke_status(
     session_id: B256,
     entry: Option<&SessionEntry>,
     status: SessionRevokeStatus,
 ) -> Result<()> {
     if shell::is_json() {
-        sh_println!(
+        return sh_println!(
             "{}",
             serde_json::to_string_pretty(&json!({
                 "session_id": session_id.to_string(),
                 "status": if status == SessionRevokeStatus::NotFound { "not_found" } else { "revoked" },
-                "reason": match status {
-                    SessionRevokeStatus::NotFound => "not_found",
-                    SessionRevokeStatus::Local => "local",
-                    SessionRevokeStatus::NotProvisioned => "not_provisioned",
-                    SessionRevokeStatus::AlreadyRevoked => "already_revoked",
-                },
+                "reason": status.reason(),
                 "root_account": entry.map(|entry| entry.root_account.to_string()),
                 "chain_id": entry.map(|entry| entry.chain_id),
                 "key_address": entry.map(|entry| entry.key_address.to_string()),
             }))?
-        )?;
-        return Ok(());
+        );
     }
 
     match status {
-        SessionRevokeStatus::NotFound => {
-            sh_status!("Tempo session {} was not found.", session_id)?;
-        }
-        SessionRevokeStatus::Local => {
-            sh_status!("Revoked local Tempo session {}", session_id)?;
-        }
-        SessionRevokeStatus::NotProvisioned => {
-            sh_status!(
-                "Revoked Tempo session {} locally; key was not provisioned on-chain",
-                session_id
-            )?;
-        }
-        SessionRevokeStatus::AlreadyRevoked => {
-            sh_status!(
-                "Revoked Tempo session {} locally; key was already revoked on-chain",
-                session_id
-            )?;
-        }
+        SessionRevokeStatus::NotFound => sh_status!("Tempo session {session_id} was not found."),
+        SessionRevokeStatus::Local => sh_status!("Revoked local Tempo session {session_id}"),
+        SessionRevokeStatus::NotProvisioned => sh_status!(
+            "Revoked Tempo session {session_id} locally; key was not provisioned on-chain"
+        ),
+        SessionRevokeStatus::AlreadyRevoked => sh_status!(
+            "Revoked Tempo session {session_id} locally; key was already revoked on-chain"
+        ),
     }
-
-    Ok(())
 }
 
 /// Builds an active session entry from CLI policy inputs and a root signature.
@@ -757,7 +652,7 @@ async fn build_session_entry(
     scope: Vec<CallScope>,
     spend_limits: Vec<SessionSpendLimit>,
     wallet: WalletOpts,
-) -> Result<foundry_common::tempo::SessionEntry> {
+) -> Result<SessionEntry> {
     if expires == 0 {
         eyre::bail!("--expires must be greater than 0");
     }
@@ -771,8 +666,8 @@ async fn build_session_entry(
     let signer = resolve_root_signer(wallet, root_account, chain_id).await?;
     let session_key = GeneratedSessionKey::random();
     let session_id = B256::random();
-    let now = now_unix_timestamp()?;
-    let expiry = now
+    let now_secs = now().as_secs();
+    let expiry = now_secs
         .checked_add(expires)
         .ok_or_else(|| eyre::eyre!("session expiry overflows the unix timestamp range"))?;
     let expiry =
@@ -787,7 +682,7 @@ async fn build_session_entry(
         scope,
         spend_limits,
     };
-    let prepared = request.prepare(now)?;
+    let prepared = request.prepare(now_secs)?;
     let signature = signer.sign_hash(&prepared.authorization.signature_hash()).await?;
     let signed_authorization =
         prepared.authorization.clone().into_signed(PrimitiveSignature::Secp256k1(signature));
@@ -817,17 +712,7 @@ async fn resolve_root_signer(
 
 /// Adapts shared keychain scope parsing into the session authorization type.
 fn parse_scope(s: &str) -> Result<CallScope, String> {
-    parse_policy_scope(s).map(|scope| CallScope {
-        target: scope.target,
-        selector_rules: scope
-            .selectorRules
-            .into_iter()
-            .map(|rule| SelectorRule {
-                selector: rule.selector.into(),
-                recipients: rule.recipients,
-            })
-            .collect(),
-    })
+    parse_policy_scope(s).map(CallScope::from)
 }
 
 /// Parses a session spend limit into the session policy model.
@@ -842,17 +727,11 @@ fn parse_spend_limit(s: &str) -> Result<SessionSpendLimit, String> {
     Ok(SessionSpendLimit { token, amount })
 }
 
-fn now_unix_timestamp() -> Result<u64> {
-    Ok(SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context("system time is before UNIX_EPOCH")?
-        .as_secs())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_primitives::address;
+    use foundry_common::tempo::SessionStatus;
     use std::{ffi::OsStr, sync::Mutex};
     use tempo_contracts::precompiles::PATH_USD_ADDRESS;
 
@@ -869,14 +748,6 @@ mod tests {
         test();
         // SAFETY: restore the process environment after the critical section.
         unsafe { std::env::remove_var("TEMPO_HOME") };
-    }
-
-    #[test]
-    fn session_revoke_is_idempotent_when_missing() {
-        with_tempo_home(|| {
-            let session_id = B256::from([0x42; 32]);
-            assert!(!retire_session_entry(session_id).unwrap());
-        });
     }
 
     #[test]
@@ -910,18 +781,13 @@ mod tests {
     }
 
     #[test]
-    fn session_scope_requires_selector_for_target_shortcut() {
+    fn session_scope_target_shortcut() {
         let target = address!("0x00000000000000000000000000000000000000aa");
         let err = session_scope(vec![], Some(target), vec![]).unwrap_err();
-
         assert!(err.to_string().contains("--target requires at least one --selector"), "{err}");
-    }
 
-    #[test]
-    fn session_scope_preserves_explicit_scope_target_wildcard() {
-        let target = address!("0x00000000000000000000000000000000000000aa");
+        // an explicit `--scope TARGET` keeps its target-wide wildcard
         let scope = vec![CallScope { target, selector_rules: vec![] }];
-
         assert_eq!(session_scope(scope.clone(), None, vec![]).unwrap(), scope);
     }
 
@@ -972,15 +838,21 @@ mod tests {
     }
 
     #[test]
+    fn local_revoke_is_idempotent_when_missing() {
+        with_tempo_home(|| {
+            assert!(!retire_session_entry(B256::from([0x42; 32])).unwrap());
+        });
+    }
+
+    #[test]
     fn create_and_local_revoke_session_entry_round_trips() {
         with_tempo_home(|| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
             runtime.block_on(async {
                 let root = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
-                let private_key = ROOT_PRIVATE_KEY.to_string();
                 let wallet = WalletOpts {
                     raw: foundry_wallets::RawWalletOpts {
-                        private_key: Some(private_key),
+                        private_key: Some(ROOT_PRIVATE_KEY.to_string()),
                         ..Default::default()
                     },
                     ..Default::default()

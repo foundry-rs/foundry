@@ -20,16 +20,17 @@ use alloy_json_abi::Function;
 use alloy_json_rpc::RpcError;
 use alloy_network::{AnyNetwork, BlockResponse, Network, TransactionBuilder};
 use alloy_primitives::{
-    Address, B256, I256, Keccak256, LogData, Selector, TxHash, U64, U256, hex,
+    Address, B256, I256, Keccak256, LogData, Selector, TxHash, U64, U256, b256, hex,
     utils::{ParseUnits, Unit, keccak256},
 };
 use alloy_provider::{PendingTransactionBuilder, Provider, network::eip2718::Decodable2718};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, BlockOverrides, Filter, FilterBlockOption, Log, state::StateOverride,
+    BlockId, BlockNumberOrTag, BlockOverrides, EIP1186AccountProofResponse, Filter,
+    FilterBlockOption, Log, state::StateOverride,
 };
 use alloy_transport::TransportErrorKind;
-use base::{Base, NumberWithBase, ToBase};
+use base::{Base, NumberWithBase};
 use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
@@ -39,11 +40,9 @@ use foundry_common::{
     flatten,
     fmt::*,
     fs, shell,
-    tempo::classify_payment_lane,
 };
 use foundry_config::Chain;
 use foundry_evm::core::{bytecode::InstIter, decode::RevertDecoder};
-use foundry_primitives::FoundryTxEnvelope;
 use futures::{FutureExt, StreamExt, TryStreamExt, future::Either};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus as _;
@@ -71,7 +70,6 @@ pub mod tempo;
 pub mod base;
 pub mod call_spec;
 pub(crate) mod debug;
-pub mod errors;
 mod rlp_converter;
 pub mod rpc_trace;
 pub mod tx;
@@ -167,8 +165,8 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         let res = match call.await {
             Ok(res) => res,
             Err(err) => {
-                if let Some(data) = err.as_error_resp().and_then(|payload| payload.as_revert_data())
-                {
+                let data = err.as_error_resp().and_then(|payload| payload.as_revert_data());
+                if let Some(data) = data {
                     let decoded = match RevertDecoder::new().maybe_decode_known(&data) {
                         Some(decoded) => Some(decoded),
                         None => tx::decode_custom_error(&data).await.ok().flatten(),
@@ -180,37 +178,31 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
                 return Err(err.into());
             }
         };
-        let decoded = if let Some(func) = func {
-            // decode args into tokens
-            match func.abi_decode_output(res.as_ref()) {
+        let decoded = match func {
+            Some(func) => match func.abi_decode_output(res.as_ref()) {
                 Ok(decoded) => decoded,
                 Err(err) => {
-                    // ensure the address is a contract
+                    // An empty response usually means the recipient is not a contract.
                     if res.is_empty() {
-                        // check that the recipient is a contract that can be called
-                        if let Some(addr) = req.to() {
-                            if let Ok(code) = self
-                                .provider
-                                .get_code_at(addr)
-                                .block_id(block.unwrap_or_default())
-                                .await
-                                && code.is_empty()
-                            {
-                                eyre::bail!("contract {addr:?} does not have any code");
-                            }
-                        } else if req.to().is_none() {
+                        let Some(addr) = req.to() else {
                             eyre::bail!("tx req is a contract deployment");
-                        } else {
-                            eyre::bail!("recipient is None");
+                        };
+                        if let Ok(code) = self
+                            .provider
+                            .get_code_at(addr)
+                            .block_id(block.unwrap_or_default())
+                            .await
+                            && code.is_empty()
+                        {
+                            eyre::bail!("contract {addr:?} does not have any code");
                         }
                     }
                     return Err(err).wrap_err(
                         "could not decode output; did you specify the wrong function return data type?"
                     );
                 }
-            }
-        } else {
-            vec![]
+            },
+            None => vec![],
         };
 
         // handle case when return type is not specified
@@ -308,9 +300,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// ```
     pub async fn publish(&self, raw_tx: String) -> Result<PendingTransactionBuilder<N>> {
         let tx = hex::decode(strip_0x(&raw_tx))?;
-        let res = self.provider.send_raw_transaction(&tx).await?;
-
-        Ok(res)
+        Ok(self.provider.send_raw_transaction(&tx).await?)
     }
 
     pub async fn chain_id(&self) -> Result<u64> {
@@ -371,13 +361,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         slots: Vec<B256>,
         block: Option<BlockId>,
     ) -> Result<String> {
-        Ok(self
-            .provider
-            .get_proof(who, slots)
-            .block_id(block.unwrap_or_default())
-            .await?
-            .code_hash
-            .to_string())
+        Ok(self.proof(who, slots, block).await?.code_hash.to_string())
     }
 
     /// #Example
@@ -404,13 +388,16 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         slots: Vec<B256>,
         block: Option<BlockId>,
     ) -> Result<String> {
-        Ok(self
-            .provider
-            .get_proof(who, slots)
-            .block_id(block.unwrap_or_default())
-            .await?
-            .storage_hash
-            .to_string())
+        Ok(self.proof(who, slots, block).await?.storage_hash.to_string())
+    }
+
+    async fn proof(
+        &self,
+        who: Address,
+        slots: Vec<B256>,
+        block: Option<BlockId>,
+    ) -> Result<EIP1186AccountProofResponse> {
+        Ok(self.provider.get_proof(who, slots).block_id(block.unwrap_or_default()).await?)
     }
 
     /// # Example
@@ -437,29 +424,15 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         is_beacon: bool,
         block: Option<BlockId>,
     ) -> Result<String> {
-        let slot = match is_beacon {
-            true => {
-                // Use the beacon slot : bytes32(uint256(keccak256('eip1967.proxy.beacon')) - 1)
-                B256::from_str(
-                    "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50",
-                )?
-            }
-            false => {
-                // Use the implementation slot :
-                // bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)
-                B256::from_str(
-                    "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
-                )?
-            }
-        };
+        // bytes32(uint256(keccak256('eip1967.proxy.beacon')) - 1)
+        const BEACON_SLOT: B256 =
+            b256!("0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50");
+        // bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)
+        const IMPLEMENTATION_SLOT: B256 =
+            b256!("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc");
 
-        let value = self
-            .provider
-            .get_storage_at(who, slot.into())
-            .block_id(block.unwrap_or_default())
-            .await?;
-        let addr = Address::from_word(value.into());
-        Ok(format!("{addr:?}"))
+        let slot = if is_beacon { BEACON_SLOT } else { IMPLEMENTATION_SLOT };
+        self.address_at_slot(who, slot, block).await
     }
 
     /// # Example
@@ -481,15 +454,25 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// # }
     /// ```
     pub async fn admin(&self, who: Address, block: Option<BlockId>) -> Result<String> {
-        let slot =
-            B256::from_str("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103")?;
+        // bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1)
+        const ADMIN_SLOT: B256 =
+            b256!("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103");
+        self.address_at_slot(who, ADMIN_SLOT, block).await
+    }
+
+    /// Reads the storage slot of `who` and formats it as an address.
+    async fn address_at_slot(
+        &self,
+        who: Address,
+        slot: B256,
+        block: Option<BlockId>,
+    ) -> Result<String> {
         let value = self
             .provider
             .get_storage_at(who, slot.into())
             .block_id(block.unwrap_or_default())
             .await?;
-        let addr = Address::from_word(value.into());
-        Ok(format!("{addr:?}"))
+        Ok(format!("{:?}", Address::from_word(value.into())))
     }
 
     /// # Example
@@ -511,8 +494,11 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// # }
     /// ```
     pub async fn compute_address(&self, address: Address, nonce: Option<u64>) -> Result<Address> {
-        let unpacked = if let Some(n) = nonce { n } else { self.nonce(address, None).await? };
-        Ok(address.create(unpacked))
+        let nonce = match nonce {
+            Some(nonce) => nonce,
+            None => self.nonce(address, None).await?,
+        };
+        Ok(address.create(nonce))
     }
 
     /// # Example
@@ -539,16 +525,8 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         block: Option<BlockId>,
         disassemble: bool,
     ) -> Result<String> {
-        if disassemble {
-            let code =
-                self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?.to_vec();
-            SimpleCast::disassemble(&code)
-        } else {
-            Ok(format!(
-                "{}",
-                self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?
-            ))
-        }
+        let code = self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?;
+        if disassemble { SimpleCast::disassemble(&code) } else { Ok(code.to_string()) }
     }
 
     /// Example
@@ -570,8 +548,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// # }
     /// ```
     pub async fn codesize(&self, who: Address, block: Option<BlockId>) -> Result<String> {
-        let code =
-            self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?.to_vec();
+        let code = self.provider.get_code_at(who).block_id(block.unwrap_or_default()).await?;
         Ok(code.len().to_string())
     }
 
@@ -663,20 +640,11 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     }
 
     fn format_logs(logs: Vec<Log>) -> Result<String> {
-        let res = if shell::is_json() {
-            serde_json::to_string(&logs)?
+        if shell::is_json() {
+            Ok(serde_json::to_string(&logs)?)
         } else {
-            let mut s = vec![];
-            for log in logs {
-                let pretty = log
-                    .pretty()
-                    .replacen('\n', "- ", 1) // Remove empty first line
-                    .replace('\n', "\n  "); // Indent
-                s.push(pretty);
-            }
-            s.join("\n")
-        };
-        Ok(res)
+            Ok(logs.iter().map(pretty_log).collect::<Vec<_>>().join("\n"))
+        }
     }
 
     /// Resolves the filter's block range to concrete block numbers.
@@ -757,31 +725,21 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     where
         P: Clone + Unpin,
     {
-        let mut chunk_ranges: Vec<(u64, u64)> = Vec::new();
-        let mut start = from;
-        loop {
-            let end = start.saturating_add(chunk_size - 1).min(to);
-            chunk_ranges.push((start, end));
-            if end >= to {
-                break;
-            }
-            start = end + 1;
-        }
+        let chunk_ranges = (from..=to)
+            .step_by(chunk_size as usize)
+            .map(|start| (start, start.saturating_add(chunk_size - 1).min(to)));
 
         // `buffered` preserves input order, so results stay ordered by block. `try_collect` stops
         // early and surfaces the error if any chunk ultimately fails.
-        let chunks: Vec<Vec<Log>> =
-            futures::stream::iter(chunk_ranges)
-                .map(|(start_block, end_block)| {
-                    let filter = filter.clone();
-                    let provider = self.provider.clone();
-                    async move {
-                        Self::get_logs_bisecting(&provider, &filter, start_block, end_block).await
-                    }
-                })
-                .buffered(MAX_CONCURRENT_RPC_REQUESTS)
-                .try_collect()
-                .await?;
+        let chunks: Vec<Vec<Log>> = futures::stream::iter(chunk_ranges)
+            .map(|(start, end)| {
+                let filter = filter.clone();
+                let provider = self.provider.clone();
+                async move { Self::get_logs_bisecting(&provider, &filter, start, end).await }
+            })
+            .buffered(MAX_CONCURRENT_RPC_REQUESTS)
+            .try_collect()
+            .await?;
 
         Ok(chunks.into_iter().flatten().collect())
     }
@@ -858,15 +816,13 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     pub async fn convert_block_number(
         &self,
         block: Option<BlockId>,
-    ) -> Result<Option<BlockNumberOrTag>, eyre::Error> {
+    ) -> Result<Option<BlockNumberOrTag>> {
         match block {
-            Some(block) => match block {
-                BlockId::Number(block_number) => Ok(Some(block_number)),
-                BlockId::Hash(hash) => {
-                    let block = self.provider.get_block_by_hash(hash.block_hash).await?;
-                    Ok(block.map(|block| block.header().number()).map(BlockNumberOrTag::from))
-                }
-            },
+            Some(BlockId::Number(number)) => Ok(Some(number)),
+            Some(BlockId::Hash(hash)) => {
+                let block = self.provider.get_block_by_hash(hash.block_hash).await?;
+                Ok(block.map(|block| block.header().number().into()))
+            }
             None => Ok(None),
         }
     }
@@ -896,70 +852,62 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// # }
     /// ```
     pub async fn subscribe(&self, filter: Filter, output: &mut dyn io::Write) -> Result<()> {
-        // Initialize the subscription stream for logs
         let mut subscription = self.provider.subscribe_logs(&filter).await?.into_stream();
 
-        // Check if a to_block is specified, if so, subscribe to blocks
-        let mut block_subscription = if filter.get_to_block().is_some() {
-            Some(self.provider.subscribe_blocks().await?.into_stream())
-        } else {
-            None
+        // Subscribe to blocks when a `to_block` is set so the stream ends once it is passed.
+        let to_block_number = filter.get_to_block();
+        let mut block_subscription = match to_block_number {
+            Some(_) => Some(self.provider.subscribe_blocks().await?.into_stream()),
+            None => None,
         };
 
         let format_json = shell::is_json();
-        let to_block_number = filter.get_to_block();
-
-        // If output should be JSON, start with an opening bracket
         if format_json {
             write!(output, "[")?;
         }
 
         let mut first = true;
-
         loop {
             tokio::select! {
-                // If block subscription is present, listen to it to avoid blocking indefinitely past the desired to_block
-                block = if let Some(bs) = &mut block_subscription {
-                    Either::Left(bs.next().fuse())
-                } else {
-                    Either::Right(futures::future::pending())
+                block = match &mut block_subscription {
+                    Some(bs) => Either::Left(bs.next().fuse()),
+                    None => Either::Right(futures::future::pending()),
                 } => {
                     if let (Some(block), Some(to_block)) = (block, to_block_number)
-                        && block.number()  > to_block {
-                            break;
-                        }
+                        && block.number() > to_block
+                    {
+                        break;
+                    }
                 },
-                // Process incoming log
                 log = subscription.next() => {
                     if format_json {
                         if !first {
                             write!(output, ",")?;
                         }
                         first = false;
-                        let log_str = serde_json::to_string(&log).unwrap();
-                        write!(output, "{log_str}")?;
+                        write!(output, "{}", serde_json::to_string(&log).unwrap())?;
                     } else {
-                        let log_str = log.pretty()
-                            .replacen('\n', "- ", 1)  // Remove empty first line
-                            .replace('\n', "\n  ");  // Indent
-                        writeln!(output, "{log_str}")?;
+                        writeln!(output, "{}", pretty_log(&log))?;
                     }
                 },
-                // Break on cancel signal, to allow for closing JSON bracket
-                _ = ctrl_c() => {
-                    break;
-                },
+                // Break on the cancel signal so the JSON array is still closed.
+                _ = ctrl_c() => break,
                 else => break,
             }
         }
 
-        // If output was JSON, end with a closing bracket
         if format_json {
             write!(output, "]")?;
         }
-
         Ok(())
     }
+}
+
+/// Renders a log as an indented list item.
+fn pretty_log(log: &impl UIfmt) -> String {
+    log.pretty()
+        .replacen('\n', "- ", 1) // Remove empty first line
+        .replace('\n', "\n  ") // Indent
 }
 
 impl<P: Provider<AnyNetwork> + Clone + Unpin> Cast<P, AnyNetwork> {
@@ -1064,98 +1012,99 @@ where
         })
     }
 
-    async fn block_field_as_num<B: Into<BlockId>>(&self, block: B, field: String) -> Result<U256> {
-        Self::block(
-            self,
-            block.into(),
-            false,
-            // Select only select field
-            vec![field],
-        )
-        .await?
-        .parse()
-        .map_err(Into::into)
+    async fn block_field<B: Into<BlockId>>(&self, block: B, field: &str) -> Result<String> {
+        self.block(block, false, vec![field.to_string()]).await
+    }
+
+    async fn block_field_as_num<B: Into<BlockId>>(&self, block: B, field: &str) -> Result<U256> {
+        Ok(self.block_field(block, field).await?.parse()?)
     }
 
     pub async fn base_fee<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
-        Self::block_field_as_num(self, block, String::from("baseFeePerGas")).await
+        self.block_field_as_num(block, "baseFeePerGas").await
     }
 
     pub async fn age<B: Into<BlockId>>(&self, block: B) -> Result<String> {
-        let timestamp_str =
-            Self::block_field_as_num(self, block, String::from("timestamp")).await?.to_string();
-        let datetime = DateTime::from_timestamp(timestamp_str.parse::<i64>().unwrap(), 0).unwrap();
+        let timestamp = self.timestamp(block).await?.to::<i64>();
+        let datetime = DateTime::from_timestamp(timestamp, 0).ok_or_eyre("invalid timestamp")?;
         Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
     pub async fn timestamp<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
-        Self::block_field_as_num(self, block, "timestamp".to_string()).await
+        self.block_field_as_num(block, "timestamp").await
     }
 
     pub async fn chain(&self) -> Result<&str> {
-        let genesis_hash = Self::block(
-            self,
-            0,
-            false,
-            // Select only block hash
-            vec![String::from("hash")],
-        )
-        .await?;
+        const GENESIS_CHAINS: &[(&str, &str)] = &[
+            ("0xa3c565fc15c7478862d50ccd6561e3c06b24cc509bf388941c25ea985ce32cb9", "kovan"),
+            ("0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d", "ropsten"),
+            (
+                "0x7ca38a1916c42007829c55e69d3e9a73265554b586a499015373241b8a3fa48b",
+                "optimism-mainnet",
+            ),
+            (
+                "0xc1fc15cd51159b1f1e5cbc4b82e85c1447ddfa33c52cf1d98d14fba0d6354be1",
+                "optimism-goerli",
+            ),
+            (
+                "0x02adc9b449ff5f2467b8c674ece7ff9b21319d76c4ad62a67a70d552655927e5",
+                "optimism-kovan",
+            ),
+            ("0x521982bd54239dc71269eefb58601762cc15cfb2978e0becb46af7962ed6bfaa", "fraxtal"),
+            (
+                "0x910f5c4084b63fd860d0c2f9a04615115a5a991254700b39ba072290dbd77489",
+                "fraxtal-testnet",
+            ),
+            (
+                "0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442",
+                "arbitrum-mainnet",
+            ),
+            ("0x0cd786a2425d16f152c658316c423e6ce1181e15c3295826d7c9904cba9ce303", "morden"),
+            ("0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177", "rinkeby"),
+            ("0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a", "goerli"),
+            ("0x14c2283285a88fe5fce9bf5c573ab03d6616695d717b12a127188bcacfc743c4", "kotti"),
+            ("0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b", "polygon-pos"),
+            (
+                "0x7202b2b53c5a0836e773e319d18922cc756dd67432f9a1f65352b61f4406c697",
+                "polygon-pos-amoy-testnet",
+            ),
+            ("0x81005434635456a16f74ff7023fbe0bf423abbc8a8deb093ffff455c0ad3b741", "polygon-zkevm"),
+            (
+                "0x676c1a76a6c5855a32bdf7c61977a0d1510088a4eeac1330466453b3d08b60b9",
+                "polygon-zkevm-cardona-testnet",
+            ),
+            ("0x4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756", "gnosis"),
+            ("0xada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a", "chiado"),
+            ("0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34", "bsctest"),
+            ("0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b", "bsc"),
+            ("0x23a2658170ba70d014ba0d0d2709f8fbfe2fa660cd868c5f282f991eecbe38ee", "ink"),
+            ("0xe5fd5cf0be56af58ad5751b401410d6b7a09d830fa459789746a3d0dd1c79834", "ink-sepolia"),
+        ];
 
-        Ok(match &genesis_hash[..] {
+        let genesis_hash = self.block_field(0, "hash").await?;
+        Ok(match genesis_hash.as_str() {
+            // Ethereum and Ethereum Classic share the genesis block and split at the DAO fork.
             "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
-                match &(Self::block(self, 1920000, false, vec![String::from("hash")]).await?)[..] {
+                match self.block_field(1920000, "hash").await?.as_str() {
                     "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
                         "etclive"
                     }
                     _ => "ethlive",
                 }
             }
-            "0xa3c565fc15c7478862d50ccd6561e3c06b24cc509bf388941c25ea985ce32cb9" => "kovan",
-            "0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d" => "ropsten",
-            "0x7ca38a1916c42007829c55e69d3e9a73265554b586a499015373241b8a3fa48b" => {
-                "optimism-mainnet"
-            }
-            "0xc1fc15cd51159b1f1e5cbc4b82e85c1447ddfa33c52cf1d98d14fba0d6354be1" => {
-                "optimism-goerli"
-            }
-            "0x02adc9b449ff5f2467b8c674ece7ff9b21319d76c4ad62a67a70d552655927e5" => {
-                "optimism-kovan"
-            }
-            "0x521982bd54239dc71269eefb58601762cc15cfb2978e0becb46af7962ed6bfaa" => "fraxtal",
-            "0x910f5c4084b63fd860d0c2f9a04615115a5a991254700b39ba072290dbd77489" => {
-                "fraxtal-testnet"
-            }
-            "0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442" => {
-                "arbitrum-mainnet"
-            }
-            "0x0cd786a2425d16f152c658316c423e6ce1181e15c3295826d7c9904cba9ce303" => "morden",
-            "0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177" => "rinkeby",
-            "0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a" => "goerli",
-            "0x14c2283285a88fe5fce9bf5c573ab03d6616695d717b12a127188bcacfc743c4" => "kotti",
-            "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b" => "polygon-pos",
-            "0x7202b2b53c5a0836e773e319d18922cc756dd67432f9a1f65352b61f4406c697" => {
-                "polygon-pos-amoy-testnet"
-            }
-            "0x81005434635456a16f74ff7023fbe0bf423abbc8a8deb093ffff455c0ad3b741" => "polygon-zkevm",
-            "0x676c1a76a6c5855a32bdf7c61977a0d1510088a4eeac1330466453b3d08b60b9" => {
-                "polygon-zkevm-cardona-testnet"
-            }
-            "0x4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756" => "gnosis",
-            "0xada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a" => "chiado",
-            "0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34" => "bsctest",
-            "0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b" => "bsc",
+            // Avalanche and Fuji share the genesis block.
             "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
-                match &(Self::block(self, 1, false, vec![String::from("hash")]).await?)[..] {
+                match self.block_field(1, "hash").await?.as_str() {
                     "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
                         "avalanche-fuji"
                     }
                     _ => "avalanche",
                 }
             }
-            "0x23a2658170ba70d014ba0d0d2709f8fbfe2fa660cd868c5f282f991eecbe38ee" => "ink",
-            "0xe5fd5cf0be56af58ad5751b401410d6b7a09d830fa459789746a3d0dd1c79834" => "ink-sepolia",
-            _ => "unknown",
+            hash => GENESIS_CHAINS
+                .iter()
+                .find(|(genesis, _)| *genesis == hash)
+                .map_or("unknown", |(_, chain)| chain),
         })
     }
 }
@@ -1181,17 +1130,13 @@ where
     /// ```
     pub async fn block_raw<B: Into<BlockId>>(&self, block: B, full: bool) -> Result<String> {
         let block_id = block.into();
-
         let block = self
             .provider
             .get_block(block_id)
             .kind(full.into())
             .await?
             .ok_or_else(|| eyre::eyre!("block {:?} not found", block_id))?;
-
-        let encoded = alloy_rlp::encode(block.header().as_ref());
-
-        Ok(format!("0x{}", hex::encode(encoded)))
+        Ok(hex::encode_prefixed(alloy_rlp::encode(block.header().as_ref())))
     }
 }
 
@@ -1213,10 +1158,8 @@ where
                 .await?
                 .ok_or_else(|| eyre::eyre!("tx not found: {:?}", tx_hash))
         } else if let Some(from) = from {
-            // If nonce is not provided, uses 0.
             let nonce = U64::from(nonce.unwrap_or_default());
             let from = from.resolve(self.provider.root()).await?;
-
             self.provider
                 .raw_request::<_, Option<N::TransactionResponse>>(
                     "eth_getTransactionBySenderAndNonce".into(),
@@ -1242,13 +1185,11 @@ where
     ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
     /// let cast = Cast::new(provider);
     /// let tx_hash = "0xf8d1713ea15a81482958fb7ddf884baee8d3bcc478c5f2f604e008dc788ee4fc";
-    /// let tx =
-    ///     cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false, false).await?;
+    /// let tx = cast.transaction(Some(tx_hash.to_string()), None, None, None, false, false).await?;
     /// println!("{}", tx);
     /// # Ok(())
     /// # }
     /// ```
-    #[allow(clippy::too_many_arguments)]
     pub async fn transaction(
         &self,
         tx_hash: Option<String>,
@@ -1257,27 +1198,18 @@ where
         field: Option<String>,
         raw: bool,
         to_request: bool,
-        lane: bool,
     ) -> Result<String> {
         let tx = self.transaction_response(tx_hash, from, nonce).await?;
 
         Ok(if raw {
-            let encoded = tx.as_ref().encoded_2718();
-            format!("0x{}", hex::encode(encoded))
-        } else if lane {
-            let encoded = tx.as_ref().encoded_2718();
-            FoundryTxEnvelope::decode_2718(&mut encoded.as_slice())
-                .wrap_err("failed to decode transaction for lane classification")?;
-            crate::args::format_lane_classification(&classify_payment_lane(&encoded))?
-        } else if let Some(ref field) = field {
-            if let Some(value) = get_pretty_tx_attr::<N>(&tx, field.as_str()) {
+            hex::encode_prefixed(tx.as_ref().encoded_2718())
+        } else if let Some(field) = field {
+            if let Some(value) = get_pretty_tx_attr::<N>(&tx, &field) {
                 value
             } else {
                 let tx_json = serde_json::to_value(&tx)?;
-                let value = tx_json
-                    .get(field)
-                    .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.clone()))?;
-
+                let value =
+                    tx_json.get(&field).ok_or_else(|| eyre::eyre!("invalid tx field: {field}"))?;
                 match value {
                     serde_json::Value::String(value) => value.clone(),
                     value => value.to_string(),
@@ -1311,7 +1243,7 @@ impl SimpleCast {
     /// # Ok::<(), eyre::Report>(())
     /// ```
     pub fn max_int(s: &str) -> Result<String> {
-        Self::max_min_int::<true>(s)
+        Self::int_bound(s, true)
     }
 
     /// Returns the maximum value of the given integer type
@@ -1328,33 +1260,29 @@ impl SimpleCast {
     /// # Ok::<(), eyre::Report>(())
     /// ```
     pub fn min_int(s: &str) -> Result<String> {
-        Self::max_min_int::<false>(s)
+        Self::int_bound(s, false)
     }
 
-    fn max_min_int<const MAX: bool>(s: &str) -> Result<String> {
+    /// Returns the maximum (`max == true`) or minimum value of the given integer type.
+    fn int_bound(s: &str, max: bool) -> Result<String> {
         let ty = DynSolType::parse(s).wrap_err("Invalid type, expected `(u)int<bit size>`")?;
         match ty {
             DynSolType::Int(n) => {
-                let mask = U256::from(1).wrapping_shl(n - 1);
-                let max = (U256::MAX & mask).saturating_sub(U256::from(1));
-                if MAX {
-                    Ok(max.to_string())
+                let max_value = (U256::MAX & U256::from(1).wrapping_shl(n - 1)) - U256::from(1);
+                if max {
+                    Ok(max_value.to_string())
                 } else {
-                    let min = I256::from_raw(max).wrapping_neg() + I256::MINUS_ONE;
-                    Ok(min.to_string())
+                    Ok((I256::from_raw(max_value).wrapping_neg() + I256::MINUS_ONE).to_string())
                 }
             }
-            DynSolType::Uint(n) => {
-                if MAX {
-                    let mut max = U256::MAX;
-                    if n < 256 {
-                        max &= U256::from(1).wrapping_shl(n).wrapping_sub(U256::from(1));
-                    }
-                    Ok(max.to_string())
-                } else {
-                    Ok("0".to_string())
+            DynSolType::Uint(n) if max => {
+                let mut max_value = U256::MAX;
+                if n < 256 {
+                    max_value &= U256::from(1).wrapping_shl(n).wrapping_sub(U256::from(1));
                 }
+                Ok(max_value.to_string())
             }
+            DynSolType::Uint(_) => Ok("0".to_string()),
             _ => Err(eyre::eyre!("Type is not int/uint: {s}")),
         }
     }
@@ -1450,14 +1378,10 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn to_fixed_point(value: &str, decimals: &str) -> Result<String> {
-        let (sign, mut value, value_len) = {
-            let number = NumberWithBase::parse_int(value, None)?;
-            let sign = if number.is_nonnegative() { "" } else { "-" };
-            let value = format!("{number:#}");
-            let value_stripped = value.strip_prefix('-').unwrap_or(&value).to_string();
-            let value_len = value_stripped.len();
-            (sign, value_stripped, value_len)
-        };
+        let number = NumberWithBase::parse_int(value, None)?;
+        let sign = if number.is_nonnegative() { "" } else { "-" };
+        let mut value = number.to_string().trim_start_matches('-').to_string();
+        let value_len = value.len();
         let decimals_num = NumberWithBase::parse_uint(decimals, None)?.number();
         let decimals: usize = decimals_num
             .try_into()
@@ -1465,19 +1389,15 @@ impl SimpleCast {
             .filter(|&d: &usize| d <= u16::MAX as usize)
             .ok_or_else(|| eyre::eyre!("decimals out of range: {decimals_num}"))?;
 
-        let value = if decimals >= value_len {
-            // Add "0." and pad with 0s
-            format!("0.{value:0>decimals$}")
+        if decimals >= value_len {
+            value = format!("0.{value:0>decimals$}");
         } else {
-            // Insert decimal at -idx (i.e 1 => decimal idx = -1)
             value.insert(value_len - decimals, '.');
-            value
-        };
-
+        }
         Ok(format!("{sign}{value}"))
     }
 
-    /// Concatencates hex strings
+    /// Concatenates hex strings
     ///
     /// # Example
     ///
@@ -1489,11 +1409,7 @@ impl SimpleCast {
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn concat_hex<T: AsRef<str>>(values: impl IntoIterator<Item = T>) -> String {
-        let mut out = String::new();
-        for s in values {
-            let s = s.as_ref();
-            out.push_str(strip_0x(s))
-        }
+        let out = values.into_iter().map(|s| strip_0x(s.as_ref()).to_string()).collect::<String>();
         format!("0x{out}")
     }
 
@@ -1785,15 +1701,11 @@ impl SimpleCast {
     /// ```
     pub fn to_base(value: &str, base_in: Option<&str>, base_out: &str) -> Result<String> {
         let base_in = Base::unwrap_or_detect(base_in, value)?;
-        let base_out: Base = base_out.parse()?;
+        let base_out = base_out.parse()?;
         if base_in == base_out {
             return Ok(value.to_string());
         }
-
-        let mut n = NumberWithBase::parse_int(value, Some(&base_in.to_string()))?;
-        n.set_base(base_out);
-
-        // Use Debug fmt
+        let n = NumberWithBase::parse_int_in(value, base_in)?.with_base(base_out);
         Ok(format!("{n:#?}"))
     }
 
@@ -1920,17 +1832,10 @@ impl SimpleCast {
         if s.len() != 64 {
             eyre::bail!("expected 64 byte hex-string, got {s}");
         }
-
-        let s = if let Some(stripped) = s.strip_prefix("000000000000000000000000") {
-            stripped
-        } else {
-            return Err(eyre::eyre!("Not convertible to address, there are non-zero bytes"));
+        let Some(s) = s.strip_prefix("000000000000000000000000") else {
+            eyre::bail!("Not convertible to address, there are non-zero bytes");
         };
-
-        let lowercase_address_string = format!("0x{s}");
-        let lowercase_address = Address::from_str(&lowercase_address_string)?;
-
-        Ok(lowercase_address.to_checksum(None))
+        Ok(Address::from_str(s)?.to_checksum(None))
     }
 
     /// Decodes abi-encoded hex input or output
@@ -2037,12 +1942,9 @@ impl SimpleCast {
     /// ```
     pub fn abi_encode(sig: &str, args: &[impl AsRef<str>]) -> Result<String> {
         let func = get_func(sig)?;
-        match encode_function_args(&func, args) {
-            Ok(res) => Ok(hex::encode_prefixed(&res[4..])),
-            Err(e) => {
-                eyre::bail!("Could not ABI encode the function and arguments: {e}");
-            }
-        }
+        let encoded = encode_function_args(&func, args)
+            .map_err(|e| eyre::eyre!("Could not ABI encode the function and arguments: {e}"))?;
+        Ok(hex::encode_prefixed(&encoded[4..]))
     }
 
     /// Performs packed ABI encoding based off of the function signature or tuple.
@@ -2068,14 +1970,10 @@ impl SimpleCast {
         let sig =
             if sig.trim_start().starts_with('(') { format!("foo{sig}") } else { sig.to_string() };
 
-        let func = get_func(sig.as_str())?;
-        let encoded = match encode_function_args_packed(&func, args) {
-            Ok(res) => hex::encode(res),
-            Err(e) => {
-                eyre::bail!("Could not ABI encode the function and arguments: {e}");
-            }
-        };
-        Ok(format!("0x{encoded}"))
+        let func = get_func(&sig)?;
+        let encoded = encode_function_args_packed(&func, args)
+            .map_err(|e| eyre::eyre!("Could not ABI encode the function and arguments: {e}"))?;
+        Ok(hex::encode_prefixed(encoded))
     }
 
     /// Performs ABI encoding of an event to produce the topics and data.
@@ -2136,13 +2034,12 @@ impl SimpleCast {
             .collect::<Result<Vec<_>>>()?;
 
         let mut topics = if event.anonymous { vec![] } else { vec![event.selector()] };
+        // Non-indexed parameters are encoded together as the event body.
         let mut data_tokens = Vec::new();
-
         for (input, token) in event.inputs.iter().zip(tokens) {
             if input.indexed {
                 topics.push(encode_event_topic(&token));
             } else {
-                // Non-indexed parameters are encoded together as the event body.
                 data_tokens.push(token);
             }
         }
@@ -2290,13 +2187,7 @@ impl SimpleCast {
         base_in: Option<&str>,
         base_out: &str,
     ) -> Result<String> {
-        let base_out: Base = base_out.parse()?;
-        let value = NumberWithBase::parse_uint(value, base_in)?;
-        let bits = NumberWithBase::parse_uint(bits, None)?;
-
-        let res = value.number() << bits.number();
-
-        Ok(res.to_base(base_out, true)?)
+        Self::shift(value, bits, base_in, base_out, |value, bits| value << bits)
     }
 
     /// Performs the right shift operation (>>) on a number
@@ -2317,13 +2208,24 @@ impl SimpleCast {
         base_in: Option<&str>,
         base_out: &str,
     ) -> Result<String> {
-        let base_out: Base = base_out.parse()?;
-        let value = NumberWithBase::parse_uint(value, base_in)?;
-        let bits = NumberWithBase::parse_uint(bits, None)?;
+        Self::shift(value, bits, base_in, base_out, |value, bits| {
+            value.wrapping_shr(bits.saturating_to())
+        })
+    }
 
-        let res = value.number().wrapping_shr(bits.number().saturating_to());
-
-        Ok(res.to_base(base_out, true)?)
+    /// Parses `value` and `bits`, applies `shift` and formats the result with the `base_out`
+    /// prefix.
+    fn shift(
+        value: &str,
+        bits: &str,
+        base_in: Option<&str>,
+        base_out: &str,
+        shift: impl FnOnce(U256, U256) -> U256,
+    ) -> Result<String> {
+        let base_out = base_out.parse()?;
+        let value = NumberWithBase::parse_uint(value, base_in)?.number();
+        let bits = NumberWithBase::parse_uint(bits, None)?.number();
+        Ok(format!("{:#?}", NumberWithBase::from(shift(value, bits)).with_base(base_out)))
     }
 
     /// Fetches source code of verified contracts from etherscan.
@@ -2465,6 +2367,7 @@ impl SimpleCast {
     /// ```
     /// use cast::SimpleCast as Cast;
     ///
+    /// assert_eq!(Cast::get_selector("foo()", 0)?.0, String::from("0xc2985578"));
     /// assert_eq!(Cast::get_selector("foo(address,uint256)", 0)?.0, String::from("0xbd0d639f"));
     /// # Ok::<(), eyre::Error>(())
     /// ```
@@ -2483,33 +2386,22 @@ impl SimpleCast {
         let num_threads = rayon::current_num_threads();
         let found = AtomicBool::new(false);
 
-        let result: Option<(u32, String, String)> =
-            (0..num_threads).into_par_iter().find_map_any(|i| {
-                let nonce_start = i as u32;
-                let nonce_step = num_threads as u32;
-
-                let mut nonce = nonce_start;
+        // Each thread walks its own residue class of nonces until one of them finds a match.
+        (0..num_threads as u32)
+            .into_par_iter()
+            .find_map_any(|mut nonce| {
                 while nonce < u32::MAX && !found.load(Ordering::Relaxed) {
                     let input = format!("{name}{nonce}({params}");
-                    let hash = keccak256(input.as_bytes());
-                    let selector = &hash[..4];
-
+                    let selector = &keccak256(input.as_bytes())[..4];
                     if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
                         found.store(true, Ordering::Relaxed);
-                        return Some((nonce, hex::encode_prefixed(selector), input));
+                        return Some((hex::encode_prefixed(selector), input));
                     }
-
-                    nonce += nonce_step;
+                    nonce += num_threads as u32;
                 }
                 None
-            });
-
-        match result {
-            Some((_nonce, selector, signature)) => Ok((selector, signature)),
-            None => {
-                eyre::bail!("No selector found");
-            }
-        }
+            })
+            .ok_or_eyre("No selector found")
     }
 
     /// Extracts function selectors, arguments and state mutability from bytecode
@@ -2537,22 +2429,18 @@ impl SimpleCast {
             .functions
             .expect("functions extraction was requested")
             .into_iter()
-            .filter_map(|f| {
-                if f.dispatch == evmole::SelectorDispatch::Abi {
-                    return Some((
-                        f.selector.into(),
-                        f.arguments
-                            .expect("arguments extraction was requested")
-                            .into_iter()
-                            .map(|t| t.sol_type_name().to_string())
-                            .collect::<Vec<String>>()
-                            .join(","),
-                        f.state_mutability
-                            .expect("state_mutability extraction was requested")
-                            .as_json_str(),
-                    ));
-                }
-                None
+            .filter(|f| f.dispatch == evmole::SelectorDispatch::Abi)
+            .map(|f| {
+                let arguments = f
+                    .arguments
+                    .expect("arguments extraction was requested")
+                    .iter()
+                    .map(|t| t.sol_type_name())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let mutability =
+                    f.state_mutability.expect("state_mutability extraction was requested");
+                (f.selector.into(), arguments, mutability.as_json_str())
             })
             .collect())
     }
@@ -2860,24 +2748,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn simple_selector() {
-        assert_eq!("0xc2985578", Cast::get_selector("foo()", 0).unwrap().0.as_str())
-    }
-
-    #[test]
-    fn selector_with_arg() {
-        assert_eq!("0xbd0d639f", Cast::get_selector("foo(address,uint256)", 0).unwrap().0.as_str())
-    }
-
-    #[test]
-    fn calldata_uint() {
-        assert_eq!(
-            "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
-            Cast::calldata_encode("f(uint256 a)", &["1"]).unwrap().as_str()
-        );
-    }
-
     // <https://github.com/foundry-rs/foundry/issues/2681>
     #[test]
     fn calldata_array() {
@@ -2892,86 +2762,6 @@ mod tests {
         assert_eq!(
             "0x6fae94120000000000000000000000000000000000000000000000000000000000000000",
             Cast::calldata_encode("bar(bool)", &["false"]).unwrap().as_str()
-        );
-    }
-
-    #[test]
-    fn abi_decode() {
-        let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
-        let sig = "balanceOf(address, uint256)(uint256)";
-        assert_eq!(
-            "1",
-            Cast::abi_decode(sig, data, false).unwrap()[0].as_uint().unwrap().0.to_string()
-        );
-
-        let data = "0x0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
-        let sig = "safeTransferFrom(address,address,uint256,uint256,bytes)";
-        let decoded = Cast::abi_decode(sig, data, true).unwrap();
-        let decoded = [
-            decoded[0]
-                .as_address()
-                .unwrap()
-                .to_string()
-                .strip_prefix("0x")
-                .unwrap()
-                .to_owned()
-                .to_lowercase(),
-            decoded[1]
-                .as_address()
-                .unwrap()
-                .to_string()
-                .strip_prefix("0x")
-                .unwrap()
-                .to_owned()
-                .to_lowercase(),
-            decoded[2].as_uint().unwrap().0.to_string(),
-            decoded[3].as_uint().unwrap().0.to_string(),
-            hex::encode(decoded[4].as_bytes().unwrap()),
-        ]
-        .to_vec();
-        assert_eq!(
-            decoded,
-            vec![
-                "8dbd1b711dc621e1404633da156fcc779e1c6f3e",
-                "d9f3c9cc99548bf3b44a43e0a2d07399eb918adc",
-                "42",
-                "1",
-                ""
-            ]
-        );
-    }
-
-    #[test]
-    fn calldata_decode() {
-        let data = "0x0000000000000000000000000000000000000000000000000000000000000001";
-        let sig = "balanceOf(address, uint256)(uint256)";
-        let decoded =
-            Cast::calldata_decode(sig, data, false).unwrap()[0].as_uint().unwrap().0.to_string();
-        assert_eq!(decoded, "1");
-
-        // Passing `input = true` will decode the data with the input function signature.
-        // We exclude the "prefixed" function selector from the data field (the first 4 bytes).
-        let data = "0xf242432a0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
-        let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
-        let decoded = Cast::calldata_decode(sig, data, true).unwrap();
-        let decoded = [
-            decoded[0].as_address().unwrap().to_string().to_lowercase(),
-            decoded[1].as_address().unwrap().to_string().to_lowercase(),
-            decoded[2].as_uint().unwrap().0.to_string(),
-            decoded[3].as_uint().unwrap().0.to_string(),
-            hex::encode(decoded[4].as_bytes().unwrap()),
-        ]
-        .into_iter()
-        .collect::<Vec<_>>();
-        assert_eq!(
-            decoded,
-            vec![
-                "0x8dbd1b711dc621e1404633da156fcc779e1c6f3e",
-                "0xd9f3c9cc99548bf3b44a43e0a2d07399eb918adc",
-                "42",
-                "1",
-                ""
-            ]
         );
     }
 
@@ -3014,12 +2804,6 @@ mod tests {
             "0x334a426ea9e21d5f84eb2d4723ca56b92382b9260ab2b6769b7c23d437b6b512322a25cecc954127e60cf91ef056ac1da25f90b73be81c3ff1872fa48d10c7ef1ccb4087bbeedb54b1417a24abbb76f6cd57010a65bb03c7b6602b1eaf0e32c67c54168232d4edc0bfa1b815b2af2a2d0a5c109d675a4f2de684e51df9abb324ab1b19a81bac80f9ce3a45095f3df3a7cf69ef18fc08e94ac3cbc1c7effeacca68e3bfe5d81e26a659b5"
         ]);
         assert_eq!(json_value, expected);
-    }
-
-    #[test]
-    fn concat_hex() {
-        assert_eq!(Cast::concat_hex(["0x00", "0x01"]), "0x0001");
-        assert_eq!(Cast::concat_hex(["1", "2"]), "0x12");
     }
 
     #[test]

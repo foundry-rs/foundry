@@ -42,7 +42,7 @@ contract DevdacianRarelyFalse is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/DevdacianRarelyFalse.t.sol:DevdacianRarelyFalse
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkRarelyFalse(uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkRarelyFalse(uint256) ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

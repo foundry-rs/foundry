@@ -1,6 +1,6 @@
 use crate::{
     Cast, SimpleCast,
-    cmd::erc20::IERC20,
+    cmd::{erc20::IERC20, rpc_provider},
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
     tx::CastTxSender,
@@ -8,30 +8,30 @@ use crate::{
 use alloy_consensus::Typed2718;
 use alloy_dyn_abi::{ErrorExt, EventExt};
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
-use alloy_ens::{ProviderEnsExt, namehash};
+use alloy_ens::{NameOrAddress, ProviderEnsExt, namehash};
 use alloy_network::{Ethereum, eip2718::Decodable2718};
-use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
+use alloy_primitives::{Address, B256, Bytes, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
     json::{print_json_object, print_json_value_or_scalar, print_list, print_scalar, print_tokens},
+    opts::RpcOpts,
     utils::{self, LoadConfig},
 };
 use foundry_common::{
     abi::{get_error, get_event},
     fmt::format_uint_exp,
     fs,
-    provider::ProviderBuilder,
+    provider::{ProviderBuilder, RetryProvider},
     selectors::{
         ParsedSignatures, SelectorImportData, SelectorKind, decode_calldata, decode_event_topic,
         decode_function_selector, decode_selectors, import_selectors, parse_signatures,
         pretty_calldata,
     },
     shell, stdin,
-    tempo::{PaymentLaneClassification, classify_payment_lane},
+    tempo::classify_payment_lane,
 };
 use foundry_evm_networks::NetworkVariant;
 use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
@@ -40,6 +40,33 @@ use op_alloy_network::Optimism;
 use std::time::Instant;
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS};
+
+/// Runs `$body` with `$provider` bound to a provider for the selected `--network`.
+///
+/// The fallback arm is used for Ethereum and when no network is selected: either `$default` is a
+/// provider expression that `$body` runs against, or a full `_ => $default` arm.
+macro_rules! with_network_provider {
+    ($network:expr, $config:expr, $default:expr, |$provider:ident| $body:expr) => {
+        with_network_provider!($network, $config, |$provider| $body, _ => {
+            let $provider = $default;
+            $body
+        })
+    };
+    ($network:expr, $config:expr, |$provider:ident| $body:expr, _ => $default:expr) => {
+        match $network {
+            #[cfg(feature = "optimism")]
+            Some(NetworkVariant::Optimism) => {
+                let $provider = ProviderBuilder::<Optimism>::from_config($config)?.build()?;
+                $body
+            }
+            Some(NetworkVariant::Tempo) => {
+                let $provider = ProviderBuilder::<TempoNetwork>::from_config($config)?.build()?;
+                $body
+            }
+            _ => $default,
+        }
+    };
+}
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
@@ -65,64 +92,41 @@ pub fn setup() -> Result<()> {
 pub async fn run_command(args: CastArgs) -> Result<()> {
     match args.cmd {
         // Constants
-        CastSubcommand::MaxInt { r#type } => {
-            let out = SimpleCast::max_int(&r#type)?;
-            print_scalar(out)?;
+        CastSubcommand::MaxInt { r#type } | CastSubcommand::MaxUint { r#type } => {
+            print_scalar(SimpleCast::max_int(&r#type)?)?;
         }
-        CastSubcommand::MinInt { r#type } => {
-            let out = SimpleCast::min_int(&r#type)?;
-            print_scalar(out)?;
-        }
-        CastSubcommand::MaxUint { r#type } => {
-            let out = SimpleCast::max_int(&r#type)?;
-            print_scalar(out)?;
-        }
-        CastSubcommand::AddressZero => {
-            print_scalar(format!("{:?}", Address::ZERO))?;
-        }
-        CastSubcommand::HashZero => {
-            print_scalar(format!("{:?}", B256::ZERO))?;
-        }
+        CastSubcommand::MinInt { r#type } => print_scalar(SimpleCast::min_int(&r#type)?)?,
+        CastSubcommand::AddressZero => print_scalar(format!("{:?}", Address::ZERO))?,
+        CastSubcommand::HashZero => print_scalar(format!("{:?}", B256::ZERO))?,
 
         // Conversions & transformations
         CastSubcommand::FromUtf8 { text } => {
-            let value = stdin::unwrap(text, false)?;
-            let out = SimpleCast::from_utf8(&value);
-            print_scalar(out)?;
+            print_scalar(SimpleCast::from_utf8(&stdin::unwrap(text, false)?))?;
         }
         CastSubcommand::ToAscii { hexdata } => {
-            let value = stdin::unwrap(hexdata, false)?;
-            let out = SimpleCast::to_ascii(value.trim())?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::to_ascii(stdin::unwrap(hexdata, false)?.trim())?)?;
         }
         CastSubcommand::ToUtf8 { hexdata } => {
-            let value = stdin::unwrap(hexdata, false)?;
-            let out = SimpleCast::to_utf8(&value)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::to_utf8(&stdin::unwrap(hexdata, false)?)?)?;
         }
         CastSubcommand::FromFixedPoint { value, decimals } => {
             let (value, decimals) = stdin::unwrap2(value, decimals)?;
-            let out = SimpleCast::from_fixed_point(&value, &decimals)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::from_fixed_point(&value, &decimals)?)?;
         }
         CastSubcommand::ToFixedPoint { value, decimals } => {
             let (value, decimals) = stdin::unwrap2(value, decimals)?;
-            let out = SimpleCast::to_fixed_point(&value, &decimals)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::to_fixed_point(&value, &decimals)?)?;
         }
         CastSubcommand::ConcatHex { data } => {
             let out = if data.is_empty() {
-                let s = stdin::read(true)?;
-                SimpleCast::concat_hex(s.split_whitespace())
+                SimpleCast::concat_hex(stdin::read(true)?.split_whitespace())
             } else {
                 SimpleCast::concat_hex(data)
             };
             print_scalar(out)?;
         }
         CastSubcommand::FromBin => {
-            let hex = stdin::read_bytes(false)?;
-            let out = hex::encode_prefixed(hex);
-            print_scalar(out)?;
+            print_scalar(hex::encode_prefixed(stdin::read_bytes(false)?))?;
         }
         CastSubcommand::ToHexdata { input } => {
             let value = stdin::unwrap_line(input)?;
@@ -134,105 +138,69 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(format!("0x{output}"))?;
         }
         CastSubcommand::ToCheckSumAddress { address, chain_id } => {
-            let value = stdin::unwrap_line(address)?;
-            let out = value.to_checksum(chain_id);
-            print_scalar(out)?;
+            print_scalar(stdin::unwrap_line(address)?.to_checksum(chain_id))?;
         }
         CastSubcommand::ToUint256 { value } => {
-            let value = stdin::unwrap_line(value)?;
-            let out = SimpleCast::to_uint256(&value)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::to_uint256(&stdin::unwrap_line(value)?)?)?;
         }
         CastSubcommand::ToInt256 { value } => {
-            let value = stdin::unwrap_line(value)?;
-            let out = SimpleCast::to_int256(&value)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::to_int256(&stdin::unwrap_line(value)?)?)?;
         }
         CastSubcommand::ToUnit { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            let out = SimpleCast::to_unit(&value, &unit)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::to_unit(&stdin::unwrap_line(value)?, &unit)?)?;
         }
         CastSubcommand::ParseUnits { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            let out = SimpleCast::parse_units(&value, unit)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::parse_units(&stdin::unwrap_line(value)?, unit)?)?;
         }
         CastSubcommand::FormatUnits { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            let out = SimpleCast::format_units(&value, unit)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::format_units(&stdin::unwrap_line(value)?, unit)?)?;
         }
         CastSubcommand::FromWei { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            let out = SimpleCast::from_wei(&value, &unit)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::from_wei(&stdin::unwrap_line(value)?, &unit)?)?;
         }
         CastSubcommand::ToWei { value, unit } => {
-            let value = stdin::unwrap_line(value)?;
-            let out = SimpleCast::to_wei(&value, &unit)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::to_wei(&stdin::unwrap_line(value)?, &unit)?)?;
         }
         CastSubcommand::FromRlp { value, as_int } => {
-            let value = stdin::unwrap_line(value)?;
-            let out = SimpleCast::from_rlp(value, as_int)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::from_rlp(stdin::unwrap_line(value)?, as_int)?)?;
         }
         CastSubcommand::ToRlp { value } => {
-            let value = stdin::unwrap_line(value)?;
-            let out = SimpleCast::to_rlp(&value)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::to_rlp(&stdin::unwrap_line(value)?)?)?;
         }
         CastSubcommand::ToHex(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
-            let out = SimpleCast::to_base(&value, base_in.as_deref(), "hex")?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::to_base(&value, base_in.as_deref(), "hex")?)?;
         }
         CastSubcommand::ToDec(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
-            let out = SimpleCast::to_base(&value, base_in.as_deref(), "dec")?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::to_base(&value, base_in.as_deref(), "dec")?)?;
         }
         CastSubcommand::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
             let (value, base_out) = stdin::unwrap2(value, base_out)?;
-            let out = SimpleCast::to_base(&value, base_in.as_deref(), &base_out)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::to_base(&value, base_in.as_deref(), &base_out)?)?;
         }
         CastSubcommand::ToBytes32 { bytes } => {
-            let value = stdin::unwrap_line(bytes)?;
-            let out = SimpleCast::to_bytes32(&value)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::to_bytes32(&stdin::unwrap_line(bytes)?)?)?;
         }
         CastSubcommand::ToBytesMemory { data } => {
-            let value = stdin::unwrap_line(data)?;
-            let out = SimpleCast::to_bytes_memory(&value)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::to_bytes_memory(&stdin::unwrap_line(data)?)?)?;
         }
         CastSubcommand::Pad { data, right, left: _, len } => {
-            let value = stdin::unwrap_line(data)?;
-            let out = SimpleCast::pad(&value, right, len)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::pad(&stdin::unwrap_line(data)?, right, len)?)?;
         }
         CastSubcommand::FormatBytes32String { string } => {
-            let value = stdin::unwrap_line(string)?;
-            let out = SimpleCast::format_bytes32_string(&value)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::format_bytes32_string(&stdin::unwrap_line(string)?)?)?;
         }
         CastSubcommand::ParseBytes32String { bytes } => {
-            let value = stdin::unwrap_line(bytes)?;
-            let out = SimpleCast::parse_bytes32_string(&value)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::parse_bytes32_string(&stdin::unwrap_line(bytes)?)?)?;
         }
         CastSubcommand::ParseBytes32Address { bytes } => {
-            let value = stdin::unwrap_line(bytes)?;
-            let out = SimpleCast::parse_bytes32_address(&value)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::parse_bytes32_address(&stdin::unwrap_line(bytes)?)?)?;
         }
 
         // ABI encoding & decoding
         CastSubcommand::DecodeAbi { sig, calldata, input } => {
-            let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            print_tokens(&tokens)?;
+            print_tokens(&SimpleCast::abi_decode(&sig, &calldata, input)?)?;
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
             let out = if packed {
@@ -252,14 +220,13 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     topics: Vec<String>,
                     data: String,
                 }
-                let encoded = EncodedEvent {
+                print_json_object(EncodedEvent {
                     topics: log_data.topics().iter().map(|t| t.to_string()).collect(),
                     data: hex::encode_prefixed(&log_data.data),
-                };
-                print_json_object(encoded)?;
+                })?;
             } else {
                 for (i, topic) in log_data.topics().iter().enumerate() {
-                    sh_println!("[topic{}]: {}", i, topic)?;
+                    sh_println!("[topic{i}]: {topic}")?;
                 }
                 if !log_data.data.is_empty() {
                     sh_println!("[data]: {}", hex::encode_prefixed(log_data.data))?;
@@ -267,73 +234,60 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
         }
         CastSubcommand::DecodeCalldata { sig, calldata, file } => {
-            let raw_hex = if let Some(file_path) = file {
-                let contents = fs::read_to_string(&file_path)?;
-                contents.trim().to_string()
-            } else {
-                calldata.unwrap()
+            let raw_hex = match file {
+                Some(file_path) => fs::read_to_string(&file_path)?.trim().to_string(),
+                None => calldata.unwrap(),
             };
-
-            let tokens = SimpleCast::calldata_decode(&sig, &raw_hex, true)?;
-            print_tokens(&tokens)?;
+            print_tokens(&SimpleCast::calldata_decode(&sig, &raw_hex, true)?)?;
         }
         CastSubcommand::CalldataEncode { sig, args, file } => {
-            let final_args = if let Some(file_path) = file {
-                let contents = fs::read_to_string(file_path)?;
-                contents
+            let args = match file {
+                Some(file_path) => fs::read_to_string(file_path)?
                     .lines()
                     .map(str::trim)
                     .filter(|line| !line.is_empty())
                     .map(String::from)
-                    .collect()
-            } else {
-                args
+                    .collect(),
+                None => args,
             };
-            let out = SimpleCast::calldata_encode(sig, &final_args)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::calldata_encode(sig, &args)?)?;
         }
         CastSubcommand::DecodeString { data } => {
-            let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
-            print_tokens(&tokens)?;
+            print_tokens(&SimpleCast::calldata_decode("Any(string)", &data, true)?)?;
         }
         CastSubcommand::DecodeEvent { sig, data } => {
             let decoded_event = if let Some(event_sig) = sig {
-                let event = get_event(event_sig.as_str())?;
+                let event = get_event(&event_sig)?;
                 event.decode_log_parts(core::iter::once(event.selector()), &hex::decode(data)?)?
             } else {
                 let data = crate::strip_0x(&data);
-                let selector = data.get(..64).unwrap_or_default();
-                let selector = selector.parse()?;
-                let identified_event =
-                    SignaturesIdentifier::new(false)?.identify_event(selector).await;
-                if let Some(event) = identified_event {
-                    let _ = sh_println!("{}", event.signature());
-                    let data = data.get(64..).unwrap_or_default();
-                    get_event(event.signature().as_str())?
-                        .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
-                } else {
+                let selector: B256 = data.get(..64).unwrap_or_default().parse()?;
+                let Some(event) = SignaturesIdentifier::new(false)?.identify_event(selector).await
+                else {
                     eyre::bail!("No matching event signature found for selector `{selector}`");
-                }
+                };
+                let _ = sh_println!("{}", event.signature());
+                let data = data.get(64..).unwrap_or_default();
+                get_event(&event.signature())?
+                    .decode_log_parts(core::iter::once(selector), &hex::decode(data)?)?
             };
             print_tokens(&decoded_event.body)?;
         }
         CastSubcommand::DecodeError { sig, data } => {
             let error = if let Some(err_sig) = sig {
-                get_error(err_sig.as_str())?
+                get_error(&err_sig)?
             } else {
                 let data = crate::strip_0x(&data);
                 let selector = data.get(..8).unwrap_or_default();
-                let identified_error =
-                    SignaturesIdentifier::new(false)?.identify_error(selector.parse()?).await;
-                if let Some(error) = identified_error {
-                    let _ = sh_println!("{}", error.signature());
-                    error
-                } else {
+                let Some(error) =
+                    SignaturesIdentifier::new(false)?.identify_error(selector.parse()?).await
+                else {
                     eyre::bail!("No matching error signature found for selector `{selector}`");
-                }
+                };
+                let _ = sh_println!("{}", error.signature());
+                error
             };
-            let decoded_error = error.decode_error(&hex::decode(data)?)?;
-            print_tokens(&decoded_error.body)?;
+            print_tokens(&error.decode_error(&hex::decode(data)?)?.body)?;
         }
         CastSubcommand::Interface(cmd) => cmd.run().await?,
         CastSubcommand::CreationCode(cmd) => cmd.run().await?,
@@ -343,8 +297,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::B2EPayload(cmd) => cmd.run().await?,
         CastSubcommand::PrettyCalldata { calldata, offline } => {
             let calldata = stdin::unwrap_line(calldata)?;
-            let out = pretty_calldata(&calldata, offline).await?.to_string();
-            print_scalar(out)?;
+            print_scalar(pretty_calldata(&calldata, offline).await?.to_string())?;
         }
         // JSON: --optimize conflicts with --json at the clap level; optimize=None uses print_scalar
         CastSubcommand::Sig { sig, optimize } => {
@@ -358,39 +311,28 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     sh_println!("Selector: {selector}")?;
                     sh_println!("Optimized signature: {signature}")?;
                 }
-                None => {
-                    let out = SimpleCast::get_selector(&sig, 0)?.0;
-                    print_scalar(out)?;
-                }
+                None => print_scalar(SimpleCast::get_selector(&sig, 0)?.0)?,
             }
         }
 
         // Blockchain & RPC queries
         CastSubcommand::AccessList(cmd) => cmd.run().await?,
         CastSubcommand::Age { block, rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let out = format!(
-                "{} UTC",
-                Cast::new(provider).age(block.unwrap_or(BlockId::Number(Latest))).await?
-            );
-            print_scalar(out)?;
+            let age = Cast::new(rpc_provider(&rpc)?).age(block.unwrap_or_default()).await?;
+            print_scalar(format!("{age} UTC"))?;
         }
         CastSubcommand::Balance { block, who, ether, rpc, erc20, overrides } => {
             if erc20.is_none() && !overrides.is_empty() {
                 eyre::bail!("call overrides require `--erc20` when using `cast balance`");
             }
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let account_addr = who.resolve(&provider).await?;
+            let (provider, account_addr) = rpc_provider_and_address(&rpc, who).await?;
 
             match erc20 {
                 Some(token) => {
                     let token = IERC20::new(token, &provider);
                     let balance_call =
                         token.balanceOf(account_addr).block(block.unwrap_or_default());
-                    let call = balance_call.call();
-                    let balance = overrides.apply(call)?.await?;
+                    let balance = overrides.apply(balance_call.call())?.await?;
 
                     sh_warn!("--erc20 flag is deprecated, use `cast erc20 balance` instead")?;
                     print_scalar(format_uint_exp(balance))?;
@@ -407,56 +349,27 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
         }
         CastSubcommand::BaseFee { block, rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let out = Cast::new(provider)
-                .base_fee(block.unwrap_or(BlockId::Number(Latest)))
-                .await?
-                .to_string();
-            print_scalar(out)?;
+            let fee = Cast::new(rpc_provider(&rpc)?).base_fee(block.unwrap_or_default()).await?;
+            print_scalar(fee.to_string())?;
         }
         CastSubcommand::Block { block, full, fields, raw, rpc, network } => {
             let config = rpc.load_config()?;
+            let block = block.unwrap_or_default();
             // Can use either --raw or specify raw as a field
-            let is_raw_block = raw || fields.contains(&"raw".into());
-            let output = if is_raw_block {
-                match network {
-                    #[cfg(feature = "optimism")]
-                    Some(NetworkVariant::Optimism) => {
-                        let provider =
-                            ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
-
-                        Cast::new(&provider)
-                            .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
-                            .await?
-                    }
-                    Some(NetworkVariant::Tempo) => {
-                        let provider =
-                            ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-                        Cast::new(&provider)
-                            .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
-                            .await?
-                    }
-                    // Ethereum (default) or no --raw flag
-                    _ => {
-                        let provider =
-                            ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
-                        Cast::new(&provider)
-                            .block_raw(block.unwrap_or(BlockId::Number(Latest)), full)
-                            .await?
-                    }
-                }
+            let output = if raw || fields.contains(&"raw".into()) {
+                with_network_provider!(
+                    network,
+                    &config,
+                    ProviderBuilder::<Ethereum>::from_config(&config)?.build()?,
+                    |provider| Cast::new(&provider).block_raw(block, full).await?
+                )
             } else {
-                let provider = utils::get_provider(&config)?;
-                Cast::new(provider)
-                    .block(block.unwrap_or(BlockId::Number(Latest)), full, fields)
-                    .await?
+                Cast::new(utils::get_provider(&config)?).block(block, full, fields).await?
             };
             print_json_value_or_scalar(output)?;
         }
         CastSubcommand::BlockNumber { rpc, block } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
+            let provider = rpc_provider(&rpc)?;
             let number = match block {
                 Some(id) => {
                     provider
@@ -471,59 +384,38 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(number)?;
         }
         CastSubcommand::Chain { rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let out = Cast::new(provider).chain().await?.to_string();
-            print_scalar(out)?;
+            print_scalar(Cast::new(rpc_provider(&rpc)?).chain().await?.to_string())?;
         }
         CastSubcommand::ChainId { rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let out = Cast::new(provider).chain_id().await?.to_string();
-            print_scalar(out)?;
+            print_scalar(Cast::new(rpc_provider(&rpc)?).chain_id().await?.to_string())?;
         }
         CastSubcommand::Client { rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let out = provider.get_client_version().await?;
-            print_scalar(out)?;
+            print_scalar(rpc_provider(&rpc)?.get_client_version().await?)?;
         }
         CastSubcommand::Code { block, who, disassemble, rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let who = who.resolve(&provider).await?;
-            let out = Cast::new(provider).code(who, block, disassemble).await?;
-            print_scalar(out)?;
+            let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
+            print_scalar(Cast::new(provider).code(who, block, disassemble).await?)?;
         }
         CastSubcommand::Codesize { block, who, rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let who = who.resolve(&provider).await?;
-            let out = Cast::new(provider).codesize(who, block).await?;
-            print_scalar(out)?;
+            let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
+            print_scalar(Cast::new(provider).codesize(who, block).await?)?;
         }
         CastSubcommand::ComputeAddress { address, nonce, salt, init_code, init_code_hash, rpc } => {
             let address = stdin::unwrap_line(address)?;
-            let computed = {
-                // For CREATE2, init_code_hash is needed to compute the address
-                if let Some(init_code_hash) = init_code_hash {
-                    address.create2(salt.unwrap_or(B256::ZERO), init_code_hash)
-                } else if let Some(init_code) = init_code {
-                    address.create2(salt.unwrap_or(B256::ZERO), keccak256(hex::decode(init_code)?))
-                } else {
-                    // For CREATE, rpc is needed to compute the address
-                    let config = rpc.load_config()?;
-                    let provider = utils::get_provider(&config)?;
-                    Cast::new(provider).compute_address(address, nonce).await?
-                }
+            let salt = salt.unwrap_or(B256::ZERO);
+            let computed = if let Some(init_code_hash) = init_code_hash {
+                address.create2(salt, init_code_hash)
+            } else if let Some(init_code) = init_code {
+                address.create2(salt, keccak256(hex::decode(init_code)?))
+            } else {
+                // CREATE addresses depend on the deployer nonce, which is fetched over RPC.
+                Cast::new(rpc_provider(&rpc)?).compute_address(address, nonce).await?
             };
-            let addr = computed.to_checksum(None);
-            print_scalar(addr)?;
+            print_scalar(computed.to_checksum(None))?;
         }
         CastSubcommand::Disassemble { bytecode } => {
             let bytecode = stdin::unwrap_line(bytecode)?;
-            let out = SimpleCast::disassemble(&hex::decode(bytecode)?)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::disassemble(&hex::decode(bytecode)?)?)?;
         }
         CastSubcommand::Selectors { bytecode, resolve } => {
             let bytecode = stdin::unwrap_line(bytecode)?;
@@ -549,7 +441,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     #[serde(skip_serializing_if = "Option::is_none")]
                     resolved: Option<String>,
                 }
-                let infos: Vec<SelectorInfo> = functions
+                let infos = functions
                     .into_iter()
                     .enumerate()
                     .map(|(pos, (selector, arguments, state_mutability))| SelectorInfo {
@@ -558,7 +450,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                         state_mutability: state_mutability.to_string(),
                         resolved: resolve_results.get(pos).cloned(),
                     })
-                    .collect();
+                    .collect::<Vec<_>>();
                 print_json_object(infos)?;
             } else {
                 let max_args_len = functions.iter().map(|r| r.1.len()).max().unwrap_or(0);
@@ -579,55 +471,35 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::FindBlock(cmd) => cmd.run().await?,
         CastSubcommand::GasPrice { rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let out = Cast::new(provider).gas_price().await?.to_string();
-            print_scalar(out)?;
+            print_scalar(Cast::new(rpc_provider(&rpc)?).gas_price().await?.to_string())?;
         }
         CastSubcommand::Index { key_type, key, slot_number } => {
-            let out = SimpleCast::index(&key_type, &key, &slot_number)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::index(&key_type, &key, &slot_number)?)?;
         }
         CastSubcommand::IndexErc7201 { id, formula_id } => {
             eyre::ensure!(formula_id == "erc7201", "unsupported formula ID: {formula_id}");
             let id = stdin::unwrap_line(id)?;
-            let out = foundry_common::erc7201(&id).to_string();
-            print_scalar(out)?;
+            print_scalar(foundry_common::erc7201(&id).to_string())?;
         }
         CastSubcommand::Implementation { block, beacon, who, rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let who = who.resolve(&provider).await?;
-            let out = Cast::new(provider).implementation(who, beacon, block).await?;
-            print_scalar(out)?;
+            let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
+            print_scalar(Cast::new(provider).implementation(who, beacon, block).await?)?;
         }
         CastSubcommand::Admin { block, who, rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let who = who.resolve(&provider).await?;
-            let out = Cast::new(provider).admin(who, block).await?;
-            print_scalar(out)?;
+            let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
+            print_scalar(Cast::new(provider).admin(who, block).await?)?;
         }
         CastSubcommand::Nonce { block, who, rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let who = who.resolve(&provider).await?;
-            let out = Cast::new(provider).nonce(who, block).await?;
-            print_scalar(out)?;
+            let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
+            print_scalar(Cast::new(provider).nonce(who, block).await?)?;
         }
         CastSubcommand::Codehash { block, who, slots, rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let who = who.resolve(&provider).await?;
-            let out = Cast::new(provider).codehash(who, slots, block).await?;
-            print_scalar(out)?;
+            let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
+            print_scalar(Cast::new(provider).codehash(who, slots, block).await?)?;
         }
         CastSubcommand::StorageRoot { block, who, slots, rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let who = who.resolve(&provider).await?;
-            let out = Cast::new(provider).storage_root(who, slots, block).await?;
-            print_scalar(out)?;
+            let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
+            print_scalar(Cast::new(provider).storage_root(who, slots, block).await?)?;
         }
         CastSubcommand::ChannelId {
             payer,
@@ -641,23 +513,13 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             block,
             rpc,
         } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
+            let provider = rpc_provider(&rpc)?;
             let payer = payer.resolve(&provider).await?;
             let payee = payee.resolve(&provider).await?;
             let token = token.resolve(&provider).await?;
-            let operator = match operator {
-                Some(operator) => operator.resolve(&provider).await?,
-                None => Address::ZERO,
-            };
-            let authorized_signer = match authorized_signer {
-                Some(authorized_signer) => authorized_signer.resolve(&provider).await?,
-                None => Address::ZERO,
-            };
-            let reserve = match reserve {
-                Some(reserve) => reserve.resolve(&provider).await?,
-                None => TIP20_CHANNEL_RESERVE_ADDRESS,
-            };
+            let operator = resolve_or(operator, Address::ZERO, &provider).await?;
+            let authorized_signer = resolve_or(authorized_signer, Address::ZERO, &provider).await?;
+            let reserve = resolve_or(reserve, TIP20_CHANNEL_RESERVE_ADDRESS, &provider).await?;
 
             let channel_id = ITIP20ChannelReserve::new(reserve, &provider)
                 .computeChannelId(
@@ -675,13 +537,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(format!("{channel_id:#x}"))?;
         }
         CastSubcommand::Proof { address, slots, rpc, block } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let address = address.resolve(&provider).await?;
-            let value = provider
-                .get_proof(address, slots.into_iter().collect())
-                .block_id(block.unwrap_or_default())
-                .await?;
+            let (provider, address) = rpc_provider_and_address(&rpc, address).await?;
+            let value =
+                provider.get_proof(address, slots).block_id(block.unwrap_or_default()).await?;
             print_json_object(value)?;
         }
         CastSubcommand::Rpc(cmd) => cmd.run().await?,
@@ -692,26 +550,19 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Estimate(cmd) => cmd.run().await?,
         CastSubcommand::MakeTx(cmd) => cmd.run().await?,
         CastSubcommand::PublishTx { raw_tx, cast_async, rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-            let cast = Cast::new(&provider);
-            let pending_tx = cast.publish(raw_tx).await?;
-            let tx_hash = pending_tx.inner().tx_hash();
-
+            let provider = rpc_provider(&rpc)?;
+            let pending_tx = Cast::new(&provider).publish(raw_tx).await?;
             if cast_async {
-                print_scalar(format!("{tx_hash:#x}"))?;
+                print_scalar(format!("{:#x}", pending_tx.inner().tx_hash()))?;
             } else {
-                let receipt = pending_tx.get_receipt().await?;
-                print_json_object(receipt)?;
+                print_json_object(pending_tx.get_receipt().await?)?;
             }
         }
         CastSubcommand::Receipt { tx_hash, field, cast_async, confirmations, rpc } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
             // JSON: Output is already formatted by `Cast::format_receipt()`
             sh_println!(
                 "{}",
-                CastTxSender::new(provider)
+                CastTxSender::new(rpc_provider(&rpc)?)
                     .receipt(tx_hash, field, confirmations, None, cast_async)
                     .await?
             )?
@@ -721,30 +572,23 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::BatchMakeTx(cmd) => cmd.run().await?,
         CastSubcommand::BatchSend(cmd) => cmd.run().await?,
         CastSubcommand::Classify { raw_tx } => {
-            let raw_tx = stdin::unwrap_line(raw_tx)?;
-            print_json_value_or_scalar(classify_raw_transaction_output(&raw_tx)?)?
+            let raw_tx = hex::decode(stdin::unwrap_line(raw_tx)?)?;
+            let out = format_lane_classification(&raw_tx, "failed to decode raw transaction")?;
+            print_json_value_or_scalar(out)?
         }
         CastSubcommand::Tx { tx_hash, from, nonce, field, raw, lane, rpc, to_request, network } => {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
-            let is_raw = raw || field.as_ref().is_some_and(|f| f == "raw");
+            let is_raw = raw || field.as_deref() == Some("raw");
             let output = if is_raw || lane {
-                let encoded = match network {
-                    #[cfg(feature = "optimism")]
-                    Some(NetworkVariant::Optimism) => {
-                        let provider =
-                            ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
+                let encoded: Bytes = with_network_provider!(
+                    network,
+                    &config,
+                    |provider| {
                         let tx =
                             Cast::new(&provider).transaction_response(tx_hash, from, nonce).await?;
                         tx.as_ref().encoded_2718().into()
-                    }
-                    Some(NetworkVariant::Tempo) => {
-                        let provider =
-                            ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-                        let tx =
-                            Cast::new(&provider).transaction_response(tx_hash, from, nonce).await?;
-                        tx.as_ref().encoded_2718().into()
-                    }
+                    },
                     _ => {
                         let provider = utils::get_provider(&config)?;
                         let tx =
@@ -753,41 +597,26 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                             format!("Cannot EIP-2718 encode transaction type 0x{:x}", tx.ty())
                         })?
                     }
-                };
-
+                );
                 if lane {
-                    FoundryTxEnvelope::decode_2718(&mut encoded.as_ref())
-                        .wrap_err("failed to decode transaction for lane classification")?;
-                    format_lane_classification(&classify_payment_lane(&encoded))?
+                    format_lane_classification(
+                        &encoded,
+                        "failed to decode transaction for lane classification",
+                    )?
                 } else {
-                    format!("0x{}", hex::encode(encoded))
+                    hex::encode_prefixed(encoded)
                 }
             } else {
-                match network {
-                    #[cfg(feature = "optimism")]
-                    Some(NetworkVariant::Optimism) => {
-                        let provider =
-                            ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
-
+                with_network_provider!(
+                    network,
+                    &config,
+                    utils::get_provider(&config)?,
+                    |provider| {
                         Cast::new(&provider)
-                            .transaction(tx_hash, from, nonce, field, false, to_request, false)
+                            .transaction(tx_hash, from, nonce, field, false, to_request)
                             .await?
                     }
-                    Some(NetworkVariant::Tempo) => {
-                        let provider =
-                            ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-                        Cast::new(&provider)
-                            .transaction(tx_hash, from, nonce, field, false, to_request, false)
-                            .await?
-                    }
-                    // Ethereum (default) or no --raw flag
-                    _ => {
-                        let provider = utils::get_provider(&config)?;
-                        Cast::new(&provider)
-                            .transaction(tx_hash, from, nonce, field, false, to_request, false)
-                            .await?
-                    }
-                }
+                )
             };
             print_json_value_or_scalar(output)?;
         }
@@ -819,23 +648,20 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
 
             let sigs = decode_calldata(&calldata).await?;
-            sigs.iter().enumerate().for_each(|(i, sig)| {
+            for (i, sig) in sigs.iter().enumerate() {
                 let _ = sh_println!("{}) \"{sig}\"", i + 1);
-            });
+            }
 
             let sig = match sigs.len() {
-                0 => {
-                    eyre::bail!("No signatures found");
-                }
-                1 => sigs.first().unwrap(),
+                0 => eyre::bail!("No signatures found"),
+                1 => &sigs[0],
                 _ => {
                     let i: usize = prompt!("Select a function signature by number: ")?;
                     sigs.get(i - 1).ok_or_else(|| eyre::eyre!("Invalid signature index"))?
                 }
             };
 
-            let tokens = SimpleCast::calldata_decode(sig, &calldata, true)?;
-            print_tokens(&tokens)?;
+            print_tokens(&SimpleCast::calldata_decode(sig, &calldata, true)?)?;
         }
 
         CastSubcommand::FourByteEvent { topic } => {
@@ -861,14 +687,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 
         // ENS
         CastSubcommand::Namehash { name } => {
-            let name = stdin::unwrap_line(name)?;
-            let out = namehash(&name).to_string();
-            print_scalar(out)?;
+            print_scalar(namehash(&stdin::unwrap_line(name)?).to_string())?;
         }
         CastSubcommand::LookupAddress { who, rpc, verify } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-
+            let provider = rpc_provider(&rpc)?;
             let who = stdin::unwrap_line(who)?;
             let name = provider.lookup_address(&who).await?;
             if verify {
@@ -881,9 +703,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(name)?;
         }
         CastSubcommand::ResolveName { who, rpc, verify } => {
-            let config = rpc.load_config()?;
-            let provider = utils::get_provider(&config)?;
-
+            let provider = rpc_provider(&rpc)?;
             let who = stdin::unwrap_line(who)?;
             let address = provider
                 .resolve_name(&who)
@@ -907,27 +727,22 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             };
             let out = match String::from_utf8(bytes) {
                 Ok(s) => SimpleCast::keccak(&s)?,
-                Err(e) => format!("0x{}", hex::encode(keccak256(e.as_bytes()))),
+                Err(e) => hex::encode_prefixed(keccak256(e.as_bytes())),
             };
             print_scalar(out)?;
         }
         CastSubcommand::HashMessage { message } => {
-            let message = stdin::unwrap(message, false)?;
-            let out = eip191_hash_message(message).to_string();
-            print_scalar(out)?;
+            print_scalar(eip191_hash_message(stdin::unwrap(message, false)?).to_string())?;
         }
         CastSubcommand::SigEvent { event_string } => {
-            let event_string = stdin::unwrap_line(event_string)?;
-            let parsed_event = get_event(&event_string)?;
-            print_scalar(format!("{:?}", parsed_event.selector()))?;
+            let event = get_event(&stdin::unwrap_line(event_string)?)?;
+            print_scalar(format!("{:?}", event.selector()))?;
         }
         CastSubcommand::LeftShift { value, bits, base_in, base_out } => {
-            let out = SimpleCast::left_shift(&value, &bits, base_in.as_deref(), &base_out)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::left_shift(&value, &bits, base_in.as_deref(), &base_out)?)?;
         }
         CastSubcommand::RightShift { value, bits, base_in, base_out } => {
-            let out = SimpleCast::right_shift(&value, &bits, base_in.as_deref(), &base_out)?;
-            print_scalar(out)?;
+            print_scalar(SimpleCast::right_shift(&value, &bits, base_in.as_deref(), &base_out)?)?;
         }
         // TODO(json): multi-line source code or directory expansion, needs structured envelope
         CastSubcommand::Source {
@@ -977,9 +792,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 }
             }
         }
-        CastSubcommand::Create2(cmd) => {
-            cmd.execute()?;
-        }
+        CastSubcommand::Create2(cmd) => cmd.execute()?,
         CastSubcommand::Wallet { command } => command.run().await?,
         CastSubcommand::Safe { command } => command.run().await?,
         CastSubcommand::Completions { shell } => {
@@ -1011,8 +824,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::RecoverAuthority { auth } => {
             let auth: SignedAuthorization = serde_json::from_str(&auth)?;
-            let out = auth.recover_authority()?.to_string();
-            print_scalar(out)?;
+            print_scalar(auth.recover_authority()?.to_string())?;
         }
         CastSubcommand::TxPool { command } => command.run().await?,
         CastSubcommand::Erc20Token { command } => command.run().await?,
@@ -1026,28 +838,43 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Tempo { command } => command.run().await?,
         CastSubcommand::VirtualAddress { command } => command.run().await?,
         #[cfg(feature = "optimism")]
-        CastSubcommand::DAEstimate(cmd) => {
-            cmd.run().await?;
-        }
+        CastSubcommand::DAEstimate(cmd) => cmd.run().await?,
         CastSubcommand::Trace(cmd) => cmd.run().await?,
     };
 
     Ok(())
 }
 
-pub(crate) fn classify_raw_transaction_output(raw_tx: &str) -> Result<String> {
-    let raw_tx = hex::decode(raw_tx)?;
-    let mut data = raw_tx.as_slice();
-    FoundryTxEnvelope::decode_2718(&mut data).wrap_err("failed to decode raw transaction")?;
-    format_lane_classification(&classify_payment_lane(&raw_tx))
+/// Builds the default provider for `rpc` and resolves `who` against it.
+async fn rpc_provider_and_address(
+    rpc: &RpcOpts,
+    who: NameOrAddress,
+) -> Result<(RetryProvider, Address)> {
+    let provider = rpc_provider(rpc)?;
+    let who = who.resolve(&provider).await?;
+    Ok((provider, who))
 }
 
-pub(crate) fn format_lane_classification(
-    classification: &PaymentLaneClassification,
-) -> Result<String> {
+/// Resolves `who` when given, otherwise returns `default`.
+async fn resolve_or(
+    who: Option<NameOrAddress>,
+    default: Address,
+    provider: &RetryProvider,
+) -> Result<Address> {
+    Ok(match who {
+        Some(who) => who.resolve(provider).await?,
+        None => default,
+    })
+}
+
+/// Validates that `encoded` is a supported EIP-2718 transaction and renders its Tempo T5 payment
+/// lane classification.
+fn format_lane_classification(encoded: &[u8], decode_context: &'static str) -> Result<String> {
+    FoundryTxEnvelope::decode_2718(&mut &encoded[..]).wrap_err(decode_context)?;
+    let classification = classify_payment_lane(encoded);
     if shell::is_json() {
-        Ok(serde_json::to_string_pretty(classification)?)
+        Ok(serde_json::to_string_pretty(&classification)?)
     } else {
-        Ok(serde_json::to_string(classification)?)
+        Ok(serde_json::to_string(&classification)?)
     }
 }

@@ -1,14 +1,25 @@
 //! general eth api tests
 
-use alloy_consensus::constants::EMPTY_WITHDRAWALS;
+use alloy_consensus::{Header, constants::EMPTY_WITHDRAWALS};
 
 use alloy_eips::{
+    eip2935::HISTORY_STORAGE_ADDRESS,
+    eip4788::BEACON_ROOTS_ADDRESS,
     eip6110::DEPOSIT_REQUEST_TYPE,
     eip7002::{WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, WITHDRAWAL_REQUEST_TYPE},
     eip7251::{CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, CONSOLIDATION_REQUEST_TYPE},
     eip7685::{EMPTY_REQUESTS_HASH, Requests},
+    eip7928::{
+        AccountChanges, BlockAccessIndex, NonceChange, SlotChanges, StorageChange,
+        compute_block_access_list_hash,
+    },
 };
-use alloy_evm::precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap};
+use alloy_evm::{
+    block::system_calls::{
+        BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS, BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS,
+    },
+    precompiles::{DynPrecompile, PrecompileInput, PrecompilesMap},
+};
 use alloy_genesis::Genesis;
 use alloy_primitives::{Address, B256, Bloom, Bytes, Log, TxKind, U256, address};
 use alloy_provider::Provider;
@@ -60,6 +71,101 @@ fn deposit_event_runtime(event: DepositEvent) -> Bytes {
     code.extend([0x5f, 0xa1, 0x00]);
     code.extend(data);
     code.into()
+}
+
+/// Checks BAL contents and indices for pre-block, transaction, and post-block execution.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_simulate_block_access_list_hash_rpc() {
+    let from = Address::with_last_byte(0x41);
+    let contract = Address::with_last_byte(0x42);
+    let beneficiary = Address::with_last_byte(0x43);
+    let system_contracts = [
+        HISTORY_STORAGE_ADDRESS,
+        BEACON_ROOTS_ADDRESS,
+        WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+        CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+        BUILDER_DEPOSIT_REQUEST_PREDEPLOY_ADDRESS,
+        BUILDER_EXIT_REQUEST_PREDEPLOY_ADDRESS,
+    ];
+    let mut overrides = serde_json::Map::new();
+    for address in system_contracts {
+        overrides.insert(address.to_string(), json!({"code": "0x", "state": {}}));
+    }
+    // Deterministic system writes expose the pre/post-block access indices in the BAL hash.
+    for address in [HISTORY_STORAGE_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS] {
+        overrides.insert(address.to_string(), json!({"code": "0x602a5f5500", "state": {}}));
+    }
+    overrides.insert(from.to_string(), json!({"nonce": "0x0"}));
+    overrides.insert(contract.to_string(), json!({"code": "0x5f5450602a60015500", "state": {}}));
+    let block = json!({
+        "stateOverrides": overrides,
+        "blockOverrides": {"feeRecipient": beneficiary},
+        "calls": [{"from": from, "to": contract}]
+    });
+    let mut expected = system_contracts.map(AccountChanges::new).to_vec();
+    for (address, index) in
+        [(HISTORY_STORAGE_ADDRESS, 0), (WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS, 2)]
+    {
+        expected.iter_mut().find(|account| account.address == address).unwrap().storage_changes =
+            vec![SlotChanges::new(
+                U256::ZERO,
+                vec![StorageChange::new(BlockAccessIndex::new(index), U256::from(42))],
+            )];
+    }
+    expected.push(AccountChanges {
+        nonce_changes: vec![NonceChange::new(BlockAccessIndex::new(1), 1)],
+        ..AccountChanges::new(from)
+    });
+    expected.push(AccountChanges {
+        storage_reads: vec![U256::ZERO],
+        storage_changes: vec![SlotChanges::new(
+            U256::from(1),
+            vec![StorageChange::new(BlockAccessIndex::new(1), U256::from(42))],
+        )],
+        ..AccountChanges::new(contract)
+    });
+    expected.push(AccountChanges::new(beneficiary));
+    expected.sort_by_key(|account| account.address);
+    let expected_hash = compute_block_access_list_hash(&expected);
+
+    for hardfork in [EthereumHardfork::Osaka, EthereumHardfork::Amsterdam] {
+        let (_api, handle) =
+            spawn(NodeConfig::test().with_hardfork(Some(hardfork.into())).with_base_fee(Some(0)))
+                .await;
+        for trace_transfers in [false, true] {
+            let response = rpc_request(
+                &handle.http_endpoint(),
+                "eth_simulateV1",
+                json!([{
+                    "blockStateCalls": [block.clone(), block.clone(), {}],
+                    "traceTransfers": trace_transfers,
+                    "returnFullTransactions": true
+                }, "latest"]),
+            )
+            .await;
+            assert!(response.get("error").is_none(), "{response}");
+            let blocks = response["result"].as_array().unwrap();
+            assert_eq!(blocks.len(), 3);
+            for block in &blocks[..2] {
+                assert_eq!(block["calls"][0]["status"], "0x1");
+                if hardfork == EthereumHardfork::Amsterdam {
+                    assert_eq!(block["blockAccessListHash"], json!(expected_hash));
+                } else {
+                    assert!(block.get("blockAccessListHash").is_none());
+                }
+                let header = serde_json::from_value::<Header>(block.clone()).unwrap();
+                assert_eq!(block["hash"], json!(header.hash_slow()));
+                assert_eq!(block["transactions"][0]["blockHash"], block["hash"]);
+            }
+            if hardfork == EthereumHardfork::Amsterdam {
+                assert!(blocks[2]["blockAccessListHash"].is_string());
+                assert_ne!(blocks[2]["blockAccessListHash"], json!(expected_hash));
+            }
+            for pair in blocks.windows(2) {
+                assert_eq!(pair[1]["parentHash"], pair[0]["hash"]);
+            }
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -251,32 +357,42 @@ async fn test_simulate_v1_preserves_precompile_warming_rpc() {
         &destination[2..],
     );
 
-    let response = rpc_request(
-        &handle.http_endpoint(),
-        "eth_simulateV1",
-        json!([{"blockStateCalls": [{
-            "stateOverrides": {
-                source: {"movePrecompileToAddress": destination},
-                helper: {"code": helper_code}
-            },
-            "calls": [{"to": helper}]
-        }]}, "latest"]),
-    )
-    .await;
-    assert!(response.get("error").is_none(), "{response}");
+    // A zero-priced blob call uses the simulation handler; an ordinary call uses transact.
+    for call in [
+        json!({"to": helper}),
+        json!({
+            "to": helper,
+            "blobVersionedHashes": [format!("0x01{}", "00".repeat(31))],
+            "maxFeePerBlobGas": "0x0"
+        }),
+    ] {
+        let response = rpc_request(
+            &handle.http_endpoint(),
+            "eth_simulateV1",
+            json!([{"blockStateCalls": [{
+                "stateOverrides": {
+                    source: {"movePrecompileToAddress": destination},
+                    helper: {"code": helper_code}
+                },
+                "calls": [call]
+            }]}, "latest"]),
+        )
+        .await;
+        assert!(response.get("error").is_none(), "{response}");
 
-    let return_data = response["result"][0]["calls"][0]["returnData"].as_str().unwrap();
-    let return_data = alloy_primitives::hex::decode(&return_data[2..]).unwrap();
-    let access_costs = return_data
-        .as_chunks::<32>()
-        .0
-        .iter()
-        .copied()
-        .map(U256::from_be_bytes)
-        .collect::<Vec<_>>();
+        let return_data = response["result"][0]["calls"][0]["returnData"].as_str().unwrap();
+        let return_data = alloy_primitives::hex::decode(&return_data[2..]).unwrap();
+        let access_costs = return_data
+            .as_chunks::<32>()
+            .0
+            .iter()
+            .copied()
+            .map(U256::from_be_bytes)
+            .collect::<Vec<_>>();
 
-    // The measured delta includes PUSH20, POP, and the second GAS opcode (7 gas total).
-    assert_eq!(access_costs, [U256::from(107), U256::from(2_607), U256::from(107)]);
+        // The measured delta includes PUSH20, POP, and the second GAS opcode (7 gas total).
+        assert_eq!(access_costs, [U256::from(107), U256::from(2_607), U256::from(107)]);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

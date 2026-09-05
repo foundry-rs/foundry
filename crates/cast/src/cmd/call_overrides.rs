@@ -57,13 +57,15 @@ pub struct CallOverrideOpts {
 impl CallOverrideOpts {
     /// Returns true when no state or block override was provided.
     pub const fn is_empty(&self) -> bool {
-        self.balance_overrides.is_none()
-            && self.nonce_overrides.is_none()
-            && self.code_overrides.is_none()
-            && self.state_overrides.is_none()
-            && self.state_diff_overrides.is_none()
-            && self.block_time.is_none()
-            && self.block_number.is_none()
+        !self.has_state_overrides() && self.block_time.is_none() && self.block_number.is_none()
+    }
+
+    const fn has_state_overrides(&self) -> bool {
+        self.balance_overrides.is_some()
+            || self.nonce_overrides.is_some()
+            || self.code_overrides.is_some()
+            || self.state_overrides.is_some()
+            || self.state_diff_overrides.is_some()
     }
 
     /// Applies the configured overrides to an `eth_call`.
@@ -84,61 +86,27 @@ impl CallOverrideOpts {
     /// Parses state overrides from command line arguments.
     pub fn get_state_overrides(&self) -> Result<Option<StateOverride>> {
         // Early return if no override set - <https://github.com/foundry-rs/foundry/issues/10705>.
-        if [
-            self.balance_overrides.as_ref(),
-            self.nonce_overrides.as_ref(),
-            self.code_overrides.as_ref(),
-            self.state_overrides.as_ref(),
-            self.state_diff_overrides.as_ref(),
-        ]
-        .iter()
-        .all(Option::is_none)
-        {
+        if !self.has_state_overrides() {
             return Ok(None);
         }
 
-        let mut state_overrides_builder = StateOverridesBuilder::default();
-
-        for override_str in self.balance_overrides.iter().flatten() {
-            let (addr, balance) = address_value_override(override_str)?;
-            state_overrides_builder =
-                state_overrides_builder.with_balance(addr.parse()?, balance.parse()?);
+        let mut builder = StateOverridesBuilder::default();
+        for (addr, balance) in address_value_overrides(&self.balance_overrides)? {
+            builder = builder.with_balance(addr.parse()?, balance.parse()?);
         }
-
-        for override_str in self.nonce_overrides.iter().flatten() {
-            let (addr, nonce) = address_value_override(override_str)?;
-            state_overrides_builder =
-                state_overrides_builder.with_nonce(addr.parse()?, nonce.parse()?);
+        for (addr, nonce) in address_value_overrides(&self.nonce_overrides)? {
+            builder = builder.with_nonce(addr.parse()?, nonce.parse()?);
         }
-
-        for override_str in self.code_overrides.iter().flatten() {
-            let (addr, code_str) = address_value_override(override_str)?;
-            state_overrides_builder =
-                state_overrides_builder.with_code(addr.parse()?, Bytes::from_str(code_str)?);
+        for (addr, code) in address_value_overrides(&self.code_overrides)? {
+            builder = builder.with_code(addr.parse()?, Bytes::from_str(code)?);
         }
-
-        type StateOverrides = HashMap<Address, HashMap<B256, B256>>;
-        let parse_state_overrides = |overrides: &Option<Vec<String>>| -> Result<StateOverrides> {
-            let mut state_overrides = StateOverrides::default();
-
-            overrides.iter().flatten().try_for_each(|s| -> Result<()> {
-                let (addr, slot, value) = address_slot_value_override(s)?;
-                state_overrides.entry(addr).or_default().insert(slot.into(), value.into());
-                Ok(())
-            })?;
-
-            Ok(state_overrides)
-        };
-
-        for (addr, entries) in parse_state_overrides(&self.state_overrides)? {
-            state_overrides_builder = state_overrides_builder.with_state(addr, entries);
+        for (addr, entries) in address_slot_value_overrides(&self.state_overrides)? {
+            builder = builder.with_state(addr, entries);
         }
-
-        for (addr, entries) in parse_state_overrides(&self.state_diff_overrides)? {
-            state_overrides_builder = state_overrides_builder.with_state_diff(addr, entries)
+        for (addr, entries) in address_slot_value_overrides(&self.state_diff_overrides)? {
+            builder = builder.with_state_diff(addr, entries)
         }
-
-        Ok(Some(state_overrides_builder.build()))
+        Ok(Some(builder.build()))
     }
 
     /// Parses block overrides from command line arguments.
@@ -150,30 +118,41 @@ impl CallOverrideOpts {
         if let Some(time) = self.block_time {
             overrides = overrides.with_time(time);
         }
-        if overrides.is_empty() { Ok(None) } else { Ok(Some(overrides)) }
+        Ok((!overrides.is_empty()).then_some(overrides))
     }
 }
 
-/// Parses an override string in the format address:value.
-fn address_value_override(address_override: &str) -> Result<(&str, &str)> {
-    address_override.split_once(':').ok_or_else(|| {
-        eyre::eyre!("Invalid override {address_override}. Expected <address>:<value>")
-    })
+/// Parses override strings in the format address:value.
+fn address_value_overrides(overrides: &Option<Vec<String>>) -> Result<Vec<(&str, &str)>> {
+    overrides
+        .iter()
+        .flatten()
+        .map(|s| {
+            s.split_once(':')
+                .ok_or_else(|| eyre::eyre!("Invalid override {s}. Expected <address>:<value>"))
+        })
+        .collect()
 }
 
-/// Parses an override string in the format address:slot:value.
-fn address_slot_value_override(address_override: &str) -> Result<(Address, U256, U256)> {
-    let captures = OVERRIDE_PATTERN.captures(address_override).ok_or_else(|| {
-        eyre::eyre!("Invalid override {address_override}. Expected <address>:<slot>:<value>")
-    })?;
-
-    Ok((captures[1].parse()?, captures[2].parse()?, captures[3].parse()?))
+/// Parses override strings in the format address:slot:value, grouped by address.
+fn address_slot_value_overrides(
+    overrides: &Option<Vec<String>>,
+) -> Result<HashMap<Address, HashMap<B256, B256>>> {
+    let mut parsed = HashMap::<Address, HashMap<B256, B256>>::default();
+    for s in overrides.iter().flatten() {
+        let captures = OVERRIDE_PATTERN.captures(s).ok_or_else(|| {
+            eyre::eyre!("Invalid override {s}. Expected <address>:<slot>:<value>")
+        })?;
+        let (slot, value): (U256, U256) = (captures[2].parse()?, captures[3].parse()?);
+        parsed.entry(captures[1].parse()?).or_default().insert(slot.into(), value.into());
+    }
+    Ok(parsed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, b256, fixed_bytes};
+    use alloy_primitives::{address, b256};
     use clap::Parser;
 
     #[derive(Debug, Parser)]
@@ -229,51 +208,28 @@ mod tests {
     }
 
     #[test]
+    fn test_invalid_overrides() {
+        let args = TestArgs::parse_from(["foundry-cli", "--override-balance", "invalid_value"]);
+        assert_eq!(
+            args.overrides.get_state_overrides().unwrap_err().to_string(),
+            "Invalid override invalid_value. Expected <address>:<value>"
+        );
+        let args = TestArgs::parse_from(["foundry-cli", "--override-state", "invalid_value"]);
+        assert_eq!(
+            args.overrides.get_state_overrides().unwrap_err().to_string(),
+            "Invalid override invalid_value. Expected <address>:<slot>:<value>"
+        );
+    }
+
+    #[test]
     fn test_get_block_overrides() {
         let args =
             TestArgs::parse_from(["foundry-cli", "--block.number", "1", "--block.time", "2"]);
         let overrides = args.overrides.get_block_overrides().unwrap().unwrap();
         assert_eq!(overrides.number, Some(U256::from(1)));
         assert_eq!(overrides.time, Some(2));
-    }
 
-    #[test]
-    fn test_get_block_overrides_empty() {
         let args = TestArgs::parse_from([""]);
         assert_eq!(args.overrides.get_block_overrides().unwrap(), None);
-    }
-
-    #[test]
-    fn test_address_value_override_success() {
-        let text = "0x0000000000000000000000000000000000000001:2";
-        let (address, value) = address_value_override(text).unwrap();
-        assert_eq!(address, "0x0000000000000000000000000000000000000001");
-        assert_eq!(value, "2");
-    }
-
-    #[test]
-    fn test_address_value_override_error() {
-        let text = "invalid_value";
-        let error = address_value_override(text).unwrap_err();
-        assert_eq!(error.to_string(), "Invalid override invalid_value. Expected <address>:<value>");
-    }
-
-    #[test]
-    fn test_address_slot_value_override_success() {
-        let text = "0x0000000000000000000000000000000000000001:2:3";
-        let (address, slot, value) = address_slot_value_override(text).unwrap();
-        assert_eq!(*address, fixed_bytes!("0x0000000000000000000000000000000000000001"));
-        assert_eq!(slot, U256::from(2));
-        assert_eq!(value, U256::from(3));
-    }
-
-    #[test]
-    fn test_address_slot_value_override_error() {
-        let text = "invalid_value";
-        let error = address_slot_value_override(text).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "Invalid override invalid_value. Expected <address>:<slot>:<value>"
-        );
     }
 }

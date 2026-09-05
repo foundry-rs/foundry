@@ -1,7 +1,7 @@
-use super::auth::confirm_auth_rpc_disclosure;
+use super::auth::confirm_and_build;
 use crate::{
     Cast,
-    tx::{CastTxBuilder, SenderKind},
+    tx::{CastTxBuilder, read_only_sender},
 };
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, Network};
@@ -74,40 +74,29 @@ impl AccessListArgs {
         }
     }
 
-    pub async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
+    async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        let Self { to, mut sig, args, data, tx, force, rpc, wallet, browser, block } = self;
-
-        if let Some(data) = data {
-            sig = Some(data);
-        }
+        let Self { to, sig, args, data, tx, force, rpc, wallet, browser, block } = self;
 
         let config = rpc.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
-        let sender = if let Some(browser) = browser.run::<N>().await? {
-            browser.address().into()
-        } else {
-            SenderKind::from_wallet_opts(wallet).await?
-        };
+        let (sender, _) = read_only_sender::<N>(&browser, wallet).await?;
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
             .await?
             .with_to(to)
             .await?
-            .with_code_sig_and_args(None, sig, args)
+            .with_code_sig_and_args(None, data.or(sig), args)
             .await?
             .raw();
-        if builder.has_auth() && !confirm_auth_rpc_disclosure(&builder, &sender, force)? {
+        let Some(tx) = confirm_and_build(builder, sender, force, None, true).await? else {
             return Ok(());
-        }
-        let (tx, _) = builder.build(sender).await?;
+        };
 
-        let access_list: String = Cast::new(&provider).access_list(&tx, block).await?;
-
+        let access_list = Cast::new(&provider).access_list(&tx, block).await?;
         sh_println!("{access_list}")?;
-
         Ok(())
     }
 }
@@ -115,19 +104,7 @@ impl AccessListArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::hex;
     use clap::error::ErrorKind;
-
-    #[test]
-    fn can_parse_access_list_data() {
-        let data = hex::encode("hello");
-        let args = AccessListArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
-        assert_eq!(args.data, Some(data));
-
-        let data = hex::encode_prefixed("hello");
-        let args = AccessListArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
-        assert_eq!(args.data, Some(data));
-    }
 
     #[test]
     fn data_conflicts_with_sig_and_args() {

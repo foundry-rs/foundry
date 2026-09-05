@@ -6,8 +6,8 @@ use crate::{
         analysis::{
             arg_for_param, branch_always_exits, expr_is_address, function_ids,
             is_address_like_cast, is_address_self, is_address_type, is_elementary, is_msg_sender,
-            is_require_or_assert, modifier_prefix, receiver_contract_id, state_lhs_vars,
-            tuple_elems, underlying_var,
+            is_require_or_assert, loop_update, modifier_prefix, receiver_contract_id,
+            state_lhs_vars, tuple_elems, underlying_var,
         },
     },
 };
@@ -48,18 +48,17 @@ declare_forge_lint!(
 /// Recursion budget for `_msgSender()`-style helper chains.
 const HELPER_DEPTH: u8 = 3;
 
-impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
+impl<'gcx> LateLintPass<'gcx> for ArbitrarySendErc20 {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        func: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        func: &'gcx hir::Function<'gcx>,
     ) {
         // Library functions forward `from` from their caller; the call site is flagged instead.
         if matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
             || func.is_constructor()
-            || func.contract.is_some_and(|cid| hir.contract(cid).kind == ContractKind::Library)
+            || func.contract.is_some_and(|cid| gcx.hir.contract(cid).kind == ContractKind::Library)
         {
             return;
         }
@@ -67,12 +66,12 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
         // A modifier prefix that always exits makes the body unreachable.
         if func.modifiers.iter().any(|m| {
             m.id.as_function()
-                .and_then(|fid| modifier_prefix(hir, fid))
+                .and_then(|fid| modifier_prefix(&gcx.hir, fid))
                 .is_some_and(|p| p.iter().any(|s| branch_always_exits(s)))
         }) {
             return;
         }
-        let mut a = Analyzer::new(gcx, hir, has_solady_safe_transfer_lib(hir));
+        let mut a = Analyzer::new(gcx, has_solady_safe_transfer_lib(&gcx.hir));
         if let Some(cid) = func.contract {
             a.seed_immutable_facts(cid);
         }
@@ -119,10 +118,10 @@ struct PendingRepayment {
 }
 
 /// An ERC20 `transferFrom`-shaped sink.
-struct Sink<'hir> {
-    from: &'hir Expr<'hir>,
-    to: &'hir Expr<'hir>,
-    amount: &'hir Expr<'hir>,
+struct Sink<'gcx> {
+    from: &'gcx Expr<'gcx>,
+    to: &'gcx Expr<'gcx>,
+    amount: &'gcx Expr<'gcx>,
     token: Option<TokenKey>,
 }
 
@@ -177,9 +176,8 @@ fn common_entries<K: Eq + Hash + Copy, V: PartialEq + Copy>(
     a.iter().filter(|(k, v)| b.get(k) == Some(v)).map(|(k, v)| (*k, *v)).collect()
 }
 
-struct Analyzer<'hir> {
-    gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
+struct Analyzer<'gcx> {
+    gcx: Gcx<'gcx>,
     /// Gates the `using ... for address` sink form on a Solady-shaped library being present.
     has_solady_lib: bool,
     state: State,
@@ -190,11 +188,10 @@ struct Analyzer<'hir> {
     hits: Vec<(Span, &'static SolLint)>,
 }
 
-impl<'hir> Analyzer<'hir> {
-    fn new(gcx: Gcx<'hir>, hir: &'hir Hir<'hir>, has_solady_lib: bool) -> Self {
+impl<'gcx> Analyzer<'gcx> {
+    fn new(gcx: Gcx<'gcx>, has_solady_lib: bool) -> Self {
         Self {
             gcx,
-            hir,
             has_solady_lib,
             state: State::default(),
             loop_exits: Vec::new(),
@@ -206,9 +203,8 @@ impl<'hir> Analyzer<'hir> {
     /// Seeds facts about `immutable`/`constant` state of `cid` from declaration initializers and
     /// the constructor body.
     fn seed_immutable_facts(&mut self, cid: ContractId) {
-        let hir = self.hir;
-        for v in hir.contract(cid).variables() {
-            let var = hir.variable(v);
+        for v in self.gcx.hir.contract(cid).variables() {
+            let var = self.gcx.hir.variable(v);
             if (var.is_immutable() || var.is_constant())
                 && let Some(init) = var.initializer
             {
@@ -220,12 +216,12 @@ impl<'hir> Analyzer<'hir> {
                 }
             }
         }
-        if let Some(ctor) = hir.contract(cid).ctor
-            && let Some(body) = hir.function(ctor).body
+        if let Some(ctor) = self.gcx.hir.contract(cid).ctor
+            && let Some(body) = self.gcx.hir.function(ctor).body
         {
-            let mut a = Self::new(self.gcx, hir, self.has_solady_lib);
+            let mut a = Self::new(self.gcx, self.has_solady_lib);
             a.visit_stmts(body.stmts);
-            let is_state = |v: &&VariableId| hir.variable(**v).kind.is_state();
+            let is_state = |v: &&VariableId| self.gcx.hir.variable(**v).kind.is_state();
             self.state.safe_vars.extend(a.state.safe_vars.iter().filter(is_state));
             self.state.self_vars.extend(a.state.self_vars.iter().filter(is_state));
         }
@@ -233,12 +229,13 @@ impl<'hir> Analyzer<'hir> {
 
     /// Seeds parameters of an internal function or modifier that every invocation site in the
     /// compilation unit passes a safe argument for.
-    fn seed_callsite_facts(&mut self, func: &'hir hir::Function<'hir>) {
+    fn seed_callsite_facts(&mut self, func: &'gcx hir::Function<'gcx>) {
         if !is_internal_only(func) {
             return;
         }
-        let index = callsite_index(self.hir);
-        let Some((fid, _)) = self.hir.functions_enumerated().find(|(_, f)| std::ptr::eq(*f, func))
+        let index = callsite_index(&self.gcx.hir);
+        let Some((fid, _)) =
+            self.gcx.hir.functions_enumerated().find(|(_, f)| std::ptr::eq(*f, func))
         else {
             return;
         };
@@ -255,11 +252,11 @@ impl<'hir> Analyzer<'hir> {
 
     /// Hoists `require(param == msg.sender | address(this))` guards from the prefix of modifier
     /// `m` onto the caller's argument variables.
-    fn hoist_modifier_facts(&mut self, m: &'hir Modifier<'hir>) {
+    fn hoist_modifier_facts(&mut self, m: &'gcx Modifier<'gcx>) {
         let Some(fid) = m.id.as_function() else { return };
-        let Some(prefix) = modifier_prefix(self.hir, fid) else { return };
-        let modifier = self.hir.function(fid);
-        let mut a = Self::new(self.gcx, self.hir, self.has_solady_lib);
+        let Some(prefix) = modifier_prefix(&self.gcx.hir, fid) else { return };
+        let modifier = self.gcx.hir.function(fid);
+        let mut a = Self::new(self.gcx, self.has_solady_lib);
         for stmt in prefix {
             a.stmt(stmt);
         }
@@ -267,7 +264,7 @@ impl<'hir> Analyzer<'hir> {
             // A fact about a rewritten parameter says nothing about the caller's variable.
             if !a.written.contains(&param)
                 && let Some(caller) =
-                    arg_for_param(self.hir, modifier, param, &m.args).and_then(underlying_var)
+                    arg_for_param(&self.gcx.hir, modifier, param, &m.args).and_then(underlying_var)
                 && self.is_safe_target(caller)
             {
                 if a.state.safe_vars.contains(&param) {
@@ -282,18 +279,18 @@ impl<'hir> Analyzer<'hir> {
 
     /// `msg.sender`, `address(this)` or a tracked-safe variable.
     fn is_safe(&self, expr: &Expr<'_>) -> bool {
-        origin_matches(self.hir, expr, HELPER_DEPTH, &self.state.safe_vars, |e| {
+        origin_matches(&self.gcx.hir, expr, HELPER_DEPTH, &self.state.safe_vars, |e| {
             is_msg_sender(e) || is_address_self(e)
         })
     }
 
     /// `address(this)` or a tracked self alias.
     fn is_self_expr(&self, expr: &Expr<'_>) -> bool {
-        origin_matches(self.hir, expr, HELPER_DEPTH, &self.state.self_vars, is_address_self)
+        origin_matches(&self.gcx.hir, expr, HELPER_DEPTH, &self.state.self_vars, is_address_self)
     }
 
     fn is_safe_target(&self, v: VariableId) -> bool {
-        let var = self.hir.variable(v);
+        let var = self.gcx.hir.variable(v);
         !var.kind.is_state() || var.is_immutable() || var.is_constant()
     }
 
@@ -430,7 +427,7 @@ impl<'hir> Analyzer<'hir> {
 
     /// EIP-2612 `token.permit(owner, <self>, ...)` or the OpenZeppelin-style wrapper
     /// `Lib.safePermit(token, owner, <self>, ...)`.
-    fn match_permit_call(&self, expr: &Expr<'hir>) -> Option<PermitRecord> {
+    fn match_permit_call(&self, expr: &Expr<'gcx>) -> Option<PermitRecord> {
         let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
         let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
         let (token, owner, spender) = match ident.name.as_str() {
@@ -442,8 +439,9 @@ impl<'hir> Analyzer<'hir> {
                 (*recv, a[0], a[1])
             }
             "safePermit"
-                if receiver_contract_id(self.gcx, recv)
-                    .is_some_and(|cid| self.hir.contract(cid).kind == ContractKind::Library) =>
+                if receiver_contract_id(self.gcx, recv).is_some_and(|cid| {
+                    self.gcx.hir.contract(cid).kind == ContractKind::Library
+                }) =>
             {
                 let a = canonical_args(
                     args,
@@ -516,12 +514,12 @@ impl<'hir> Analyzer<'hir> {
 
     /// Visits `stmts` up to the first that cannot fall through; returns whether the end is
     /// reachable.
-    fn visit_stmts(&mut self, stmts: &'hir [Stmt<'hir>]) -> bool {
+    fn visit_stmts(&mut self, stmts: &'gcx [Stmt<'gcx>]) -> bool {
         stmts.iter().all(|s| self.stmt(s))
     }
 
     /// Visits `stmt`, returning whether control can fall through it.
-    fn stmt(&mut self, stmt: &'hir Stmt<'hir>) -> bool {
+    fn stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> bool {
         match &stmt.kind {
             StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => return self.visit_stmts(b.stmts),
             StmtKind::Break | StmtKind::Continue => {
@@ -551,7 +549,9 @@ impl<'hir> Analyzer<'hir> {
                 // all; `do-while` bodies run at least once.
                 let baseline = (!matches!(source, LoopSource::DoWhile)).then(|| self.state.clone());
                 self.loop_exits.push(baseline.into_iter().collect());
-                if self.visit_stmts(block.stmts) {
+                if self.visit_stmts(block.stmts)
+                    && loop_update(*source).is_none_or(|update| self.stmt(update))
+                {
                     let state = self.state.clone();
                     self.loop_exits.last_mut().expect("pushed above").push(state);
                 }
@@ -581,7 +581,7 @@ impl<'hir> Analyzer<'hir> {
                 return falls;
             }
             StmtKind::DeclSingle(vid) => {
-                if let Some(init) = self.hir.variable(*vid).initializer {
+                if let Some(init) = self.gcx.hir.variable(*vid).initializer {
                     let rhs = self.eval_rhs(Some(init));
                     self.assign_var(*vid, rhs);
                 }
@@ -601,19 +601,19 @@ impl<'hir> Analyzer<'hir> {
     }
 }
 
-impl<'hir> Visit<'hir> for Analyzer<'hir> {
+impl<'gcx> Visit<'gcx> for Analyzer<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
-        self.hir
+    fn hir(&self) -> &'gcx Hir<'gcx> {
+        &self.gcx.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Never> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Never> {
         self.stmt(stmt);
         ControlFlow::Continue(())
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         match &expr.kind {
             // `rhs` may not execute: its facts and writes survive only if they also hold without
             // it, while `lhs` facts flow into `rhs`. Sinks in `rhs` are still reported.
@@ -632,11 +632,11 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 }
             }
             ExprKind::Call(callee, ..) => {
-                if let Some(rep) = match_flash_loan_call(self.gcx, self.hir, expr) {
+                if let Some(rep) = match_flash_loan_call(self.gcx, expr) {
                     *self.state.repayments.entry(rep).or_insert(0) += 1;
                 } else if let Some(permit) = self.match_permit_call(expr) {
                     self.state.permits.insert(permit);
-                } else if let Some(sink) = match_sink(self.gcx, self.hir, self.has_solady_lib, expr)
+                } else if let Some(sink) = match_sink(self.gcx, self.has_solady_lib, expr)
                     && !self.is_safe(sink.from)
                     && !self.consume_repayment(&sink)
                 {
@@ -653,7 +653,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 // about state the callee writes.
                 let _ = self.walk_expr(expr);
                 if let Some(fid) = function_ids(callee).next() {
-                    for v in state_writes(self.hir, fid) {
+                    for v in state_writes(&self.gcx.hir, fid) {
                         self.invalidate(v);
                     }
                 }
@@ -736,10 +736,10 @@ fn token_key(expr: &Expr<'_>) -> Option<TokenKey> {
 
 /// Positional or named call arguments in declaration order; `slots[i]` lists the parameter names
 /// accepted for position `i`. `None` when the arity differs or a slot is unmatched.
-fn canonical_args<'hir>(
-    args: &'hir CallArgs<'hir>,
+fn canonical_args<'gcx>(
+    args: &'gcx CallArgs<'gcx>,
     slots: &[&[&str]],
-) -> Option<Vec<&'hir Expr<'hir>>> {
+) -> Option<Vec<&'gcx Expr<'gcx>>> {
     if args.len() != slots.len() {
         return None;
     }
@@ -754,11 +754,7 @@ fn canonical_args<'hir>(
 
 /// EIP-3156 `receiver.onFlashLoan(initiator, token, amount, fee, data)` on a receiver type
 /// declaring the exact signature. Literal arguments yield `None`.
-fn match_flash_loan_call<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &Hir<'hir>,
-    expr: &Expr<'hir>,
-) -> Option<PendingRepayment> {
+fn match_flash_loan_call<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> Option<PendingRepayment> {
     let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
     let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
     if ident.name.as_str() != "onFlashLoan" {
@@ -767,7 +763,7 @@ fn match_flash_loan_call<'hir>(
     let a = canonical_args(args, &[&["initiator"], &["token"], &["amount"], &["fee"], &["data"]])?;
     let cid = receiver_contract_id(gcx, recv)?;
     if !contract_has_function(
-        hir,
+        &gcx.hir,
         cid,
         "onFlashLoan",
         &["address", "address", "uint256", "uint256", "bytes"],
@@ -787,19 +783,19 @@ fn match_flash_loan_call<'hir>(
 /// declaring ERC20's `transferFrom(address,address,uint256) returns (bool)` (ERC721's same-named
 /// overload is excluded), `addr.safeTransferFrom(..)` via `using SafeTransferLib for address`,
 /// or the library form `Lib.safeTransferFrom(token, from, to, amt)`.
-fn match_sink<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &Hir<'hir>,
+fn match_sink<'gcx>(
+    gcx: Gcx<'gcx>,
     has_solady_lib: bool,
-    expr: &'hir Expr<'hir>,
-) -> Option<Sink<'hir>> {
+    expr: &'gcx Expr<'gcx>,
+) -> Option<Sink<'gcx>> {
     let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
     let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
     let name = ident.name.as_str();
     if matches!(name, "transferFrom" | "safeTransferFrom")
         && let Some(a) = canonical_args(args, &[&["from"], &["to"], &["value", "amount"]])
     {
-        let erc20 = receiver_contract_id(gcx, recv).is_some_and(|cid| has_transfer_from(hir, cid));
+        let erc20 =
+            receiver_contract_id(gcx, recv).is_some_and(|cid| has_transfer_from(&gcx.hir, cid));
         // The HIR does not expose `using` bindings, so the `address` receiver form is accepted
         // only when a Solady-shaped library is compiled in.
         if erc20 || (name == "safeTransferFrom" && has_solady_lib && expr_is_address(gcx, recv)) {
@@ -810,8 +806,8 @@ fn match_sink<'hir>(
         && let Some(a) =
             canonical_args(args, &[&["token"], &["from"], &["to"], &["value", "amount"]])
         && let Some(cid) = receiver_contract_id(gcx, recv)
-        && hir.contract(cid).kind == ContractKind::Library
-        && library_has_safe_transfer_from(hir, cid)
+        && gcx.hir.contract(cid).kind == ContractKind::Library
+        && library_has_safe_transfer_from(&gcx.hir, cid)
     {
         return Some(Sink { from: a[1], to: a[2], amount: a[3], token: token_key(a[0]) });
     }
@@ -819,7 +815,7 @@ fn match_sink<'hir>(
 }
 
 /// State variables written by `fid` or by the internal functions it calls (one level deep).
-fn state_writes<'hir>(hir: &'hir Hir<'hir>, fid: FunctionId) -> HashSet<VariableId> {
+fn state_writes<'gcx>(hir: &'gcx Hir<'gcx>, fid: FunctionId) -> HashSet<VariableId> {
     let mut w = StateWrites { hir, out: HashSet::new(), callees: Vec::new() };
     w.scan(fid);
     for callee in std::mem::take(&mut w.callees) {
@@ -828,8 +824,8 @@ fn state_writes<'hir>(hir: &'hir Hir<'hir>, fid: FunctionId) -> HashSet<Variable
     w.out
 }
 
-struct StateWrites<'hir> {
-    hir: &'hir Hir<'hir>,
+struct StateWrites<'gcx> {
+    hir: &'gcx Hir<'gcx>,
     out: HashSet<VariableId>,
     callees: Vec<FunctionId>,
 }
@@ -844,14 +840,14 @@ impl StateWrites<'_> {
     }
 }
 
-impl<'hir> Visit<'hir> for StateWrites<'hir> {
+impl<'gcx> Visit<'gcx> for StateWrites<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         self.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         match &expr.kind {
             ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => {
                 self.out.extend(state_lhs_vars(self.hir, lhs));
@@ -881,7 +877,7 @@ thread_local! {
 }
 
 /// The call-site index of `hir`, built once per compilation unit.
-fn callsite_index<'hir>(hir: &'hir Hir<'hir>) -> Rc<CallsiteFacts> {
+fn callsite_index<'gcx>(hir: &'gcx Hir<'gcx>) -> Rc<CallsiteFacts> {
     let key = std::ptr::from_ref(hir) as usize;
     CALLSITE_INDEX.with(|cell| {
         let mut slot = cell.borrow_mut();
@@ -907,13 +903,13 @@ fn callsite_index<'hir>(hir: &'hir Hir<'hir>) -> Rc<CallsiteFacts> {
     })
 }
 
-struct CallsiteCollector<'hir> {
-    hir: &'hir Hir<'hir>,
+struct CallsiteCollector<'gcx> {
+    hir: &'gcx Hir<'gcx>,
     out: CallsiteFacts,
 }
 
-impl<'hir> CallsiteCollector<'hir> {
-    fn record(&mut self, fid: FunctionId, args: &'hir CallArgs<'hir>) {
+impl<'gcx> CallsiteCollector<'gcx> {
+    fn record(&mut self, fid: FunctionId, args: &'gcx CallArgs<'gcx>) {
         let f = self.hir.function(fid);
         if !is_internal_only(f) {
             return;
@@ -935,14 +931,14 @@ impl<'hir> CallsiteCollector<'hir> {
     }
 }
 
-impl<'hir> Visit<'hir> for CallsiteCollector<'hir> {
+impl<'gcx> Visit<'gcx> for CallsiteCollector<'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir Hir<'hir> {
+    fn hir(&self) -> &'gcx Hir<'gcx> {
         self.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Never> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Never> {
         if let ExprKind::Call(callee, args, _) = &expr.kind
             && let Some(fid) = function_ids(callee).next()
         {

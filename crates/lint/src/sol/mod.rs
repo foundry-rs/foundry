@@ -130,8 +130,7 @@ impl ForgeLintSuite {
             .filter(|lint| {
                 self.include_lint(**lint)
                     && path.is_none_or(|path| {
-                        !self.path_config.is_test_or_script(path)
-                            || !matches!(lint.severity(), Severity::Gas | Severity::CodeSize)
+                        !self.path_config.is_test_or_script(path) || lint.id == "unsafe-cheatcode"
                     })
             })
             .map(|lint| lint.id)

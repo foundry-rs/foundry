@@ -20,15 +20,14 @@ declare_forge_lint!(
     "reading a state variable via `this` causes an unnecessary STATICCALL; access it directly"
 );
 
-impl<'hir> LateLintPass<'hir> for VarReadUsingThis {
+impl<'gcx> LateLintPass<'gcx> for VarReadUsingThis {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: Gcx<'gcx>,
         contract_id: hir::ContractId,
     ) {
-        let contract = hir.contract(contract_id);
+        let contract = gcx.hir.contract(contract_id);
         // `this` only exists in (abstract) contracts: libraries have none, interfaces no bodies.
         if !matches!(contract.kind, ContractKind::Contract | ContractKind::AbstractContract) {
             return;
@@ -37,8 +36,10 @@ impl<'hir> LateLintPass<'hir> for VarReadUsingThis {
         // Externally callable functions reachable through `this.<name>(...)`, grouped by name so
         // overloads and inherited overrides can be resolved by arity.
         let mut callable = HashMap::<_, Vec<_>>::new();
-        for fid in contract.linearized_bases.iter().flat_map(|&cid| hir.contract(cid).functions()) {
-            let func = hir.function(fid);
+        for fid in
+            contract.linearized_bases.iter().flat_map(|&cid| gcx.hir.contract(cid).functions())
+        {
+            let func = gcx.hir.function(fid);
             if let Some(name) = func.name
                 && func.is_part_of_external_interface()
             {
@@ -46,7 +47,7 @@ impl<'hir> LateLintPass<'hir> for VarReadUsingThis {
             }
         }
 
-        let mut finder = ThisReadFinder { ctx, hir, callable, try_target: None };
+        let mut finder = ThisReadFinder { ctx, hir: &gcx.hir, callable, try_target: None };
         // State variable initializers run in the synthesized constructor.
         for var_id in contract.variables() {
             let _ = finder.visit_nested_var(var_id);
@@ -58,29 +59,29 @@ impl<'hir> LateLintPass<'hir> for VarReadUsingThis {
     }
 }
 
-struct ThisReadFinder<'a, 'hir> {
+struct ThisReadFinder<'a, 'gcx> {
     ctx: &'a LintContext<'a, 'a>,
-    hir: &'hir hir::Hir<'hir>,
-    callable: HashMap<Symbol, Vec<&'hir Function<'hir>>>,
+    hir: &'gcx hir::Hir<'gcx>,
+    callable: HashMap<Symbol, Vec<&'gcx Function<'gcx>>>,
     /// The expression tried by the enclosing `try` statement, which must stay an external call.
     try_target: Option<ExprId>,
 }
 
-impl<'hir> hir::Visit<'hir> for ThisReadFinder<'_, 'hir> {
+impl<'gcx> hir::Visit<'gcx> for ThisReadFinder<'_, 'gcx> {
     type BreakValue = Never;
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         self.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<Self::BreakValue> {
         if let StmtKind::Try(try_stmt) = &stmt.kind {
             self.try_target = Some(try_stmt.expr.id);
         }
         self.walk_stmt(stmt)
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<Self::BreakValue> {
         if self.try_target != Some(expr.id) {
             self.check_call(expr);
         }

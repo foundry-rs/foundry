@@ -8,39 +8,39 @@ use solar::{
 use std::ops::ControlFlow;
 
 /// Runs `f` on every statement (pre-order, nested ones included) until it breaks.
-struct StmtVisitor<'hir, F> {
-    hir: &'hir hir::Hir<'hir>,
+struct StmtVisitor<'gcx, F> {
+    hir: &'gcx hir::Hir<'gcx>,
     f: F,
 }
 
-impl<'hir, F: FnMut(&'hir Stmt<'hir>) -> ControlFlow<()>> Visit<'hir> for StmtVisitor<'hir, F> {
+impl<'gcx, F: FnMut(&'gcx Stmt<'gcx>) -> ControlFlow<()>> Visit<'gcx> for StmtVisitor<'gcx, F> {
     type BreakValue = ();
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         self.hir
     }
 
-    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<()> {
+    fn visit_stmt(&mut self, stmt: &'gcx Stmt<'gcx>) -> ControlFlow<()> {
         (self.f)(stmt)?;
         self.walk_stmt(stmt)
     }
 }
 
 /// Runs `f` on every statement of `stmts` and their nested statements (pre-order) until it breaks.
-pub fn visit_stmts<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    stmts: impl IntoIterator<Item = &'hir Stmt<'hir>>,
-    f: impl FnMut(&'hir Stmt<'hir>) -> ControlFlow<()>,
+pub fn visit_stmts<'gcx>(
+    hir: &'gcx hir::Hir<'gcx>,
+    stmts: impl IntoIterator<Item = &'gcx Stmt<'gcx>>,
+    f: impl FnMut(&'gcx Stmt<'gcx>) -> ControlFlow<()>,
 ) -> ControlFlow<()> {
     let mut visitor = StmtVisitor { hir, f };
     stmts.into_iter().try_for_each(|stmt| visitor.visit_stmt(stmt))
 }
 
 /// The expression directly owned by `stmt` (nested statements excluded).
-pub fn stmt_expr<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    stmt: &'hir Stmt<'hir>,
-) -> Option<&'hir Expr<'hir>> {
+pub fn stmt_expr<'gcx>(
+    hir: &'gcx hir::Hir<'gcx>,
+    stmt: &'gcx Stmt<'gcx>,
+) -> Option<&'gcx Expr<'gcx>> {
     match stmt.kind {
         StmtKind::DeclSingle(var_id) => hir.variable(var_id).initializer,
         StmtKind::DeclMulti(_, expr)
@@ -76,6 +76,22 @@ pub fn branch_always_exits(stmt: &Stmt<'_>) -> bool {
     }
 }
 
+/// The `for` update statement of a loop, which runs after every iteration.
+pub const fn loop_update<'gcx>(source: LoopSource<'gcx>) -> Option<&'gcx Stmt<'gcx>> {
+    match source {
+        LoopSource::For { update } => update,
+        LoopSource::While | LoopSource::DoWhile => None,
+    }
+}
+
+/// The statements of one loop iteration: the body followed by the `for` update, if any.
+pub fn loop_stmts<'gcx>(
+    block: hir::Block<'gcx>,
+    source: LoopSource<'gcx>,
+) -> impl Iterator<Item = &'gcx Stmt<'gcx>> + Clone {
+    block.stmts.iter().chain(loop_update(source))
+}
+
 /// Number of `_` placeholders in `stmts`, recursing into nested control flow.
 pub fn count_placeholders(stmts: &[Stmt<'_>]) -> usize {
     stmts.iter().map(count_placeholders_in_stmt).sum()
@@ -84,9 +100,8 @@ pub fn count_placeholders(stmts: &[Stmt<'_>]) -> usize {
 fn count_placeholders_in_stmt(stmt: &Stmt<'_>) -> usize {
     match &stmt.kind {
         StmtKind::Placeholder => 1,
-        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) | StmtKind::Loop(b, _) => {
-            count_placeholders(b.stmts)
-        }
+        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => count_placeholders(b.stmts),
+        StmtKind::Loop(b, source) => loop_stmts(*b, *source).map(count_placeholders_in_stmt).sum(),
         StmtKind::If(_, t, e) => {
             count_placeholders_in_stmt(t) + e.as_ref().map_or(0, |e| count_placeholders_in_stmt(e))
         }
@@ -98,9 +113,9 @@ fn count_placeholders_in_stmt(stmt: &Stmt<'_>) -> usize {
 /// Collects the statements executed before the first placeholder of a modifier body, following
 /// nested blocks. Returns `None` when the placeholder is not reached unconditionally (e.g. it is
 /// inside an `if`, loop or `try`).
-pub fn stmts_before_placeholder<'a, 'hir>(
-    stmts: &'a [Stmt<'hir>],
-    out: &mut Vec<&'a Stmt<'hir>>,
+pub fn stmts_before_placeholder<'a, 'gcx>(
+    stmts: &'a [Stmt<'gcx>],
+    out: &mut Vec<&'a Stmt<'gcx>>,
 ) -> Option<()> {
     for (i, stmt) in stmts.iter().enumerate() {
         match &stmt.kind {
@@ -120,7 +135,7 @@ pub fn stmts_before_placeholder<'a, 'hir>(
 }
 
 /// Strips the trailing `if (cond) break;` that lowers `do { ... } while (cond);`.
-pub fn do_while_user_stmts<'a, 'hir>(stmts: &'a [Stmt<'hir>]) -> &'a [Stmt<'hir>] {
+pub fn do_while_user_stmts<'a, 'gcx>(stmts: &'a [Stmt<'gcx>]) -> &'a [Stmt<'gcx>] {
     match stmts.split_last() {
         Some((last, rest)) if is_loop_termination_if(last) => rest,
         _ => stmts,
@@ -160,10 +175,10 @@ pub fn stmts_break_or_continue(stmts: &[Stmt<'_>]) -> bool {
 
 /// The statements a modifier runs before its unique `_;`, when that placeholder is reached
 /// unconditionally. `None` for non-modifiers, bodiless modifiers and conditional placeholders.
-pub fn modifier_prefix<'hir>(
-    hir: &'hir hir::Hir<'hir>,
+pub fn modifier_prefix<'gcx>(
+    hir: &'gcx hir::Hir<'gcx>,
     fid: FunctionId,
-) -> Option<Vec<&'hir Stmt<'hir>>> {
+) -> Option<Vec<&'gcx Stmt<'gcx>>> {
     let modifier = hir.function(fid);
     let body = modifier.body.filter(|_| modifier.kind == FunctionKind::Modifier)?;
     if count_placeholders(body.stmts) != 1 {

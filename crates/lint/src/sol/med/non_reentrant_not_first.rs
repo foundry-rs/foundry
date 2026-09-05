@@ -15,13 +15,12 @@ declare_forge_lint!(
     "`nonReentrant` should be the first modifier"
 );
 
-impl<'hir> LateLintPass<'hir> for NonReentrantNotFirst {
+impl<'gcx> LateLintPass<'gcx> for NonReentrantNotFirst {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        func: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        func: &'gcx hir::Function<'gcx>,
     ) {
         if !matches!(
             func.kind,
@@ -31,7 +30,7 @@ impl<'hir> LateLintPass<'hir> for NonReentrantNotFirst {
         }
         for modifier in func.modifiers.iter().skip(1) {
             let is_non_reentrant = modifier.id.as_function().is_some_and(|id| {
-                hir.function(id).name.is_some_and(|name| name.as_str() == "nonReentrant")
+                gcx.hir.function(id).name.is_some_and(|name| name.as_str() == "nonReentrant")
             });
             if is_non_reentrant {
                 ctx.emit(&NON_REENTRANT_NOT_FIRST, modifier.span);
