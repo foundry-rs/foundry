@@ -49,9 +49,41 @@ contract ReentrancyBalance {
 
     function assertAfterLowLevelCall(address target, uint256 amount) external {
         uint256 balanceBefore = address(this).balance;
-        (bool ok,) = target.call("");
+        (bool ok,) = target.call(""); //~WARN: external call can be reentered before a stale contract balance is checked
         require(ok, "call failed");
         assert(address(this).balance - balanceBefore >= amount);
+    }
+
+    // Delta form: the current/stale balances are combined into a single subtraction
+    // expression on one side of the comparison, rather than split across both sides
+    // (`balanceAfter >= balanceBefore + amount`). Algebraically equivalent, and just
+    // as vulnerable, so it must be flagged the same way.
+    function requireDeltaAfterCall(IReentrancyBalanceCallback callback, uint256 amount) external {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance - balanceBefore >= amount, "insufficient payment");
+    }
+
+    // Same delta shape, reversed comparison order and the amount on the left.
+    function requireDeltaReversedOrder(IReentrancyBalanceCallback callback, uint256 amount) external {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(amount <= address(this).balance - balanceBefore, "insufficient payment");
+    }
+
+    // Sanity check: a delta between two values that are NOT balance-derived must not
+    // spuriously trip the new delta-form recognition just because it's a subtraction,
+    // even with a genuine pending balance call in scope to exercise the matcher.
+    function unrelatedDeltaAfterCall(
+        IReentrancyBalanceCallback callback,
+        uint256 a,
+        uint256 b,
+        uint256 amount
+    ) external {
+        uint256 balanceBefore = address(this).balance;
+        callback.pay(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(a - b >= 1, "unrelated");
+        require(address(this).balance >= balanceBefore + amount, "insufficient payment");
     }
 
     function revertingBranchAfterCall(IReentrancyBalanceCallback callback, uint256 amount) external {

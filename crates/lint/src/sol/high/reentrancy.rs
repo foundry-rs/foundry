@@ -966,10 +966,24 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                         | BinOpKind::Ne
                 );
                 let depends = |e, stale| self.expr_depends_on_balance(e, span, call, stale, state);
+                // Delta form: one side is itself a subtraction of the current and stale
+                // balance (e.g. `balanceAfter - balanceBefore`), rather than the comparison
+                // being split across both sides of the outer operator. Requires the outer
+                // operator of that side to actually be a subtraction - merely containing
+                // both a current and a stale reference somewhere (e.g. added together) is
+                // not a stale-balance check and must not be flagged.
+                let is_delta_side = |side: &'hir Expr<'hir>| match &side.peel_parens().kind {
+                    ExprKind::Binary(a, sub_op, b) if sub_op.kind == BinOpKind::Sub => {
+                        (depends(a, false) && depends(b, true))
+                            || (depends(a, true) && depends(b, false))
+                    }
+                    _ => false,
+                };
                 (is_comparison
-                    && [(lhs, rhs), (rhs, lhs)]
+                    && ([(lhs, rhs), (rhs, lhs)]
                         .into_iter()
-                        .any(|(current, stale)| depends(current, false) && depends(stale, true)))
+                        .any(|(current, stale)| depends(current, false) && depends(stale, true))
+                        || [lhs, rhs].into_iter().any(|side| is_delta_side(side))))
                     || recurse(lhs, state)
                     || recurse(rhs, state)
             }
