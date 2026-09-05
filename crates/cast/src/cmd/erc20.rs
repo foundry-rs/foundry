@@ -40,6 +40,8 @@ use foundry_wallets::{TempoAccountsWallet, WalletSigner};
 use tempo_alloy::TempoNetwork;
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 
+mod permit;
+
 sol! {
     #[sol(rpc)]
     interface IERC20 {
@@ -60,6 +62,32 @@ sol! {
 /// Interact with ERC20 tokens.
 #[derive(Debug, Parser, Clone)]
 pub enum Erc20Subcommand {
+    /// Sign an ERC-2612 approval without sending a transaction, or submit it with --broadcast.
+    ///
+    /// The owner is the signing wallet. Amounts are in raw token units and the deadline is an
+    /// absolute Unix timestamp in seconds. This does not transfer tokens or deposit into a vault.
+    /// For deposits, the permit must target the underlying asset, not the vault's share token.
+    ///
+    /// By default stdout contains the 65-byte signature (r, s, v). With --json, it contains the
+    /// signature, permit calldata, owner, spender, value, nonce, deadline, token, and typed data.
+    /// With --broadcast, output follows cast send: a receipt, or a transaction hash with --async.
+    /// Anyone can submit the generated calldata to the token before the deadline.
+    ///
+    /// Uses EIP-5267 domain discovery when available. Otherwise uses name(), version "1", the
+    /// RPC chain ID, and the token address. --domain-name and --domain-version override the name
+    /// and version. The resulting domain must match DOMAIN_SEPARATOR() before signing.
+    /// DAI-style permits and Permit2 are not supported.
+    ///
+    /// Example:
+    /// ```text
+    /// cast erc20 permit $TOKEN $SPENDER 1000000 --deadline $DEADLINE \
+    ///     --account owner --rpc-url $RPC_URL --json
+    /// cast erc20 permit $TOKEN $SPENDER 1000000 --deadline $DEADLINE \
+    ///     --account owner --rpc-url $RPC_URL --broadcast --async
+    /// ```
+    #[command(verbatim_doc_comment)]
+    Permit(permit::PermitArgs),
+
     /// Query ERC20 token balance.
     #[command(visible_alias = "b")]
     Balance {
@@ -249,6 +277,7 @@ pub enum Erc20Subcommand {
 impl Erc20Subcommand {
     const fn rpc_opts(&self) -> &RpcOpts {
         match self {
+            Self::Permit(args) => &args.send_tx.eth.rpc,
             Self::Allowance { rpc, .. } => rpc,
             Self::Approve { send_tx, .. } => &send_tx.eth.rpc,
             Self::Balance { rpc, .. } => rpc,
@@ -268,7 +297,8 @@ impl Erc20Subcommand {
             | Self::Transfer { tx, .. }
             | Self::Mint { tx, .. }
             | Self::Burn { tx, .. } => Some(tx),
-            Self::Allowance { .. }
+            Self::Permit(_)
+            | Self::Allowance { .. }
             | Self::Balance { .. }
             | Self::Name { .. }
             | Self::Symbol { .. }
@@ -312,6 +342,9 @@ impl Erc20Subcommand {
     }
 
     pub async fn run(self) -> eyre::Result<()> {
+        if let Self::Permit(args) = self {
+            return args.run().await;
+        }
         let has_session = self.has_tempo_session()?;
         // Resolve the signer once for state-changing variants.
         let (resolved_tempo, signer, tempo_access_key) = match &self {
@@ -647,6 +680,7 @@ impl Erc20Subcommand {
         }
 
         match self {
+            Self::Permit(args) => args.run().await?,
             // Read-only
             Self::Allowance { token, owner, spender, block, .. } => {
                 let provider = get_provider(&config)?;
