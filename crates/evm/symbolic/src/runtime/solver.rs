@@ -86,103 +86,6 @@ impl fmt::Display for SolverOutcome {
 
 pub(crate) type QueryObserver = Box<dyn Fn(usize) + Send + Sync + 'static>;
 
-/// Minimal solver backend interface used by the symbolic executor.
-///
-/// Implementations are responsible for translating accumulated symbolic constraints
-/// into solver queries, enforcing query budgets, and extracting concrete model values
-/// for counterexample replay. The trait is intentionally small so alternate SMT
-/// backends can be added without changing the executor entrypoints.
-pub(crate) trait SymbolicSolver {
-    /// Returns solver counters collected by this backend.
-    fn stats(&self) -> SymbolicStats;
-
-    /// Registers a callback invoked after each logical solver query is reserved.
-    fn set_query_observer(&mut self, observer: Option<QueryObserver>);
-
-    /// Returns aggregate staged-portfolio diagnostics collected by this backend.
-    fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics>;
-
-    /// Captures verbose diagnostics for later rendering instead of writing them live.
-    fn capture_diagnostics(&mut self);
-
-    /// Takes any captured verbose diagnostics collected by this backend.
-    fn take_diagnostics(&mut self) -> Option<String>;
-
-    /// Clears cached expression keys tied to a previous symbolic context.
-    fn clear_context_caches(&mut self) {}
-
-    /// Returns the number of satisfiable witnesses produced by local hard-arithmetic search.
-    fn heuristic_witnesses(&self) -> usize {
-        0
-    }
-
-    /// Verifies that the configured solver can be invoked before exploration starts.
-    ///
-    /// Backends should keep this check lightweight and return a [`SymbolicError`] with
-    /// a stable stop reason when the solver executable or service is unavailable.
-    fn check_available(&self) -> Result<(), SymbolicError>;
-
-    /// Returns whether the supplied path constraints are satisfiable.
-    ///
-    /// Implementations should count this as one solver query and map solver `unknown`
-    /// or timeout responses into [`SymbolicError::SolverUnknown`] or
-    /// [`SymbolicError::Solver`], as appropriate.
-    fn is_sat(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-    ) -> Result<bool, SymbolicError>;
-
-    /// Returns satisfiability with path-local storage symbols that concrete replay can set.
-    fn is_sat_with_replayable_storage(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-        _replayable_storage: &SymbolicVars,
-    ) -> Result<bool, SymbolicError> {
-        self.is_sat(cx, constraints)
-    }
-
-    #[cfg(test)]
-    fn is_sat_branch(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-    ) -> Result<bool, SymbolicError> {
-        self.is_sat(cx, constraints)
-    }
-
-    /// Returns branch satisfiability with path-local storage symbols concrete replay can set.
-    fn is_sat_branch_with_replayable_storage(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-        replayable_storage: &SymbolicVars,
-    ) -> Result<bool, SymbolicError> {
-        self.is_sat_with_replayable_storage(cx, constraints, replayable_storage)
-    }
-
-    /// Returns a concrete model for all symbolic variables constrained by the path.
-    ///
-    /// The executor uses the returned variable assignments to materialize ABI
-    /// arguments, calldata, and invariant sequences for concrete replay.
-    fn model(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-    ) -> Result<SymbolicModel, SymbolicError>;
-
-    /// Returns a model with path-local storage symbols that concrete replay can set.
-    fn model_with_replayable_storage(
-        &mut self,
-        cx: &mut SymCx,
-        constraints: &[SymBoolExpr],
-        _replayable_storage: &SymbolicVars,
-    ) -> Result<SymbolicModel, SymbolicError> {
-        self.model(cx, constraints)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SolverCommand {
     program: String,
@@ -295,10 +198,9 @@ impl SmtLibSubprocessSolver {
             config.dump_smt,
         )
     }
-}
 
-impl SymbolicSolver for SmtLibSubprocessSolver {
-    fn stats(&self) -> SymbolicStats {
+    /// Returns solver counters collected by this backend.
+    pub(crate) fn stats(&self) -> SymbolicStats {
         SymbolicStats {
             paths: 0,
             solver_queries: self.queries,
@@ -321,37 +223,39 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     }
 
     /// Registers a live query observer for progress rendering.
-    fn set_query_observer(&mut self, observer: Option<QueryObserver>) {
+    pub(crate) fn set_query_observer(&mut self, observer: Option<QueryObserver>) {
         self.query_observer = observer;
     }
 
     /// Returns staged-portfolio diagnostics collected by this solver.
-    fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics> {
+    pub(crate) fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics> {
         (!self.portfolio_diagnostics.is_empty()).then_some(&self.portfolio_diagnostics)
     }
 
     /// Enables deferred diagnostic rendering for verbose symbolic solver output.
-    fn capture_diagnostics(&mut self) {
+    pub(crate) fn capture_diagnostics(&mut self) {
         self.captured_diagnostics.get_or_insert_with(String::new);
     }
 
     /// Returns and clears deferred diagnostic rendering output.
-    fn take_diagnostics(&mut self) -> Option<String> {
+    pub(crate) fn take_diagnostics(&mut self) -> Option<String> {
         self.captured_diagnostics.take().filter(|diagnostics| !diagnostics.is_empty())
     }
 
-    fn clear_context_caches(&mut self) {
+    /// Clears cached expression keys tied to a previous symbolic context.
+    pub(crate) fn clear_context_caches(&mut self) {
         self.normalization_cache.clear();
         self.sat_cache.clear();
         self.model_cache.clear();
     }
 
     /// Returns how many validated local hard-arithmetic witnesses this solver used.
-    fn heuristic_witnesses(&self) -> usize {
+    pub(crate) const fn heuristic_witnesses(&self) -> usize {
         self.heuristic_witnesses
     }
 
-    fn check_available(&self) -> Result<(), SymbolicError> {
+    /// Verifies that a configured solver can be invoked before exploration starts.
+    pub(crate) fn check_available(&self) -> Result<(), SymbolicError> {
         let commands = self.commands()?;
         let mut errors = Vec::new();
         for command in commands {
@@ -370,7 +274,8 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         Err(SymbolicError::Solver(errors.join("; ")))
     }
 
-    fn is_sat(
+    #[cfg(test)]
+    pub(crate) fn is_sat(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
@@ -378,7 +283,8 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         self.is_sat_inner(cx, constraints, false)
     }
 
-    fn is_sat_with_replayable_storage(
+    /// Returns satisfiability with path-local storage symbols that concrete replay can set.
+    pub(crate) fn is_sat_with_replayable_storage(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
@@ -391,7 +297,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     }
 
     #[cfg(test)]
-    fn is_sat_branch(
+    pub(crate) fn is_sat_branch(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
@@ -399,7 +305,8 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         self.is_sat_inner(cx, constraints, true)
     }
 
-    fn is_sat_branch_with_replayable_storage(
+    /// Returns branch satisfiability with path-local storage symbols concrete replay can set.
+    pub(crate) fn is_sat_branch_with_replayable_storage(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
@@ -411,19 +318,21 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         result
     }
 
-    fn model_with_replayable_storage(
+    /// Returns a model with path-local storage symbols that concrete replay can set.
+    pub(crate) fn model_with_replayable_storage(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
         replayable_storage: &SymbolicVars,
     ) -> Result<SymbolicModel, SymbolicError> {
         let previous = std::mem::replace(&mut self.replayable_storage, replayable_storage.clone());
-        let result = <Self as SymbolicSolver>::model(self, cx, constraints);
+        let result = self.model(cx, constraints);
         self.replayable_storage = previous;
         result
     }
 
-    fn model(
+    /// Returns variable assignments used to materialize inputs for concrete replay.
+    pub(crate) fn model(
         &mut self,
         cx: &mut SymCx,
         constraints: &[SymBoolExpr],
@@ -547,9 +456,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             other => Err(SymbolicError::Solver(format!("unexpected solver response `{other}`"))),
         }
     }
-}
 
-impl SmtLibSubprocessSolver {
     fn is_sat_inner(
         &mut self,
         cx: &mut SymCx,
