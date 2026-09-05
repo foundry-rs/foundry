@@ -16,6 +16,7 @@ use alloy_primitives::{
     utils::{ParseUnits, Unit},
 };
 use alloy_provider::Provider;
+use alloy_rlp::Decodable;
 use alloy_rpc_types::BlockId;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
@@ -204,7 +205,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(ParseUnits::parse_units(&value, unit)?.to_string())?;
         }
         CastSubcommand::FromRlp { value, as_int } => {
-            print_scalar(SimpleCast::from_rlp(stdin::unwrap_line(value)?, as_int)?)?;
+            let bytes = hex::decode(stdin::unwrap_line(value)?).wrap_err("Could not decode hex")?;
+            let value = if as_int {
+                U256::decode(&mut &bytes[..])?.to_string()
+            } else {
+                crate::rlp_converter::Item::decode(&mut &bytes[..])
+                    .wrap_err("Could not decode rlp")?
+                    .to_string()
+            };
+            print_scalar(value)?;
         }
         CastSubcommand::ToRlp { value } => {
             print_scalar(SimpleCast::to_rlp(&stdin::unwrap_line(value)?)?)?;

@@ -9757,3 +9757,7 @@ casttest!(to_unit, |_prj, cmd| {
 casttest!(to_wei, |_prj, cmd| {
     cmd.cast_fuse().args(["to-wei", "100", "gwei"]).assert_success().stdout_eq("100000000000\n");
 });
+
+casttest!(from_rlp_long, |_prj, cmd| {
+    cmd.cast_fuse().args(["from-rlp", "0xf8b1a02b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca8080a02838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f90380a0e46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd8754980a01d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5808080a0236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff08080808080"]).assert_success().stdout_eq("[\"0x2b5df5f0757397573e8ff34a8b987b21680357de1f6c8d10273aa528a851eaca\",\"0x\",\"0x\",\"0x2838ac1d2d2721ba883169179b48480b2ba4f43d70fcf806956746bd9e83f903\",\"0x\",\"0xe46fff283b0ab96a32a7cc375cecc3ed7b6303a43d64e0a12eceb0bc6bd87549\",\"0x\",\"0x1d818c1c414c665a9c9a0e0c0ef1ef87cacb380b8c1f6223cb2a68a4b2d023f5\",\"0x\",\"0x\",\"0x\",\"0x236e8f61ecde6abfebc6c529441f782f62469d8a2cc47b7aace2c136bd3b1ff0\",\"0x\",\"0x\",\"0x\",\"0x\",\"0x\"]\n");
+});
