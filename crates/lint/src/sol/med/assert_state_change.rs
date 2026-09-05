@@ -13,7 +13,7 @@ use solar::{
     ast::{DataLocation, ElementaryType},
     interface::{kw, sym},
     sema::{
-        Gcx, Hir,
+        Gcx,
         hir::{CallArgs, ContractId, Expr, ExprKind},
         ty::TyKind,
     },
@@ -27,14 +27,8 @@ declare_forge_lint!(
     "assert() should not contain state-modifying expressions"
 );
 
-impl<'hir> LateLintPass<'hir> for AssertStateChange {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        expr: &'hir Expr<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for AssertStateChange {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
         let ExprKind::Call(callee, args, _) = &expr.kind else { return };
         if !is_builtin(callee, sym::assert) {
             return;
@@ -60,10 +54,10 @@ impl<'hir> LateLintPass<'hir> for AssertStateChange {
     }
 }
 
-fn is_state_change<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
+fn is_state_change<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
     match &expr.kind {
-        ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => is_storage_lvalue(&gcx.hir, lhs),
-        ExprKind::Unary(op, lhs) => op.kind.has_side_effects() && is_storage_lvalue(&gcx.hir, lhs),
+        ExprKind::Assign(lhs, ..) | ExprKind::Delete(lhs) => is_storage_lvalue(gcx, lhs),
+        ExprKind::Unary(op, lhs) => op.kind.has_side_effects() && is_storage_lvalue(gcx, lhs),
         ExprKind::Call(callee, args, _) => is_mutating_call(gcx, callee, args),
         _ => false,
     }
@@ -71,18 +65,17 @@ fn is_state_change<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
 
 /// True if the lvalue is rooted in contract storage: a state variable or a local declared
 /// `storage`, which aliases contract storage.
-fn is_storage_lvalue(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+fn is_storage_lvalue(gcx: Gcx<'_>, expr: &Expr<'_>) -> bool {
     let mut found = false;
     for_each_lhs_var(expr, &mut |v| {
-        let v = hir.variable(v);
+        let v = gcx.hir.variable(v);
         found |= v.is_state_variable() || v.data_location == Some(DataLocation::Storage);
     });
     found
 }
 
-fn is_mutating_call<'hir>(gcx: Gcx<'hir>, callee: &Expr<'hir>, args: &CallArgs<'hir>) -> bool {
-    let hir = &gcx.hir;
-    let mutates = |fid| hir.function(fid).mutates_state();
+fn is_mutating_call<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>, args: &CallArgs<'gcx>) -> bool {
+    let mutates = |fid| gcx.hir.function(fid).mutates_state();
     if let ExprKind::Member(base, method) = &callee.kind {
         // `arr.push(..)` / `arr.pop()` on a storage array or `bytes`. The type check keeps
         // contract methods that happen to be named push/pop out of this heuristic.
@@ -95,7 +88,7 @@ fn is_mutating_call<'hir>(gcx: Gcx<'hir>, callee: &Expr<'hir>, args: &CallArgs<'
                         | TyKind::Elementary(ElementaryType::Bytes)
                 )
             })
-            && is_storage_lvalue(hir, base)
+            && is_storage_lvalue(gcx, base)
         {
             return true;
         }
@@ -109,8 +102,8 @@ fn is_mutating_call<'hir>(gcx: Gcx<'hir>, callee: &Expr<'hir>, args: &CallArgs<'
         // Member calls on a contract: flag when any overload with this name and arity mutates,
         // so a mutating overload is not hidden behind a view one of the same arity.
         if let Some(cid) = contract_id_of(gcx, base)
-            && hir.contract_item_ids(cid).filter_map(|item| item.as_function()).any(|fid| {
-                let f = hir.function(fid);
+            && gcx.hir.contract_item_ids(cid).filter_map(|item| item.as_function()).any(|fid| {
+                let f = gcx.hir.function(fid);
                 f.name.is_some_and(|n| n.name == method.name)
                     && f.parameters.len() == args.len()
                     && mutates(fid)
@@ -123,12 +116,12 @@ fn is_mutating_call<'hir>(gcx: Gcx<'hir>, callee: &Expr<'hir>, args: &CallArgs<'
     // any-overload-mutates policy for bare internal calls.
     resolved_function(gcx, callee).is_some_and(mutates)
         || function_ids(callee)
-            .filter(|&fid| hir.function(fid).parameters.len() == args.len())
+            .filter(|&fid| gcx.hir.function(fid).parameters.len() == args.len())
             .any(mutates)
 }
 
 /// The contract a method-call receiver denotes, including `this`.
-fn contract_id_of<'hir>(gcx: Gcx<'hir>, recv: &Expr<'hir>) -> Option<ContractId> {
+fn contract_id_of<'gcx>(gcx: Gcx<'gcx>, recv: &Expr<'gcx>) -> Option<ContractId> {
     gcx.type_of_expr(recv.peel_parens().id)
         .and_then(ty_contract_id)
         .or_else(|| receiver_contract_id(gcx, recv))

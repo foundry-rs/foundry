@@ -8,7 +8,7 @@ use crate::{
 };
 use solar::sema::{
     Gcx,
-    hir::{Expr, ExprKind, FunctionId, Hir},
+    hir::{Expr, ExprKind, FunctionId},
 };
 
 declare_forge_lint!(
@@ -18,20 +18,14 @@ declare_forge_lint!(
     "Solmate's `SafeTransferLib` does not check that the token has code, so a transfer to a token-less address succeeds silently"
 );
 
-impl<'hir> LateLintPass<'hir> for SolmateSafeTransferLib {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        expr: &'hir Expr<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for SolmateSafeTransferLib {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
         // A name or member expression typed as a function is a resolved reference, called or
         // used as a value: judge the single declaration the type checker selected (overloads,
         // overrides, `using for` and import aliases already accounted for).
         if matches!(expr.kind, ExprKind::Ident(..) | ExprKind::Member(..))
             && let Some(function_id) = resolved_function(gcx, expr)
-            && is_unchecked_token_op(hir, function_id)
+            && is_unchecked_token_op(gcx, function_id)
         {
             ctx.emit(&SOLMATE_SAFE_TRANSFER_LIB, expr.span);
         }
@@ -46,12 +40,12 @@ impl<'hir> LateLintPass<'hir> for SolmateSafeTransferLib {
 /// from a solmate package path (`lib/solmate`, `solmate/...`). Matching a whole path component
 /// rather than a substring keeps a vendored or patched copy under a misleading path such as
 /// `vendor/solmate-fixed/` from being recognized.
-fn is_unchecked_token_op(hir: &Hir<'_>, function_id: FunctionId) -> bool {
-    let function = hir.function(function_id);
+fn is_unchecked_token_op(gcx: Gcx<'_>, function_id: FunctionId) -> bool {
+    let function = gcx.hir.function(function_id);
     let (Some(name), Some(contract_id)) = (function.name, function.contract) else { return false };
-    let contract = hir.contract(contract_id);
+    let contract = gcx.hir.contract(contract_id);
     matches!(name.as_str(), "safeTransfer" | "safeTransferFrom" | "safeApprove")
         && contract.kind.is_library()
         && contract.name.as_str() == "SafeTransferLib"
-        && source_in_package(hir, function.source, &["solmate"])
+        && source_in_package(&gcx.hir, function.source, &["solmate"])
 }

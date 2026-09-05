@@ -17,16 +17,9 @@ use foundry_evm::traces::{
 };
 use revm::interpreter::InstructionResult;
 
-/// Builds a [`CallTraceArena`] from a geth `callTracer` [`CallFrame`] tree.
-pub fn call_frame_to_arena(root: &CallFrame) -> CallTraceArena {
-    call_frame_to_arena_with_root_address(root, None)
-}
-
-/// Builds a [`CallTraceArena`] and overrides the root frame's address when the tracer omitted it.
-pub fn call_frame_to_arena_with_root_address(
-    root: &CallFrame,
-    root_address: Option<Address>,
-) -> CallTraceArena {
+/// Builds a [`CallTraceArena`] from a geth `callTracer` [`CallFrame`] tree, overriding the root
+/// frame's address with `root_address` when the tracer omitted it.
+pub fn call_frame_to_arena(root: &CallFrame, root_address: Option<Address>) -> CallTraceArena {
     let mut arena = CallTraceArena::default();
     let nodes = arena.nodes_mut();
     nodes.clear();
@@ -218,7 +211,7 @@ fn call_log(log: &CallLogFrame) -> CallLog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, b256, bytes};
+    use alloy_primitives::{B256, address, bytes};
 
     /// A geth `callTracer` `SELFDESTRUCT` frame encodes `from` as the destructed contract, `to` as
     /// the refund target and `value` as the transferred balance (the inverse of
@@ -237,7 +230,7 @@ mod tests {
             ..Default::default()
         };
 
-        let arena = call_frame_to_arena(&frame);
+        let arena = call_frame_to_arena(&frame, None);
         let trace = &arena.nodes()[0].trace;
 
         // The destructed contract is the identified address, not the refund target.
@@ -254,7 +247,7 @@ mod tests {
         let created = address!("3333333333333333333333333333333333333333");
         let frame = CallFrame { typ: "CREATE".to_string(), ..Default::default() };
 
-        let arena = call_frame_to_arena_with_root_address(&frame, Some(created));
+        let arena = call_frame_to_arena(&frame, Some(created));
 
         assert_eq!(arena.nodes()[0].trace.address, created);
         assert_eq!(arena.nodes()[0].trace.kind, CallKind::Create);
@@ -293,7 +286,7 @@ mod tests {
             ..Default::default()
         };
 
-        let arena = call_frame_to_arena(&frame);
+        let arena = call_frame_to_arena(&frame, None);
         let nodes = arena.nodes();
         assert_eq!(nodes.len(), 2, "root + one child");
 
@@ -360,7 +353,7 @@ mod tests {
             ..Default::default()
         };
 
-        let arena = call_frame_to_arena(&frame);
+        let arena = call_frame_to_arena(&frame, None);
         let root = &arena.nodes()[0];
 
         assert!(!root.trace.success);
@@ -386,7 +379,7 @@ mod tests {
             ..Default::default()
         };
 
-        let arena = call_frame_to_arena(&frame);
+        let arena = call_frame_to_arena(&frame, None);
         let root = &arena.nodes()[0];
 
         assert_eq!(root.logs.len(), 2, "no log dropped");
@@ -415,7 +408,7 @@ mod tests {
             ..Default::default()
         };
 
-        let arena = call_frame_to_arena(&frame);
+        let arena = call_frame_to_arena(&frame, None);
         let root = &arena.nodes()[0];
 
         assert_eq!(arena.nodes().len(), 3, "root + two children");
@@ -426,47 +419,37 @@ mod tests {
         );
     }
 
-    /// `call_kind` must map every geth `callTracer` call-type string to the right `CallKind`, and
-    /// treat anything unknown as a plain call. The conversion tests only exercise
-    /// `CALL`/`STATICCALL`, so a swapped or dropped arm would otherwise go unnoticed.
     #[test]
     fn maps_call_kind() {
-        assert_eq!(call_kind("CALL"), CallKind::Call);
-        assert_eq!(call_kind("STATICCALL"), CallKind::StaticCall);
-        assert_eq!(call_kind("DELEGATECALL"), CallKind::DelegateCall);
-        assert_eq!(call_kind("CALLCODE"), CallKind::CallCode);
-        assert_eq!(call_kind("AUTHCALL"), CallKind::AuthCall);
-        assert_eq!(call_kind("CREATE"), CallKind::Create);
-        assert_eq!(call_kind("CREATE2"), CallKind::Create2);
-        // "SELFDESTRUCT" and any unknown type render as a plain call.
-        assert_eq!(call_kind("SELFDESTRUCT"), CallKind::Call);
-        assert_eq!(call_kind("NOT_A_REAL_TYPE"), CallKind::Call);
+        for (typ, kind) in [
+            ("CALL", CallKind::Call),
+            ("STATICCALL", CallKind::StaticCall),
+            ("DELEGATECALL", CallKind::DelegateCall),
+            ("CALLCODE", CallKind::CallCode),
+            ("AUTHCALL", CallKind::AuthCall),
+            ("CREATE", CallKind::Create),
+            ("CREATE2", CallKind::Create2),
+            // `SELFDESTRUCT` and unknown types render as a plain call.
+            ("SELFDESTRUCT", CallKind::Call),
+            ("NOT_A_REAL_TYPE", CallKind::Call),
+        ] {
+            assert_eq!(call_kind(typ), kind, "{typ}");
+        }
     }
 
-    /// `call_log` must map each `callTracer` log field to the right place. Distinct topics, data,
-    /// position and index catch a swapped or dropped field (e.g. topics/data or position/index).
+    /// Distinct topics, data, position and index catch a swapped or dropped field.
     #[test]
     fn maps_call_log_fields() {
-        let frame_log = CallLogFrame {
-            address: Some(address!("3333333333333333333333333333333333333333")),
-            topics: Some(vec![
-                b256!("0x00000000000000000000000000000000000000000000000000000000000000aa"),
-                b256!("0x00000000000000000000000000000000000000000000000000000000000000bb"),
-            ]),
+        let topics = vec![B256::with_last_byte(0xaa), B256::with_last_byte(0xbb)];
+        let log = call_log(&CallLogFrame {
+            address: Some(Address::repeat_byte(0x33)),
+            topics: Some(topics.clone()),
             data: Some(bytes!("dead")),
             position: Some(2),
             index: Some(5),
-        };
-
-        let log = call_log(&frame_log);
-        assert_eq!(log.address, address!("3333333333333333333333333333333333333333"));
-        assert_eq!(
-            log.raw_log.topics(),
-            &[
-                b256!("0x00000000000000000000000000000000000000000000000000000000000000aa"),
-                b256!("0x00000000000000000000000000000000000000000000000000000000000000bb"),
-            ]
-        );
+        });
+        assert_eq!(log.address, Address::repeat_byte(0x33));
+        assert_eq!(log.raw_log.topics(), &topics[..]);
         assert_eq!(log.raw_log.data, bytes!("dead"));
         assert_eq!(log.position, 2);
         assert_eq!(log.index, 5);

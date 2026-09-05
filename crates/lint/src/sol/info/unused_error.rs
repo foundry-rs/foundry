@@ -24,12 +24,12 @@ impl<'ast> ProjectLintPass<'ast> for UnusedError {
             return;
         }
         let gcx = ctx.gcx();
-        let hir = &gcx.hir;
 
         // Only errors declared in user-provided files are reported, while uses are collected
         // across the whole unit, so an error declared here and reverted in a dependency (or the
         // other way around) is attributed correctly.
-        let input_source_idx: HashMap<_, _> = hir
+        let input_source_idx: HashMap<_, _> = gcx
+            .hir
             .sources_enumerated()
             .filter_map(|(sid, src)| {
                 let FileName::Real(path) = &src.file.name else { return None };
@@ -41,19 +41,19 @@ impl<'ast> ProjectLintPass<'ast> for UnusedError {
         }
 
         let mut collector = UsedErrorCollector { gcx, current_source: None, used: HashSet::new() };
-        for source_id in hir.source_ids() {
+        for source_id in gcx.hir.source_ids() {
             collector.current_source = Some(source_id);
             let _ = collector.visit_nested_source(source_id);
         }
 
-        for error_id in hir.error_ids() {
-            let error = hir.error(error_id);
+        for error_id in gcx.hir.error_ids() {
+            let error = gcx.hir.error(error_id);
             let Some(&src_idx) = input_source_idx.get(&error.source) else { continue };
             // Errors declared in interfaces and abstract contracts are ABI surface meant for
             // implementers and off-chain consumers, which may live outside the compiled sources.
             let abi_surface = error.contract.is_some_and(|id| {
                 matches!(
-                    hir.contract(id).kind,
+                    gcx.hir.contract(id).kind,
                     ContractKind::Interface | ContractKind::AbstractContract
                 )
             });

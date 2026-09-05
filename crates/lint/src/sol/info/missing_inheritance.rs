@@ -21,10 +21,10 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
             return;
         }
         let gcx = ctx.gcx();
-        let hir = &gcx.hir;
 
         // Only user-provided files are analyzed (and emitted against).
-        let input_source_idx: HashMap<_, _> = hir
+        let input_source_idx: HashMap<_, _> = gcx
+            .hir
             .sources_enumerated()
             .filter_map(|(sid, src)| {
                 let FileName::Real(path) = &src.file.name else { return None };
@@ -40,8 +40,8 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
         let mut selectors = HashMap::<ContractId, BTreeSet<[u8; 4]>>::new();
         let mut candidates = Vec::new();
         let mut targets = Vec::new();
-        for cid in hir.contract_ids() {
-            let contract = hir.contract(cid);
+        for cid in gcx.hir.contract_ids() {
+            let contract = gcx.hir.contract(cid);
             if contract.linearization_failed() {
                 continue;
             }
@@ -49,7 +49,7 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
                 gcx.interface_functions(cid).all().iter().map(|f| f.selector.0).collect();
             let interface_like = match contract.kind {
                 ContractKind::Interface => true,
-                ContractKind::AbstractContract => is_signature_only(hir, cid),
+                ContractKind::AbstractContract => is_signature_only(&gcx.hir, cid),
                 ContractKind::Contract | ContractKind::Library => false,
             };
             if interface_like {
@@ -65,11 +65,11 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
 
         // Stable sort key for deterministic dedupe ordering across runs.
         let sort_key = |cid| {
-            let name = &hir.contract(cid).name;
+            let name = &gcx.hir.contract(cid).name;
             (name.span, name.as_str())
         };
         for tid in targets {
-            let target = hir.contract(tid);
+            let target = gcx.hir.contract(tid);
             let target_sels = &selectors[&tid];
             if target_sels.is_empty() {
                 continue;
@@ -114,7 +114,7 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
                 let msg = format!(
                     "contract `{}` implements interface `{}`'s external API but does not explicitly inherit from it",
                     target.name.as_str(),
-                    hir.contract(iid).name.as_str(),
+                    gcx.hir.contract(iid).name.as_str(),
                 );
                 ctx.emit_with_msg(&sources[src_idx], &MISSING_INHERITANCE, target.name.span, msg);
             }

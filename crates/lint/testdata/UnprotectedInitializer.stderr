@@ -86,3 +86,11 @@ LL │     function initializeConditional(bool useAlternate, address owner_) pub
    │
    ╰ help: https://getfoundry.sh/forge/linting/unprotected-initializer
 
+warning[unprotected-initializer]: upgradeable initializer is not protected against direct implementation calls
+   ╭▸ ROOT/testdata/UnprotectedInitializer.sol:LL:CC
+   │
+LL │     function initialize(address owner_) public initializer {
+   │              ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unprotected-initializer
+

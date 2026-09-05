@@ -2,12 +2,10 @@ use clap::{Args, Parser};
 use eyre::Result;
 use foundry_cli::json::print_json_success;
 use foundry_common::{sh_println, shell};
-use foundry_config::Config;
 use serde_json::json;
-use std::path::PathBuf;
 
 use super::{
-    TouchIdSidecarState, ensure_account_name_available, ensure_touch_id_available,
+    TouchIdSidecarState, ensure_touch_id_available, existing_keystore_path,
     remove_touch_id_sidecar, touch_id_sidecar_path, touch_id_sidecar_policy,
     touch_id_sidecar_state,
 };
@@ -16,7 +14,7 @@ use super::{
 use alloy_signer_local::PrivateKeySigner;
 
 #[cfg(all(target_os = "macos", feature = "touch-id"))]
-use super::ensure_touch_id_sidecar_available;
+use super::{ensure_touch_id_sidecar_available, password_or_prompt};
 
 /// Arguments for `cast wallet touch-id`.
 #[derive(Debug, Args)]
@@ -84,22 +82,8 @@ impl TouchIdSubcommands {
     }
 }
 
-fn keystore_path(account_name: &str, keystore_dir: Option<String>) -> Result<PathBuf> {
-    ensure_account_name_available(account_name)?;
-    let keystore_dir = match keystore_dir {
-        Some(path) => PathBuf::from(path),
-        None => Config::foundry_keystores_dir()
-            .ok_or_else(|| eyre::eyre!("Could not find the default keystore directory."))?,
-    };
-    let keystore_path = keystore_dir.join(account_name);
-    if !keystore_path.exists() {
-        eyre::bail!("Keystore file does not exist at {}", keystore_path.display());
-    }
-    Ok(keystore_path)
-}
-
 fn status(account_name: &str, keystore_dir: Option<String>) -> Result<()> {
-    let keystore_path = keystore_path(account_name, keystore_dir)?;
+    let keystore_path = existing_keystore_path(account_name, keystore_dir)?;
     let sidecar = touch_id_sidecar_path(&keystore_path);
 
     match touch_id_sidecar_state(&sidecar)? {
@@ -134,7 +118,7 @@ fn status(account_name: &str, keystore_dir: Option<String>) -> Result<()> {
 }
 
 fn remove(account_name: &str, keystore_dir: Option<String>) -> Result<()> {
-    let keystore_path = keystore_path(account_name, keystore_dir)?;
+    let keystore_path = existing_keystore_path(account_name, keystore_dir)?;
     let removed = remove_touch_id_sidecar(&keystore_path)?;
     let message = if removed {
         format!("Touch ID enrollment removed for keystore `{account_name}`.")
@@ -150,7 +134,7 @@ fn enroll(
     keystore_dir: Option<String>,
     unsafe_password: Option<String>,
 ) -> Result<()> {
-    let keystore_path = keystore_path(account_name, keystore_dir)?;
+    let keystore_path = existing_keystore_path(account_name, keystore_dir)?;
     ensure_touch_id_available(true)?;
 
     let sidecar = touch_id_sidecar_path(&keystore_path);
@@ -166,10 +150,7 @@ fn enroll(
         }
     };
 
-    let password = match unsafe_password {
-        Some(password) => password,
-        None => rpassword::prompt_password("Enter password: ")?,
-    };
+    let password = password_or_prompt(unsafe_password, "Enter password: ")?;
     PrivateKeySigner::decrypt_keystore(&keystore_path, &password)
         .map_err(|_| eyre::eyre!("Invalid password - Touch ID enrollment cancelled"))?;
 
@@ -195,7 +176,7 @@ fn enroll(
     keystore_dir: Option<String>,
     _unsafe_password: Option<String>,
 ) -> Result<()> {
-    let _ = keystore_path(account_name, keystore_dir)?;
+    existing_keystore_path(account_name, keystore_dir)?;
     ensure_touch_id_available(true)
 }
 

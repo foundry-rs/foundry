@@ -7,7 +7,7 @@ use solar::{
     ast::DataLocation,
     sema::{
         Gcx,
-        hir::{self, Hir, UsingDirective, UsingEntryKind},
+        hir::{self, UsingDirective, UsingEntryKind},
     },
 };
 
@@ -18,28 +18,16 @@ declare_forge_lint!(
     "`using ... for` names a library with no function applicable to the type, so the directive attaches nothing"
 );
 
-impl<'hir> LateLintPass<'hir> for IncorrectUsingFor {
-    fn check_nested_source(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        id: hir::SourceId,
-    ) {
-        for directive in hir.source(id).usings {
-            check_directive(ctx, gcx, hir, directive);
+impl<'gcx> LateLintPass<'gcx> for IncorrectUsingFor {
+    fn check_nested_source(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, id: hir::SourceId) {
+        for directive in gcx.hir.source(id).usings {
+            check_directive(ctx, gcx, directive);
         }
     }
 
-    fn check_nested_contract(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        id: hir::ContractId,
-    ) {
-        for directive in hir.contract(id).usings {
-            check_directive(ctx, gcx, hir, directive);
+    fn check_nested_contract(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, id: hir::ContractId) {
+        for directive in gcx.hir.contract(id).usings {
+            check_directive(ctx, gcx, directive);
         }
     }
 }
@@ -47,12 +35,7 @@ impl<'hir> LateLintPass<'hir> for IncorrectUsingFor {
 /// Judges one `using ... for` directive: a library entry that contributes no member to the
 /// target type attaches nothing, which means no function of the library accepts the type as
 /// its bound first parameter.
-fn check_directive<'hir>(
-    ctx: &LintContext,
-    gcx: Gcx<'hir>,
-    hir: &'hir Hir<'hir>,
-    directive: &'hir UsingDirective<'hir>,
-) {
+fn check_directive<'gcx>(ctx: &LintContext, gcx: Gcx<'gcx>, directive: &'gcx UsingDirective<'gcx>) {
     // `using L for *` attaches every function of the library: nothing to validate.
     let Some(hir_ty) = &directive.ty else { return };
     // `members_of` expects reference types wrapped in their data location. Storage converts
@@ -75,7 +58,7 @@ fn check_directive<'hir>(
             .filter(|member| member.attached)
             .filter_map(|member| member.ty.function_id())
             .any(|function_id| {
-                let function = hir.function(function_id);
+                let function = gcx.hir.function(function_id);
                 function.contract == Some(library_id)
                     && function.visibility != hir::Visibility::Private
             });

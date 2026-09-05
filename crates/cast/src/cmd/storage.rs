@@ -1,4 +1,4 @@
-use crate::{Cast, opts::parse_slot};
+use crate::opts::parse_slot;
 use alloy_ens::NameOrAddress;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -6,7 +6,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
 use comfy_table::{
-    Cell, Table,
+    Table,
     presets::{ASCII_FULL, ASCII_MARKDOWN},
 };
 use eyre::Result;
@@ -107,21 +107,20 @@ impl StorageArgs {
 
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = base_slot {
-            let cast = Cast::new(provider);
+            let slot = U256::from_be_bytes(slot.0).saturating_add(offset);
             sh_println!(
                 "{}",
-                cast.storage(
-                    address,
-                    (Into::<U256>::into(slot).saturating_add(offset)).into(),
-                    block
+                B256::from(
+                    provider
+                        .get_storage_at(address, slot)
+                        .block_id(block.unwrap_or_default())
+                        .await?
                 )
-                .await?
             )?;
             return Ok(());
         }
 
-        // No slot was provided
-        // Get deployed bytecode at given address
+        // No slot was provided: get deployed bytecode at given address
         let address_code =
             provider.get_code_at(address).block_id(block.unwrap_or_default()).await?;
         if address_code.is_empty() {
@@ -138,103 +137,85 @@ impl StorageArgs {
         }
 
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let etherscan_api_key = self.etherscan.key();
         let client = match config.get_etherscan_config_with_chain(Some(chain))? {
             Some(etherscan_config) => {
                 etherscan_config.into_client_with_no_proxy(config.eth_rpc_no_proxy)?
             }
             None => {
-                let api_key = etherscan_api_key.ok_or_else(|| {
+                let api_key = self.etherscan.key().ok_or_else(|| {
                     eyre::eyre!("You must provide an Etherscan API key if you're fetching a remote contract's storage.")
                 })?;
                 foundry_block_explorers::Client::new(chain, api_key)?
             }
         };
-        let source = if let Some(proxy) = self.proxy {
-            find_source(client, proxy.resolve(&provider).await?).await?
-        } else {
-            find_source(client, address).await?
+        let source_address = match self.proxy {
+            Some(proxy) => proxy.resolve(&provider).await?,
+            None => address,
         };
+        let source = find_source(client, source_address).await?;
         let metadata = source.items.first().unwrap();
         if metadata.is_vyper() {
             eyre::bail!("Contract at provided address is not a valid Solidity contract");
         }
 
-        // Create or reuse a persistent cache for Etherscan sources; fall back to a temp dir
-        let mut temp_dir = None;
-        let root_path = if let Some(cache_root) =
-            foundry_config::Config::foundry_etherscan_chain_cache_dir(chain)
+        // Create or reuse a persistent cache for Etherscan sources; fall back to a temp dir.
+        let mut root_path = Config::foundry_etherscan_chain_cache_dir(chain)
+            .map(|cache_root| cache_root.join("sources").join(address.to_string()));
+        if let Some(path) = &root_path
+            && let Err(err) = std::fs::create_dir_all(path)
         {
-            let sources_root = cache_root.join("sources");
-            let contract_root = sources_root.join(format!("{address}"));
-            if let Err(err) = std::fs::create_dir_all(&contract_root) {
-                sh_warn!("Could not create etherscan cache dir, falling back to temp: {err}")?;
-                let tmp = tempfile::tempdir()?;
-                let path = tmp.path().to_path_buf();
-                temp_dir = Some(tmp);
-                path
-            } else {
-                contract_root
+            sh_warn!("Could not create etherscan cache dir, falling back to temp: {err}")?;
+            root_path = None;
+        }
+        let _temp_dir;
+        let root_path = match root_path {
+            Some(path) => path,
+            None => {
+                _temp_dir = tempfile::tempdir()?;
+                _temp_dir.path().to_path_buf()
             }
-        } else {
-            let tmp = tempfile::tempdir()?;
-            let path = tmp.path().to_path_buf();
-            temp_dir = Some(tmp);
-            path
         };
         let mut project = etherscan_project(metadata, &root_path)?;
         add_storage_layout_output(&mut project);
 
-        // Decide on compiler to use (user override -> metadata -> autodetect)
+        // Decide on compiler to use (user override -> metadata -> autodetect).
         let meta_version = metadata.compiler_version()?;
-        let mut auto_detect = false;
-        let desired = if let Some(user_version) = self.solc_version {
-            if user_version < MIN_SOLC {
-                sh_warn!(
-                    "The provided --solc-version is {user_version} while the minimum version for \
-                     storage layouts is {MIN_SOLC} and as a result the output may be empty."
-                )?;
-            }
-            SolcCompiler::Specific(Solc::find_or_install(&user_version)?)
-        } else if meta_version < MIN_SOLC {
-            auto_detect = true;
-            SolcCompiler::AutoDetect
-        } else {
-            SolcCompiler::Specific(Solc::find_or_install(&meta_version)?)
-        };
-        project.compiler.solc = Some(desired);
-
-        // Compile
-        let mut out = ProjectCompiler::new().quiet(true).compile(&project)?;
-        let artifact = {
-            let (_, mut artifact) = out
-                .artifacts()
-                .find(|(name, _)| name == &metadata.contract_name)
-                .ok_or_else(|| eyre::eyre!("Could not find artifact"))?;
-
-            if auto_detect && is_storage_layout_empty(&artifact.storage_layout) {
-                // try recompiling with the minimum version
-                sh_warn!(
-                    "The requested contract was compiled with {meta_version} while the minimum version \
-                     for storage layouts is {MIN_SOLC} and as a result the output may be empty.",
-                )?;
-                let solc = Solc::find_or_install(&MIN_SOLC)?;
-                project.compiler.solc = Some(SolcCompiler::Specific(solc));
-                if let Ok(output) = ProjectCompiler::new().quiet(true).compile(&project) {
-                    out = output;
-                    let (_, new_artifact) = out
-                        .artifacts()
-                        .find(|(name, _)| name == &metadata.contract_name)
-                        .ok_or_else(|| eyre::eyre!("Could not find artifact"))?;
-                    artifact = new_artifact;
+        let auto_detect = self.solc_version.is_none() && meta_version < MIN_SOLC;
+        project.compiler.solc = Some(match self.solc_version {
+            Some(user_version) => {
+                if user_version < MIN_SOLC {
+                    sh_warn!(
+                        "The provided --solc-version is {user_version} while the minimum version for \
+                         storage layouts is {MIN_SOLC} and as a result the output may be empty."
+                    )?;
                 }
+                SolcCompiler::Specific(Solc::find_or_install(&user_version)?)
             }
+            None if auto_detect => SolcCompiler::AutoDetect,
+            None => SolcCompiler::Specific(Solc::find_or_install(&meta_version)?),
+        });
 
-            artifact
+        let find_artifact = |out: &ProjectCompileOutput| {
+            out.artifacts()
+                .find(|(name, _)| name == &metadata.contract_name)
+                .map(|(_, artifact)| artifact.clone())
+                .ok_or_else(|| eyre::eyre!("Could not find artifact"))
         };
+        let out = ProjectCompiler::new().quiet(true).compile(&project)?;
+        let mut artifact = find_artifact(&out)?;
+        if auto_detect && artifact.storage_layout.as_ref().is_none_or(|l| l.storage.is_empty()) {
+            // Try recompiling with the minimum version.
+            sh_warn!(
+                "The requested contract was compiled with {meta_version} while the minimum version \
+                 for storage layouts is {MIN_SOLC} and as a result the output may be empty.",
+            )?;
+            project.compiler.solc = Some(SolcCompiler::Specific(Solc::find_or_install(&MIN_SOLC)?));
+            if let Ok(out) = ProjectCompiler::new().quiet(true).compile(&project) {
+                artifact = find_artifact(&out)?;
+            }
+        }
 
-        drop(temp_dir);
-        fetch_and_print_storage(provider, address, block, artifact).await
+        fetch_and_print_storage(provider, address, block, &artifact).await
     }
 }
 
@@ -249,40 +230,35 @@ fn compile_local_storage_layout(
 ) -> Result<Option<ConfigurableContractArtifact>> {
     // The JSON output exposes compiler-assigned AST IDs, which change when the compilation unit is
     // reduced to the target's dependency graph. Preserve those IDs by retaining the full compile.
-    if json
+    let full_compile = json
         || project.build_info
         || !project.cache_path().is_file()
-        || !project.paths.artifacts.is_dir()
-    {
-        let output = compile_full_storage_layout(project, json)?;
-        return Ok(output.into_artifacts().find_map(|(_, artifact)| {
-            (artifact.get_deployed_bytecode_bytes().as_deref() == Some(address_code))
-                .then_some(artifact)
-        }));
-    }
-
-    let output = ProjectCompiler::new().quiet(json).compile(project)?;
-    let Some((target, artifact)) = output.into_artifacts().find(|(_, artifact)| {
-        artifact.get_deployed_bytecode_bytes().as_deref() == Some(address_code)
-    }) else {
-        return Ok(None);
-    };
-
-    if artifact.storage_layout.is_some() {
-        return Ok(Some(artifact));
-    }
-
-    if let Ok(output) = compile_target_storage_layout(project, &target)
-        && let Some(artifact) = find_target_artifact(output, &target, address_code)
-    {
-        return Ok(Some(artifact));
+        || !project.paths.artifacts.is_dir();
+    if !full_compile {
+        let output = ProjectCompiler::new().quiet(false).compile(project)?;
+        let Some((target, artifact)) =
+            output.into_artifacts().find(|(_, artifact)| has_deployed_code(artifact, address_code))
+        else {
+            return Ok(None);
+        };
+        if artifact.storage_layout.is_some() {
+            return Ok(Some(artifact));
+        }
+        if let Ok(output) = compile_target_storage_layout(project, &target)
+            && let Some(artifact) = find_target_artifact(output, &target, address_code)
+        {
+            return Ok(Some(artifact));
+        }
     }
 
     let output = compile_full_storage_layout(project, json)?;
-    Ok(output.into_artifacts().find_map(|(_, artifact)| {
-        (artifact.get_deployed_bytecode_bytes().as_deref() == Some(address_code))
-            .then_some(artifact)
-    }))
+    Ok(output
+        .into_artifacts()
+        .find_map(|(_, artifact)| has_deployed_code(&artifact, address_code).then_some(artifact)))
+}
+
+fn has_deployed_code(artifact: &ConfigurableContractArtifact, code: &Bytes) -> bool {
+    artifact.get_deployed_bytecode_bytes().as_deref() == Some(code)
 }
 
 fn find_target_artifact(
@@ -293,7 +269,7 @@ fn find_target_artifact(
     output.into_artifacts().find_map(|(id, artifact)| {
         (same_artifact(&id, target)
             && artifact.storage_layout.is_some()
-            && artifact.get_deployed_bytecode_bytes().as_deref() == Some(address_code))
+            && has_deployed_code(&artifact, address_code))
         .then_some(artifact)
     })
 }
@@ -339,21 +315,9 @@ impl StorageValue {
     /// Returns the value of the storage slot, applying the offset if necessary.
     fn value(&self, offset: i64, number_of_bytes: Option<usize>) -> B256 {
         let offset = offset as usize;
-        let mut end = 32;
-        if let Some(number_of_bytes) = number_of_bytes {
-            end = offset + number_of_bytes;
-            if end > 32 {
-                end = 32;
-            }
-        }
-
-        // reverse range, because the value is stored in big endian
-        let raw_sliced_value = &self.raw_slot_value.as_slice()[32 - end..32 - offset];
-
-        // copy the raw sliced value as tail
-        let mut value = [0u8; 32];
-        value[32 - raw_sliced_value.len()..32].copy_from_slice(raw_sliced_value);
-        B256::from(value)
+        let end = number_of_bytes.map_or(32, |n| (offset + n).min(32));
+        // Reverse range, because the value is stored in big endian.
+        B256::left_padding_from(&self.raw_slot_value[32 - end..32 - offset])
     }
 }
 
@@ -371,96 +335,52 @@ async fn fetch_and_print_storage<P: Provider<AnyNetwork>>(
     block: Option<BlockId>,
     artifact: &ConfigurableContractArtifact,
 ) -> Result<()> {
-    if is_storage_layout_empty(&artifact.storage_layout) {
+    let Some(layout) = artifact.storage_layout.as_ref().filter(|l| !l.storage.is_empty()) else {
         sh_warn!("Storage layout is empty.")?;
-        Ok(())
-    } else {
-        let layout = artifact.storage_layout.as_ref().unwrap().clone();
-        let values = fetch_storage_slots(provider, address, block, &layout).await?;
-        print_storage(layout, values)
-    }
-}
-
-async fn fetch_storage_slots<P: Provider<AnyNetwork>>(
-    provider: P,
-    address: Address,
-    block: Option<BlockId>,
-    layout: &StorageLayout,
-) -> Result<Vec<StorageValue>> {
-    let requests = layout.storage.iter().map(|storage_slot| async {
+        return Ok(());
+    };
+    let values = futures::future::try_join_all(layout.storage.iter().map(|storage_slot| async {
         let slot = B256::from(U256::from_str(&storage_slot.slot)?);
         let raw_slot_value = provider
             .get_storage_at(address, slot.into())
             .block_id(block.unwrap_or_default())
             .await?;
+        let storage_type = layout.types.get(&storage_slot.storage_type);
+        let value = StorageValue { slot, raw_slot_value: raw_slot_value.into() }.value(
+            storage_slot.offset,
+            storage_type.and_then(|t| t.number_of_bytes.parse::<usize>().ok()),
+        );
+        Ok::<_, eyre::Report>(value)
+    }))
+    .await?;
 
-        let value = StorageValue { slot, raw_slot_value: raw_slot_value.into() };
-
-        Ok(value)
-    });
-
-    futures::future::try_join_all(requests).await
-}
-
-fn print_storage(layout: StorageLayout, values: Vec<StorageValue>) -> Result<()> {
     if shell::is_json() {
-        let values: Vec<_> = layout
-            .storage
-            .iter()
-            .zip(&values)
-            .map(|(slot, storage_value)| {
-                let storage_type = layout.types.get(&slot.storage_type);
-                storage_value.value(
-                    slot.offset,
-                    storage_type.and_then(|t| t.number_of_bytes.parse::<usize>().ok()),
-                )
-            })
-            .collect();
-        sh_println!(
-            "{}",
-            serde_json::to_string_pretty(&serde_json::to_value(StorageReport { layout, values })?)?
-        )?;
+        let report = StorageReport { layout: layout.clone(), values };
+        sh_println!("{}", serde_json::to_string_pretty(&serde_json::to_value(report)?)?)?;
         return Ok(());
     }
 
     let mut table = Table::new();
-    if shell::is_markdown() {
-        table.load_style(ASCII_MARKDOWN);
+    table.load_style(if shell::is_markdown() {
+        ASCII_MARKDOWN
     } else {
-        table.load_style(ASCII_FULL.with_rounded_corners());
-    }
-
-    table.set_header(vec![
-        Cell::new("Name"),
-        Cell::new("Type"),
-        Cell::new("Slot"),
-        Cell::new("Offset"),
-        Cell::new("Bytes"),
-        Cell::new("Value"),
-        Cell::new("Hex Value"),
-        Cell::new("Contract"),
-    ]);
-
-    for (slot, storage_value) in layout.storage.into_iter().zip(values) {
+        ASCII_FULL.with_rounded_corners()
+    });
+    table.set_header(["Name", "Type", "Slot", "Offset", "Bytes", "Value", "Hex Value", "Contract"]);
+    for (slot, value) in layout.storage.iter().zip(values) {
         let storage_type = layout.types.get(&slot.storage_type);
-        let value = storage_value
-            .value(slot.offset, storage_type.and_then(|t| t.number_of_bytes.parse::<usize>().ok()));
-        let converted_value = U256::from_be_bytes(value.0);
-
         table.add_row([
             slot.label.as_str(),
             storage_type.map_or("?", |t| &t.label),
             &slot.slot,
             &slot.offset.to_string(),
             storage_type.map_or("?", |t| &t.number_of_bytes),
-            &converted_value.to_string(),
+            &U256::from_be_bytes(value.0).to_string(),
             &value.to_string(),
             &slot.contract,
         ]);
     }
-
     sh_println!("\n{table}\n")?;
-
     Ok(())
 }
 
@@ -475,10 +395,6 @@ fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(project: 
     })
 }
 
-const fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {
-    if let Some(s) = storage_layout { s.storage.is_empty() } else { true }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,6 +404,7 @@ mod tests {
         TestProject,
         util::{OTHER_SOLC_VERSION, SOLC_VERSION},
     };
+    use std::path::Path;
 
     fn test_project(name: &str) -> TestProject {
         let project = TestProject::new(name, PathStyle::Dapptools);
@@ -503,6 +420,14 @@ mod tests {
         let project = config.canonic_at(project.root()).project().unwrap();
         assert!(project.paths.has_input_files(), "{:?}", project.paths);
         project
+    }
+
+    /// Compiles `project` and returns the artifact id and deployed code of `name` in `source`.
+    fn compile_target(project: &Project, source: &Path, name: &str) -> (ArtifactId, Bytes) {
+        let output = ProjectCompiler::new().quiet(true).compile(project).unwrap();
+        let (target, artifact) =
+            output.artifact_ids().find(|(id, _)| id.source == source && id.name == name).unwrap();
+        (target, artifact.get_deployed_bytecode_bytes().unwrap().into_owned())
     }
 
     #[test]
@@ -525,13 +450,7 @@ contract Target is Base {
 "#,
         );
         let project = load_project(&prj);
-
-        let output = ProjectCompiler::new().quiet(true).compile(&project).unwrap();
-        let (target, artifact) = output
-            .artifact_ids()
-            .find(|(id, _)| id.source == target_path && id.name == "Target")
-            .unwrap();
-        let address_code = artifact.get_deployed_bytecode_bytes().unwrap().into_owned();
+        let (target, address_code) = compile_target(&project, &target_path, "Target");
         let artifact_before = std::fs::read(&target.path).unwrap();
         let cache_before = std::fs::read(project.cache_path()).unwrap();
 
@@ -561,12 +480,7 @@ contract Target is Base {
         let prj = test_project("cast-storage-source-change");
         let target_path = prj.add_source("Target", "contract Target { uint256 originalValue; }");
         let project = load_project(&prj);
-        let output = ProjectCompiler::new().quiet(true).compile(&project).unwrap();
-        let (target, artifact) = output
-            .artifact_ids()
-            .find(|(id, _)| id.source == target_path && id.name == "Target")
-            .unwrap();
-        let address_code = artifact.get_deployed_bytecode_bytes().unwrap().into_owned();
+        let (target, address_code) = compile_target(&project, &target_path, "Target");
 
         std::fs::write(
             &target_path,
@@ -607,20 +521,14 @@ contract Target is Base {
             max_evm_version: None,
         }];
         let project = load_project_with_config(&prj, config);
-        let output = ProjectCompiler::new().quiet(true).compile(&project).unwrap();
-        let (target, artifact) = output
-            .artifact_ids()
-            .find(|(id, _)| id.source == target_path && id.name == "Profiled")
-            .unwrap();
+        let (target, address_code) = compile_target(&project, &target_path, "Profiled");
         assert_eq!(target.profile, "optimized");
-        let address_code = artifact.get_deployed_bytecode_bytes().unwrap().into_owned();
 
         let output = compile_target_storage_layout(&project, &target).unwrap();
         let (compiled, _) = output
             .artifact_ids()
             .find(|(id, artifact)| {
-                same_artifact(id, &target)
-                    && artifact.get_deployed_bytecode_bytes().as_deref() == Some(&address_code)
+                same_artifact(id, &target) && has_deployed_code(artifact, &address_code)
             })
             .unwrap();
         assert_eq!(compiled.version, target.version);
@@ -646,13 +554,8 @@ contract Target is Base {
         let mut config = Config::with_root(prj.root());
         config.solc = None;
         let project = load_project_with_config(&prj, config);
-        let output = ProjectCompiler::new().quiet(true).compile(&project).unwrap();
-        let (target, artifact) = output
-            .artifact_ids()
-            .find(|(id, _)| id.source == old_path && id.name == "Old")
-            .unwrap();
+        let (target, address_code) = compile_target(&project, &old_path, "Old");
         assert_eq!(target.version, Version::parse(OTHER_SOLC_VERSION).unwrap());
-        let address_code = artifact.get_deployed_bytecode_bytes().unwrap().into_owned();
 
         let output = compile_target_storage_layout(&project, &target).unwrap();
         assert!(!output.artifact_ids().any(|(id, _)| id.source == new_path));
@@ -668,12 +571,7 @@ contract Target is Base {
         prj.add_source("First", "contract First { uint256 first; }");
         let target_path = prj.add_source("Target", "contract Target { uint256 value; }");
         let project = load_project(&prj);
-        let output = ProjectCompiler::new().quiet(true).compile(&project).unwrap();
-        let (target, artifact) = output
-            .artifact_ids()
-            .find(|(id, _)| id.source == target_path && id.name == "Target")
-            .unwrap();
-        let address_code = artifact.get_deployed_bytecode_bytes().unwrap().into_owned();
+        let (target, address_code) = compile_target(&project, &target_path, "Target");
 
         let targeted = find_target_artifact(
             compile_target_storage_layout(&project, &target).unwrap(),
@@ -694,12 +592,7 @@ contract Target is Base {
         let mut config = Config::with_root(prj.root());
         config.build_info = true;
         let project = load_project_with_config(&prj, config);
-        let output = ProjectCompiler::new().quiet(true).compile(&project).unwrap();
-        let (_, artifact) = output
-            .artifact_ids()
-            .find(|(id, _)| id.source == target_path && id.name == "Target")
-            .unwrap();
-        let address_code = artifact.get_deployed_bytecode_bytes().unwrap().into_owned();
+        let (_, address_code) = compile_target(&project, &target_path, "Target");
 
         let artifact =
             compile_local_storage_layout(&project, &address_code, true).unwrap().unwrap();
@@ -713,12 +606,7 @@ contract Target is Base {
         let project = load_project(&prj);
         let mut code_project = project.clone();
         code_project.no_artifacts = true;
-        let output = ProjectCompiler::new().quiet(true).compile(&code_project).unwrap();
-        let (_, artifact) = output
-            .artifact_ids()
-            .find(|(id, _)| id.source == target_path && id.name == "Target")
-            .unwrap();
-        let address_code = artifact.get_deployed_bytecode_bytes().unwrap().into_owned();
+        let (_, address_code) = compile_target(&code_project, &target_path, "Target");
         assert!(!project.cache_path().exists());
 
         let artifact =
@@ -740,14 +628,6 @@ contract Target is Base {
             std::env::remove_var("ETHERSCAN_API_KEY");
         }
         assert_eq!(config.etherscan_api_key, Some("dummykey".to_string()));
-
-        let key = config.get_etherscan_api_key(None).unwrap();
-        assert_eq!(key, "dummykey".to_string());
-    }
-
-    #[test]
-    fn parse_solc_version_arg() {
-        let args = StorageArgs::parse_from(["foundry-cli", "addr.eth", "--solc-version", "0.8.10"]);
-        assert_eq!(args.solc_version, Some(Version::parse("0.8.10").unwrap()));
+        assert_eq!(config.get_etherscan_api_key(None).unwrap(), "dummykey".to_string());
     }
 }

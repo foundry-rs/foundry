@@ -357,32 +357,42 @@ async fn test_simulate_v1_preserves_precompile_warming_rpc() {
         &destination[2..],
     );
 
-    let response = rpc_request(
-        &handle.http_endpoint(),
-        "eth_simulateV1",
-        json!([{"blockStateCalls": [{
-            "stateOverrides": {
-                source: {"movePrecompileToAddress": destination},
-                helper: {"code": helper_code}
-            },
-            "calls": [{"to": helper}]
-        }]}, "latest"]),
-    )
-    .await;
-    assert!(response.get("error").is_none(), "{response}");
+    // A zero-priced blob call uses the simulation handler; an ordinary call uses transact.
+    for call in [
+        json!({"to": helper}),
+        json!({
+            "to": helper,
+            "blobVersionedHashes": [format!("0x01{}", "00".repeat(31))],
+            "maxFeePerBlobGas": "0x0"
+        }),
+    ] {
+        let response = rpc_request(
+            &handle.http_endpoint(),
+            "eth_simulateV1",
+            json!([{"blockStateCalls": [{
+                "stateOverrides": {
+                    source: {"movePrecompileToAddress": destination},
+                    helper: {"code": helper_code}
+                },
+                "calls": [call]
+            }]}, "latest"]),
+        )
+        .await;
+        assert!(response.get("error").is_none(), "{response}");
 
-    let return_data = response["result"][0]["calls"][0]["returnData"].as_str().unwrap();
-    let return_data = alloy_primitives::hex::decode(&return_data[2..]).unwrap();
-    let access_costs = return_data
-        .as_chunks::<32>()
-        .0
-        .iter()
-        .copied()
-        .map(U256::from_be_bytes)
-        .collect::<Vec<_>>();
+        let return_data = response["result"][0]["calls"][0]["returnData"].as_str().unwrap();
+        let return_data = alloy_primitives::hex::decode(&return_data[2..]).unwrap();
+        let access_costs = return_data
+            .as_chunks::<32>()
+            .0
+            .iter()
+            .copied()
+            .map(U256::from_be_bytes)
+            .collect::<Vec<_>>();
 
-    // The measured delta includes PUSH20, POP, and the second GAS opcode (7 gas total).
-    assert_eq!(access_costs, [U256::from(107), U256::from(2_607), U256::from(107)]);
+        // The measured delta includes PUSH20, POP, and the second GAS opcode (7 gas total).
+        assert_eq!(access_costs, [U256::from(107), U256::from(2_607), U256::from(107)]);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

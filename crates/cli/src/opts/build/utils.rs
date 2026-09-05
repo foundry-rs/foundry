@@ -13,7 +13,7 @@ use solar::{interface::MIN_SOLIDITY_VERSION, sema::ParsingContext};
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt as _;
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     path::{Path, PathBuf},
 };
 
@@ -197,21 +197,19 @@ pub fn get_solar_sources_from_compile_output(
         && !targets.is_empty()
     {
         let mut source_paths = HashSet::new();
-        let mut queue: VecDeque<PathBuf> = targets
-            .iter()
-            .filter_map(|path| {
-                is_solidity_file(path).then(|| dunce::canonicalize(path).ok()).flatten()
-            })
-            .collect();
-
-        while let Some(path) = queue.pop_front() {
+        for path in targets.iter().filter_map(|path| {
+            is_solidity_file(path).then(|| dunce::canonicalize(path).ok()).flatten()
+        }) {
             if source_paths.insert(path.clone()) {
-                for import in output.graph().imports(path.as_path()) {
-                    // Skip ignored imports to prevent solar from trying to compile them
-                    if !is_ignored(import) {
-                        queue.push_back(import.to_path_buf());
-                    }
-                }
+                // `imports` already includes transitive dependencies.
+                source_paths.extend(
+                    output
+                        .graph()
+                        .imports(&path)
+                        .into_iter()
+                        .filter(|import| !is_ignored(import))
+                        .map(Path::to_path_buf),
+                );
             }
         }
 

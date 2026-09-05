@@ -96,8 +96,17 @@ contract NoDestructiveSink is Initializable {
     address public owner;
 
     function initialize(address owner_) public initializer {
+        _shared();
+        _shared();
         owner = owner_;
     }
+
+    function _shared() internal pure {
+        _leaf();
+        _leaf();
+    }
+
+    function _leaf() internal pure {}
 }
 
 contract ProtectedDisableInitializers is Initializable {
@@ -313,5 +322,28 @@ contract StorageReturnInitializer is Initializable {
     function execute(address target, bytes calldata data) external {
         (bool ok,) = target.delegatecall(data);
         require(ok);
+    }
+}
+
+// Repeated edges and recursive calls must not hide a later state write.
+contract RepeatedInitializerCalls is Initializable, DangerousBase {
+    address public owner;
+
+    function initialize(address owner_) public initializer { //~WARN: upgradeable initializer is not protected against direct implementation calls
+        _left(owner_);
+        _right(owner_);
+    }
+
+    function _left(address owner_) internal {
+        _shared(owner_);
+    }
+
+    function _right(address owner_) internal {
+        _shared(owner_);
+        owner = owner_;
+    }
+
+    function _shared(address owner_) internal {
+        _left(owner_);
     }
 }

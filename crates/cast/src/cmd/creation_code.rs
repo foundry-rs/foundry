@@ -1,9 +1,8 @@
 use super::interface::load_abi_from_file;
-use crate::SimpleCast;
 use alloy_consensus::Transaction;
-use alloy_network::AnyNetwork;
+use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_primitives::{Address, Bytes};
-use alloy_provider::{Provider, RootProvider, ext::TraceApi};
+use alloy_provider::{Provider, ext::TraceApi};
 use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
 use clap::Parser;
 use eyre::{OptionExt, Result, eyre};
@@ -48,16 +47,9 @@ pub struct CreationCodeArgs {
 impl CreationCodeArgs {
     pub async fn run(self) -> Result<()> {
         let mut config = self.load_config()?;
+        let Self { contract, disassemble, without_args, only_args, abi_path, .. } = self;
 
-        let Self { contract, disassemble, without_args, only_args, abi_path, etherscan: _, rpc: _ } =
-            self;
-
-        let provider = utils::get_provider(&config)?;
-        let chain = provider.get_chain_id().await?;
-        config.chain = Some(chain.into());
-
-        let bytecode = fetch_creation_code_from_etherscan(contract, &config, provider).await?;
-
+        let bytecode = fetch_creation_code(&mut config, contract).await?;
         let bytecode = parse_code_output(
             bytecode,
             contract,
@@ -69,11 +61,10 @@ impl CreationCodeArgs {
         .await?;
 
         if disassemble {
-            let _ = sh_println!("{}", SimpleCast::disassemble(&bytecode)?);
+            sh_println!("{}", super::disassemble(&bytecode)?)?;
         } else {
-            let _ = sh_println!("{bytecode}");
+            sh_println!("{bytecode}")?;
         }
-
         Ok(())
     }
 }
@@ -82,7 +73,7 @@ impl CreationCodeArgs {
 /// - The complete bytecode
 /// - The bytecode without constructor arguments
 /// - Only the constructor arguments
-pub async fn parse_code_output(
+pub(crate) async fn parse_code_output(
     bytecode: Bytes,
     contract: Address,
     config: &Config,
@@ -94,94 +85,90 @@ pub async fn parse_code_output(
         return Ok(bytecode);
     }
 
-    let abi = if let Some(abi_path) = abi_path {
-        load_abi_from_file(abi_path, None)?
-    } else {
-        fetch_abi_from_etherscan(contract, config).await?
+    let abi = load_abi(contract, config, abi_path).await?;
+    let constructor = match constructor_with_args(&abi) {
+        Ok(constructor) => constructor,
+        Err(e) if only_args => return Err(e),
+        Err(_) => return Ok(bytecode),
     };
+    let split = constructor_args_offset(constructor, &bytecode)?;
+    Ok(if without_args { bytecode.slice(..split) } else { bytecode.slice(split..) })
+}
 
-    let abi = abi.into_iter().next().ok_or_eyre("No ABI found.")?;
-    let (abi, _) = abi;
-
-    if abi.constructor.is_none() {
-        if only_args {
-            return Err(eyre!("No constructor found."));
-        }
-        return Ok(bytecode);
+/// Loads the ABI of `contract` from `abi_path`, or from Etherscan when no path is given.
+pub(crate) async fn load_abi(
+    contract: Address,
+    config: &Config,
+    abi_path: Option<&str>,
+) -> Result<JsonAbi> {
+    if let Some(path) = abi_path {
+        return load_abi_from_file(path);
     }
+    let abis = fetch_abi_from_etherscan(contract, config).await?;
+    abis.into_iter().next().map(|(abi, _)| abi).ok_or_eyre("No ABI found.")
+}
 
-    let constructor = abi.constructor.unwrap();
+/// Returns the constructor of `abi`, failing if there is none or it takes no arguments.
+pub(crate) fn constructor_with_args(abi: &JsonAbi) -> Result<&Constructor> {
+    let constructor = abi.constructor().ok_or_else(|| eyre!("No constructor found."))?;
     if constructor.inputs.is_empty() {
-        if only_args {
-            return Err(eyre!("No constructor arguments found."));
-        }
-        return Ok(bytecode);
+        eyre::bail!("No constructor arguments found.");
     }
+    Ok(constructor)
+}
 
+/// Returns the offset in `bytecode` at which the ABI-encoded constructor arguments start.
+pub(crate) fn constructor_args_offset(constructor: &Constructor, bytecode: &[u8]) -> Result<usize> {
     let args_size = constructor.inputs.len() * 32;
-    let split = bytecode.len().checked_sub(args_size).ok_or_else(|| {
+    bytecode.len().checked_sub(args_size).ok_or_else(|| {
         eyre!(
             "Invalid creation bytecode length: have {} bytes, need at least {} for {} constructor inputs",
             bytecode.len(),
             args_size,
             constructor.inputs.len()
         )
-    })?;
-
-    let bytecode = if without_args {
-        Bytes::from(bytecode[..split].to_vec())
-    } else if only_args {
-        Bytes::from(bytecode[split..].to_vec())
-    } else {
-        unreachable!();
-    };
-
-    Ok(bytecode)
+    })
 }
 
-/// Fetches the creation code of a contract from Etherscan and RPC.
-pub async fn fetch_creation_code_from_etherscan(
-    contract: Address,
-    config: &Config,
-    provider: RootProvider<AnyNetwork>,
-) -> Result<Bytes> {
-    let chain = config.chain.unwrap_or_default();
+/// Connects to the configured RPC, pins `config.chain` to it, and fetches the creation code of
+/// `contract` using its Etherscan creation transaction.
+pub(crate) async fn fetch_creation_code(config: &mut Config, contract: Address) -> Result<Bytes> {
+    let provider = utils::get_provider(config)?;
+    let chain = provider.get_chain_id().await?.into();
+    config.chain = Some(chain);
+
     let client = config
         .get_etherscan_config_with_chain(Some(chain))?
         .ok_or_else(|| eyre!("No Etherscan API key configured for chain {chain}"))?
         .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
-    let creation_data = client.contract_creation_data(contract).await?;
-    let creation_tx_hash = creation_data.transaction_hash;
-    let tx_data = provider.get_transaction_by_hash(creation_tx_hash).await?;
-    let tx_data = tx_data.ok_or_eyre("Could not find creation tx data.")?;
+    let creation_tx_hash = client.contract_creation_data(contract).await?.transaction_hash;
+    let tx_data = provider
+        .get_transaction_by_hash(creation_tx_hash)
+        .await?
+        .ok_or_eyre("Could not find creation tx data.")?;
 
-    let bytecode = if tx_data.to().is_none() {
-        // Contract was created using a standard transaction
-        tx_data.input().clone()
-    } else {
-        // Contract was created using a factory pattern or create2
-        // Extract creation code from tx traces
-        let mut creation_bytecode = None;
+    if tx_data.to().is_none() {
+        // Contract was created using a standard transaction.
+        return Ok(tx_data.input().clone());
+    }
 
-        let traces = provider.trace_transaction(creation_tx_hash).await.map_err(|e| {
-            eyre!("Could not fetch traces for transaction {}: {}", creation_tx_hash, e)
-        })?;
-
-        for trace in traces {
-            if let Some(TraceOutput::Create(CreateOutput { address, .. })) = trace.trace.result
-                && address == contract
-            {
-                creation_bytecode = match trace.trace.action {
-                    Action::Create(CreateAction { init, .. }) => Some(init),
-                    _ => None,
-                };
-            }
-        }
-
-        creation_bytecode.ok_or_else(|| eyre!("Could not find contract creation trace."))?
-    };
-
-    Ok(bytecode)
+    // Contract was created using a factory pattern or create2: extract the init code from the
+    // creation trace.
+    let traces = provider
+        .trace_transaction(creation_tx_hash)
+        .await
+        .map_err(|e| eyre!("Could not fetch traces for transaction {}: {}", creation_tx_hash, e))?;
+    traces
+        .into_iter()
+        .filter(|trace| {
+            matches!(&trace.trace.result, Some(TraceOutput::Create(CreateOutput { address, .. })) if *address == contract)
+        })
+        .filter_map(|trace| match trace.trace.action {
+            Action::Create(CreateAction { init, .. }) => Some(init),
+            _ => None,
+        })
+        .last()
+        .ok_or_else(|| eyre!("Could not find contract creation trace."))
 }
 
 #[cfg(test)]

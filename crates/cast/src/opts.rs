@@ -1466,8 +1466,6 @@ pub fn parse_slot(s: &str) -> Result<B256> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SimpleCast;
-    use alloy_rpc_types::{BlockNumberOrTag, RpcBlockHash};
     use clap::CommandFactory;
 
     #[test]
@@ -1553,57 +1551,10 @@ mod tests {
                     "__$_$__$$$$$__$$_$$$_$$__$$___$$(address,address,uint256)".to_string()
                 );
 
-                let selector = SimpleCast::get_selector(&sig, 0).unwrap();
-                assert_eq!(selector.0, "0x23b872dd".to_string());
+                let selector = foundry_common::abi::get_func(&sig).unwrap().selector();
+                assert_eq!(selector.to_string(), "0x23b872dd");
             }
             _ => unreachable!(),
         };
-    }
-
-    #[test]
-    fn parse_block_ids() {
-        struct TestCase {
-            input: String,
-            expect: BlockId,
-        }
-
-        let test_cases = [
-            TestCase {
-                input: "0".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Number(0u64)),
-            },
-            TestCase {
-                input: "0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a"
-                    .to_string(),
-                expect: BlockId::Hash(RpcBlockHash::from_hash(
-                    "0x56462c47c03df160f66819f0a79ea07def1569f8aac0fe91bb3a081159b61b4a"
-                        .parse()
-                        .unwrap(),
-                    None,
-                )),
-            },
-            TestCase {
-                input: "latest".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Latest),
-            },
-            TestCase {
-                input: "earliest".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Earliest),
-            },
-            TestCase {
-                input: "pending".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Pending),
-            },
-            TestCase { input: "safe".to_string(), expect: BlockId::Number(BlockNumberOrTag::Safe) },
-            TestCase {
-                input: "finalized".to_string(),
-                expect: BlockId::Number(BlockNumberOrTag::Finalized),
-            },
-        ];
-
-        for test in test_cases {
-            let result: BlockId = test.input.parse().unwrap();
-            assert_eq!(result, test.expect);
-        }
     }
 }

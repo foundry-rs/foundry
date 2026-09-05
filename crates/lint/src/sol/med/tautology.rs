@@ -20,24 +20,18 @@ declare_forge_lint!(
     "condition is always true or false based on the variable's type"
 );
 
-impl<'hir> LateLintPass<'hir> for TypeBasedTautology {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        expr: &'hir Expr<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for TypeBasedTautology {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx Expr<'gcx>) {
         let ExprKind::Binary(left, op, right) = &expr.kind else { return };
 
         // A pair of comparisons can cover the complete type range even when neither is
         // tautological on its own, e.g. `x > 0 || x == 0` for `uint`.
         let is_tautology = if op.kind == BinOpKind::Or {
-            matches!((comparison_of(hir, left), comparison_of(hir, right)),
+            matches!((comparison_of(&gcx.hir, left), comparison_of(&gcx.hir, right)),
                 (Some(l), Some(r)) if is_boundary_composition(&l, &r))
         } else {
             split_comparison(expr).is_some_and(|(operand, val, op)| {
-                elem_type_of(hir, operand)
+                elem_type_of(&gcx.hir, operand)
                     .and_then(integer_bounds)
                     .is_some_and(|range| is_tautology(range, val, op))
             })
@@ -95,7 +89,7 @@ fn is_tautology(range: Range, val: Const, op: BinOpKind) -> bool {
 
 /// A relational/equality comparison between an operand and a constant, normalized to
 /// `operand <op> const` (the operator is flipped when the constant is on the left).
-fn split_comparison<'hir>(expr: &'hir Expr<'hir>) -> Option<(&'hir Expr<'hir>, Const, BinOpKind)> {
+fn split_comparison<'gcx>(expr: &'gcx Expr<'gcx>) -> Option<(&'gcx Expr<'gcx>, Const, BinOpKind)> {
     let ExprKind::Binary(left, op, right) = &expr.peel_parens().kind else { return None };
     let flipped = match op.kind {
         BinOpKind::Lt => BinOpKind::Gt,
@@ -120,7 +114,7 @@ struct Comparison {
 }
 
 /// A comparison of one resolved integer variable (possibly cast) against a constant.
-fn comparison_of<'hir>(hir: &hir::Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<Comparison> {
+fn comparison_of<'gcx>(hir: &hir::Hir<'gcx>, expr: &'gcx Expr<'gcx>) -> Option<Comparison> {
     let (operand, val, op) = split_comparison(expr)?;
     let (variable, cast_path, range) = comparison_operand_of(hir, operand)?;
     Some(Comparison { variable, cast_path, range, op, val })
@@ -146,9 +140,9 @@ fn is_boundary_composition(l: &Comparison, r: &Comparison) -> bool {
 /// A same-signed widening cast preserves the value, so it neither changes the range nor
 /// distinguishes the operand from the uncast expression; any other cast resets the range to the
 /// target type's and becomes part of the operand's identity.
-fn comparison_operand_of<'hir>(
-    hir: &hir::Hir<'hir>,
-    expr: &'hir Expr<'hir>,
+fn comparison_operand_of<'gcx>(
+    hir: &hir::Hir<'gcx>,
+    expr: &'gcx Expr<'gcx>,
 ) -> Option<(VariableId, Vec<ElementaryType>, Range)> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(reses) => {

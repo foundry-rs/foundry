@@ -7,7 +7,7 @@ use crate::{
     sol::{Severity, SolLint, analysis::builtins},
 };
 use solar::sema::{
-    Gcx, Hir,
+    Gcx,
     builtins::Builtin,
     hir::{Expr, ExprKind, Function, StmtKind},
 };
@@ -19,15 +19,9 @@ declare_forge_lint!(
     "`require` or `revert` inside a loop"
 );
 
-impl<'hir> LateLintPass<'hir> for RequireRevertInLoop {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
-        for_each_loop_item(gcx, hir, func, false, |item| {
+impl<'gcx> LateLintPass<'gcx> for RequireRevertInLoop {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
+        for_each_loop_item(gcx, func, false, |item| {
             let reported = match item {
                 LoopItem::Stmt(stmt) => match stmt.kind {
                     StmtKind::Revert(expr) => Some(expr),

@@ -15,33 +15,31 @@ declare_forge_lint!(
     "explicit empty base-constructor arguments are redundant"
 );
 
-impl<'hir> LateLintPass<'hir> for RedundantBaseConstructorCall {
+impl<'gcx> LateLintPass<'gcx> for RedundantBaseConstructorCall {
     fn check_contract(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        contract: &'hir hir::Contract<'hir>,
+        gcx: Gcx<'gcx>,
+        contract: &'gcx hir::Contract<'gcx>,
     ) {
         // `contract X is A(), B()` clauses: removing only the `()` is enough, `is A` is valid.
         for m in contract.bases_args {
-            try_emit(ctx, hir, m, m.args.span);
+            try_emit(ctx, &gcx.hir, m, m.args.span);
         }
     }
 
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        func: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        func: &'gcx hir::Function<'gcx>,
     ) {
         // `constructor() A() {}` modifier-style base calls. The bare base name `A` is not valid
         // in a constructor's modifier list, so the whole `A()` must be removed, along with one
         // leading whitespace char to avoid leaving a double space.
         if func.kind == hir::FunctionKind::Constructor {
             for m in func.modifiers {
-                try_emit(ctx, hir, m, expand_to_leading_ws(ctx, m.span));
+                try_emit(ctx, &gcx.hir, m, expand_to_leading_ws(ctx, m.span));
             }
         }
     }

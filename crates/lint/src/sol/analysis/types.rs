@@ -39,12 +39,12 @@ pub fn ty_contract_id(ty: Ty<'_>) -> Option<ContractId> {
 }
 
 /// True when `expr`'s type-checked static type is `address` / `address payable`.
-pub fn expr_is_address<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
+pub fn expr_is_address<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
     gcx.type_of_expr(expr.peel_parens().id).is_some_and(ty_is_address)
 }
 
 /// `address`-typed expression, or an address cast / `payable(..)` wrap whose type is unknown.
-pub fn is_address_like<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
+pub fn is_address_like<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Payable(_) => true,
         ExprKind::Call(callee, ..) if is_address_cast(callee) => true,
@@ -54,7 +54,7 @@ pub fn is_address_like<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> bool {
 
 /// Static contract type of a method-call receiver: a contract-typed expression, a direct
 /// contract/library reference, or an `IFoo(addr)` cast.
-pub fn receiver_contract_id<'hir>(gcx: Gcx<'hir>, recv: &Expr<'hir>) -> Option<ContractId> {
+pub fn receiver_contract_id<'gcx>(gcx: Gcx<'gcx>, recv: &Expr<'gcx>) -> Option<ContractId> {
     expr_ty(gcx, recv).and_then(ty_contract_id).or_else(|| direct_contract_id(recv))
 }
 
@@ -78,8 +78,7 @@ pub fn variable_data_location(hir: &hir::Hir<'_>, var_id: VariableId) -> Option<
 /// Static type of `expr`. Uses the type checker's result when available and otherwise
 /// reconstructs the type structurally from the HIR (locations of storage-rooted lvalues are
 /// preserved). `this`/`super` and unresolvable expressions yield `None`.
-pub fn expr_ty<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> Option<Ty<'hir>> {
-    let hir = &gcx.hir;
+pub fn expr_ty<'gcx>(gcx: Gcx<'gcx>, expr: &Expr<'gcx>) -> Option<Ty<'gcx>> {
     let expr = expr.peel_parens();
     if !is_this_or_super(expr)
         && let Some(ty) = gcx.type_of_expr(expr.id)
@@ -108,7 +107,7 @@ pub fn expr_ty<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> Option<Ty<'hir>> {
             }
             let ty = gcx.type_of_res(res);
             Some(match res.as_variable() {
-                Some(v) => ty.with_loc_if_ref_opt(gcx, variable_data_location(hir, v)),
+                Some(v) => ty.with_loc_if_ref_opt(gcx, variable_data_location(&gcx.hir, v)),
                 None => ty,
             })
         }
@@ -175,7 +174,7 @@ pub fn expr_ty<'hir>(gcx: Gcx<'hir>, expr: &Expr<'hir>) -> Option<Ty<'hir>> {
     }
 }
 
-fn explicit_cast_ty<'hir>(gcx: Gcx<'hir>, to: Ty<'hir>, args: &CallArgs<'hir>) -> Ty<'hir> {
+fn explicit_cast_ty<'gcx>(gcx: Gcx<'gcx>, to: Ty<'gcx>, args: &CallArgs<'gcx>) -> Ty<'gcx> {
     match args.exprs().next().and_then(|arg| expr_ty(gcx, arg)) {
         Some(from) => from.try_convert_explicit_to(to, gcx).unwrap_or(to),
         None => to,
@@ -183,17 +182,16 @@ fn explicit_cast_ty<'hir>(gcx: Gcx<'hir>, to: Ty<'hir>, args: &CallArgs<'hir>) -
 }
 
 /// Type of `base.<member>`, resolved through Solar's member tables (unique match only).
-pub fn member_ty<'hir>(gcx: Gcx<'hir>, base: &Expr<'hir>, member: Symbol) -> Option<Ty<'hir>> {
+pub fn member_ty<'gcx>(gcx: Gcx<'gcx>, base: &Expr<'gcx>, member: Symbol) -> Option<Ty<'gcx>> {
     if is_this_or_super(base) {
         return None;
     }
-    let hir = &gcx.hir;
     let base_ty = expr_ty(gcx, base)?;
     let item = referenced_item(base);
     let source = item
-        .map(|id| hir.item(id).source())
-        .unwrap_or_else(|| hir.sources_enumerated().next().expect("HIR has a source").0);
-    let contract = item.and_then(|id| hir.item(id).contract());
+        .map(|id| gcx.hir.item(id).source())
+        .unwrap_or_else(|| gcx.hir.sources_enumerated().next().expect("HIR has a source").0);
+    let contract = item.and_then(|id| gcx.hir.item(id).contract());
     unique(gcx.members_of(base_ty, source, contract).filter(|m| m.name == member).map(|m| m.ty))
 }
 

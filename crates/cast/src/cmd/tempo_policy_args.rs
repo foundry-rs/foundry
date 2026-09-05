@@ -6,16 +6,6 @@ use tempo_contracts::precompiles::IAccountKeychain::{CallScope, SelectorRule};
 // `cast wallet session`. Keeping it here avoids duplicating parsing behavior
 // or making wallet-session commands depend on the larger keychain command module.
 
-/// Parsed selector argument used by policy-editing commands.
-#[derive(Debug, Clone, Copy)]
-pub struct SelectorArg([u8; 4]);
-
-impl SelectorArg {
-    pub(crate) const fn into_bytes(self) -> [u8; 4] {
-        self.0
-    }
-}
-
 /// Parse a selector string into 4-byte selector bytes.
 ///
 /// Accepts 4-byte hex (`0xd09de08a`), a full signature
@@ -52,25 +42,14 @@ pub(crate) fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
     }
 }
 
-/// Parse a selector string into a named selector argument.
-pub(crate) fn parse_selector_arg(s: &str) -> Result<SelectorArg, String> {
-    parse_selector_bytes(s).map(SelectorArg)
-}
-
 /// Parse a `TARGET[:SELECTORS[@RECIPIENTS]]` scope string.
 pub(crate) fn parse_scope(s: &str) -> Result<CallScope, String> {
-    let (target_str, selectors_str) = match s.split_once(':') {
-        Some((t, sel)) => (t, Some(sel)),
-        None => (s, None),
-    };
+    let (target_str, selectors_str) =
+        s.split_once(':').map_or((s, None), |(target, selectors)| (target, Some(selectors)));
 
     let target: Address =
         target_str.parse().map_err(|e| format!("invalid target address '{target_str}': {e}"))?;
-
-    let selector_rules = match selectors_str {
-        None => vec![],
-        Some(sel_str) => parse_selector_rules(sel_str)?,
-    };
+    let selector_rules = selectors_str.map_or(Ok(vec![]), parse_selector_rules)?;
 
     Ok(CallScope { target, selectorRules: selector_rules })
 }
@@ -84,26 +63,18 @@ fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
             continue;
         }
 
-        let (selector_str, recipients_str) = match part.split_once('@') {
-            Some((sel, recip)) => (sel, Some(recip)),
-            None => (part, None),
-        };
-
+        let (selector_str, recipients_str) = part.split_once('@').unwrap_or((part, ""));
         let selector = parse_selector_bytes(selector_str)?;
-
-        let recipients = match recipients_str {
-            None => vec![],
-            Some(r) => r
-                .split(',')
-                .filter(|s| !s.trim().is_empty())
-                .map(|addr_str| {
-                    let addr_str = addr_str.trim();
-                    addr_str
-                        .parse::<Address>()
-                        .map_err(|e| format!("invalid recipient address '{addr_str}': {e}"))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        };
+        let recipients = recipients_str
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|addr_str| {
+                addr_str
+                    .parse::<Address>()
+                    .map_err(|e| format!("invalid recipient address '{addr_str}': {e}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         rules.push(SelectorRule { selector: selector.into(), recipients });
     }
@@ -167,99 +138,66 @@ pub(crate) fn parse_period(s: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::keccak256;
-    use std::str::FromStr;
+    use alloy_primitives::{address, keccak256};
 
-    #[test]
-    fn parse_selector_bytes_named() {
-        let sel = parse_selector_bytes("transfer").unwrap();
-        assert_eq!(sel, keccak256(b"transfer(address,uint256)")[..4]);
-
-        let sel = parse_selector_bytes("approve").unwrap();
-        assert_eq!(sel, keccak256(b"approve(address,uint256)")[..4]);
-
-        let sel = parse_selector_bytes("transferWithMemo").unwrap();
-        assert_eq!(sel, keccak256(b"transferWithMemo(address,uint256,bytes32)")[..4]);
+    fn selector(sig: &str) -> [u8; 4] {
+        keccak256(sig.as_bytes())[..4].try_into().unwrap()
     }
 
     #[test]
-    fn parse_selector_bytes_hex() {
-        let sel = parse_selector_bytes("0xaabbccdd").unwrap();
-        assert_eq!(sel, [0xaa, 0xbb, 0xcc, 0xdd]);
-
-        let sel = parse_selector_bytes("0xd09de08a").unwrap();
-        assert_eq!(sel, [0xd0, 0x9d, 0xe0, 0x8a]);
+    fn parse_selector_bytes_accepts_names_hex_and_signatures() {
+        for (input, expected) in [
+            ("transfer", selector("transfer(address,uint256)")),
+            ("approve", selector("approve(address,uint256)")),
+            ("transferWithMemo", selector("transferWithMemo(address,uint256,bytes32)")),
+            ("increment()", selector("increment()")),
+            ("transfer(address,uint256)", selector("transfer(address,uint256)")),
+            ("0xaabbccdd", [0xaa, 0xbb, 0xcc, 0xdd]),
+            ("0xd09de08a", [0xd0, 0x9d, 0xe0, 0x8a]),
+        ] {
+            assert_eq!(parse_selector_bytes(input).unwrap(), expected, "{input}");
+        }
+        for input in
+            ["0xaabb", "0xaabbccddee", "0xzzzzzzzz", "", "transfer(address,uint256", "transfer)"]
+        {
+            assert!(parse_selector_bytes(input).is_err(), "{input}");
+        }
     }
 
     #[test]
-    fn parse_selector_bytes_hex_invalid() {
-        assert!(parse_selector_bytes("0xaabb").is_err());
-        assert!(parse_selector_bytes("0xaabbccddee").is_err());
-        assert!(parse_selector_bytes("0xzzzzzzzz").is_err());
-    }
-
-    #[test]
-    fn parse_selector_bytes_full_signature() {
-        let sel = parse_selector_bytes("increment()").unwrap();
-        assert_eq!(sel, keccak256(b"increment()")[..4]);
-
-        let sel = parse_selector_bytes("transfer(address,uint256)").unwrap();
-        assert_eq!(sel, keccak256(b"transfer(address,uint256)")[..4]);
-    }
-
-    #[test]
-    fn parse_selector_bytes_rejects_invalid_signature() {
-        assert!(parse_selector_bytes("").is_err());
-        assert!(parse_selector_bytes("transfer(address,uint256").is_err());
-        assert!(parse_selector_bytes("transfer)").is_err());
-    }
-
-    #[test]
-    fn parse_scope_hex_selector_with_recipient() {
-        let scope = parse_scope(
-            "0x20c0000000000000000000000000000000000001:0xaabbccdd@0x1111111111111111111111111111111111111111",
-        )
-        .unwrap();
-        assert_eq!(scope.selectorRules.len(), 1);
-        assert_eq!(scope.selectorRules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
-        assert_eq!(scope.selectorRules[0].recipients.len(), 1);
-    }
-
-    #[test]
-    fn parse_scope_target_only() {
-        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap();
-        assert_eq!(
-            scope.target,
-            Address::from_str("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap()
-        );
-        assert!(scope.selectorRules.is_empty());
-    }
-
-    #[test]
-    fn parse_scope_with_selectors() {
-        let scope =
-            parse_scope("0x20c0000000000000000000000000000000000001:transfer,approve").unwrap();
-        assert_eq!(scope.selectorRules.len(), 2);
-        assert!(scope.selectorRules[0].recipients.is_empty());
-        assert!(scope.selectorRules[1].recipients.is_empty());
-    }
-
-    #[test]
-    fn parse_scope_hex_selector() {
-        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xaabbccdd").unwrap();
-        assert_eq!(scope.selectorRules.len(), 1);
-        assert_eq!(scope.selectorRules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
-        assert!(scope.selectorRules[0].recipients.is_empty());
-    }
-
-    #[test]
-    fn parse_scope_selector_with_recipient() {
-        let scope = parse_scope(
-            "0x20c0000000000000000000000000000000000001:transfer@0x1111111111111111111111111111111111111111",
-        )
-        .unwrap();
-        assert_eq!(scope.selectorRules.len(), 1);
-        assert_eq!(scope.selectorRules[0].recipients.len(), 1);
+    fn parse_scope_variants() {
+        let target = address!("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D");
+        let recipient = address!("0x1111111111111111111111111111111111111111");
+        // (input, expected selectors, expected recipients per rule)
+        let cases = [
+            ("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D", vec![]),
+            (
+                "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xaabbccdd",
+                vec![([0xaa, 0xbb, 0xcc, 0xdd], vec![])],
+            ),
+            (
+                "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:transfer,approve",
+                vec![
+                    (selector("transfer(address,uint256)"), vec![]),
+                    (selector("approve(address,uint256)"), vec![]),
+                ],
+            ),
+            (
+                "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:transfer@0x1111111111111111111111111111111111111111",
+                vec![(selector("transfer(address,uint256)"), vec![recipient])],
+            ),
+            (
+                "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xaabbccdd@0x1111111111111111111111111111111111111111",
+                vec![([0xaa, 0xbb, 0xcc, 0xdd], vec![recipient])],
+            ),
+        ];
+        for (input, expected) in cases {
+            let scope = parse_scope(input).unwrap();
+            assert_eq!(scope.target, target, "{input}");
+            let rules: Vec<_> =
+                scope.selectorRules.iter().map(|r| (r.selector.0, r.recipients.clone())).collect();
+            assert_eq!(rules, expected, "{input}");
+        }
     }
 
     #[test]

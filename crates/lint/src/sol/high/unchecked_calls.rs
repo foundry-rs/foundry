@@ -30,17 +30,11 @@ declare_forge_lint!(
 ///
 /// WARN: can issue false positives, as it doesn't check that the contract being called sticks to
 /// the full ERC20 specification.
-impl<'hir> LateLintPass<'hir> for UncheckedTransferERC20 {
-    fn check_stmt(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        stmt: &'hir hir::Stmt<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for UncheckedTransferERC20 {
+    fn check_stmt(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, stmt: &'gcx hir::Stmt<'gcx>) {
         // Only expression statements can contain unchecked transfers.
         if let hir::StmtKind::Expr(expr) = &stmt.kind
-            && is_erc20_transfer_call(gcx, hir, expr)
+            && is_erc20_transfer_call(gcx, expr)
         {
             ctx.emit(&ERC20_UNCHECKED_TRANSFER, expr.span);
         }
@@ -50,11 +44,7 @@ impl<'hir> LateLintPass<'hir> for UncheckedTransferERC20 {
 /// Checks if an expression is a call to a contract member matching the ERC20 signature of
 /// * `function transfer(address to, uint256 amount) external returns (bool);`
 /// * `function transferFrom(address from, address to, uint256 amount) external returns (bool);`
-fn is_erc20_transfer_call<'hir>(
-    gcx: Gcx<'hir>,
-    hir: &hir::Hir<'hir>,
-    expr: &hir::Expr<'hir>,
-) -> bool {
+fn is_erc20_transfer_call<'gcx>(gcx: Gcx<'gcx>, expr: &hir::Expr<'gcx>) -> bool {
     let hir::ExprKind::Call(callee, call_args, ..) = &expr.kind else { return false };
     let hir::ExprKind::Member(receiver, func_ident) = &callee.kind else { return false };
     let params: &[&str] = match (func_ident.as_str(), call_args.len()) {
@@ -63,14 +53,14 @@ fn is_erc20_transfer_call<'hir>(
         _ => return false,
     };
     let Some(cid) = receiver_contract_id(gcx, receiver) else { return false };
-    hir.contract_item_ids(cid).filter_map(|item| item.as_function()).any(|fid| {
-        let func = hir.function(fid);
+    gcx.hir.contract_item_ids(cid).filter_map(|item| item.as_function()).any(|fid| {
+        let func = gcx.hir.function(fid);
         func.name.is_some_and(|name| name.name == func_ident.name)
             && func.kind.is_function()
             && func.mutates_state()
             && func.parameters.len() == params.len()
-            && func.parameters.iter().zip(params).all(|(id, ty)| is_elementary(hir, *id, ty))
-            && matches!(func.returns, [ret] if is_elementary(hir, *ret, "bool"))
+            && func.parameters.iter().zip(params).all(|(id, ty)| is_elementary(&gcx.hir, *id, ty))
+            && matches!(func.returns, [ret] if is_elementary(&gcx.hir, *ret, "bool"))
     })
 }
 
