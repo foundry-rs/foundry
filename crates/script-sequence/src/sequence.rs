@@ -104,7 +104,9 @@ impl<N: Network> ScriptSequence<N> {
         )
         .wrap_err(format!("Deployment's sensitive details not found for chain `{chain_id}`."))?;
 
-        script_sequence.fill_sensitive(&sensitive_script_sequence);
+        script_sequence.fill_sensitive(&sensitive_script_sequence).wrap_err(format!(
+            "Deployment's sensitive details are out of sync with the broadcast file for chain `{chain_id}`; the two were likely written partially (e.g. interrupted mid-save). Try re-running the deployment from scratch."
+        ))?;
 
         script_sequence.paths = Some((path, sensitive_path));
 
@@ -233,11 +235,23 @@ impl<N: Network> ScriptSequence<N> {
         self.transactions.iter().map(|tx| tx.tx())
     }
 
-    pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) {
-        self.transactions
-            .iter_mut()
-            .enumerate()
-            .for_each(|(i, tx)| tx.rpc.clone_from(&sensitive.transactions[i].rpc));
+    /// Fills each transaction's sensitive metadata (currently just the RPC url) from the
+    /// corresponding entry in `sensitive`.
+    pub fn fill_sensitive(&mut self, sensitive: &SensitiveScriptSequence) -> Result<()> {
+        let transactions_len = self.transactions.len();
+        let sensitive_len = sensitive.transactions.len();
+        if transactions_len != sensitive_len {
+            eyre::bail!(
+                "sensitive-cache entry count ({sensitive_len}) does not match transaction count \
+                 ({transactions_len}); the broadcast file and its sensitive-cache counterpart are \
+                 out of sync"
+            );
+        }
+        for (i, tx) in self.transactions.iter_mut().enumerate() {
+            // Length equality was already checked above, so this index is always in bounds.
+            tx.rpc.clone_from(&sensitive.transactions[i].rpc);
+        }
+        Ok(())
     }
 }
 
