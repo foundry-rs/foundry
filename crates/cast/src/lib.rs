@@ -105,15 +105,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         self.provider.get_logs(filter).await.map_err(Into::into)
     }
 
-    /// Retrieves logs using chunked requests to handle large block ranges.
-    ///
-    /// Automatically divides large block ranges into smaller chunks to avoid provider limits
-    /// and processes them with controlled concurrency to prevent rate limiting.
-    pub async fn filter_logs_chunked(&self, filter: Filter, chunk_size: u64) -> Result<String> {
-        let logs = crate::cmd::logs::get_logs_chunked(&self.provider, &filter, chunk_size).await?;
-        crate::cmd::logs::format_logs(logs)
-    }
-
     /// Sets up a subscription to the given filter and writes the logs to the given output.
     ///
     /// # Example
