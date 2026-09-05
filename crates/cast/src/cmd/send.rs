@@ -20,7 +20,7 @@ use foundry_common::{
     tempo::{maybe_print_fee_token, resolve_and_set_fee_token},
 };
 use foundry_config::Chain;
-use foundry_wallets::{TempoAccountsWallet, WalletSigner};
+use foundry_wallets::{TempoAccountsWallet, WalletSigner, wallet_browser::signer::BrowserSigner};
 use tempo_alloy::TempoNetwork;
 use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 
@@ -142,10 +142,39 @@ impl SendTxArgs {
         }
     }
 
+    /// Runs a contract call with an already resolved browser signer.
+    pub(crate) async fn run_generic_with_browser<N: Network>(
+        self,
+        browser: BrowserSigner<N>,
+    ) -> Result<()>
+    where
+        N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+        N::UnsignedTx: SignableTransaction<Signature>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+    {
+        self.run_generic_inner::<N>(None, None, Some(browser)).await
+    }
+
     pub async fn run_generic<N: Network>(
         self,
         pre_resolved_signer: Option<WalletSigner>,
+        access_key: Option<TempoAccountsWallet>,
+    ) -> Result<()>
+    where
+        N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+        N::UnsignedTx: SignableTransaction<Signature>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+    {
+        self.run_generic_inner::<N>(pre_resolved_signer, access_key, None).await
+    }
+
+    async fn run_generic_inner<N: Network>(
+        self,
+        pre_resolved_signer: Option<WalletSigner>,
         mut access_key: Option<TempoAccountsWallet>,
+        pre_resolved_browser: Option<BrowserSigner<N>>,
     ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
@@ -331,8 +360,12 @@ impl SendTxArgs {
             }
         }
 
-        // Launch browser signer if `--browser` flag is set
-        let browser = send_tx.browser.run::<N>().await?;
+        // Launch a browser signer if one was not already resolved by the caller.
+        let browser = if let Some(browser) = pre_resolved_browser {
+            Some(browser)
+        } else {
+            send_tx.browser.run::<N>().await?
+        };
 
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
