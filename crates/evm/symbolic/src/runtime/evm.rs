@@ -189,10 +189,6 @@ pub(crate) fn shift_left(cx: &mut SymCx, value: SymExpr, bits: usize) -> SymExpr
     }
 }
 
-pub(crate) fn ensure_jumpdest(dest: usize, jumpdests: &JumpTable) -> Result<(), SymbolicError> {
-    if jumpdests.is_valid(dest) { Ok(()) } else { Err(SymbolicError::InvalidJump(dest)) }
-}
-
 pub(crate) fn is_assertion_revert(data: &[u8]) -> bool {
     is_assert_panic(data) || is_revert_assertion_failure(data)
 }

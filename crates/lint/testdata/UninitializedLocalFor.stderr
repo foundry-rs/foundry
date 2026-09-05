@@ -1,0 +1,88 @@
+warning[uninitialized-local]: local variable is read before being initialized
+   ╭▸ ROOT/testdata/UninitializedLocalFor.sol:LL:CC
+   │
+LL │             for (; i < n; ++i) {}
+   │                    ━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[uninitialized-local]: local variable is read before being initialized
+   ╭▸ ROOT/testdata/UninitializedLocalFor.sol:LL:CC
+   │
+LL │         for (uint256 i; i < n; ++i) {}
+   │                             ━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[uninitialized-local]: local variable is read before being initialized
+   ╭▸ ROOT/testdata/UninitializedLocalFor.sol:LL:CC
+   │
+LL │             sum += amount;
+   │                    ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[uninitialized-local]: local variable is read before being initialized
+   ╭▸ ROOT/testdata/UninitializedLocalFor.sol:LL:CC
+   │
+LL │         return amount;
+   │                ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[uninitialized-local]: local variable is read before being initialized
+   ╭▸ ROOT/testdata/UninitializedLocalFor.sol:LL:CC
+   │
+LL │             sum += amount;
+   │                    ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[uninitialized-local]: local variable is read before being initialized
+   ╭▸ ROOT/testdata/UninitializedLocalFor.sol:LL:CC
+   │
+LL │         for (uint256 i; i < n; --i) {}
+   │                         ━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[uninitialized-local]: local variable is read before being initialized
+   ╭▸ ROOT/testdata/UninitializedLocalFor.sol:LL:CC
+   │
+LL │         for (uint256 i; i < n; --n) {}
+   │                         ━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[uninitialized-local]: local variable is read before being initialized
+   ╭▸ ROOT/testdata/UninitializedLocalFor.sol:LL:CC
+   │
+LL │         for (uint256 i; i < n;) {
+   │                         ━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[uninitialized-local]: local variable is read before being initialized
+   ╭▸ ROOT/testdata/UninitializedLocalFor.sol:LL:CC
+   │
+LL │         amount += 1;
+   │         ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[uninitialized-local]: local variable is read before being initialized
+   ╭▸ ROOT/testdata/UninitializedLocalFor.sol:LL:CC
+   │
+LL │                 sum += amount;
+   │                        ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[uninitialized-local]: local variable is read before being initialized
+   ╭▸ ROOT/testdata/UninitializedLocalFor.sol:LL:CC
+   │
+LL │         for (int256 i; i < n; ++i) {}
+   │                        ━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+

@@ -6,6 +6,7 @@ use crate::{
         analysis::{builtins, function_ids, is_builtin, runtime_entry_points},
     },
 };
+use alloy_primitives::map::HashSet;
 use solar::{
     ast::{ContractKind, DataLocation, StateMutability},
     interface::{kw, sym},
@@ -45,6 +46,9 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
         let upgradeable =
             bases.iter().any(|&cid| hir.contract(cid).name.as_str() == "Initializable")
                 || entries.iter().any(|&fid| has_initializer_modifier(hir, hir.function(fid)));
+        if !upgradeable {
+            return;
+        }
         let locked = bases.iter().filter_map(|&cid| hir.contract(cid).ctor).any(|ctor| {
             reaches(hir, bases, ctor, |expr| {
                 let ExprKind::Call(callee, ..) = &expr.kind else { return false };
@@ -55,11 +59,14 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
                 })
             })
         });
+        if locked {
+            return;
+        }
         let destructive = entries.iter().any(|&fid| {
             !has_modifier_named(hir, hir.function(fid), "onlyProxy")
                 && reaches(hir, bases, fid, is_destructive_call)
         });
-        if !upgradeable || locked || !destructive {
+        if !destructive {
             return;
         }
 
@@ -98,26 +105,24 @@ fn reaches<'hir>(
     fid: FunctionId,
     hit: impl FnMut(&'hir Expr<'hir>) -> bool,
 ) -> bool {
-    Reach { hir, bases, stack: Vec::new(), hit }.visit_function_body(fid).is_break()
+    Reach { hir, bases, visited: HashSet::default(), hit }.visit_function_body(fid).is_break()
 }
 
 struct Reach<'hir, F> {
     hir: &'hir hir::Hir<'hir>,
     bases: &'hir [ContractId],
-    stack: Vec<FunctionId>,
+    // The predicate and dispatch context are fixed for the entire reachability check.
+    visited: HashSet<FunctionId>,
     hit: F,
 }
 
 impl<'hir, F: FnMut(&'hir Expr<'hir>) -> bool> Reach<'hir, F> {
     fn visit_function_body(&mut self, fid: FunctionId) -> ControlFlow<()> {
-        if self.stack.contains(&fid) {
+        if !self.visited.insert(fid) {
             return ControlFlow::Continue(());
         }
         let Some(body) = self.hir.function(fid).body else { return ControlFlow::Continue(()) };
-        self.stack.push(fid);
-        let flow = body.stmts.iter().try_for_each(|stmt| self.visit_stmt(stmt));
-        self.stack.pop();
-        flow
+        body.stmts.iter().try_for_each(|stmt| self.visit_stmt(stmt))
     }
 }
 
