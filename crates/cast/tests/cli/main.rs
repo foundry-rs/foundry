@@ -9596,3 +9596,15 @@ casttest!(codesize_empty, async |_prj, cmd| {
     .assert_success()
     .stdout_eq("0\n");
 });
+
+casttest!(codehash_empty, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    cmd.args([
+        "codehash",
+        "0x0000000000000000000000000000000000000000",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_success()
+    .stdout_eq(format!("{}\n", keccak256([])));
+});

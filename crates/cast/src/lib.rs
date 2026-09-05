@@ -139,33 +139,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// let cast = Cast::new(provider);
     /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
     /// let slots = vec![FixedBytes::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")?];
-    /// let codehash = cast.codehash(addr, slots, None).await?;
-    /// println!("{}", codehash);
-    /// # Ok(())
-    /// # }
-    pub async fn codehash(
-        &self,
-        who: Address,
-        slots: Vec<B256>,
-        block: Option<BlockId>,
-    ) -> Result<String> {
-        Ok(self.proof(who, slots, block).await?.code_hash.to_string())
-    }
-
-    /// #Example
-    ///
-    /// ```
-    /// use alloy_primitives::{Address, FixedBytes};
-    /// use alloy_provider::{network::AnyNetwork, ProviderBuilder, RootProvider};
-    /// use cast::Cast;
-    /// use std::str::FromStr;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let addr = Address::from_str("0x7eD52863829AB99354F3a0503A622e82AcD5F7d3")?;
-    /// let slots = vec![FixedBytes::from_str("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")?];
     /// let storage_root = cast.storage_root(addr, slots, None).await?;
     /// println!("{}", storage_root);
     /// # Ok(())

@@ -516,7 +516,14 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Codehash { block, who, slots, rpc } => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
-            print_scalar(Cast::new(provider).codehash(who, slots, block).await?)?;
+            print_scalar(
+                provider
+                    .get_proof(who, slots)
+                    .block_id(block.unwrap_or_default())
+                    .await?
+                    .code_hash
+                    .to_string(),
+            )?;
         }
         CastSubcommand::StorageRoot { block, who, slots, rpc } => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
