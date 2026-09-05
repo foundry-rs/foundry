@@ -198,6 +198,17 @@ deterministically:
 forge fuzz replay --match-test invariant_ --corpus-dir fuzz_corpus
 ```
 
+When an invariant follow-up explicitly selects frontier IDs, Forge also checks
+whether one symbolic invocation of each selected target can break the invariant
+from its replayed concrete prefix. Requiring exact IDs keeps this additional
+solver work tied to specific prefixes; PC and selector filters continue to
+target comparison flips only. Property checking catches correlated inputs that
+violate the invariant even when flipping the recorded comparison is harmless.
+Forge persists only a one-call symbolic suffix with no symbolic initial-storage
+assignments that replays concretely through the full prefix and fails the
+invariant or `afterInvariant`. It does not symbolize or repair earlier calls in
+the recorded prefix.
+
 This is an explicit follow-up to a concrete campaign, not automatic symbolic
 work in every fuzz run. A short solver timeout keeps iteration bounded; increase
 it for frontiers that report incomplete. Use frontier IDs, PCs, selectors, or a
@@ -222,9 +233,8 @@ forge test --match-test test_hard_branch \
 `symbolic.frontier_selectors` default to `[]`, meaning any value for that
 dimension. Non-empty filters compose conjunctively, so the example imports only
 records matching one of the requested IDs, one of the requested PCs, and one of
-the requested selectors. Stateless imports keep artifact order. Stateful
-imports keep four fifths of a bounded selection shortest-first and reserve one
-fifth for the longest transaction prefixes. Forge imports up to
+the requested selectors. Stateless imports keep artifact order; stateful
+imports prefer shorter replay prefixes. Forge imports up to
 `symbolic.frontier_limit` matching records and warns if a requested stateless
 target cannot be imported.
 

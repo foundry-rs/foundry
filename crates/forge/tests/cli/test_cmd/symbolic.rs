@@ -3371,22 +3371,7 @@ contract SymbolicInvariantFrontierSeed is Test {
         .cloned()
         .unwrap_or_else(|| panic!("missing value >= 123456789 frontier in {artifact}"));
     let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
-    let shallow_frontier = artifact["frontiers"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|frontier| frontier["call_index"] == 0)
-        .cloned()
-        .unwrap_or_else(|| panic!("missing first-call frontier in {artifact}"));
-    let mut selected_frontiers = (0..6)
-        .map(|offset| {
-            let mut frontier = shallow_frontier.clone();
-            frontier["id"] = serde_json::json!(10_000 + offset);
-            frontier
-        })
-        .collect::<Vec<_>>();
-    selected_frontiers.push(target_frontier.clone());
-    *artifact["frontiers"].as_array_mut().unwrap() = selected_frontiers;
+    *artifact["frontiers"].as_array_mut().unwrap() = vec![target_frontier.clone()];
     std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap())
         .unwrap_or_else(|err| panic!("failed to write {}: {err}", frontier_path.display()));
 
@@ -3501,7 +3486,7 @@ contract SymbolicInvariantFrontierSeed is Test {
         "invariant_corpus",
         "--symbolic-use-fuzz-frontiers",
         "--symbolic-frontier-limit",
-        "5",
+        "1",
     ])
     .assert_success();
 
@@ -3560,6 +3545,170 @@ contract SymbolicInvariantFrontierSeed is Test {
             "filtered_invariant_corpus",
         ])
         .assert_failure();
+});
+
+forgetest_init!(symbolic_invariant_frontier_seeding_checks_property_from_prefix, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_checks_property_from_prefix because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantPropertySeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantPropertyTarget {
+    uint256 public phase;
+    uint256 public assets;
+    uint256 public liabilities;
+
+    function account(uint256 value) external {
+        if (phase == 0) {
+            phase = 1;
+            return;
+        }
+        if (value == 0) return;
+
+        assets += value;
+        liabilities += value == 123456789 ? value + 1 : value;
+    }
+}
+
+contract SymbolicInvariantPropertySeed is Test {
+    SymbolicInvariantPropertyTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantPropertyTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_balancedAccounting() public view {
+        assertEq(target.assets(), target.liabilities());
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantPropertySeed",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x9abc",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "property_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = prj
+        .root()
+        .join("property_frontiers")
+        .join("SymbolicInvariantPropertySeed")
+        .join("branch-frontiers.json");
+    let mut artifact: Value = serde_json::from_slice(
+        &std::fs::read(&frontier_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+    )
+    .unwrap();
+    let target_frontier = artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|frontier| {
+            frontier["call_index"] == 1
+                && frontier["site"]["opcode_name"] == "ISZERO"
+                && frontier["operands"]["lhs"] != "0x0"
+                && frontier["operands"]["rhs"] == "0x0"
+        })
+        .cloned()
+        .unwrap_or_else(|| panic!("missing value != 0 second-call frontier in {artifact}"));
+    let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+    *artifact["frontiers"].as_array_mut().unwrap() = vec![target_frontier];
+    std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap())
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", frontier_path.display()));
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantPropertySeed",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "property_frontiers",
+        "--invariant-corpus-dir",
+        "branch_only_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+    ])
+    .assert_success();
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantPropertySeed",
+            "--match-test",
+            "invariant_balancedAccounting",
+            "--corpus-dir",
+            "branch_only_corpus",
+        ])
+        .assert_success();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantPropertySeed",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "property_frontiers",
+        "--invariant-corpus-dir",
+        "property_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
+    ])
+    .assert_success();
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantPropertySeed",
+            "--match-test",
+            "invariant_balancedAccounting",
+            "--corpus-dir",
+            "property_corpus",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    assert!(
+        output.stdout_lossy().contains("invariant_balancedAccounting"),
+        "stdout={}\nstderr={}",
+        output.stdout_lossy(),
+        output.stderr_lossy()
+    );
 });
 
 forgetest_init!(symbolic_import_fuzz_corpus_guides_bounded_symbolic_path, |prj, cmd| {
