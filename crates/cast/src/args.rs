@@ -361,7 +361,13 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             }
         }
         CastSubcommand::BaseFee { block, rpc } => {
-            let fee = Cast::new(rpc_provider(&rpc)?).base_fee(block.unwrap_or_default()).await?;
+            let fee = rpc_provider(&rpc)?
+                .get_block(block.unwrap_or_default())
+                .await?
+                .ok_or_eyre("block not found")?
+                .header
+                .base_fee_per_gas
+                .ok_or_eyre("base fee not found")?;
             print_scalar(fee.to_string())?;
         }
         CastSubcommand::Block { block, full, fields, raw, rpc, network } => {
