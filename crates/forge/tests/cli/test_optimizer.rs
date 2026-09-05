@@ -187,7 +187,7 @@ contract ImplTest is Helper {
 forgetest!(preprocess_remapped_helper_source, |prj, cmd| {
     prj.update_config(|config| {
         config.dynamic_test_linking = true;
-        config.remappings = ["@p/=src/", "test/Impl.t.sol:foundry-pp/=lib/alternate/"]
+        config.remappings = ["@p/=src/", "test/:foundry-pp/=lib/alternate/"]
             .into_iter()
             .map(|remapping| remapping.parse::<Remapping>().unwrap().into())
             .collect();

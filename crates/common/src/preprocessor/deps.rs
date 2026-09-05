@@ -346,7 +346,10 @@ fn remapping_applies(
     root_dir: &Path,
 ) -> bool {
     let source_unit = source_unit.strip_prefix(root_dir).unwrap_or(source_unit).to_slash_lossy();
-    remapping.context.as_ref().is_none_or(|context| source_unit.starts_with(context))
+    remapping
+        .context
+        .as_ref()
+        .is_none_or(|context| source_unit.starts_with(Path::new(context).to_slash_lossy().as_ref()))
         && remapping_matches_path(remapping, import_path)
 }
 
