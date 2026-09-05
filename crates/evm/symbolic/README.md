@@ -198,16 +198,23 @@ forge fuzz replay --match-test invariant_ --corpus-dir fuzz_corpus
 ```
 
 Pass `--symbolic-check-invariant-frontiers` to first check whether one symbolic
-invocation of each selected target can break the invariant from its replayed
-concrete prefix. Property checking catches correlated inputs that violate the
-invariant even when flipping the recorded comparison is harmless. Forge
-persists only a one-call symbolic suffix with no symbolic initial-storage
-assignments that replays concretely through the full prefix and fails the
-invariant or `afterInvariant`. It falls back to comparison flipping when no
-property-breaking input is found, and does not symbolize or repair earlier
-calls in the recorded prefix. Only the current campaign anchor is checked.
-Configured symbolic limits apply separately to the property attempt and any
-comparison-flipping fallback for each imported frontier.
+invocation of each selected target can break a suite predicate from its replayed
+concrete prefix. Without `afterInvariant`, each invariant function is checked
+independently from the same post-call symbolic state. Forge uses the concrete
+campaign semantics: assertions and reverts indicate failure, while a Solidity
+`bool` return value is ignored. With `afterInvariant`, the property attempt uses
+the current campaign anchor and its hook.
+
+Property checking catches correlated inputs that violate an invariant even when
+flipping the recorded comparison is harmless. Forge persists only a one-call
+symbolic suffix with no symbolic initial-storage assignments that replays
+concretely through the full prefix and fails the exact predicate. Unsupported or
+bounded predicates do not discard candidates already found, but an empty search
+does not prove the suite safe. Forge performs comparison flipping after the
+property search regardless of whether that search found a candidate, and does
+not symbolize or repair earlier calls in the recorded prefix.
+Configured symbolic limits apply separately to the property attempt and
+comparison-flipping pass for each imported frontier.
 
 This is an explicit follow-up to a concrete campaign, not automatic symbolic
 work in every fuzz run. A short solver timeout keeps iteration bounded; increase

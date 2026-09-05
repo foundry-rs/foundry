@@ -1,5 +1,17 @@
 use super::*;
 
+fn record_candidate_limitation(
+    limitation: &mut Option<SymbolicInvariantSearchLimitation>,
+    error: SymbolicError,
+) -> bool {
+    let search_exhausted = matches!(
+        error,
+        SymbolicError::Timeout(_) | SymbolicError::Solver(_) | SymbolicError::SolverQueryLimit(_)
+    );
+    limitation.get_or_insert_with(|| error.into());
+    search_exhausted
+}
+
 impl SymbolicExecutor {
     #[expect(clippy::too_many_arguments)]
     pub(super) fn execute_invariant_check<FEN: FoundryEvmNetwork>(
@@ -12,19 +24,17 @@ impl SymbolicExecutor {
         after_invariant: Option<&Function>,
         completed_paths: &mut usize,
     ) -> Result<Vec<InvariantCheckOutcome>, SymbolicError> {
-        let calldata = SymbolicCalldata::selector_only(&mut self.cx, invariant)?;
-        let call_data = calldata.call_data(&mut self.cx);
-        let constraints = calldata.into_constraints();
-        let outcomes = self.execute_sequence_call(
-            executor,
-            state,
-            invariant_address,
-            sender,
-            invariant,
-            call_data,
-            constraints,
-            completed_paths,
-        )?;
+        let outcomes = self
+            .execute_invariant_call(
+                executor,
+                state,
+                invariant_address,
+                sender,
+                invariant,
+                completed_paths,
+                false,
+            )?
+            .outcomes;
 
         let mut checked = Vec::new();
         for mut outcome in outcomes {
@@ -46,16 +56,20 @@ impl SymbolicExecutor {
             let after_calldata = SymbolicCalldata::selector_only(&mut self.cx, after_invariant)?;
             let calldata = after_calldata.call_data(&mut self.cx);
             let constraints = after_calldata.constraints().to_vec();
-            for after_outcome in self.execute_sequence_call(
-                executor,
-                outcome.state,
-                invariant_address,
-                sender,
-                after_invariant,
-                calldata,
-                constraints,
-                completed_paths,
-            )? {
+            for after_outcome in self
+                .execute_sequence_call(
+                    executor,
+                    outcome.state,
+                    invariant_address,
+                    sender,
+                    after_invariant,
+                    calldata,
+                    constraints,
+                    completed_paths,
+                    false,
+                )?
+                .outcomes
+            {
                 checked.push(InvariantCheckOutcome {
                     failed: !matches!(after_outcome.status, CallStatus::Success),
                     state: after_outcome.state,
@@ -65,7 +79,157 @@ impl SymbolicExecutor {
         Ok(checked)
     }
 
-    pub(super) fn invariant_return_failed(
+    #[expect(clippy::too_many_arguments)]
+    fn execute_invariant_call<FEN: FoundryEvmNetwork>(
+        &mut self,
+        executor: &Executor<FEN>,
+        state: PathState,
+        invariant_address: Address,
+        sender: Address,
+        invariant: &Function,
+        completed_paths: &mut usize,
+        preserve_completed: bool,
+    ) -> Result<CallPathOutcomes, SymbolicError> {
+        let calldata = SymbolicCalldata::selector_only(&mut self.cx, invariant)?;
+        let call_data = calldata.call_data(&mut self.cx);
+        let constraints = calldata.into_constraints();
+        self.execute_sequence_call(
+            executor,
+            state,
+            invariant_address,
+            sender,
+            invariant,
+            call_data,
+            constraints,
+            completed_paths,
+            preserve_completed,
+        )
+    }
+
+    pub(super) fn search_invariant_candidates_inner<FEN: FoundryEvmNetwork>(
+        &mut self,
+        input: &SymbolicInvariantCandidateInput<'_, FEN>,
+        candidates: &mut Vec<SymbolicInvariantCandidate>,
+        limitation: &mut Option<SymbolicInvariantSearchLimitation>,
+    ) -> Result<(), SymbolicError> {
+        if input.invariants.is_empty() {
+            return Err(SymbolicError::Unsupported("symbolic invariant has no predicates"));
+        }
+        let mut completed_paths = 0;
+
+        let mut initial_state = PathState::empty(
+            &mut self.cx,
+            input.invariant_address,
+            input.handler_sender,
+            input.ffi_enabled,
+        );
+        initial_state.apply_executor_env(&mut self.cx, input.executor);
+        initial_state.world.set_storage_layout(self.config.storage_layout);
+
+        let calldatas = SymbolicCalldata::variants_with_prefix(
+            &input.target.function,
+            &self.config,
+            &mut self.cx,
+            "frontier_handler",
+        )?;
+        'variants: for calldata in calldatas {
+            self.check_timeout()?;
+            let step = SequenceStepTemplate {
+                sender: input.handler_sender,
+                address: input.target.address,
+                contract_name: input.target.contract_name.clone(),
+                function: input.target.function.clone(),
+                calldata,
+            };
+            let call_data = step.calldata.call_data(&mut self.cx);
+            let constraints = step.calldata.constraints().to_vec();
+            let handler = match self.execute_sequence_call(
+                input.executor,
+                initial_state.clone(),
+                input.target.address,
+                input.handler_sender,
+                &input.target.function,
+                call_data,
+                constraints,
+                &mut completed_paths,
+                true,
+            ) {
+                Ok(outcomes) => outcomes,
+                Err(error) => {
+                    if record_candidate_limitation(limitation, error) {
+                        break;
+                    }
+                    continue;
+                }
+            };
+            let stop_after_handler = handler
+                .limitation
+                .is_some_and(|error| record_candidate_limitation(limitation, error));
+
+            for outcome in handler.outcomes {
+                if !matches!(outcome.status, CallStatus::Success) {
+                    continue;
+                }
+                for (invariant_idx, invariant) in input.invariants.iter().enumerate() {
+                    self.check_timeout()?;
+                    let predicate = match self.execute_invariant_call(
+                        input.executor,
+                        outcome.state.clone(),
+                        input.invariant_address,
+                        CALLER,
+                        invariant,
+                        &mut completed_paths,
+                        true,
+                    ) {
+                        Ok(outcomes) => outcomes,
+                        Err(error) => {
+                            if record_candidate_limitation(limitation, error) {
+                                break 'variants;
+                            }
+                            continue;
+                        }
+                    };
+                    let stop_after_predicate = predicate
+                        .limitation
+                        .is_some_and(|error| record_candidate_limitation(limitation, error));
+                    for predicate_outcome in predicate.outcomes {
+                        if matches!(predicate_outcome.status, CallStatus::Success) {
+                            continue;
+                        }
+                        match self.materialize_sequence(
+                            std::slice::from_ref(&step),
+                            &predicate_outcome.state,
+                        ) {
+                            Ok((mut sequence, storage)) => {
+                                let step =
+                                    sequence.pop().expect("one handler template produces one step");
+                                candidates.push(SymbolicInvariantCandidate {
+                                    invariant_idx,
+                                    step,
+                                    storage,
+                                });
+                            }
+                            Err(error) => {
+                                if record_candidate_limitation(limitation, error) {
+                                    break 'variants;
+                                }
+                            }
+                        }
+                    }
+                    if stop_after_predicate {
+                        break 'variants;
+                    }
+                }
+            }
+            if stop_after_handler {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn invariant_return_failed(
         &mut self,
         invariant: &Function,
         state: &mut PathState,
@@ -110,7 +274,8 @@ impl SymbolicExecutor {
         calldata: SymCalldata,
         constraints: Vec<SymBoolExpr>,
         completed_paths: &mut usize,
-    ) -> Result<Vec<CallOutcome>, SymbolicError> {
+        preserve_completed: bool,
+    ) -> Result<CallPathOutcomes, SymbolicError> {
         state.world.clear_transaction_scoped_state();
         state.mapping_hook_keccak_preimages.clear();
         let code = state.world.extcode(&mut self.cx, executor, target)?;
@@ -121,7 +286,14 @@ impl SymbolicExecutor {
         state.frame =
             CallFrame::new(&mut self.cx, target, target, sender, callvalue, false, calldata);
         state.constraints.extend(constraints);
-        self.execute_call_paths(executor, state, &code, completed_paths, CallPathKind::Sequence)
+        self.execute_call_paths(
+            executor,
+            state,
+            &code,
+            completed_paths,
+            CallPathKind::Sequence,
+            preserve_completed,
+        )
     }
 
     pub(super) fn materialize_sequence(

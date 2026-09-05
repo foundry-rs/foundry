@@ -210,6 +210,48 @@ impl SymbolicExecutor {
         }
     }
 
+    /// Searches for invariant-breaking inputs after one symbolic handler call.
+    ///
+    /// This is a best-effort candidate search from a concrete state. Returned candidates are
+    /// unconfirmed until the caller replays them concretely, and an empty result does not prove
+    /// any invariant.
+    pub fn search_invariant_candidates<FEN: FoundryEvmNetwork>(
+        &mut self,
+        input: SymbolicInvariantCandidateInput<'_, FEN>,
+    ) -> SymbolicInvariantCandidateSearchResult {
+        self.reset_run_state(true);
+        self.solver.clear_context_caches();
+        self.cx = SymCx::new();
+        if let Err(error) = self.solver.check_available() {
+            return SymbolicInvariantCandidateSearchResult {
+                candidates: Vec::new(),
+                limitation: Some(error.into()),
+            };
+        }
+
+        let heuristic_witness_baseline = self.solver.heuristic_witnesses();
+        let mut candidates = Vec::new();
+        let mut limitation = None;
+        if let Err(error) =
+            self.search_invariant_candidates_inner(&input, &mut candidates, &mut limitation)
+        {
+            limitation.get_or_insert_with(|| error.into());
+        }
+        if limitation.is_none() && self.heuristic_witnesses_used_since(heuristic_witness_baseline) {
+            limitation = Some(SymbolicInvariantSearchLimitation {
+                kind: SymbolicStopReason::Timeout,
+                reason: Self::hard_arith_heuristic_incomplete_reason(),
+            });
+        }
+        if limitation.is_none()
+            && let Some((kind, reason)) = self.take_deferred_incomplete()
+        {
+            limitation = Some(SymbolicInvariantSearchLimitation { kind, reason });
+        }
+
+        SymbolicInvariantCandidateSearchResult { candidates, limitation }
+    }
+
     pub(super) fn run_inner<FEN: FoundryEvmNetwork>(
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
@@ -559,16 +601,19 @@ impl SymbolicExecutor {
                             };
                             let calldata = step.calldata.call_data(&mut self.cx);
                             let constraints = step.calldata.constraints().to_vec();
-                            let outcomes = self.execute_sequence_call(
-                                input.executor,
-                                sequence.state.clone(),
-                                target.address,
-                                sender,
-                                &target.function,
-                                calldata,
-                                constraints,
-                                &mut completed_paths,
-                            )?;
+                            let outcomes = self
+                                .execute_sequence_call(
+                                    input.executor,
+                                    sequence.state.clone(),
+                                    target.address,
+                                    sender,
+                                    &target.function,
+                                    calldata,
+                                    constraints,
+                                    &mut completed_paths,
+                                    false,
+                                )?
+                                .outcomes;
 
                             for outcome in outcomes {
                                 let mut steps = sequence.steps.clone();

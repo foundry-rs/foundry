@@ -3607,6 +3607,7 @@ forgetest_init!(symbolic_invariant_frontier_seeding_checks_property_from_prefix,
         return;
     }
 
+    prj.update_config(|config| config.assertions_revert = false);
     prj.add_test(
         "SymbolicInvariantPropertySeed.t.sol",
         r#"
@@ -3614,31 +3615,51 @@ import "forge-std/Test.sol";
 
 contract SymbolicInvariantPropertyTarget {
     uint256 public phase;
-    uint256 public assets;
-    uint256 public liabilities;
+    uint256 public stored;
 
     function account(uint256 value) external {
         if (phase == 0) {
             phase = 1;
             return;
         }
-        if (value == 0) return;
-
-        assets += value;
-        liabilities += value == 123456789 ? value + 1 : value;
+        stored = value;
     }
 }
 
 contract SymbolicInvariantPropertySeed is Test {
     SymbolicInvariantPropertyTarget target;
+    uint256 predicateTouches;
 
     function setUp() public {
         target = new SymbolicInvariantPropertyTarget();
         targetContract(address(target));
     }
 
-    function invariant_balancedAccounting() public view {
-        assertEq(target.assets(), target.liabilities());
+    function invariant_aMutationDoesNotLeak() public {
+        predicateTouches++;
+        assertEq(predicateTouches, 1);
+    }
+
+    function invariant_bFirstStoredValue() public view {
+        assertEq(predicateTouches, 0);
+        assertNotEq(target.stored(), 123456789);
+    }
+
+    function invariant_cPartialOutcomeIsRetained() public view {
+        if (target.stored() != 555555555) {
+            if (target.stored() == 777777777) vm.lastCallGas();
+            return;
+        }
+        revert("partial candidate");
+    }
+
+    function invariant_dSecondStoredValue() public view {
+        assertEq(predicateTouches, 0);
+        assertNotEq(target.stored(), 987654321);
+    }
+
+    function invariant_eBooleanReturnIsIgnored() public pure returns (bool) {
+        return false;
     }
 }
 "#,
@@ -3673,18 +3694,23 @@ contract SymbolicInvariantPropertySeed is Test {
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
     )
     .unwrap();
-    let target_frontier = artifact["frontiers"]
+    let second_call = artifact["sequences"][0][0].clone();
+    artifact["sequences"][0].as_array_mut().unwrap().push(second_call);
+    let mut target_frontier = artifact["frontiers"]
         .as_array()
         .unwrap()
         .iter()
         .find(|frontier| {
-            frontier["call_index"] == 1
+            frontier["call_index"] == 0
                 && frontier["site"]["opcode_name"] == "ISZERO"
-                && frontier["operands"]["lhs"] != "0x0"
+                && frontier["operands"]["lhs"] == "0x0"
                 && frontier["operands"]["rhs"] == "0x0"
         })
         .cloned()
-        .unwrap_or_else(|| panic!("missing value != 0 second-call frontier in {artifact}"));
+        .unwrap_or_else(|| panic!("missing phase frontier in {artifact}"));
+    target_frontier["call_index"] = Value::from(1);
+    target_frontier["operands"]["lhs"] = Value::from("0x1");
+    target_frontier["operands"]["result"] = Value::from(false);
     let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
     *artifact["frontiers"].as_array_mut().unwrap() = vec![target_frontier];
     std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap())
@@ -3716,7 +3742,7 @@ contract SymbolicInvariantPropertySeed is Test {
             "--match-contract",
             "SymbolicInvariantPropertySeed",
             "--match-test",
-            "invariant_balancedAccounting",
+            "invariant_bFirstStoredValue",
             "--corpus-dir",
             "branch_only_corpus",
         ])
@@ -3724,46 +3750,104 @@ contract SymbolicInvariantPropertySeed is Test {
 
     cmd.forge_fuse();
     cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
-    cmd.args([
-        "test",
-        "--match-contract",
-        "SymbolicInvariantPropertySeed",
-        "--threads",
-        "1",
-        "--invariant-frontier-dir",
-        "property_frontiers",
-        "--invariant-corpus-dir",
-        "property_corpus",
-        "--symbolic-use-fuzz-frontiers",
-        "--symbolic-check-invariant-frontiers",
-        "--symbolic-frontier-limit",
-        "1",
-        "--symbolic-frontier-ids",
-        &target_frontier_id,
-    ])
-    .assert_success();
+    cmd.env("RUST_LOG", "forge::runner=debug");
+    let output = cmd
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantPropertySeed",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "property_frontiers",
+            "--invariant-corpus-dir",
+            "property_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-check-invariant-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+    let stderr = output.stderr_lossy();
+    assert!(
+        stderr.contains("symbolic invariant frontier candidate search incomplete")
+            && stderr.contains("lastCallGas"),
+        "stdout={}\nstderr={}",
+        output.stdout_lossy(),
+        stderr
+    );
+
+    for invariant in [
+        "invariant_bFirstStoredValue",
+        "invariant_cPartialOutcomeIsRetained",
+        "invariant_dSecondStoredValue",
+    ] {
+        let output = cmd
+            .forge_fuse()
+            .args([
+                "fuzz",
+                "replay",
+                "--match-contract",
+                "SymbolicInvariantPropertySeed",
+                "--match-test",
+                invariant,
+                "--corpus-dir",
+                "property_corpus",
+            ])
+            .assert_failure()
+            .get_output()
+            .clone();
+        assert!(
+            output.stdout_lossy().contains(invariant),
+            "stdout={}\nstderr={}",
+            output.stdout_lossy(),
+            output.stderr_lossy()
+        );
+    }
+
+    for invariant in ["invariant_aMutationDoesNotLeak", "invariant_eBooleanReturnIsIgnored"] {
+        cmd.forge_fuse()
+            .args([
+                "fuzz",
+                "replay",
+                "--match-contract",
+                "SymbolicInvariantPropertySeed",
+                "--match-test",
+                invariant,
+                "--corpus-dir",
+                "property_corpus",
+            ])
+            .assert_success();
+    }
 
     let output = cmd
         .forge_fuse()
         .args([
-            "fuzz",
-            "replay",
+            "test",
+            "--symbolic",
+            "--json",
             "--match-contract",
             "SymbolicInvariantPropertySeed",
             "--match-test",
-            "invariant_balancedAccounting",
-            "--corpus-dir",
-            "property_corpus",
+            "invariant_cPartialOutcomeIsRetained",
+            "--symbolic-invariant-depth",
+            "2",
         ])
         .assert_failure()
         .get_output()
+        .stdout
         .clone();
-    assert!(
-        output.stdout_lossy().contains("invariant_balancedAccounting"),
-        "stdout={}\nstderr={}",
-        output.stdout_lossy(),
-        output.stderr_lossy()
+    let result = json_test_result(&output, "invariant_cPartialOutcomeIsRetained()");
+    assert_eq!(result["symbolic"]["status"], "incomplete");
+    assert_eq!(
+        result["symbolic"]["incomplete"]["reason"],
+        "unsupported symbolic execution feature: symbolic vm.lastCallGas not modeled"
     );
+    assert!(result["symbolic"]["counterexample"].is_null());
 });
 
 forgetest_init!(symbolic_import_fuzz_corpus_guides_bounded_symbolic_path, |prj, cmd| {
