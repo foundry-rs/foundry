@@ -9644,3 +9644,27 @@ casttest!(admin_empty, async |_prj, cmd| {
     .assert_success()
     .stdout_eq("0x0000000000000000000000000000000000000000\n");
 });
+
+casttest!(publish_raw_transaction, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    let signer = handle.dev_wallets().next().unwrap();
+    let raw = cmd
+        .args([
+            "mktx",
+            "0x0000000000000000000000000000000000000001",
+            "--private-key",
+            &hex::encode(signer.to_bytes()),
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy()
+        .trim()
+        .to_string();
+    let hash = keccak256(hex::decode(&raw).unwrap());
+    cmd.cast_fuse()
+        .args(["publish", &raw, "--async", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq(format!("{hash}\n"));
+});

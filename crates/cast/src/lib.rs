@@ -22,7 +22,7 @@ use alloy_primitives::{
     Address, B256, I256, Keccak256, LogData, Selector, TxHash, U64, U256, b256, hex,
     utils::{ParseUnits, Unit, keccak256},
 };
-use alloy_provider::{PendingTransactionBuilder, Provider, network::eip2718::Decodable2718};
+use alloy_provider::{Provider, network::eip2718::Decodable2718};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, Log};
 use alloy_transport::TransportErrorKind;
@@ -99,28 +99,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// ```
     pub const fn new(provider: P) -> Self {
         Self { provider, _phantom: PhantomData }
-    }
-
-    /// Publishes a raw transaction to the network
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let res = cast.publish("0x1234".to_string()).await?;
-    /// println!("{:?}", res);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn publish(&self, raw_tx: String) -> Result<PendingTransactionBuilder<N>> {
-        let tx = hex::decode(strip_0x(&raw_tx))?;
-        Ok(self.provider.send_raw_transaction(&tx).await?)
     }
 
     pub async fn filter_logs(&self, filter: Filter) -> Result<String> {

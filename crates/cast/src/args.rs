@@ -598,7 +598,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::MakeTx(cmd) => cmd.run().await?,
         CastSubcommand::PublishTx { raw_tx, cast_async, rpc } => {
             let provider = rpc_provider(&rpc)?;
-            let pending_tx = Cast::new(&provider).publish(raw_tx).await?;
+            let raw_tx = hex::decode(crate::strip_0x(&raw_tx))?;
+            let pending_tx = provider.send_raw_transaction(&raw_tx).await?;
             if cast_async {
                 print_scalar(format!("{:#x}", pending_tx.inner().tx_hash()))?;
             } else {
@@ -926,7 +927,7 @@ fn format_lane_classification(encoded: &[u8], decode_context: &'static str) -> R
     }
 }
 
-pub(super) async fn address_at_slot<N: alloy_network::Network>(
+async fn address_at_slot<N: alloy_network::Network>(
     provider: &impl Provider<N>,
     who: Address,
     slot: B256,
