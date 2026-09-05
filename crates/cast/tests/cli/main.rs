@@ -9768,3 +9768,16 @@ casttest!(to_base_uppercase, |_prj, cmd| {
     cmd.cast_fuse().args(["to-dec", "0X10"]).assert_success().stdout_eq("16\n");
     cmd.cast_fuse().args(["to-dec", "-0X10"]).assert_success().stdout_eq("-16\n");
 });
+
+casttest!(to_bytes32, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args(["to-bytes32", "0x1234"])
+        .assert_success()
+        .stdout_eq("0x1234000000000000000000000000000000000000000000000000000000000000\n");
+});
+
+casttest!(to_bytes32_too_long, |_prj, cmd| {
+    cmd.args(["to-bytes32", "000000000000000000000000000000000000000000000000000000000000000000"])
+        .assert_failure()
+        .stderr_eq("Error: string >32 bytes\n");
+});

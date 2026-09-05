@@ -67,32 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Converts hexdata into bytes32 value
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// let bytes = Cast::to_bytes32("1234")?;
-    /// assert_eq!(bytes, "0x1234000000000000000000000000000000000000000000000000000000000000");
-    ///
-    /// let bytes = Cast::to_bytes32("0x1234")?;
-    /// assert_eq!(bytes, "0x1234000000000000000000000000000000000000000000000000000000000000");
-    ///
-    /// let err = Cast::to_bytes32("0x123400000000000000000000000000000000000000000000000000000000000011").unwrap_err();
-    /// assert_eq!(err.to_string(), "string >32 bytes");
-    /// # Ok::<_, eyre::Report>(())
-    pub fn to_bytes32(s: &str) -> Result<String> {
-        let s = strip_0x(s);
-        if s.len() > 64 {
-            eyre::bail!("string >32 bytes");
-        }
-
-        let padded = format!("{s:0<64}");
-        Ok(padded.parse::<B256>()?.to_string())
-    }
-
     /// Converts hex data to the word-aligned layout of a Solidity `bytes memory` value.
     ///
     /// The output contains a 32-byte big-endian length prefix followed by the data, right-padded

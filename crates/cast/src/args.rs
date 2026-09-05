@@ -235,7 +235,14 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(to_base(&value, base_in.as_deref(), &base_out)?)?;
         }
         CastSubcommand::ToBytes32 { bytes } => {
-            print_scalar(SimpleCast::to_bytes32(&stdin::unwrap_line(bytes)?)?)?;
+            let s = stdin::unwrap_line(bytes)?;
+            let s = crate::strip_0x(&s);
+            if s.len() > 64 {
+                eyre::bail!("string >32 bytes");
+            }
+
+            let padded = format!("{s:0<64}");
+            print_scalar(padded.parse::<B256>()?.to_string())?;
         }
         CastSubcommand::ToBytesMemory { data } => {
             print_scalar(SimpleCast::to_bytes_memory(&stdin::unwrap_line(data)?)?)?;
