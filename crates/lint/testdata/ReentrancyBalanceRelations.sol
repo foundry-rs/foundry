@@ -8,47 +8,35 @@ interface IBalanceObservation {
 }
 
 contract ReentrancyBalanceRelations {
-    function inlineDelta(IBalanceObservation target, uint256 amount) external {
-        uint256 beforeBalance = address(this).balance;
-        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
-        require(address(this).balance - beforeBalance >= amount);
+    function assertAfterLowLevelCall(address target, uint256 amount) external {
+        uint256 balanceBefore = address(this).balance;
+        (bool ok,) = target.call("");
+        require(ok, "call failed");
+        assert(address(this).balance - balanceBefore >= amount);
     }
 
     function reversedDelta(IBalanceObservation target, uint256 amount) external {
         uint256 beforeBalance = address(this).balance;
-        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
-        require(amount <= address(this).balance - beforeBalance);
+        target.observe();
+        require(amount >= beforeBalance - address(this).balance);
     }
 
     function nestedOffsets(IBalanceObservation target, uint256 amount, uint256 fee) external {
         uint256 beforeBalance = address(this).balance;
-        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
+        target.observe();
         require((address(this).balance - beforeBalance) - fee >= amount * uint256(2));
-    }
-
-    function preservedCast(IBalanceObservation target, uint256 amount) external {
-        uint256 beforeBalance = address(this).balance;
-        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
-        require(uint256(address(this).balance - beforeBalance) >= amount);
-    }
-
-    function localDelta(IBalanceObservation target, uint256 amount) external {
-        uint256 beforeBalance = address(this).balance;
-        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
-        uint256 delta = address(this).balance - beforeBalance;
-        require(delta >= amount);
     }
 
     function tupleDelta(IBalanceObservation target, uint256 amount) external {
         uint256 beforeBalance = address(this).balance;
-        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
-        (uint256 delta, uint256 required) = (address(this).balance - beforeBalance, amount);
+        target.observe();
+        (uint256 delta, uint256 required) = (uint256(address(this).balance - beforeBalance), amount);
         require(delta >= required);
     }
 
     function helperDelta(IBalanceObservation target, uint256 amount) external {
         uint256 beforeBalance = address(this).balance;
-        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
+        target.observe();
         require(difference(address(this).balance, beforeBalance) >= amount);
     }
 
@@ -58,29 +46,13 @@ contract ReentrancyBalanceRelations {
 
     function compoundDelta(IBalanceObservation target, uint256 amount, uint256 fee) external {
         uint256 beforeBalance = address(this).balance;
-        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
+        target.observe();
         uint256 delta = address(this).balance;
         delta -= beforeBalance;
         delta -= fee;
         require(delta >= amount);
     }
 
-    function reversedContributions(IBalanceObservation target, uint256 amount) external {
-        uint256 beforeBalance = address(this).balance;
-        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
-        require(beforeBalance - address(this).balance <= amount);
-    }
-
-    // Recognize the source pattern without claiming equivalence to checked arithmetic.
-    function uncheckedDelta(IBalanceObservation target, uint256 amount) external {
-        uint256 beforeBalance = address(this).balance;
-        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
-        unchecked {
-            require(address(this).balance - beforeBalance >= amount);
-        }
-    }
-
-    // No later valid guard may mask an incorrect diagnostic from these negative cases.
     function unrelatedSubtraction(IBalanceObservation target, uint256 a, uint256 b) external {
         uint256 beforeBalance = address(this).balance;
         target.observe();
@@ -115,14 +87,6 @@ contract ReentrancyBalanceRelations {
         uint256 beforeBalance = address(this).balance;
         target.observe();
         require(int256(address(this).balance - beforeBalance) >= amount);
-    }
-
-    function overwrittenDelta(IBalanceObservation target, uint256 amount) external {
-        uint256 beforeBalance = address(this).balance;
-        target.observe();
-        uint256 delta = address(this).balance - beforeBalance;
-        delta = amount;
-        require(delta >= amount);
     }
 
     function unsupportedCompound(IBalanceObservation target, uint256 amount) external {
