@@ -147,27 +147,15 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
             return Ok(None);
         }
 
-        let from = self.resolve_block_tag(from_tag).await?;
+        let from = crate::cmd::logs::resolve_block_tag(&self.provider, from_tag).await?;
         // Resolve identical tags only once so a moving head (e.g. `latest`..`latest`) can't yield
         // an inconsistent range.
-        let to = if from_tag == to_tag { from } else { self.resolve_block_tag(to_tag).await? };
+        let to = if from_tag == to_tag {
+            from
+        } else {
+            crate::cmd::logs::resolve_block_tag(&self.provider, to_tag).await?
+        };
         Ok(Some((from, to)))
-    }
-
-    /// Resolves a [`BlockNumberOrTag`] to a concrete block number, querying the provider for tags.
-    async fn resolve_block_tag(&self, tag: BlockNumberOrTag) -> Result<u64> {
-        match tag {
-            BlockNumberOrTag::Number(number) => Ok(number),
-            BlockNumberOrTag::Earliest => Ok(0),
-            tag => {
-                let block = self
-                    .provider
-                    .get_block(BlockId::Number(tag))
-                    .await?
-                    .ok_or_else(|| eyre::eyre!("could not resolve block tag `{tag}`"))?;
-                Ok(block.header().number())
-            }
-        }
     }
 
     /// Retrieves logs, splitting the request into fixed-size block chunks when needed.

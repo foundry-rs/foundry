@@ -405,3 +405,20 @@ where
 
     Ok(chunks.into_iter().flatten().collect())
 }
+
+pub(crate) async fn resolve_block_tag<P: Provider<N> + Clone + Unpin, N: Network>(
+    provider: &P,
+    tag: BlockNumberOrTag,
+) -> Result<u64> {
+    match tag {
+        BlockNumberOrTag::Number(number) => Ok(number),
+        BlockNumberOrTag::Earliest => Ok(0),
+        tag => {
+            let block = provider
+                .get_block(BlockId::Number(tag))
+                .await?
+                .ok_or_else(|| eyre::eyre!("could not resolve block tag `{tag}`"))?;
+            Ok(block.header().number())
+        }
+    }
+}
