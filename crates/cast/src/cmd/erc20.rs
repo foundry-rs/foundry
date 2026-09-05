@@ -1,8 +1,8 @@
+use foundry_common::fmt::format_uint_exp;
 use std::str::FromStr;
 
 use crate::{
     cmd::{call_overrides::CallOverrideOpts, rpc_provider, send::SendTxArgs},
-    format_uint_exp,
     tx::{SendTxOpts, TxParams},
 };
 use alloy_eips::BlockId;

@@ -7,13 +7,13 @@ use super::{
     },
 };
 use crate::{
-    Cast,
     debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
     rpc_trace::call_frame_to_arena,
     traces::TraceKind,
     tx::{CastTxBuilder, SenderKind, read_only_sender},
 };
 use alloy_consensus::BlockHeader;
+use alloy_dyn_abi::FunctionExt;
 use alloy_eips::BlockNumHash;
 use alloy_ens::NameOrAddress;
 use alloy_network::{
@@ -29,7 +29,7 @@ use alloy_rpc_types::{
     },
 };
 use clap::Parser;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TracingArgs, TransactionOpts},
     utils::{LoadConfig, TraceResult, parse_ether_value},
@@ -37,6 +37,7 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     abi::{encode_function_args, get_func},
+    fmt::{format_token, serialize_value_as_json},
     provider::{ProviderBuilder, curl_transport::generate_curl_command},
     sh_println, shell,
 };
@@ -55,6 +56,7 @@ use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
+        decode::RevertDecoder,
         evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
     },
     executors::{ExecutorBuilder, TracingExecutor},
@@ -684,9 +686,67 @@ impl CallArgs {
             .await;
         }
 
-        let response = Cast::new(&provider)
-            .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
-            .await?;
+        let mut call = provider
+            .call(tx.clone())
+            .block(block.unwrap_or_default())
+            .with_block_overrides_opt(block_overrides);
+        if let Some(state_override) = state_overrides {
+            call = call.overrides(state_override)
+        }
+
+        let res = match call.await {
+            Ok(res) => res,
+            Err(err) => {
+                let data = err.as_error_resp().and_then(|payload| payload.as_revert_data());
+                if let Some(data) = data {
+                    let decoded = match RevertDecoder::new().maybe_decode_known(&data) {
+                        Some(decoded) => Some(decoded),
+                        None => crate::tx::decode_custom_error(&data).await.ok().flatten(),
+                    };
+                    if let Some(decoded) = decoded {
+                        return Err(err).wrap_err(format!("execution reverted: {decoded}"));
+                    }
+                }
+                return Err(err.into());
+            }
+        };
+        let decoded = match func.as_ref() {
+            Some(func) => match func.abi_decode_output(res.as_ref()) {
+                Ok(decoded) => decoded,
+                Err(err) => {
+                    // An empty response usually means the recipient is not a contract.
+                    if res.is_empty() {
+                        let Some(addr) = tx.to() else {
+                            eyre::bail!("tx req is a contract deployment");
+                        };
+                        if let Ok(code) =
+                            provider.get_code_at(addr).block_id(block.unwrap_or_default()).await
+                            && code.is_empty()
+                        {
+                            eyre::bail!("contract {addr:?} does not have any code");
+                        }
+                    }
+                    return Err(err).wrap_err(
+                        "could not decode output; did you specify the wrong function return data type?"
+                    );
+                }
+            },
+            None => vec![],
+        };
+
+        // handle case when return type is not specified
+        let response = if decoded.is_empty() {
+            res.to_string()
+        } else if shell::is_json() {
+            let tokens = decoded
+                .into_iter()
+                .map(|value| serialize_value_as_json(value, None, true))
+                .collect::<eyre::Result<Vec<_>>>()?;
+            serde_json::to_string_pretty(&tokens).unwrap()
+        } else {
+            // seth compatible user-friendly return type conversions
+            decoded.iter().map(format_token).collect::<Vec<_>>().join("\n")
+        };
 
         // With `--delegate` the call targets the sender, whose code comes from the override and
         // was already checked to be non-empty, so the on-chain code lookup would be misleading.

@@ -1,7 +1,6 @@
 use std::str::FromStr;
 
 use crate::{
-    SimpleCast,
     cmd::{erc20::print_amount, rpc_provider, send::SendTxArgs},
     tx::{SendTxOpts, TxParams},
 };
@@ -765,7 +764,7 @@ impl TokenAmount {
         Self {
             raw: value.to_string(),
             formatted: decimals
-                .and_then(|decimals| SimpleCast::format_units(&value.to_string(), decimals).ok()),
+                .and_then(|decimals| crate::args::format_units(&value.to_string(), decimals).ok()),
         }
     }
 }

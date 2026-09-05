@@ -5,7 +5,6 @@
 //! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
 //! [`foundry_config::Config`].
 
-use crate::MAX_CONCURRENT_RPC_REQUESTS;
 use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use alloy_provider::Provider;
@@ -18,11 +17,13 @@ use foundry_cli::{
 };
 use foundry_common::{provider::RetryProvider, shell};
 use foundry_config::{Config, figment::Figment};
-use foundry_evm::opts::EvmOpts;
+use foundry_evm::{core::bytecode::InstIter, opts::EvmOpts};
 use futures::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
-use std::fmt::Display;
+use std::fmt::{Display, Write};
+
+const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 
 /// Loads Cast's config and applies its normalized network to the EVM options.
 pub(crate) fn load_cast_config_and_evm_opts(figment: Figment) -> Result<(Box<Config>, EvmOpts)> {
@@ -155,4 +156,12 @@ mod tests {
         assert!(config.networks.is_monad());
         assert!(evm_opts.networks.is_monad());
     }
+}
+
+pub(crate) fn disassemble(code: &[u8]) -> Result<String> {
+    let mut output = String::new();
+    for (pc, inst) in InstIter::new(code).with_pc() {
+        writeln!(output, "{pc:08x}: {inst}")?;
+    }
+    Ok(output)
 }
