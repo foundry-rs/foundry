@@ -7,12 +7,13 @@ use crate::{
     tx::CastTxSender,
 };
 use alloy_consensus::Typed2718;
-use alloy_dyn_abi::{DynSolType, ErrorExt, EventExt};
+use alloy_dyn_abi::{DynSolType, DynSolValue, ErrorExt, EventExt, Specifier};
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_ens::{NameOrAddress, ProviderEnsExt, namehash};
 use alloy_network::{BlockResponse, Ethereum, Network, eip2718::Decodable2718};
 use alloy_primitives::{
-    Address, B256, Bytes, I256, TxHash, U64, U256, b256, eip191_hash_message, hex, keccak256,
+    Address, B256, Bytes, I256, LogData, TxHash, U64, U256, b256, eip191_hash_message, hex,
+    keccak256,
     utils::{ParseUnits, Unit},
 };
 use alloy_provider::Provider;
@@ -342,7 +343,37 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         // TODO(json): multi-line output (one line per topic + data field), needs structured object
         // envelope
         CastSubcommand::AbiEncodeEvent { sig, args } => {
-            let log_data = SimpleCast::abi_encode_event(&sig, &args)?;
+            let event = get_event(&sig)?;
+            if event.inputs.len() != args.len() {
+                eyre::bail!(
+                    "encode length mismatch: expected {} types, got {}",
+                    event.inputs.len(),
+                    args.len(),
+                );
+            }
+
+            let types = event
+                .inputs
+                .iter()
+                .map(Specifier::<DynSolType>::resolve)
+                .collect::<Result<Vec<_>, _>>()?;
+            let tokens = std::iter::zip(&types, &args)
+                .map(|(ty, arg)| Ok(DynSolType::coerce_str(ty, arg.as_ref())?))
+                .collect::<Result<Vec<_>>>()?;
+
+            let mut topics = if event.anonymous { vec![] } else { vec![event.selector()] };
+            // Non-indexed parameters are encoded together as the event body.
+            let mut data_tokens = Vec::new();
+            for (input, token) in event.inputs.iter().zip(tokens) {
+                if input.indexed {
+                    topics.push(crate::encode_event_topic(&token));
+                } else {
+                    data_tokens.push(token);
+                }
+            }
+
+            let data = DynSolValue::Tuple(data_tokens).abi_encode_params();
+            let log_data = LogData::new_unchecked(topics, data.into());
             if shell::is_json() {
                 #[derive(serde::Serialize)]
                 struct EncodedEvent {
