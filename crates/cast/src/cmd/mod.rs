@@ -5,7 +5,6 @@
 //! implement `figment::Provider` which allows the subcommand to override the config's defaults, see
 //! [`foundry_config::Config`].
 
-use crate::MAX_CONCURRENT_RPC_REQUESTS;
 use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, map::AddressHashMap};
 use alloy_provider::Provider;
@@ -23,6 +22,8 @@ use futures::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
 use std::fmt::{Display, Write};
+
+const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 
 /// Loads Cast's config and applies its normalized network to the EVM options.
 pub(crate) fn load_cast_config_and_evm_opts(figment: Figment) -> Result<(Box<Config>, EvmOpts)> {

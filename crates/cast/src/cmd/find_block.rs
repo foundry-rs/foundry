@@ -107,6 +107,18 @@ impl FindBlockArgs {
     }
 }
 
+async fn timestamp(
+    provider: &impl Provider<alloy_network::AnyNetwork>,
+    number: u64,
+) -> Result<u64> {
+    Ok(provider
+        .get_block_by_number(number.into())
+        .await?
+        .ok_or_else(|| eyre::eyre!("block {number} not found"))?
+        .header
+        .timestamp)
+}
+
 #[cfg(test)]
 mod tests {
     use super::interpolate_block;
@@ -122,16 +134,4 @@ mod tests {
         // Falls back to the midpoint for equal timestamps.
         assert_eq!(interpolate_block(1, 100, 10, 100, 100), 6);
     }
-}
-
-async fn timestamp(
-    provider: &impl Provider<alloy_network::AnyNetwork>,
-    number: u64,
-) -> Result<u64> {
-    Ok(provider
-        .get_block_by_number(number.into())
-        .await?
-        .ok_or_else(|| eyre::eyre!("block {number} not found"))?
-        .header
-        .timestamp)
 }

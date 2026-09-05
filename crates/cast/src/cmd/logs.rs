@@ -1,4 +1,5 @@
-use crate::{MAX_CONCURRENT_RPC_REQUESTS, encode_event_topic};
+use super::MAX_CONCURRENT_RPC_REQUESTS;
+use crate::args::encode_event_topic;
 use alloy_consensus::BlockHeader;
 use alloy_dyn_abi::Specifier;
 use alloy_ens::NameOrAddress;
@@ -257,139 +258,6 @@ fn raw_topics(topics: Vec<String>) -> Result<[Topic; 4]> {
     Ok(topics.try_into().unwrap())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy_primitives::keccak256;
-
-    const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
-    const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";
-    const TRANSFER_TOPIC: &str =
-        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
-
-    fn filter(sig_or_topic: &str, args: &[&str]) -> Result<Filter> {
-        build_filter(
-            None,
-            None,
-            None,
-            Some(sig_or_topic.to_string()),
-            args.iter().map(|s| s.to_string()).collect(),
-        )
-    }
-
-    fn topics(topics: [Topic; 4]) -> Filter {
-        Filter { topics, ..Default::default() }
-    }
-
-    #[test]
-    fn builds_filters() {
-        let transfer_topic = B256::from_str(TRANSFER_TOPIC).unwrap();
-        let addr: Address = ADDRESS.parse().unwrap();
-        let addr_topic = Topic::from(B256::left_padding_from(addr.as_slice()));
-        let any = Topic::default;
-
-        let from_block = Some(BlockNumberOrTag::from(1337));
-        let to_block = Some(BlockNumberOrTag::Latest);
-        let basic = build_filter(from_block, to_block, Some(vec![addr]), None, vec![]).unwrap();
-        assert_eq!(
-            basic,
-            Filter {
-                block_option: FilterBlockOption::Range { from_block, to_block },
-                address: addr.into(),
-                topics: Default::default(),
-            }
-        );
-
-        let cases: [(&str, &[&str], [Topic; 4]); 8] = [
-            (TRANSFER_SIG, &[], [transfer_topic.into(), any(), any(), any()]),
-            (TRANSFER_SIG, &[ADDRESS], [transfer_topic.into(), addr_topic.clone(), any(), any()]),
-            (TRANSFER_SIG, &["", ADDRESS], [transfer_topic.into(), any(), addr_topic, any()]),
-            (
-                TRANSFER_TOPIC,
-                &[TRANSFER_TOPIC],
-                [transfer_topic.into(), transfer_topic.into(), any(), any()],
-            ),
-            (
-                TRANSFER_TOPIC,
-                &["", TRANSFER_TOPIC],
-                [transfer_topic.into(), any(), transfer_topic.into(), any()],
-            ),
-            (
-                "event Owned(uint256 value, address indexed owner)",
-                &[ADDRESS],
-                [
-                    Event::parse("event Owned(uint256 value, address indexed owner)")
-                        .unwrap()
-                        .selector()
-                        .into(),
-                    B256::left_padding_from(addr.as_slice()).into(),
-                    any(),
-                    any(),
-                ],
-            ),
-            (
-                "event Message(string indexed value)",
-                &["hello"],
-                [
-                    Event::parse("event Message(string indexed value)").unwrap().selector().into(),
-                    keccak256("hello").into(),
-                    any(),
-                    any(),
-                ],
-            ),
-            (
-                "Swap(address indexed from, address indexed to, uint256 value)",
-                &[],
-                [
-                    Event::parse(
-                        "event Swap(address indexed from, address indexed to, uint256 value)",
-                    )
-                    .unwrap()
-                    .selector()
-                    .into(),
-                    any(),
-                    any(),
-                    any(),
-                ],
-            ),
-        ];
-        for (sig_or_topic, args, expected) in cases {
-            assert_eq!(filter(sig_or_topic, args).unwrap(), topics(expected), "{sig_or_topic}");
-        }
-
-        let multiple = build_filter(
-            None,
-            None,
-            Some(vec![Address::ZERO, addr]),
-            Some(TRANSFER_TOPIC.to_string()),
-            vec![],
-        )
-        .unwrap();
-        assert_eq!(
-            multiple,
-            Filter {
-                address: vec![Address::ZERO, addr].into(),
-                topics: [transfer_topic.into(), any(), any(), any()],
-                ..Default::default()
-            }
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_arguments_and_topics() {
-        let cases = [
-            (TRANSFER_SIG, &["1234"][..], "parser error:\n1234\n^\ninvalid string length"),
-            ("asdasdasd", &[], "odd number of digits"),
-            (ADDRESS, &[], "invalid string length"),
-            (TRANSFER_TOPIC, &["1234"], "invalid string length"),
-        ];
-        for (sig_or_topic, args, expected) in cases {
-            let err = filter(sig_or_topic, args).unwrap_err().to_string().to_lowercase();
-            assert_eq!(err, expected, "{sig_or_topic}");
-        }
-    }
-}
-
 fn get_logs_bisecting<'a, P: Provider<N>, N: Network>(
     provider: &'a P,
     filter: &'a Filter,
@@ -549,6 +417,171 @@ fn pretty_log(log: &impl UIfmt) -> String {
         .replace('\n', "\n  ") // Indent
 }
 
+/// Returns `true` if `err` is a provider range/result-size limit that retrying over a smaller
+/// range can fix. Network, auth, rate-limit, and malformed-response errors return `false`.
+fn is_range_limit_error(err: &RpcError<TransportErrorKind>) -> bool {
+    // Only HTTP 413 (payload too large) is fixable by a smaller range; other transport errors
+    // (network, auth 401/403, rate-limit 429) are not.
+    if let RpcError::Transport(kind) = err {
+        return kind.as_http_error().is_some_and(|http| http.status == 413);
+    }
+
+    // Range/result-size limits are reported as JSON-RPC server error responses; every other
+    // variant falls through to `false`.
+    let RpcError::ErrorResp(payload) = err else { return false };
+    let message = payload.message.to_ascii_lowercase();
+
+    // Phrases providers use for range/result-size limits, kept specific so rate-limit/quota
+    // wording (e.g. "no more than 10 requests per second") doesn't match.
+    const RANGE_LIMIT_HINTS: &[&str] = &[
+        "block range",
+        "blocks range",
+        "range is too",
+        "range too",
+        "returned more than",
+        "response size",
+        "result set",
+        "too many results",
+        "too many blocks",
+        "maximum block range",
+        "max block range",
+    ];
+    RANGE_LIMIT_HINTS.iter().any(|hint| message.contains(hint))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::keccak256;
+
+    const ADDRESS: &str = "0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38";
+    const TRANSFER_SIG: &str = "Transfer(address indexed,address indexed,uint256)";
+    const TRANSFER_TOPIC: &str =
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+    fn filter(sig_or_topic: &str, args: &[&str]) -> Result<Filter> {
+        build_filter(
+            None,
+            None,
+            None,
+            Some(sig_or_topic.to_string()),
+            args.iter().map(|s| s.to_string()).collect(),
+        )
+    }
+
+    fn topics(topics: [Topic; 4]) -> Filter {
+        Filter { topics, ..Default::default() }
+    }
+
+    #[test]
+    fn builds_filters() {
+        let transfer_topic = B256::from_str(TRANSFER_TOPIC).unwrap();
+        let addr: Address = ADDRESS.parse().unwrap();
+        let addr_topic = Topic::from(B256::left_padding_from(addr.as_slice()));
+        let any = Topic::default;
+
+        let from_block = Some(BlockNumberOrTag::from(1337));
+        let to_block = Some(BlockNumberOrTag::Latest);
+        let basic = build_filter(from_block, to_block, Some(vec![addr]), None, vec![]).unwrap();
+        assert_eq!(
+            basic,
+            Filter {
+                block_option: FilterBlockOption::Range { from_block, to_block },
+                address: addr.into(),
+                topics: Default::default(),
+            }
+        );
+
+        let cases: [(&str, &[&str], [Topic; 4]); 8] = [
+            (TRANSFER_SIG, &[], [transfer_topic.into(), any(), any(), any()]),
+            (TRANSFER_SIG, &[ADDRESS], [transfer_topic.into(), addr_topic.clone(), any(), any()]),
+            (TRANSFER_SIG, &["", ADDRESS], [transfer_topic.into(), any(), addr_topic, any()]),
+            (
+                TRANSFER_TOPIC,
+                &[TRANSFER_TOPIC],
+                [transfer_topic.into(), transfer_topic.into(), any(), any()],
+            ),
+            (
+                TRANSFER_TOPIC,
+                &["", TRANSFER_TOPIC],
+                [transfer_topic.into(), any(), transfer_topic.into(), any()],
+            ),
+            (
+                "event Owned(uint256 value, address indexed owner)",
+                &[ADDRESS],
+                [
+                    Event::parse("event Owned(uint256 value, address indexed owner)")
+                        .unwrap()
+                        .selector()
+                        .into(),
+                    B256::left_padding_from(addr.as_slice()).into(),
+                    any(),
+                    any(),
+                ],
+            ),
+            (
+                "event Message(string indexed value)",
+                &["hello"],
+                [
+                    Event::parse("event Message(string indexed value)").unwrap().selector().into(),
+                    keccak256("hello").into(),
+                    any(),
+                    any(),
+                ],
+            ),
+            (
+                "Swap(address indexed from, address indexed to, uint256 value)",
+                &[],
+                [
+                    Event::parse(
+                        "event Swap(address indexed from, address indexed to, uint256 value)",
+                    )
+                    .unwrap()
+                    .selector()
+                    .into(),
+                    any(),
+                    any(),
+                    any(),
+                ],
+            ),
+        ];
+        for (sig_or_topic, args, expected) in cases {
+            assert_eq!(filter(sig_or_topic, args).unwrap(), topics(expected), "{sig_or_topic}");
+        }
+
+        let multiple = build_filter(
+            None,
+            None,
+            Some(vec![Address::ZERO, addr]),
+            Some(TRANSFER_TOPIC.to_string()),
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(
+            multiple,
+            Filter {
+                address: vec![Address::ZERO, addr].into(),
+                topics: [transfer_topic.into(), any(), any(), any()],
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_arguments_and_topics() {
+        let cases = [
+            (TRANSFER_SIG, &["1234"][..], "parser error:\n1234\n^\ninvalid string length"),
+            ("asdasdasd", &[], "odd number of digits"),
+            (ADDRESS, &[], "invalid string length"),
+            (TRANSFER_TOPIC, &["1234"], "invalid string length"),
+        ];
+        for (sig_or_topic, args, expected) in cases {
+            let err = filter(sig_or_topic, args).unwrap_err().to_string().to_lowercase();
+            assert_eq!(err, expected, "{sig_or_topic}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod logs_bisecting {
     use super::*;
@@ -669,36 +702,4 @@ mod logs_bisecting {
         let err = get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap_err();
         assert!(err.to_string().contains("unauthorized"), "got: {err}");
     }
-}
-
-/// Returns `true` if `err` is a provider range/result-size limit that retrying over a smaller
-/// range can fix. Network, auth, rate-limit, and malformed-response errors return `false`.
-fn is_range_limit_error(err: &RpcError<TransportErrorKind>) -> bool {
-    // Only HTTP 413 (payload too large) is fixable by a smaller range; other transport errors
-    // (network, auth 401/403, rate-limit 429) are not.
-    if let RpcError::Transport(kind) = err {
-        return kind.as_http_error().is_some_and(|http| http.status == 413);
-    }
-
-    // Range/result-size limits are reported as JSON-RPC server error responses; every other
-    // variant falls through to `false`.
-    let RpcError::ErrorResp(payload) = err else { return false };
-    let message = payload.message.to_ascii_lowercase();
-
-    // Phrases providers use for range/result-size limits, kept specific so rate-limit/quota
-    // wording (e.g. "no more than 10 requests per second") doesn't match.
-    const RANGE_LIMIT_HINTS: &[&str] = &[
-        "block range",
-        "blocks range",
-        "range is too",
-        "range too",
-        "returned more than",
-        "response size",
-        "result set",
-        "too many results",
-        "too many blocks",
-        "maximum block range",
-        "max block range",
-    ];
-    RANGE_LIMIT_HINTS.iter().any(|hint| message.contains(hint))
 }

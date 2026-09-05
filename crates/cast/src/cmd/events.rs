@@ -1,10 +1,7 @@
-use super::{fetch_code_via_rpc, logs::LogQueryArgs};
-use crate::{
-    MAX_CONCURRENT_RPC_REQUESTS,
-    traces::{
-        CallTraceDecoderBuilder, DecodedEvent,
-        identifier::{ExternalIdentifier, SignaturesIdentifier},
-    },
+use super::{MAX_CONCURRENT_RPC_REQUESTS, fetch_code_via_rpc, logs::LogQueryArgs};
+use crate::traces::{
+    CallTraceDecoderBuilder, DecodedEvent,
+    identifier::{ExternalIdentifier, SignaturesIdentifier},
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::JsonAbi;
