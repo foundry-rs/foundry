@@ -1410,3 +1410,16 @@ fn to_base(value: &str, base_in: Option<&str>, base_out: &str) -> Result<String>
     let n = NumberWithBase::parse_int_in(value, base_in)?.with_base(base_out);
     Ok(format!("{n:#?}"))
 }
+
+pub(super) fn shift(
+    value: &str,
+    bits: &str,
+    base_in: Option<&str>,
+    base_out: &str,
+    shift: impl FnOnce(U256, U256) -> U256,
+) -> Result<String> {
+    let base_out = base_out.parse()?;
+    let value = NumberWithBase::parse_uint(value, base_in)?.number();
+    let bits = NumberWithBase::parse_uint(bits, None)?.number();
+    Ok(format!("{:#?}", NumberWithBase::from(shift(value, bits)).with_base(base_out)))
+}

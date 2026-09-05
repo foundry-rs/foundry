@@ -85,7 +85,7 @@ impl SimpleCast {
         base_in: Option<&str>,
         base_out: &str,
     ) -> Result<String> {
-        Self::shift(value, bits, base_in, base_out, |value, bits| value << bits)
+        args::shift(value, bits, base_in, base_out, |value, bits| value << bits)
     }
 
     /// Performs the right shift operation (>>) on a number
@@ -106,24 +106,9 @@ impl SimpleCast {
         base_in: Option<&str>,
         base_out: &str,
     ) -> Result<String> {
-        Self::shift(value, bits, base_in, base_out, |value, bits| {
+        args::shift(value, bits, base_in, base_out, |value, bits| {
             value.wrapping_shr(bits.saturating_to())
         })
-    }
-
-    /// Parses `value` and `bits`, applies `shift` and formats the result with the `base_out`
-    /// prefix.
-    fn shift(
-        value: &str,
-        bits: &str,
-        base_in: Option<&str>,
-        base_out: &str,
-        shift: impl FnOnce(U256, U256) -> U256,
-    ) -> Result<String> {
-        let base_out = base_out.parse()?;
-        let value = NumberWithBase::parse_uint(value, base_in)?.number();
-        let bits = NumberWithBase::parse_uint(bits, None)?.number();
-        Ok(format!("{:#?}", NumberWithBase::from(shift(value, bits)).with_base(base_out)))
     }
 
     /// Fetches source code of verified contracts from etherscan.
