@@ -3188,6 +3188,27 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
             let input =
                 SymbolicConcreteInput { args, calldata: call.call_details.calldata.clone() };
+            if property_selection_active
+                && let Some(solved_sequence) = self.solve_invariant_from_frontier_prefix(
+                    invariant_contract,
+                    &prefix_executor,
+                    invariant_target.clone(),
+                    call.sender,
+                    &sequence[..call_index],
+                )
+            {
+                match persist_corpus_seed(&invariant_config.corpus, solved_sequence) {
+                    Ok(Some(path)) => {
+                        debug!(id, path = %path.display(), "persisted property-directed invariant frontier seed");
+                        continue;
+                    }
+                    Ok(None) => continue,
+                    Err(err) => {
+                        warn!(%err, id, "failed to persist property-directed invariant frontier seed");
+                    }
+                }
+            }
+
             let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
             let target = SymbolicBranchTarget::new(
                 frontier.site.address,
@@ -3253,26 +3274,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                 } else {
                     debug!(id, "solved invariant frontier did not flip during concrete replay");
-                }
-            }
-
-            if property_selection_active
-                && let Some(solved_sequence) = self.solve_invariant_from_frontier_prefix(
-                    invariant_contract,
-                    &prefix_executor,
-                    invariant_target,
-                    call.sender,
-                    &sequence[..call_index],
-                )
-            {
-                match persist_corpus_seed(&invariant_config.corpus, solved_sequence) {
-                    Ok(Some(path)) => {
-                        debug!(id, path = %path.display(), "persisted property-directed invariant frontier seed");
-                    }
-                    Ok(None) => {}
-                    Err(err) => {
-                        warn!(%err, id, "failed to persist property-directed invariant frontier seed");
-                    }
                 }
             }
         }
