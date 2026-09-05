@@ -881,6 +881,59 @@ fn read_dir<FEN: FoundryEvmNetwork>(
         .same_file_system(true)
         .sort_by_file_name()
         .into_iter()
+        // `follow_links(true)` lets the walk descend *through* a symlink whose target lies
+        // outside the permitted `fs_permissions` boundary (the boundary check above only
+        // covers `root` itself). Once that happens, every entry found beyond the symlink is
+        // reachable only because an ancestor path component resolved outside the sandbox, so
+        // check each entry's *parent* against the boundary and prune the walk the moment it
+        // escapes: rejecting a directory entry here means `WalkDir` won't queue or return any
+        // of *its* children, so nothing beneath it - however deep, even if a later symlink
+        // would resolve back inside the sandbox - is ever returned to the caller. `filter_entry`
+        // (not a post-hoc `.filter()`) is required for this: a post-hoc filter still lets the
+        // walk enumerate and yield every descendant before discarding them one by one, which is
+        // exactly how an escape that later resolves back in-bounds would slip through (its
+        // *own* immediate parent looks fine once fully resolved, even though reaching it required
+        // stepping outside). `filter_entry` instead stops queuing an entry's children the moment
+        // the entry itself is rejected, so an escape can't be "laundered" by a later re-entry.
+        //
+        // This intentionally checks the parent, not the entry's own path: canonicalizing the
+        // entry itself would also resolve a symlink that IS the entry (e.g. the `escape` entry
+        // for a symlink directly inside an allowed dir), which would incorrectly hide that
+        // symlink's own name even when it isn't followed (`follow_links: false` must keep
+        // listing it, unchanged from today). The parent check only fires once traversal has
+        // actually stepped through an escaping symlink - mirrors the boundary `read_file`
+        // already enforces for a single path, just applied per-entry along the walk.
+        //
+        // The root entry itself (depth 0) is exempt: it already passed `ensure_path_allowed`
+        // above, and checking *its* parent would often fail even for a fully legitimate root
+        // (a permission can be granted for a directory without separately granting its parent).
+        .filter_entry(|entry| {
+            entry.depth() == 0
+                || entry
+                    .path()
+                    .parent()
+                    .is_none_or(|parent| state.config.is_path_allowed(parent, FsAccessKind::Read))
+        })
+        .filter(|entry| {
+            // `filter_entry`'s predicate only ever sees `Ok` entries; errors pass through it
+            // untouched, so apply the same parent-boundary check here for the `Err` case -
+            // except at the root (depth 0), whose error must be preserved even if its *parent*
+            // isn't separately permitted, matching the exemption above. `WalkDir`'s own root
+            // error always carries a path (so it's covered by the depth check above regardless);
+            // a non-root error can occasionally carry no path at all (e.g. a lower-level I/O
+            // failure enumerating a directory's children, or an internal `same_file_system`
+            // check) - since there is then nothing to check against the boundary, fail closed
+            // and drop it rather than defaulting to keeping something we can't verify.
+            match entry {
+                Ok(_) => true,
+                Err(e) if e.depth() == 0 => true,
+                Err(e) => e.path().is_some_and(|p| {
+                    p.parent().is_none_or(|parent| {
+                        state.config.is_path_allowed(parent, FsAccessKind::Read)
+                    })
+                }),
+            }
+        })
         .map(|entry| match entry {
             Ok(entry) => DirEntry {
                 errorMessage: String::new(),

@@ -22,6 +22,7 @@ mod fuzz;
 mod invariant;
 mod logs;
 mod mutation;
+mod readdir_fs_permissions;
 mod repros;
 mod showmap;
 mod spec;
