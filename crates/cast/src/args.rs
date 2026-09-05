@@ -494,7 +494,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Nonce { block, who, rpc } => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
-            print_scalar(Cast::new(provider).nonce(who, block).await?)?;
+            print_scalar(
+                provider.get_transaction_count(who).block_id(block.unwrap_or_default()).await?,
+            )?;
         }
         CastSubcommand::Codehash { block, who, slots, rpc } => {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
