@@ -9889,3 +9889,10 @@ casttest!(abi_encode_packed, |_prj, cmd| {
         .assert_success()
         .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000001\n");
 });
+
+casttest!(calldata_bool, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args(["calldata", "bar(bool)", "false"])
+        .assert_success()
+        .stdout_eq("0x6fae94120000000000000000000000000000000000000000000000000000000000000000\n");
+});

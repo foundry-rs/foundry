@@ -410,7 +410,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     .collect(),
                 None => args,
             };
-            print_scalar(SimpleCast::calldata_encode(sig, &args)?)?;
+            print_scalar(hex::encode_prefixed(encode_function_args(&get_func(&sig)?, &args)?))?;
         }
         CastSubcommand::DecodeString { data } => {
             print_tokens(&abi_decode_calldata("Any(string)", &data, true, true)?)?;

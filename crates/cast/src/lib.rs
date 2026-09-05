@@ -67,25 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Performs ABI encoding to produce the hexadecimal calldata with the given arguments.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(
-    ///     "0xb3de648b0000000000000000000000000000000000000000000000000000000000000001",
-    ///     Cast::calldata_encode("f(uint256 a)", &["1"]).unwrap().as_str()
-    /// );
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn calldata_encode(sig: impl AsRef<str>, args: &[impl AsRef<str>]) -> Result<String> {
-        let func = get_func(sig.as_ref())?;
-        let calldata = encode_function_args(&func, args)?;
-        Ok(hex::encode_prefixed(calldata))
-    }
-
     /// Returns the slot number for a given mapping key and slot.
     ///
     /// Given `mapping(k => v) m`, for a key `k` the slot number of its associated `v` is
@@ -644,21 +625,6 @@ mod tests {
     }
 
     // <https://github.com/foundry-rs/foundry/issues/2681>
-    #[test]
-    fn calldata_array() {
-        assert_eq!(
-            "0xcde2baba0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000",
-            Cast::calldata_encode("propose(string[])", &["[\"\"]"]).unwrap().as_str()
-        );
-    }
-
-    #[test]
-    fn calldata_bool() {
-        assert_eq!(
-            "0x6fae94120000000000000000000000000000000000000000000000000000000000000000",
-            Cast::calldata_encode("bar(bool)", &["false"]).unwrap().as_str()
-        );
-    }
 
     #[test]
     fn disassemble_incomplete_sequence() {
