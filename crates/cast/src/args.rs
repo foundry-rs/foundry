@@ -6,7 +6,10 @@ use crate::{
     traces::identifier::SignaturesIdentifier,
     tx::CastTxSender,
 };
-use alloy_consensus::Typed2718;
+use alloy_consensus::{
+    Typed2718,
+    transaction::{Recovered, SignerRecoverable},
+};
 use alloy_dyn_abi::{DynSolType, DynSolValue, ErrorExt, EventExt, Specifier};
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_ens::{NameOrAddress, ProviderEnsExt, namehash};
@@ -49,6 +52,7 @@ use foundry_evm_networks::NetworkVariant;
 use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
+use serde::Serialize;
 use std::{str::FromStr, time::Instant};
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS};
@@ -1235,21 +1239,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let tx = stdin::unwrap_line(tx)?;
             let decoded_tx = match network {
                 #[cfg(feature = "optimism")]
-                Some(NetworkVariant::Optimism) => {
-                    SimpleCast::decode_raw_transaction::<Optimism>(&tx)?
-                }
-                Some(NetworkVariant::Tempo) => {
-                    SimpleCast::decode_raw_transaction::<TempoNetwork>(&tx)?
-                }
-                Some(NetworkVariant::Ethereum) => {
-                    SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?
-                }
+                Some(NetworkVariant::Optimism) => decode_raw_transaction::<Optimism>(&tx)?,
+                Some(NetworkVariant::Tempo) => decode_raw_transaction::<TempoNetwork>(&tx)?,
+                Some(NetworkVariant::Ethereum) => decode_raw_transaction::<Ethereum>(&tx)?,
                 #[cfg(feature = "monad")]
-                Some(NetworkVariant::Monad) => SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?,
+                Some(NetworkVariant::Monad) => decode_raw_transaction::<Ethereum>(&tx)?,
                 // Without an explicit `--network` override, decode with the Foundry envelope,
                 // which dispatches on the EIP-2718 type byte for the transaction types compiled
                 // into `FoundryNetwork`, including Tempo txs (`0x76`).
-                None => SimpleCast::decode_raw_transaction::<FoundryNetwork>(&tx)?,
+                None => decode_raw_transaction::<FoundryNetwork>(&tx)?,
             };
             print_json_object(decoded_tx)?;
         }
@@ -1483,4 +1481,16 @@ pub(super) fn explorer_client(
     }
 
     builder.build().map_err(Into::into)
+}
+
+fn decode_raw_transaction<N: Network<TxEnvelope: SignerRecoverable + Serialize>>(
+    tx: &str,
+) -> Result<String> {
+    let tx_hex = hex::decode(tx)?;
+    let tx: N::TxEnvelope = Decodable2718::decode_2718(&mut tx_hex.as_slice())?;
+    if let Ok(signer) = tx.recover_signer() {
+        Ok(serde_json::to_string_pretty(&Recovered::new_unchecked(tx, signer))?)
+    } else {
+        Ok(serde_json::to_string_pretty(&tx)?)
+    }
 }
