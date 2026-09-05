@@ -130,26 +130,8 @@ impl SimpleCast {
     pub fn format_units(value: &str, unit: u8) -> Result<String> {
         let value = NumberWithBase::parse_int(value, None)?;
         let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
-        let parsed = Self::signed_parse_units(&value)?;
+        let parsed = args::signed_parse_units(&value)?;
         Ok(Self::format_unit_as_string(parsed, unit))
-    }
-
-    /// Converts a parsed, possibly-negative [`NumberWithBase`] into a [`ParseUnits`], preserving
-    /// its sign.
-    ///
-    /// `NumberWithBase::number()` returns the two's-complement bits of a negative value modulo
-    /// 2^256, which is a wider range than [`I256`] can represent (magnitudes up to 2^255 only).
-    /// A magnitude beyond that range would silently reinterpret as a small *positive* [`I256`]
-    /// if constructed unconditionally via [`I256::from_raw`] -- reject it instead.
-    fn signed_parse_units(value: &NumberWithBase) -> Result<ParseUnits> {
-        if value.is_nonnegative() {
-            return Ok(ParseUnits::U256(value.number()));
-        }
-        let signed = I256::from_raw(value.number());
-        if !signed.is_negative() {
-            eyre::bail!("value out of range for a signed 256-bit integer");
-        }
-        Ok(ParseUnits::I256(signed))
     }
 
     // Helper function to format units as a string
@@ -182,7 +164,7 @@ impl SimpleCast {
     /// ```
     pub fn from_wei(value: &str, unit: &str) -> Result<String> {
         let value = NumberWithBase::parse_int(value, None)?;
-        let parsed = Self::signed_parse_units(&value)?;
+        let parsed = args::signed_parse_units(&value)?;
         Ok(parsed.format_units(unit.parse()?))
     }
 

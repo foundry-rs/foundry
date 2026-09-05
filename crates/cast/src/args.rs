@@ -1198,3 +1198,14 @@ fn int_bound(s: &str, max: bool) -> Result<String> {
         _ => Err(eyre::eyre!("Type is not int/uint: {s}")),
     }
 }
+
+pub(super) fn signed_parse_units(value: &NumberWithBase) -> Result<ParseUnits> {
+    if value.is_nonnegative() {
+        return Ok(ParseUnits::U256(value.number()));
+    }
+    let signed = I256::from_raw(value.number());
+    if !signed.is_negative() {
+        eyre::bail!("value out of range for a signed 256-bit integer");
+    }
+    Ok(ParseUnits::I256(signed))
+}
