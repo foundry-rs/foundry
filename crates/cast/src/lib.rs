@@ -16,9 +16,8 @@ use alloy_consensus::{
 use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, Specifier};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
-use alloy_json_abi::Function;
 use alloy_json_rpc::RpcError;
-use alloy_network::{AnyNetwork, BlockResponse, Network, TransactionBuilder};
+use alloy_network::{AnyNetwork, BlockResponse, Network};
 use alloy_primitives::{
     Address, B256, I256, Keccak256, LogData, Selector, TxHash, U64, U256, b256, hex,
     utils::{ParseUnits, Unit, keccak256},
@@ -26,8 +25,7 @@ use alloy_primitives::{
 use alloy_provider::{PendingTransactionBuilder, Provider, network::eip2718::Decodable2718};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, BlockOverrides, EIP1186AccountProofResponse, Filter,
-    FilterBlockOption, Log, state::StateOverride,
+    BlockId, BlockNumberOrTag, EIP1186AccountProofResponse, Filter, FilterBlockOption, Log,
 };
 use alloy_transport::TransportErrorKind;
 use base::{Base, NumberWithBase};
@@ -42,7 +40,7 @@ use foundry_common::{
     fs, shell,
 };
 use foundry_config::Chain;
-use foundry_evm::core::{bytecode::InstIter, decode::RevertDecoder};
+use foundry_evm::core::bytecode::InstIter;
 use futures::{FutureExt, StreamExt, TryStreamExt, future::Either};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus as _;
@@ -103,121 +101,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// ```
     pub const fn new(provider: P) -> Self {
         Self { provider, _phantom: PhantomData }
-    }
-
-    /// Makes a read-only call to the specified address
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_primitives::{Address, U256, Bytes};
-    /// use alloy_rpc_types::{TransactionRequest, BlockOverrides, state::{StateOverride, AccountOverride}};
-    /// use alloy_serde::WithOtherFields;
-    /// use cast::Cast;
-    /// use alloy_provider::{RootProvider, ProviderBuilder, network::AnyNetwork};
-    /// use std::{str::FromStr, collections::HashMap};
-    /// use alloy_rpc_types::state::StateOverridesBuilder;
-    /// use alloy_sol_types::{sol, SolCall};
-    ///
-    /// sol!(
-    ///     function greeting(uint256 i) public returns (string);
-    /// );
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let alloy_provider = ProviderBuilder::<_,_, AnyNetwork>::default().connect("http://localhost:8545").await?;;
-    /// let to = Address::from_str("0xB3C95ff08316fb2F2e3E52Ee82F8e7b605Aa1304")?;
-    /// let greeting = greetingCall { i: U256::from(5) }.abi_encode();
-    /// let bytes = Bytes::from_iter(greeting.iter());
-    /// let tx = TransactionRequest::default().to(to).input(bytes.into());
-    /// let tx = WithOtherFields::new(tx);
-    ///
-    /// // Create state overrides
-    /// let mut state_override = StateOverride::default();
-    /// let mut account_override = AccountOverride::default();
-    /// account_override.balance = Some(U256::from(1000));
-    /// state_override.insert(to, account_override);
-    /// let state_override_object = StateOverridesBuilder::default().build();
-    /// let block_override_object = BlockOverrides::default();
-    ///
-    /// let cast = Cast::new(alloy_provider);
-    /// let data = cast.call(&tx, None, None, Some(state_override_object), Some(block_override_object)).await?;
-    /// println!("{}", data);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn call(
-        &self,
-        req: &N::TransactionRequest,
-        func: Option<&Function>,
-        block: Option<BlockId>,
-        state_override: Option<StateOverride>,
-        block_override: Option<BlockOverrides>,
-    ) -> Result<String> {
-        let mut call = self
-            .provider
-            .call(req.clone())
-            .block(block.unwrap_or_default())
-            .with_block_overrides_opt(block_override);
-        if let Some(state_override) = state_override {
-            call = call.overrides(state_override)
-        }
-
-        let res = match call.await {
-            Ok(res) => res,
-            Err(err) => {
-                let data = err.as_error_resp().and_then(|payload| payload.as_revert_data());
-                if let Some(data) = data {
-                    let decoded = match RevertDecoder::new().maybe_decode_known(&data) {
-                        Some(decoded) => Some(decoded),
-                        None => tx::decode_custom_error(&data).await.ok().flatten(),
-                    };
-                    if let Some(decoded) = decoded {
-                        return Err(err).wrap_err(format!("execution reverted: {decoded}"));
-                    }
-                }
-                return Err(err.into());
-            }
-        };
-        let decoded = match func {
-            Some(func) => match func.abi_decode_output(res.as_ref()) {
-                Ok(decoded) => decoded,
-                Err(err) => {
-                    // An empty response usually means the recipient is not a contract.
-                    if res.is_empty() {
-                        let Some(addr) = req.to() else {
-                            eyre::bail!("tx req is a contract deployment");
-                        };
-                        if let Ok(code) = self
-                            .provider
-                            .get_code_at(addr)
-                            .block_id(block.unwrap_or_default())
-                            .await
-                            && code.is_empty()
-                        {
-                            eyre::bail!("contract {addr:?} does not have any code");
-                        }
-                    }
-                    return Err(err).wrap_err(
-                        "could not decode output; did you specify the wrong function return data type?"
-                    );
-                }
-            },
-            None => vec![],
-        };
-
-        // handle case when return type is not specified
-        Ok(if decoded.is_empty() {
-            res.to_string()
-        } else if shell::is_json() {
-            let tokens = decoded
-                .into_iter()
-                .map(|value| serialize_value_as_json(value, None, true))
-                .collect::<eyre::Result<Vec<_>>>()?;
-            serde_json::to_string_pretty(&tokens).unwrap()
-        } else {
-            // seth compatible user-friendly return type conversions
-            decoded.iter().map(format_token).collect::<Vec<_>>().join("\n")
-        })
     }
 
     /// Generates an access list for the specified transaction
