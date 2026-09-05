@@ -4775,6 +4775,14 @@ fn invariant_suite_paths(
             is_optimization,
         )));
     }
+    if let Some(root) = &corpus_config.frontier_dir {
+        corpus_config.frontier_dir = Some(canonicalized(invariant_corpus_dir(
+            root,
+            contract_name,
+            invariant_name,
+            is_optimization,
+        )));
+    }
     canonicalized(persist_dir.join("failures").join(contract_short_name(contract_name)))
 }
 

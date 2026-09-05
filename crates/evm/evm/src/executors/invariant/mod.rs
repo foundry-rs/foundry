@@ -9,6 +9,10 @@ use crate::{
             CorpusInsertionMode, DynamicTargetCtx, ReplayTarget, WorkerCorpus, WorkerCorpusSeed,
             persist_campaign_optimization,
         },
+        fuzz::{
+            FuzzBranchFrontier, FuzzFrontierRecorder, StatefulFuzzBranchFrontierArtifact,
+            merge_frontiers, write_frontier_artifact,
+        },
     },
     inspectors::Fuzzer,
 };
@@ -945,7 +949,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let campaign_state =
             Arc::new(InvariantCampaignState::new(early_exit.clone(), self.config.timeout));
 
-        let worker_outputs = if actual_worker_count > 1 {
+        let frontier_test = self
+            .config
+            .corpus
+            .capture_branch_frontiers()
+            .then(|| invariant_contract.anchor().clone());
+        let mut worker_outputs = if actual_worker_count > 1 {
             let worker_jobs = worker_plans
                 .into_iter()
                 .map(|worker_plan| {
@@ -1041,8 +1050,24 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             )?]
         };
 
+        let frontier_limit = self.config.corpus.frontier_limit;
+        let frontiers = merge_frontiers(
+            frontier_limit,
+            worker_outputs.iter_mut().flat_map(|(_, frontiers)| frontiers.drain(..)),
+        );
+        if !frontiers.is_empty()
+            && let (Some(frontier_dir), Some(frontier_test)) =
+                (&self.config.corpus.frontier_dir, frontier_test.as_ref())
+        {
+            let artifact =
+                StatefulFuzzBranchFrontierArtifact::new(frontier_test, frontier_limit, frontiers);
+            if let Err(err) = write_frontier_artifact(frontier_dir, &artifact) {
+                warn!(%err, path = ?frontier_dir, "failed to write fuzz branch frontier artifact");
+            }
+        }
+
         let mut aggregator = InvariantCampaignAggregator::new(campaign_spec);
-        for worker_output in worker_outputs {
+        for (worker_output, _) in worker_outputs {
             aggregator.push(worker_output);
         }
         let result = if campaign_state.is_timed_campaign() {
@@ -1076,11 +1101,18 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         corpus_seed: WorkerCorpusSeed,
         worker_count: usize,
         gas_report_samples: usize,
-    ) -> Result<InvariantWorkerOutput> {
+    ) -> Result<(InvariantWorkerOutput, Vec<FuzzBranchFrontier>)> {
         // Note: invariant function signatures (no inputs) are validated upstream in the
         // suite runner so parameterized `invariant_*` functions are rejected with a per-test
         // failure entry before any campaign runs.
         let config = invariant_worker_config(config, plan.worker_id, worker_count);
+        let frontier_limit =
+            if invariant_worker_collects_evm_cmp_log(&config, plan.worker_id, worker_count) {
+                config.corpus.frontier_limit
+            } else {
+                0
+            };
+        let mut frontier_recorder = FuzzFrontierRecorder::new(frontier_limit);
         executor.inspector_mut().set_execution_cancellation(campaign_state.cancellation().clone());
 
         let (mut invariant_test, mut corpus_manager) = Self::prepare_worker(
@@ -1425,6 +1457,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // Extend corpus only after the run and its optional hook have completed.
+            frontier_recorder.capture_sequence(&current_run.inputs, &current_run.cmp_seq);
             let optimization = current_run.optimization_value.map(|v| {
                 let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
                 (v, prefix)
@@ -1584,7 +1617,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             // `first_global_run` offsets were computed from the original partition.
             plan
         };
-        Ok(InvariantWorkerOutput { plan: reported_plan, result: worker_result })
+        Ok((
+            InvariantWorkerOutput { plan: reported_plan, result: worker_result },
+            frontier_recorder.into_frontiers(),
+        ))
     }
 
     fn shrink_handler_failures(
@@ -2814,7 +2850,7 @@ mod tests {
             (handler_entered, result)
         });
         assert!(handler_entered, "invariant handler did not begin EVM execution");
-        let output = result.expect("invariant campaign did not observe early exit").unwrap();
+        let (output, _) = result.expect("invariant campaign did not observe early exit").unwrap();
         assert_eq!(output.result.runs, 0);
         assert_eq!(output.result.calls, 0);
         assert_eq!(campaign_state.total_runs(), 0);
