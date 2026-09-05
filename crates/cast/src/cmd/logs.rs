@@ -492,3 +492,11 @@ pub(crate) async fn convert_block_number<P: Provider<N> + Clone + Unpin, N: Netw
         None => Ok(None),
     }
 }
+
+pub(crate) fn format_logs(logs: Vec<Log>) -> Result<String> {
+    if shell::is_json() {
+        Ok(serde_json::to_string(&logs)?)
+    } else {
+        Ok(logs.iter().map(pretty_log).collect::<Vec<_>>().join("\n"))
+    }
+}

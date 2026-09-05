@@ -102,7 +102,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
 
     pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
         let logs = self.get_logs(&filter).await?;
-        Self::format_logs(logs)
+        crate::cmd::logs::format_logs(logs)
     }
 
     /// Retrieves logs matching the filter.
@@ -116,15 +116,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// and processes them with controlled concurrency to prevent rate limiting.
     pub async fn filter_logs_chunked(&self, filter: Filter, chunk_size: u64) -> Result<String> {
         let logs = crate::cmd::logs::get_logs_chunked(&self.provider, &filter, chunk_size).await?;
-        Self::format_logs(logs)
-    }
-
-    fn format_logs(logs: Vec<Log>) -> Result<String> {
-        if shell::is_json() {
-            Ok(serde_json::to_string(&logs)?)
-        } else {
-            Ok(logs.iter().map(pretty_log).collect::<Vec<_>>().join("\n"))
-        }
+        crate::cmd::logs::format_logs(logs)
     }
 
     /// Sets up a subscription to the given filter and writes the logs to the given output.
