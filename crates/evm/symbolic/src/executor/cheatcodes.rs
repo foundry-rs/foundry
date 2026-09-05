@@ -430,7 +430,16 @@ impl SymbolicExecutor {
         returns: Vec<SymReturnData>,
         reverts: bool,
     ) -> CheatcodeOutcome {
-        state.call_mocks.push(CallMock::new(callee, value, data, returns, reverts));
+        // Replace identical definitions in place to preserve mock precedence.
+        if let Some(existing) = state.call_mocks.iter_mut().find(|mock| {
+            mock.callee == callee
+                && mock.value() == value
+                && mock.data.same_bytes(&mut self.cx, &data)
+        }) {
+            *existing = CallMock::new(callee, value, data, returns, reverts);
+        } else {
+            state.call_mocks.push(CallMock::new(callee, value, data, returns, reverts));
+        }
         CheatcodeOutcome::Continue(Vec::new())
     }
 
