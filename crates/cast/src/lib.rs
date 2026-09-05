@@ -198,36 +198,7 @@ where
     }
 }
 
-impl<P: Provider<N>, N: Network> Cast<P, N>
-where
-    N::Header: Encodable,
-{
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::Ethereum};
-    /// use cast::Cast;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, Ethereum>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let block = cast.block_raw(5, true).await?;
-    /// println!("{}", block);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn block_raw<B: Into<BlockId>>(&self, block: B, full: bool) -> Result<String> {
-        let block_id = block.into();
-        let block = self
-            .provider
-            .get_block(block_id)
-            .kind(full.into())
-            .await?
-            .ok_or_else(|| eyre::eyre!("block {:?} not found", block_id))?;
-        Ok(hex::encode_prefixed(alloy_rlp::encode(block.header().as_ref())))
-    }
-}
+impl<P: Provider<N>, N: Network> Cast<P, N> where N::Header: Encodable {}
 
 impl<P: Provider<N>, N: Network> Cast<P, N>
 where

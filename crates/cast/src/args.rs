@@ -9,7 +9,7 @@ use alloy_consensus::Typed2718;
 use alloy_dyn_abi::{ErrorExt, EventExt};
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_ens::{NameOrAddress, ProviderEnsExt, namehash};
-use alloy_network::{Ethereum, Network, eip2718::Decodable2718};
+use alloy_network::{BlockResponse, Ethereum, Network, eip2718::Decodable2718};
 use alloy_primitives::{Address, B256, Bytes, b256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -365,7 +365,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     network,
                     &config,
                     ProviderBuilder::<Ethereum>::from_config(&config)?.build()?,
-                    |provider| Cast::new(&provider).block_raw(block, full).await?
+                    |provider| {
+                        let block_id = block;
+                        let block = provider
+                            .get_block(block_id)
+                            .kind(full.into())
+                            .await?
+                            .ok_or_else(|| eyre::eyre!("block {:?} not found", block_id))?;
+                        hex::encode_prefixed(alloy_rlp::encode(block.header().as_ref()))
+                    }
                 )
             } else {
                 self::block(&utils::get_provider(&config)?, block, full, fields).await?
