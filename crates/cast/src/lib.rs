@@ -25,7 +25,6 @@ use alloy_provider::{Provider, network::eip2718::Decodable2718};
 use alloy_rlp::{Decodable, Encodable};
 use alloy_rpc_types::BlockId;
 use base::{Base, NumberWithBase};
-use chrono::DateTime;
 use eyre::{Context, ContextCompat, OptionExt, Result};
 use foundry_block_explorers::Client;
 use foundry_common::{
@@ -111,12 +110,6 @@ where
 
     pub async fn base_fee<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
         self.block_field_as_num(block, "baseFeePerGas").await
-    }
-
-    pub async fn age<B: Into<BlockId>>(&self, block: B) -> Result<String> {
-        let timestamp = self.timestamp(block).await?.to::<i64>();
-        let datetime = DateTime::from_timestamp(timestamp, 0).ok_or_eyre("invalid timestamp")?;
-        Ok(datetime.format("%a %b %e %H:%M:%S %Y").to_string())
     }
 
     pub async fn timestamp<B: Into<BlockId>>(&self, block: B) -> Result<U256> {

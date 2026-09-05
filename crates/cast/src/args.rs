@@ -15,7 +15,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use eyre::{Result, WrapErr};
+use eyre::{OptionExt, Result, WrapErr};
 use foundry_cli::{
     json::{print_json_object, print_json_value_or_scalar, print_list, print_scalar, print_tokens},
     opts::RpcOpts,
@@ -319,7 +319,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         // Blockchain & RPC queries
         CastSubcommand::AccessList(cmd) => cmd.run().await?,
         CastSubcommand::Age { block, rpc } => {
-            let age = Cast::new(rpc_provider(&rpc)?).age(block.unwrap_or_default()).await?;
+            let timestamp = rpc_provider(&rpc)?
+                .get_block(block.unwrap_or_default())
+                .await?
+                .ok_or_eyre("block not found")?
+                .header
+                .timestamp;
+            let age = chrono::DateTime::from_timestamp(timestamp as i64, 0)
+                .ok_or_eyre("invalid timestamp")?
+                .format("%a %b %e %H:%M:%S %Y");
             print_scalar(format!("{age} UTC"))?;
         }
         CastSubcommand::Balance { block, who, ether, rpc, erc20, overrides } => {
