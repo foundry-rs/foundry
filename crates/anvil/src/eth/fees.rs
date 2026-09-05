@@ -623,7 +623,8 @@ where
 
         let gas_used = block.header.gas_used() as f64;
         let blob_gas_used = block.header.blob_gas_used().map(|g| g as f64);
-        item.gas_used_ratio = gas_used / block.header.gas_limit() as f64;
+        let gas_limit = block.header.gas_limit() as f64;
+        item.gas_used_ratio = if gas_limit == 0.0 { 0.0 } else { gas_used / gas_limit };
         item.blob_gas_used_ratio = blob_gas_used
             .map(|g| {
                 let max = blob_params.max_blob_gas_per_block() as f64;
