@@ -75,23 +75,6 @@ impl SimpleCast {
     /// use alloy_primitives::{I256, U256};
     /// use cast::SimpleCast;
     ///
-    /// assert_eq!(SimpleCast::max_int("uint256")?, U256::MAX.to_string());
-    /// assert_eq!(SimpleCast::max_int("int256")?, I256::MAX.to_string());
-    /// assert_eq!(SimpleCast::max_int("int32")?, i32::MAX.to_string());
-    /// # Ok::<(), eyre::Report>(())
-    /// ```
-    pub fn max_int(s: &str) -> Result<String> {
-        args::int_bound(s, true)
-    }
-
-    /// Returns the maximum value of the given integer type
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_primitives::{I256, U256};
-    /// use cast::SimpleCast;
-    ///
     /// assert_eq!(SimpleCast::min_int("uint256")?, "0");
     /// assert_eq!(SimpleCast::min_int("int256")?, I256::MIN.to_string());
     /// assert_eq!(SimpleCast::min_int("int32")?, i32::MIN.to_string());

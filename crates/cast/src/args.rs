@@ -96,7 +96,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
     match args.cmd {
         // Constants
         CastSubcommand::MaxInt { r#type } | CastSubcommand::MaxUint { r#type } => {
-            print_scalar(SimpleCast::max_int(&r#type)?)?;
+            print_scalar(int_bound(&r#type, true)?)?;
         }
         CastSubcommand::MinInt { r#type } => print_scalar(SimpleCast::min_int(&r#type)?)?,
         CastSubcommand::AddressZero => print_scalar(format!("{:?}", Address::ZERO))?,
