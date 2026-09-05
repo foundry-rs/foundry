@@ -1,9 +1,7 @@
+use super::fetch_code_via_rpc;
 use crate::{
-    MAX_CONCURRENT_RPC_REQUESTS,
-    debug::{ensure_remote_trace_context_unchanged, handle_traces, select_remote_trace_hardfork},
-    rpc_trace::{
-        call_frame_to_arena_with_root_address, is_method_not_found_error, is_missing_state_error,
-    },
+    debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
+    rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
     traces::TraceKind,
     utils::{
         apply_chain_and_block_specific_env_changes_for_chain,
@@ -23,8 +21,9 @@ use alloy_primitives::{
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
     BlockId, BlockTransactions,
-    trace::geth::{CallConfig, GethDebugTracingOptions, GethTrace, PreStateConfig},
+    trace::geth::{CallConfig, CallFrame, GethDebugTracingOptions, GethTrace, PreStateConfig},
 };
+use alloy_transport::TransportError;
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
@@ -57,10 +56,10 @@ use foundry_evm::{
     executors::{Executor, ExecutorBuilder, TracingExecutor},
     hardforks::FoundryHardfork,
     opts::EvmOpts,
-    traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements, Traces},
+    traces::{InternalTraceMode, SparsedTraceArena, TraceContext, TraceRequirements},
 };
 use foundry_evm_networks::NetworkConfigs;
-use futures::{StreamExt, TryFutureExt};
+use futures::TryFutureExt;
 use revm::{DatabaseRef, context::Block, primitives::hardfork::SpecId};
 
 /// CLI arguments for `cast run`.
@@ -152,10 +151,9 @@ struct TargetFetch {
     tx: AnyRpcTransaction,
     provider: RetryProvider,
     compute_units_per_second: Option<u64>,
-    target_is_system: bool,
 }
 
-/// Fields only needed by the Monad-specific `execute_monad`/`execute_monad_target` path.
+/// Fields only needed by the Monad-specific `execute_monad` path.
 #[cfg(feature = "monad")]
 struct MonadPrepared {
     tx_block_number: u64,
@@ -173,7 +171,6 @@ struct PreparedRun<FEN: FoundryEvmNetwork> {
     evm_env: EvmEnvFor<FEN>,
     executor: TracingExecutor<FEN>,
     trace_context: TraceContext,
-    verbosity: u8,
     prestate_applied: bool,
     #[cfg(feature = "monad")]
     monad: MonadPrepared,
@@ -186,6 +183,15 @@ impl RunArgs {
         } else {
             self.tracing.resolve(config, verbosity)
         }
+    }
+
+    /// Applies the network and tracing options to `config` and returns the resolved tracing
+    /// config.
+    fn configure_tracing(&mut self, config: &mut Config, evm_opts: &EvmOpts) -> TracingConfig {
+        config.networks = evm_opts.networks;
+        self.tracing.labels.append(&mut self.legacy_labels);
+        config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
+        config.tracing.clone()
     }
 
     /// Executes the transaction by replaying it
@@ -209,6 +215,10 @@ impl RunArgs {
         // Auto-detect network from fork chain ID when not explicitly configured.
         evm_opts.infer_network_from_fork().await?;
 
+        if self.debug_trace_transaction {
+            return self.remote_trace(config, evm_opts).await;
+        }
+
         if evm_opts.networks.is_tempo() {
             return self
                 .run_with_evm(config, evm_opts, ExecutorBuilder::<TempoEvmNetwork>::new())
@@ -217,7 +227,17 @@ impl RunArgs {
 
         #[cfg(feature = "monad")]
         if evm_opts.networks.is_monad() {
-            return self.run_with_monad(config, evm_opts).await;
+            let target = self.fetch_target(&config).await?;
+            let mut run = self
+                .prepare::<MonadEvmNetwork>(
+                    config,
+                    evm_opts,
+                    target,
+                    ExecutorBuilder::<MonadEvmNetwork>::new(),
+                )
+                .await?;
+            let result = run.execute_monad().await?;
+            return run.finish(result).await;
         }
 
         #[cfg(feature = "optimism")]
@@ -237,35 +257,14 @@ impl RunArgs {
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<()> {
         let target = self.fetch_target(&config).await?;
-        if target.target_is_system && !self.replay_system_txes && !self.debug_trace_transaction {
+        if is_system_transaction(&target.tx) && !self.replay_system_txes {
             eyre::bail!(
                 "{:?} is a system transaction.\nReplaying system transactions is currently not supported.",
                 target.tx.tx_hash()
             );
         }
-        let Some(mut run) = self.prepare::<FEN>(config, evm_opts, target, executor_builder).await?
-        else {
-            return Ok(());
-        };
+        let mut run = self.prepare::<FEN>(config, evm_opts, target, executor_builder).await?;
         let result = run.execute_ordinary()?;
-        run.finish(result).await
-    }
-
-    #[cfg(feature = "monad")]
-    async fn run_with_monad(self, config: Box<Config>, evm_opts: EvmOpts) -> Result<()> {
-        let target = self.fetch_target(&config).await?;
-        let Some(mut run) = self
-            .prepare::<MonadEvmNetwork>(
-                config,
-                evm_opts,
-                target,
-                ExecutorBuilder::<MonadEvmNetwork>::new(),
-            )
-            .await?
-        else {
-            return Ok(());
-        };
-        let result = run.execute_monad().await?;
         run.finish(result).await
     }
 
@@ -288,9 +287,123 @@ impl RunArgs {
             .await
             .wrap_err_with(|| format!("tx not found: {tx_hash:?}"))?
             .ok_or_else(|| eyre::eyre!("tx not found: {tx_hash:?}"))?;
-        let target_is_system = is_known_system_sender(tx.from())
-            || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
-        Ok(TargetFetch { tx, provider, compute_units_per_second, target_is_system })
+        Ok(TargetFetch { tx, provider, compute_units_per_second })
+    }
+
+    /// Fetches the trace from the node via `debug_traceTransaction` (callTracer) instead of
+    /// re-executing the transaction locally. The node already holds the transaction's exact
+    /// pre-state and EVM rules, so this needs no block replay and no local executor; it also
+    /// handles system transactions.
+    async fn remote_trace(mut self, mut config: Box<Config>, evm_opts: EvmOpts) -> Result<()> {
+        let TargetFetch { tx, provider, .. } = self.fetch_target(&config).await?;
+        let tx_hash = tx.tx_hash();
+        let tracing = self.configure_tracing(&mut config, &evm_opts);
+        let with_local_artifacts = self.with_local_artifacts;
+
+        let endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+        let tx_inclusion = tx
+            .block_hash_num()
+            .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
+
+        let frame = call_tracer_frame(
+            provider
+                .debug_trace_transaction(
+                    tx_hash,
+                    GethDebugTracingOptions::call_tracer(CallConfig::default().with_log()),
+                )
+                .await,
+            "debug_traceTransaction",
+            "drop `--debug-trace-transaction` to re-execute the transaction locally",
+            "the transaction's block; use an archive endpoint",
+        )?;
+
+        let receipt = provider
+            .get_transaction_receipt(tx_hash)
+            .await?
+            .ok_or_else(|| eyre::eyre!("tx receipt not found: {:?}", tx_hash))?;
+        ensure_remote_transaction_inclusion(
+            tx_hash,
+            tx_inclusion,
+            receipt.block_hash_num(),
+            "transaction receipt",
+        )?;
+
+        let transaction_block = provider.get_block_by_hash(tx_inclusion.hash).await?;
+        ensure_remote_transaction_inclusion(
+            tx_hash,
+            tx_inclusion,
+            transaction_block.as_ref().map(block_num_hash),
+            "block fetched by hash",
+        )?;
+        let Some(transaction_block) = transaction_block else {
+            unreachable!("ensure_remote_transaction_inclusion errors when the block is missing")
+        };
+
+        let root_create_address = Transaction::to(&tx)
+            .is_none()
+            .then(|| receipt.contract_address().unwrap_or_else(|| tx.from().create(tx.nonce())));
+        let arena = SparsedTraceArena {
+            arena: call_frame_to_arena(&frame, root_create_address),
+            ignored: Default::default(),
+            diagnostics: Default::default(),
+        };
+        let result = TraceResult {
+            success: receipt.status(),
+            traces: Some(vec![(TraceKind::Execution, arena)]),
+            gas_used: receipt.gas_used(),
+        };
+
+        // Local-artifact labeling matches deployed runtime bytecode against the project
+        // artifacts. There is no local executor on this path, so fetch the code over RPC for the
+        // addresses in the trace, at the transaction's block. Skip the extra round-trips unless
+        // local artifacts were requested.
+        let contracts_bytecode = if with_local_artifacts {
+            fetch_transaction_contracts_bytecode_via_rpc(
+                &provider,
+                &result,
+                tx_hash,
+                BlockId::hash(tx_inclusion.hash),
+            )
+            .await
+        } else {
+            Default::default()
+        };
+
+        // The remote node executed this trace, so its reported family is authoritative for
+        // decoding even when the caller selected a compatible local EVM implementation.
+        let chain = alloy_chains::Chain::from_id(endpoint_identity.source_chain_id);
+        let resolved_hardfork = resolve_remote_trace_hardfork(
+            config.hardfork,
+            &endpoint_identity,
+            Some(transaction_block.header().timestamp()),
+        );
+        let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
+        ensure_remote_trace_context_unchanged(&endpoint_identity, &final_endpoint_identity)?;
+
+        let current_tx = provider.get_transaction_by_hash(tx_hash).await?;
+        ensure_remote_transaction_inclusion(
+            tx_hash,
+            tx_inclusion,
+            current_tx.and_then(|tx| tx.block_hash_num()),
+            "transaction lookup",
+        )?;
+        let canonical_block = provider.get_block_by_number(tx_inclusion.number.into()).await?;
+        ensure_remote_transaction_inclusion(
+            tx_hash,
+            tx_inclusion,
+            canonical_block.as_ref().map(block_num_hash),
+            "canonical block lookup",
+        )?;
+        handle_traces(
+            result,
+            &config,
+            TraceContext::new(chain, endpoint_identity.network_profile, resolved_hardfork),
+            &contracts_bytecode,
+            &tracing,
+            with_local_artifacts,
+            false,
+        )
+        .await
     }
 
     async fn prepare<FEN: FoundryEvmNetwork>(
@@ -299,179 +412,11 @@ impl RunArgs {
         evm_opts: EvmOpts,
         target: TargetFetch,
         executor_builder: ExecutorBuilder<FEN>,
-    ) -> Result<Option<PreparedRun<FEN>>> {
+    ) -> Result<PreparedRun<FEN>> {
         #[cfg_attr(not(feature = "monad"), allow(unused_variables))]
-        let TargetFetch { tx, provider, compute_units_per_second, .. } = target;
+        let TargetFetch { tx, provider, compute_units_per_second } = target;
         let tx_hash = tx.tx_hash();
-        config.networks = evm_opts.networks;
-        self.tracing.labels.append(&mut self.legacy_labels);
-        config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
-        let tracing = config.tracing.clone();
-
-        let with_local_artifacts = self.with_local_artifacts;
-
-        let endpoint_identity = if self.debug_trace_transaction {
-            Some(evm_opts.discover_fork_endpoint().await?)
-        } else {
-            None
-        };
-
-        // Fetch the trace from the node via `debug_traceTransaction` (callTracer) instead of
-        // re-executing the transaction locally. The node already holds the transaction's exact
-        // pre-state and EVM rules, so this needs no block replay and no local executor; it also
-        // handles system transactions, so this path comes before the system transaction guard.
-        if self.debug_trace_transaction {
-            let endpoint_identity = endpoint_identity
-                .as_ref()
-                .ok_or_else(|| eyre::eyre!("remote trace endpoint identity was not captured"))?;
-            let tx_inclusion = tx
-                .block_hash_num()
-                .ok_or_else(|| eyre::eyre!("tx may still be pending: {:?}", tx_hash))?;
-            let tx_block_number = tx_inclusion.number;
-            let tx_block_hash = tx_inclusion.hash;
-
-            let geth_trace = provider
-                .debug_trace_transaction(
-                    tx_hash,
-                    GethDebugTracingOptions::call_tracer(CallConfig::default().with_log()),
-                )
-                .await
-                .map_err(|err| -> eyre::Report {
-                    // Two RPC rejections deserve an actionable hint instead of the raw transport
-                    // error, and they need different fixes: a disabled `debug` namespace, and
-                    // missing historical state, hit whenever the transaction's block has been
-                    // pruned by a full node.
-                    if is_method_not_found_error(&err) {
-                        eyre::eyre!(
-                            "the RPC endpoint does not support `debug_traceTransaction` (method not found); use a node with the `debug` namespace enabled (e.g. a local anvil/reth or an archive endpoint), or drop `--debug-trace-transaction` to re-execute the transaction locally"
-                        )
-                    } else if is_missing_state_error(&err) {
-                        eyre::eyre!(
-                            "the RPC endpoint does not have the historical state for the transaction's block; use an archive endpoint"
-                        )
-                    } else {
-                        err.into()
-                    }
-                })?;
-            let GethTrace::CallTracer(frame) = geth_trace else {
-                eyre::bail!(
-                    "`debug_traceTransaction` did not return a callTracer frame; the RPC endpoint \
-                     may not support the `callTracer`"
-                );
-            };
-
-            let receipt = provider
-                .get_transaction_receipt(tx_hash)
-                .await?
-                .ok_or_else(|| eyre::eyre!("tx receipt not found: {:?}", tx_hash))?;
-            ensure_remote_transaction_inclusion(
-                tx_hash,
-                tx_inclusion,
-                receipt.block_hash_num(),
-                "transaction receipt",
-            )?;
-
-            let Some(transaction_block) = provider.get_block_by_hash(tx_block_hash).await? else {
-                // `actual: None` always errors; this call exists to reuse its error message.
-                ensure_remote_transaction_inclusion(
-                    tx_hash,
-                    tx_inclusion,
-                    None,
-                    "block fetched by hash",
-                )?;
-                unreachable!("ensure_remote_transaction_inclusion errors when actual is None");
-            };
-            ensure_remote_transaction_inclusion(
-                tx_hash,
-                tx_inclusion,
-                Some(BlockNumHash::new(
-                    transaction_block.header().number(),
-                    transaction_block.header().hash(),
-                )),
-                "block fetched by hash",
-            )?;
-
-            let success = receipt.status();
-            let gas_used = receipt.gas_used();
-            let root_create_address = Transaction::to(&tx).is_none().then(|| {
-                receipt.contract_address().unwrap_or_else(|| tx.from().create(tx.nonce()))
-            });
-            let arena = SparsedTraceArena {
-                arena: call_frame_to_arena_with_root_address(&frame, root_create_address),
-                ignored: Default::default(),
-                diagnostics: Default::default(),
-            };
-            let result = TraceResult {
-                success,
-                traces: Some(vec![(TraceKind::Execution, arena)]),
-                gas_used,
-            };
-
-            // Local-artifact labeling matches deployed runtime bytecode against the project
-            // artifacts. There is no local executor on this path, so fetch the code over RPC
-            // for the addresses in the trace, at the transaction's block. Skip the extra
-            // round-trips unless local artifacts were requested.
-            let contracts_bytecode = if with_local_artifacts {
-                fetch_transaction_contracts_bytecode_via_rpc(
-                    &provider,
-                    &result,
-                    tx_hash,
-                    BlockId::hash(tx_block_hash),
-                )
-                .await?
-            } else {
-                Default::default()
-            };
-
-            // The remote node executed this trace, so its reported family is authoritative for
-            // decoding even when the caller selected a compatible local EVM implementation.
-            let execution_network = endpoint_identity.network;
-            let chain = alloy_chains::Chain::from_id(endpoint_identity.source_chain_id);
-            // A configured hardfork is an explicit trace-decoding override. Otherwise honor an
-            // Anvil endpoint's exact execution hardfork before consulting the source schedule.
-            let resolved_hardfork = if let Some(hardfork) = select_remote_trace_hardfork(
-                config.hardfork,
-                endpoint_identity.hardfork,
-                execution_network,
-            ) {
-                Some(hardfork)
-            } else {
-                FoundryHardfork::from_chain_and_timestamp(
-                    chain.id(),
-                    transaction_block.header().timestamp(),
-                )
-            };
-            let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
-            ensure_remote_trace_context_unchanged(endpoint_identity, &final_endpoint_identity)?;
-
-            let current_tx = provider.get_transaction_by_hash(tx_hash).await?;
-            ensure_remote_transaction_inclusion(
-                tx_hash,
-                tx_inclusion,
-                current_tx.and_then(|tx| tx.block_hash_num()),
-                "transaction lookup",
-            )?;
-            let canonical_block = provider.get_block_by_number(tx_block_number.into()).await?;
-            ensure_remote_transaction_inclusion(
-                tx_hash,
-                tx_inclusion,
-                canonical_block
-                    .map(|block| BlockNumHash::new(block.header().number(), block.header().hash())),
-                "canonical block lookup",
-            )?;
-            handle_traces(
-                result,
-                &config,
-                TraceContext::new(chain, endpoint_identity.network_profile, resolved_hardfork),
-                &contracts_bytecode,
-                &tracing,
-                with_local_artifacts,
-                false,
-            )
-            .await?;
-
-            return Ok(None);
-        }
+        let tracing = self.configure_tracing(&mut config, &evm_opts);
 
         let tx_block_number = tx
             .block_number()
@@ -481,7 +426,6 @@ impl RunArgs {
         config.fork_block_number = Some(tx_block_number - 1);
 
         let create2_deployer = evm_opts.create2_deployer;
-        let verbosity = tracing.verbosity;
         let (block, mut fork) = tokio::try_join!(
             // fetch the block the transaction was mined in
             provider.get_block(tx_block_number.into()).full().into_future().map_err(Into::into),
@@ -537,6 +481,7 @@ impl RunArgs {
 
         let trace_context = fork.context();
         let mut evm_env = fork.evm_env.clone();
+
         let mut executor = fork.into_executor(
             executor_builder,
             TraceRequirements::none(),
@@ -586,7 +531,7 @@ impl RunArgs {
             }
         }
 
-        Ok(Some(PreparedRun {
+        Ok(PreparedRun {
             args: self,
             config,
             tracing,
@@ -595,16 +540,17 @@ impl RunArgs {
             evm_env,
             executor,
             trace_context,
-            verbosity,
             prestate_applied,
             #[cfg(feature = "monad")]
             monad: MonadPrepared { tx_block_number, compute_units_per_second },
-        }))
+        })
     }
 }
 
 impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
-    fn enable_target_tracing(&mut self) {
+    /// Prepares the executor for the target transaction: enables tracing and, when the sender
+    /// was forged, disables the balance check.
+    fn prepare_target(&mut self) {
         let requirements = TraceRequirements::none()
             .with_calls(true)
             .with_debug(self.args.debug)
@@ -613,12 +559,10 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
             } else {
                 InternalTraceMode::None
             })
-            .with_state_changes(self.verbosity > 4);
+            .with_state_changes(self.tracing.verbosity > 4);
         self.executor.set_trace_requirements(requirements);
         self.executor.set_trace_printer(self.args.trace_printer);
-    }
 
-    fn disable_balance_check_for_forged_sender(&mut self) {
         let sender_is_forged = match &*self.tx.inner.inner {
             AnyTxEnvelope::Ethereum(inner) => {
                 inner.recover_signer().is_ok_and(|signer| signer != self.tx.from())
@@ -630,73 +574,83 @@ impl<FEN: FoundryEvmNetwork> PreparedRun<FEN> {
         }
     }
 
-    fn execute_ordinary(&mut self) -> Result<TraceResult> {
-        // Decode the target transaction before replaying the block: an envelope this build
-        // can't decode should fail fast.
-        let target_tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&self.tx)?;
+    /// Returns the index of the target transaction in its block.
+    fn target_index(&self) -> Result<usize> {
+        let Some(block) = &self.block else { return Ok(0) };
+        full_transactions(block)?
+            .iter()
+            .position(|candidate| candidate.tx_hash() == self.tx.tx_hash())
+            .ok_or_else(|| {
+                eyre::eyre!("transaction {:?} is missing from its block", self.tx.tx_hash())
+            })
+    }
 
-        let target_index = if let Some(block) = &self.block {
-            let BlockTransactions::Full(txs) = block.transactions() else {
-                eyre::bail!("Could not get block txs");
-            };
-            txs.iter().position(|candidate| candidate.tx_hash() == self.tx.tx_hash()).ok_or_else(
-                || eyre::eyre!("transaction {:?} is missing from its block", self.tx.tx_hash()),
-            )?
-        } else {
-            0
-        };
-
-        self.enable_target_tracing();
-        self.disable_balance_check_for_forged_sender();
-        let replay_prefix = !self.args.quick && !self.prestate_applied;
-        let block_number = self.evm_env.block_env.number();
-        let tx_hash = self.tx.tx_hash();
-        let block = &self.block;
-        let replay_system_txes = self.args.replay_system_txes;
-        let mut replay = Vec::new();
-        if replay_prefix {
-            sh_status!("Executing previous transactions from the block.")?;
-            if let Some(block) = block {
-                let BlockTransactions::Full(txs) = block.transactions() else {
-                    eyre::bail!("Could not get block txs");
-                };
-                let pb = init_progress(txs.len() as u64, "tx");
-                for (index, tx) in txs.iter().take(target_index).enumerate() {
-                    let is_system = is_known_system_sender(tx.from())
-                        || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE);
-                    if !is_system || replay_system_txes {
-                        let tx_env =
-                            TxEnvFor::<FEN>::from_any_rpc_transaction(tx).wrap_err_with(|| {
-                                format!(
-                                    "Failed to prepare transaction: {:?} in block {}",
-                                    tx.tx_hash(),
-                                    block_number
-                                )
-                            })?;
-                        if let Some(to) = Transaction::to(tx) {
-                            trace!(tx=?tx.tx_hash(), ?to, "preparing previous call transaction");
-                        } else {
-                            trace!(tx=?tx.tx_hash(), "preparing previous create transaction");
-                        }
-                        replay.push((tx.tx_hash(), tx_env));
-                    }
-                    pb.set_position((index + 1) as u64);
-                }
-            }
+    /// Calls `f` for every transaction mined before the target, unless the block replay was
+    /// skipped (`--quick` or an applied prestate).
+    fn for_each_prefix_transaction(
+        &self,
+        target_index: usize,
+        mut f: impl FnMut(usize, &AnyRpcTransaction) -> Result<()>,
+    ) -> Result<()> {
+        if self.args.quick || self.prestate_applied {
+            return Ok(());
         }
-        let result = self.executor.transact_with_ordinary_block_replay(
-            self.evm_env.clone(),
-            target_tx_env,
-            replay,
-        )?;
-        let trace_kind = if let Some(to) = Transaction::to(&self.tx) {
+        sh_status!("Executing previous transactions from the block.")?;
+        let Some(block) = &self.block else { return Ok(()) };
+        let txs = full_transactions(block)?;
+        let pb = init_progress(txs.len() as u64, "tx");
+        for (index, tx) in txs.iter().take(target_index).enumerate() {
+            if let Some(to) = Transaction::to(tx) {
+                trace!(tx=?tx.tx_hash(), ?to, "preparing previous call transaction");
+            } else {
+                trace!(tx=?tx.tx_hash(), "preparing previous create transaction");
+            }
+            f(index, tx)?;
+            pb.set_position((index + 1) as u64);
+        }
+        Ok(())
+    }
+
+    fn trace_kind(&self) -> TraceKind {
+        if let Some(to) = Transaction::to(&self.tx) {
             trace!(tx=?self.tx.tx_hash(), ?to, "executing call transaction");
             TraceKind::Execution
         } else {
             trace!(tx=?self.tx.tx_hash(), "executing create transaction");
             TraceKind::Deployment
-        };
-        trace!(?tx_hash, "completed block replay");
+        }
+    }
+
+    fn execute_ordinary(&mut self) -> Result<TraceResult> {
+        // Decode the target transaction before replaying the block: an envelope this build
+        // can't decode should fail fast.
+        let target_tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(&self.tx)?;
+        let target_index = self.target_index()?;
+        self.prepare_target();
+
+        let block_number = self.evm_env.block_env.number();
+        let replay_system_txes = self.args.replay_system_txes;
+        let mut replay = Vec::new();
+        self.for_each_prefix_transaction(target_index, |_, tx| {
+            if !is_system_transaction(tx) || replay_system_txes {
+                let tx_env = TxEnvFor::<FEN>::from_any_rpc_transaction(tx).wrap_err_with(|| {
+                    format!(
+                        "Failed to prepare transaction: {:?} in block {}",
+                        tx.tx_hash(),
+                        block_number
+                    )
+                })?;
+                replay.push((tx.tx_hash(), tx_env));
+            }
+            Ok(())
+        })?;
+        let result = self.executor.transact_with_ordinary_block_replay(
+            self.evm_env.clone(),
+            target_tx_env,
+            replay,
+        )?;
+        let trace_kind = self.trace_kind();
+        trace!(tx_hash=?self.tx.tx_hash(), "completed block replay");
         Ok(TraceResult::from_raw(result, trace_kind))
     }
 
@@ -738,49 +692,22 @@ impl PreparedRun<MonadEvmNetwork> {
         // can't decode should fail fast, not after paying for the entire prior-transaction
         // replay.
         let target_tx_env = TxEnvFor::<MonadEvmNetwork>::from_any_rpc_transaction(&self.tx)?;
+        let target_index = self.target_index()?;
+        self.prepare_target();
 
-        let target_index = if let Some(block) = &self.block {
-            let BlockTransactions::Full(txs) = block.transactions() else {
-                eyre::bail!("Could not get block txs");
-            };
-            txs.iter().position(|candidate| candidate.tx_hash() == self.tx.tx_hash()).ok_or_else(
-                || eyre::eyre!("transaction {:?} is missing from its block", self.tx.tx_hash()),
-            )?
-        } else {
-            0
-        };
-        self.enable_target_tracing();
-        self.disable_balance_check_for_forged_sender();
-        let replay_prefix = !self.args.quick && !self.prestate_applied;
-        let replay_system_txes = self.args.replay_system_txes;
-        let block = &self.block;
         let mut replay = Vec::new();
-        if replay_prefix {
-            sh_status!("Executing previous transactions from the block.")?;
-            if let Some(block) = block {
-                let BlockTransactions::Full(txs) = block.transactions() else {
-                    eyre::bail!("Could not get block txs");
-                };
-                let pb = init_progress(txs.len() as u64, "tx");
-                for (index, tx) in txs.iter().take(target_index).enumerate() {
-                    let tx_env = TxEnvFor::<MonadEvmNetwork>::from_any_rpc_transaction(tx)?;
-                    if let Some(to) = Transaction::to(tx) {
-                        trace!(tx=?tx.tx_hash(), ?to, "preparing previous call transaction");
-                    } else {
-                        trace!(tx=?tx.tx_hash(), "preparing previous create transaction");
-                    }
-                    let chain_context: ChainFor<MonadEvmNetwork> = block_context.transaction(index);
-                    replay.push((tx.tx_hash(), tx_env, chain_context));
-                    pb.set_position((index + 1) as u64);
-                }
-            }
-        }
+        self.for_each_prefix_transaction(target_index, |index, tx| {
+            let tx_env = TxEnvFor::<MonadEvmNetwork>::from_any_rpc_transaction(tx)?;
+            let chain_context: ChainFor<MonadEvmNetwork> = block_context.transaction(index);
+            replay.push((tx.tx_hash(), tx_env, chain_context));
+            Ok(())
+        })?;
         let result = self.executor.transact_with_monad_block_replay(
             self.evm_env.clone(),
             target_tx_env,
             block_context.transaction(target_index),
             replay,
-            replay_system_txes,
+            self.args.replay_system_txes,
         )?;
         let Some((result, used_system_replay)) = result else {
             eyre::bail!(
@@ -791,15 +718,59 @@ impl PreparedRun<MonadEvmNetwork> {
         if used_system_replay {
             trace!(tx=?self.tx.tx_hash(), "executed canonical system transaction");
         }
-        let trace_kind = if let Some(to) = Transaction::to(&self.tx) {
-            trace!(tx=?self.tx.tx_hash(), ?to, "executing call transaction");
-            TraceKind::Execution
-        } else {
-            trace!(tx=?self.tx.tx_hash(), "executing create transaction");
-            TraceKind::Deployment
-        };
-        Ok(TraceResult::from_raw(result, trace_kind))
+        Ok(TraceResult::from_raw(result, self.trace_kind()))
     }
+}
+
+fn is_system_transaction(tx: &AnyRpcTransaction) -> bool {
+    is_known_system_sender(tx.from()) || tx.transaction_type() == Some(SYSTEM_TRANSACTION_TYPE)
+}
+
+fn full_transactions(block: &AnyRpcBlock) -> Result<&[AnyRpcTransaction]> {
+    let BlockTransactions::Full(txs) = block.transactions() else {
+        eyre::bail!("Could not get block txs");
+    };
+    Ok(txs)
+}
+
+/// Returns the number and hash of a fetched block.
+pub(super) fn block_num_hash<B: BlockResponse>(block: &B) -> BlockNumHash
+where
+    B::Header: HeaderResponse,
+{
+    BlockNumHash::new(block.header().number(), block.header().hash())
+}
+
+/// Extracts the `callTracer` frame from a `debug_trace*` response.
+///
+/// Two RPC rejections deserve an actionable hint instead of the raw transport error, and they
+/// need different fixes: a disabled `debug` namespace, and missing historical state, hit
+/// whenever a full node has pruned the traced block.
+pub(super) fn call_tracer_frame(
+    response: Result<GethTrace, TransportError>,
+    method: &str,
+    local_hint: &str,
+    missing_state_hint: &str,
+) -> Result<CallFrame> {
+    let trace = response.map_err(|err| -> eyre::Report {
+        if is_method_not_found_error(&err) {
+            eyre::eyre!(
+                "the RPC endpoint does not support `{method}` (method not found); use a node with the `debug` namespace enabled (e.g. a local anvil/reth or an archive endpoint), or {local_hint}"
+            )
+        } else if is_missing_state_error(&err) {
+            eyre::eyre!(
+                "the RPC endpoint does not have the historical state for {missing_state_hint}"
+            )
+        } else {
+            err.into()
+        }
+    })?;
+    let GethTrace::CallTracer(frame) = trace else {
+        eyre::bail!(
+            "`{method}` did not return a callTracer frame; the RPC endpoint may not support the `callTracer`"
+        );
+    };
+    Ok(frame)
 }
 
 fn ensure_remote_transaction_inclusion(
@@ -845,9 +816,8 @@ pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     result: &TraceResult,
 ) -> Result<AddressHashMap<Bytes>> {
-    let mut contracts_bytecode = AddressHashMap::default();
-    if let Some(ref traces) = result.traces {
-        contracts_bytecode.extend(gather_trace_addresses(traces).filter_map(|addr| {
+    let contracts_bytecode = trace_addresses(result)
+        .filter_map(|addr| {
             // All relevant bytecodes should already be cached in the executor.
             let code = executor
                 .backend()
@@ -856,45 +826,9 @@ pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
                 .ok()??
                 .code?
                 .bytes();
-            if code.is_empty() {
-                return None;
-            }
-            Some((addr, code))
-        }));
-    }
-    Ok(contracts_bytecode)
-}
-
-/// Fetches the runtime bytecode of the addresses seen in `result` over RPC.
-///
-/// The RPC trace path (`cast call --debug-trace-call`) has no local executor to read code
-/// from, so the bytecode needed to match local artifacts is fetched from the node with
-/// `eth_getCode`. Addresses whose code cannot be fetched are skipped with a warning.
-pub async fn fetch_contracts_bytecode_via_rpc<N: Network, P: Provider<N>>(
-    provider: &P,
-    result: &TraceResult,
-    block: BlockId,
-) -> Result<AddressHashMap<Bytes>> {
-    let mut contracts_bytecode = AddressHashMap::default();
-    if let Some(ref traces) = result.traces {
-        let mut requests =
-            futures::stream::iter(gather_trace_addresses(traces))
-                .map(|address| async move {
-                    (address, provider.get_code_at(address).block_id(block).await)
-                })
-                .buffer_unordered(MAX_CONCURRENT_RPC_REQUESTS);
-        while let Some((address, code)) = requests.next().await {
-            match code {
-                Ok(code) if !code.is_empty() => {
-                    contracts_bytecode.insert(address, code);
-                }
-                Ok(_) => {}
-                Err(err) => {
-                    let _ = sh_warn!("Failed to fetch code for {address}: {err}");
-                }
-            }
-        }
-    }
+            (!code.is_empty()).then_some((addr, code))
+        })
+        .collect();
     Ok(contracts_bytecode)
 }
 
@@ -909,7 +843,7 @@ async fn fetch_transaction_contracts_bytecode_via_rpc<N: Network, P: Provider<N>
     result: &TraceResult,
     tx_hash: B256,
     block: BlockId,
-) -> Result<AddressHashMap<Bytes>> {
+) -> AddressHashMap<Bytes> {
     let mut contracts_bytecode = AddressHashMap::default();
     let prestate_config = PreStateConfig { disable_storage: Some(true), ..Default::default() };
     match provider
@@ -933,41 +867,21 @@ async fn fetch_transaction_contracts_bytecode_via_rpc<N: Network, P: Provider<N>
         }
     }
 
-    if let Some(ref traces) = result.traces {
-        let missing_addresses = gather_trace_addresses(traces)
-            .filter(|address| !contracts_bytecode.contains_key(address))
-            .collect::<Vec<_>>();
-        let mut requests =
-            futures::stream::iter(missing_addresses)
-                .map(|address| async move {
-                    (address, provider.get_code_at(address).block_id(block).await)
-                })
-                .buffer_unordered(MAX_CONCURRENT_RPC_REQUESTS);
-        while let Some((address, code)) = requests.next().await {
-            match code {
-                Ok(code) if !code.is_empty() => {
-                    contracts_bytecode.insert(address, code);
-                }
-                Ok(_) => {}
-                Err(err) => {
-                    let _ = sh_warn!("Failed to fetch code for {address}: {err}");
-                }
-            }
-        }
-    }
-    Ok(contracts_bytecode)
+    let missing_addresses = trace_addresses(result)
+        .filter(|address| !contracts_bytecode.contains_key(address))
+        .collect::<Vec<_>>();
+    contracts_bytecode.extend(fetch_code_via_rpc(provider, missing_addresses, block).await);
+    contracts_bytecode
 }
 
-fn gather_trace_addresses(traces: &Traces) -> impl Iterator<Item = Address> {
+/// Returns the distinct non-zero addresses and callers seen in the traces of `result`.
+pub(super) fn trace_addresses(result: &TraceResult) -> impl Iterator<Item = Address> {
     let mut addresses = AddressSet::default();
-    for (_, trace) in traces {
+    for (_, trace) in result.traces.iter().flatten() {
         for node in trace.arena.nodes() {
-            if !node.trace.address.is_zero() {
-                addresses.insert(node.trace.address);
-            }
-            if !node.trace.caller.is_zero() {
-                addresses.insert(node.trace.caller);
-            }
+            addresses.extend(
+                [node.trace.address, node.trace.caller].into_iter().filter(|a| !a.is_zero()),
+            );
         }
     }
     addresses.into_iter()
@@ -999,58 +913,12 @@ mod tests {
     use alloy_primitives::address;
 
     #[test]
-    fn remote_transaction_inclusion_must_remain_stable() {
-        let tx_hash = B256::repeat_byte(0x11);
-        let expected = BlockNumHash::new(42, B256::repeat_byte(0x22));
-
-        ensure_remote_transaction_inclusion(tx_hash, expected, Some(expected), "receipt").unwrap();
-
-        let err =
-            ensure_remote_transaction_inclusion(tx_hash, expected, None, "receipt").unwrap_err();
-        assert!(err.to_string().contains("no longer reports it as mined"));
-
-        for actual in [
-            BlockNumHash::new(43, expected.hash),
-            BlockNumHash::new(expected.number, B256::repeat_byte(0x33)),
-        ] {
-            let err =
-                ensure_remote_transaction_inclusion(tx_hash, expected, Some(actual), "receipt")
-                    .unwrap_err();
-            assert!(err.to_string().contains("changed inclusion"));
-        }
-    }
-
-    #[test]
     fn parses_legacy_short_label_alias() {
         let address = address!("0x0000000000000000000000000000000000000001");
         let label = format!("{address}:alice");
         let args = RunArgs::parse_from(["cast run", "0x00", "-l", &label]);
 
         assert_eq!(args.legacy_labels, vec![label]);
-    }
-
-    #[test]
-    fn debug_trace_transaction_rejects_local_execution_flags() {
-        for flag in
-            ["--debug", "--decode-internal", "--trace-printer", "--quick", "--prestate-tracer"]
-        {
-            let result = RunArgs::try_parse_from([
-                "foundry-cli",
-                "--debug-trace-transaction",
-                "0x0000000000000000000000000000000000000000000000000000000000000000",
-                flag,
-            ]);
-            assert!(result.is_err(), "--debug-trace-transaction must reject {flag}");
-        }
-        // --evm-version takes a value, so it is checked separately from the boolean flags above.
-        let result = RunArgs::try_parse_from([
-            "foundry-cli",
-            "--debug-trace-transaction",
-            "0x0000000000000000000000000000000000000000000000000000000000000000",
-            "--evm-version",
-            "shanghai",
-        ]);
-        assert!(result.is_err(), "--debug-trace-transaction must reject --evm-version");
     }
 
     #[test]
@@ -1072,35 +940,23 @@ mod tests {
     #[test]
     fn parent_beacon_block_root_is_applied_only_when_the_header_has_one() {
         let networks = NetworkConfigs::default();
+        let root = Some(B256::repeat_byte(0x42));
         // Polygon and Scroll run a Cancun or later EVM without populating the header field.
-        assert_eq!(parent_beacon_block_root_for_network(networks, SpecId::CANCUN, None), None);
-
-        let root = B256::repeat_byte(0x42);
-        assert_eq!(
-            parent_beacon_block_root_for_network(networks, SpecId::CANCUN, Some(root)),
-            Some(root),
-        );
-        assert_eq!(
-            parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, Some(root)),
-            None,
-        );
-        assert_eq!(parent_beacon_block_root_for_network(networks, SpecId::SHANGHAI, None), None,);
-    }
-
-    #[cfg(feature = "monad")]
-    #[test]
-    fn parent_beacon_block_root_is_not_used_by_monad() {
-        let networks = NetworkConfigs::with_monad();
-        for spec_id in [SpecId::PRAGUE, SpecId::OSAKA] {
-            assert_eq!(parent_beacon_block_root_for_network(networks, spec_id, None), None,);
-            assert_eq!(
-                parent_beacon_block_root_for_network(
-                    networks,
-                    spec_id,
-                    Some(B256::repeat_byte(0x42)),
-                ),
-                None,
-            );
+        for (networks, spec_id, root, expected) in [
+            (networks, SpecId::CANCUN, None, None),
+            (networks, SpecId::CANCUN, root, root),
+            (networks, SpecId::SHANGHAI, root, None),
+            (networks, SpecId::SHANGHAI, None, None),
+            #[cfg(feature = "monad")]
+            (NetworkConfigs::with_monad(), SpecId::PRAGUE, root, None),
+            #[cfg(feature = "monad")]
+            (NetworkConfigs::with_monad(), SpecId::OSAKA, root, None),
+            #[cfg(feature = "monad")]
+            (NetworkConfigs::with_monad(), SpecId::PRAGUE, None, None),
+            #[cfg(feature = "monad")]
+            (NetworkConfigs::with_monad(), SpecId::OSAKA, None, None),
+        ] {
+            assert_eq!(parent_beacon_block_root_for_network(networks, spec_id, root), expected);
         }
     }
 

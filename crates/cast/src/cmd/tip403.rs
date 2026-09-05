@@ -1,16 +1,14 @@
 use crate::{
-    cmd::tip20::{resolve_tip20_signer, send_tip20_transaction},
+    cmd::{rpc_provider, tip20::send_tip20_transaction},
     tempo::print_payload,
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::Address;
+use alloy_sol_types::SolCall;
 use clap::{Parser, ValueEnum};
 use eyre::Result;
-use foundry_cli::{
-    opts::RpcOpts,
-    utils::{LoadConfig, get_provider},
-};
+use foundry_cli::opts::RpcOpts;
 use serde_json::json;
 use std::str::FromStr;
 use tempo_contracts::precompiles::{ITIP403Registry, TIP403_REGISTRY_ADDRESS};
@@ -144,8 +142,7 @@ async fn create(
     send_tx: SendTxOpts,
     tx: TxParams,
 ) -> Result<()> {
-    let config = send_tx.eth.rpc.load_config()?;
-    let provider = get_provider(&config)?;
+    let provider = rpc_provider(&send_tx.eth.rpc)?;
     let admin = admin.resolve(&provider).await?;
 
     let mut members = Vec::with_capacity(accounts.len());
@@ -158,72 +155,54 @@ async fn create(
     // Preview the policy ID the registry would assign. This is the next counter value, so it is
     // only accurate if no other policy is created before this transaction lands.
     let registry = ITIP403Registry::new(TIP403_REGISTRY_ADDRESS, &provider);
-    let policy_type_sol = policy_type.to_sol();
-    let expected_id = if members.is_empty() {
-        registry.createPolicy(admin, policy_type_sol).call().await?
+    let policy_type = policy_type.to_sol();
+    let (expected_id, data) = if members.is_empty() {
+        let call = registry.createPolicy(admin, policy_type);
+        (call.call().await?, call.calldata().to_vec())
     } else {
-        registry.createPolicyWithAccounts(admin, policy_type_sol, members.clone()).call().await?
+        let call = registry.createPolicyWithAccounts(admin, policy_type, members);
+        (call.call().await?, call.calldata().to_vec())
     };
-    // Non-authoritative: the real ID is the one in the PolicyCreated event of this transaction.
     sh_status!(
         "Expected policy ID: {expected_id} (only if this tx is mined before any other policy \
          creation; read the PolicyCreated event for the authoritative ID)"
     )?;
 
-    let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
-    let type_arg = (policy_type_sol as u8).to_string();
-    let (sig, args) = if members.is_empty() {
-        ("createPolicy(address,uint8)", vec![admin.to_string(), type_arg])
-    } else {
-        let members =
-            format!("[{}]", members.iter().map(Address::to_string).collect::<Vec<_>>().join(","));
-        (
-            "createPolicyWithAccounts(address,uint8,address[])",
-            vec![admin.to_string(), type_arg, members],
-        )
-    };
-    send_tip20_transaction(
-        NameOrAddress::Address(TIP403_REGISTRY_ADDRESS),
-        sig,
-        args,
-        send_tx,
-        tx,
-        signer,
-        access_key,
-    )
-    .await
+    send_tip20_transaction(TIP403_REGISTRY_ADDRESS, data, send_tx, tx).await
 }
 
 async fn modify(kind: PolicyKind, args: MembershipArgs) -> Result<()> {
     let MembershipArgs { action, policy_id, account, send_tx, tx } = args;
-    let config = send_tx.eth.rpc.load_config()?;
-    let provider = get_provider(&config)?;
+    let provider = rpc_provider(&send_tx.eth.rpc)?;
     let account = account.resolve(&provider).await?;
     warn_if_virtual(account)?;
 
     let flag = matches!(action, MembershipAction::Add);
-    let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
-    let sig = match kind {
-        PolicyKind::Whitelist => "modifyPolicyWhitelist(uint64,address,bool)",
-        PolicyKind::Blacklist => "modifyPolicyBlacklist(uint64,address,bool)",
+    let data = match kind {
+        PolicyKind::Whitelist => ITIP403Registry::modifyPolicyWhitelistCall {
+            policyId: policy_id,
+            account,
+            allowed: flag,
+        }
+        .abi_encode(),
+        PolicyKind::Blacklist => ITIP403Registry::modifyPolicyBlacklistCall {
+            policyId: policy_id,
+            account,
+            restricted: flag,
+        }
+        .abi_encode(),
     };
-    send_tip20_transaction(
-        NameOrAddress::Address(TIP403_REGISTRY_ADDRESS),
-        sig,
-        vec![policy_id.to_string(), account.to_string(), flag.to_string()],
-        send_tx,
-        tx,
-        signer,
-        access_key,
-    )
-    .await
+    send_tip20_transaction(TIP403_REGISTRY_ADDRESS, data, send_tx, tx).await
 }
 
 async fn info(policy_id: u64, rpc: RpcOpts) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = get_provider(&config)?;
+    let provider = rpc_provider(&rpc)?;
     let registry = ITIP403Registry::new(TIP403_REGISTRY_ADDRESS, provider);
-    let builtin = builtin_label(policy_id);
+    let builtin = match policy_id {
+        0 => Some("reject-all"),
+        1 => Some("allow-all"),
+        _ => None,
+    };
 
     if !registry.policyExists(policy_id).call().await? {
         let payload = json!({ "policy_id": policy_id, "exists": false, "builtin": builtin });
@@ -258,25 +237,26 @@ async fn check(
     role: Option<PolicyRole>,
     rpc: RpcOpts,
 ) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = get_provider(&config)?;
+    let provider = rpc_provider(&rpc)?;
     let address = address.resolve(&provider).await?;
     let registry = ITIP403Registry::new(TIP403_REGISTRY_ADDRESS, provider);
-    let authorized = match role {
-        None => registry.isAuthorized(policy_id, address).call().await?,
-        Some(PolicyRole::Sender) => registry.isAuthorizedSender(policy_id, address).call().await?,
+    let (role_label, authorized) = match role {
+        None => ("transfer", registry.isAuthorized(policy_id, address).call().await?),
+        Some(PolicyRole::Sender) => {
+            ("sender", registry.isAuthorizedSender(policy_id, address).call().await?)
+        }
         Some(PolicyRole::Recipient) => {
-            registry.isAuthorizedRecipient(policy_id, address).call().await?
+            ("recipient", registry.isAuthorizedRecipient(policy_id, address).call().await?)
         }
         Some(PolicyRole::MintRecipient) => {
-            registry.isAuthorizedMintRecipient(policy_id, address).call().await?
+            ("mint-recipient", registry.isAuthorizedMintRecipient(policy_id, address).call().await?)
         }
     };
 
     let payload = json!({
         "policy_id": policy_id,
         "address": format!("{address}"),
-        "role": role_label(role),
+        "role": role_label,
         "authorized": authorized,
     });
     print_payload(payload, |payload| {
@@ -313,28 +293,11 @@ impl PolicyKind {
     }
 }
 
-const fn policy_type_label(policy_type: ITIP403Registry::PolicyType) -> &'static str {
+pub(super) const fn policy_type_label(policy_type: ITIP403Registry::PolicyType) -> &'static str {
     match policy_type {
         ITIP403Registry::PolicyType::WHITELIST => "whitelist",
         ITIP403Registry::PolicyType::BLACKLIST => "blacklist",
         ITIP403Registry::PolicyType::COMPOUND => "compound",
         _ => "unknown",
-    }
-}
-
-const fn builtin_label(policy_id: u64) -> Option<&'static str> {
-    match policy_id {
-        0 => Some("reject-all"),
-        1 => Some("allow-all"),
-        _ => None,
-    }
-}
-
-const fn role_label(role: Option<PolicyRole>) -> &'static str {
-    match role {
-        None => "transfer",
-        Some(PolicyRole::Sender) => "sender",
-        Some(PolicyRole::Recipient) => "recipient",
-        Some(PolicyRole::MintRecipient) => "mint-recipient",
     }
 }

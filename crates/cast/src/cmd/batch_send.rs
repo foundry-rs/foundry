@@ -7,23 +7,20 @@
 use crate::{
     call_spec::CallSpec,
     cmd::{
-        auth::confirm_auth_rpc_disclosure_during_build,
-        send::{cast_send, cast_send_with_tempo_wallet},
+        auth::{confirm_and_build, confirm_and_build_with_tempo_wallet},
+        send::{SendOptions, cast_send, cast_send_with_tempo_wallet},
     },
     tempo,
-    tx::{self, CastTxBuilder, SendTxOpts},
+    tx::{self, CastTxBuilder, InitState, InputState, SendTxOpts, apply_poll_interval},
 };
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::EthereumWallet;
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
-use alloy_signer::Signer;
 use clap::Parser;
-use eyre::{Result, eyre};
+use eyre::Result;
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{self, LoadConfig, maybe_print_resolved_lane, resolve_lane},
+    utils::{self, resolve_lane},
 };
-use foundry_common::provider::ProviderBuilder;
-use std::time::Duration;
 use tempo_alloy::TempoNetwork;
 
 /// CLI arguments for `cast batch-send`.
@@ -59,163 +56,91 @@ pub struct BatchSendArgs {
 impl BatchSendArgs {
     pub async fn run(self) -> Result<()> {
         let Self { calls, send_tx, mut tx, force, unlocked } = self;
-        let has_session = tx.tempo.session_id()?.is_some();
         // Tempo sessions must sign with the session key; these modes route signing through a
         // node-managed account or browser wallet instead.
-        if has_session && unlocked {
+        if tx.tempo.session_id()?.is_some() && unlocked {
             eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --unlocked");
         }
-        if has_session && send_tx.browser.browser {
-            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --browser");
-        }
+        tempo::ensure_session_not_browser(&tx.tempo, send_tx.browser.browser)?;
 
         let expires_at = tx.tempo.resolve_expires();
 
-        if calls.is_empty() {
-            return Err(eyre!("No calls specified. Use --call to specify at least one call."));
-        }
-
-        let config = send_tx.eth.load_config()?;
-        let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-
-        // Resolve `--tempo.lane <name>` against the lanes file (default
-        // `<root>/tempo.lanes.toml`) and populate `tx.tempo.nonce_key` from the lane.
+        let (config, provider) = tempo::tempo_provider(&send_tx.eth)?;
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
+        let lane = resolved_lane.as_ref();
 
-        if let Some(interval) = send_tx.poll_interval {
-            provider.client().set_poll_interval(Duration::from_secs(interval))
-        }
+        apply_poll_interval(&provider, send_tx.poll_interval);
 
-        // Parse all call specs
-        let call_specs: Vec<CallSpec> =
-            calls.iter().map(|s| CallSpec::parse(s)).collect::<Result<Vec<_>>>()?;
-
-        // Get chain for parsing function args
         let chain = utils::get_chain(config.chain, &provider).await?;
         let (signer, tempo_access_key) =
             tempo::resolve_session_or_wallet_signer(&tx.tempo, &send_tx.eth.wallet, chain.id())
                 .await?;
 
-        let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
-        let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
-        let etherscan_api_url = etherscan_config.map(|c| c.api_url);
-
-        // Build Vec<Call> from specs
-        let mut tempo_calls = Vec::with_capacity(call_specs.len());
-        for (i, spec) in call_specs.iter().enumerate() {
-            tempo_calls.push(
-                spec.resolve(
-                    i,
-                    chain,
-                    &provider,
-                    etherscan_api_key.as_deref(),
-                    etherscan_api_url.as_deref(),
-                )
-                .await?,
-            );
-        }
-
-        sh_status!("Building batch transaction with {} call(s)...", tempo_calls.len())?;
-        tempo::print_expires(expires_at)?;
-
         // Preserve key_id for modes that do not call build_with_tempo_wallet, such as unlocked.
-        if let Some(ref access_key) = tempo_access_key {
+        if let Some(access_key) = &tempo_access_key {
             tx.tempo.key_id = Some(access_key.key_id()?);
         }
 
-        // Build transaction request with calls
-        let mut builder = CastTxBuilder::<TempoNetwork, _, _>::new(&provider, tx, &config).await?;
+        let builder = CastTxBuilder::<TempoNetwork, _, _>::new(&provider, tx, &config).await?;
+        let builder = with_batch_calls(&calls, builder, &provider).await?;
+        tempo::print_expires(expires_at)?;
 
-        // Access the inner tx and set calls
-        builder.tx.calls = tempo_calls;
-
-        // We need to set a dummy "to" to satisfy the state machine, but the calls field
-        // will be used by build_aa. Set to first call's target.
-        let first_call_to = call_specs.first().map(|s| s.to);
-        let builder = builder.with_to(first_call_to.map(Into::into)).await?;
-
-        // Use empty sig/args since we're using calls directly
-        let builder = builder.with_code_sig_and_args(None, None, vec![]).await?;
-
-        let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+        let send_opts =
+            SendOptions::new(&send_tx, &config).resolving_fee_token(Some(chain), &config);
 
         if unlocked {
-            if !confirm_auth_rpc_disclosure_during_build(&builder, config.sender, force)? {
+            let Some(tx) = confirm_and_build(builder, config.sender, force, lane, false).await?
+            else {
                 return Ok(());
-            }
-            let (tx, _) = builder.build(config.sender).await?;
-            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            cast_send(
-                provider,
-                tx,
-                Some(chain),
-                None,
-                send_tx.cast_async,
-                send_tx.sync,
-                send_tx.confirmations,
-                timeout,
-                !config.eth_rpc_curl,
-            )
-            .await
-            .map(drop)
+            };
+            cast_send(provider, tx, &send_opts).await?;
+        } else if let Some(access_key) = &tempo_access_key {
+            let Some((tx_request, prepared)) =
+                confirm_and_build_with_tempo_wallet(builder, access_key, force, lane).await?
+            else {
+                return Ok(());
+            };
+            cast_send_with_tempo_wallet(&provider, tx_request, &prepared, &send_opts).await?;
         } else {
-            if let Some(ref access_key) = tempo_access_key {
-                if !confirm_auth_rpc_disclosure_during_build(&builder, access_key.account(), force)?
-                {
-                    return Ok(());
-                }
-                let (tx_request, _, prepared) = builder.build_with_tempo_wallet(access_key).await?;
-                maybe_print_resolved_lane(
-                    resolved_lane.as_ref(),
-                    tx_request.nonce().unwrap_or_default(),
-                )?;
-                cast_send_with_tempo_wallet(
-                    &provider,
-                    tx_request,
-                    &prepared,
-                    Some(chain),
-                    None,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
-                    timeout,
-                    !config.eth_rpc_curl,
-                )
-                .await?;
-            } else {
-                let signer = match signer {
-                    Some(s) => s,
-                    None => send_tx.eth.wallet.signer().await?,
-                };
-                tx::validate_from_address(send_tx.eth.wallet.from, Signer::address(&signer))?;
-                if !confirm_auth_rpc_disclosure_during_build(&builder, &signer, force)? {
-                    return Ok(());
-                }
-                let (tx_request, _) = builder.build(&signer).await?;
-                maybe_print_resolved_lane(
-                    resolved_lane.as_ref(),
-                    tx_request.nonce().unwrap_or_default(),
-                )?;
-                let wallet = EthereumWallet::from(signer);
-                let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
-                    .wallet(wallet)
-                    .connect_provider(&provider);
-
-                cast_send(
-                    provider,
-                    tx_request,
-                    Some(chain),
-                    None,
-                    send_tx.cast_async,
-                    send_tx.sync,
-                    send_tx.confirmations,
-                    timeout,
-                    !config.eth_rpc_curl,
-                )
-                .await?;
-            }
-
-            Ok(())
+            let (signer, _) = tx::resolve_send_signer(signer, &send_tx.eth).await?;
+            let Some(tx_request) = confirm_and_build(builder, &signer, force, lane, false).await?
+            else {
+                return Ok(());
+            };
+            let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
+                .wallet(EthereumWallet::from(signer))
+                .connect_provider(&provider);
+            cast_send(provider, tx_request, &send_opts).await?;
         }
+
+        Ok(())
     }
+}
+
+/// Parses the `--call` specs, resolves them against the builder's chain and sets them as the
+/// batch calls of the transaction.
+pub(super) async fn with_batch_calls<P: Provider<TempoNetwork>>(
+    calls: &[String],
+    mut builder: CastTxBuilder<TempoNetwork, P, InitState>,
+    provider: &impl Provider<TempoNetwork>,
+) -> Result<CastTxBuilder<TempoNetwork, P, InputState>> {
+    let specs = calls.iter().map(|s| CallSpec::parse(s)).collect::<Result<Vec<_>>>()?;
+    let (etherscan_api_key, etherscan_api_url) = builder.etherscan_api();
+    let mut tempo_calls = Vec::with_capacity(specs.len());
+    for (i, spec) in specs.iter().enumerate() {
+        tempo_calls.push(
+            spec.resolve(i, builder.chain(), provider, etherscan_api_key, etherscan_api_url)
+                .await?,
+        );
+    }
+    sh_status!("Building batch transaction with {} call(s)...", tempo_calls.len())?;
+    builder.tx_mut().calls = tempo_calls;
+
+    // The builder requires a `to`; `build_aa` uses the calls instead, so point it at the first
+    // call's target.
+    builder
+        .with_to(specs.first().map(|spec| spec.to.into()))
+        .await?
+        .with_code_sig_and_args(None, None, vec![])
+        .await
 }
