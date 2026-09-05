@@ -382,7 +382,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                         .header
                         .number
                 }
-                None => Cast::new(provider).block_number().await?,
+                None => provider.get_block_number().await?,
             };
             print_scalar(number)?;
         }
