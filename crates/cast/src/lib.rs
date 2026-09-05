@@ -191,40 +191,8 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
             return self.provider.get_logs(filter).await.map_err(Into::into);
         }
 
-        self.get_logs_chunked_concurrent(filter, from, to, chunk_size).await
-    }
-
-    /// Retrieves logs for the inclusive `[from, to]` range using concurrent chunked requests.
-    async fn get_logs_chunked_concurrent(
-        &self,
-        filter: &Filter,
-        from: u64,
-        to: u64,
-        chunk_size: u64,
-    ) -> Result<Vec<Log>>
-    where
-        P: Clone + Unpin,
-    {
-        let chunk_ranges = (from..=to)
-            .step_by(chunk_size as usize)
-            .map(|start| (start, start.saturating_add(chunk_size - 1).min(to)));
-
-        // `buffered` preserves input order, so results stay ordered by block. `try_collect` stops
-        // early and surfaces the error if any chunk ultimately fails.
-        let chunks: Vec<Vec<Log>> =
-            futures::stream::iter(chunk_ranges)
-                .map(|(start, end)| {
-                    let filter = filter.clone();
-                    let provider = self.provider.clone();
-                    async move {
-                        crate::cmd::logs::get_logs_bisecting(&provider, &filter, start, end).await
-                    }
-                })
-                .buffered(MAX_CONCURRENT_RPC_REQUESTS)
-                .try_collect()
-                .await?;
-
-        Ok(chunks.into_iter().flatten().collect())
+        crate::cmd::logs::get_logs_chunked_concurrent(&self.provider, filter, from, to, chunk_size)
+            .await
     }
 
     /// Converts a block identifier into a block number.
