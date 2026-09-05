@@ -9798,3 +9798,20 @@ casttest!(format_bytes32_string, |_prj, cmd| {
         .assert_success()
         .stdout_eq("0x68656c6c6f000000000000000000000000000000000000000000000000000000\n");
 });
+
+casttest!(pad, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args(["pad", "abcd", "--len", "20"])
+        .assert_success()
+        .stdout_eq("0x000000000000000000000000000000000000abcd\n");
+    cmd.cast_fuse()
+        .args(["pad", "abcd", "--len", "20", "--right"])
+        .assert_success()
+        .stdout_eq("0xabcd000000000000000000000000000000000000\n");
+});
+
+casttest!(pad_overflow, |_prj, cmd| {
+    cmd.args(["pad", "abcd", "--len", "32768"])
+        .assert_failure()
+        .stderr_eq("Error: len out of range: 32768\n");
+});

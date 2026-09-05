@@ -257,7 +257,26 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(hex::encode_prefixed(out))?;
         }
         CastSubcommand::Pad { data, right, left: _, len } => {
-            print_scalar(SimpleCast::pad(&stdin::unwrap_line(data)?, right, len)?)?;
+            let s = stdin::unwrap_line(data)?;
+            let s = crate::strip_0x(&s);
+            let hex_len = len
+                .checked_mul(2)
+                .filter(|&h| h <= u16::MAX as usize)
+                .ok_or_else(|| eyre::eyre!("len out of range: {len}"))?;
+
+            // Validate input
+            if s.len() > hex_len {
+                eyre::bail!("input length exceeds target length");
+            }
+            if !s.chars().all(|c| c.is_ascii_hexdigit()) {
+                eyre::bail!("input is not a valid hex");
+            }
+
+            print_scalar(if right {
+                format!("0x{s:0<hex_len$}")
+            } else {
+                format!("0x{s:0>hex_len$}")
+            })?;
         }
         CastSubcommand::FormatBytes32String { string } => {
             let s = stdin::unwrap_line(string)?;
