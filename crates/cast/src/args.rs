@@ -1654,6 +1654,4 @@ mod tests {
             .0,
         );
     }
-
-    // <https://github.com/foundry-rs/foundry/issues/2681>
 }
