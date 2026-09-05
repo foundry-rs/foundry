@@ -2936,6 +2936,29 @@ contract SymbolicMockCall is Test {
         assertEq(IMockedTarget(target).value(input), input + 2);
         assertEq(IMockedTarget(target).value(input), input + 2);
     }
+
+    function checkMockCallRemockReplacesStaleValue(uint256) public {
+        address target = address(0x1234);
+
+        vm.mockCall(
+            target,
+            abi.encodeWithSelector(IMockedTarget.value.selector, uint256(1)),
+            abi.encode(uint256(10))
+        );
+        assertEq(IMockedTarget(target).value(1), 10);
+
+        // Re-mock the IDENTICAL (callee, calldata) pair with a new return value -- this
+        // must REPLACE the prior registration, matching the concrete cheatcode's
+        // map-insert semantics (see `testMockCallWithValue` in `MockCall.t.sol`), not
+        // stack a second entry that a specificity tie then resolves in favor of the
+        // first-inserted (stale) one.
+        vm.mockCall(
+            target,
+            abi.encodeWithSelector(IMockedTarget.value.selector, uint256(1)),
+            abi.encode(uint256(20))
+        );
+        assertEq(IMockedTarget(target).value(1), 20);
+    }
 }
 "#,
     );
@@ -3011,6 +3034,22 @@ contract SymbolicMockCall is Test {
 checkSymbolicCalleeMockMismatch(address)
 "#]],
     );
+    assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
+
+    let stdout = prj
+        .forge_command()
+        .args(["test", "--symbolic", "--match-test", "checkMockCallRemockReplacesStaleValue"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockCallRemockReplacesStaleValue(uint256)
+"#]],
+    );
+    assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
 });
 
