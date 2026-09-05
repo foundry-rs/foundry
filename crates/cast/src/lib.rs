@@ -155,7 +155,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
             b256!("0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc");
 
         let slot = if is_beacon { BEACON_SLOT } else { IMPLEMENTATION_SLOT };
-        self.address_at_slot(who, slot, block).await
+        args::address_at_slot(&self.provider, who, slot, block).await
     }
 
     /// # Example
@@ -180,22 +180,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         // bytes32(uint256(keccak256('eip1967.proxy.admin')) - 1)
         const ADMIN_SLOT: B256 =
             b256!("0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103");
-        self.address_at_slot(who, ADMIN_SLOT, block).await
-    }
-
-    /// Reads the storage slot of `who` and formats it as an address.
-    async fn address_at_slot(
-        &self,
-        who: Address,
-        slot: B256,
-        block: Option<BlockId>,
-    ) -> Result<String> {
-        let value = self
-            .provider
-            .get_storage_at(who, slot.into())
-            .block_id(block.unwrap_or_default())
-            .await?;
-        Ok(format!("{:?}", Address::from_word(value.into())))
+        args::address_at_slot(&self.provider, who, ADMIN_SLOT, block).await
     }
 
     pub async fn filter_logs(&self, filter: Filter) -> Result<String> {

@@ -12,6 +12,7 @@ use alloy_ens::{NameOrAddress, ProviderEnsExt, namehash};
 use alloy_network::{Ethereum, eip2718::Decodable2718};
 use alloy_primitives::{Address, B256, Bytes, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
+use alloy_rpc_types::BlockId;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::{Result, WrapErr};
@@ -912,4 +913,15 @@ fn format_lane_classification(encoded: &[u8], decode_context: &'static str) -> R
     } else {
         Ok(serde_json::to_string(&classification)?)
     }
+}
+
+pub(super) async fn address_at_slot<N: alloy_network::Network>(
+    provider: &impl Provider<N>,
+    who: Address,
+    slot: B256,
+    block: Option<BlockId>,
+) -> Result<String> {
+    let value =
+        provider.get_storage_at(who, slot.into()).block_id(block.unwrap_or_default()).await?;
+    Ok(format!("{:?}", Address::from_word(value.into())))
 }
