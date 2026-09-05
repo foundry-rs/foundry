@@ -39,7 +39,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     ContractsByArtifact, EmptyTestFilter, TestFilter, TestFunctionExt, TestFunctionKind,
-    compile::{ProjectCompiler, compile_abi_project},
+    compile::{ProjectCompiler, compile_abi_project, compile_abi_project_with_yul_tests},
     fs, sh_status, sh_warn, shell,
 };
 use foundry_compilers::{
@@ -1502,14 +1502,15 @@ impl TestArgs {
                 }),
             )
             .collect::<BTreeSet<_>>();
-        let output = compile_abi_project(
-            &mut project,
-            ProjectCompiler::new()
-                .files(sources.iter().cloned())
-                .dynamic_test_linking(config.dynamic_test_linking)
-                .yul_tests(self.strict_assembly)
-                .quiet(true),
-        )?;
+        let compiler = ProjectCompiler::new()
+            .files(sources.iter().cloned())
+            .dynamic_test_linking(config.dynamic_test_linking)
+            .quiet(true);
+        let output = if self.strict_assembly {
+            compile_abi_project_with_yul_tests(&mut project, compiler)?
+        } else {
+            compile_abi_project(&mut project, compiler)?
+        };
         if output.has_compiler_errors() {
             sh_println!("{output}")?;
             bail!("Compilation failed");
@@ -1659,7 +1660,6 @@ impl TestArgs {
 
         let compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
-            .yul_tests(self.strict_assembly)
             .quiet(shell::is_json() || self.junit);
         let (output, selected_sources, inline_config) = if self.list {
             // Only the ABI is needed to list tests, so skip the full compile when possible.
@@ -1677,11 +1677,21 @@ impl TestArgs {
             } else {
                 compiler
             };
-            (compile_abi_project(&mut project, compiler)?, BTreeSet::new(), None)
+            let output = if self.strict_assembly {
+                compile_abi_project_with_yul_tests(&mut project, compiler)?
+            } else {
+                compile_abi_project(&mut project, compiler)?
+            };
+            (output, BTreeSet::new(), None)
         } else {
             let (files, inline_config) =
                 self.get_sources_to_compile(&config, &filter, replay_symbolic_artifact.as_ref())?;
-            let output = compiler.files(files.clone()).compile(&project);
+            let compiler = compiler.files(files.clone());
+            let output = if self.strict_assembly {
+                compiler.compile_yul_tests(&project)
+            } else {
+                compiler.compile(&project)
+            };
             let output = if should_mutate {
                 output.wrap_err(
                     "Mutation testing compiler profile failed to compile before applying mutations",

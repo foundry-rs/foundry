@@ -15,8 +15,14 @@ function min(a, b) -> minimum {
         r#"
 import "../src/MathUtil.yul"
 
+function setUp() { sstore(0, 42) }
+
 function test_min() {
     if iszero(eq(2, min(4, 2))) { revert(0, 0) }
+}
+
+function test_set_up_state() {
+    if iszero(eq(sload(0), 42)) { revert(0, 0) }
 }
 "#,
     );
@@ -28,6 +34,7 @@ Compiler run successful!
 test/MathUtil.t.yul
   MathUtil
     test_min
+    test_set_up_state
 
 
 "#]]);
@@ -37,13 +44,89 @@ test/MathUtil.t.yul
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 1 test for test/MathUtil.t.yul:MathUtil
+Ran 2 tests for test/MathUtil.t.yul:MathUtil
 [PASS] test_min() ([GAS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+[PASS] test_set_up_state() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
+});
+
+forgetest!(strict_assembly_preserves_independent_yul_objects, |prj, cmd| {
+    prj.create_file("test/Suite.t.yul", "function test_ok() {}\n");
+    for object in ["First", "Second"] {
+        prj.create_file(
+            format!("src/{object}.yul"),
+            &format!(
+                r#"object "{object}" {{
+    code {{ mstore(0, 1) return(0, 32) }}
+}}"#
+            ),
+        );
+    }
+
+    cmd.args(["test", "--strict-assembly", "--list"]).assert_success();
+    for object in ["First", "Second"] {
+        assert!(prj.artifacts().join(format!("{object}.yul/{object}.json")).exists());
+    }
+
+    cmd.forge_fuse().args(["test", "--strict-assembly"]).assert_success();
+    for object in ["First", "Second"] {
+        prj.create_file(
+            format!("src/{object}.yul"),
+            &format!(
+                r#"object "{object}" {{
+    code {{ mstore(0, 2) return(0, 32) }}
+}}"#
+            ),
+        );
+    }
+    cmd.forge_fuse().args(["test", "--strict-assembly"]).assert_success();
+});
+
+forgetest!(strict_assembly_invalidates_solidity_body_changes, |prj, cmd| {
+    prj.create_file(
+        "src/Value.sol",
+        "contract Value { function value() external pure returns (uint256) { return 1; } }",
+    );
+    prj.create_file(
+        "test/Value.t.sol",
+        r#"
+import {Value} from "../src/Value.sol";
+contract ValueTest {
+    function test_value() external { require(new Value().value() == 1); }
+}
+"#,
+    );
+    prj.create_file("test/Suite.t.yul", "function test_ok() {}\n");
+
+    cmd.args(["test", "--strict-assembly"]).assert_success();
+    prj.create_file(
+        "src/Value.sol",
+        "contract Value { function value() external pure returns (uint256) { return 2; } }",
+    );
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--strict-assembly"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+    assert!(output.contains("ValueTest"));
+    assert!(output.contains("[FAIL") && output.contains("test_value()"));
+
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    prj.create_file(
+        "src/Value.sol",
+        "contract Value { function value() external pure returns (uint256) { return 1; } }",
+    );
+    cmd.forge_fuse().args(["test", "--strict-assembly"]).assert_success();
+    prj.create_file(
+        "src/Value.sol",
+        "contract Value { function value() external pure returns (uint256) { return 2; } }",
+    );
+    cmd.forge_fuse().args(["test", "--strict-assembly"]).assert_failure();
 });
 
 forgetest!(strict_assembly_test_failure_reverts, |prj, cmd| {
@@ -75,6 +158,17 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
 
 "#]]);
+});
+
+forgetest!(strict_assembly_cache_is_not_reused_without_flag, |prj, cmd| {
+    prj.create_file("test/Cache.t.yul", "function test_cache_identity() {}\n");
+
+    cmd.args(["test", "--strict-assembly"]).assert_success();
+    cmd.forge_fuse().arg("test").assert_failure();
+
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    cmd.forge_fuse().args(["test", "--strict-assembly"]).assert_success();
+    cmd.forge_fuse().arg("test").assert_failure();
 });
 
 forgetest!(strict_assembly_splits_suites_and_invalidates_imports, |prj, cmd| {

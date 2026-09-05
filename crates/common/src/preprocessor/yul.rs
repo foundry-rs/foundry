@@ -6,7 +6,6 @@ use foundry_compilers::{
     error::{Result, SolcError},
     multi::{MultiCompiler, MultiCompilerInput, MultiCompilerLanguage},
     project::Preprocessor,
-    solc::{SolcCompiler, SolcVersionedInput},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -20,27 +19,13 @@ pub struct YulTestPreprocessor {
     tests: Mutex<HashMap<PathBuf, Vec<String>>>,
 }
 
-impl Preprocessor<SolcCompiler> for YulTestPreprocessor {
-    fn preprocess(
-        &self,
-        _compiler: &SolcCompiler,
-        _input: &mut SolcVersionedInput,
-        _paths: &ProjectPathsConfig<SolcLanguage>,
-        _mocks: &mut HashSet<PathBuf>,
-    ) -> Result<()> {
-        Ok(())
-    }
-}
-
 impl Preprocessor<MultiCompiler> for YulTestPreprocessor {
-    fn preprocess(
-        &self,
-        _compiler: &MultiCompiler,
-        _input: &mut MultiCompilerInput,
-        _paths: &ProjectPathsConfig<MultiCompilerLanguage>,
-        _mocks: &mut HashSet<PathBuf>,
-    ) -> Result<()> {
-        Ok(())
+    fn supports_interface_only_invalidation(&self) -> bool {
+        false
+    }
+
+    fn cache_key(&self) -> Option<&'static str> {
+        Some("foundry-yul-tests-v1")
     }
 
     fn preprocess_inputs(
@@ -62,11 +47,8 @@ impl Preprocessor<MultiCompiler> for YulTestPreprocessor {
             .filter(|path| is_yul_test(path, paths))
             .cloned()
             .collect::<Vec<_>>();
-        if test_paths.is_empty() {
-            return Ok(vec![MultiCompilerInput::Solc(input)]);
-        }
-
-        let mut inputs = Vec::with_capacity(test_paths.len());
+        let mut inputs = Vec::with_capacity(input.input.sources.len());
+        let mut consumed = HashSet::new();
         for test_path in test_paths {
             let mut visited = HashSet::new();
             let mut modules = Vec::new();
@@ -78,6 +60,7 @@ impl Preprocessor<MultiCompiler> for YulTestPreprocessor {
                 &mut HashSet::new(),
                 &mut modules,
             )?;
+            consumed.extend(visited);
 
             let mut definitions = String::new();
             let mut names = HashSet::new();
@@ -115,7 +98,7 @@ impl Preprocessor<MultiCompiler> for YulTestPreprocessor {
                                 function.name
                             )));
                         }
-                        if !function.parameters.is_empty() || !function.returns.is_empty() {
+                        if has_tokens(function.parameters) || has_tokens(function.returns) {
                             return Err(SolcError::msg(format!(
                                 "Yul test entrypoint `{}` must not have parameters or return values",
                                 function.name
@@ -134,13 +117,6 @@ impl Preprocessor<MultiCompiler> for YulTestPreprocessor {
                     test_path.display()
                 )));
             }
-            if entrypoints.iter().filter(|name| name.as_str() == "setUp").count() > 1 {
-                return Err(SolcError::msg(format!(
-                    "multiple `setUp` functions found in `{}`",
-                    test_path.display()
-                )));
-            }
-
             let suite_name = suite_name(&test_path)?;
             let generated = generate_harness(&suite_name, &entrypoints, &definitions)?;
             self.tests
@@ -153,18 +129,17 @@ impl Preprocessor<MultiCompiler> for YulTestPreprocessor {
             // Solc emits no contract entry for Yul when only ABI output is requested. Forge's
             // filtered discovery and `--list` paths use ABI-only compilation, so request the
             // smallest real Yul output needed for postprocessing to attach the synthetic ABI.
-            let outputs = split
-                .input
-                .settings
-                .output_selection
-                .0
-                .entry("*".to_string())
-                .or_default()
-                .entry("*".to_string())
-                .or_default();
-            if !outputs.iter().any(|output| output == "evm.bytecode.object") {
-                outputs.push("evm.bytecode.object".to_string());
+            ensure_yul_bytecode_output(&mut split);
+            inputs.push(MultiCompilerInput::Solc(Box::new(split)));
+        }
+
+        for (path, source) in &input.input.sources {
+            if consumed.contains(path) {
+                continue;
             }
+            let mut split = (*input).clone();
+            split.input.sources = Sources::from_iter([(path.clone(), source.clone())]);
+            ensure_yul_bytecode_output(&mut split);
             inputs.push(MultiCompilerInput::Solc(Box::new(split)));
         }
         Ok(inputs)
@@ -196,6 +171,21 @@ impl Preprocessor<MultiCompiler> for YulTestPreprocessor {
             }
         }
         Ok(())
+    }
+}
+
+fn ensure_yul_bytecode_output(input: &mut foundry_compilers::solc::SolcVersionedInput) {
+    let outputs = input
+        .input
+        .settings
+        .output_selection
+        .0
+        .entry("*".to_string())
+        .or_default()
+        .entry("*".to_string())
+        .or_default();
+    if !outputs.iter().any(|output| output == "evm.bytecode.object") {
+        outputs.push("evm.bytecode.object".to_string());
     }
 }
 
@@ -234,9 +224,20 @@ fn collect_modules(
         let absolute = if path.is_absolute() { path.to_path_buf() } else { paths.root.join(path) };
         let parent = absolute.parent().unwrap_or(&paths.root);
         let resolved = paths.resolve_import(parent, Path::new(import.path))?;
-        let resolved =
-            resolved.strip_prefix(&paths.root).map(Path::to_path_buf).unwrap_or(resolved);
-        collect_modules(&resolved, sources, paths, visited, visiting, modules)?;
+        let source_key = sources
+            .keys()
+            .find(|candidate| {
+                foundry_compilers::utils::normalize_solidity_import_path(&paths.root, candidate)
+                    .is_ok_and(|absolute| absolute == resolved)
+            })
+            .cloned()
+            .ok_or_else(|| {
+                SolcError::msg(format!(
+                    "resolved Yul import `{}` is not present in compiler input",
+                    resolved.display()
+                ))
+            })?;
+        collect_modules(&source_key, sources, paths, visited, visiting, modules)?;
     }
     visiting.remove(path);
     visited.insert(path.to_path_buf());
@@ -357,14 +358,24 @@ fn skip_trivia(source: &str, mut cursor: usize) -> std::result::Result<usize, St
 
 fn identifier(source: &str, start: usize) -> std::result::Result<(&str, usize), String> {
     let bytes = source.as_bytes();
-    if !bytes.get(start).is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_') {
+    if !bytes
+        .get(start)
+        .is_some_and(|byte| byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'$'))
+    {
         return Err(format!("expected identifier at byte {start}"));
     }
     let mut end = start + 1;
-    while bytes.get(end).is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_') {
+    while bytes
+        .get(end)
+        .is_some_and(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'.'))
+    {
         end += 1;
     }
     Ok((&source[start..end], end))
+}
+
+fn has_tokens(source: &str) -> bool {
+    skip_trivia(source, 0).is_ok_and(|cursor| cursor != source.len())
 }
 
 fn delimited(
@@ -464,16 +475,19 @@ mod tests {
 import "Math.yul"
 // function test_ignored() {}
 function helper(a, b) -> result { result := add(a, b) }
+function $helper.name(/* no parameters */) -> /* no returns */ { }
 function test_example() { let value := "function test_fake() {}" }
 "#,
         )
         .unwrap();
         assert_eq!(
             functions.iter().map(|function| function.name).collect::<Vec<_>>(),
-            ["helper", "test_example"]
+            ["helper", "$helper.name", "test_example"]
         );
         assert_eq!(functions[0].parameters, "a, b");
         assert_eq!(functions[0].returns, "result");
+        assert!(!has_tokens(functions[1].parameters));
+        assert!(!has_tokens(functions[1].returns));
     }
 
     #[test]

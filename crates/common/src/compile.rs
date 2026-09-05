@@ -16,7 +16,8 @@ use foundry_block_explorers::contract::Metadata;
 use foundry_compilers::{
     Artifact, Project, ProjectBuilder, ProjectCompileOutput, ProjectPathsConfig, SolcConfig,
     artifacts::{
-        BytecodeObject, Contract, Source, output_selection::OutputSelection, remappings::Remapping,
+        BytecodeObject, Contract, Source, Sources, output_selection::OutputSelection,
+        remappings::Remapping,
     },
     compilers::{
         Compiler,
@@ -83,9 +84,6 @@ pub struct ProjectCompiler {
 
     /// Whether to compile with dynamic linking tests and scripts.
     dynamic_test_linking: bool,
-
-    /// Whether to compile bare `.t.yul` modules as test contracts.
-    yul_tests: bool,
 }
 
 impl Default for ProjectCompiler {
@@ -110,7 +108,6 @@ impl ProjectCompiler {
             size_limits: ContractSizeLimits::default(),
             files: Vec::new(),
             dynamic_test_linking: false,
-            yul_tests: false,
         }
     }
 
@@ -178,22 +175,50 @@ impl ProjectCompiler {
         self
     }
 
-    /// Sets whether bare `.t.yul` modules should be compiled as test contracts.
-    #[inline]
-    pub const fn yul_tests(mut self, preprocess: bool) -> Self {
-        self.yul_tests = preprocess;
-        self
-    }
-
     /// Compiles the project.
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
-        mut self,
+        self,
         project: &Project<C>,
     ) -> Result<ProjectCompileOutput<C>>
     where
         DynamicTestLinkingPreprocessor: Preprocessor<C>,
-        YulTestPreprocessor: Preprocessor<C>,
+    {
+        self.compile_project(project, |sources, preprocess| {
+            let mut compiler =
+                foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
+            if preprocess {
+                compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
+            }
+            compiler.compile().map_err(Into::into)
+        })
+    }
+
+    /// Compiles a multi-compiler project with bare `.t.yul` modules enabled as test contracts.
+    #[instrument(target = "forge::compile", skip_all)]
+    pub fn compile_yul_tests(
+        self,
+        project: &Project<MultiCompiler>,
+    ) -> Result<ProjectCompileOutput<MultiCompiler>> {
+        self.compile_project(project, |sources, preprocess| {
+            let mut compiler =
+                foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?
+                    .with_preprocessor(YulTestPreprocessor::default());
+            if preprocess {
+                compiler = compiler.with_additional_preprocessor(DynamicTestLinkingPreprocessor);
+            }
+            compiler.compile().map_err(Into::into)
+        })
+    }
+
+    fn compile_project<C, F>(
+        mut self,
+        project: &Project<C>,
+        f: F,
+    ) -> Result<ProjectCompileOutput<C>>
+    where
+        C: Compiler<CompilerContract = Contract>,
+        F: FnOnce(Sources, bool) -> Result<ProjectCompileOutput<C>>,
     {
         self.project_root = project.root().to_path_buf();
 
@@ -208,26 +233,15 @@ impl ProjectCompiler {
             std::process::exit(0);
         }
 
-        // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
         let preprocess = self.dynamic_test_linking;
-        let yul_tests = self.yul_tests;
         self.compile_with(|| {
             let sources = if files.is_empty() {
                 project.paths.read_input_files()?
             } else {
                 Source::read_all(files)?
             };
-
-            let mut compiler =
-                foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
-            if yul_tests {
-                compiler = compiler.with_preprocessor(YulTestPreprocessor::default());
-            }
-            if preprocess {
-                compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
-            }
-            compiler.compile().map_err(Into::into)
+            f(sources, preprocess)
         })
     }
 
@@ -709,7 +723,6 @@ pub fn compile_target<C: Compiler<CompilerContract = Contract>>(
 ) -> Result<ProjectCompileOutput<C>>
 where
     DynamicTestLinkingPreprocessor: Preprocessor<C>,
-    YulTestPreprocessor: Preprocessor<C>,
 {
     ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
 }
@@ -721,13 +734,23 @@ pub fn compile_abi_project<C: Compiler<CompilerContract = Contract>>(
 ) -> Result<ProjectCompileOutput<C>>
 where
     DynamicTestLinkingPreprocessor: Preprocessor<C>,
-    YulTestPreprocessor: Preprocessor<C>,
 {
     project.update_output_selection(|selection| {
         // Request ABI so compilers populate `contracts` without producing bytecode outputs.
         *selection = OutputSelection::common_output_selection(["abi".to_string()]);
     });
     compiler.compile(project)
+}
+
+/// Compiles a multi-compiler project requesting only ABI output, with Yul tests enabled.
+pub fn compile_abi_project_with_yul_tests(
+    project: &mut Project<MultiCompiler>,
+    compiler: ProjectCompiler,
+) -> Result<ProjectCompileOutput<MultiCompiler>> {
+    project.update_output_selection(|selection| {
+        *selection = OutputSelection::common_output_selection(["abi".to_string()]);
+    });
+    compiler.compile_yul_tests(project)
 }
 
 /// Compiles the target contract requesting only ABI output and returns its ABI.
