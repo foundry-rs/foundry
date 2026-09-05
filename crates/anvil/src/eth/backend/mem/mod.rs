@@ -65,7 +65,7 @@ use alloy_eips::{
 use alloy_evm::{
     Database, EthEvmFactory, Evm, EvmEnv, EvmFactory, FromTxWithEncoded,
     block::{BlockExecutionResult, BlockExecutor, StateDB},
-    eth::EthEvmContext,
+    eth::{EthEvm, EthEvmContext},
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, MovePrecompileError, Precompile, PrecompilesMap},
 };
@@ -2413,18 +2413,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let mut evm = EthEvmFactory::default().create_evm_with_inspector(
-            WrapDatabaseRef(db),
-            evm_env.clone(),
-            inspector,
-        );
-        self.inject_precompiles(evm.precompiles_mut(), evm_env);
-        if !overrides.moves.is_empty() {
-            let warm_addresses =
-                self.apply_simulation_precompile_overrides(evm.precompiles_mut(), overrides)?;
-            // EIP-2929 warms protocol precompile addresses, not simulation-only destinations.
-            evm.ctx_mut().journal_mut().warm_precompiles(&warm_addresses);
-        }
+        let mut evm = self.prepare_eth_evm(db, evm_env, inspector, overrides)?;
         Ok(evm.transact(tx_env)?)
     }
 
@@ -2436,6 +2425,32 @@ impl<N: Network> Backend<N> {
         tx_env: TxEnv,
         overrides: &SimulationPrecompileOverrides,
     ) -> Result<ResultAndState<HaltReason>, BlockchainError>
+    where
+        DB: DatabaseRef + ?Sized,
+        I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
+        WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
+    {
+        let evm = self.prepare_eth_evm(db, evm_env, inspector, overrides)?;
+        let mut evm = evm.into_inner();
+        ContextSetters::set_tx(evm.ctx_mut(), tx_env);
+        let mut handler = SimulationHandler::<
+            _,
+            revm::context::result::EVMError<DatabaseError>,
+            EthFrame<EthInterpreter>,
+        >::default();
+        let result = handler.inspect_run(&mut evm)?;
+        let state = evm.ctx_mut().journal_mut().finalize();
+        Ok(ResultAndState { result, state })
+    }
+
+    /// Creates an Ethereum EVM with the active precompiles and simulation overrides.
+    fn prepare_eth_evm<'db, 'inspector, I, DB>(
+        &self,
+        db: &'db DB,
+        evm_env: &EvmEnv,
+        inspector: &'inspector mut I,
+        overrides: &SimulationPrecompileOverrides,
+    ) -> Result<EthEvm<WrapDatabaseRef<&'db DB>, &'inspector mut I, PrecompilesMap>, BlockchainError>
     where
         DB: DatabaseRef + ?Sized,
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>,
@@ -2453,17 +2468,7 @@ impl<N: Network> Backend<N> {
             // EIP-2929 warms protocol precompile addresses, not simulation-only destinations.
             evm.ctx_mut().journal_mut().warm_precompiles(&warm_addresses);
         }
-
-        let mut evm = evm.into_inner();
-        ContextSetters::set_tx(evm.ctx_mut(), tx_env);
-        let mut handler = SimulationHandler::<
-            _,
-            revm::context::result::EVMError<DatabaseError>,
-            EthFrame<EthInterpreter>,
-        >::default();
-        let result = handler.inspect_run(&mut evm)?;
-        let state = evm.ctx_mut().journal_mut().finalize();
-        Ok(ResultAndState { result, state })
+        Ok(evm)
     }
 
     /// Executes an envelope through the active network EVM with optional Monad block context.
