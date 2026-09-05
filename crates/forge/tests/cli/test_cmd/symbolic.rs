@@ -3400,7 +3400,6 @@ contract SymbolicInvariantFrontierSeed is Test {
     let call_index = target_frontier["call_index"].as_u64().unwrap() as usize;
     payable_artifact["sequences"][sequence_index][call_index]["value"] =
         Value::String("0x1".to_string());
-    *payable_artifact["frontiers"].as_array_mut().unwrap() = vec![target_frontier.clone()];
     std::fs::write(&payable_frontier_path, serde_json::to_vec_pretty(&payable_artifact).unwrap())
         .unwrap_or_else(|err| panic!("failed to write {}: {err}", payable_frontier_path.display()));
 

@@ -2321,12 +2321,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 .get(..4)
                 .and_then(|selector| <[u8; 4]>::try_from(selector).ok())
                 .map(Selector::from);
-            if select_frontier_selectors
-                && selector.is_none_or(|selector| !parsed_selectors.contains(&selector))
-            {
-                return false;
-            }
-            true
+            !(select_frontier_selectors
+                && selector.is_none_or(|selector| !parsed_selectors.contains(&selector)))
         });
         frontiers.sort_unstable_by_key(|frontier| (frontier.call_index, frontier.id));
         frontiers.truncate(limit);
@@ -3203,7 +3199,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 executor: &prefix_executor,
                 target: call.call_details.target,
                 sender: call.sender,
-                function: &function,
+                function,
                 value: U256::ZERO,
                 ffi_enabled: self.config.ffi,
                 collect_success_input: true,
