@@ -95,7 +95,9 @@ impl EventsArgs {
         } else {
             let (filter, query_size) = query.resolve(&provider).await?;
             match query_size {
-                Some(chunk_size) => cast.get_logs_chunked(&filter, chunk_size).await?,
+                Some(chunk_size) => {
+                    crate::cmd::logs::get_logs_chunked(&provider, &filter, chunk_size).await?
+                }
                 None => cast.get_logs(&filter).await?,
             }
         };

@@ -450,3 +450,30 @@ pub(crate) async fn resolve_block_range<P: Provider<N> + Clone + Unpin, N: Netwo
     };
     Ok(Some((from, to)))
 }
+
+pub(crate) async fn get_logs_chunked<P: Provider<N> + Clone + Unpin, N: Network>(
+    provider: &P,
+    filter: &Filter,
+    chunk_size: u64,
+) -> Result<Vec<Log>>
+where
+    P: Clone + Unpin,
+{
+    // Only chunk a finite block-number range larger than one chunk; `chunk_size == 0`
+    // disables chunking and falls back to a single request.
+    let Some((from, to)) = resolve_block_range(provider, filter).await? else {
+        return provider.get_logs(filter).await.map_err(Into::into);
+    };
+    // Inverted range yields no logs; warn instead of returning empty silently.
+    if from > to {
+        sh_warn!(
+            "requested block range is inverted (from-block {from} > to-block {to}); no logs to return"
+        )?;
+        return Ok(vec![]);
+    }
+    if chunk_size == 0 || to - from < chunk_size {
+        return provider.get_logs(filter).await.map_err(Into::into);
+    }
+
+    get_logs_chunked_concurrent(provider, filter, from, to, chunk_size).await
+}

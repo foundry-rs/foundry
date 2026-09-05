@@ -115,7 +115,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// Automatically divides large block ranges into smaller chunks to avoid provider limits
     /// and processes them with controlled concurrency to prevent rate limiting.
     pub async fn filter_logs_chunked(&self, filter: Filter, chunk_size: u64) -> Result<String> {
-        let logs = self.get_logs_chunked(&filter, chunk_size).await?;
+        let logs = crate::cmd::logs::get_logs_chunked(&self.provider, &filter, chunk_size).await?;
         Self::format_logs(logs)
     }
 
@@ -125,33 +125,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         } else {
             Ok(logs.iter().map(pretty_log).collect::<Vec<_>>().join("\n"))
         }
-    }
-
-    /// Retrieves logs, splitting the request into fixed-size block chunks when needed.
-    pub async fn get_logs_chunked(&self, filter: &Filter, chunk_size: u64) -> Result<Vec<Log>>
-    where
-        P: Clone + Unpin,
-    {
-        // Only chunk a finite block-number range larger than one chunk; `chunk_size == 0`
-        // disables chunking and falls back to a single request.
-        let Some((from, to)) =
-            crate::cmd::logs::resolve_block_range(&self.provider, filter).await?
-        else {
-            return self.provider.get_logs(filter).await.map_err(Into::into);
-        };
-        // Inverted range yields no logs; warn instead of returning empty silently.
-        if from > to {
-            sh_warn!(
-                "requested block range is inverted (from-block {from} > to-block {to}); no logs to return"
-            )?;
-            return Ok(vec![]);
-        }
-        if chunk_size == 0 || to - from < chunk_size {
-            return self.provider.get_logs(filter).await.map_err(Into::into);
-        }
-
-        crate::cmd::logs::get_logs_chunked_concurrent(&self.provider, filter, from, to, chunk_size)
-            .await
     }
 
     /// Converts a block identifier into a block number.
