@@ -77,12 +77,18 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             let ControlFlow::Continue(()) = compiler.lower_asts()? else { return Ok(()) };
             let gcx = compiler.gcx();
             let mut source_units = sources.keys().cloned().collect::<Vec<_>>();
-            let cache_files = CompilerCache::<MultiCompilerSettings>::read(&paths.cache)
-                .map(|cache| cache.files)
-                .or_else(|_| {
-                    CompilerCache::<SolcSettings>::read(&paths.cache).map(|cache| cache.files)
-                });
-            if let Ok(files) = cache_files {
+            // Cache data is optional, including on the first compilation. Avoid the cache
+            // reader diagnostics when probing for either supported settings format.
+            let cache_files = crate::fs::read_to_string(&paths.cache).ok().and_then(|cache| {
+                serde_json::from_str::<CompilerCache<MultiCompilerSettings>>(&cache)
+                    .map(|cache| cache.files)
+                    .or_else(|_| {
+                        serde_json::from_str::<CompilerCache<SolcSettings>>(&cache)
+                            .map(|cache| cache.files)
+                    })
+                    .ok()
+            });
+            if let Some(files) = cache_files {
                 source_units.extend(
                     files
                         .into_keys()
@@ -99,10 +105,8 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                 gcx,
                 &preprocessed_paths,
                 &script_paths,
-                &paths.paths_relative().sources,
-                &paths.root,
+                paths,
                 &source_units,
-                &paths.remappings,
                 mocks,
             );
             // Collect data of source contracts referenced in tests and scripts.

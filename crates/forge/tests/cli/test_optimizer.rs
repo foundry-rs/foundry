@@ -33,7 +33,8 @@ contract ImplTest {
 }
 "#,
     );
-    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+    cmd.env("RUST_LOG", "error");
+    cmd.args(["test"]).assert_success().stderr_eq("").stdout_eq(str![[r#"
 ...
 Ran 2 tests for test/Impl.t.sol:ImplTest
 [PASS] test_creationCode() ([GAS])

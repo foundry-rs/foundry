@@ -3,7 +3,10 @@ use super::{
     span_to_range,
 };
 use crate::fs::normalize_path;
-use foundry_compilers::{Updates, artifacts::remappings::Remapping};
+use foundry_compilers::{
+    ProjectPathsConfig, Updates,
+    artifacts::{SolcLanguage, remappings::Remapping},
+};
 use itertools::Itertools;
 use path_slash::PathExt;
 use solar::sema::{
@@ -33,12 +36,14 @@ impl PreprocessorDependencies {
         gcx: Gcx<'_>,
         paths: &[PathBuf],
         script_paths: &HashSet<PathBuf>,
-        src_dir: &Path,
-        root_dir: &Path,
+        project_paths: &ProjectPathsConfig<SolcLanguage>,
         source_units: &[PathBuf],
-        remappings: &[Remapping],
         mocks: &mut HashSet<PathBuf>,
     ) -> Self {
+        let relative_paths = project_paths.paths_relative();
+        let src_dir = &relative_paths.sources;
+        let root_dir = &project_paths.root;
+        let remappings = &project_paths.remappings;
         let mut preprocessed_contracts = BTreeMap::new();
         let mut referenced_contracts = HashSet::new();
         let mut current_mocks = HashSet::new();
@@ -213,7 +218,7 @@ struct BytecodeDependencyCollector<'gcx, 'src> {
 }
 
 impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
-    fn new(
+    const fn new(
         gcx: Gcx<'gcx>,
         src: &'src str,
         src_dir: &'src Path,
