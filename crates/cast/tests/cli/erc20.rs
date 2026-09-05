@@ -917,6 +917,27 @@ casttest!(erc20_permit_rejects_wrong_owner_and_expired_submission, async |prj, c
             "4000000000",
             "--private-key",
             anvil_const::PK1,
+            "--chain",
+            "mainnet",
+            "--rpc-url",
+            &rpc,
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: Configured chain does not match the RPC chain
+
+"#]]);
+    cmd.cast_fuse()
+        .args([
+            "erc20",
+            "permit",
+            &token,
+            anvil_const::ADDR2,
+            "123",
+            "--deadline",
+            "4000000000",
+            "--private-key",
+            anvil_const::PK1,
             "--from",
             anvil_const::ADDR2,
             "--rpc-url",

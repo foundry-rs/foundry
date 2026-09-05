@@ -72,6 +72,8 @@ pub enum Erc20Subcommand {
     /// signature, permit calldata, owner, spender, value, nonce, deadline, token, and typed data.
     /// With --broadcast, output follows cast send: a receipt, or a transaction hash with --async.
     /// Anyone can submit the generated calldata to the token before the deadline.
+    /// Transaction options require --broadcast; --nonce selects the transaction nonce, while the
+    /// permit nonce is always read from the token.
     ///
     /// Uses EIP-5267 domain discovery when available. Otherwise uses name(), version "1", the
     /// RPC chain ID, and the token address. --domain-name and --domain-version override the name

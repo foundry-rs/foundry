@@ -4,24 +4,34 @@ use std::str::FromStr;
 
 use crate::{
     cmd::send::SendTxArgs,
+    tempo,
     tx::{SendTxOpts, TxParams},
 };
+use alloy_consensus::{SignableTransaction, Signed};
 use alloy_dyn_abi::TypedData;
 use alloy_ens::NameOrAddress;
-use alloy_network::Ethereum;
+use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_provider::Provider;
-use alloy_signer::Signer;
+use alloy_signer::{Signature, Signer};
 use alloy_sol_types::{Eip712Domain, SolCall, sol};
 use clap::Args;
 use eyre::{Result, WrapErr, ensure};
 use foundry_cli::{
     json::{print_json_success, print_scalar},
-    utils::{LoadConfig, get_provider},
+    utils::{LoadConfig, get_chain, get_provider},
 };
-use foundry_common::shell;
+use foundry_common::{
+    FoundryTransactionBuilder,
+    fmt::{UIfmt, UIfmtReceiptExt},
+    provider::ProviderBuilder,
+    shell,
+};
+use foundry_config::Config;
+use foundry_wallets::WalletSigner;
 use serde::Serialize;
 use serde_json::json;
+use tempo_alloy::TempoNetwork;
 
 sol! {
     #[sol(rpc)]
@@ -79,11 +89,50 @@ pub struct PermitArgs {
 
 impl PermitArgs {
     pub(super) async fn run(self) -> Result<()> {
+        self.ensure_broadcast_options()?;
+        ensure!(
+            self.tx.tempo.session_id()?.is_none(),
+            "Tempo sessions cannot sign ERC-2612 permits"
+        );
         let config = self.send_tx.eth.load_config()?;
         let provider = get_provider(&config)?;
+        let rpc_chain_id = provider.get_chain_id().await?;
+        ensure!(
+            config.chain.is_none_or(|chain| chain.id() == rpc_chain_id),
+            "Configured chain does not match the RPC chain"
+        );
+        let rpc_is_tempo = get_chain(config.chain, &provider).await?.is_tempo();
+        let (resolved_tempo, signer, access_key) =
+            tempo::resolve_transaction_network_and_signer(&self.tx.tempo, &self.send_tx.eth)
+                .await?;
+        ensure!(
+            access_key.is_none(),
+            "Tempo access keys cannot sign ERC-2612 permits; use a root account signer"
+        );
+        let is_tempo = resolved_tempo || (self.send_tx.browser.browser && rpc_is_tempo);
+        if is_tempo {
+            self.run_generic::<TempoNetwork>(signer, config, rpc_chain_id).await
+        } else {
+            self.run_generic::<Ethereum>(signer, config, rpc_chain_id).await
+        }
+    }
+
+    async fn run_generic<N: Network>(
+        self,
+        pre_resolved_signer: Option<WalletSigner>,
+        config: Config,
+        rpc_chain_id: u64,
+    ) -> Result<()>
+    where
+        N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+        N::UnsignedTx: SignableTransaction<Signature>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+    {
+        let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
         let token = self.token.resolve(&provider).await?;
         let spender = self.spender.resolve(&provider).await?;
-        let chain_id = U256::from(provider.get_chain_id().await?);
+        let chain_id = U256::from(rpc_chain_id);
         let contract = IERC2612::new(token, &provider);
         let separator = contract
             .DOMAIN_SEPARATOR()
@@ -118,9 +167,21 @@ impl PermitArgs {
         }
         validate_domain(&domain, separator, chain_id, token)?;
 
-        let browser = self.send_tx.browser.run::<Ethereum>().await?;
-        let wallet =
-            if browser.is_none() { Some(self.send_tx.eth.wallet.signer().await?) } else { None };
+        let browser = self.send_tx.browser.run::<N>().await?;
+        if let Some(browser) = &browser
+            && domain.chain_id.is_some()
+            && browser.chain_id() != rpc_chain_id
+        {
+            browser.switch_chain(rpc_chain_id).await?;
+        }
+        let wallet = if browser.is_none() {
+            Some(match pre_resolved_signer {
+                Some(signer) => signer,
+                None => self.send_tx.eth.wallet.signer().await?,
+            })
+        } else {
+            None
+        };
         let owner = browser
             .as_ref()
             .map(|wallet| wallet.address())
@@ -136,10 +197,10 @@ impl PermitArgs {
             .wrap_err("Could not read ERC-2612 nonces(owner)")?;
         let permit = Permit { owner, spender, value: self.amount, nonce, deadline: self.deadline };
         let typed_data = TypedData::from_struct(&permit, Some(domain));
-        let signature = if let Some(browser) = browser {
+        let signature = if let Some(browser) = &browser {
             browser.sign_dynamic_typed_data(&typed_data).await?
         } else {
-            wallet.expect("signer resolved").sign_dynamic_typed_data(&typed_data).await?
+            wallet.as_ref().expect("signer resolved").sign_dynamic_typed_data(&typed_data).await?
         };
         let calldata = hex::encode_prefixed(
             permitCall {
@@ -154,9 +215,12 @@ impl PermitArgs {
             .abi_encode(),
         );
         if self.broadcast {
-            return SendTxArgs::contract_call(token.into(), calldata, self.send_tx, self.tx)
-                .run()
-                .await;
+            let send = SendTxArgs::contract_call(token.into(), calldata, self.send_tx, self.tx);
+            return if let Some(browser) = browser {
+                send.run_generic_with_browser::<N>(browser).await
+            } else {
+                send.run_generic::<N>(wallet, None).await
+            };
         }
         if shell::is_json() {
             print_json_success(json!({
@@ -169,6 +233,26 @@ impl PermitArgs {
         } else {
             print_scalar(hex::encode_prefixed(signature.as_bytes()))?;
         }
+        Ok(())
+    }
+
+    fn ensure_broadcast_options(&self) -> Result<()> {
+        let send_options = self.send_tx.cast_async
+            || self.send_tx.sync
+            || self.send_tx.confirmations != 1
+            || self.send_tx.timeout.is_some()
+            || self.send_tx.poll_interval.is_some();
+        let transaction_options = self.tx.gas_limit.is_some()
+            || self.tx.gas_price.is_some()
+            || self.tx.priority_gas_price.is_some()
+            || self.tx.nonce.is_some()
+            || self.tx.tempo.is_tempo()
+            || self.tx.tempo.session_id()?.is_some()
+            || self.tx.tempo.lanes_file.is_some();
+        ensure!(
+            self.broadcast || !(send_options || transaction_options),
+            "Transaction options require --broadcast"
+        );
         Ok(())
     }
 }
@@ -237,6 +321,36 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn permit_requires_broadcast_for_transaction_options() {
+        let base = [
+            "erc20",
+            "permit",
+            "0x0000000000000000000000000000000000000001",
+            "0x0000000000000000000000000000000000000002",
+            "123",
+            "--deadline",
+            "4000000000",
+        ];
+        for option in [["--async", ""], ["--nonce", "1"], ["--gas-limit", "21000"]] {
+            let args = base.into_iter().chain(option.into_iter().filter(|value| !value.is_empty()));
+            let Erc20Subcommand::Permit(args) = Erc20Subcommand::try_parse_from(args).unwrap()
+            else {
+                unreachable!()
+            };
+            assert_eq!(
+                args.ensure_broadcast_options().unwrap_err().to_string(),
+                "Transaction options require --broadcast"
+            );
+        }
+
+        let args = base.into_iter().chain(["--async", "--broadcast"]);
+        let Erc20Subcommand::Permit(args) = Erc20Subcommand::try_parse_from(args).unwrap() else {
+            unreachable!()
+        };
+        assert!(args.ensure_broadcast_options().is_ok());
     }
 
     #[test]
