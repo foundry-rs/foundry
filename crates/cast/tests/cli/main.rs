@@ -9668,3 +9668,10 @@ casttest!(publish_raw_transaction, async |_prj, cmd| {
         .assert_success()
         .stdout_eq(format!("{hash}\n"));
 });
+
+casttest!(chain_unknown, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    cmd.args(["chain", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stdout_eq("unknown\n");
+});

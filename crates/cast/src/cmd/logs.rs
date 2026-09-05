@@ -1,4 +1,4 @@
-use crate::{MAX_CONCURRENT_RPC_REQUESTS, encode_event_topic, is_range_limit_error, pretty_log};
+use crate::{MAX_CONCURRENT_RPC_REQUESTS, encode_event_topic};
 use alloy_consensus::BlockHeader;
 use alloy_dyn_abi::Specifier;
 use alloy_ens::NameOrAddress;
@@ -669,4 +669,36 @@ mod logs_bisecting {
         let err = get_logs_bisecting(&provider, &Filter::new(), 0, 3).await.unwrap_err();
         assert!(err.to_string().contains("unauthorized"), "got: {err}");
     }
+}
+
+/// Returns `true` if `err` is a provider range/result-size limit that retrying over a smaller
+/// range can fix. Network, auth, rate-limit, and malformed-response errors return `false`.
+fn is_range_limit_error(err: &RpcError<TransportErrorKind>) -> bool {
+    // Only HTTP 413 (payload too large) is fixable by a smaller range; other transport errors
+    // (network, auth 401/403, rate-limit 429) are not.
+    if let RpcError::Transport(kind) = err {
+        return kind.as_http_error().is_some_and(|http| http.status == 413);
+    }
+
+    // Range/result-size limits are reported as JSON-RPC server error responses; every other
+    // variant falls through to `false`.
+    let RpcError::ErrorResp(payload) = err else { return false };
+    let message = payload.message.to_ascii_lowercase();
+
+    // Phrases providers use for range/result-size limits, kept specific so rate-limit/quota
+    // wording (e.g. "no more than 10 requests per second") doesn't match.
+    const RANGE_LIMIT_HINTS: &[&str] = &[
+        "block range",
+        "blocks range",
+        "range is too",
+        "range too",
+        "returned more than",
+        "response size",
+        "result set",
+        "too many results",
+        "too many blocks",
+        "maximum block range",
+        "max block range",
+    ];
+    RANGE_LIMIT_HINTS.iter().any(|hint| message.contains(hint))
 }

@@ -410,7 +410,110 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(number)?;
         }
         CastSubcommand::Chain { rpc } => {
-            print_scalar(Cast::new(rpc_provider(&rpc)?).chain().await?.to_string())?;
+            let provider = rpc_provider(&rpc)?;
+            const GENESIS_CHAINS: &[(&str, &str)] = &[
+                ("0xa3c565fc15c7478862d50ccd6561e3c06b24cc509bf388941c25ea985ce32cb9", "kovan"),
+                ("0x41941023680923e0fe4d74a34bdac8141f2540e3ae90623718e47d66d1ca4a2d", "ropsten"),
+                (
+                    "0x7ca38a1916c42007829c55e69d3e9a73265554b586a499015373241b8a3fa48b",
+                    "optimism-mainnet",
+                ),
+                (
+                    "0xc1fc15cd51159b1f1e5cbc4b82e85c1447ddfa33c52cf1d98d14fba0d6354be1",
+                    "optimism-goerli",
+                ),
+                (
+                    "0x02adc9b449ff5f2467b8c674ece7ff9b21319d76c4ad62a67a70d552655927e5",
+                    "optimism-kovan",
+                ),
+                ("0x521982bd54239dc71269eefb58601762cc15cfb2978e0becb46af7962ed6bfaa", "fraxtal"),
+                (
+                    "0x910f5c4084b63fd860d0c2f9a04615115a5a991254700b39ba072290dbd77489",
+                    "fraxtal-testnet",
+                ),
+                (
+                    "0x7ee576b35482195fc49205cec9af72ce14f003b9ae69f6ba0faef4514be8b442",
+                    "arbitrum-mainnet",
+                ),
+                ("0x0cd786a2425d16f152c658316c423e6ce1181e15c3295826d7c9904cba9ce303", "morden"),
+                ("0x6341fd3daf94b748c72ced5a5b26028f2474f5f00d824504e4fa37a75767e177", "rinkeby"),
+                ("0xbf7e331f7f7c1dd2e05159666b3bf8bc7a8a3a9eb1d518969eab529dd9b88c1a", "goerli"),
+                ("0x14c2283285a88fe5fce9bf5c573ab03d6616695d717b12a127188bcacfc743c4", "kotti"),
+                (
+                    "0xa9c28ce2141b56c474f1dc504bee9b01eb1bd7d1a507580d5519d4437a97de1b",
+                    "polygon-pos",
+                ),
+                (
+                    "0x7202b2b53c5a0836e773e319d18922cc756dd67432f9a1f65352b61f4406c697",
+                    "polygon-pos-amoy-testnet",
+                ),
+                (
+                    "0x81005434635456a16f74ff7023fbe0bf423abbc8a8deb093ffff455c0ad3b741",
+                    "polygon-zkevm",
+                ),
+                (
+                    "0x676c1a76a6c5855a32bdf7c61977a0d1510088a4eeac1330466453b3d08b60b9",
+                    "polygon-zkevm-cardona-testnet",
+                ),
+                ("0x4f1dd23188aab3a76b463e4af801b52b1248ef073c648cbdc4c9333d3da79756", "gnosis"),
+                ("0xada44fd8d2ecab8b08f256af07ad3e777f17fb434f8f8e678b312f576212ba9a", "chiado"),
+                ("0x6d3c66c5357ec91d5c43af47e234a939b22557cbb552dc45bebbceeed90fbe34", "bsctest"),
+                ("0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b", "bsc"),
+                ("0x23a2658170ba70d014ba0d0d2709f8fbfe2fa660cd868c5f282f991eecbe38ee", "ink"),
+                (
+                    "0xe5fd5cf0be56af58ad5751b401410d6b7a09d830fa459789746a3d0dd1c79834",
+                    "ink-sepolia",
+                ),
+            ];
+
+            let genesis_hash = provider
+                .get_block_by_number(0.into())
+                .await?
+                .ok_or_eyre("block not found")?
+                .header
+                .hash
+                .to_string();
+            let chain = match genesis_hash.as_str() {
+                // Ethereum and Ethereum Classic share the genesis block and split at the DAO fork.
+                "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3" => {
+                    match provider
+                        .get_block_by_number(1920000.into())
+                        .await?
+                        .ok_or_eyre("block not found")?
+                        .header
+                        .hash
+                        .to_string()
+                        .as_str()
+                    {
+                        "0x94365e3a8c0b35089c1d1195081fe7489b528a84b22199c916180db8b28ade7f" => {
+                            "etclive"
+                        }
+                        _ => "ethlive",
+                    }
+                }
+                // Avalanche and Fuji share the genesis block.
+                "0x31ced5b9beb7f8782b014660da0cb18cc409f121f408186886e1ca3e8eeca96b" => {
+                    match provider
+                        .get_block_by_number(1.into())
+                        .await?
+                        .ok_or_eyre("block not found")?
+                        .header
+                        .hash
+                        .to_string()
+                        .as_str()
+                    {
+                        "0x738639479dc82d199365626f90caa82f7eafcfe9ed354b456fb3d294597ceb53" => {
+                            "avalanche-fuji"
+                        }
+                        _ => "avalanche",
+                    }
+                }
+                hash => GENESIS_CHAINS
+                    .iter()
+                    .find(|(genesis, _)| *genesis == hash)
+                    .map_or("unknown", |(_, chain)| chain),
+            };
+            print_scalar(chain)?;
         }
         CastSubcommand::ChainId { rpc } => {
             print_scalar(rpc_provider(&rpc)?.get_chain_id().await?.to_string())?;
