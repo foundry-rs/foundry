@@ -338,7 +338,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     print_scalar(format_uint_exp(balance))?;
                 }
                 None => {
-                    let value = Cast::new(&provider).balance(account_addr, block).await?;
+                    let value = provider
+                        .get_balance(account_addr)
+                        .block_id(block.unwrap_or_default())
+                        .await?;
                     let out = if ether {
                         SimpleCast::from_wei(&value.to_string(), "eth")?
                     } else {

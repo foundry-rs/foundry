@@ -13,7 +13,7 @@ use alloy_consensus::{
     BlockHeader,
     transaction::{Recovered, SignerRecoverable},
 };
-use alloy_dyn_abi::{DynSolType, DynSolValue, FunctionExt, Specifier};
+use alloy_dyn_abi::{DynSolType, DynSolValue, Specifier};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
 use alloy_json_rpc::RpcError;
@@ -101,10 +101,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// ```
     pub const fn new(provider: P) -> Self {
         Self { provider, _phantom: PhantomData }
-    }
-
-    pub async fn balance(&self, who: Address, block: Option<BlockId>) -> Result<U256> {
-        Ok(self.provider.get_balance(who).block_id(block.unwrap_or_default()).await?)
     }
 
     /// Publishes a raw transaction to the network
