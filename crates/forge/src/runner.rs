@@ -3046,7 +3046,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
         let result = symbolic.run_invariant(SymbolicInvariantRunInput {
             executor: prefix_executor,
-            invariant_address: self.address,
+            invariant_address: invariant_contract.address,
             sender: self.sender,
             invariant,
             after_invariant,
@@ -3088,8 +3088,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.clone_executor(),
             &candidate,
             &sequence,
-            self.address,
-            invariant.selector().to_vec().into(),
+            invariant_contract.address,
+            invariant_contract.anchor_calldata(),
             CheckSequenceOptions {
                 accumulate_warp_roll: false,
                 fail_on_revert,
