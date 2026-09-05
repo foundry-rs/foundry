@@ -3127,7 +3127,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return;
         }
 
-        let property_selection_active = !self.config.symbolic.frontier_ids.is_empty();
         for (frontier, sequence) in
             self.import_symbolic_invariant_frontiers(invariant_contract.anchor(), invariant_config)
         {
@@ -3188,7 +3187,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
             let input =
                 SymbolicConcreteInput { args, calldata: call.call_details.calldata.clone() };
-            if property_selection_active
+            if self.config.symbolic.check_invariant_frontiers
                 && let Some(solved_sequence) = self.solve_invariant_from_frontier_prefix(
                     invariant_contract,
                     &prefix_executor,

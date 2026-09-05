@@ -40,6 +40,9 @@ pub struct SymbolicConfig {
     pub corpus_seed_limit: usize,
     /// Whether fuzz branch frontiers should guide targeted symbolic fuzz-test seeding.
     pub use_fuzz_frontiers: bool,
+    /// Whether invariant frontier seeding should first search for a property-breaking call.
+    #[serde(default)]
+    pub check_invariant_frontiers: bool,
     /// Maximum number of fuzz branch frontiers to try for one symbolic run.
     pub frontier_limit: usize,
     /// Fuzz branch frontier artifact IDs to import. Empty imports by artifact order.
@@ -115,6 +118,7 @@ impl Default for SymbolicConfig {
             use_fuzz_corpus: false,
             corpus_seed_limit: 32,
             use_fuzz_frontiers: false,
+            check_invariant_frontiers: false,
             frontier_limit: 256,
             frontier_ids: Vec::new(),
             frontier_pcs: Vec::new(),

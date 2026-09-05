@@ -198,16 +198,17 @@ deterministically:
 forge fuzz replay --match-test invariant_ --corpus-dir fuzz_corpus
 ```
 
-When an invariant follow-up explicitly selects frontier IDs, Forge also checks
-whether one symbolic invocation of each selected target can break the invariant
-from its replayed concrete prefix. Requiring exact IDs keeps this additional
-solver work tied to specific prefixes; PC and selector filters continue to
-target comparison flips only. Property checking catches correlated inputs that
-violate the invariant even when flipping the recorded comparison is harmless.
-Forge persists only a one-call symbolic suffix with no symbolic initial-storage
+Pass `--symbolic-check-invariant-frontiers` to first check whether one symbolic
+invocation of each selected target can break the invariant from its replayed
+concrete prefix. Property checking catches correlated inputs that violate the
+invariant even when flipping the recorded comparison is harmless. Forge
+persists only a one-call symbolic suffix with no symbolic initial-storage
 assignments that replays concretely through the full prefix and fails the
-invariant or `afterInvariant`. It does not symbolize or repair earlier calls in
-the recorded prefix.
+invariant or `afterInvariant`. It falls back to comparison flipping when no
+property-breaking input is found, and does not symbolize or repair earlier
+calls in the recorded prefix. Only the current campaign anchor is checked.
+Configured symbolic limits apply separately to the property attempt and any
+comparison-flipping fallback for each imported frontier.
 
 This is an explicit follow-up to a concrete campaign, not automatic symbolic
 work in every fuzz run. A short solver timeout keeps iteration bounded; increase
@@ -527,6 +528,9 @@ default_array_lengths = []
 default_bytes_lengths = []
 max_calldata_bytes = 4096
 invariant_depth = 10
+use_fuzz_frontiers = false
+check_invariant_frontiers = false
+frontier_limit = 256
 frontier_ids = []
 frontier_pcs = []
 frontier_selectors = []

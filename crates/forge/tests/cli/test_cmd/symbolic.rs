@@ -3652,6 +3652,8 @@ contract SymbolicInvariantPropertySeed is Test {
         "--symbolic-use-fuzz-frontiers",
         "--symbolic-frontier-limit",
         "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
     ])
     .assert_success();
     cmd.forge_fuse()
@@ -3680,6 +3682,7 @@ contract SymbolicInvariantPropertySeed is Test {
         "--invariant-corpus-dir",
         "property_corpus",
         "--symbolic-use-fuzz-frontiers",
+        "--symbolic-check-invariant-frontiers",
         "--symbolic-frontier-limit",
         "1",
         "--symbolic-frontier-ids",
