@@ -67,29 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Performs the right shift operation (>>) on a number
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(Cast::right_shift("0x4000", "10", None, "dec")?, "16");
-    /// assert_eq!(Cast::right_shift("16711680", "16", Some("10"), "hex")?, "0xff");
-    /// assert_eq!(Cast::right_shift("0xff0000", "16", None, "hex")?, "0xff");
-    /// # Ok::<(), eyre::Report>(())
-    /// ```
-    pub fn right_shift(
-        value: &str,
-        bits: &str,
-        base_in: Option<&str>,
-        base_out: &str,
-    ) -> Result<String> {
-        args::shift(value, bits, base_in, base_out, |value, bits| {
-            value.wrapping_shr(bits.saturating_to())
-        })
-    }
-
     /// Fetches source code of verified contracts from etherscan.
     ///
     /// # Example

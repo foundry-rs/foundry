@@ -9900,3 +9900,7 @@ casttest!(calldata_bool, |_prj, cmd| {
 casttest!(left_shift, |_prj, cmd| {
     cmd.cast_fuse().args(["left-shift", "16", "1"]).assert_success().stdout_eq("0x20\n");
 });
+
+casttest!(right_shift, |_prj, cmd| {
+    cmd.cast_fuse().args(["right-shift", "16", "1"]).assert_success().stdout_eq("0x8\n");
+});

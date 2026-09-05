@@ -1141,7 +1141,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             })?)?;
         }
         CastSubcommand::RightShift { value, bits, base_in, base_out } => {
-            print_scalar(SimpleCast::right_shift(&value, &bits, base_in.as_deref(), &base_out)?)?;
+            print_scalar(shift(&value, &bits, base_in.as_deref(), &base_out, |value, bits| {
+                value.wrapping_shr(bits.saturating_to())
+            })?)?;
         }
         // TODO(json): multi-line source code or directory expansion, needs structured envelope
         CastSubcommand::Source {
