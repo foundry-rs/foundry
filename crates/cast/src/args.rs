@@ -9,7 +9,7 @@ use alloy_consensus::Typed2718;
 use alloy_dyn_abi::{ErrorExt, EventExt};
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_ens::{NameOrAddress, ProviderEnsExt, namehash};
-use alloy_network::{Ethereum, eip2718::Decodable2718};
+use alloy_network::{Ethereum, Network, eip2718::Decodable2718};
 use alloy_primitives::{Address, B256, Bytes, b256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -23,7 +23,7 @@ use foundry_cli::{
 };
 use foundry_common::{
     abi::{get_error, get_event},
-    fmt::format_uint_exp,
+    fmt::{UIfmt, UIfmtHeaderExt, format_uint_exp, get_pretty_block_attr},
     fs,
     provider::{ProviderBuilder, RetryProvider},
     selectors::{
@@ -368,7 +368,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     |provider| Cast::new(&provider).block_raw(block, full).await?
                 )
             } else {
-                Cast::new(utils::get_provider(&config)?).block(block, full, fields).await?
+                self::block(&utils::get_provider(&config)?, block, full, fields).await?
             };
             print_json_value_or_scalar(output)?;
         }
@@ -936,4 +936,43 @@ async fn address_at_slot<N: alloy_network::Network>(
     let value =
         provider.get_storage_at(who, slot.into()).block_id(block.unwrap_or_default()).await?;
     Ok(format!("{:?}", Address::from_word(value.into())))
+}
+
+pub(super) async fn block<P: Provider<N>, N: Network, B: Into<BlockId>>(
+    provider: &P,
+    block: B,
+    full: bool,
+    fields: Vec<String>,
+) -> Result<String>
+where
+    N::HeaderResponse: UIfmtHeaderExt,
+    N::BlockResponse: UIfmt,
+{
+    let block = block.into();
+    if fields.contains(&"transactions".into()) && !full {
+        eyre::bail!("use --full to view transactions");
+    }
+
+    let block = provider
+        .get_block(block)
+        .kind(full.into())
+        .await?
+        .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
+
+    Ok(if !fields.is_empty() {
+        let mut result = String::new();
+        for field in fields {
+            result.push_str(
+                &get_pretty_block_attr::<N>(&block, &field)
+                    .unwrap_or_else(|| format!("{field} is not a valid block field")),
+            );
+
+            result.push('\n');
+        }
+        result.trim_end().to_string()
+    } else if shell::is_json() {
+        serde_json::to_value(&block).unwrap().to_string()
+    } else {
+        block.pretty()
+    })
 }

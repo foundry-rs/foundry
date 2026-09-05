@@ -101,59 +101,8 @@ where
     N::HeaderResponse: UIfmtHeaderExt,
     N::BlockResponse: UIfmt,
 {
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let block = cast.block(5, true, vec![]).await?;
-    /// println!("{}", block);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn block<B: Into<BlockId>>(
-        &self,
-        block: B,
-        full: bool,
-        fields: Vec<String>,
-    ) -> Result<String> {
-        let block = block.into();
-        if fields.contains(&"transactions".into()) && !full {
-            eyre::bail!("use --full to view transactions");
-        }
-
-        let block = self
-            .provider
-            .get_block(block)
-            .kind(full.into())
-            .await?
-            .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
-
-        Ok(if !fields.is_empty() {
-            let mut result = String::new();
-            for field in fields {
-                result.push_str(
-                    &get_pretty_block_attr::<N>(&block, &field)
-                        .unwrap_or_else(|| format!("{field} is not a valid block field")),
-                );
-
-                result.push('\n');
-            }
-            result.trim_end().to_string()
-        } else if shell::is_json() {
-            serde_json::to_value(&block).unwrap().to_string()
-        } else {
-            block.pretty()
-        })
-    }
-
     async fn block_field<B: Into<BlockId>>(&self, block: B, field: &str) -> Result<String> {
-        self.block(block, false, vec![field.to_string()]).await
+        args::block(&self.provider, block, false, vec![field.to_string()]).await
     }
 
     async fn block_field_as_num<B: Into<BlockId>>(&self, block: B, field: &str) -> Result<U256> {
