@@ -2,10 +2,11 @@ use crate::errors::convert_solar_errors;
 use foundry_compilers::{
     Compiler, ProjectPathsConfig, SourceParser, apply_updates,
     artifacts::SolcLanguage,
+    cache::CompilerCache,
     error::Result,
-    multi::{MultiCompiler, MultiCompilerInput, MultiCompilerLanguage},
+    multi::{MultiCompiler, MultiCompilerInput, MultiCompilerLanguage, MultiCompilerSettings},
     project::Preprocessor,
-    solc::{SolcCompiler, SolcVersionedInput},
+    solc::{SolcCompiler, SolcSettings, SolcVersionedInput},
 };
 use solar::parse::{ast::Span, interface::SourceMap};
 use std::{
@@ -75,6 +76,27 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             pcx.parse();
             let ControlFlow::Continue(()) = compiler.lower_asts()? else { return Ok(()) };
             let gcx = compiler.gcx();
+            let mut source_units = sources.keys().cloned().collect::<Vec<_>>();
+            // Cache data is optional, including on the first compilation. Avoid the cache
+            // reader diagnostics when probing for either supported settings format.
+            let cache_files = crate::fs::read_to_string(&paths.cache).ok().and_then(|cache| {
+                serde_json::from_str::<CompilerCache<MultiCompilerSettings>>(&cache)
+                    .map(|cache| cache.files)
+                    .or_else(|_| {
+                        serde_json::from_str::<CompilerCache<SolcSettings>>(&cache)
+                            .map(|cache| cache.files)
+                    })
+                    .ok()
+            });
+            if let Some(files) = cache_files {
+                source_units.extend(
+                    files
+                        .into_keys()
+                        .map(|path| path.strip_prefix(&paths.root).unwrap_or(&path).to_path_buf()),
+                );
+            }
+            source_units.sort_unstable();
+            source_units.dedup();
             // Collect tests and scripts dependencies and identify mock contracts.
             // Script paths are passed separately so salted new-expressions are left untouched
             // (Foundry's broadcast redirects native CREATE2 through the deterministic factory,
@@ -83,12 +105,12 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                 gcx,
                 &preprocessed_paths,
                 &script_paths,
-                &paths.paths_relative().sources,
-                &paths.root,
+                paths,
+                &source_units,
                 mocks,
             );
             // Collect data of source contracts referenced in tests and scripts.
-            let data = collect_preprocessor_data(gcx, &deps.referenced_contracts);
+            let data = collect_preprocessor_data(gcx, &deps.referenced_contracts, &paths.root);
 
             // Extend existing sources with preprocessor deploy helper sources.
             sources.extend(create_deploy_helpers(&data));
