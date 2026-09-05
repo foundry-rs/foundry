@@ -80,4 +80,8 @@ casttest!(disassemble_incomplete_sequence, |_prj, cmd| {
 
 casttest!(signature_selector, |_prj, cmd| {
     cmd.cast_fuse().args(["sig", "foo()"]).assert_success().stdout_eq("0xc2985578\n");
+    cmd.cast_fuse()
+        .args(["sig", "foo(address,uint256)"])
+        .assert_success()
+        .stdout_eq("0xbd0d639f\n");
 });

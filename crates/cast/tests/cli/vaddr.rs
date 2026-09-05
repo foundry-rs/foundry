@@ -68,6 +68,12 @@ Virtual addresses:
 "#]]);
 });
 
+// End-to-end `cast vaddr` tests against a local Anvil Tempo node.
+//
+// These tests exercise the full TIP-1022 lifecycle, including mining a 4-byte PoW salt.
+// Keep them out of the default local suite because the mining step is intentionally CPU-bound
+// and can saturate developer machines. Run explicitly with `--ignored` when changing this flow.
+
 mod vaddr_e2e {
     use super::*;
     use std::{

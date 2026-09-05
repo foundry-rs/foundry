@@ -857,3 +857,38 @@ casttest!(call_labels_rejected_without_trace_mode, |_prj, cmd| {
     ])
     .assert_failure();
 });
+
+// `--debug-trace-call` must render a multi-node trace (a call that emits a log AND makes a
+// sub-call), exercising the log/sub-call interleaving and nesting through the real pipeline, not
+// just in the unit tests. The overridden runtime emits a LOG0 then STATICCALLs the identity
+// precompile, so the trace has a child call ordered after the log.
+casttest!(cast_call_debug_trace_call_renders_nested_call_and_log, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    cmd.cast_fuse()
+        .args([
+            "call",
+            "0x00000000000000000000000000000000000000cc",
+            "run()",
+            "--debug-trace-call",
+            // runtime: LOG0(0,0); STATICCALL(gas, 0x4, 0,0,0,0); POP; STOP
+            "--override-code",
+            "0x00000000000000000000000000000000000000cc:0x60006000a060006000600060007300000000000000000000000000000000000000045afa5000",
+            "--rpc-url",
+            &handle.http_endpoint(),
+        ])
+        .assert_success()
+        .stdout_eq(str![[r#"
+Traces:
+  [21579] 0x00000000000000000000000000000000000000cc::run()
+    ├─           data: 0x
+    ├─ [15] PRECOMPILES::identity(0x) [staticcall]
+    │   └─ ← [Return] 0x
+    └─ ← [Return]
+
+
+Transaction successfully executed.
+[GAS]
+
+"#]]);
+});

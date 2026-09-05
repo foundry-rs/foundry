@@ -428,4 +428,8 @@ casttest!(index_mapping, |_prj, cmd| {
         .args(["index", "string", "hello", "1"])
         .assert_success()
         .stdout_eq("0x8404bb4d805e9ca2bd5dd5c43a107e935c8ec393caa7851b353b3192cd5379ae\n");
+    cmd.cast_fuse()
+        .args(["index", "address", "0xD0074F4E6490ae3f888d1d4f7E3E43326bD3f0f5", "2"])
+        .assert_success()
+        .stdout_eq("0x9525a448a9000053a4d151336329d6563b7e80b24f8e628e95527f218e8ab5fb\n");
 });

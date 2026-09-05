@@ -283,6 +283,28 @@ casttest!(abi_decode_output, |_prj, cmd| {
         ])
         .assert_success()
         .stdout_eq("1\n");
+    cmd.cast_fuse()
+        .args([
+            "abi-decode",
+            "balanceOf(address, uint256)(uint256)",
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
+        ])
+        .assert_success()
+        .stdout_eq("1\n");
+});
+
+casttest!(abi_and_calldata_decode_mixed_values, |_prj, cmd| {
+    let data = "0000000000000000000000008dbd1b711dc621e1404633da156fcc779e1c6f3e000000000000000000000000d9f3c9cc99548bf3b44a43e0a2d07399eb918adc000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000";
+    let sig = "safeTransferFrom(address, address, uint256, uint256, bytes)";
+    let expected = "0x8DbD1b711DC621e1404633da156FcC779e1c6f3E\n0xD9f3c9CC99548bF3b44a43E0A2D07399EB918ADc\n42\n1\n0x\n";
+    cmd.cast_fuse()
+        .args(["abi-decode", "--input", sig, &format!("0x{data}")])
+        .assert_success()
+        .stdout_eq(expected);
+    cmd.cast_fuse()
+        .args(["calldata-decode", sig, &format!("0xf242432a{data}")])
+        .assert_success()
+        .stdout_eq(expected);
 });
 
 casttest!(calldata_decode_nested_json, |_prj, cmd| {
@@ -331,7 +353,27 @@ casttest!(abi_encode, |_prj, cmd| {
         .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000001\n");
 });
 
+casttest!(abi_encode_constructor, |_prj, cmd| {
+    cmd.args(["abi-encode", "constructor(uint a)", "1"])
+        .assert_success()
+        .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000001\n");
+});
+
 casttest!(abi_encode_packed, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args(["abi-encode", "--packed", "(uint128[] a, uint64 b)", "[100, 300]", "200"])
+        .assert_success()
+        .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000064000000000000000000000000000000000000000000000000000000000000012c00000000000000c8\n");
+    cmd.cast_fuse()
+        .args([
+            "abi-encode",
+            "--packed",
+            "foo(address a, string b)",
+            "0x8dbd1b711dc621e1404633da156fcc779e1c6f3e",
+            "hello world",
+        ])
+        .assert_success()
+        .stdout_eq("0x8dbd1b711dc621e1404633da156fcc779e1c6f3e68656c6c6f20776f726c64\n");
     cmd.cast_fuse()
         .args(["abi-encode", "--packed", "f(uint256)", "1"])
         .assert_success()
