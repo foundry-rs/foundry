@@ -67,41 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Keccak-256 hashes arbitrary data
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(
-    ///     Cast::keccak("foo")?,
-    ///     "0x41b1a0649752af1b28b3dc29a1556eee781e4a4c3a1f7f53f90fa834de098c4d"
-    /// );
-    /// assert_eq!(
-    ///     Cast::keccak("123abc")?,
-    ///     "0xb1f1c74a1ba56f07a892ea1110a39349d40f66ca01d245e704621033cb7046a4"
-    /// );
-    /// assert_eq!(
-    ///     Cast::keccak("0x12")?,
-    ///     "0x5fa2358263196dbbf23d1ca7a509451f7a2f64c15837bfbb81298b1e3e24e4fa"
-    /// );
-    /// assert_eq!(
-    ///     Cast::keccak("12")?,
-    ///     "0x7f8b6b088b6d74c2852fc86c796dca07b44eed6fb3daf5e6b59f7c364db14528"
-    /// );
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn keccak(data: &str) -> Result<String> {
-        // Hex-decode if data starts with 0x.
-        let hash = if data.starts_with("0x") {
-            keccak256(hex::decode(data.trim_end())?)
-        } else {
-            keccak256(data)
-        };
-        Ok(hash.to_string())
-    }
-
     /// Performs the left shift operation (<<) on a number
     ///
     /// # Example

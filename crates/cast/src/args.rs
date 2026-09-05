@@ -1115,7 +1115,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 None => stdin::read_bytes(false)?,
             };
             let out = match String::from_utf8(bytes) {
-                Ok(s) => SimpleCast::keccak(&s)?,
+                Ok(s) => {
+                    // Hex-decode if data starts with 0x.
+                    if s.starts_with("0x") {
+                        keccak256(hex::decode(s.trim_end())?)
+                    } else {
+                        keccak256(s)
+                    }
+                    .to_string()
+                }
                 Err(e) => hex::encode_prefixed(keccak256(e.as_bytes())),
             };
             print_scalar(out)?;
