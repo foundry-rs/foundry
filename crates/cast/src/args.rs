@@ -291,7 +291,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(hex::encode_prefixed(bytes32))?;
         }
         CastSubcommand::ParseBytes32String { bytes } => {
-            print_scalar(SimpleCast::parse_bytes32_string(&stdin::unwrap_line(bytes)?)?)?;
+            let s = stdin::unwrap_line(bytes)?;
+            let bytes = hex::decode(s)?;
+            eyre::ensure!(bytes.len() == 32, "expected 32 byte hex-string");
+            let len = bytes.iter().take_while(|x| **x != 0).count();
+            print_scalar(std::str::from_utf8(&bytes[..len])?)?;
         }
         CastSubcommand::ParseBytes32Address { bytes } => {
             print_scalar(SimpleCast::parse_bytes32_address(&stdin::unwrap_line(bytes)?)?)?;

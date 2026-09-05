@@ -67,14 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Decodes string from bytes32 value
-    pub fn parse_bytes32_string(s: &str) -> Result<String> {
-        let bytes = hex::decode(s)?;
-        eyre::ensure!(bytes.len() == 32, "expected 32 byte hex-string");
-        let len = bytes.iter().take_while(|x| **x != 0).count();
-        Ok(std::str::from_utf8(&bytes[..len])?.into())
-    }
-
     /// Decodes checksummed address from bytes32 value
     pub fn parse_bytes32_address(s: &str) -> Result<String> {
         let s = strip_0x(s);

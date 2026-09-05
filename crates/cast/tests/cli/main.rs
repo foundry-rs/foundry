@@ -9815,3 +9815,13 @@ casttest!(pad_overflow, |_prj, cmd| {
         .assert_failure()
         .stderr_eq("Error: len out of range: 32768\n");
 });
+
+casttest!(parse_bytes32_string, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args([
+            "parse-bytes32-string",
+            "0x68656c6c6f000000000000000000000000000000000000000000000000000000",
+        ])
+        .assert_success()
+        .stdout_eq("hello\n");
+});
