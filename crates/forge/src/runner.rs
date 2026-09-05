@@ -110,7 +110,7 @@ struct FuzzBranchFrontierArtifact {
 struct FuzzBranchFrontierRecord {
     id: u64,
     #[serde(skip)]
-    both_results_observed: bool,
+    both_results_retained: bool,
     call_index: usize,
     #[serde(default)]
     sequence: Vec<BasicTxDetails>,
@@ -140,50 +140,123 @@ fn select_stateful_frontiers(
         return Vec::new();
     }
 
+    if explicit_selection {
+        return sample_stateful_frontiers(frontiers, limit);
+    }
+
     let mut candidates = Vec::with_capacity(frontiers.len());
-    let mut deep_context = Option::<FuzzBranchFrontierRecord>::None;
+    let mut lower_priority = Vec::new();
     for frontier in frontiers {
-        if !explicit_selection && frontier.both_results_observed {
-            if deep_context.as_ref().is_none_or(|current| {
-                (frontier.call_index, frontier.id) > (current.call_index, current.id)
-            }) {
-                deep_context = Some(frontier);
-            }
+        if frontier.both_results_retained {
+            lower_priority.push(frontier);
         } else {
             candidates.push(frontier);
         }
     }
 
-    candidates.sort_unstable_by_key(|frontier| (frontier.call_index, frontier.id));
-    let total = candidates.len();
-    let mut selected = if total <= limit {
-        candidates
-    } else {
-        let denominator = 2 * limit as u128;
-        let mut indexes = (0..limit)
-            .map(|index| (((2 * index + 1) as u128 * total as u128) / denominator) as usize);
-        let mut next = indexes.next();
-        candidates
-            .into_iter()
+    let deep_context_index = if !candidates.is_empty() && limit > 1 {
+        lower_priority
+            .iter()
             .enumerate()
-            .filter_map(|(index, frontier)| {
-                (Some(index) == next).then(|| {
-                    next = indexes.next();
-                    frontier
-                })
-            })
-            .collect()
+            .max_by_key(|(_, frontier)| (frontier.call_index, frontier.id))
+            .map(|(index, _)| index)
+    } else {
+        None
     };
-
-    if let Some(deep_context) = deep_context
-        && (selected.is_empty() || limit > 1)
-    {
+    let deep_context = deep_context_index.map(|index| lower_priority.swap_remove(index));
+    let mut selected = select_context_diverse_frontiers(candidates, limit);
+    selected.extend(select_context_diverse_frontiers(
+        lower_priority,
+        limit.saturating_sub(selected.len()),
+    ));
+    if let Some(deep_context) = deep_context {
         if selected.len() == limit {
-            selected.pop();
+            let mut context_counts = HashMap::<(Option<usize>, usize), usize>::default();
+            for frontier in &selected {
+                *context_counts
+                    .entry((frontier.sequence_index, frontier.call_index))
+                    .or_default() += 1;
+            }
+            let repeated_context = selected
+                .iter()
+                .enumerate()
+                .filter(|(_, frontier)| {
+                    context_counts
+                        .get(&(frontier.sequence_index, frontier.call_index))
+                        .is_some_and(|count| *count > 1)
+                })
+                .min_by_key(|(_, frontier)| frontier.id)
+                .map(|(index, _)| index);
+            if let Some(index) = repeated_context {
+                selected.remove(index);
+            } else {
+                selected.pop();
+            }
         }
         selected.push(deep_context);
     }
     selected
+}
+
+fn select_context_diverse_frontiers(
+    mut frontiers: Vec<FuzzBranchFrontierRecord>,
+    limit: usize,
+) -> Vec<FuzzBranchFrontierRecord> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    if frontiers.len() <= limit {
+        return frontiers;
+    }
+
+    frontiers.sort_unstable_by_key(|frontier| {
+        (frontier.sequence_index, frontier.call_index, frontier.id)
+    });
+    let mut representatives = Vec::<FuzzBranchFrontierRecord>::new();
+    let mut remaining = Vec::new();
+    for frontier in frontiers {
+        let context = (frontier.sequence_index, frontier.call_index);
+        if let Some(previous) = representatives.last_mut()
+            && (previous.sequence_index, previous.call_index) == context
+        {
+            remaining.push(std::mem::replace(previous, frontier));
+        } else {
+            representatives.push(frontier);
+        }
+    }
+
+    let mut selected = sample_stateful_frontiers(representatives, limit);
+    selected.extend(sample_stateful_frontiers(remaining, limit - selected.len()));
+    selected
+}
+
+fn sample_stateful_frontiers(
+    mut frontiers: Vec<FuzzBranchFrontierRecord>,
+    limit: usize,
+) -> Vec<FuzzBranchFrontierRecord> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    frontiers.sort_unstable_by_key(|frontier| (frontier.call_index, frontier.id));
+    if frontiers.len() <= limit {
+        return frontiers;
+    }
+
+    let total = frontiers.len();
+    let denominator = 2 * limit as u128;
+    let mut indexes =
+        (0..limit).map(|index| (((2 * index + 1) as u128 * total as u128) / denominator) as usize);
+    let mut next = indexes.next();
+    frontiers
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, frontier)| {
+            (Some(index) == next).then(|| {
+                next = indexes.next();
+                frontier
+            })
+        })
+        .collect()
 }
 
 fn comparison_result(opcode: u8, lhs: U256, rhs: U256) -> Option<bool> {
@@ -376,6 +449,27 @@ mod tests {
 
     const CONTRACT_NAME: &str = "src/Test.t.sol:InvariantTest";
 
+    fn stateful_frontier_record(
+        id: u64,
+        sequence_index: usize,
+        call_index: usize,
+        both_results_retained: bool,
+    ) -> FuzzBranchFrontierRecord {
+        FuzzBranchFrontierRecord {
+            id,
+            both_results_retained,
+            call_index,
+            sequence: Vec::new(),
+            sequence_index: Some(sequence_index),
+            site: FuzzBranchFrontierSite {
+                address: Address::ZERO,
+                pc: id as usize,
+                opcode: opcode::EQ,
+            },
+            operands: FuzzBranchFrontierOperands { result: false },
+        }
+    }
+
     #[test]
     fn symbolic_artifact_file_name_hashes_full_identity() {
         let single = symbolic_artifact_file_name(
@@ -432,18 +526,8 @@ mod tests {
         let frontiers =
             [(6, 7), (0, 1), (8, 9), (3, 4), (9, 9), (2, 3), (5, 6), (1, 2), (7, 8), (4, 5)]
                 .into_iter()
-                .map(|(id, call_index)| FuzzBranchFrontierRecord {
-                    id,
-                    both_results_observed: false,
-                    call_index,
-                    sequence: Vec::new(),
-                    sequence_index: None,
-                    site: FuzzBranchFrontierSite {
-                        address: Address::ZERO,
-                        pc: id as usize,
-                        opcode: opcode::EQ,
-                    },
-                    operands: FuzzBranchFrontierOperands { result: false },
+                .map(|(id, call_index)| {
+                    stateful_frontier_record(id, id as usize, call_index, false)
                 })
                 .collect();
 
@@ -456,22 +540,10 @@ mod tests {
     }
 
     #[test]
-    fn stateful_frontiers_reserve_deep_observed_context() {
+    fn stateful_frontiers_reserve_deep_retained_context() {
         let frontiers = || {
             (0..12)
-                .map(|id| FuzzBranchFrontierRecord {
-                    id,
-                    both_results_observed: id >= 10,
-                    call_index: id as usize,
-                    sequence: Vec::new(),
-                    sequence_index: None,
-                    site: FuzzBranchFrontierSite {
-                        address: Address::ZERO,
-                        pc: id as usize,
-                        opcode: opcode::EQ,
-                    },
-                    operands: FuzzBranchFrontierOperands { result: false },
-                })
+                .map(|id| stateful_frontier_record(id, id as usize, id as usize, id >= 10))
                 .collect()
         };
 
@@ -484,6 +556,77 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(ids, [1, 3, 5, 7, 11]);
+    }
+
+    #[test]
+    fn stateful_frontiers_prioritize_distinct_call_contexts() {
+        let frontiers = [(0, 0, 0), (1, 0, 0), (2, 1, 1), (3, 1, 1), (4, 2, 2)]
+            .into_iter()
+            .map(|(id, sequence_index, call_index)| {
+                stateful_frontier_record(id, sequence_index, call_index, false)
+            })
+            .collect();
+
+        let ids = select_stateful_frontiers(frontiers, 3, false)
+            .into_iter()
+            .map(|frontier| frontier.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, [1, 3, 4]);
+    }
+
+    #[test]
+    fn stateful_frontier_reservation_keeps_primary_contexts() {
+        let frontiers = [
+            (0, 0, 0, false),
+            (1, 0, 0, false),
+            (2, 1, 1, false),
+            (3, 2, 2, false),
+            (4, 3, 3, true),
+        ]
+        .into_iter()
+        .map(|(id, sequence_index, call_index, both_results_retained)| {
+            stateful_frontier_record(id, sequence_index, call_index, both_results_retained)
+        })
+        .collect();
+
+        let ids = select_stateful_frontiers(frontiers, 4, false)
+            .into_iter()
+            .map(|frontier| frontier.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn stateful_frontier_reservation_keeps_fallback_contexts() {
+        let frontiers =
+            [(0, 0, 0, false), (1, 1, 1, true), (2, 1, 1, true), (3, 2, 2, true), (4, 3, 3, true)]
+                .into_iter()
+                .map(|(id, sequence_index, call_index, both_results_retained)| {
+                    stateful_frontier_record(id, sequence_index, call_index, both_results_retained)
+                })
+                .collect();
+
+        let ids = select_stateful_frontiers(frontiers, 4, false)
+            .into_iter()
+            .map(|frontier| frontier.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, [0, 2, 3, 4]);
+    }
+
+    #[test]
+    fn stateful_frontiers_fill_from_retained_outcomes() {
+        let frontiers =
+            (0..5).map(|id| stateful_frontier_record(id, id as usize, id as usize, true)).collect();
+
+        let ids = select_stateful_frontiers(frontiers, 4, false)
+            .into_iter()
+            .map(|frontier| frontier.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, [0, 1, 3, 4]);
     }
 
     #[test]
@@ -2393,7 +2536,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             *observed_results.entry(key).or_default() |= result_bit;
         }
         for frontier in &mut frontiers {
-            frontier.both_results_observed = observed_results
+            frontier.both_results_retained = observed_results
                 .get(&(frontier.site.address, frontier.site.pc, frontier.site.opcode))
                 .is_some_and(|results| *results == 3);
         }

@@ -187,12 +187,11 @@ forge test --match-test invariant_ \
 ```
 
 Forge replays each recorded prefix into a fresh EVM, symbolically solves only
-the call that reached a comparison for which the artifact observed only one
-result, and writes a candidate only when concrete replay observes the opposite
-result at that exact comparison site. Target calls carrying nonzero value are
-currently skipped because symbolic root calls do not yet apply the corresponding
-balance transfer. Replay the resulting corpus to check every persisted sequence
-deterministically:
+the call that reached the retained comparison, and writes a branch candidate
+only when concrete replay observes the opposite result at that exact comparison
+site. Target calls carrying nonzero value are currently skipped because symbolic
+root calls do not yet apply the corresponding balance transfer. Replay the
+resulting corpus to check every persisted sequence deterministically:
 
 ```sh
 forge fuzz replay --match-test invariant_ --corpus-dir fuzz_corpus
@@ -234,15 +233,15 @@ forge test --match-test test_hard_branch \
 `symbolic.frontier_selectors` default to `[]`, meaning any value for that
 dimension. Non-empty filters compose conjunctively, so the example imports only
 records matching one of the requested IDs, one of the requested PCs, and one of
-the requested selectors. Stateless imports keep artifact order. Stateful
-imports sample evenly across concrete transaction-prefix lengths so the bounded
-solver budget does not crowd out either shallow or deep states. Automatic
-stateful imports also reserve one slot for the deepest context at a comparison
-site whose two outcomes appeared under different concrete sequences, since
-global edge coverage does not imply that both continuations are reachable from
-the same state. Explicit frontier filters use the matching records directly.
-Forge imports up to `symbolic.frontier_limit` matching records and warns if a
-requested stateless target cannot be imported.
+the requested selectors. Stateless imports keep artifact order. Automatic
+stateful imports represent distinct recorded sequence/call contexts within each
+priority tier before revisiting other comparisons from the same contexts, while
+sampling across call depths. Records at sites whose two outcomes are both
+retained in the bounded artifact remain lower priority rather than being
+discarded; one deep such record is reserved when possible, and they fill
+otherwise unused solver budget. Explicit frontier filters use the matching
+records directly. Forge imports up to `symbolic.frontier_limit` matching records
+and warns if a requested stateless target cannot be imported.
 
 > **Hash-model caveat:** `PASS` also assumes collision and preimage resistance
 > for symbolic `KECCAK256` and hash-like precompile terms. The executor may use
