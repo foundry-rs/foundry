@@ -1,4 +1,4 @@
-use crate::{Cast, cmd::rpc_provider};
+use crate::cmd::rpc_provider;
 use alloy_provider::Provider;
 use clap::Parser;
 use eyre::Result;
@@ -41,11 +41,10 @@ impl FindBlockArgs {
         let provider = rpc_provider(&rpc)?;
 
         let last_block_num = provider.get_block_number().await?;
-        let cast_provider = Cast::new(provider);
         let (ts_block_latest, ts_block_1) =
-            join!(cast_provider.timestamp(last_block_num), cast_provider.timestamp(1));
-        let ts_block_latest = ts_block_latest?.to::<u64>();
-        let ts_block_1 = ts_block_1?.to::<u64>();
+            join!(timestamp(&provider, last_block_num), timestamp(&provider, 1));
+        let ts_block_latest = ts_block_latest?;
+        let ts_block_1 = ts_block_1?;
 
         let block_num = if ts_block_latest < ts_target {
             // If the most recent block's timestamp is below the target, return it
@@ -88,7 +87,7 @@ impl FindBlockArgs {
                         ts_target,
                     )
                 };
-                let next_timestamp = cast_provider.timestamp(next_block).await?.to::<u64>();
+                let next_timestamp = timestamp(&provider, next_block).await?;
 
                 if next_timestamp == ts_target {
                     break next_block;
@@ -123,4 +122,16 @@ mod tests {
         // Falls back to the midpoint for equal timestamps.
         assert_eq!(interpolate_block(1, 100, 10, 100, 100), 6);
     }
+}
+
+async fn timestamp(
+    provider: &impl Provider<alloy_network::AnyNetwork>,
+    number: u64,
+) -> Result<u64> {
+    Ok(provider
+        .get_block_by_number(number.into())
+        .await?
+        .ok_or_else(|| eyre::eyre!("block {number} not found"))?
+        .header
+        .timestamp)
 }

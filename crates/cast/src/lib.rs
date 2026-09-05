@@ -112,10 +112,6 @@ where
         self.block_field_as_num(block, "baseFeePerGas").await
     }
 
-    pub async fn timestamp<B: Into<BlockId>>(&self, block: B) -> Result<U256> {
-        self.block_field_as_num(block, "timestamp").await
-    }
-
     pub async fn chain(&self) -> Result<&str> {
         const GENESIS_CHAINS: &[(&str, &str)] = &[
             ("0xa3c565fc15c7478862d50ccd6561e3c06b24cc509bf388941c25ea985ce32cb9", "kovan"),
