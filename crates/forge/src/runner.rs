@@ -129,6 +129,24 @@ struct FuzzBranchFrontierOperands {
     result: bool,
 }
 
+fn select_stateful_frontiers(
+    mut frontiers: Vec<FuzzBranchFrontierRecord>,
+    limit: usize,
+) -> Vec<FuzzBranchFrontierRecord> {
+    frontiers.sort_unstable_by_key(|frontier| (frontier.call_index, frontier.id));
+    if frontiers.len() <= limit {
+        return frontiers;
+    }
+
+    let deep_count = limit / 5;
+    let shallow_count = limit - deep_count;
+    let mut deep = frontiers.split_off(frontiers.len() - deep_count);
+    frontiers.truncate(shallow_count);
+    deep.reverse();
+    frontiers.extend(deep);
+    frontiers
+}
+
 pub(crate) struct InvariantCampaignScope<'a> {
     pub config: &'a Config,
     pub inline_config: &'a InlineConfig,
@@ -342,6 +360,33 @@ mod tests {
         assert!(same_sequence_failure(&outcome(site(1, 1)), &expected));
         assert!(!same_sequence_failure(&outcome(site(2, 1)), &expected));
         assert!(!same_sequence_failure(&outcome(site(1, 2)), &expected));
+    }
+
+    #[test]
+    fn stateful_frontiers_reserve_one_fifth_for_long_prefixes() {
+        let frontiers =
+            [(6, 7), (0, 1), (8, 9), (3, 4), (9, 9), (2, 3), (5, 6), (1, 2), (7, 8), (4, 5)]
+                .into_iter()
+                .map(|(id, call_index)| FuzzBranchFrontierRecord {
+                    id,
+                    call_index,
+                    sequence: Vec::new(),
+                    sequence_index: None,
+                    site: FuzzBranchFrontierSite {
+                        address: Address::ZERO,
+                        pc: id as usize,
+                        opcode: opcode::EQ,
+                    },
+                    operands: FuzzBranchFrontierOperands { result: false },
+                })
+                .collect();
+
+        let ids = select_stateful_frontiers(frontiers, 5)
+            .into_iter()
+            .map(|frontier| frontier.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, [0, 1, 2, 3, 9]);
     }
 
     fn count_anchors(abi: &JsonAbi, inline_config: &InlineConfig) -> usize {
@@ -2229,33 +2274,28 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             *observed_results.entry(key).or_default() |= result_bit;
         }
         frontiers.retain(|frontier| {
-            observed_results
+            if observed_results
                 .get(&(frontier.site.address, frontier.site.pc, frontier.site.opcode))
-                .is_some_and(|results| *results != 3)
-        });
-        frontiers.sort_by_key(|frontier| (frontier.call_index, frontier.id));
-
-        let mut imported = Vec::with_capacity(limit.min(frontiers.len()));
-        for frontier in frontiers {
-            if imported.len() == limit {
-                break;
+                .is_none_or(|results| *results == 3)
+            {
+                return false;
             }
             if select_frontier_ids && !requested_ids.contains(&frontier.id) {
-                continue;
+                return false;
             }
             if select_frontier_pcs && !requested_pcs.contains(&frontier.site.pc) {
-                continue;
+                return false;
             }
             if !matches!(
                 frontier.site.opcode,
                 opcode::EQ | opcode::LT | opcode::GT | opcode::SLT | opcode::SGT | opcode::ISZERO
             ) {
-                continue;
+                return false;
             }
             let Some(sequence) = frontier.sequence_index.and_then(|index| sequences.get(index))
             else {
                 debug!(id = frontier.id, "skipping invariant frontier with missing sequence");
-                continue;
+                return false;
             };
             let Some(call) = sequence.get(frontier.call_index) else {
                 debug!(
@@ -2264,7 +2304,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     sequence_len = sequence.len(),
                     "skipping invariant frontier with invalid call index"
                 );
-                continue;
+                return false;
             };
             let selector = call
                 .call_details
@@ -2275,9 +2315,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if select_frontier_selectors
                 && selector.is_none_or(|selector| !parsed_selectors.contains(&selector))
             {
-                continue;
+                return false;
             }
+            true
+        });
+        let frontiers = select_stateful_frontiers(frontiers, limit);
 
+        let mut imported = Vec::with_capacity(frontiers.len());
+        for frontier in frontiers {
+            let sequence = sequences
+                .get(frontier.sequence_index.expect("frontier sequence index was validated"))
+                .expect("frontier sequence was validated");
             imported.push((
                 frontier.id,
                 frontier.call_index,

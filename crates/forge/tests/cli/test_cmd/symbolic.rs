@@ -3370,7 +3370,23 @@ contract SymbolicInvariantFrontierSeed is Test {
         })
         .cloned()
         .unwrap_or_else(|| panic!("missing value >= 123456789 frontier in {artifact}"));
-    *artifact["frontiers"].as_array_mut().unwrap() = vec![target_frontier.clone()];
+    let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+    let shallow_frontier = artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|frontier| frontier["call_index"] == 0)
+        .cloned()
+        .unwrap_or_else(|| panic!("missing first-call frontier in {artifact}"));
+    let mut selected_frontiers = (0..6)
+        .map(|offset| {
+            let mut frontier = shallow_frontier.clone();
+            frontier["id"] = serde_json::json!(10_000 + offset);
+            frontier
+        })
+        .collect::<Vec<_>>();
+    selected_frontiers.push(target_frontier.clone());
+    *artifact["frontiers"].as_array_mut().unwrap() = selected_frontiers;
     std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap())
         .unwrap_or_else(|err| panic!("failed to write {}: {err}", frontier_path.display()));
 
@@ -3404,7 +3420,9 @@ contract SymbolicInvariantFrontierSeed is Test {
         "covered_invariant_corpus",
         "--symbolic-use-fuzz-frontiers",
         "--symbolic-frontier-limit",
-        "8",
+        "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
     ])
     .assert_success();
     cmd.forge_fuse()
@@ -3436,7 +3454,7 @@ contract SymbolicInvariantFrontierSeed is Test {
         "invariant_corpus",
         "--symbolic-use-fuzz-frontiers",
         "--symbolic-frontier-limit",
-        "8",
+        "5",
     ])
     .assert_success();
 
@@ -3461,6 +3479,40 @@ contract SymbolicInvariantFrontierSeed is Test {
         stdout.contains("[FAIL:") && stdout.contains("invariant_notBroken"),
         "stdout={stdout}\nstderr={stderr}"
     );
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantFrontierSeed",
+        "--invariant-depth",
+        "1",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "invariant_frontiers",
+        "--invariant-corpus-dir",
+        "filtered_invariant_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
+    ])
+    .assert_success();
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantFrontierSeed",
+            "--match-test",
+            "invariant_notBroken",
+            "--corpus-dir",
+            "filtered_invariant_corpus",
+        ])
+        .assert_failure();
 });
 
 forgetest_init!(symbolic_import_fuzz_corpus_guides_bounded_symbolic_path, |prj, cmd| {
