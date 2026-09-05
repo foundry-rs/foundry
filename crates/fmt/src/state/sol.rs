@@ -2006,12 +2006,18 @@ impl<'ast> State<'_, 'ast> {
     /// Prints the given statement in the source code, handling formatting, inline documentation,
     /// trailing comments and layout logic for various statement kinds.
     fn print_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) {
+        self.print_stmt_bound(stmt, None);
+    }
+
+    /// Like [`Self::print_stmt`], but bounds the statement's own trailing-comment scan by
+    /// `next_pos` instead of scanning unbounded.
+    fn print_stmt_bound(&mut self, stmt: &'ast ast::Stmt<'ast>, next_pos: Option<BytePos>) {
         let ast::Stmt { ref docs, span, ref kind } = *stmt;
         self.print_docs(docs);
 
         // Handle disabled statements.
         if self.handle_span(span, false) {
-            self.print_trailing_comment_no_break(stmt.span.hi(), None);
+            self.print_trailing_comment_no_break(stmt.span.hi(), next_pos);
             return;
         }
 
@@ -2080,7 +2086,7 @@ impl<'ast> State<'_, 'ast> {
             stmt.span.hi(),
             CommentConfig::default().trailing_no_break().mixed_no_break().mixed_prev_space(),
         );
-        self.print_trailing_comment_no_break(stmt.span.hi(), None);
+        self.print_trailing_comment_no_break(stmt.span.hi(), next_pos);
     }
 
     /// Prints an `assembly` statement, including optional dialect and flags,
@@ -2180,7 +2186,9 @@ impl<'ast> State<'_, 'ast> {
         // Print init.
         self.s.cbox(0);
         match init {
-            Some(init_stmt) => self.print_stmt(init_stmt),
+            Some(init_stmt) => {
+                self.print_stmt_bound(init_stmt, Some(init_stmt.span.hi()));
+            }
             None => self.print_word(";"),
         }
 
