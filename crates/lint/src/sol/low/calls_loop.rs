@@ -55,8 +55,9 @@ enum ExternalCall {
 /// dispatch run in this contract and are not external.
 fn classify<'gcx>(gcx: Gcx<'gcx>, callee: &Expr<'gcx>) -> Option<ExternalCall> {
     let callee = callee.peel_parens();
-    if matches!(callee.kind, ExprKind::New(_)) {
-        return Some(ExternalCall::Opaque);
+    if let ExprKind::New(ty) = &callee.kind {
+        return matches!(gcx.type_of_hir_ty(ty).kind, TyKind::Contract(_))
+            .then_some(ExternalCall::Opaque);
     }
     let ExprKind::Member(base, member) = &callee.kind else { return None };
     if matches!(
