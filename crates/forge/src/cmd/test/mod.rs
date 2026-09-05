@@ -108,6 +108,10 @@ const DEBUGGER_MATCHING_TESTS_DISPLAY_LIMIT: usize = 12;
 const AUTO_FUZZ_FAILURE_DIR: &str = "fuzz";
 const AUTO_CORPUS_DIR: &str = "corpus";
 
+fn is_yul_test_path(path: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.ends_with(".t.yul"))
+}
+
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
 
@@ -512,6 +516,10 @@ pub struct TestArgs {
     /// The contract file you want to test, it's a shortcut for --match-path.
     #[arg(value_hint = ValueHint::FilePath)]
     pub path: Option<GlobMatcher>,
+
+    /// Compile bare `.t.yul` modules as strict-assembly test contracts.
+    #[arg(long)]
+    strict_assembly: bool,
 
     /// Run a single test in the debugger.
     ///
@@ -1489,7 +1497,9 @@ impl TestArgs {
             .chain(
                 // Preserve path-filter behavior for conventional test files while still
                 // scanning non-test fixtures under the test root.
-                test_files().filter(|path| !path.is_sol_test() || test_filter.matches_path(path)),
+                test_files().filter(|path| {
+                    !path.is_sol_test() && !is_yul_test_path(path) || test_filter.matches_path(path)
+                }),
             )
             .collect::<BTreeSet<_>>();
         let output = compile_abi_project(
@@ -1497,6 +1507,7 @@ impl TestArgs {
             ProjectCompiler::new()
                 .files(sources.iter().cloned())
                 .dynamic_test_linking(config.dynamic_test_linking)
+                .yul_tests(self.strict_assembly)
                 .quiet(true),
         )?;
         if output.has_compiler_errors() {
@@ -1648,6 +1659,7 @@ impl TestArgs {
 
         let compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
+            .yul_tests(self.strict_assembly)
             .quiet(shell::is_json() || self.junit);
         let (output, selected_sources, inline_config) = if self.list {
             // Only the ABI is needed to list tests, so skip the full compile when possible.

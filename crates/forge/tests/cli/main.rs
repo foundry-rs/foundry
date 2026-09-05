@@ -38,6 +38,7 @@ mod verify;
 mod verify_bytecode;
 mod version;
 mod watch;
+mod yul;
 
 mod ext_integration;
 mod fmt;

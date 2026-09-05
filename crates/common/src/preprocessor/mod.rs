@@ -20,6 +20,9 @@ use data::{collect_preprocessor_data, create_deploy_helpers};
 mod deps;
 use deps::{PreprocessorDependencies, remove_bytecode_dependencies};
 
+mod yul;
+pub use yul::YulTestPreprocessor;
+
 /// Preprocessor that replaces static bytecode linking in tests and scripts (`new Contract`) with
 /// dynamic linkage through (`Vm.create*`).
 ///
@@ -118,6 +121,10 @@ impl Preprocessor<MultiCompiler> for DynamicTestLinkingPreprocessor {
     ) -> Result<()> {
         // Preprocess only Solc compilers.
         let MultiCompilerInput::Solc(input) = input else { return Ok(()) };
+
+        if input.input.language != SolcLanguage::Solidity {
+            return Ok(());
+        }
 
         let Some(solc) = &compiler.solc else { return Ok(()) };
 

@@ -1,7 +1,10 @@
 //! Support for compiling [foundry_compilers::Project]
 
 use crate::{
-    TestFunctionExt, preprocessor::DynamicTestLinkingPreprocessor, shell, term::SpinnerReporter,
+    TestFunctionExt,
+    preprocessor::{DynamicTestLinkingPreprocessor, YulTestPreprocessor},
+    shell,
+    term::SpinnerReporter,
 };
 use alloy_json_abi::JsonAbi;
 use comfy_table::{
@@ -80,6 +83,9 @@ pub struct ProjectCompiler {
 
     /// Whether to compile with dynamic linking tests and scripts.
     dynamic_test_linking: bool,
+
+    /// Whether to compile bare `.t.yul` modules as test contracts.
+    yul_tests: bool,
 }
 
 impl Default for ProjectCompiler {
@@ -104,6 +110,7 @@ impl ProjectCompiler {
             size_limits: ContractSizeLimits::default(),
             files: Vec::new(),
             dynamic_test_linking: false,
+            yul_tests: false,
         }
     }
 
@@ -171,6 +178,13 @@ impl ProjectCompiler {
         self
     }
 
+    /// Sets whether bare `.t.yul` modules should be compiled as test contracts.
+    #[inline]
+    pub const fn yul_tests(mut self, preprocess: bool) -> Self {
+        self.yul_tests = preprocess;
+        self
+    }
+
     /// Compiles the project.
     #[instrument(target = "forge::compile", skip_all)]
     pub fn compile<C: Compiler<CompilerContract = Contract>>(
@@ -179,6 +193,7 @@ impl ProjectCompiler {
     ) -> Result<ProjectCompileOutput<C>>
     where
         DynamicTestLinkingPreprocessor: Preprocessor<C>,
+        YulTestPreprocessor: Preprocessor<C>,
     {
         self.project_root = project.root().to_path_buf();
 
@@ -196,6 +211,7 @@ impl ProjectCompiler {
         // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
         let preprocess = self.dynamic_test_linking;
+        let yul_tests = self.yul_tests;
         self.compile_with(|| {
             let sources = if files.is_empty() {
                 project.paths.read_input_files()?
@@ -205,6 +221,9 @@ impl ProjectCompiler {
 
             let mut compiler =
                 foundry_compilers::project::ProjectCompiler::with_sources(project, sources)?;
+            if yul_tests {
+                compiler = compiler.with_preprocessor(YulTestPreprocessor::default());
+            }
             if preprocess {
                 compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
             }
@@ -690,6 +709,7 @@ pub fn compile_target<C: Compiler<CompilerContract = Contract>>(
 ) -> Result<ProjectCompileOutput<C>>
 where
     DynamicTestLinkingPreprocessor: Preprocessor<C>,
+    YulTestPreprocessor: Preprocessor<C>,
 {
     ProjectCompiler::new().quiet(quiet).files([target_path.into()]).compile(project)
 }
@@ -701,6 +721,7 @@ pub fn compile_abi_project<C: Compiler<CompilerContract = Contract>>(
 ) -> Result<ProjectCompileOutput<C>>
 where
     DynamicTestLinkingPreprocessor: Preprocessor<C>,
+    YulTestPreprocessor: Preprocessor<C>,
 {
     project.update_output_selection(|selection| {
         // Request ABI so compilers populate `contracts` without producing bytecode outputs.
