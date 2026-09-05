@@ -52,8 +52,13 @@ use foundry_evm_networks::NetworkVariant;
 use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
+use rayon::prelude::*;
 use serde::Serialize;
-use std::{str::FromStr, time::Instant};
+use std::{
+    str::FromStr,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Instant,
+};
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{ITIP20ChannelReserve, TIP20_CHANNEL_RESERVE_ADDRESS};
 
@@ -472,12 +477,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Some(opt) => {
                     sh_status!("Starting to optimize signature...")?;
                     let start_time = Instant::now();
-                    let (selector, signature) = SimpleCast::get_selector(&sig, opt)?;
+                    let (selector, signature) = get_selector(&sig, opt)?;
                     sh_status!("Successfully generated in {:?}", start_time.elapsed())?;
                     sh_println!("Selector: {selector}")?;
                     sh_println!("Optimized signature: {signature}")?;
                 }
-                None => print_scalar(SimpleCast::get_selector(&sig, 0)?.0)?,
+                None => print_scalar(get_selector(&sig, 0)?.0)?,
             }
         }
 
@@ -1493,4 +1498,37 @@ fn decode_raw_transaction<N: Network<TxEnvelope: SignerRecoverable + Serialize>>
     } else {
         Ok(serde_json::to_string_pretty(&tx)?)
     }
+}
+
+fn get_selector(signature: &str, optimize: usize) -> Result<(String, String)> {
+    if optimize > 4 {
+        eyre::bail!("number of leading zeroes must not be greater than 4");
+    }
+    if optimize == 0 {
+        let selector = get_func(signature)?.selector();
+        return Ok((selector.to_string(), String::from(signature)));
+    }
+    let Some((name, params)) = signature.split_once('(') else {
+        eyre::bail!("invalid function signature");
+    };
+
+    let num_threads = rayon::current_num_threads();
+    let found = AtomicBool::new(false);
+
+    // Each thread walks its own residue class of nonces until one of them finds a match.
+    (0..num_threads as u32)
+        .into_par_iter()
+        .find_map_any(|mut nonce| {
+            while nonce < u32::MAX && !found.load(Ordering::Relaxed) {
+                let input = format!("{name}{nonce}({params}");
+                let selector = &keccak256(input.as_bytes())[..4];
+                if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
+                    found.store(true, Ordering::Relaxed);
+                    return Some((hex::encode_prefixed(selector), input));
+                }
+                nonce += num_threads as u32;
+            }
+            None
+        })
+        .ok_or_eyre("No selector found")
 }

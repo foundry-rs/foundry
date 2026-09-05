@@ -177,51 +177,6 @@ impl SimpleCast {
 
         Ok(())
     }
-
-    /// Gets the selector for a given function signature
-    /// Optimizes if the `optimize` parameter is set to a number of leading zeroes
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(Cast::get_selector("foo()", 0)?.0, String::from("0xc2985578"));
-    /// assert_eq!(Cast::get_selector("foo(address,uint256)", 0)?.0, String::from("0xbd0d639f"));
-    /// # Ok::<(), eyre::Error>(())
-    /// ```
-    pub fn get_selector(signature: &str, optimize: usize) -> Result<(String, String)> {
-        if optimize > 4 {
-            eyre::bail!("number of leading zeroes must not be greater than 4");
-        }
-        if optimize == 0 {
-            let selector = get_func(signature)?.selector();
-            return Ok((selector.to_string(), String::from(signature)));
-        }
-        let Some((name, params)) = signature.split_once('(') else {
-            eyre::bail!("invalid function signature");
-        };
-
-        let num_threads = rayon::current_num_threads();
-        let found = AtomicBool::new(false);
-
-        // Each thread walks its own residue class of nonces until one of them finds a match.
-        (0..num_threads as u32)
-            .into_par_iter()
-            .find_map_any(|mut nonce| {
-                while nonce < u32::MAX && !found.load(Ordering::Relaxed) {
-                    let input = format!("{name}{nonce}({params}");
-                    let selector = &keccak256(input.as_bytes())[..4];
-                    if selector.iter().take_while(|&&byte| byte == 0).count() == optimize {
-                        found.store(true, Ordering::Relaxed);
-                        return Some((hex::encode_prefixed(selector), input));
-                    }
-                    nonce += num_threads as u32;
-                }
-                None
-            })
-            .ok_or_eyre("No selector found")
-    }
 }
 
 pub(crate) fn strip_0x(s: &str) -> &str {
