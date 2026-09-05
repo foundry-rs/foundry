@@ -67,23 +67,6 @@ const MAX_CONCURRENT_RPC_REQUESTS: usize = 5;
 pub struct SimpleCast;
 
 impl SimpleCast {
-    /// Converts fixed point number into specified number of decimals
-    /// ```
-    /// use alloy_primitives::U256;
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// assert_eq!(Cast::from_fixed_point("10", "0")?, "10");
-    /// assert_eq!(Cast::from_fixed_point("1.0", "1")?, "10");
-    /// assert_eq!(Cast::from_fixed_point("0.10", "2")?, "10");
-    /// assert_eq!(Cast::from_fixed_point("0.010", "3")?, "10");
-    /// # Ok::<_, eyre::Report>(())
-    /// ```
-    pub fn from_fixed_point(value: &str, decimals: &str) -> Result<String> {
-        let units: Unit = Unit::from_str(decimals)?;
-        let n = ParseUnits::parse_units(value, units)?;
-        Ok(n.to_string())
-    }
-
     /// Converts integers with specified decimals into fixed point numbers
     ///
     /// # Example

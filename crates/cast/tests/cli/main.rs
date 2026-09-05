@@ -9700,3 +9700,7 @@ casttest!(to_utf8, |_prj, cmd| {
 casttest!(to_ascii, |_prj, cmd| {
     cmd.cast_fuse().args(["to-ascii", "0x796f"]).assert_success().stdout_eq("yo\n");
 });
+
+casttest!(from_fixed_point, |_prj, cmd| {
+    cmd.cast_fuse().args(["from-fixed-point", "0.010", "3"]).assert_success().stdout_eq("10\n");
+});

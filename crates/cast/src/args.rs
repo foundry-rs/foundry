@@ -12,6 +12,7 @@ use alloy_ens::{NameOrAddress, ProviderEnsExt, namehash};
 use alloy_network::{BlockResponse, Ethereum, Network, eip2718::Decodable2718};
 use alloy_primitives::{
     Address, B256, Bytes, I256, TxHash, U64, U256, b256, eip191_hash_message, hex, keccak256,
+    utils::{ParseUnits, Unit},
 };
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -117,7 +118,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::FromFixedPoint { value, decimals } => {
             let (value, decimals) = stdin::unwrap2(value, decimals)?;
-            print_scalar(SimpleCast::from_fixed_point(&value, &decimals)?)?;
+            print_scalar(ParseUnits::parse_units(&value, Unit::from_str(&decimals)?)?.to_string())?;
         }
         CastSubcommand::ToFixedPoint { value, decimals } => {
             let (value, decimals) = stdin::unwrap2(value, decimals)?;
