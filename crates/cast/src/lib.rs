@@ -100,9 +100,6 @@ where
     N::HeaderResponse: UIfmtHeaderExt,
     N::BlockResponse: UIfmt,
 {
-    async fn block_field<B: Into<BlockId>>(&self, block: B, field: &str) -> Result<String> {
-        args::block(&self.provider, block, false, vec![field.to_string()]).await
-    }
 }
 
 impl<P: Provider<N>, N: Network> Cast<P, N> where N::Header: Encodable {}

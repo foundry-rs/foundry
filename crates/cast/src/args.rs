@@ -390,7 +390,33 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     }
                 )
             } else {
-                self::block(&utils::get_provider(&config)?, block, full, fields).await?
+                let provider = utils::get_provider(&config)?;
+                if fields.contains(&"transactions".into()) && !full {
+                    eyre::bail!("use --full to view transactions");
+                }
+
+                let block = provider
+                    .get_block(block)
+                    .kind(full.into())
+                    .await?
+                    .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
+
+                if !fields.is_empty() {
+                    let mut result = String::new();
+                    for field in fields {
+                        result.push_str(
+                            &get_pretty_block_attr::<alloy_network::AnyNetwork>(&block, &field)
+                                .unwrap_or_else(|| format!("{field} is not a valid block field")),
+                        );
+
+                        result.push('\n');
+                    }
+                    result.trim_end().to_string()
+                } else if shell::is_json() {
+                    serde_json::to_value(&block).unwrap().to_string()
+                } else {
+                    block.pretty()
+                }
             };
             print_json_value_or_scalar(output)?;
         }
@@ -1061,43 +1087,4 @@ async fn address_at_slot<N: alloy_network::Network>(
     let value =
         provider.get_storage_at(who, slot.into()).block_id(block.unwrap_or_default()).await?;
     Ok(format!("{:?}", Address::from_word(value.into())))
-}
-
-pub(super) async fn block<P: Provider<N>, N: Network, B: Into<BlockId>>(
-    provider: &P,
-    block: B,
-    full: bool,
-    fields: Vec<String>,
-) -> Result<String>
-where
-    N::HeaderResponse: UIfmtHeaderExt,
-    N::BlockResponse: UIfmt,
-{
-    let block = block.into();
-    if fields.contains(&"transactions".into()) && !full {
-        eyre::bail!("use --full to view transactions");
-    }
-
-    let block = provider
-        .get_block(block)
-        .kind(full.into())
-        .await?
-        .ok_or_else(|| eyre::eyre!("block {:?} not found", block))?;
-
-    Ok(if !fields.is_empty() {
-        let mut result = String::new();
-        for field in fields {
-            result.push_str(
-                &get_pretty_block_attr::<N>(&block, &field)
-                    .unwrap_or_else(|| format!("{field} is not a valid block field")),
-            );
-
-            result.push('\n');
-        }
-        result.trim_end().to_string()
-    } else if shell::is_json() {
-        serde_json::to_value(&block).unwrap().to_string()
-    } else {
-        block.pretty()
-    })
 }
