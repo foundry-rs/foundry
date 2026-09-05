@@ -125,10 +125,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         Ok(self.provider.send_raw_transaction(&tx).await?)
     }
 
-    pub async fn chain_id(&self) -> Result<u64> {
-        Ok(self.provider.get_chain_id().await?)
-    }
-
     pub async fn block_number(&self) -> Result<u64> {
         Ok(self.provider.get_block_number().await?)
     }

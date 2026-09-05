@@ -390,7 +390,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_scalar(Cast::new(rpc_provider(&rpc)?).chain().await?.to_string())?;
         }
         CastSubcommand::ChainId { rpc } => {
-            print_scalar(Cast::new(rpc_provider(&rpc)?).chain_id().await?.to_string())?;
+            print_scalar(rpc_provider(&rpc)?.get_chain_id().await?.to_string())?;
         }
         CastSubcommand::Client { rpc } => {
             print_scalar(rpc_provider(&rpc)?.get_client_version().await?)?;
