@@ -24,9 +24,7 @@ use alloy_primitives::{
 };
 use alloy_provider::{PendingTransactionBuilder, Provider, network::eip2718::Decodable2718};
 use alloy_rlp::{Decodable, Encodable};
-use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, EIP1186AccountProofResponse, Filter, FilterBlockOption, Log,
-};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, Filter, FilterBlockOption, Log};
 use alloy_transport::TransportErrorKind;
 use base::{Base, NumberWithBase};
 use chrono::DateTime;
@@ -123,15 +121,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     pub async fn publish(&self, raw_tx: String) -> Result<PendingTransactionBuilder<N>> {
         let tx = hex::decode(strip_0x(&raw_tx))?;
         Ok(self.provider.send_raw_transaction(&tx).await?)
-    }
-
-    async fn proof(
-        &self,
-        who: Address,
-        slots: Vec<B256>,
-        block: Option<BlockId>,
-    ) -> Result<EIP1186AccountProofResponse> {
-        Ok(self.provider.get_proof(who, slots).block_id(block.unwrap_or_default()).await?)
     }
 
     /// # Example
