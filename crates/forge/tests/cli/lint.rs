@@ -535,6 +535,57 @@ forgetest!(skip_test_and_script_project_lints, |prj, cmd| {
     cmd.args(["lint", "--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq("");
 });
 
+// <https://github.com/foundry-rs/foundry/issues/16662>
+forgetest!(skip_reentrancy_events_for_expect_emit, |prj, cmd| {
+    let fixture = r#"
+interface Vm {
+    function expectEmit(bool, bool, bool, bool, address) external;
+    function prank(address) external;
+}
+
+interface Governance {
+    event Rejected(uint256 taskId, address owner);
+    function removeOwner(address owner) external;
+    function vetoRemoveOwner(address owner) external;
+}
+
+contract EventExpectation {
+    function checkEvent(Vm vm, Governance harness, address alice, address bob) external {
+        vm.prank(bob);
+        harness.removeOwner(bob);
+        vm.expectEmit(true, true, false, false, address(harness));
+        emit Governance.Rejected(1, alice);
+        vm.prank(alice);
+        harness.vetoRemoveOwner(bob);
+    }
+}
+"#;
+    prj.add_test("EventExpectation", fixture);
+    prj.add_script("EventExpectation", fixture);
+
+    cmd.arg("lint").assert_success().stderr_eq("");
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "reentrancy-events"])
+        .assert_success()
+        .stderr_eq("");
+
+    prj.add_source("EventExpectation", fixture);
+    cmd.forge_fuse()
+        .args(["lint", "--only-lint", "reentrancy-events"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+   [FILE]:20:9
+   │
+20 │         emit Governance.Rejected(1, alice);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+
+"#]]);
+});
+
 forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContract", OTHER_CONTRACT);
