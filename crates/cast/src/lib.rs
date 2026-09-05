@@ -81,7 +81,7 @@ impl SimpleCast {
     /// # Ok::<(), eyre::Report>(())
     /// ```
     pub fn max_int(s: &str) -> Result<String> {
-        Self::int_bound(s, true)
+        args::int_bound(s, true)
     }
 
     /// Returns the maximum value of the given integer type
@@ -98,31 +98,7 @@ impl SimpleCast {
     /// # Ok::<(), eyre::Report>(())
     /// ```
     pub fn min_int(s: &str) -> Result<String> {
-        Self::int_bound(s, false)
-    }
-
-    /// Returns the maximum (`max == true`) or minimum value of the given integer type.
-    fn int_bound(s: &str, max: bool) -> Result<String> {
-        let ty = DynSolType::parse(s).wrap_err("Invalid type, expected `(u)int<bit size>`")?;
-        match ty {
-            DynSolType::Int(n) => {
-                let max_value = (U256::MAX & U256::from(1).wrapping_shl(n - 1)) - U256::from(1);
-                if max {
-                    Ok(max_value.to_string())
-                } else {
-                    Ok((I256::from_raw(max_value).wrapping_neg() + I256::MINUS_ONE).to_string())
-                }
-            }
-            DynSolType::Uint(n) if max => {
-                let mut max_value = U256::MAX;
-                if n < 256 {
-                    max_value &= U256::from(1).wrapping_shl(n).wrapping_sub(U256::from(1));
-                }
-                Ok(max_value.to_string())
-            }
-            DynSolType::Uint(_) => Ok("0".to_string()),
-            _ => Err(eyre::eyre!("Type is not int/uint: {s}")),
-        }
+        args::int_bound(s, false)
     }
 
     /// Converts UTF-8 text input to hex

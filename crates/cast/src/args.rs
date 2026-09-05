@@ -6,12 +6,12 @@ use crate::{
     tx::CastTxSender,
 };
 use alloy_consensus::Typed2718;
-use alloy_dyn_abi::{ErrorExt, EventExt};
+use alloy_dyn_abi::{DynSolType, ErrorExt, EventExt};
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
 use alloy_ens::{NameOrAddress, ProviderEnsExt, namehash};
 use alloy_network::{BlockResponse, Ethereum, Network, eip2718::Decodable2718};
 use alloy_primitives::{
-    Address, B256, Bytes, TxHash, U64, b256, eip191_hash_message, hex, keccak256,
+    Address, B256, Bytes, I256, TxHash, U64, U256, b256, eip191_hash_message, hex, keccak256,
 };
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -1149,4 +1149,27 @@ where
     } else {
         tx.pretty()
     })
+}
+
+pub(super) fn int_bound(s: &str, max: bool) -> Result<String> {
+    let ty = DynSolType::parse(s).wrap_err("Invalid type, expected `(u)int<bit size>`")?;
+    match ty {
+        DynSolType::Int(n) => {
+            let max_value = (U256::MAX & U256::from(1).wrapping_shl(n - 1)) - U256::from(1);
+            if max {
+                Ok(max_value.to_string())
+            } else {
+                Ok((I256::from_raw(max_value).wrapping_neg() + I256::MINUS_ONE).to_string())
+            }
+        }
+        DynSolType::Uint(n) if max => {
+            let mut max_value = U256::MAX;
+            if n < 256 {
+                max_value &= U256::from(1).wrapping_shl(n).wrapping_sub(U256::from(1));
+            }
+            Ok(max_value.to_string())
+        }
+        DynSolType::Uint(_) => Ok("0".to_string()),
+        _ => Err(eyre::eyre!("Type is not int/uint: {s}")),
+    }
 }
