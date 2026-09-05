@@ -272,7 +272,7 @@ impl<T: Transaction> PendingTransactions<T> {
             "transaction is already added"
         );
 
-        if let Some(replace) = self
+        let replaced_hash = if let Some(replace) = self
             .waiting_markers
             .get(&tx.transaction.provides)
             .and_then(|hash| self.waiting_queue.get(hash))
@@ -282,6 +282,15 @@ impl<T: Transaction> PendingTransactions<T> {
                 warn!(target: "txpool", "pending replacement transaction underpriced [{:?}]", tx.transaction.hash());
                 return Err(PoolError::ReplacementUnderpriced(tx.transaction.hash()));
             }
+            Some(replace.transaction.hash())
+        } else {
+            None
+        };
+        // remove the replaced tx (and its marker bookkeeping) *before* inserting the new one's
+        // markers below, so the new tx's `waiting_markers`/`required_markers` entries can't be
+        // clobbered by removing the old ones afterwards
+        if let Some(replaced_hash) = replaced_hash {
+            self.remove(vec![replaced_hash]);
         }
 
         // add all missing markers
