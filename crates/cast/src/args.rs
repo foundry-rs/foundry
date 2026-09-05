@@ -22,6 +22,7 @@ use alloy_rpc_types::BlockId;
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::{ContextCompat, OptionExt, Result, WrapErr};
+use foundry_block_explorers::Client;
 use foundry_cli::{
     json::{print_json_object, print_json_value_or_scalar, print_list, print_scalar, print_tokens},
     opts::RpcOpts,
@@ -43,6 +44,7 @@ use foundry_common::{
     shell, stdin,
     tempo::classify_payment_lane,
 };
+use foundry_config::Chain;
 use foundry_evm_networks::NetworkVariant;
 use foundry_primitives::{FoundryNetwork, FoundryTxEnvelope};
 #[cfg(feature = "optimism")]
@@ -710,7 +712,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let (provider, who) = rpc_provider_and_address(&rpc, who).await?;
             let code = provider.get_code_at(who).block_id(block.unwrap_or_default()).await?;
             print_scalar(if disassemble {
-                SimpleCast::disassemble(&code)?
+                crate::cmd::disassemble(&code)?
             } else {
                 code.to_string()
             })?;
@@ -745,7 +747,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Disassemble { bytecode } => {
             let bytecode = stdin::unwrap_line(bytecode)?;
-            print_scalar(SimpleCast::disassemble(&hex::decode(bytecode)?)?)?;
+            print_scalar(crate::cmd::disassemble(&hex::decode(bytecode)?)?)?;
         }
         CastSubcommand::Selectors { bytecode, resolve } => {
             let bytecode = stdin::unwrap_line(bytecode)?;
@@ -1415,7 +1417,7 @@ fn to_base(value: &str, base_in: Option<&str>, base_out: &str) -> Result<String>
     Ok(format!("{n:#?}"))
 }
 
-pub(super) fn shift(
+fn shift(
     value: &str,
     bits: &str,
     base_in: Option<&str>,
@@ -1426,4 +1428,31 @@ pub(super) fn shift(
     let value = NumberWithBase::parse_uint(value, base_in)?.number();
     let bits = NumberWithBase::parse_uint(bits, None)?.number();
     Ok(format!("{:#?}", NumberWithBase::from(shift(value, bits)).with_base(base_out)))
+}
+
+pub(super) fn explorer_client(
+    chain: Chain,
+    api_key: Option<String>,
+    api_url: Option<String>,
+    explorer_url: Option<String>,
+) -> Result<Client> {
+    let mut builder = Client::builder();
+
+    let deduced = chain.etherscan_urls();
+
+    let explorer_url = explorer_url
+        .or(deduced.map(|d| d.1.to_string()))
+        .ok_or_eyre("Please provide the explorer browser URL using `--explorer-url`")?;
+    builder = builder.with_url(explorer_url)?;
+
+    let api_url = api_url
+        .or(deduced.map(|d| d.0.to_string()))
+        .ok_or_eyre("Please provide the explorer API URL using `--explorer-api-url`")?;
+    builder = builder.with_api_url(api_url)?;
+
+    if let Some(api_key) = api_key {
+        builder = builder.with_api_key(api_key);
+    }
+
+    builder.build().map_err(Into::into)
 }

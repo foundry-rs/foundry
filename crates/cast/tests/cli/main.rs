@@ -9904,3 +9904,16 @@ casttest!(left_shift, |_prj, cmd| {
 casttest!(right_shift, |_prj, cmd| {
     cmd.cast_fuse().args(["right-shift", "16", "1"]).assert_success().stdout_eq("0x8\n");
 });
+
+casttest!(disassemble_incomplete_sequence, |_prj, cmd| {
+    cmd.cast_fuse().args(["disassemble", "60"]).assert_success().stdout_eq("00000000: PUSH1\n\n");
+    cmd.cast_fuse()
+        .args(["disassemble", "6000"])
+        .assert_success()
+        .stdout_eq("00000000: PUSH1 0x00\n\n");
+    cmd.cast_fuse()
+        .args(["disassemble", "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"])
+        .assert_success()
+        .stdout_eq("00000000: PUSH32\n\n");
+    cmd.cast_fuse().args(["disassemble", "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"]).assert_success().stdout_eq("00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n\n");
+});

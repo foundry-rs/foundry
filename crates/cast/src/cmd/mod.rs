@@ -18,11 +18,11 @@ use foundry_cli::{
 };
 use foundry_common::{provider::RetryProvider, shell};
 use foundry_config::{Config, figment::Figment};
-use foundry_evm::opts::EvmOpts;
+use foundry_evm::{core::bytecode::InstIter, opts::EvmOpts};
 use futures::StreamExt;
 use serde::Serialize;
 use serde_json::Value;
-use std::fmt::Display;
+use std::fmt::{Display, Write};
 
 /// Loads Cast's config and applies its normalized network to the EVM options.
 pub(crate) fn load_cast_config_and_evm_opts(figment: Figment) -> Result<(Box<Config>, EvmOpts)> {
@@ -155,4 +155,12 @@ mod tests {
         assert!(config.networks.is_monad());
         assert!(evm_opts.networks.is_monad());
     }
+}
+
+pub(crate) fn disassemble(code: &[u8]) -> Result<String> {
+    let mut output = String::new();
+    for (pc, inst) in InstIter::new(code).with_pc() {
+        writeln!(output, "{pc:08x}: {inst}")?;
+    }
+    Ok(output)
 }

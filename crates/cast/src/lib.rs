@@ -100,7 +100,8 @@ impl SimpleCast {
         explorer_api_url: Option<String>,
         explorer_url: Option<String>,
     ) -> Result<String> {
-        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
+        let client =
+            args::explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let metadata = client.contract_source_code(contract_address.parse()?).await?;
         Ok(metadata.source_code())
     }
@@ -135,7 +136,8 @@ impl SimpleCast {
         explorer_api_url: Option<String>,
         explorer_url: Option<String>,
     ) -> eyre::Result<()> {
-        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
+        let client =
+            args::explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let meta = client.contract_source_code(contract_address.parse()?).await?;
         let source_tree = meta.source_tree();
         source_tree.write_to(&output_directory)?;
@@ -152,7 +154,8 @@ impl SimpleCast {
         explorer_api_url: Option<String>,
         explorer_url: Option<String>,
     ) -> Result<()> {
-        let client = explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
+        let client =
+            args::explorer_client(chain, etherscan_api_key, explorer_api_url, explorer_url)?;
         let metadata = client.contract_source_code(contract_address.parse()?).await?;
         let Some(metadata) = metadata.items.first() else {
             eyre::bail!("Empty contract source code");
@@ -173,29 +176,6 @@ impl SimpleCast {
         }
 
         Ok(())
-    }
-
-    /// Disassembles hex encoded bytecode into individual / human readable opcodes
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_primitives::hex;
-    /// use cast::SimpleCast as Cast;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let bytecode = "0x608060405260043610603f57600035";
-    /// let opcodes = Cast::disassemble(&hex::decode(bytecode)?)?;
-    /// println!("{}", opcodes);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn disassemble(code: &[u8]) -> Result<String> {
-        let mut output = String::new();
-        for (pc, inst) in InstIter::new(code).with_pc() {
-            writeln!(output, "{pc:08x}: {inst}")?;
-        }
-        Ok(output)
     }
 
     /// Gets the selector for a given function signature
@@ -351,33 +331,6 @@ fn encode_event_topic_preimage(value: &DynSolValue, out: &mut Vec<u8>) {
     }
 }
 
-fn explorer_client(
-    chain: Chain,
-    api_key: Option<String>,
-    api_url: Option<String>,
-    explorer_url: Option<String>,
-) -> Result<Client> {
-    let mut builder = Client::builder();
-
-    let deduced = chain.etherscan_urls();
-
-    let explorer_url = explorer_url
-        .or(deduced.map(|d| d.1.to_string()))
-        .ok_or_eyre("Please provide the explorer browser URL using `--explorer-url`")?;
-    builder = builder.with_url(explorer_url)?;
-
-    let api_url = api_url
-        .or(deduced.map(|d| d.0.to_string()))
-        .ok_or_eyre("Please provide the explorer API URL using `--explorer-api-url`")?;
-    builder = builder.with_api_url(api_url)?;
-
-    if let Some(api_key) = api_key {
-        builder = builder.with_api_key(api_key);
-    }
-
-    builder.build().map_err(Into::into)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{DynSolValue, SimpleCast as Cast, serialize_value_as_json};
@@ -464,26 +417,4 @@ mod tests {
     }
 
     // <https://github.com/foundry-rs/foundry/issues/2681>
-
-    #[test]
-    fn disassemble_incomplete_sequence() {
-        let incomplete = &hex!("60"); // PUSH1
-        let disassembled = Cast::disassemble(incomplete).unwrap();
-        assert_eq!(disassembled, "00000000: PUSH1\n");
-
-        let complete = &hex!("6000"); // PUSH1 0x00
-        let disassembled = Cast::disassemble(complete).unwrap();
-        assert_eq!(disassembled, "00000000: PUSH1 0x00\n");
-
-        let incomplete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 31 bytes
-        let disassembled = Cast::disassemble(incomplete).unwrap();
-        assert_eq!(disassembled, "00000000: PUSH32\n");
-
-        let complete = &hex!("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // PUSH32 with 32 bytes
-        let disassembled = Cast::disassemble(complete).unwrap();
-        assert_eq!(
-            disassembled,
-            "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n"
-        );
-    }
 }
