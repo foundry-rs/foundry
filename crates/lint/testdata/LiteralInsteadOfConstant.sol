@@ -11,7 +11,7 @@ pragma solidity ^0.8.18;
 // Out of scope: `0`, `1` and `2` (structural values), bare literals indexing an array-like
 // value, bounding a slice or giving a shift amount (positional or structural; mapping keys
 // count, they are configuration data), string and bool literals, single occurrences, and
-// repetitions split across two contracts. Yul `case` labels count like any other literal.
+// repetitions split across two contracts, and literals inside Yul blocks.
 
 contract Fees {
     uint256 internal total;
@@ -167,18 +167,20 @@ contract IndexEdgeCases {
     }
 }
 
-// A Yul `case` label is a literal like any other: it groups with the same value elsewhere.
-contract YulCaseLabels {
+// Yul literals are structural more often than they are magic values. They neither group with
+// each other nor with the same value in Solidity.
+contract YulLiterals {
     uint256 internal y;
 
     function labels(uint256 x) internal {
         uint256 r;
         assembly {
+            mstore(mload(0x40), 500)
             switch x
-            case 500 { r := 1 } //~NOTE: this literal appears multiple times
+            case 500 { r := 1 }
             default { r := 0 }
         }
-        y = r + 500; //~NOTE: this literal appears multiple times
+        y = r + 500;
     }
 }
 

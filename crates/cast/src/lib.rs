@@ -1458,7 +1458,12 @@ impl SimpleCast {
             let value_len = value_stripped.len();
             (sign, value_stripped, value_len)
         };
-        let decimals = NumberWithBase::parse_uint(decimals, None)?.number().to::<usize>();
+        let decimals_num = NumberWithBase::parse_uint(decimals, None)?.number();
+        let decimals: usize = decimals_num
+            .try_into()
+            .ok()
+            .filter(|&d: &usize| d <= u16::MAX as usize)
+            .ok_or_else(|| eyre::eyre!("decimals out of range: {decimals_num}"))?;
 
         let value = if decimals >= value_len {
             // Add "0." and pad with 0s
@@ -1584,7 +1589,7 @@ impl SimpleCast {
             .wrap_err("Could not convert to uint")?
             .0;
         let unit = unit.parse().wrap_err("could not parse units")?;
-        Ok(Self::format_unit_as_string(value, unit))
+        Ok(Self::format_unit_as_string(ParseUnits::U256(value), unit))
     }
 
     /// Convert a number into a uint with arbitrary decimals.
@@ -1621,19 +1626,39 @@ impl SimpleCast {
     /// assert_eq!(Cast::format_units("2500000", 6)?, "2.500000");
     /// assert_eq!(Cast::format_units("1000000000000", 12)?, "1"); // 12 decimals
     /// assert_eq!(Cast::format_units("1230", 3)?, "1.230"); // 3 decimals
+    /// assert_eq!(Cast::format_units("-1000000", 6)?, "-1"); // negative value
     ///
     /// # Ok(())
     /// # }
     /// ```
     pub fn format_units(value: &str, unit: u8) -> Result<String> {
-        let value = NumberWithBase::parse_int(value, None)?.number();
+        let value = NumberWithBase::parse_int(value, None)?;
         let unit = Unit::new(unit).ok_or_else(|| eyre::eyre!("invalid unit"))?;
-        Ok(Self::format_unit_as_string(value, unit))
+        let parsed = Self::signed_parse_units(&value)?;
+        Ok(Self::format_unit_as_string(parsed, unit))
+    }
+
+    /// Converts a parsed, possibly-negative [`NumberWithBase`] into a [`ParseUnits`], preserving
+    /// its sign.
+    ///
+    /// `NumberWithBase::number()` returns the two's-complement bits of a negative value modulo
+    /// 2^256, which is a wider range than [`I256`] can represent (magnitudes up to 2^255 only).
+    /// A magnitude beyond that range would silently reinterpret as a small *positive* [`I256`]
+    /// if constructed unconditionally via [`I256::from_raw`] -- reject it instead.
+    fn signed_parse_units(value: &NumberWithBase) -> Result<ParseUnits> {
+        if value.is_nonnegative() {
+            return Ok(ParseUnits::U256(value.number()));
+        }
+        let signed = I256::from_raw(value.number());
+        if !signed.is_negative() {
+            eyre::bail!("value out of range for a signed 256-bit integer");
+        }
+        Ok(ParseUnits::I256(signed))
     }
 
     // Helper function to format units as a string
-    fn format_unit_as_string(value: U256, unit: Unit) -> String {
-        let mut formatted = ParseUnits::U256(value).format_units(unit);
+    fn format_unit_as_string(value: ParseUnits, unit: Unit) -> String {
+        let mut formatted = value.format_units(unit);
         // Trim empty fractional part.
         if let Some(dot) = formatted.find('.') {
             let fractional = &formatted[dot + 1..];
@@ -1656,11 +1681,13 @@ impl SimpleCast {
     /// assert_eq!(Cast::from_wei("10", "ether")?, "0.000000000000000010");
     /// assert_eq!(Cast::from_wei("100", "eth")?, "0.000000000000000100");
     /// assert_eq!(Cast::from_wei("17", "ether")?, "0.000000000000000017");
+    /// assert_eq!(Cast::from_wei("-1000000000000000000", "ether")?, "-1.000000000000000000");
     /// # Ok::<_, eyre::Report>(())
     /// ```
     pub fn from_wei(value: &str, unit: &str) -> Result<String> {
-        let value = NumberWithBase::parse_int(value, None)?.number();
-        Ok(ParseUnits::U256(value).format_units(unit.parse()?))
+        let value = NumberWithBase::parse_int(value, None)?;
+        let parsed = Self::signed_parse_units(&value)?;
+        Ok(parsed.format_units(unit.parse()?))
     }
 
     /// Converts an eth amount into wei
@@ -1863,7 +1890,10 @@ impl SimpleCast {
     /// ```
     pub fn pad(s: &str, right: bool, len: usize) -> Result<String> {
         let s = strip_0x(s);
-        let hex_len = len * 2;
+        let hex_len = len
+            .checked_mul(2)
+            .filter(|&h| h <= u16::MAX as usize)
+            .ok_or_else(|| eyre::eyre!("len out of range: {len}"))?;
 
         // Validate input
         if s.len() > hex_len {
@@ -3046,5 +3076,31 @@ mod tests {
             disassembled,
             "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n"
         );
+    }
+
+    #[test]
+    fn to_fixed_point_rejects_decimals_too_large_to_convert() {
+        assert!(Cast::to_fixed_point("10", "18446744073709551616").is_err());
+    }
+
+    #[test]
+    fn to_fixed_point_rejects_decimals_above_format_width_limit() {
+        assert!(Cast::to_fixed_point("12345", "70000").is_err());
+        assert!(Cast::to_fixed_point("12345", "65536").is_err());
+    }
+
+    #[test]
+    fn pad_rejects_len_above_format_width_limit() {
+        assert!(Cast::pad("abcd", false, 32768).is_err());
+        assert!(Cast::pad("abcd", false, usize::MAX).is_err());
+    }
+
+    #[test]
+    fn pad_and_to_fixed_point_still_work_for_valid_inputs() {
+        assert_eq!(
+            Cast::pad("abcd", false, 20).unwrap(),
+            "0x000000000000000000000000000000000000abcd"
+        );
+        assert_eq!(Cast::to_fixed_point("10", "2").unwrap(), "0.10");
     }
 }

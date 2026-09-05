@@ -667,8 +667,7 @@ Important internal pieces:
   storage, logs, returndata, snapshots, and account lifecycle changes.
 - `CallFrame` tracks address, code address, storage address, caller, call value,
   static context, calldata, stack, memory, and returndata.
-- `SymbolicSolver` is the small internal trait used by the default SMT-LIB
-  subprocess backend, which resolves named solvers (z3, cvc5, yices, bitwuzla,
+- `SmtLibSubprocessSolver` resolves named solvers (z3, cvc5, yices, bitwuzla,
   etc.) into solver-specific argv via `solver_commands_for_config`.
 
 ## EVM And World Semantics

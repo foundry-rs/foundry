@@ -14,6 +14,10 @@ use axum::{
 };
 use eyre::Result;
 use foundry_common::{sh_err, sh_println};
+use std::{
+    hash::{DefaultHasher, Hasher},
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -27,9 +31,6 @@ pub async fn serve_and_open(
     contract_name: &str,
 ) -> Result<()> {
     let token = generate_token();
-
-    let state = ServerState { profile_json: Bytes::from(profile_json) };
-
     let app = Router::new()
         .route(&format!("/{token}/profile.json"), get(serve_profile))
         .layer(
@@ -38,49 +39,34 @@ pub async fn serve_and_open(
                 .allow_methods([Method::GET, Method::OPTIONS])
                 .allow_headers(Any),
         )
-        .with_state(state);
+        .with_state(Bytes::from(profile_json));
 
-    let bind_addr = "127.0.0.1:0";
-
-    let listener = TcpListener::bind(bind_addr).await?;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
 
-    let profile_url = format!("http://127.0.0.1:{port}/{token}/profile.json");
-    let title = format!("{contract_name}::{test_name}");
-
-    let encoded_url = percent_encode(&profile_url);
-    let encoded_title = percent_encode(&title);
-    let viewer_url =
-        format!("https://www.speedscope.app/#profileURL={encoded_url}&title={encoded_title}");
+    let profile_url = percent_encode(&format!("http://127.0.0.1:{port}/{token}/profile.json"));
+    let title = percent_encode(&format!("{contract_name}::{test_name}"));
+    let viewer_url = format!("https://www.speedscope.app/#profileURL={profile_url}&title={title}");
 
     sh_println!("Profile server running at http://127.0.0.1:{port}")?;
-
     sh_println!("Opening speedscope: {viewer_url}")?;
     if let Err(e) = opener::open(&viewer_url) {
         sh_err!("Failed to open browser: {e}")?;
     }
-
     sh_println!("\nPress Ctrl+C to stop the server.")?;
 
     // Run the server until interrupted.
     axum::serve(listener, app).await?;
-
     Ok(())
 }
 
 /// Generates a random token for the URL path (32 hex characters).
 fn generate_token() -> String {
-    use std::{
-        hash::{DefaultHasher, Hasher},
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let mut hasher = DefaultHasher::new();
     hasher.write_u128(nanos);
     hasher.write_usize(std::process::id() as usize);
-    let random_part = hasher.finish();
-    format!("{nanos:016x}{random_part:016x}")
+    format!("{nanos:016x}{:016x}", hasher.finish())
 }
 
 /// Percent-encode a URL for embedding in viewer URL parameters.
@@ -88,26 +74,16 @@ fn percent_encode(url: &str) -> String {
     let mut result = String::with_capacity(url.len() * 3);
     for byte in url.bytes() {
         match byte {
-            // Unreserved characters (RFC 3986)
+            // Unreserved characters (RFC 3986).
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                result.push(byte as char);
+                result.push(byte as char)
             }
-            // Everything else gets percent-encoded
-            _ => {
-                result.push('%');
-                result.push_str(&format!("{byte:02X}"));
-            }
+            _ => result.push_str(&format!("%{byte:02X}")),
         }
     }
     result
 }
 
-#[derive(Clone)]
-struct ServerState {
-    profile_json: Bytes,
-}
-
-async fn serve_profile(State(state): State<ServerState>) -> Response {
-    (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], state.profile_json)
-        .into_response()
+async fn serve_profile(State(profile_json): State<Bytes>) -> Response {
+    (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], profile_json).into_response()
 }

@@ -209,6 +209,8 @@ impl PathState {
         // semantics unless the callee sets its own prank.
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
+        child.expected_revert = None;
+        child.assume_no_revert_next_call = None;
         child
     }
 
@@ -217,8 +219,6 @@ impl PathState {
         child.storage_hook_active = true;
         child.recorded_logs = None;
         child.access_record = None;
-        child.expected_revert = None;
-        child.assume_no_revert_next_call = None;
         child.expected_emit = None;
         child.expected_calls.clear();
         child.expected_creates.clear();
@@ -1135,6 +1135,29 @@ impl ExpectedCall {
     pub(crate) const fn is_satisfied(&self) -> bool {
         if self.exact { self.observed == self.expected } else { self.observed >= self.expected }
     }
+}
+
+/// Registers an expected call using the concrete cheatcode's keyed-additive semantics.
+pub(crate) fn register_expected_call(
+    expected_calls: &mut Vec<ExpectedCall>,
+    cx: &mut SymCx,
+    expected: ExpectedCall,
+) -> Result<(), &'static str> {
+    if let Some(existing) = expected_calls
+        .iter_mut()
+        .find(|call| call.callee == expected.callee && call.data.same_bytes(cx, &expected.data))
+    {
+        if expected.exact {
+            return Err("counted expected calls can only bet set once");
+        }
+        if existing.exact {
+            return Err("cannot overwrite a counted expectCall with a non-counted expectCall");
+        }
+        existing.expected += 1;
+    } else {
+        expected_calls.push(expected);
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -2304,6 +2327,66 @@ mod tests {
         assert!(called_once.is_satisfied());
         // A second call beyond the exact count of 1 must be rejected.
         assert!(!called_once.observe());
+    }
+
+    #[test]
+    fn duplicate_non_counted_expect_call_merges_additively() {
+        let mut cx = SymCx::new();
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+        let mut expected_calls = Vec::new();
+        let first = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), None);
+        let second = ExpectedCall::new(callee, None, None, None, data, None);
+
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, first), Ok(()));
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, second), Ok(()));
+        assert_eq!(expected_calls.len(), 1);
+        assert_eq!(expected_calls[0].expected, 2);
+        assert!(expected_calls[0].observe());
+        assert!(!expected_calls[0].is_satisfied());
+        assert!(expected_calls[0].observe());
+        assert!(expected_calls[0].is_satisfied());
+    }
+
+    #[test]
+    fn duplicate_counted_expect_call_is_rejected() {
+        let mut cx = SymCx::new();
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+        let mut expected_calls = Vec::new();
+        let first = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), Some(3));
+        let counted = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), Some(5));
+        let non_counted = ExpectedCall::new(callee, None, None, None, data, None);
+
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, first), Ok(()));
+        assert_eq!(
+            register_expected_call(&mut expected_calls, &mut cx, counted),
+            Err("counted expected calls can only bet set once")
+        );
+        assert_eq!(
+            register_expected_call(&mut expected_calls, &mut cx, non_counted),
+            Err("cannot overwrite a counted expectCall with a non-counted expectCall")
+        );
+        assert_eq!(expected_calls.len(), 1);
+        assert_eq!(expected_calls[0].expected, 3);
+    }
+
+    #[test]
+    fn counted_expect_call_over_existing_non_counted_is_rejected() {
+        let mut cx = SymCx::new();
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+        let mut expected_calls = Vec::new();
+        let first = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), None);
+        let counted = ExpectedCall::new(callee, None, None, None, data, Some(2));
+
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, first), Ok(()));
+        assert_eq!(
+            register_expected_call(&mut expected_calls, &mut cx, counted),
+            Err("counted expected calls can only bet set once")
+        );
+        assert_eq!(expected_calls.len(), 1);
+        assert_eq!(expected_calls[0].expected, 1);
     }
 
     #[test]

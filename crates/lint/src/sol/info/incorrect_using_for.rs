@@ -8,7 +8,6 @@ use solar::{
     sema::{
         Gcx,
         hir::{self, Hir, UsingDirective, UsingEntryKind},
-        ty::TyKind,
     },
 };
 
@@ -27,9 +26,8 @@ impl<'hir> LateLintPass<'hir> for IncorrectUsingFor {
         hir: &'hir Hir<'hir>,
         id: hir::SourceId,
     ) {
-        // The file-level directives.
         for directive in hir.source(id).usings {
-            self.check_directive(ctx, gcx, hir, directive);
+            check_directive(ctx, gcx, hir, directive);
         }
     }
 
@@ -40,65 +38,49 @@ impl<'hir> LateLintPass<'hir> for IncorrectUsingFor {
         hir: &'hir Hir<'hir>,
         id: hir::ContractId,
     ) {
-        // The contract-level directives.
         for directive in hir.contract(id).usings {
-            self.check_directive(ctx, gcx, hir, directive);
+            check_directive(ctx, gcx, hir, directive);
         }
     }
 }
 
-impl IncorrectUsingFor {
-    /// Judges one `using ... for` directive: a library entry that contributes no member to the
-    /// target type attaches nothing, which means no function of the library accepts the type
-    /// as its bound first parameter.
-    fn check_directive<'hir>(
-        &self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        directive: &'hir UsingDirective<'hir>,
-    ) {
-        // `using L for *` attaches every function of the library: nothing to validate.
-        let Some(hir_ty) = &directive.ty else { return };
-        // `members_of` expects reference types wrapped in their data location. Storage
-        // converts implicitly to memory but not to calldata, so a library function whose
-        // bound first parameter is `calldata` only shows up under the calldata form: each
-        // location is probed and the directive only flags when none of them attaches.
-        let base_ty = gcx.type_of_hir_ty(hir_ty);
-        let tys = [
-            base_ty.with_loc_if_ref(gcx, DataLocation::Storage),
-            base_ty.with_loc_if_ref(gcx, DataLocation::Memory),
-            base_ty.with_loc_if_ref(gcx, DataLocation::Calldata),
-        ];
-        for entry in directive.entries {
-            // The braced form `using {f} for T` is already type-checked: the compiler rejects
-            // a function that cannot attach to `T`.
-            let UsingEntryKind::Library(library_id) = entry.kind else { continue };
-            // The directive is useful when at least one member the type gains in this scope
-            // comes from the named library. Whether the bound value converts to the first
-            // parameter is the type checker's business: `members_of` already reflects it.
-            let mut attaches = false;
-            // Each data location the bound value may live in is probed separately.
-            for ty in tys {
-                for member in gcx.members_of(ty, directive.source, directive.contract) {
-                    // A member counts when it is an attached function declared in the library,
-                    // excluding private ones: the library form skips private functions, so a
-                    // private member attached by a braced directive in scope does not make
-                    // this entry live.
-                    if member.attached
-                        && let TyKind::Fn(function_ty) = member.ty.kind
-                        && let Some(function_id) = function_ty.function_id
-                        && hir.function(function_id).contract == Some(library_id)
-                        && hir.function(function_id).visibility != hir::Visibility::Private
-                    {
-                        attaches = true;
-                    }
-                }
-            }
-            // No function of the library accepts the type: the directive is a no-op.
-            if !attaches {
-                ctx.emit(&INCORRECT_USING_FOR, entry.span);
-            }
+/// Judges one `using ... for` directive: a library entry that contributes no member to the
+/// target type attaches nothing, which means no function of the library accepts the type as
+/// its bound first parameter.
+fn check_directive<'hir>(
+    ctx: &LintContext,
+    gcx: Gcx<'hir>,
+    hir: &'hir Hir<'hir>,
+    directive: &'hir UsingDirective<'hir>,
+) {
+    // `using L for *` attaches every function of the library: nothing to validate.
+    let Some(hir_ty) = &directive.ty else { return };
+    // `members_of` expects reference types wrapped in their data location. Storage converts
+    // implicitly to memory but not to calldata, so a library function whose bound first
+    // parameter is `calldata` only shows up under the calldata form: each location is probed
+    // and the directive only flags when none of them attaches.
+    let base_ty = gcx.type_of_hir_ty(hir_ty);
+    let tys = [DataLocation::Storage, DataLocation::Memory, DataLocation::Calldata]
+        .map(|loc| base_ty.with_loc_if_ref(gcx, loc));
+    for entry in directive.entries {
+        // The braced form `using {f} for T` is already type-checked: the compiler rejects a
+        // function that cannot attach to `T`.
+        let UsingEntryKind::Library(library_id) = entry.kind else { continue };
+        // A member counts when it is an attached, non-private function declared in the library:
+        // the library form skips private functions, so a private member attached by a braced
+        // directive in scope does not make this entry live.
+        let attaches = tys
+            .iter()
+            .flat_map(|ty| gcx.members_of(*ty, directive.source, directive.contract))
+            .filter(|member| member.attached)
+            .filter_map(|member| member.ty.function_id())
+            .any(|function_id| {
+                let function = hir.function(function_id);
+                function.contract == Some(library_id)
+                    && function.visibility != hir::Visibility::Private
+            });
+        if !attaches {
+            ctx.emit(&INCORRECT_USING_FOR, entry.span);
         }
     }
 }

@@ -95,7 +95,7 @@ pub use showmap::{
     ShowmapDomain, ShowmapOpts, ShowmapReplayTarget, ShowmapStats, replay_corpus_to_showmap,
     replay_sequence_for_minimization,
 };
-pub use trace::TracingExecutor;
+pub use trace::{TracingExecutor, TracingFork};
 
 const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
 

@@ -1,11 +1,14 @@
 use super::UnusedReturn;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint, analysis::interface::receiver_contract_id},
+    sol::{
+        Severity, SolLint,
+        analysis::{is_elementary, receiver_contract_id, tuple_elems},
+    },
 };
 use solar::sema::{
     Gcx, Hir,
-    hir::{Expr, ExprKind, Function, Stmt, StmtKind, TypeKind, VariableId},
+    hir::{Expr, ExprKind, Stmt, StmtKind},
 };
 
 declare_forge_lint!(
@@ -19,99 +22,61 @@ impl<'hir> LateLintPass<'hir> for UnusedReturn {
     fn check_stmt(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
+        gcx: Gcx<'hir>,
         hir: &'hir Hir<'hir>,
         stmt: &'hir Stmt<'hir>,
     ) {
-        match &stmt.kind {
-            StmtKind::Expr(expr)
-                if is_unused_return_call(hir, expr) || is_ignored_tuple_assignment(hir, expr) =>
-            {
-                ctx.emit(&UNUSED_RETURN, expr.span);
+        let (call, span) = match &stmt.kind {
+            StmtKind::Expr(expr) => match &expr.peel_parens().kind {
+                // `(x, ) = call()` with an ignored slot.
+                ExprKind::Assign(lhs, None, rhs)
+                    if tuple_elems(lhs).is_some_and(|e| e.iter().any(Option::is_none)) =>
+                {
+                    (rhs, expr.span)
+                }
+                _ => (expr, expr.span),
+            },
+            StmtKind::DeclMulti(vars, expr) if vars.iter().any(Option::is_none) => {
+                (expr, expr.span)
             }
-            StmtKind::DeclMulti(vars, expr)
-                if vars.iter().any(Option::is_none) && is_unused_return_call(hir, expr) =>
-            {
-                ctx.emit(&UNUSED_RETURN, expr.span);
-            }
-            _ => {}
+            _ => return,
+        };
+        if is_unused_return_call(gcx, hir, call) {
+            ctx.emit(&UNUSED_RETURN, span);
         }
     }
 }
 
-fn is_ignored_tuple_assignment(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
-    let ExprKind::Assign(lhs, None, rhs) = &expr.peel_parens().kind else { return false };
-    matches!(&lhs.peel_parens().kind, ExprKind::Tuple(elems) if elems.iter().any(Option::is_none))
-        && is_unused_return_call(hir, rhs)
-}
+/// True if `expr` is a member call on a contract whose every candidate function (same name and
+/// arity) has return values, excluding ERC20 `transfer`/`transferFrom` (covered by
+/// `erc20-unchecked-transfer`).
+fn is_unused_return_call<'hir>(gcx: Gcx<'hir>, hir: &Hir<'hir>, expr: &Expr<'hir>) -> bool {
+    let ExprKind::Call(callee, args, ..) = &expr.peel_parens().kind else { return false };
+    let ExprKind::Member(receiver, name) = &callee.peel_parens().kind else { return false };
+    let Some(cid) = receiver_contract_id(gcx, receiver) else { return false };
 
-/// Returns true if `expr` is a member call on a contract whose resolved function has return
-/// values, excluding ERC20 `transfer`/`transferFrom` (covered by `erc20-unchecked-transfer`).
-fn is_unused_return_call(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
-    let is_type = |var_id: VariableId, type_str: &str| {
-        matches!(
-            &hir.variable(var_id).ty.kind,
-            TypeKind::Elementary(ty) if ty.to_abi_str() == type_str
-        )
+    let sig = |vars: &[_], expected: &[&str]| {
+        vars.len() == expected.len()
+            && vars.iter().zip(expected).all(|(&id, &ty)| is_elementary(hir, id, ty))
     };
-
-    let ExprKind::Call(callee, call_args, ..) = &expr.peel_parens().kind else { return false };
-    let ExprKind::Member(contract_expr, func_ident) = &callee.peel_parens().kind else {
-        return false;
-    };
-
-    // Arity from either positional or named args.
-    let arity = call_args.kind.len();
-
-    let Some(cid) = receiver_contract_id(hir, contract_expr) else { return false };
-
-    let mut has_candidate = false;
-    for item in hir.contract_item_ids(cid) {
-        let Some(fid) = item.as_function() else { continue };
-        let func = hir.function(fid);
-        if func.name.is_none_or(|n| n.as_str() != func_ident.as_str())
-            || !func.kind.is_function()
-            || func.parameters.len() != arity
-        {
-            continue;
-        }
-
-        has_candidate = true;
-
-        // If any matching overload returns nothing, we can't tell which overload is being called,
-        // skip to avoid a false positive.
-        if func.returns.is_empty() {
-            return false;
-        }
-
-        // If any candidate is an ERC20 transfer/transferFrom, defer to erc20-unchecked-transfer.
-        if is_erc20_transfer_sig(func, func_ident.as_str(), &is_type) {
-            return false;
-        }
-    }
-
-    has_candidate
-}
-
-/// Returns true if `func` matches the ERC20 `transfer` or `transferFrom` signature exactly.
-/// These are handled by `erc20-unchecked-transfer` and must not be double-reported.
-fn is_erc20_transfer_sig(
-    func: &Function<'_>,
-    name: &str,
-    is_type: &impl Fn(VariableId, &str) -> bool,
-) -> bool {
-    match name {
-        "transfer" if func.parameters.len() == 2 && func.returns.len() == 1 => {
-            is_type(func.parameters[0], "address")
-                && is_type(func.parameters[1], "uint256")
-                && is_type(func.returns[0], "bool")
-        }
-        "transferFrom" if func.parameters.len() == 3 && func.returns.len() == 1 => {
-            is_type(func.parameters[0], "address")
-                && is_type(func.parameters[1], "address")
-                && is_type(func.parameters[2], "uint256")
-                && is_type(func.returns[0], "bool")
-        }
-        _ => false,
-    }
+    let mut candidates = hir
+        .contract_item_ids(cid)
+        .filter_map(|item| item.as_function())
+        .map(|fid| hir.function(fid))
+        .filter(|f| {
+            f.kind.is_function()
+                && f.name.is_some_and(|n| n.name == name.name)
+                && f.parameters.len() == args.kind.len()
+        })
+        .peekable();
+    candidates.peek().is_some()
+        && candidates.all(|f| {
+            let is_erc20_transfer = sig(f.returns, &["bool"])
+                && match name.as_str() {
+                    "transfer" => sig(f.parameters, &["address", "uint256"]),
+                    "transferFrom" => sig(f.parameters, &["address", "address", "uint256"]),
+                    _ => false,
+                };
+            !f.returns.is_empty() && !is_erc20_transfer
+        })
 }

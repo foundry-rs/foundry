@@ -9,13 +9,16 @@ use alloy_primitives::{
     map::{AddressHashMap, HashMap},
 };
 use eyre::Report;
-use foundry_common::{ContractsByArtifact, get_contract_name, get_file_name, shell};
+use foundry_common::{ContractsByArtifact, get_contract_name, shell};
 use foundry_config::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 use foundry_evm::{
     core::{Breakpoints, evm::FoundryEvmNetwork},
     coverage::HitMaps,
     decode::SkipReason,
-    executors::{RawCallResult, invariant::InvariantMetrics},
+    executors::{
+        RawCallResult,
+        invariant::{CheckSequenceFailureSite, CheckSequenceOutcome, InvariantMetrics},
+    },
     fuzz::{
         CallDetails, CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult,
         strategies::EvmFuzzState,
@@ -27,9 +30,9 @@ use foundry_evm_symbolic::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    borrow::Cow,
     collections::{BTreeMap, HashMap as Map},
     fmt::{self, Write},
+    path::PathBuf,
     sync::OnceLock,
     time::Duration,
 };
@@ -110,47 +113,15 @@ impl TestOutcome {
         self.results.values().flat_map(|suite| suite.tests())
     }
 
-    /// Returns merged symbolic solver portfolio diagnostics across all tests in this outcome.
-    pub fn symbolic_portfolio_diagnostics(&self) -> Option<PortfolioDiagnostics> {
-        let mut diagnostics = PortfolioDiagnostics::default();
-        for (_, result) in self.tests() {
-            if let Some(result_diagnostics) = &result.symbolic_portfolio_diagnostics {
-                diagnostics.merge(result_diagnostics);
-            }
-        }
-        (!diagnostics.is_empty()).then_some(diagnostics)
-    }
-
-    /// Flattens the test outcome into a list of individual tests.
-    // TODO: Replace this with `tests` and make it return `TestRef<'_>`
-    pub fn into_tests_cloned(&self) -> impl Iterator<Item = SuiteTestResult> + '_ {
-        self.results
-            .iter()
-            .flat_map(|(file, suite)| {
-                suite
-                    .test_results
-                    .iter()
-                    .map(move |(sig, result)| (file.clone(), sig.clone(), result.clone()))
-            })
-            .map(|(artifact_id, signature, result)| SuiteTestResult {
-                artifact_id,
-                signature,
-                result,
-            })
-    }
-
     /// Flattens the test outcome into a list of individual tests.
     pub fn into_tests(self) -> impl Iterator<Item = SuiteTestResult> {
-        self.results
-            .into_iter()
-            .flat_map(|(file, suite)| {
-                suite.test_results.into_iter().map(move |t| (file.clone(), t))
-            })
-            .map(|(artifact_id, (signature, result))| SuiteTestResult {
-                artifact_id,
+        self.results.into_iter().flat_map(|(artifact_id, suite)| {
+            suite.test_results.into_iter().map(move |(signature, result)| SuiteTestResult {
+                artifact_id: artifact_id.clone(),
                 signature,
                 result,
             })
+        })
     }
 
     /// Returns the number of tests that passed.
@@ -173,16 +144,12 @@ impl TestOutcome {
         self.failures().any(|(_, t)| t.kind.is_fuzz() || t.kind.is_invariant())
     }
 
-    /// Returns `true` if any invariant test failed.
-    pub fn has_invariant_failures(&self) -> bool {
-        self.failures().any(|(_, t)| t.kind.is_invariant())
-    }
-
     /// Returns `true` if all failing tests can be meaningfully inspected with `forge test --debug`.
-    pub fn failed_tests_are_debuggable(&self) -> bool {
+    fn failed_tests_are_debuggable(&self) -> bool {
         self.failures().all(|(_, result)| result.is_debuggable_failure())
     }
 
+    /// Returns the shared parallel worker count of all failing invariant tests, if they agree.
     fn invariant_workers_hint(&self) -> Option<usize> {
         let mut workers = self.failures().filter_map(|(_, result)| result.kind.invariant_workers());
         let first = workers.next()?;
@@ -200,28 +167,21 @@ impl TestOutcome {
     pub fn summary(&self, wall_clock_time: Duration) -> String {
         let num_test_suites = self.results.len();
         let suites = if num_test_suites == 1 { "suite" } else { "suites" };
-        let total_passed = self.passed();
-        let total_failed = self.failed();
-        let total_skipped = self.skipped();
-        let total_tests = total_passed + total_failed + total_skipped;
+        let (passed, failed, skipped) = (self.passed(), self.failed(), self.skipped());
         format!(
-            "\nRan {} test {} in {:.2?} ({:.2?} CPU time): {} tests passed, {} failed, {} skipped ({} total tests)",
-            num_test_suites,
-            suites,
-            wall_clock_time,
+            "\nRan {num_test_suites} test {suites} in {wall_clock_time:.2?} ({:.2?} CPU time): {} tests passed, {} failed, {} skipped ({} total tests)",
             self.total_time(),
-            total_passed.green(),
-            total_failed.red(),
-            total_skipped.yellow(),
-            total_tests
+            passed.green(),
+            failed.red(),
+            skipped.yellow(),
+            passed + failed + skipped
         )
     }
 
     /// Checks if there are any failures and failures are disallowed.
     pub fn ensure_ok(&self, silent: bool) -> eyre::Result<()> {
-        let outcome = self;
-        let failures = outcome.failures().count();
-        if outcome.allow_failure || failures == 0 {
+        let failures = self.failures().count();
+        if self.allow_failure || failures == 0 {
             return Ok(());
         }
 
@@ -230,7 +190,7 @@ impl TestOutcome {
         }
 
         sh_println!("\nFailing tests:")?;
-        for (suite_name, suite) in &outcome.results {
+        for (suite_name, suite) in &self.results {
             let failed = suite.failed();
             if failed == 0 {
                 continue;
@@ -243,22 +203,18 @@ impl TestOutcome {
             }
             sh_println!()?;
         }
-        let successes = outcome.passed();
         sh_println!(
             "Encountered a total of {} failing tests, {} tests succeeded",
             failures.to_string().red(),
-            successes.to_string().green()
+            self.passed().to_string().green()
         )?;
 
-        // Show helpful hint for rerunning failed tests
         let test_word = if failures == 1 { "test" } else { "tests" };
         sh_println!(
-            "\nTip: Run {} to retry only the {} failed {}",
-            "`forge test --rerun`".cyan(),
-            failures,
-            test_word
+            "\nTip: Run {} to retry only the {failures} failed {test_word}",
+            "`forge test --rerun`".cyan()
         )?;
-        if outcome.failed_tests_are_debuggable() {
+        if self.failed_tests_are_debuggable() {
             sh_println!(
                 "Tip: Run {} to inspect one failing test in the debugger",
                 "`forge test --debug --match-test <TEST_NAME>`".cyan()
@@ -267,17 +223,16 @@ impl TestOutcome {
 
         // Print seed for fuzz/invariant test failures to enable reproduction.
         if let Some(seed) = self.fuzz_seed
-            && outcome.has_fuzz_failures()
+            && self.has_fuzz_failures()
         {
             sh_println!(
                 "\nFuzz seed: {} (use {} to reproduce)",
                 format!("{seed:#x}").cyan(),
                 "`--fuzz-seed`".cyan()
             )?;
-            if let Some(invariant_workers) = outcome.invariant_workers_hint() {
+            if let Some(invariant_workers) = self.invariant_workers_hint() {
                 sh_println!(
-                    "Invariant workers: {} (use {} to reproduce)",
-                    invariant_workers,
+                    "Invariant workers: {invariant_workers} (use {} to reproduce)",
                     format!("`--invariant-workers {invariant_workers}`").cyan()
                 )?;
             }
@@ -289,490 +244,9 @@ impl TestOutcome {
     /// Removes first test result, if any.
     pub fn remove_first(&mut self) -> Option<(String, String, TestResult)> {
         self.results.iter_mut().find_map(|(suite_name, suite)| {
-            if let Some(test_name) = suite.test_results.keys().next().cloned() {
-                let result = suite.test_results.remove(&test_name).unwrap();
-                Some((suite_name.clone(), test_name, result))
-            } else {
-                None
-            }
+            let (test_name, result) = suite.test_results.pop_first()?;
+            Some((suite_name.clone(), test_name, result))
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const SYMBOLIC_RESULT_SCHEMA_JSON: &str =
-        include_str!("../../evm/symbolic/assets/symbolic-result.schema.json");
-    const SYMBOLIC_COUNTEREXAMPLE_SCHEMA_JSON: &str =
-        include_str!("../../evm/symbolic/assets/symbolic-counterexample.schema.json");
-
-    fn schema_defs(schema: &serde_json::Value) -> &serde_json::Map<String, serde_json::Value> {
-        schema["$defs"].as_object().expect("schema $defs object")
-    }
-
-    fn assert_counterexample_schema_refs_resolve_offline() {
-        let counterexample_schema: serde_json::Value =
-            serde_json::from_str(SYMBOLIC_COUNTEREXAMPLE_SCHEMA_JSON).unwrap();
-        let result_schema: serde_json::Value =
-            serde_json::from_str(SYMBOLIC_RESULT_SCHEMA_JSON).unwrap();
-        let result_defs = schema_defs(&result_schema);
-        let counterexample_defs = schema_defs(&counterexample_schema);
-
-        fn visit_refs(
-            value: &serde_json::Value,
-            result_defs: &serde_json::Map<String, serde_json::Value>,
-            counterexample_defs: &serde_json::Map<String, serde_json::Value>,
-        ) {
-            match value {
-                serde_json::Value::Object(map) => {
-                    if let Some(reference) = map.get("$ref").and_then(serde_json::Value::as_str) {
-                        if let Some(name) = reference.strip_prefix(
-                            "https://foundry-rs.github.io/schemas/symbolic-result.v1.schema.json#/$defs/",
-                        ) {
-                            assert!(result_defs.contains_key(name), "unresolved ref {reference}");
-                        } else if let Some(name) = reference.strip_prefix("#/$defs/") {
-                            assert!(
-                                counterexample_defs.contains_key(name),
-                                "unresolved ref {reference}"
-                            );
-                        } else {
-                            panic!("unexpected schema ref {reference}");
-                        }
-                    }
-                    for child in map.values() {
-                        visit_refs(child, result_defs, counterexample_defs);
-                    }
-                }
-                serde_json::Value::Array(values) => {
-                    for child in values {
-                        visit_refs(child, result_defs, counterexample_defs);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        visit_refs(&counterexample_schema, result_defs, counterexample_defs);
-    }
-
-    #[test]
-    fn symbolic_result_schema_includes_solver_stats() {
-        let schema: serde_json::Value = serde_json::from_str(SYMBOLIC_RESULT_SCHEMA_JSON).unwrap();
-        let stats = schema["$defs"]["solver_stats"]["properties"]
-            .as_object()
-            .expect("solver stats properties");
-
-        for key in [
-            "paths",
-            "solver_queries",
-            "smt_queries",
-            "sat_queries",
-            "model_queries",
-            "sat_cache_hits",
-            "model_cache_hits",
-            "heuristic_witnesses",
-            "solver_time_ms",
-            "smt_input_bytes",
-            "smt_max_query_bytes",
-            "smt_build_time_ms",
-            "smt_max_query_time_ms",
-        ] {
-            assert!(stats.contains_key(key), "missing solver stats schema key {key}");
-        }
-    }
-
-    fn assert_counterexample_artifact_shape(value: &serde_json::Value) {
-        assert_counterexample_schema_refs_resolve_offline();
-        let object = value.as_object().expect("artifact object");
-        for key in [
-            "schema_version",
-            "schema",
-            "kind",
-            "test",
-            "replay",
-            "replay_semantics",
-            "bounds",
-            "solver",
-            "assumptions",
-            "call_trace",
-            "calls",
-        ] {
-            assert!(object.contains_key(key), "missing required artifact key {key}");
-        }
-        assert_eq!(value["schema_version"], 1);
-        assert_eq!(value["schema"], SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA);
-        assert!(matches!(value["kind"].as_str(), Some("single_call" | "sequence")));
-        assert!(value["replay_semantics"].is_object());
-        assert!(!value["calls"].as_array().expect("calls array").is_empty());
-        for call in value["calls"].as_array().unwrap() {
-            let call = call.as_object().expect("call object");
-            for key in [
-                "warp",
-                "roll",
-                "sender",
-                "target",
-                "calldata",
-                "value",
-                "contract_name",
-                "function_name",
-                "signature",
-                "args",
-                "raw_args",
-            ] {
-                assert!(call.contains_key(key), "missing required call key {key}");
-            }
-            for key in ["warp", "roll", "value"] {
-                let Some(encoded) = call[key].as_str() else { continue };
-                let Some(hex) = encoded.strip_prefix("0x") else {
-                    panic!("{key} must be 0x-prefixed hex quantity: {encoded}");
-                };
-                assert!(
-                    hex == "0" || !hex.starts_with('0'),
-                    "{key} must be compact hex quantity without leading zeros: {encoded}"
-                );
-                assert!(
-                    hex.bytes().all(|byte| byte.is_ascii_hexdigit()),
-                    "{key} must be hex quantity: {encoded}"
-                );
-            }
-        }
-    }
-
-    fn outcome_with_failed_invariant_workers(workers: &[usize]) -> TestOutcome {
-        let test_results = workers
-            .iter()
-            .enumerate()
-            .map(|(idx, workers)| {
-                (
-                    format!("invariant{idx}()"),
-                    TestResult {
-                        status: TestStatus::Failure,
-                        kind: TestKind::Invariant {
-                            runs: 0,
-                            calls: 0,
-                            reverts: 0,
-                            workers: *workers,
-                            metrics: Map::new(),
-                            failed_corpus_replays: 0,
-                            optimization_best_value: None,
-                        },
-                        ..Default::default()
-                    },
-                )
-            })
-            .collect();
-        TestOutcome::new(
-            None,
-            BTreeMap::from([(
-                "suite".to_string(),
-                SuiteResult::new(Duration::ZERO, test_results, Vec::new()),
-            )]),
-            false,
-            None,
-        )
-    }
-
-    fn outcome_with_results(test_results: Vec<TestResult>) -> TestOutcome {
-        TestOutcome::new(
-            None,
-            BTreeMap::from([(
-                "suite".to_string(),
-                SuiteResult::new(
-                    Duration::ZERO,
-                    test_results
-                        .into_iter()
-                        .enumerate()
-                        .map(|(idx, result)| (format!("test{idx}()"), result))
-                        .collect(),
-                    Vec::new(),
-                ),
-            )]),
-            false,
-            None,
-        )
-    }
-
-    fn failed_result(kind: TestKind) -> TestResult {
-        TestResult { status: TestStatus::Failure, kind, ..Default::default() }
-    }
-
-    #[test]
-    fn failed_tests_are_debuggable_for_unit_failures() {
-        let outcome = outcome_with_results(vec![failed_result(TestKind::Unit { gas: 0 })]);
-
-        assert!(outcome.failed_tests_are_debuggable());
-    }
-
-    #[test]
-    fn failed_tests_are_not_debuggable_for_invariant_failures() {
-        let outcome = outcome_with_results(vec![failed_result(TestKind::Invariant {
-            runs: 0,
-            calls: 0,
-            reverts: 0,
-            workers: 1,
-            metrics: Map::new(),
-            failed_corpus_replays: 0,
-            optimization_best_value: None,
-        })]);
-
-        assert!(!outcome.failed_tests_are_debuggable());
-    }
-
-    #[test]
-    fn failed_tests_are_not_debuggable_for_symbolic_failures() {
-        let outcome = outcome_with_results(vec![failed_result(TestKind::Symbolic {
-            paths: 0,
-            solver_queries: 0,
-            smt_queries: 0,
-            sat_queries: 0,
-            model_queries: 0,
-            sat_cache_hits: 0,
-            model_cache_hits: 0,
-            heuristic_witnesses: 0,
-            solver_time_ms: 0,
-            smt_input_bytes: 0,
-            smt_max_query_bytes: 0,
-            smt_build_time_ms: 0,
-            smt_max_query_time_ms: 0,
-        })]);
-
-        assert!(!outcome.failed_tests_are_debuggable());
-    }
-
-    #[test]
-    fn failed_tests_are_not_debuggable_for_symbolic_backed_failures() {
-        let mut result = failed_result(TestKind::Unit { gas: 0 });
-        result.symbolic =
-            Some(SymbolicResult::pass(&SymbolicConfig::default(), SymbolicStats::default()));
-        let outcome = outcome_with_results(vec![result]);
-
-        assert!(!outcome.failed_tests_are_debuggable());
-    }
-
-    #[test]
-    fn invariant_workers_hint_requires_matching_parallel_worker_counts() {
-        assert_eq!(
-            outcome_with_failed_invariant_workers(&[3, 3]).invariant_workers_hint(),
-            Some(3)
-        );
-        assert_eq!(outcome_with_failed_invariant_workers(&[2, 3]).invariant_workers_hint(), None);
-        assert_eq!(outcome_with_failed_invariant_workers(&[1]).invariant_workers_hint(), None);
-    }
-
-    #[test]
-    fn invariant_kind_deserializes_legacy_payload_without_workers() {
-        let kind = serde_json::from_value::<TestKind>(serde_json::json!({
-            "Invariant": {
-                "runs": 4,
-                "calls": 10,
-                "reverts": 0,
-                "metrics": {},
-                "failed_corpus_replays": 0,
-                "optimization_best_value": null
-            }
-        }))
-        .unwrap();
-
-        assert_eq!(kind.invariant_workers(), Some(1));
-    }
-
-    #[test]
-    fn symbolic_counterexample_artifact_serializes_sequence_calls() {
-        let symbolic = SymbolicResult::pass(&SymbolicConfig::default(), SymbolicStats::default());
-        let call = SymbolicCounterexampleCall {
-            warp: Some(U256::from(12)),
-            roll: Some(U256::from(3)),
-            sender: Address::ZERO,
-            target: Address::ZERO,
-            calldata: Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
-            value: Some(U256::from(9)),
-            contract_name: Some("Target".to_string()),
-            function_name: Some("step".to_string()),
-            signature: Some("step()".to_string()),
-            args: Some(String::new()),
-            raw_args: Some(String::new()),
-        };
-        let artifact = SymbolicCounterexampleArtifact::new(
-            SymbolicCounterexampleArtifactKind::Sequence,
-            SymbolicCounterexampleTestIdentity {
-                contract: "InvariantTest".to_string(),
-                test: "invariant_counter()".to_string(),
-            },
-            &symbolic,
-            SymbolicCounterexampleReplaySemantics { fail_on_revert: false },
-            vec![call.clone(), call],
-        );
-
-        let value = serde_json::to_value(artifact).unwrap();
-        assert_eq!(value["schema_version"], 1);
-        assert_eq!(value["schema"], SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA);
-        assert_eq!(value["kind"], "sequence");
-        assert_eq!(value["replay_semantics"]["fail_on_revert"], false);
-        assert!(value.get("storage").is_none());
-        assert!(value.get("invariant_failure").is_none());
-        assert_eq!(value["calls"].as_array().unwrap().len(), 2);
-        assert_eq!(value["calls"][0]["calldata"], "0x12345678");
-        assert_eq!(value["calls"][0]["warp"], "0xc");
-        assert_eq!(value["calls"][0]["roll"], "0x3");
-        assert_eq!(value["calls"][0]["value"], "0x9");
-        assert_counterexample_artifact_shape(&value);
-
-        let decoded = serde_json::from_value::<SymbolicCounterexampleArtifact>(value).unwrap();
-        assert!(decoded.storage.is_empty());
-        assert!(decoded.invariant_failure.is_none());
-    }
-
-    #[test]
-    fn symbolic_counterexample_artifact_serializes_invariant_replay_metadata() {
-        let symbolic = SymbolicResult::pass(&SymbolicConfig::default(), SymbolicStats::default());
-        let call = SymbolicCounterexampleCall {
-            warp: None,
-            roll: None,
-            sender: Address::ZERO,
-            target: Address::repeat_byte(0x22),
-            calldata: Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
-            value: None,
-            contract_name: Some("Target".to_string()),
-            function_name: Some("step".to_string()),
-            signature: Some("step()".to_string()),
-            args: Some(String::new()),
-            raw_args: Some(String::new()),
-        };
-        let artifact = SymbolicCounterexampleArtifact::new(
-            SymbolicCounterexampleArtifactKind::Sequence,
-            SymbolicCounterexampleTestIdentity {
-                contract: "InvariantTest".to_string(),
-                test: "invariant_counter()".to_string(),
-            },
-            &symbolic,
-            SymbolicCounterexampleReplaySemantics { fail_on_revert: true },
-            vec![call],
-        )
-        .with_storage(vec![SymbolicStorageAssignment {
-            address: Address::repeat_byte(0x11),
-            slot: U256::from(7),
-            value: U256::from(42),
-        }])
-        .with_invariant_failure(SymbolicInvariantArtifactFailure::Handler {
-            name: Some("Target::step".to_string()),
-            reverter: Address::repeat_byte(0x22),
-            selector: Selector::from([0x12, 0x34, 0x56, 0x78]),
-            fingerprint: B256::repeat_byte(0x33),
-        });
-
-        let value = serde_json::to_value(artifact.clone()).unwrap();
-        assert_eq!(value["storage"][0]["address"], format!("{:?}", Address::repeat_byte(0x11)));
-        assert_eq!(value["storage"][0]["slot"], "0x7");
-        assert_eq!(value["storage"][0]["value"], "0x2a");
-        assert_eq!(value["invariant_failure"]["kind"], "handler");
-        assert_eq!(value["invariant_failure"]["name"], "Target::step");
-        assert_eq!(
-            value["invariant_failure"]["reverter"],
-            format!("{:?}", Address::repeat_byte(0x22))
-        );
-        assert_eq!(value["invariant_failure"]["selector"], "0x12345678");
-        assert_eq!(
-            value["invariant_failure"]["fingerprint"],
-            format!("{:?}", B256::repeat_byte(0x33))
-        );
-        assert_counterexample_artifact_shape(&value);
-
-        let decoded = serde_json::from_value::<SymbolicCounterexampleArtifact>(value).unwrap();
-        assert_eq!(decoded.storage, artifact.storage);
-        assert_eq!(decoded.invariant_failure, artifact.invariant_failure);
-    }
-
-    #[test]
-    fn symbolic_counterexample_schema_includes_predicate_failure_sites() {
-        let schema: serde_json::Value =
-            serde_json::from_str(SYMBOLIC_COUNTEREXAMPLE_SCHEMA_JSON).unwrap();
-        let predicate = schema["$defs"]["invariant_failure"]["oneOf"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|variant| variant["properties"]["kind"]["const"] == "predicate")
-            .unwrap();
-        assert_eq!(predicate["properties"]["site"]["$ref"], "#/$defs/invariant_failure_site");
-
-        let site_schema = &schema["$defs"]["invariant_failure_site"];
-        let site_properties = site_schema["properties"].as_object().unwrap();
-        let required_site_properties = site_schema["required"].as_array().unwrap();
-        let site_kinds = site_properties["kind"]["enum"].as_array().unwrap();
-        for (site, expected_kind) in [
-            (
-                SymbolicInvariantFailureSite::SequenceCall {
-                    target: Address::ZERO,
-                    selector: Selector::ZERO,
-                    fingerprint: B256::ZERO,
-                },
-                "sequence_call",
-            ),
-            (
-                SymbolicInvariantFailureSite::Invariant {
-                    target: Address::ZERO,
-                    selector: Selector::ZERO,
-                    fingerprint: B256::ZERO,
-                },
-                "invariant",
-            ),
-            (
-                SymbolicInvariantFailureSite::AfterInvariant {
-                    target: Address::ZERO,
-                    selector: Selector::ZERO,
-                    fingerprint: B256::ZERO,
-                },
-                "after_invariant",
-            ),
-        ] {
-            let failure = SymbolicInvariantArtifactFailure::Predicate {
-                name: "invariant_counter".to_string(),
-                site: Some(site),
-            };
-            let value = serde_json::to_value(failure).unwrap();
-            assert_eq!(value["site"]["kind"], expected_kind);
-            assert!(site_kinds.contains(&value["site"]["kind"]));
-            let site = value["site"].as_object().unwrap();
-            assert!(site.keys().all(|key| site_properties.contains_key(key)));
-            assert!(
-                required_site_properties.iter().all(|key| site.contains_key(key.as_str().unwrap()))
-            );
-        }
-    }
-
-    #[test]
-    fn symbolic_counterexample_artifact_serializes_zero_quantities_compactly() {
-        let symbolic = SymbolicResult::pass(&SymbolicConfig::default(), SymbolicStats::default());
-        let call = SymbolicCounterexampleCall {
-            warp: Some(U256::ZERO),
-            roll: Some(U256::ZERO),
-            sender: Address::ZERO,
-            target: Address::ZERO,
-            calldata: Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
-            value: Some(U256::ZERO),
-            contract_name: Some("Target".to_string()),
-            function_name: Some("step".to_string()),
-            signature: Some("step()".to_string()),
-            args: Some(String::new()),
-            raw_args: Some(String::new()),
-        };
-        let artifact = SymbolicCounterexampleArtifact::new(
-            SymbolicCounterexampleArtifactKind::Sequence,
-            SymbolicCounterexampleTestIdentity {
-                contract: "InvariantTest".to_string(),
-                test: "invariant_counter()".to_string(),
-            },
-            &symbolic,
-            SymbolicCounterexampleReplaySemantics { fail_on_revert: false },
-            vec![call],
-        );
-
-        let value = serde_json::to_value(artifact).unwrap();
-        assert_eq!(value["calls"][0]["warp"], "0x0");
-        assert_eq!(value["calls"][0]["roll"], "0x0");
-        assert_eq!(value["calls"][0]["value"], "0x0");
-        assert_counterexample_artifact_shape(&value);
     }
 }
 
@@ -795,10 +269,10 @@ impl SuiteResult {
         mut warnings: Vec<String>,
     ) -> Self {
         // Add deprecated cheatcodes warning, if any of them used in current test suite.
-        let mut deprecated_cheatcodes = HashMap::new();
-        for test_result in test_results.values() {
-            deprecated_cheatcodes.extend(test_result.deprecated_cheatcodes.clone());
-        }
+        let deprecated_cheatcodes = test_results
+            .values()
+            .flat_map(|result| result.deprecated_cheatcodes.iter().map(|(k, v)| (*k, *v)))
+            .collect::<HashMap<_, _>>();
         if !deprecated_cheatcodes.is_empty() {
             let mut warning =
                 "the following cheatcode(s) are deprecated and will be removed in future versions:"
@@ -832,7 +306,7 @@ impl SuiteResult {
 
     /// Returns the number of tests that passed.
     pub fn passed(&self) -> usize {
-        self.test_results.values().map(TestResult::passed_count).sum()
+        self.test_results.values().filter(|t| t.status.is_success()).count()
     }
 
     /// Returns the number of tests that were skipped.
@@ -842,7 +316,7 @@ impl SuiteResult {
 
     /// Returns the number of tests that failed.
     pub fn failed(&self) -> usize {
-        self.test_results.values().map(TestResult::failed_count).sum()
+        self.test_results.values().filter(|t| t.status.is_failure()).count()
     }
 
     /// Iterator over all tests and their names
@@ -872,8 +346,7 @@ impl SuiteResult {
         let failed = self.failed();
         let result = if failed == 0 { "ok".green() } else { "FAILED".red() };
         format!(
-            "Suite result: {}. {} passed; {} failed; {} skipped; finished in {:.2?} ({:.2?} CPU time)",
-            result,
+            "Suite result: {result}. {} passed; {} failed; {} skipped; finished in {:.2?} ({:.2?} CPU time)",
             self.passed().green(),
             failed.red(),
             self.skipped().yellow(),
@@ -899,18 +372,13 @@ pub struct SuiteTestResult {
 
 impl SuiteTestResult {
     /// Returns the gas used by the test.
-    pub fn gas_used(&self) -> u64 {
+    pub const fn gas_used(&self) -> u64 {
         self.result.kind.report().gas()
     }
 
     /// Returns the contract name of the artifact ID.
     pub fn contract_name(&self) -> &str {
         get_contract_name(&self.artifact_id)
-    }
-
-    /// Returns the file name of the artifact ID.
-    pub fn file_name(&self) -> &str {
-        get_file_name(&self.artifact_id)
     }
 }
 
@@ -964,7 +432,7 @@ pub enum InvariantFailure {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         minimization: Option<SymbolicCounterexampleMinimization>,
         /// Path where the counterexample was persisted for re-running and shrinking.
-        persisted_path: std::path::PathBuf,
+        persisted_path: PathBuf,
         /// Whether this failure is the stable campaign anchor.
         /// When `true` and this is the only single-predicate failure, the function name is
         /// omitted on the `[FAIL: ...]` line (the trailing summary already identifies it).
@@ -1087,15 +555,7 @@ pub struct SymbolicResult {
 impl SymbolicResult {
     /// Creates a symbolic pass result.
     pub fn pass(config: &SymbolicConfig, stats: SymbolicStats) -> Self {
-        Self::new(
-            SymbolicResultStatus::Pass,
-            config,
-            stats,
-            None,
-            SymbolicReplayMetadata::not_required(),
-            SymbolicCallTrace::none(),
-            None,
-        )
+        Self::base(config, stats)
     }
 
     /// Creates a symbolic counterexample result that concrete replay confirmed.
@@ -1105,15 +565,10 @@ impl SymbolicResult {
         call_trace: SymbolicCallTrace,
         counterexample: SymbolicCounterexample,
     ) -> Self {
-        Self::new(
-            SymbolicResultStatus::FailCounterexample,
-            config,
-            stats,
-            None,
-            SymbolicReplayMetadata::confirmed(),
-            call_trace,
-            Some(counterexample),
-        )
+        Self {
+            counterexample: Some(counterexample),
+            ..Self::fail_counterexample_sequence(config, stats, call_trace)
+        }
     }
 
     /// Creates a symbolic sequence counterexample result that concrete replay confirmed.
@@ -1122,15 +577,12 @@ impl SymbolicResult {
         stats: SymbolicStats,
         call_trace: SymbolicCallTrace,
     ) -> Self {
-        Self::new(
-            SymbolicResultStatus::FailCounterexample,
-            config,
-            stats,
-            None,
-            SymbolicReplayMetadata::confirmed(),
+        Self {
+            status: SymbolicResultStatus::FailCounterexample,
+            replay: SymbolicReplayMetadata::confirmed(),
             call_trace,
-            None,
-        )
+            ..Self::base(config, stats)
+        }
     }
 
     /// Creates an incomplete symbolic result.
@@ -1143,36 +595,33 @@ impl SymbolicResult {
         call_trace: SymbolicCallTrace,
         counterexample: Option<SymbolicCounterexample>,
     ) -> Self {
-        Self::new(
-            SymbolicResultStatus::Incomplete,
-            config,
-            stats,
-            Some(SymbolicIncomplete::new(kind, reason)),
+        Self {
+            status: SymbolicResultStatus::Incomplete,
+            incomplete: Some(SymbolicIncomplete::new(kind, reason)),
             replay,
             call_trace,
             counterexample,
-        )
+            ..Self::base(config, stats)
+        }
     }
 
-    fn new(
-        status: SymbolicResultStatus,
-        config: &SymbolicConfig,
-        stats: SymbolicStats,
-        incomplete: Option<SymbolicIncomplete>,
-        replay: SymbolicReplayMetadata,
-        call_trace: SymbolicCallTrace,
-        counterexample: Option<SymbolicCounterexample>,
-    ) -> Self {
+    /// A passing result carrying the run's bounds, solver metadata and assumptions.
+    fn base(config: &SymbolicConfig, stats: SymbolicStats) -> Self {
         Self {
             schema_version: SYMBOLIC_RESULT_SCHEMA_VERSION,
-            status,
-            incomplete,
+            status: SymbolicResultStatus::Pass,
+            incomplete: None,
             bounds: SymbolicBounds::from_config(config),
-            solver: SymbolicSolverMetadata::from_config_and_stats(config, stats),
+            solver: SymbolicSolverMetadata {
+                name: config.solver.clone(),
+                command: config.solver_command.clone(),
+                portfolio: config.solver_portfolio.clone(),
+                stats,
+            },
             assumptions: SymbolicAssumption::default_assumptions(),
-            call_trace,
-            replay,
-            counterexample,
+            call_trace: SymbolicCallTrace::none(),
+            replay: SymbolicReplayMetadata::not_required(),
+            counterexample: None,
             corpus_seeds: None,
             artifact: None,
             minimization: None,
@@ -1202,7 +651,7 @@ impl SymbolicResult {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolicCorpusSeedMetadata {
     /// Corpus root used for the current test, after contract/test path expansion.
-    pub corpus_dir: Option<std::path::PathBuf>,
+    pub corpus_dir: Option<PathBuf>,
     /// Maximum imported seeds allowed by configuration.
     pub limit: usize,
     /// Number of corpus files considered.
@@ -1217,7 +666,7 @@ pub struct SymbolicCorpusSeedMetadata {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolicCorpusSeedRef {
     /// Corpus file path.
-    pub path: std::path::PathBuf,
+    pub path: PathBuf,
     /// ABI-encoded calldata imported from the corpus file.
     pub calldata: Bytes,
 }
@@ -1228,12 +677,12 @@ pub struct SymbolicArtifactRef {
     /// Artifact schema id.
     pub schema: String,
     /// Path to the artifact file.
-    pub path: std::path::PathBuf,
+    pub path: PathBuf,
 }
 
 impl SymbolicArtifactRef {
     /// Creates a reference to a symbolic counterexample artifact.
-    pub fn new(path: impl Into<std::path::PathBuf>) -> Self {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
         Self { schema: SYMBOLIC_COUNTEREXAMPLE_ARTIFACT_SCHEMA.to_string(), path: path.into() }
     }
 }
@@ -1242,9 +691,9 @@ impl SymbolicArtifactRef {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolicRegressionRef {
     /// Source counterexample artifact path.
-    pub artifact: std::path::PathBuf,
+    pub artifact: PathBuf,
     /// Generated Solidity regression test path.
-    pub path: std::path::PathBuf,
+    pub path: PathBuf,
 }
 
 /// Before/after artifact references and counters for concrete symbolic counterexample minimization.
@@ -1328,16 +777,13 @@ pub struct SymbolicIncomplete {
 
 impl SymbolicIncomplete {
     fn new(kind: SymbolicStopReason, reason: impl Into<String>) -> Self {
-        Self { kind: symbolic_stop_reason_kind(kind).to_string(), reason: reason.into() }
-    }
-}
-
-const fn symbolic_stop_reason_kind(kind: SymbolicStopReason) -> &'static str {
-    match kind {
-        SymbolicStopReason::Stuck => "stuck",
-        SymbolicStopReason::RevertAll => "revert_all",
-        SymbolicStopReason::Timeout => "timeout",
-        SymbolicStopReason::Error => "error",
+        let kind = match kind {
+            SymbolicStopReason::Stuck => "stuck",
+            SymbolicStopReason::RevertAll => "revert_all",
+            SymbolicStopReason::Timeout => "timeout",
+            SymbolicStopReason::Error => "error",
+        };
+        Self { kind: kind.to_string(), reason: reason.into() }
     }
 }
 
@@ -1411,73 +857,7 @@ pub struct SymbolicSolverMetadata {
     /// Configured solver portfolio entries, when any.
     pub portfolio: Vec<String>,
     /// Run counters.
-    pub stats: SymbolicSolverStats,
-}
-
-impl SymbolicSolverMetadata {
-    fn from_config_and_stats(config: &SymbolicConfig, stats: SymbolicStats) -> Self {
-        Self {
-            name: config.solver.clone(),
-            command: config.solver_command.clone(),
-            portfolio: config.solver_portfolio.clone(),
-            stats: SymbolicSolverStats::from(stats),
-        }
-    }
-}
-
-/// Symbolic engine and solver counters.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SymbolicSolverStats {
-    /// Number of explored symbolic paths.
-    pub paths: usize,
-    /// Number of normalized solver queries issued during the run.
-    pub solver_queries: usize,
-    /// Number of queries sent to the SMT backend after local fast paths.
-    pub smt_queries: usize,
-    /// Number of satisfiability checks requested by the executor.
-    pub sat_queries: usize,
-    /// Number of concrete model requests requested by the executor.
-    pub model_queries: usize,
-    /// Number of satisfiability checks served from the normalized cache.
-    pub sat_cache_hits: usize,
-    /// Number of model requests served from the normalized model cache.
-    pub model_cache_hits: usize,
-    /// Number of satisfiable witnesses produced by local hard-arithmetic search.
-    pub heuristic_witnesses: usize,
-    /// Wall-clock time spent waiting on backend solver subprocesses, in milliseconds.
-    pub solver_time_ms: u64,
-    /// Total SMT-LIB input bytes sent to backend solver subprocesses.
-    #[serde(default)]
-    pub smt_input_bytes: u64,
-    /// Largest single SMT-LIB query input sent to a backend solver subprocess, in bytes.
-    #[serde(default)]
-    pub smt_max_query_bytes: u64,
-    /// Wall-clock time spent building SMT-LIB query strings, in milliseconds.
-    #[serde(default)]
-    pub smt_build_time_ms: u64,
-    /// Longest single backend solver subprocess query, in milliseconds.
-    #[serde(default)]
-    pub smt_max_query_time_ms: u64,
-}
-
-impl From<SymbolicStats> for SymbolicSolverStats {
-    fn from(stats: SymbolicStats) -> Self {
-        Self {
-            paths: stats.paths,
-            solver_queries: stats.solver_queries,
-            smt_queries: stats.smt_queries,
-            sat_queries: stats.sat_queries,
-            model_queries: stats.model_queries,
-            sat_cache_hits: stats.sat_cache_hits,
-            model_cache_hits: stats.model_cache_hits,
-            heuristic_witnesses: stats.heuristic_witnesses,
-            solver_time_ms: stats.solver_time_ms,
-            smt_input_bytes: stats.smt_input_bytes,
-            smt_max_query_bytes: stats.smt_max_query_bytes,
-            smt_build_time_ms: stats.smt_build_time_ms,
-            smt_max_query_time_ms: stats.smt_max_query_time_ms,
-        }
-    }
+    pub stats: SymbolicStats,
 }
 
 /// Explicit symbolic assumption attached to a result.
@@ -1523,14 +903,10 @@ impl SymbolicCallTrace {
 
     /// A concrete replay trace may be available in the normal test result traces field.
     pub fn test_result_traces(available: bool) -> Self {
-        if !available {
-            return Self::none();
-        }
-
         Self {
-            available: true,
-            source: Some("test_result.traces".to_string()),
-            format: Some("foundry_call_trace_arena".to_string()),
+            available,
+            source: available.then(|| "test_result.traces".to_string()),
+            format: available.then(|| "foundry_call_trace_arena".to_string()),
         }
     }
 }
@@ -1746,6 +1122,22 @@ pub enum SymbolicInvariantFailureSite {
     AfterInvariant { target: Address, selector: Selector, fingerprint: B256 },
 }
 
+impl From<CheckSequenceFailureSite> for SymbolicInvariantFailureSite {
+    fn from(site: CheckSequenceFailureSite) -> Self {
+        match site {
+            CheckSequenceFailureSite::SequenceCall { target, selector, fingerprint } => {
+                Self::SequenceCall { target, selector, fingerprint }
+            }
+            CheckSequenceFailureSite::Invariant { target, selector, fingerprint } => {
+                Self::Invariant { target, selector, fingerprint }
+            }
+            CheckSequenceFailureSite::AfterInvariant { target, selector, fingerprint } => {
+                Self::AfterInvariant { target, selector, fingerprint }
+            }
+        }
+    }
+}
+
 /// Test identity for a symbolic counterexample artifact.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1874,7 +1266,7 @@ pub struct TestResult {
     /// Directory where invariant failure counterexamples have been persisted (set when one or more
     /// secondary invariant failures were written, so users can locate persisted counterexamples).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub invariant_failure_dir: Option<std::path::PathBuf>,
+    pub invariant_failure_dir: Option<PathBuf>,
 
     /// Total number of invariant predicates exercised in this campaign. When `Some(n)` the
     /// user-facing report renders a contract-level `<broken>/<n> invariants broken` summary so
@@ -1967,8 +1359,37 @@ pub struct TestResult {
 
 impl fmt::Display for TestResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.render_status_block(false, None))
+        f.write_str(&self.render(false, None))
     }
+}
+
+/// Appends a `[label] (original: N, shrunk: M)` header followed by one line per call.
+fn write_sequence(s: &mut String, label: &str, original: usize, sequence: &[BaseCounterExample]) {
+    writeln!(s, "\n\t[{label}] (original: {original}, shrunk: {})", sequence.len()).unwrap();
+    for ex in sequence {
+        writeln!(s, "{ex}").unwrap();
+    }
+}
+
+/// Appends `[FAIL: reason]{name_suffix}` plus the counterexample sequence, if any.
+///
+/// Returns `true` if a sequence (ending in a newline) was written.
+fn write_failure(s: &mut String, failure: &InvariantFailure, name_suffix: &str) -> bool {
+    write!(s, "[FAIL: {}]{name_suffix}", failure.reason()).unwrap();
+    if let Some(CounterExample::Sequence(original, sequence)) = failure.counterexample() {
+        write_sequence(s, "Sequence", *original, sequence);
+        return true;
+    }
+    false
+}
+
+/// All durable replay artifacts referenced by a counterexample: its own artifact plus the
+/// before/after artifacts of its minimization, if any.
+fn replay_artifacts<'a>(
+    artifact: Option<&'a SymbolicArtifactRef>,
+    minimization: Option<&'a SymbolicCounterexampleMinimization>,
+) -> impl Iterator<Item = &'a SymbolicArtifactRef> {
+    artifact.into_iter().chain(minimization.into_iter().flat_map(|m| [&m.original, &m.minimized]))
 }
 
 impl TestResult {
@@ -1991,259 +1412,137 @@ impl TestResult {
         }
     }
 
-    fn render_status_block(
-        &self,
-        user_facing: bool,
-        invariant_campaign_name: Option<&str>,
-    ) -> String {
+    /// Renders the status block, either for the console (`user_facing`) or for JUnit output.
+    fn render(&self, user_facing: bool, campaign_name: Option<&str>) -> String {
+        let header = if user_facing {
+            campaign_name.unwrap_or(INVARIANT_CAMPAIGN_FALLBACK_NAME)
+        } else {
+            "Predicates"
+        };
+        let mut s = String::new();
         match self.status {
             TestStatus::Success => {
+                s.push_str("[PASS]");
                 // For optimization mode, show the best example sequence in green.
-                let mut s = String::from("[PASS]");
                 if let Some(CounterExample::Sequence(original, sequence)) = &self.counterexample {
-                    s.push_str(
-                        format!(
-                            "\n\t[Best sequence] (original: {original}, shrunk: {})\n",
-                            sequence.len()
-                        )
-                        .as_str(),
-                    );
-                    for ex in sequence {
-                        writeln!(s, "{ex}").unwrap();
-                    }
+                    write_sequence(&mut s, "Best sequence", *original, sequence);
                 }
-                self.write_invariant_predicate_results(
-                    &mut s,
-                    user_facing,
-                    true,
-                    invariant_campaign_name,
-                );
-                format!("{}", s.green().wrap())
+                self.write_predicates(&mut s, header, true);
+                s.green().wrap().to_string()
             }
             TestStatus::Skipped => {
-                let mut s = String::from("[SKIP");
+                s.push_str("[SKIP");
                 if let Some(reason) = &self.reason {
                     write!(s, ": {reason}").unwrap();
                 }
                 s.push(']');
-                self.write_invariant_predicate_results(
-                    &mut s,
-                    user_facing,
-                    true,
-                    invariant_campaign_name,
-                );
-                format!("{}", s.yellow())
+                self.write_predicates(&mut s, header, true);
+                s.yellow().to_string()
             }
             TestStatus::Failure => {
-                let mut s = String::new();
-                let has_handler_failures = !self.invariant_handler_failures.is_empty();
-                let is_invariant_failure =
-                    !self.invariant_failures.is_empty() || has_handler_failures;
-                if !is_invariant_failure {
-                    // Non-invariant failure (unit / fuzz / DS-style): render from the legacy
-                    // `reason` / `counterexample` fields.
-                    s.push_str("[FAIL");
-                    if let Some(reason) = &self.reason {
-                        write!(s, ": {reason}").unwrap();
-                    }
-                    if let Some(counterexample) = &self.counterexample {
-                        match counterexample {
-                            CounterExample::Single(ex) => {
-                                write!(s, "; counterexample: {ex}]").unwrap();
-                            }
-                            CounterExample::Sequence(original, sequence) => {
-                                writeln!(
-                                    s,
-                                    "]\n\t[Sequence] (original: {original}, shrunk: {})",
-                                    sequence.len()
-                                )
-                                .unwrap();
-                                for ex in sequence {
-                                    writeln!(s, "{ex}").unwrap();
-                                }
-                            }
-                        }
-                    } else {
-                        s.push(']');
-                    }
-                } else if !self.invariant_failures.is_empty() {
+                let is_invariant_failure = !self.invariant_failures.is_empty()
+                    || !self.invariant_handler_failures.is_empty();
+                if is_invariant_failure {
                     // Contract-level campaigns identify the broken predicate even when only one
                     // predicate failed. Preserve the compact legacy shape only for the anchor of a
                     // single-predicate run.
-                    let multi = self.invariant_failures.len() > 1;
-                    let is_campaign = self.invariant_count.is_some();
+                    let named = self.invariant_count.is_some() || self.invariant_failures.len() > 1;
                     for (i, failure) in self.invariant_failures.iter().enumerate() {
                         if i > 0 {
                             s.push('\n');
                         }
                         let is_anchor =
                             matches!(failure, InvariantFailure::Predicate { is_anchor: true, .. });
-                        let name_suffix = if is_campaign || multi || !is_anchor {
+                        let suffix = if named || !is_anchor {
                             format!(" {}", failure.name())
                         } else {
                             String::new()
                         };
-                        if let Some(CounterExample::Sequence(original, sequence)) =
-                            failure.counterexample()
-                        {
-                            writeln!(
-                                s,
-                                "[FAIL: {}]{name_suffix}\n\t[Sequence] (original: {original}, shrunk: {})",
-                                failure.reason(),
-                                sequence.len()
-                            )
-                            .unwrap();
-                            for ex in sequence {
-                                writeln!(s, "{ex}").unwrap();
-                            }
-                        } else {
-                            write!(s, "[FAIL: {}]{name_suffix}", failure.reason()).unwrap();
+                        write_failure(&mut s, failure, &suffix);
+                    }
+                } else {
+                    // Non-invariant failure (unit / fuzz / DS-style): render from the legacy
+                    // `reason` / `counterexample` fields.
+                    s.push_str("[FAIL");
+                    if let Some(reason) = &self.reason {
+                        write!(s, ": {reason}").unwrap();
+                    }
+                    match &self.counterexample {
+                        Some(CounterExample::Single(ex)) => {
+                            write!(s, "; counterexample: {ex}]").unwrap();
+                        }
+                        Some(CounterExample::Sequence(original, sequence)) => {
+                            s.push(']');
+                            write_sequence(&mut s, "Sequence", *original, sequence);
+                        }
+                        None => s.push(']'),
+                    }
+                }
+
+                let broken = self.invariant_failures.len();
+                let rollup = match self.invariant_count {
+                    Some(total) if total > 1 && is_invariant_failure => {
+                        writeln!(s, "\n{header}: {broken}/{total} invariants broken").unwrap();
+                        true
+                    }
+                    _ => false,
+                };
+                self.write_predicates(&mut s, header, !user_facing || !rollup);
+                if broken > 1
+                    && let Some(dir) = &self.invariant_failure_dir
+                {
+                    writeln!(
+                        s,
+                        "{broken} invariant failure(s) persisted to {} — rerun to shrink",
+                        dir.display()
+                    )
+                    .unwrap();
+                }
+
+                if !self.invariant_handler_failures.is_empty() {
+                    // Separate the section from anything rendered above it.
+                    let preceded = rollup
+                        || broken > 0
+                        || (user_facing && self.invariant_predicate_results.len() > 1);
+                    writeln!(
+                        s,
+                        "{}{}: {} assertion bug(s) found",
+                        if preceded { "\n" } else { "" },
+                        if user_facing { "Assertion Tests" } else { "Handler assertions" },
+                        self.invariant_handler_failures.len()
+                    )
+                    .unwrap();
+                    for failure in &self.invariant_handler_failures {
+                        if !write_failure(&mut s, failure, &format!(" {}", failure.name())) {
+                            s.push('\n');
                         }
                     }
                 }
 
-                let rollup_rendered = self.write_invariant_rollup(
-                    &mut s,
-                    user_facing,
-                    is_invariant_failure,
-                    invariant_campaign_name,
-                );
-                let show_predicate_header = if user_facing { !rollup_rendered } else { true };
-                self.write_invariant_predicate_results(
-                    &mut s,
-                    user_facing,
-                    show_predicate_header,
-                    invariant_campaign_name,
-                );
-                self.write_invariant_persistence_note(&mut s);
-                let handler_preceded = if user_facing {
-                    rollup_rendered
-                        || self.invariant_predicate_results.len() > 1
-                        || !self.invariant_failures.is_empty()
-                } else {
-                    !self.invariant_failures.is_empty()
-                        || matches!(self.invariant_count, Some(t) if t > 1)
-                };
-                self.write_handler_failures(&mut s, user_facing, handler_preceded);
-
-                format!("{}", s.red().wrap())
+                s.red().wrap().to_string()
             }
         }
     }
 
-    fn write_invariant_rollup(
-        &self,
-        s: &mut String,
-        user_facing: bool,
-        is_invariant_failure: bool,
-        invariant_campaign_name: Option<&str>,
-    ) -> bool {
-        let Some(total) = self.invariant_count else {
-            return false;
-        };
-        if total <= 1 || !is_invariant_failure {
-            return false;
-        }
-
-        writeln!(
-            s,
-            "\n{}: {}/{total} invariants broken",
-            if user_facing {
-                invariant_campaign_name.unwrap_or(INVARIANT_CAMPAIGN_FALLBACK_NAME)
-            } else {
-                "Predicates"
-            },
-            self.invariant_failures.len()
-        )
-        .unwrap();
-        true
-    }
-
-    fn write_invariant_persistence_note(&self, s: &mut String) {
-        if self.invariant_failures.len() > 1
-            && let Some(dir) = &self.invariant_failure_dir
-        {
-            writeln!(
-                s,
-                "{} invariant failure(s) persisted to {} — rerun to shrink",
-                self.invariant_failures.len(),
-                dir.display()
-            )
-            .unwrap();
-        }
-    }
-
-    fn write_handler_failures(&self, s: &mut String, user_facing: bool, preceded: bool) {
-        if self.invariant_handler_failures.is_empty() {
-            return;
-        }
-
-        let prefix = if preceded { "\n" } else { "" };
-        writeln!(
-            s,
-            "{prefix}{}: {} assertion bug(s) found",
-            if user_facing { "Assertion Tests" } else { "Handler assertions" },
-            self.invariant_handler_failures.len()
-        )
-        .unwrap();
-        for failure in &self.invariant_handler_failures {
-            if let Some(CounterExample::Sequence(original, sequence)) = failure.counterexample() {
-                writeln!(
-                    s,
-                    "[FAIL: {}] {}\n\t[Sequence] (original: {original}, shrunk: {})",
-                    failure.reason(),
-                    failure.name(),
-                    sequence.len()
-                )
-                .unwrap();
-                for ex in sequence {
-                    writeln!(s, "{ex}").unwrap();
-                }
-            } else {
-                writeln!(s, "[FAIL: {}] {}", failure.reason(), failure.name()).unwrap();
-            }
-        }
-    }
-
-    /// Appends the invariant/property summary for multi-predicate campaigns.
-    fn write_invariant_predicate_results(
-        &self,
-        s: &mut String,
-        user_facing: bool,
-        show_header: bool,
-        invariant_campaign_name: Option<&str>,
-    ) {
+    /// Appends the per-predicate summary for multi-predicate campaigns.
+    fn write_predicates(&self, s: &mut String, header: &str, show_header: bool) {
         if self.invariant_predicate_results.len() <= 1 {
             return;
         }
-
         if show_header {
-            s.push('\n');
-            s.push_str(if user_facing {
-                invariant_campaign_name.unwrap_or(INVARIANT_CAMPAIGN_FALLBACK_NAME)
-            } else {
-                "Predicates"
-            });
-            s.push_str(":\n");
+            write!(s, "\n{header}:\n").unwrap();
         }
-
         for predicate in &self.invariant_predicate_results {
-            match predicate.status {
-                TestStatus::Success => {
-                    writeln!(s, "[PASS] {}", predicate.name).unwrap();
+            let name = &predicate.name;
+            match (predicate.status, &predicate.reason) {
+                (TestStatus::Success, _) => writeln!(s, "[PASS] {name}"),
+                (TestStatus::Failure, reason) => {
+                    writeln!(s, "[FAIL: {}] {name}", reason.as_deref().unwrap_or_default())
                 }
-                TestStatus::Failure => {
-                    let reason = predicate.reason.as_deref().unwrap_or_default();
-                    writeln!(s, "[FAIL: {reason}] {}", predicate.name).unwrap();
-                }
-                TestStatus::Skipped => {
-                    if let Some(reason) = &predicate.reason {
-                        writeln!(s, "[SKIP: {reason}] {}", predicate.name).unwrap();
-                    } else {
-                        writeln!(s, "[SKIP] {}", predicate.name).unwrap();
-                    }
-                }
+                (TestStatus::Skipped, Some(reason)) => writeln!(s, "[SKIP: {reason}] {name}"),
+                (TestStatus::Skipped, None) => writeln!(s, "[SKIP] {name}"),
             }
+            .unwrap();
         }
     }
 }
@@ -2259,6 +1558,42 @@ macro_rules! extend {
         $a.debug_bytecodes.extend($b.debug_bytecodes);
         $a.merge_coverages($b.line_coverage);
     };
+}
+
+/// Forge-side outcome of an invariant campaign, recorded into a [`TestResult`].
+#[derive(Default)]
+pub struct InvariantOutcome {
+    /// Whether every checked invariant held.
+    pub success: bool,
+    /// Fork block number the campaign ran against, if any.
+    pub fork_block_number: Option<u64>,
+    /// Broken invariants, each with its shrunk call sequence.
+    pub failures: Vec<InvariantFailure>,
+    /// Handler assertion failures found while running the campaign.
+    pub handler_failures: Vec<InvariantFailure>,
+    /// Per-invariant pass/fail/skip rows.
+    pub predicate_results: Vec<InvariantPredicateResult>,
+    /// Directory the failing sequences were persisted to.
+    pub failure_dir: Option<PathBuf>,
+    /// Number of invariants checked, when the campaign ran more than one.
+    pub invariant_count: Option<usize>,
+    /// Best sequence found in optimization mode.
+    pub counterexample: Option<CounterExample>,
+    /// Traces collected for the gas report.
+    pub gas_report_traces: Vec<Vec<CallTraceArena>>,
+}
+
+/// Invariant kind for results that did not run a real campaign (setup failures, replays, skips).
+pub(crate) fn invariant_kind(runs: usize, calls: usize, reverts: usize) -> TestKind {
+    TestKind::Invariant {
+        runs,
+        calls,
+        reverts,
+        workers: 1,
+        metrics: Default::default(),
+        failed_corpus_replays: 0,
+        optimization_best_value: None,
+    }
 }
 
 impl TestResult {
@@ -2282,29 +1617,15 @@ impl TestResult {
 
     /// Creates a test setup result.
     pub fn setup_result(setup: TestSetup) -> Self {
-        let TestSetup {
-            address: _,
-            fuzz_fixtures: _,
-            logs,
-            labels,
-            traces,
-            debug_bytecodes,
-            coverage,
-            deployed_libs: _,
-            fork_block_number,
-            reason,
-            skipped,
-            ..
-        } = setup;
         Self {
-            status: if skipped { TestStatus::Skipped } else { TestStatus::Failure },
-            reason,
-            logs,
-            traces,
-            debug_bytecodes,
-            line_coverage: coverage,
-            labels,
-            fork_block_number,
+            status: if setup.skipped { TestStatus::Skipped } else { TestStatus::Failure },
+            reason: setup.reason,
+            logs: setup.logs,
+            traces: setup.traces,
+            debug_bytecodes: setup.debug_bytecodes,
+            line_coverage: setup.coverage,
+            labels: setup.labels,
+            fork_block_number: setup.fork_block_number,
             ..Default::default()
         }
     }
@@ -2335,10 +1656,7 @@ impl TestResult {
 
         extend!(self, raw_call_result, TraceKind::Execution);
 
-        self.status = match success {
-            true => TestStatus::Success,
-            false => TestStatus::Failure,
-        };
+        self.status = if success { TestStatus::Success } else { TestStatus::Failure };
         self.reason = reason;
         self.duration = Duration::default();
         self.gas_report_traces = Vec::new();
@@ -2352,16 +1670,31 @@ impl TestResult {
 
     /// Returns the result for a fuzzed test. Merges fuzz execution results (logs, labeled
     /// addresses, traces and coverages) in initial setup results.
-    pub fn fuzz_result(&mut self, result: FuzzTestResult) {
-        self.kind = TestKind::Fuzz {
+    pub fn fuzz_result(&mut self, mut result: FuzzTestResult) {
+        let kind = TestKind::Fuzz {
             median_gas: result.median_gas(false),
             mean_gas: result.mean_gas(false),
-            first_case: result.first_case,
+            first_case: std::mem::take(&mut result.first_case),
             runs: result.gas_by_case.len(),
             failed_corpus_replays: result.failed_corpus_replays,
         };
+        self.campaign_result(kind, result);
+    }
 
-        // Record logs, labels, traces and merge coverages.
+    /// Returns the result for a table test. Merges table test execution results (logs, labeled
+    /// addresses, traces and coverages) in initial setup results.
+    pub fn table_result(&mut self, result: FuzzTestResult) {
+        let kind = TestKind::Table {
+            median_gas: result.median_gas(false),
+            mean_gas: result.mean_gas(false),
+            runs: result.gas_by_case.len(),
+        };
+        self.campaign_result(kind, result);
+    }
+
+    fn campaign_result(&mut self, kind: TestKind, result: FuzzTestResult) {
+        self.kind = kind;
+
         extend!(self, result, TraceKind::Execution);
 
         self.status = if result.skipped {
@@ -2393,26 +1726,13 @@ impl TestResult {
         self.reason = Some(format!("failed to set up fuzz testing environment: {e}"));
     }
 
-    /// Returns the skipped result for invariant test.
-    pub fn invariant_skip(&mut self, reason: SkipReason) {
-        self.invariant_skip_with_predicates(reason, Vec::new());
-    }
-
     /// Returns the skipped result for invariant campaign with per-predicate outcomes.
     pub fn invariant_skip_with_predicates(
         &mut self,
         reason: SkipReason,
         invariant_predicate_results: Vec<InvariantPredicateResult>,
     ) {
-        self.kind = TestKind::Invariant {
-            runs: 1,
-            calls: 1,
-            reverts: 1,
-            workers: default_invariant_workers(),
-            metrics: HashMap::default(),
-            failed_corpus_replays: 0,
-            optimization_best_value: None,
-        };
+        self.kind = invariant_kind(1, 1, 1);
         self.status = TestStatus::Skipped;
         let predicate_count = invariant_predicate_results.len();
         let is_campaign = predicate_count > 1;
@@ -2424,156 +1744,65 @@ impl TestResult {
     /// Returns the fail result for replayed invariant test.
     pub fn invariant_replay_fail(
         &mut self,
-        replayed_entirely: bool,
+        outcome: CheckSequenceOutcome,
         invariant_name: &str,
-        replay_reason: Option<String>,
-        calls: usize,
-        reverts: usize,
+        fallback_reason: Option<String>,
         call_sequence: Vec<BaseCounterExample>,
     ) {
-        self.kind = TestKind::Invariant {
-            runs: 1,
-            calls,
-            reverts,
-            workers: default_invariant_workers(),
-            metrics: HashMap::default(),
-            failed_corpus_replays: 0,
-            optimization_best_value: None,
-        };
+        self.kind = invariant_kind(1, outcome.calls_count, outcome.reverts);
         self.status = TestStatus::Failure;
-        self.reason = replay_reason.or_else(|| {
-            if replayed_entirely {
-                Some(format!("{invariant_name} replay failure"))
+        self.reason = Some(outcome.reason.or(fallback_reason).unwrap_or_else(|| {
+            let what = if outcome.replayed_entirely {
+                "replay failure"
             } else {
-                Some(format!("{invariant_name} persisted failure revert"))
-            }
-        });
+                "persisted failure revert"
+            };
+            format!("{invariant_name} {what}")
+        }));
         self.counterexample = Some(CounterExample::Sequence(call_sequence.len(), call_sequence));
     }
 
     /// Returns the success result for a replayed invariant test.
     pub fn invariant_replay_success(&mut self, call_count: usize, reverts: usize) {
-        self.kind = TestKind::Invariant {
-            runs: 1,
-            calls: call_count,
-            reverts,
-            workers: default_invariant_workers(),
-            metrics: HashMap::default(),
-            failed_corpus_replays: 0,
-            optimization_best_value: None,
-        };
+        self.kind = invariant_kind(1, call_count, reverts);
         self.status = TestStatus::Success;
         self.reason = None;
     }
 
     /// Returns the fail result for invariant test setup.
     pub fn invariant_setup_fail(&mut self, e: Report) {
-        self.kind = TestKind::Invariant {
-            runs: 0,
-            calls: 0,
-            reverts: 0,
-            workers: default_invariant_workers(),
-            metrics: HashMap::default(),
-            failed_corpus_replays: 0,
-            optimization_best_value: None,
-        };
+        self.kind = invariant_kind(0, 0, 0);
         self.status = TestStatus::Failure;
         self.reason = Some(format!("failed to set up invariant testing environment: {e}"));
     }
 
     /// Returns the invariant test result.
-    #[expect(clippy::too_many_arguments)]
-    pub fn invariant_result(
-        &mut self,
-        gas_report_traces: Vec<Vec<CallTraceArena>>,
-        success: bool,
-        fork_block_number: Option<u64>,
-        invariant_failures: Vec<InvariantFailure>,
-        invariant_predicate_results: Vec<InvariantPredicateResult>,
-        invariant_failure_dir: Option<std::path::PathBuf>,
-        invariant_count: Option<usize>,
-        invariant_handler_failures: Vec<InvariantFailure>,
-        counterexample: Option<CounterExample>,
-        runs: usize,
-        calls: usize,
-        reverts: usize,
-        metrics: Map<String, InvariantMetrics>,
-        failed_corpus_replays: usize,
-        workers: usize,
-        optimization_best_value: Option<I256>,
-    ) {
-        self.kind = TestKind::Invariant {
-            runs,
-            calls,
-            reverts,
-            workers: workers.max(1),
-            metrics,
-            failed_corpus_replays,
-            optimization_best_value,
-        };
+    pub fn invariant_result(&mut self, kind: TestKind, outcome: InvariantOutcome) {
         // For optimization mode (Some value), always succeed. For check mode (None), use success.
-        self.status = if optimization_best_value.is_some() || success {
-            TestStatus::Success
-        } else {
-            TestStatus::Failure
-        };
-        self.fork_block_number = fork_block_number;
-        self.invariant_failures = invariant_failures;
-        self.invariant_predicate_results = invariant_predicate_results;
-        self.invariant_failure_dir = invariant_failure_dir;
-        self.invariant_count = invariant_count;
-        self.invariant_handler_failures = invariant_handler_failures;
+        let optimizing =
+            matches!(kind, TestKind::Invariant { optimization_best_value: Some(_), .. });
+        self.kind = kind;
+        self.status =
+            if optimizing || outcome.success { TestStatus::Success } else { TestStatus::Failure };
+        self.fork_block_number = outcome.fork_block_number;
+        self.invariant_predicate_results = outcome.predicate_results;
+        self.invariant_failure_dir = outcome.failure_dir;
+        self.invariant_count = outcome.invariant_count;
         // `counterexample` is only used by the renderer for optimization mode (the "best
         // sequence" rendered on success). Invariant check-mode failures live entirely in
         // `invariant_failures`; `reason`/`counterexample` stay `None` for invariant tests.
-        self.counterexample = counterexample;
-        let artifacts = self
-            .invariant_failures
+        self.counterexample = outcome.counterexample;
+        for artifact in outcome
+            .failures
             .iter()
-            .chain(&self.invariant_handler_failures)
-            .flat_map(|failure| {
-                let mut artifacts = Vec::new();
-                if let Some(artifact) = failure.artifact().cloned() {
-                    artifacts.push(artifact);
-                }
-                if let Some(minimization) = failure.minimization().cloned() {
-                    artifacts.push(minimization.original);
-                    artifacts.push(minimization.minimized);
-                }
-                artifacts
-            })
-            .collect::<Vec<_>>();
-        for artifact in artifacts {
-            self.add_counterexample_artifact(artifact);
+            .chain(&outcome.handler_failures)
+            .flat_map(|failure| replay_artifacts(failure.artifact(), failure.minimization()))
+        {
+            self.add_counterexample_artifact(artifact.clone());
         }
-        self.gas_report_traces = gas_report_traces;
-    }
-
-    /// Returns the result for a table test. Merges table test execution results (logs, labeled
-    /// addresses, traces and coverages) in initial setup results.
-    pub fn table_result(&mut self, result: FuzzTestResult) {
-        self.kind = TestKind::Table {
-            median_gas: result.median_gas(false),
-            mean_gas: result.mean_gas(false),
-            runs: result.gas_by_case.len(),
-        };
-
-        // Record logs, labels, traces and merge coverages.
-        extend!(self, result, TraceKind::Execution);
-
-        self.status = if result.skipped {
-            TestStatus::Skipped
-        } else if result.success {
-            TestStatus::Success
-        } else {
-            TestStatus::Failure
-        };
-        self.reason = result.reason;
-        self.counterexample = result.counterexample;
-        self.duration = Duration::default();
-        self.gas_report_traces = result.gas_report_traces.into_iter().map(|t| vec![t]).collect();
-        self.breakpoints = result.breakpoints.unwrap_or_default();
-        self.deprecated_cheatcodes = result.deprecated_cheatcodes;
+        self.invariant_failures = outcome.failures;
+        self.invariant_handler_failures = outcome.handler_failures;
+        self.gas_report_traces = outcome.gas_report_traces;
     }
 
     /// Returns the result for a symbolic test.
@@ -2584,22 +1813,7 @@ impl TestResult {
         counterexample: Option<CounterExample>,
         symbolic: SymbolicResult,
     ) {
-        let stats = symbolic.solver.stats;
-        self.kind = TestKind::Symbolic {
-            paths: stats.paths,
-            solver_queries: stats.solver_queries,
-            smt_queries: stats.smt_queries,
-            sat_queries: stats.sat_queries,
-            model_queries: stats.model_queries,
-            sat_cache_hits: stats.sat_cache_hits,
-            model_cache_hits: stats.model_cache_hits,
-            heuristic_witnesses: stats.heuristic_witnesses,
-            solver_time_ms: stats.solver_time_ms,
-            smt_input_bytes: stats.smt_input_bytes,
-            smt_max_query_bytes: stats.smt_max_query_bytes,
-            smt_build_time_ms: stats.smt_build_time_ms,
-            smt_max_query_time_ms: stats.smt_max_query_time_ms,
-        };
+        self.kind = TestKind::Symbolic(symbolic.solver.stats);
         self.status = status;
         self.reason = reason;
         self.counterexample = counterexample;
@@ -2609,12 +1823,9 @@ impl TestResult {
 
     /// Records symbolic execution metadata without changing the test status/kind.
     pub(crate) fn record_symbolic(&mut self, symbolic: SymbolicResult) {
-        if let Some(artifact) = symbolic.artifact.clone() {
-            self.add_counterexample_artifact(artifact);
-        }
-        if let Some(minimization) = symbolic.minimization.clone() {
-            self.add_counterexample_artifact(minimization.original);
-            self.add_counterexample_artifact(minimization.minimized);
+        for artifact in replay_artifacts(symbolic.artifact.as_ref(), symbolic.minimization.as_ref())
+        {
+            self.add_counterexample_artifact(artifact.clone());
         }
         self.symbolic = Some(symbolic);
     }
@@ -2640,44 +1851,22 @@ impl TestResult {
         self.duration = Duration::default();
     }
 
-    /// Returns `true` if this is the result of a fuzz test
-    pub const fn is_fuzz(&self) -> bool {
-        matches!(self.kind, TestKind::Fuzz { .. })
-    }
-
-    /// Formats the test result into a string (for printing).
-    pub fn short_result(&self, name: &str) -> String {
-        self.short_result_with_campaign_name(name, None)
-    }
-
+    /// Formats the test result into a string (for printing), naming invariant campaigns after
+    /// the suite's contract.
     pub(crate) fn short_result_with_suite(&self, name: &str, suite_name: &str) -> String {
-        self.short_result_with_campaign_name(name, Some(get_contract_name(suite_name)))
-    }
-
-    fn short_result_with_campaign_name(&self, name: &str, contract_name: Option<&str>) -> String {
-        let is_invariant_campaign = self.is_invariant_campaign();
-        let name = if is_invariant_campaign {
-            contract_name
-                .map(invariant_campaign_display_name)
-                .map(Cow::Owned)
-                .unwrap_or(Cow::Borrowed(INVARIANT_CAMPAIGN_FALLBACK_NAME))
-        } else {
-            Cow::Borrowed(name)
+        let campaign = (self.kind.is_invariant() && self.invariant_count.is_some())
+            .then(|| invariant_campaign_display_name(get_contract_name(suite_name)));
+        let name = campaign.as_deref().unwrap_or(name);
+        let status = self.render(true, campaign.as_deref());
+        let block = match self.fork_block_number {
+            Some(block) if self.status.is_failure() => format!(" (block: {block})"),
+            _ => String::new(),
         };
-        let status = self.render_status_block(true, is_invariant_campaign.then_some(name.as_ref()));
-        if self.status.is_failure()
-            && let Some(block) = self.fork_block_number
-        {
-            format!("{status} {name} (block: {block}) {}", self.kind.report())
-        } else {
-            format!("{status} {name} {}", self.kind.report())
-        }
+        format!("{status} {name}{block} {}", self.kind.report())
     }
 
-    const fn is_invariant_campaign(&self) -> bool {
-        self.kind.is_invariant() && self.invariant_count.is_some()
-    }
-
+    /// The number of logical tests this result stands for: skipped predicates of a campaign are
+    /// counted individually.
     fn logical_count(&self) -> usize {
         let skipped = self.skipped_predicate_count();
         if skipped == 0 {
@@ -2689,24 +1878,13 @@ impl TestResult {
         }
     }
 
-    fn passed_count(&self) -> usize {
-        usize::from(self.status.is_success())
-    }
-
     fn skipped_count(&self) -> usize {
         let skipped = self.skipped_predicate_count();
         if skipped == 0 && self.status.is_skipped() { 1 } else { skipped }
     }
 
-    fn failed_count(&self) -> usize {
-        usize::from(self.status.is_failure())
-    }
-
     fn skipped_predicate_count(&self) -> usize {
-        self.invariant_predicate_results
-            .iter()
-            .filter(|predicate| predicate.status.is_skipped())
-            .count()
+        self.invariant_predicate_results.iter().filter(|p| p.status.is_skipped()).count()
     }
 
     /// Merges the given raw call result into `self`.
@@ -2741,7 +1919,6 @@ pub enum TestKindReport {
         runs: usize,
         calls: usize,
         reverts: usize,
-        metrics: Map<String, InvariantMetrics>,
         failed_corpus_replays: usize,
         /// For optimization mode (int256 return): the best value achieved. None = check mode.
         optimization_best_value: Option<I256>,
@@ -2751,21 +1928,7 @@ pub enum TestKindReport {
         mean_gas: u64,
         median_gas: u64,
     },
-    Symbolic {
-        paths: usize,
-        solver_queries: usize,
-        smt_queries: usize,
-        sat_queries: usize,
-        model_queries: usize,
-        sat_cache_hits: usize,
-        model_cache_hits: usize,
-        heuristic_witnesses: usize,
-        solver_time_ms: u64,
-        smt_input_bytes: u64,
-        smt_max_query_bytes: u64,
-        smt_build_time_ms: u64,
-        smt_max_query_time_ms: u64,
-    },
+    Symbolic(SymbolicStats),
     /// Showmap corpus replay (no campaign performed).
     Replay {
         corpus_entries: usize,
@@ -2777,43 +1940,34 @@ pub enum TestKindReport {
 impl fmt::Display for TestKindReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Unit { gas } => {
-                write!(f, "(gas: {gas})")
-            }
+            Self::Unit { gas } => write!(f, "(gas: {gas})"),
             Self::Fuzz { runs, mean_gas, median_gas, failed_corpus_replays } => {
+                write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas}")?;
                 if *failed_corpus_replays != 0 {
-                    write!(
-                        f,
-                        "(runs: {runs}, μ: {mean_gas}, ~: {median_gas}, failed corpus replays: {failed_corpus_replays})"
-                    )
-                } else {
-                    write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
+                    write!(f, ", failed corpus replays: {failed_corpus_replays}")?;
                 }
+                f.write_str(")")
             }
             Self::Invariant {
                 runs,
                 calls,
                 reverts,
-                metrics: _,
                 failed_corpus_replays,
                 optimization_best_value,
             } => {
-                // If optimization_best_value is Some, this is optimization mode.
                 if let Some(best_value) = optimization_best_value {
-                    write!(f, "(best: {best_value}, runs: {runs}, calls: {calls})")
-                } else if *failed_corpus_replays != 0 {
-                    write!(
-                        f,
-                        "(runs: {runs}, calls: {calls}, reverts: {reverts}, failed corpus replays: {failed_corpus_replays})"
-                    )
-                } else {
-                    write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts})")
+                    return write!(f, "(best: {best_value}, runs: {runs}, calls: {calls})");
                 }
+                write!(f, "(runs: {runs}, calls: {calls}, reverts: {reverts}")?;
+                if *failed_corpus_replays != 0 {
+                    write!(f, ", failed corpus replays: {failed_corpus_replays}")?;
+                }
+                f.write_str(")")
             }
             Self::Table { runs, mean_gas, median_gas } => {
                 write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
             }
-            Self::Symbolic {
+            Self::Symbolic(SymbolicStats {
                 paths,
                 solver_queries,
                 smt_queries,
@@ -2823,25 +1977,19 @@ impl fmt::Display for TestKindReport {
                 model_cache_hits,
                 heuristic_witnesses,
                 solver_time_ms,
-                smt_input_bytes: _,
-                smt_max_query_bytes: _,
-                smt_build_time_ms: _,
-                smt_max_query_time_ms: _,
-            } => {
+                ..
+            }) => {
                 write!(
                     f,
                     "(paths: {paths}, queries: {solver_queries}, smt: {smt_queries}, sat: {sat_queries} ({sat_cache_hits} cached), models: {model_queries} ({model_cache_hits} cached), hard-arith: {heuristic_witnesses}, solver: {solver_time_ms}ms)"
                 )
             }
             Self::Replay { corpus_entries, showmap_files, skipped_entries } => {
+                write!(f, "(replay: {corpus_entries} entries, {showmap_files} files")?;
                 if *skipped_entries != 0 {
-                    write!(
-                        f,
-                        "(replay: {corpus_entries} entries, {showmap_files} files, {skipped_entries} skipped)"
-                    )
-                } else {
-                    write!(f, "(replay: {corpus_entries} entries, {showmap_files} files)")
+                    write!(f, ", {skipped_entries} skipped")?;
                 }
+                f.write_str(")")
             }
         }
     }
@@ -2890,32 +2038,7 @@ pub enum TestKind {
     /// A table test.
     Table { runs: usize, mean_gas: u64, median_gas: u64 },
     /// A symbolic test.
-    Symbolic {
-        paths: usize,
-        solver_queries: usize,
-        #[serde(default)]
-        smt_queries: usize,
-        #[serde(default)]
-        sat_queries: usize,
-        #[serde(default)]
-        model_queries: usize,
-        #[serde(default)]
-        sat_cache_hits: usize,
-        #[serde(default)]
-        model_cache_hits: usize,
-        #[serde(default)]
-        heuristic_witnesses: usize,
-        #[serde(default)]
-        solver_time_ms: u64,
-        #[serde(default)]
-        smt_input_bytes: u64,
-        #[serde(default)]
-        smt_max_query_bytes: u64,
-        #[serde(default)]
-        smt_build_time_ms: u64,
-        #[serde(default)]
-        smt_max_query_time_ms: u64,
-    },
+    Symbolic(SymbolicStats),
     /// Showmap corpus replay (no campaign performed).
     Replay { corpus_entries: usize, showmap_files: usize, skipped_entries: usize },
 }
@@ -2951,71 +2074,32 @@ impl TestKind {
     }
 
     /// The gas consumed by this test
-    pub fn report(&self) -> TestKindReport {
-        match self {
-            Self::Unit { gas } => TestKindReport::Unit { gas: *gas },
-            Self::Fuzz { first_case: _, runs, mean_gas, median_gas, failed_corpus_replays } => {
-                TestKindReport::Fuzz {
-                    runs: *runs,
-                    mean_gas: *mean_gas,
-                    median_gas: *median_gas,
-                    failed_corpus_replays: *failed_corpus_replays,
-                }
+    pub const fn report(&self) -> TestKindReport {
+        match *self {
+            Self::Unit { gas } => TestKindReport::Unit { gas },
+            Self::Fuzz { runs, mean_gas, median_gas, failed_corpus_replays, .. } => {
+                TestKindReport::Fuzz { runs, mean_gas, median_gas, failed_corpus_replays }
             }
             Self::Invariant {
                 runs,
                 calls,
                 reverts,
-                workers: _,
-                metrics: _,
                 failed_corpus_replays,
                 optimization_best_value,
+                ..
             } => TestKindReport::Invariant {
-                runs: *runs,
-                calls: *calls,
-                reverts: *reverts,
-                metrics: HashMap::default(),
-                failed_corpus_replays: *failed_corpus_replays,
-                optimization_best_value: *optimization_best_value,
+                runs,
+                calls,
+                reverts,
+                failed_corpus_replays,
+                optimization_best_value,
             },
             Self::Table { runs, mean_gas, median_gas } => {
-                TestKindReport::Table { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
+                TestKindReport::Table { runs, mean_gas, median_gas }
             }
-            Self::Symbolic {
-                paths,
-                solver_queries,
-                smt_queries,
-                sat_queries,
-                model_queries,
-                sat_cache_hits,
-                model_cache_hits,
-                heuristic_witnesses,
-                solver_time_ms,
-                smt_input_bytes,
-                smt_max_query_bytes,
-                smt_build_time_ms,
-                smt_max_query_time_ms,
-            } => TestKindReport::Symbolic {
-                paths: *paths,
-                solver_queries: *solver_queries,
-                smt_queries: *smt_queries,
-                sat_queries: *sat_queries,
-                model_queries: *model_queries,
-                sat_cache_hits: *sat_cache_hits,
-                model_cache_hits: *model_cache_hits,
-                heuristic_witnesses: *heuristic_witnesses,
-                solver_time_ms: *solver_time_ms,
-                smt_input_bytes: *smt_input_bytes,
-                smt_max_query_bytes: *smt_max_query_bytes,
-                smt_build_time_ms: *smt_build_time_ms,
-                smt_max_query_time_ms: *smt_max_query_time_ms,
-            },
+            Self::Symbolic(stats) => TestKindReport::Symbolic(stats),
             Self::Replay { corpus_entries, showmap_files, skipped_entries } => {
-                TestKindReport::Replay {
-                    corpus_entries: *corpus_entries,
-                    showmap_files: *showmap_files,
-                    skipped_entries: *skipped_entries,
-                }
+                TestKindReport::Replay { corpus_entries, showmap_files, skipped_entries }
             }
         }
     }
@@ -3089,4 +2173,143 @@ pub(crate) fn invariant_campaign_display_name(contract_name: &str) -> String {
 
 const fn symbolic_result_schema_version() -> u32 {
     SYMBOLIC_RESULT_SCHEMA_VERSION
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SYMBOLIC_RESULT_SCHEMA: &str =
+        include_str!("../../evm/symbolic/assets/symbolic-result.schema.json");
+    const SYMBOLIC_COUNTEREXAMPLE_SCHEMA: &str =
+        include_str!("../../evm/symbolic/assets/symbolic-counterexample.schema.json");
+
+    fn schema_defs(schema: &serde_json::Value) -> &serde_json::Map<String, serde_json::Value> {
+        schema["$defs"].as_object().expect("schema $defs object")
+    }
+
+    /// Collects every `$ref` target in `value`.
+    fn collect_refs<'a>(value: &'a serde_json::Value, refs: &mut Vec<&'a str>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                refs.extend(map.get("$ref").and_then(serde_json::Value::as_str));
+                for child in map.values() {
+                    collect_refs(child, refs);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for child in values {
+                    collect_refs(child, refs);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn symbolic_schemas_match_result_types() {
+        let result_schema: serde_json::Value =
+            serde_json::from_str(SYMBOLIC_RESULT_SCHEMA).unwrap();
+        let counterexample_schema: serde_json::Value =
+            serde_json::from_str(SYMBOLIC_COUNTEREXAMPLE_SCHEMA).unwrap();
+        let result_defs = schema_defs(&result_schema);
+        let counterexample_defs = schema_defs(&counterexample_schema);
+
+        // Every counterexample `$ref` must resolve offline, either locally or into the result
+        // schema.
+        let mut refs = Vec::new();
+        collect_refs(&counterexample_schema, &mut refs);
+        for reference in refs {
+            let resolved = if let Some(name) = reference.strip_prefix(
+                "https://foundry-rs.github.io/schemas/symbolic-result.v1.schema.json#/$defs/",
+            ) {
+                result_defs.contains_key(name)
+            } else if let Some(name) = reference.strip_prefix("#/$defs/") {
+                counterexample_defs.contains_key(name)
+            } else {
+                false
+            };
+            assert!(resolved, "unresolved schema ref {reference}");
+        }
+
+        // The solver stats schema must list exactly the serialized `SymbolicStats` fields.
+        let stats = serde_json::to_value(SymbolicStats::default()).unwrap();
+        let mut expected = stats.as_object().unwrap().keys().collect::<Vec<_>>();
+        let mut actual = result_defs["solver_stats"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>();
+        expected.sort();
+        actual.sort();
+        assert_eq!(actual, expected);
+    }
+
+    fn outcome_with_results(test_results: Vec<TestResult>) -> TestOutcome {
+        let test_results = test_results
+            .into_iter()
+            .enumerate()
+            .map(|(idx, result)| (format!("test{idx}()"), result))
+            .collect();
+        let suite = SuiteResult::new(Duration::ZERO, test_results, Vec::new());
+        TestOutcome::new(None, BTreeMap::from([("suite".to_string(), suite)]), false, None)
+    }
+
+    fn failed_result(kind: TestKind) -> TestResult {
+        TestResult { status: TestStatus::Failure, kind, ..Default::default() }
+    }
+
+    fn failed_invariant(workers: usize) -> TestResult {
+        let mut kind = invariant_kind(0, 0, 0);
+        if let TestKind::Invariant { workers: w, .. } = &mut kind {
+            *w = workers;
+        }
+        failed_result(kind)
+    }
+
+    #[test]
+    fn failed_tests_are_debuggable_only_for_concrete_failures() {
+        let unit = failed_result(TestKind::Unit { gas: 0 });
+        assert!(outcome_with_results(vec![unit.clone()]).failed_tests_are_debuggable());
+        assert!(!outcome_with_results(vec![failed_invariant(1)]).failed_tests_are_debuggable());
+        assert!(
+            !outcome_with_results(vec![failed_result(
+                TestKind::Symbolic(SymbolicStats::default())
+            )])
+            .failed_tests_are_debuggable()
+        );
+
+        let mut symbolic_backed = unit;
+        symbolic_backed.symbolic =
+            Some(SymbolicResult::pass(&SymbolicConfig::default(), SymbolicStats::default()));
+        assert!(!outcome_with_results(vec![symbolic_backed]).failed_tests_are_debuggable());
+    }
+
+    #[test]
+    fn invariant_workers_hint_requires_matching_parallel_worker_counts() {
+        let hint = |workers: &[usize]| {
+            outcome_with_results(workers.iter().map(|&w| failed_invariant(w)).collect())
+                .invariant_workers_hint()
+        };
+        assert_eq!(hint(&[3, 3]), Some(3));
+        assert_eq!(hint(&[2, 3]), None);
+        assert_eq!(hint(&[1]), None);
+    }
+
+    #[test]
+    fn invariant_kind_deserializes_legacy_payload_without_workers() {
+        let kind = serde_json::from_value::<TestKind>(serde_json::json!({
+            "Invariant": {
+                "runs": 4,
+                "calls": 10,
+                "reverts": 0,
+                "metrics": {},
+                "failed_corpus_replays": 0,
+                "optimization_best_value": null
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(kind.invariant_workers(), Some(1));
+    }
 }

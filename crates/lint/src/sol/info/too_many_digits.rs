@@ -3,7 +3,11 @@ use crate::{
     linter::{EarlyLintPass, LintContext},
     sol::{Severity, SolLint},
 };
-use solar::ast::{Expr, ExprKind, Lit, LitKind, Stmt, StmtKind, yul};
+use solar::{
+    ast::{Expr, ExprKind, Lit, LitKind, Stmt, StmtKind, visit::Visit},
+    data_structures::Never,
+};
+use std::ops::ControlFlow;
 
 declare_forge_lint!(
     TOO_MANY_DIGITS,
@@ -15,107 +19,49 @@ declare_forge_lint!(
 
 impl<'ast> EarlyLintPass<'ast> for TooManyDigits {
     fn check_stmt(&mut self, ctx: &LintContext, stmt: &'ast Stmt<'ast>) {
+        // Yul literals are not `Expr`s, so `check_expr` never sees them.
         if let StmtKind::Assembly(assembly) = &stmt.kind {
-            check_yul_block(ctx, &assembly.block);
+            let _ = YulLiterals { ctx }.visit_yul_block(&assembly.block);
         }
     }
 
     fn check_expr(&mut self, ctx: &LintContext, expr: &'ast Expr<'ast>) {
-        let ExprKind::Lit(lit, sub_denom) = &expr.kind else { return };
-        check_lit(ctx, lit, sub_denom.is_some());
+        // Skip literals with a sub-denomination, e.g. `1000000 gwei`, `5 minutes`.
+        if let ExprKind::Lit(lit, None) = &expr.kind {
+            check_lit(ctx, lit);
+        }
     }
 }
 
-fn check_lit(ctx: &LintContext, lit: &Lit<'_>, has_sub_denom: bool) {
-    // Only plain integer literals. `LitKind::Address` (40-hex-digit address) is a
-    // distinct variant and is therefore skipped automatically.
+fn check_lit(ctx: &LintContext, lit: &Lit<'_>) {
+    // Only plain integer literals; `LitKind::Address` is a distinct variant.
     if !matches!(lit.kind, LitKind::Number(_)) {
         return;
     }
-
-    // Skip literals with a sub-denomination, e.g. `1000000 gwei`, `5 minutes`.
-    if has_sub_denom {
-        return;
-    }
-
     let s = lit.symbol.as_str();
-    let is_hex = is_hex_literal(s);
-
-    // Match Slither's detector: skip only address-shaped hex constants, not all hex
-    // constants. Long padded masks/selectors are still hard to review.
-    if is_hex_address(s) {
-        return;
-    }
-
-    // Skip if the user already used scientific notation (`1e18`).
-    if !is_hex && (s.contains('e') || s.contains('E')) {
-        return;
-    }
-
-    // 5+ consecutive zeros in the literal as written. Underscores are
-    // preserved, so `1_000_000` passes while `1_000000` is flagged.
-    if s.contains("00000") {
+    let hex = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X"));
+    // Match Slither's detector: skip only address-shaped hex constants, not all hex constants
+    // (long padded masks/selectors are still hard to review), and scientific notation (`1e18`).
+    let is_hex_address =
+        hex.is_some_and(|h| h.len() == 40 && h.bytes().all(|b| b.is_ascii_hexdigit()));
+    let is_scientific = hex.is_none() && s.contains(['e', 'E']);
+    // 5+ consecutive zeros in the literal as written. Underscores are preserved, so
+    // `1_000_000` passes while `1_000000` is flagged.
+    if !is_hex_address && !is_scientific && s.contains("00000") {
         ctx.emit(&TOO_MANY_DIGITS, lit.span);
     }
 }
 
-fn is_hex_literal(s: &str) -> bool {
-    s.starts_with("0x") || s.starts_with("0X")
+/// Checks every literal of an assembly block, `case` labels included.
+struct YulLiterals<'a, 's> {
+    ctx: &'a LintContext<'s, 'a>,
 }
 
-fn is_hex_address(s: &str) -> bool {
-    let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) else { return false };
-    hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit())
-}
+impl<'ast> Visit<'ast> for YulLiterals<'_, '_> {
+    type BreakValue = Never;
 
-fn check_yul_block(ctx: &LintContext, block: &yul::Block<'_>) {
-    for stmt in block.stmts.iter() {
-        check_yul_stmt(ctx, stmt);
-    }
-}
-
-fn check_yul_stmt(ctx: &LintContext, stmt: &yul::Stmt<'_>) {
-    match &stmt.kind {
-        yul::StmtKind::Block(block) => check_yul_block(ctx, block),
-        yul::StmtKind::AssignSingle(_, expr)
-        | yul::StmtKind::AssignMulti(_, expr)
-        | yul::StmtKind::Expr(expr) => check_yul_expr(ctx, expr),
-        yul::StmtKind::If(cond, block) => {
-            check_yul_expr(ctx, cond);
-            check_yul_block(ctx, block);
-        }
-        yul::StmtKind::For(for_stmt) => {
-            check_yul_block(ctx, &for_stmt.init);
-            check_yul_expr(ctx, &for_stmt.cond);
-            check_yul_block(ctx, &for_stmt.step);
-            check_yul_block(ctx, &for_stmt.body);
-        }
-        yul::StmtKind::Switch(switch) => {
-            check_yul_expr(ctx, &switch.selector);
-            for case in switch.cases.iter() {
-                if let Some(lit) = &case.constant {
-                    check_lit(ctx, lit, false);
-                }
-                check_yul_block(ctx, &case.body);
-            }
-        }
-        yul::StmtKind::FunctionDef(func) => check_yul_block(ctx, &func.body),
-        yul::StmtKind::VarDecl(_, Some(init)) => check_yul_expr(ctx, init),
-        yul::StmtKind::Leave
-        | yul::StmtKind::Break
-        | yul::StmtKind::Continue
-        | yul::StmtKind::VarDecl(_, None) => {}
-    }
-}
-
-fn check_yul_expr(ctx: &LintContext, expr: &yul::Expr<'_>) {
-    match &expr.kind {
-        yul::ExprKind::Call(call) => {
-            for arg in call.arguments.iter() {
-                check_yul_expr(ctx, arg);
-            }
-        }
-        yul::ExprKind::Lit(lit) => check_lit(ctx, lit, false),
-        yul::ExprKind::Path(_) => {}
+    fn visit_lit(&mut self, lit: &'ast Lit<'_>) -> ControlFlow<Self::BreakValue> {
+        check_lit(self.ctx, lit);
+        ControlFlow::Continue(())
     }
 }

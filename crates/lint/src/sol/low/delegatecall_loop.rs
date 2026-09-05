@@ -1,19 +1,15 @@
-use super::{
-    DelegatecallLoop,
-    payable_loop::{expr_ty, is_address_ty, is_this_or_super, visit_payable_loop_expressions},
-};
+use super::{DelegatecallLoop, payable_loop::for_each_payable_loop_expr};
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::expr_is_address},
 };
 use solar::{
     interface::kw,
     sema::{
         Gcx,
-        hir::{Expr, ExprKind, Function, Hir},
+        hir::{ExprKind, Function, Hir},
     },
 };
-use std::collections::HashSet;
 
 declare_forge_lint!(
     DELEGATECALL_LOOP,
@@ -30,28 +26,16 @@ impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
         hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
-        let mut emitted = HashSet::new();
-        visit_payable_loop_expressions(ctx, gcx, hir, func, |ctx, gcx, hir, expr| {
-            if is_delegatecall(gcx, hir, expr) && emitted.insert(expr.span) {
+        for_each_payable_loop_expr(gcx, hir, func, |expr| {
+            // Only `<address>.delegatecall(..)`: user functions named `delegatecall` on
+            // contract-typed receivers are ordinary calls.
+            if let ExprKind::Call(callee, ..) = &expr.kind
+                && let ExprKind::Member(receiver, member) = &callee.peel_parens().kind
+                && member.name == kw::Delegatecall
+                && expr_is_address(gcx, receiver)
+            {
                 ctx.emit(&DELEGATECALL_LOOP, expr.span);
             }
         });
     }
-}
-
-fn is_delegatecall<'hir>(gcx: Gcx<'hir>, hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> bool {
-    let ExprKind::Call(call_expr, _, _) = &expr.kind else {
-        return false;
-    };
-    let ExprKind::Member(receiver, member) = &call_expr.peel_parens().kind else {
-        return false;
-    };
-    if member.name != kw::Delegatecall {
-        return false;
-    }
-    if is_this_or_super(receiver) {
-        return false;
-    }
-
-    expr_ty(gcx, hir, receiver).is_some_and(is_address_ty)
 }

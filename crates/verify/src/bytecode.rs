@@ -3,8 +3,7 @@ use crate::{
     etherscan::EtherscanVerificationProvider,
     utils::{
         BytecodeType, JsonResult, check_and_encode_args, check_explorer_args,
-        load_fork_config_and_evm_opts, maybe_predeploy_contract, synthetic_deployment_context,
-        validate_encoded_constructor_args,
+        load_fork_config_and_evm_opts, maybe_predeploy_contract, validate_encoded_constructor_args,
     },
     verify::VerifierArgs,
 };
@@ -31,19 +30,16 @@ use foundry_common::{
 };
 use foundry_compilers::info::ContractInfo;
 use foundry_config::{Chain, Config, figment, impl_figment_convert};
-#[cfg(feature = "monad")]
-use foundry_evm::core::evm::MonadEvmNetwork;
 #[cfg(feature = "optimism")]
 use foundry_evm::core::evm::OpEvmNetwork;
+#[cfg(feature = "monad")]
+use foundry_evm::core::evm::{BlockContext, MonadEvmNetwork};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
         FoundryChain, FoundryTransaction as _,
         env::FromAnyRpcTransaction as _,
-        evm::{
-            BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork,
-            TxEnvFor,
-        },
+        evm::{ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, ExecutorBuilder, TracingExecutor},
     opts::{EvmOpts, ForkEndpointIdentity},
@@ -547,16 +543,6 @@ impl VerifyBytecodeArgs {
             tx_env.set_gas_limit(evm_env.block_env.gas_limit());
             tx_env.set_gas_price(evm_env.block_env.basefee() as u128);
 
-            let kind = TxKind::Create;
-            let block_context =
-                if !maybe_predeploy && deploy_block != 0 && config.networks.is_monad() {
-                    Some(monad_block_context::<FEN>(&config, deploy_block).await?)
-                } else {
-                    None
-                };
-            let target_context =
-                synthetic_deployment_context::<FEN>(block_context.as_ref(), &tx_env);
-
             // Seed deployer account with funds
             let account_info = AccountInfo {
                 balance: U256::from(100 * 10_u128.pow(18)),
@@ -565,13 +551,17 @@ impl VerifyBytecodeArgs {
             };
             executor.backend_mut().insert_account_info(deployer, account_info);
 
-            let fork_address = crate::utils::deploy_contract::<FEN>(
-                &mut executor,
-                &evm_env,
-                &tx_env,
-                kind,
-                target_context,
-            )?;
+            let fork_address = if maybe_predeploy || deploy_block == 0 {
+                crate::utils::deploy_contract::<FEN>(
+                    &mut executor,
+                    &evm_env,
+                    &tx_env,
+                    TxKind::Create,
+                    ChainFor::<FEN>::for_transaction(&tx_env),
+                )?
+            } else {
+                executor.deploy_with_env(evm_env.clone(), tx_env.clone(), None)?.address
+            };
 
             // Compare runtime bytecode. The onchain code is read at `deploy_block` to stay
             // anchored to the same height as the local fork. Predeploys keep reading at the
@@ -983,7 +973,7 @@ fn replay_monad_block_transactions<'a>(
         let BlockTransactions::Full(txs) = block.transactions() else {
             return Err(eyre::eyre!("Could not get block txs"));
         };
-        let block_context = monad_block_context::<MonadEvmNetwork>(config, block_number).await?;
+        let block_context = monad_block_context(config, block_number).await?;
         let target_index = txs
             .iter()
             .position(|tx| tx.tx_hash() == target_hash)
@@ -1061,15 +1051,18 @@ fn execute_replay_transaction<FEN: FoundryEvmNetwork>(
 }
 
 /// Fetches the block context Monad needs to reconstruct replay ordering.
-async fn monad_block_context<FEN: FoundryEvmNetwork>(
+#[cfg(feature = "monad")]
+async fn monad_block_context(
     config: &Config,
     block_number: u64,
-) -> Result<BlockContext<FEN>> {
-    let provider = ProviderBuilder::<FEN::Network>::from_config(config)?.build()?;
+) -> Result<BlockContext<MonadEvmNetwork>> {
+    let provider =
+        ProviderBuilder::<<MonadEvmNetwork as FoundryEvmNetwork>::Network>::from_config(config)?
+            .build()?;
     let block = provider.get_block(block_number.into()).full().await?.ok_or_else(|| {
         eyre::eyre!("block {block_number} is required to reconstruct transaction context")
     })?;
-    BlockContext::<FEN>::fetch(&provider, &block).await
+    BlockContext::<MonadEvmNetwork>::fetch(&provider, &block).await
 }
 
 #[cfg(test)]
