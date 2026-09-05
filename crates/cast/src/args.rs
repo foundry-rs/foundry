@@ -318,7 +318,18 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
             let out = if packed {
-                SimpleCast::abi_encode_packed(&sig, &args)?
+                // If the signature is a tuple, we need to prefix it to make it a function
+                let sig = if sig.trim_start().starts_with('(') {
+                    format!("foo{sig}")
+                } else {
+                    sig.to_string()
+                };
+
+                let func = get_func(&sig)?;
+                let encoded = encode_function_args_packed(&func, &args).map_err(|e| {
+                    eyre::eyre!("Could not ABI encode the function and arguments: {e}")
+                })?;
+                hex::encode_prefixed(encoded)
             } else {
                 let func = get_func(&sig)?;
                 let encoded = encode_function_args(&func, &args).map_err(|e| {

@@ -9882,3 +9882,10 @@ casttest!(abi_encode, |_prj, cmd| {
         .assert_success()
         .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000001\n");
 });
+
+casttest!(abi_encode_packed, |_prj, cmd| {
+    cmd.cast_fuse()
+        .args(["abi-encode", "--packed", "f(uint256)", "1"])
+        .assert_success()
+        .stdout_eq("0x0000000000000000000000000000000000000000000000000000000000000001\n");
+});
