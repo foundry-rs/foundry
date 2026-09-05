@@ -2726,6 +2726,55 @@ contract SymbolicExpectCall is Test {
         );
         assertEq(target.ping{gas: 50000}(15), 16);
     }
+
+    function checkExpectCallAdditive(uint256) public {
+        bytes memory data =
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(2));
+        vm.expectCall(address(target), data);
+        vm.expectCall(address(target), data);
+        assertEq(target.ping(2), 3);
+        assertEq(target.ping(2), 3);
+    }
+
+    function checkExpectCallCountedDuplicateReverts(uint256) public {
+        bytes memory data =
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(3));
+        vm.expectCall(address(target), data, 1);
+        (bool ok, bytes memory ret) = address(vm).call(
+            abi.encodeWithSignature("expectCall(address,bytes,uint64)", address(target), data, uint64(1))
+        );
+        assertFalse(ok);
+        assertEq(
+            keccak256(ret),
+            keccak256(
+                abi.encodeWithSelector(
+                    bytes4(keccak256("CheatcodeError(string)")),
+                    "counted expected calls can only bet set once"
+                )
+            )
+        );
+        assertEq(target.ping(3), 4);
+    }
+
+    function checkExpectCallNonCountedOverCountedReverts(uint256) public {
+        bytes memory data =
+            abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(4));
+        vm.expectCall(address(target), data, 1);
+        (bool ok, bytes memory ret) = address(vm).call(
+            abi.encodeWithSignature("expectCall(address,bytes)", address(target), data)
+        );
+        assertFalse(ok);
+        assertEq(
+            keccak256(ret),
+            keccak256(
+                abi.encodeWithSelector(
+                    bytes4(keccak256("CheatcodeError(string)")),
+                    "cannot overwrite a counted expectCall with a non-counted expectCall"
+                )
+            )
+        );
+        assertEq(target.ping(4), 5);
+    }
 }
 "#,
     );
@@ -2832,172 +2881,25 @@ checkSymbolicCalleeExpectedCallMismatch(address)
 checkExpectCallMinGasMissing(uint256)
 "#]],
     );
-});
-
-forgetest_init!(symbolic_vm_expect_call_additive_idiom, |prj, cmd| {
-    if !z3_available() {
-        let _ = sh_eprintln!(
-            "skipping symbolic_vm_expect_call_additive_idiom because z3 is not available"
-        );
-        return;
-    }
-
-    prj.add_test(
-        "SymbolicExpectCallAdditive.t.sol",
-        r#"
-import "forge-std/Test.sol";
-
-contract SymbolicExpectCallAdditiveTarget {
-    function ping(uint256 value) external pure returns (uint256) {
-        return value + 1;
-    }
-}
-
-contract SymbolicExpectCallAdditive is Test {
-    SymbolicExpectCallAdditiveTarget target;
-
-    function setUp() public {
-        target = new SymbolicExpectCallAdditiveTarget();
-    }
-
-    // Cheatcode-usage errors are returned as `CheatcodeError(string)`. Compare
-    // whole-buffer hashes against a precomputed expected encoding rather than
-    // slicing `ret` with a length-dependent loop, which the symbolic engine
-    // cannot bound and blows the path depth limit.
-    function _expectedCheatcodeError(string memory message) internal pure returns (bytes memory) {
-        return abi.encodeWithSelector(bytes4(keccak256("CheatcodeError(string)")), message);
-    }
-
-    // Two identical non-counted registrations followed by only one matching
-    // call: an end-to-end smoke check that this shape still reports a clean
-    // "expected call ... unmet" failure rather than crashing or misbehaving
-    // under --symbolic. This does NOT by itself distinguish the fix from the
-    // pre-fix bug (the old unconditional-push behavior also fails here, for
-    // the wrong reason: its unreachable second entry is never observed
-    // either). The real regression coverage for the merge itself - that a
-    // duplicate registration raises the expected count rather than pushing a
-    // structurally-unreachable second entry - lives in the
-    // `duplicate_non_counted_expect_call_merges_additively` Rust unit test in
-    // `crates/evm/symbolic/src/runtime/state.rs`, which exercises
-    // `register_expected_call` and `observe()`/`is_satisfied()` directly. A
-    // pre-existing, unrelated symbolic-replay limitation (any --symbolic test
-    // that registers 2+ `vm.expectCall`s and fully satisfies all of them
-    // produces a false "symbolic counterexample did not replay", reproduced
-    // identically on unmodified master with plain distinct-key registrations)
-    // makes the satisfied-by-two-calls direction unreliable to assert
-    // end-to-end here.
-    function checkExpectCallAdditiveUnmetSecondCall(uint256) public {
-        vm.expectCall(
-            address(target),
-            abi.encodeWithSelector(SymbolicExpectCallAdditiveTarget.ping.selector, uint256(2))
-        );
-        vm.expectCall(
-            address(target),
-            abi.encodeWithSelector(SymbolicExpectCallAdditiveTarget.ping.selector, uint256(2))
-        );
-        assertEq(target.ping(2), 3);
-    }
-
-    // Re-registering an already-counted expectCall with the same key must
-    // revert, matching the concrete cheatcode's guard rail.
-    function checkExpectCallCountedDuplicateReverts(uint256) public {
-        vm.expectCall(
-            address(target),
-            abi.encodeWithSelector(SymbolicExpectCallAdditiveTarget.ping.selector, uint256(3)),
-            1
-        );
-        (bool ok, bytes memory ret) = address(vm).call(
-            abi.encodeWithSignature(
-                "expectCall(address,bytes,uint64)",
-                address(target),
-                abi.encodeWithSelector(SymbolicExpectCallAdditiveTarget.ping.selector, uint256(3)),
-                uint64(1)
-            )
-        );
-        assertFalse(ok);
-        assertEq(
-            keccak256(ret),
-            keccak256(_expectedCheatcodeError("counted expected calls can only bet set once"))
-        );
-        assertEq(target.ping(3), 4);
-    }
-
-    // Registering a non-counted expectCall over an already-counted one with
-    // the same key must revert, matching the concrete cheatcode's guard rail.
-    function checkExpectCallNonCountedOverCountedReverts(uint256) public {
-        vm.expectCall(
-            address(target),
-            abi.encodeWithSelector(SymbolicExpectCallAdditiveTarget.ping.selector, uint256(4)),
-            1
-        );
-        (bool ok, bytes memory ret) = address(vm).call(
-            abi.encodeWithSignature(
-                "expectCall(address,bytes)",
-                address(target),
-                abi.encodeWithSelector(SymbolicExpectCallAdditiveTarget.ping.selector, uint256(4))
-            )
-        );
-        assertFalse(ok);
-        assertEq(
-            keccak256(ret),
-            keccak256(
-                _expectedCheatcodeError(
-                    "cannot overwrite a counted expectCall with a non-counted expectCall"
-                )
-            )
-        );
-        assertEq(target.ping(4), 5);
-    }
-}
-"#,
-    );
-
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkExpectCallAdditiveUnmetSecondCall"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[FAIL:
-"#]],
-    );
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-checkExpectCallAdditiveUnmetSecondCall(uint256)
-"#]],
-    );
 
     let stdout = prj
         .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkExpectCallCountedDuplicateReverts"])
+        .args(["test", "--symbolic", "--match-test", "checkExpectCallAdditive"])
         .assert_success()
         .get_output()
         .stdout_lossy();
-
     assert_relevant_lines(
         &stdout,
         foundry_test_utils::str![[r#"
-[PASS] checkExpectCallCountedDuplicateReverts(uint256)
+[PASS] checkExpectCallAdditive(uint256)
 "#]],
     );
 
-    let stdout = prj
-        .forge_command()
-        .args(["test", "--symbolic", "--match-test", "checkExpectCallNonCountedOverCountedReverts"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert_relevant_lines(
-        &stdout,
-        foundry_test_utils::str![[r#"
-[PASS] checkExpectCallNonCountedOverCountedReverts(uint256)
-"#]],
-    );
+    for test in
+        ["checkExpectCallCountedDuplicateReverts", "checkExpectCallNonCountedOverCountedReverts"]
+    {
+        prj.forge_command().args(["test", "--symbolic", "--match-test", test]).assert_success();
+    }
 });
 
 forgetest_init!(symbolic_vm_mock_call_returns_and_reverts, |prj, cmd| {

@@ -1137,53 +1137,27 @@ impl ExpectedCall {
     }
 }
 
-/// Outcome of registering a new `vm.expectCall` against the existing set, mirroring
-/// the concrete cheatcode's keyed-additive semantics (see `expect_call` in
-/// `crates/cheatcodes/src/test/expect.rs`).
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum ExpectedCallRegistration {
-    /// No existing entry for this (callee, calldata) key; a fresh one was pushed.
-    Inserted,
-    /// An existing non-counted entry for this key had its expected count bumped.
-    Merged,
-    /// A counted expectCall was registered for a key that already has an entry
-    /// (counted or non-counted) - counted expectations can only be set once.
-    DuplicateCounted,
-    /// A non-counted expectCall would overwrite an existing counted one for this key.
-    NonCountedOverCounted,
-}
-
-/// Registers a new expected call, merging into an existing entry that shares the
-/// same (callee, calldata) key rather than pushing an unreachable duplicate -
-/// `observe_expected_call` always resolves a matching call to the *first* entry
-/// in the list, so a second entry for the same key could never be observed.
-#[expect(clippy::too_many_arguments)]
+/// Registers an expected call using the concrete cheatcode's keyed-additive semantics.
 pub(crate) fn register_expected_call(
     expected_calls: &mut Vec<ExpectedCall>,
     cx: &mut SymCx,
-    callee: SymExpr,
-    value: Option<U256>,
-    gas: Option<u64>,
-    min_gas: Option<u64>,
-    data: SymBytes,
-    count: Option<u64>,
-) -> ExpectedCallRegistration {
+    expected: ExpectedCall,
+) -> Result<(), &'static str> {
     if let Some(existing) = expected_calls
         .iter_mut()
-        .find(|call| call.callee == callee && call.data.same_bytes(cx, &data))
+        .find(|call| call.callee == expected.callee && call.data.same_bytes(cx, &expected.data))
     {
-        if count.is_some() {
-            return ExpectedCallRegistration::DuplicateCounted;
+        if expected.exact {
+            return Err("counted expected calls can only bet set once");
         }
         if existing.exact {
-            return ExpectedCallRegistration::NonCountedOverCounted;
+            return Err("cannot overwrite a counted expectCall with a non-counted expectCall");
         }
         existing.expected += 1;
-        ExpectedCallRegistration::Merged
     } else {
-        expected_calls.push(ExpectedCall::new(callee, value, gas, min_gas, data, count));
-        ExpectedCallRegistration::Inserted
+        expected_calls.push(expected);
     }
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -2361,40 +2335,13 @@ mod tests {
         let callee = SymExpr::zero(&mut cx);
         let data = SymBytes::empty(&mut cx);
         let mut expected_calls = Vec::new();
+        let first = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), None);
+        let second = ExpectedCall::new(callee, None, None, None, data, None);
 
-        // First registration: no existing entry, so it's inserted fresh.
-        let outcome = register_expected_call(
-            &mut expected_calls,
-            &mut cx,
-            callee.clone(),
-            None,
-            None,
-            None,
-            data.clone(),
-            None,
-        );
-        assert_eq!(outcome, ExpectedCallRegistration::Inserted);
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, first), Ok(()));
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, second), Ok(()));
         assert_eq!(expected_calls.len(), 1);
-        assert_eq!(expected_calls[0].expected, 1);
-
-        // Second registration of the identical (callee, data) key: merges into the
-        // existing entry (bumping its expected count) rather than pushing a second,
-        // structurally-unreachable entry.
-        let outcome = register_expected_call(
-            &mut expected_calls,
-            &mut cx,
-            callee,
-            None,
-            None,
-            None,
-            data,
-            None,
-        );
-        assert_eq!(outcome, ExpectedCallRegistration::Merged);
-        assert_eq!(expected_calls.len(), 1, "must merge, not push a second entry");
         assert_eq!(expected_calls[0].expected, 2);
-
-        // Two observations now satisfy the merged expectation.
         assert!(expected_calls[0].observe());
         assert!(!expected_calls[0].is_satisfied());
         assert!(expected_calls[0].observe());
@@ -2407,47 +2354,19 @@ mod tests {
         let callee = SymExpr::zero(&mut cx);
         let data = SymBytes::empty(&mut cx);
         let mut expected_calls = Vec::new();
+        let first = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), Some(3));
+        let counted = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), Some(5));
+        let non_counted = ExpectedCall::new(callee, None, None, None, data, None);
 
-        let outcome = register_expected_call(
-            &mut expected_calls,
-            &mut cx,
-            callee.clone(),
-            None,
-            None,
-            None,
-            data.clone(),
-            Some(3),
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, first), Ok(()));
+        assert_eq!(
+            register_expected_call(&mut expected_calls, &mut cx, counted),
+            Err("counted expected calls can only bet set once")
         );
-        assert_eq!(outcome, ExpectedCallRegistration::Inserted);
-
-        // Re-registering a counted expectCall for the same key must be rejected,
-        // not silently accepted as a second, unreachable entry.
-        let outcome = register_expected_call(
-            &mut expected_calls,
-            &mut cx,
-            callee.clone(),
-            None,
-            None,
-            None,
-            data.clone(),
-            Some(5),
+        assert_eq!(
+            register_expected_call(&mut expected_calls, &mut cx, non_counted),
+            Err("cannot overwrite a counted expectCall with a non-counted expectCall")
         );
-        assert_eq!(outcome, ExpectedCallRegistration::DuplicateCounted);
-        assert_eq!(expected_calls.len(), 1, "the rejected registration must not be pushed");
-        assert_eq!(expected_calls[0].expected, 3, "the original counted expectation is untouched");
-
-        // A non-counted expectCall over the same counted key is likewise rejected.
-        let outcome = register_expected_call(
-            &mut expected_calls,
-            &mut cx,
-            callee,
-            None,
-            None,
-            None,
-            data,
-            None,
-        );
-        assert_eq!(outcome, ExpectedCallRegistration::NonCountedOverCounted);
         assert_eq!(expected_calls.len(), 1);
         assert_eq!(expected_calls[0].expected, 3);
     }
@@ -2458,39 +2377,16 @@ mod tests {
         let callee = SymExpr::zero(&mut cx);
         let data = SymBytes::empty(&mut cx);
         let mut expected_calls = Vec::new();
+        let first = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), None);
+        let counted = ExpectedCall::new(callee, None, None, None, data, Some(2));
 
-        // First registration is non-counted (the additive idiom's starting point).
-        let outcome = register_expected_call(
-            &mut expected_calls,
-            &mut cx,
-            callee.clone(),
-            None,
-            None,
-            None,
-            data.clone(),
-            None,
-        );
-        assert_eq!(outcome, ExpectedCallRegistration::Inserted);
-
-        // A counted expectCall for the same key must be rejected too - concrete's
-        // guard rail fires on ANY existing entry for the key, not just an existing
-        // counted one.
-        let outcome = register_expected_call(
-            &mut expected_calls,
-            &mut cx,
-            callee,
-            None,
-            None,
-            None,
-            data,
-            Some(2),
-        );
-        assert_eq!(outcome, ExpectedCallRegistration::DuplicateCounted);
-        assert_eq!(expected_calls.len(), 1, "the rejected registration must not be pushed");
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, first), Ok(()));
         assert_eq!(
-            expected_calls[0].expected, 1,
-            "the original non-counted expectation is untouched"
+            register_expected_call(&mut expected_calls, &mut cx, counted),
+            Err("counted expected calls can only bet set once")
         );
+        assert_eq!(expected_calls.len(), 1);
+        assert_eq!(expected_calls[0].expected, 1);
     }
 
     #[test]

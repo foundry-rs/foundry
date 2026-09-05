@@ -59,30 +59,11 @@ impl SymbolicExecutor {
         data: SymBytes,
         count: Option<u64>,
     ) -> CheatcodeOutcome {
-        match register_expected_call(
-            &mut state.expected_calls,
-            &mut self.cx,
-            callee,
-            value,
-            gas,
-            min_gas,
-            data,
-            count,
-        ) {
-            ExpectedCallRegistration::Inserted | ExpectedCallRegistration::Merged => {
-                CheatcodeOutcome::Continue(Vec::new())
-            }
-            ExpectedCallRegistration::DuplicateCounted => {
-                CheatcodeOutcome::Revert(error_string_return_data(
-                    &mut self.cx,
-                    "counted expected calls can only bet set once",
-                ))
-            }
-            ExpectedCallRegistration::NonCountedOverCounted => {
-                CheatcodeOutcome::Revert(error_string_return_data(
-                    &mut self.cx,
-                    "cannot overwrite a counted expectCall with a non-counted expectCall",
-                ))
+        let expected = ExpectedCall::new(callee, value, gas, min_gas, data, count);
+        match register_expected_call(&mut state.expected_calls, &mut self.cx, expected) {
+            Ok(()) => CheatcodeOutcome::Continue(Vec::new()),
+            Err(message) => {
+                CheatcodeOutcome::Revert(error_string_return_data(&mut self.cx, message))
             }
         }
     }
