@@ -228,44 +228,6 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         Ok(serde_json::to_string(&res)?)
     }
 
-    /// Returns the slot
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use alloy_primitives::{Address, B256};
-    /// use alloy_provider::{ProviderBuilder, RootProvider, network::AnyNetwork};
-    /// use cast::Cast;
-    /// use std::str::FromStr;
-    ///
-    /// # async fn foo() -> eyre::Result<()> {
-    /// let provider =
-    ///     ProviderBuilder::<_, _, AnyNetwork>::default().connect("http://localhost:8545").await?;
-    /// let cast = Cast::new(provider);
-    /// let addr = Address::from_str("0x00000000006c3852cbEf3e08E8dF289169EdE581")?;
-    /// let slot = B256::ZERO;
-    /// let storage = cast.storage(addr, slot, None).await?;
-    /// println!("{}", storage);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn storage(
-        &self,
-        from: Address,
-        slot: B256,
-        block: Option<BlockId>,
-    ) -> Result<String> {
-        Ok(format!(
-            "{:?}",
-            B256::from(
-                self.provider
-                    .get_storage_at(from, slot.into())
-                    .block_id(block.unwrap_or_default())
-                    .await?
-            )
-        ))
-    }
-
     pub async fn filter_logs(&self, filter: Filter) -> Result<String> {
         let logs = self.get_logs(&filter).await?;
         Self::format_logs(logs)

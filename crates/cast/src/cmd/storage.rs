@@ -1,4 +1,4 @@
-use crate::{Cast, opts::parse_slot};
+use crate::opts::parse_slot;
 use alloy_ens::NameOrAddress;
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -108,7 +108,15 @@ impl StorageArgs {
         // Slot was provided, perform a simple RPC call
         if let Some(slot) = base_slot {
             let slot = U256::from_be_bytes(slot.0).saturating_add(offset).into();
-            sh_println!("{}", Cast::new(provider).storage(address, slot, block).await?)?;
+            sh_println!(
+                "{}",
+                B256::from(
+                    provider
+                        .get_storage_at(address, slot.into())
+                        .block_id(block.unwrap_or_default())
+                        .await?
+                )
+            )?;
             return Ok(());
         }
 
