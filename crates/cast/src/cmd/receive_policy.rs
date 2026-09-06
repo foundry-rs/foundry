@@ -1,23 +1,15 @@
 use crate::{
-    cmd::{
-        keychain::ensure_tempo_precompile_active,
-        tip20::{resolve_tip20_signer, send_tip20_transaction},
-    },
-    tempo::print_payload,
+    cmd::{rpc_provider, tip20::send_tip20_transaction, tip403::policy_type_label},
+    tempo::{ensure_tempo_precompile_active, print_payload, tempo_provider},
     tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, Bytes, U256, keccak256};
-use alloy_provider::Provider;
 use alloy_sol_types::{SolCall, SolValue};
 use clap::{Parser, Subcommand};
 use eyre::{Result, WrapErr, ensure};
-use foundry_cli::{
-    json::print_json_success,
-    opts::RpcOpts,
-    utils::{LoadConfig, get_provider},
-};
-use foundry_common::{provider::ProviderBuilder, shell};
+use foundry_cli::opts::RpcOpts;
+use foundry_common::provider::RetryProvider;
 use foundry_evm::hardfork::TempoHardfork;
 use foundry_evm_networks::TEMPO_PRECOMPILE_ADDRESSES;
 use serde_json::{Value, json};
@@ -206,12 +198,12 @@ async fn set(
         recovery_warning(sender_policy_id, recovery_authority, &send_tx.eth.rpc).await?
     };
 
-    let call = ITIP403Registry::setReceivePolicyCall {
+    let calldata = ITIP403Registry::setReceivePolicyCall {
         senderPolicyId: sender_policy_id,
         tokenFilterId: token_filter_id,
         recoveryAuthority: recovery_authority,
-    };
-    let calldata = Bytes::from(call.abi_encode());
+    }
+    .abi_encode();
 
     if preview {
         let payload = json!({
@@ -221,52 +213,36 @@ async fn set(
             "token_filter_id": token_filter_id,
             "recovery_authority": format!("{recovery_authority}"),
             "recovery_mode": recovery_mode(recovery_authority),
-            "calldata": format!("{calldata}"),
+            "calldata": Bytes::from(calldata),
             "warning": warning,
         });
-        if shell::is_json() {
-            print_json_success(payload)?;
-        } else {
+        return print_payload(payload, |payload| {
             sh_println!(
                 "Registry:           {TIP403_REGISTRY_ADDRESS}\n\
                  Sender policy ID:   {sender_policy_id}\n\
                  Token filter ID:    {token_filter_id}\n\
                  Recovery authority: {recovery_authority}\n\
                  Recovery mode:      {}\n\
-                 Calldata:           {calldata}",
-                recovery_mode(recovery_authority)
+                 Calldata:           {}",
+                recovery_mode(recovery_authority),
+                payload["calldata"].as_str().unwrap_or_default(),
             )?;
-            if let Some(warning) = warning.as_deref() {
+            if let Some(warning) = payload["warning"].as_str() {
                 sh_warn!("{warning}")?;
             }
-        }
-        return Ok(());
+            Ok(())
+        });
     }
 
     if let Some(warning) = warning.as_deref() {
         sh_warn!("{warning}")?;
     }
 
-    let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
-    send_tip20_transaction(
-        NameOrAddress::Address(TIP403_REGISTRY_ADDRESS),
-        "setReceivePolicy(uint64,uint64,address)",
-        vec![
-            sender_policy_id.to_string(),
-            token_filter_id.to_string(),
-            recovery_authority.to_string(),
-        ],
-        send_tx,
-        tx,
-        signer,
-        access_key,
-    )
-    .await
+    send_tip20_transaction(TIP403_REGISTRY_ADDRESS, calldata, send_tx, tx).await
 }
 
 async fn get(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = get_provider(&config)?;
+    let provider = rpc_provider(&rpc)?;
     let account = account.resolve(&provider).await?;
     let registry = ITIP403Registry::new(TIP403_REGISTRY_ADDRESS, provider);
     let policy = registry.receivePolicy(account).call().await?;
@@ -275,9 +251,9 @@ async fn get(account: NameOrAddress, rpc: RpcOpts) -> Result<()> {
         "account": format!("{account}"),
         "has_receive_policy": policy.hasReceivePolicy,
         "sender_policy_id": policy.senderPolicyId,
-        "sender_policy_type": policy_type(policy.senderPolicyType),
+        "sender_policy_type": policy_type_label(policy.senderPolicyType),
         "token_filter_id": policy.tokenFilterId,
-        "token_filter_type": policy_type(policy.tokenFilterType),
+        "token_filter_type": policy_type_label(policy.tokenFilterType),
         "recovery_authority": format!("{}", policy.recoveryAuthority),
         "recovery_mode": recovery_mode(policy.recoveryAuthority),
     });
@@ -309,8 +285,7 @@ async fn validate(
     receiver: NameOrAddress,
     rpc: RpcOpts,
 ) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = get_provider(&config)?;
+    let provider = rpc_provider(&rpc)?;
     let token = token.resolve(&provider).await?;
     let sender = sender.resolve(&provider).await?;
     let receiver = receiver.resolve(&provider).await?;
@@ -367,7 +342,7 @@ fn validate_payload(
         "effective_receiver": format!("{effective_receiver}"),
         "receiver_was_resolved": receiver != effective_receiver,
         "authorized": authorized,
-        "blocked_reason": blocked_reason(blocked_reason_value),
+        "blocked_reason": blocked_reason(blocked_reason_value as u8),
         "delivery_state": delivery_state,
     })
 }
@@ -382,8 +357,7 @@ fn decode_receipt(receipt: Bytes) -> Result<()> {
 }
 
 async fn receipt_balance(receipt: Bytes, rpc: RpcOpts) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = get_provider(&config)?;
+    let provider = rpc_provider(&rpc)?;
     let guard = IReceivePolicyGuard::new(RECEIVE_POLICY_GUARD_ADDRESS, provider);
     let amount = guard.balanceOf(receipt.clone()).call().await?;
     let decoded = decode_claim_receipt(&receipt)?;
@@ -394,56 +368,36 @@ async fn receipt_balance(receipt: Bytes, rpc: RpcOpts) -> Result<()> {
     })
 }
 
-// The ReceivePolicyGuard precompile only has code from T6 onwards, so a pre-T6 call would
-// succeed as a silent no-op instead of reverting. Fail early with a clear message.
-async fn ensure_receive_policy_t6<P>(provider: &P, command: &str) -> Result<()>
-where
-    P: Provider<TempoNetwork>,
-{
+/// Checks the receipt and that the RPC is T6+: the ReceivePolicyGuard precompile only has code from
+/// T6 onwards, so a pre-T6 call would succeed as a silent no-op instead of reverting.
+async fn guard_provider(
+    receipt: &Bytes,
+    send_tx: &SendTxOpts,
+    command: &str,
+) -> Result<RetryProvider<TempoNetwork>> {
+    decode_claim_receipt(receipt)?;
+    let (_, provider) = tempo_provider(&send_tx.eth.rpc)?;
     ensure_tempo_precompile_active(
-        provider,
+        &provider,
         TempoHardfork::T6,
         RECEIVE_POLICY_GUARD_ADDRESS,
         &format!("{command} requires a Tempo T6-capable ReceivePolicy RPC"),
     )
-    .await
+    .await?;
+    Ok(provider)
 }
 
 async fn burn_receipt(receipt: Bytes, send_tx: SendTxOpts, tx: TxParams) -> Result<()> {
-    decode_claim_receipt(&receipt)?;
-    let config = send_tx.eth.rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    ensure_receive_policy_t6(&provider, "cast receive-policy receipt burn").await?;
-    let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
-    send_tip20_transaction(
-        NameOrAddress::Address(RECEIVE_POLICY_GUARD_ADDRESS),
-        "burnBlockedReceipt(bytes)",
-        vec![format!("{receipt}")],
-        send_tx,
-        tx,
-        signer,
-        access_key,
-    )
-    .await
+    guard_provider(&receipt, &send_tx, "cast receive-policy receipt burn").await?;
+    let data = IReceivePolicyGuard::burnBlockedReceiptCall { receipt }.abi_encode();
+    send_tip20_transaction(RECEIVE_POLICY_GUARD_ADDRESS, data, send_tx, tx).await
 }
 
 async fn claim(to: NameOrAddress, receipt: Bytes, send_tx: SendTxOpts, tx: TxParams) -> Result<()> {
-    decode_claim_receipt(&receipt)?;
-    let config = send_tx.eth.rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    ensure_receive_policy_t6(&provider, "cast receive-policy claim").await?;
+    let provider = guard_provider(&receipt, &send_tx, "cast receive-policy claim").await?;
     let to = to.resolve(&provider).await?;
-    let (signer, access_key) = resolve_tip20_signer(&send_tx, &tx).await?;
-    send_tip20_transaction(
-        NameOrAddress::Address(RECEIVE_POLICY_GUARD_ADDRESS),
-        "claim(address,bytes)",
-        vec![to.to_string(), format!("{receipt}")],
-        send_tx,
-        tx,
-        signer,
-        access_key,
-    )
-    .await
+    let data = IReceivePolicyGuard::claimCall { to, receipt }.abi_encode();
+    send_tip20_transaction(RECEIVE_POLICY_GUARD_ADDRESS, data, send_tx, tx).await
 }
 
 async fn recovery_warning(
@@ -455,8 +409,7 @@ async fn recovery_warning(
         return Ok(None);
     }
 
-    let config = rpc.load_config()?;
-    let provider = get_provider(&config)?;
+    let provider = rpc_provider(rpc)?;
     let registry = ITIP403Registry::new(TIP403_REGISTRY_ADDRESS, provider);
     let mut blocked = Vec::new();
     for address in TEMPO_PRECOMPILE_ADDRESSES {
@@ -520,11 +473,8 @@ fn decode_claim_receipt(receipt: &Bytes) -> Result<IReceivePolicyGuard::ClaimRec
         "ReceivePolicyGuard claim receipt recipient cannot be the guard precompile"
     );
     ensure!(
-        matches!(
-            decoded.blockedReason,
-            reason if reason == ITIP403Registry::BlockedReason::TOKEN_FILTER as u8 ||
-                reason == ITIP403Registry::BlockedReason::RECEIVE_POLICY as u8
-        ),
+        decoded.blockedReason == ITIP403Registry::BlockedReason::TOKEN_FILTER as u8
+            || decoded.blockedReason == ITIP403Registry::BlockedReason::RECEIVE_POLICY as u8,
         "ReceivePolicyGuard claim receipt blocked reason is not claimable"
     );
     ensure!(
@@ -566,7 +516,7 @@ fn receipt_payload(
         },
         "blocked_at": decoded.blockedAt,
         "blocked_nonce": decoded.blockedNonce,
-        "blocked_reason": blocked_reason_u8(decoded.blockedReason),
+        "blocked_reason": blocked_reason(decoded.blockedReason),
         "kind": inbound_kind(decoded.kind),
         "memo": format!("{}", decoded.memo),
         "delivery_state": delivery_state,
@@ -626,25 +576,8 @@ fn recovery_mode(recovery_authority: Address) -> &'static str {
     if recovery_authority == Address::ZERO { "originator" } else { "authority" }
 }
 
-const fn policy_type(policy_type: ITIP403Registry::PolicyType) -> &'static str {
-    match policy_type {
-        ITIP403Registry::PolicyType::WHITELIST => "whitelist",
-        ITIP403Registry::PolicyType::BLACKLIST => "blacklist",
-        ITIP403Registry::PolicyType::COMPOUND => "compound",
-        _ => "unknown",
-    }
-}
-
-const fn blocked_reason(reason: ITIP403Registry::BlockedReason) -> &'static str {
-    match reason {
-        ITIP403Registry::BlockedReason::NONE => "none",
-        ITIP403Registry::BlockedReason::TOKEN_FILTER => "token_filter",
-        ITIP403Registry::BlockedReason::RECEIVE_POLICY => "receive_policy",
-        _ => "unknown",
-    }
-}
-
-const fn blocked_reason_u8(reason: u8) -> &'static str {
+/// Labels a `BlockedReason` discriminant; receipts carry it as a raw `u8`.
+const fn blocked_reason(reason: u8) -> &'static str {
     match reason {
         0 => "none",
         1 => "token_filter",
@@ -848,16 +781,5 @@ mod tests {
         );
         let err = invalid_recovery_authority_message(virtual_address).unwrap();
         assert!(err.contains("TIP-1022 virtual address"));
-    }
-
-    #[test]
-    fn preview_calldata_uses_set_receive_policy_selector() {
-        let call = ITIP403Registry::setReceivePolicyCall {
-            senderPolicyId: 0,
-            tokenFilterId: 1,
-            recoveryAuthority: Address::ZERO,
-        };
-        let calldata = call.abi_encode();
-        assert_eq!(&calldata[..4], ITIP403Registry::setReceivePolicyCall::SELECTOR);
     }
 }

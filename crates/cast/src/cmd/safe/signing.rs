@@ -2,9 +2,9 @@ use alloy_dyn_abi::TypedData;
 use alloy_primitives::{Address, B256, hex};
 use alloy_signer::Signer;
 use eyre::Result;
+use foundry_cli::utils::now;
 use foundry_wallets::WalletSigner;
 use serde_json::json;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const DELEGATE_TOTP_PERIOD_SECS: u64 = 60 * 60;
 
@@ -13,7 +13,7 @@ pub(super) async fn sign_delegate(
     delegate: Address,
     chain_id: u64,
 ) -> Result<String> {
-    let totp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() / DELEGATE_TOTP_PERIOD_SECS;
+    let totp = now().as_secs() / DELEGATE_TOTP_PERIOD_SECS;
     let typed_data = delegate_typed_data(delegate, chain_id, totp)?;
     sign_delegate_typed_data(signer, &typed_data, matches!(signer, WalletSigner::Trezor(_))).await
 }
@@ -80,18 +80,12 @@ mod tests {
     use alloy_primitives::Signature;
 
     #[test]
-    fn normalizes_safe_eth_sign_v() {
+    fn normalizes_signature_v() {
         let mut signature = [0u8; 65];
         signature[64] = 1;
         assert!(normalize_signature(&signature, true).ends_with("20"));
-
         signature[64] = 27;
         assert!(normalize_signature(&signature, true).ends_with("1f"));
-    }
-
-    #[test]
-    fn normalizes_typed_data_v() {
-        let mut signature = [0u8; 65];
         signature[64] = 0;
         assert!(normalize_signature(&signature, false).ends_with("1b"));
     }

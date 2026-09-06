@@ -1087,12 +1087,16 @@ impl SymbolicExecutor {
             }
             opcode::JUMP => {
                 let dest = state.stack.pop()?;
-                let dest = state.expect_constrained_usize(
-                    &mut self.cx,
+                let Some(dest) = self.resolve_jump_destination(
+                    state,
+                    jumpdests,
                     dest,
                     "symbolic JUMP destination",
-                )?;
-                ensure_jumpdest(dest, jumpdests)?;
+                )?
+                else {
+                    state.return_data = SymReturnData::empty(&mut self.cx);
+                    return Ok(StepOutcome::Revert);
+                };
                 if !self.take_loop_jump(state, state.pc, dest) {
                     return Ok(StepOutcome::AssumeRejected);
                 }
@@ -1100,15 +1104,19 @@ impl SymbolicExecutor {
             }
             opcode::JUMPI => {
                 let dest = state.stack.pop()?;
-                let dest = state.expect_constrained_usize(
-                    &mut self.cx,
-                    dest,
-                    "symbolic JUMPI destination",
-                )?;
-                ensure_jumpdest(dest, jumpdests)?;
                 let cond = state.stack.pop()?;
                 match cond.truth() {
                     Some(true) => {
+                        let Some(dest) = self.resolve_jump_destination(
+                            state,
+                            jumpdests,
+                            dest,
+                            "symbolic JUMPI destination",
+                        )?
+                        else {
+                            state.return_data = SymReturnData::empty(&mut self.cx);
+                            return Ok(StepOutcome::Revert);
+                        };
                         if !self.take_loop_jump(state, state.pc, dest) {
                             return Ok(StepOutcome::AssumeRejected);
                         }
@@ -1116,9 +1124,32 @@ impl SymbolicExecutor {
                     }
                     Some(false) => {}
                     None => {
+                        let true_cond = cond.nonzero_bool(&mut self.cx);
+                        let dest = match self.resolve_jump_destination(
+                            state,
+                            jumpdests,
+                            dest,
+                            "symbolic JUMPI destination",
+                        ) {
+                            Ok(Some(dest)) => dest,
+                            Ok(None) => {
+                                return self.branch_invalid_jumpi(state, worklist, true_cond);
+                            }
+                            Err(err) => {
+                                let (_, taken_sat) =
+                                    self.constraints_with_condition(state, true_cond.clone())?;
+                                if taken_sat {
+                                    return Err(err);
+                                }
+                                let (_, not_taken_seed_models) =
+                                    state.split_corpus_seed_models(&true_cond);
+                                state.constraints.push(true_cond.not(&mut self.cx));
+                                state.set_corpus_seed_models(not_taken_seed_models);
+                                return Ok(StepOutcome::Continue);
+                            }
+                        };
                         let op_pc = state.pc.saturating_sub(1);
                         let _branch_span = trace_span!("jumpi_branch", pc = op_pc, dest).entered();
-                        let true_cond = cond.nonzero_bool(&mut self.cx);
                         let false_cond = true_cond.clone().not(&mut self.cx);
                         let fallthrough = state.pc;
                         let (true_seed_models, false_seed_models) =
@@ -1419,6 +1450,48 @@ impl SymbolicExecutor {
         };
 
         Ok(StepOutcome::Continue)
+    }
+
+    fn resolve_jump_destination(
+        &mut self,
+        state: &PathState,
+        jumpdests: &JumpTable,
+        dest: SymExpr,
+        unsupported: &'static str,
+    ) -> Result<Option<usize>, SymbolicError> {
+        let dest = state.expect_constrained_word(&mut self.cx, dest, unsupported)?;
+        let Ok(dest) = usize::try_from(dest) else { return Ok(None) };
+        Ok(jumpdests.is_valid(dest).then_some(dest))
+    }
+
+    fn branch_invalid_jumpi(
+        &mut self,
+        state: &mut PathState,
+        worklist: &mut VecDeque<PathState>,
+        taken: SymBoolExpr,
+    ) -> Result<StepOutcome, SymbolicError> {
+        let (taken_constraints, taken_sat) =
+            self.constraints_with_condition(state, taken.clone())?;
+        let not_taken = taken.clone().not(&mut self.cx);
+        let (taken_seed_models, not_taken_seed_models) = state.split_corpus_seed_models(&taken);
+        if !taken_sat {
+            state.constraints.push(not_taken);
+            state.set_corpus_seed_models(not_taken_seed_models);
+            return Ok(StepOutcome::Continue);
+        }
+
+        let (not_taken_constraints, not_taken_sat) =
+            self.constraints_with_condition(state, not_taken)?;
+        if not_taken_sat {
+            let mut fallthrough = state.clone();
+            fallthrough.constraints = not_taken_constraints;
+            fallthrough.set_corpus_seed_models(not_taken_seed_models);
+            worklist.push_back(fallthrough);
+        }
+        state.constraints = taken_constraints;
+        state.set_corpus_seed_models(taken_seed_models);
+        state.return_data = SymReturnData::empty(&mut self.cx);
+        Ok(StepOutcome::Revert)
     }
 
     pub(super) fn assume_returndata_copy_in_bounds(

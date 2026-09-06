@@ -20,15 +20,11 @@ fn main() {
                 .chain()
                 .enumerate()
                 .map(|(i, e)| {
-                    if i == 0 {
-                        JsonMessage::error("cast.error", e.to_string())
-                    } else {
-                        JsonMessage::error("cast.error.context", e.to_string())
-                    }
+                    let code = if i == 0 { "cast.error" } else { "cast.error.context" };
+                    JsonMessage::error(code, e.to_string())
                 })
-                .collect::<Vec<_>>();
-            let envelope = JsonEnvelope::<()>::failure(errors);
-            let _ = print_json(&envelope);
+                .collect();
+            let _ = print_json(&JsonEnvelope::<()>::failure(errors));
         } else {
             let _ = foundry_common::sh_err!("{err:?}");
         }
