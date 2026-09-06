@@ -157,8 +157,13 @@ Stateless records additionally contain fuzz replay metadata (`seed`, `run`,
 
 Frontier capture is opt-in and bounded by `fuzz.frontier_limit` or
 `invariant.frontier_limit` (both default to 256). It reuses the fuzzer's
-comparison-operand inspector and does not store traces. When equally close
-executions reach the same comparison side, it retains the shortest sequence.
+comparison-operand inspector and does not store traces. Parallel invariant
+campaigns capture on worker 0 only. The recorder keeps the first distinct
+site/result pairs up to the record limit, replaces them with closer operands,
+and prefers the shorter sequence when distances tie. The limit bounds records,
+not bytes; retained sequence storage can scale with the limit and campaign
+depth. Campaigns using `invariant.call_override` do not write frontier artifacts
+because the artifact does not encode randomized inner calls.
 The current symbolic frontier importer accepts stateless one-call records only;
 invariant records are durable inputs for stateful replay and future targeted
 suffix solving, not automatic symbolic seeds yet.

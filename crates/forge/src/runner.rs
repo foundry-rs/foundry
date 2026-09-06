@@ -3089,6 +3089,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .inspector_mut()
             .collect_sancov_trace_cmp(invariant_config.corpus.collect_sancov_trace_cmp());
         let mut config = invariant_config.clone();
+        if config.call_override && config.corpus.capture_branch_frontiers() {
+            let _ = sh_warn!(
+                "Invariant frontier capture does not support `invariant.call_override`; running \
+                 the campaign without writing frontier artifacts."
+            );
+            config.corpus.frontier_dir = None;
+        }
         let failure_dir = invariant_suite_paths(
             &mut config.corpus,
             invariant_config.failure_persist_dir.clone().unwrap(),
