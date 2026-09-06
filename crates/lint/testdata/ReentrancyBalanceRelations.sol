@@ -148,4 +148,92 @@ contract ReentrancyBalanceRelations {
         target.observe();
         require((enabled ? address(this).balance : 0) >= (enabled ? 0 : beforeBalance * 2));
     }
+
+    function multipliedLocal(IBalanceObservation target) external {
+        uint256 beforeBalance = address(this).balance;
+        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
+        beforeBalance *= 2;
+        require(address(this).balance >= beforeBalance);
+    }
+
+    function transformedBeforeCall(IBalanceObservation target) external {
+        uint256 beforeBalance = address(this).balance * 2;
+        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(address(this).balance >= beforeBalance);
+    }
+
+    function transformedTuple(IBalanceObservation target) external {
+        uint256 beforeBalance = address(this).balance;
+        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
+        (uint256 current, uint256 previous) = (address(this).balance * 2, beforeBalance / 2);
+        require(previous <= current);
+    }
+
+    function transformedHelper(IBalanceObservation target) external {
+        uint256 beforeBalance = address(this).balance;
+        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
+        require(scale(address(this).balance) >= scaleNamed(beforeBalance));
+    }
+
+    function scale(uint256 value) internal pure returns (uint256) {
+        return value * 2;
+    }
+
+    function scaleNamed(uint256 value) internal pure returns (uint256 result) {
+        result = value;
+        result *= 2;
+    }
+
+    function transformedOverwrite(IBalanceObservation target, uint256 amount) external {
+        uint256 beforeBalance = address(this).balance;
+        target.observe();
+        beforeBalance *= 2;
+        beforeBalance = amount;
+        require(address(this).balance >= beforeBalance);
+    }
+
+    function transformedBothStale(IBalanceObservation target) external {
+        uint256 beforeBalance = address(this).balance * 2;
+        uint256 otherBalance = scale(address(this).balance);
+        target.observe();
+        require(otherBalance >= beforeBalance);
+    }
+
+    function transformedHelperExclusive(IBalanceObservation target, bool enabled) external {
+        uint256 beforeBalance = address(this).balance;
+        target.observe();
+        uint256 current = conditionalScale(address(this).balance, enabled);
+        uint256 previous = conditionalScale(beforeBalance, !enabled);
+        require(current >= previous);
+    }
+
+    function conditionalScale(uint256 value, bool enabled) internal pure returns (uint256) {
+        return enabled ? value * 2 : 0;
+    }
+
+    function transformedSameSide(IBalanceObservation target, uint256 amount) external {
+        uint256 beforeBalance = address(this).balance;
+        target.observe();
+        uint256 current = scale(address(this).balance);
+        uint256 previous = scaleNamed(beforeBalance);
+        require(current - previous >= amount);
+    }
+
+    function nestedHelperBothStale(IBalanceObservation target) external {
+        uint256 saved = wrap(address(this).balance);
+        target.observe();
+        uint256 transformed = wrap(saved);
+        require(transformed >= saved);
+    }
+
+    function nestedHelperFresh(IBalanceObservation target) external {
+        uint256 saved = wrap(address(this).balance);
+        target.observe(); //~WARN: external call can be reentered before a stale contract balance is checked
+        uint256 transformed = wrap(address(this).balance);
+        require(transformed >= saved);
+    }
+
+    function wrap(uint256 value) internal pure returns (uint256) {
+        return scale(value);
+    }
 }
