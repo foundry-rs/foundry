@@ -104,12 +104,20 @@ repl_test!(failed_save_restores_previous_session_id, |repl| {
     let first_id = unique_cache_id("failed-save-first");
     let second_id = unique_cache_id("failed-save-second");
     let _cleanup = CacheCleanup(vec![first_id.clone(), second_id.clone()]);
-    let invalid_id = format!("{}/id", unique_cache_id("failed-save-invalid"));
 
-    repl.sendln(&format!("!save {first_id}"));
-    // The nested path makes the write fail without touching the existing cache file.
-    repl.sendln_raw(&format!("!save {invalid_id}"));
-    repl.expect("No such file or directory");
+    repl.sendln_raw(&format!("!save {first_id}"));
+    repl.expect(&format!("Saved session to cache with ID = {first_id}"));
+    repl.expect_prompt();
+    // A directory at the destination makes a valid ID fail when writing the cache file.
+    let blocked_cache = tempfile::Builder::new()
+        .prefix("chisel-failed-save-")
+        .suffix(".json")
+        .tempdir_in(CachedChiselSession::<EthEvmNetwork>::cache_dir().unwrap())
+        .unwrap();
+    let blocked_name = blocked_cache.path().file_name().unwrap().to_str().unwrap();
+    let blocked_id = blocked_name.strip_prefix("chisel-").unwrap().strip_suffix(".json").unwrap();
+    repl.sendln_raw(&format!("!save {blocked_id}"));
+    repl.expect("Is a directory");
     repl.expect_prompt();
 
     // A failed rename must not lose the ID of the last successfully saved file.
