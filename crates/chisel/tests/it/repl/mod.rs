@@ -54,6 +54,29 @@ repl_test!(repl_help, |repl| {
     repl.expect_prompt();
 });
 
+repl_test!(command_output_after_raw_input, |repl| {
+    repl.sendln_raw("!help");
+    repl.expect("Chisel help");
+    repl.expect_prompt();
+
+    // A synchronous command must retain its output even after an explicit prompt wait.
+    repl.sendln("uint256(7)");
+    repl.expect("Hex: 0x7");
+    repl.expect("Decimal: 7");
+    repl.sendln("uint256(8)");
+    repl.expect("Decimal: 8");
+});
+
+repl_test!(sendln_waits_for_save, |repl| {
+    let id = unique_cache_id("wait-for-save");
+    let _cleanup = CacheCleanup(vec![id.clone()]);
+
+    // The first command must finish before the caller observes its filesystem effects.
+    repl.sendln(&format!("!save {id}"));
+    assert!(cache_file(&id).is_file());
+    repl.expect(&format!("Saved session to cache with ID = {id}"));
+});
+
 repl_test!(save_renamed_session_removes_stale_cache, |repl| {
     let old_id = unique_cache_id("rename-old");
     let new_id = unique_cache_id("rename-new");
@@ -104,12 +127,18 @@ repl_test!(failed_save_restores_previous_session_id, |repl| {
     let first_id = unique_cache_id("failed-save-first");
     let second_id = unique_cache_id("failed-save-second");
     let _cleanup = CacheCleanup(vec![first_id.clone(), second_id.clone()]);
-    let invalid_id = format!("{}/id", unique_cache_id("failed-save-invalid"));
 
     repl.sendln(&format!("!save {first_id}"));
-    // The nested path makes the write fail without touching the existing cache file.
-    repl.sendln_raw(&format!("!save {invalid_id}"));
-    repl.expect("No such file or directory");
+    // A directory at the destination makes a valid ID fail when writing the cache file.
+    let blocked_cache = tempfile::Builder::new()
+        .prefix("chisel-failed-save-")
+        .suffix(".json")
+        .tempdir_in(CachedChiselSession::<EthEvmNetwork>::cache_dir().unwrap())
+        .unwrap();
+    let blocked_name = blocked_cache.path().file_name().unwrap().to_str().unwrap();
+    let blocked_id = blocked_name.strip_prefix("chisel-").unwrap().strip_suffix(".json").unwrap();
+    repl.sendln_raw(&format!("!save {blocked_id}"));
+    repl.expect("Is a directory");
     repl.expect_prompt();
 
     // A failed rename must not lose the ID of the last successfully saved file.
@@ -200,7 +229,9 @@ repl_test!(cheatcodes_available, "", init = true, |repl| {
 
 // Test empty inputs.
 repl_test!(empty_input, |repl| {
-    repl.sendln("   \n \n\n    \t \t \n \n\t\t\t\t \n \n");
+    for line in "   \n \n\n    \t \t \n \n\t\t\t\t \n \n".split('\n') {
+        repl.sendln(line);
+    }
 });
 
 // Issue #4130: Test type(intN).min correctness.
@@ -281,11 +312,13 @@ repl_test!(import, "", init = true, |repl| {
     repl.sendln("Counter c = new Counter()");
     // TODO: pre-existing inspection failure.
     // repl.sendln("c.number()");
-    repl.sendln("uint x = c.number();\nx");
+    repl.sendln("uint x = c.number();");
+    repl.sendln("x");
     repl.expect("Decimal: 0");
     repl.sendln("c.increment();");
     // repl.sendln("c.number()");
-    repl.sendln("x = c.number();\nx");
+    repl.sendln("x = c.number();");
+    repl.sendln("x");
     repl.expect("Decimal: 1");
 });
 
@@ -409,7 +442,8 @@ repl_test!(assembly_no_return_intermediate, |repl| {
 
 // Issue #5051, #8978: Test EVM version normalization.
 repl_test!(flaky_evm_version_normalization, "--use 0.7.6 --evm-version london", |repl| {
-    repl.sendln("uint x;\nx");
+    repl.sendln("uint x;");
+    repl.sendln("x");
     repl.expect("Decimal: 0");
 });
 
@@ -441,7 +475,8 @@ repl_test!(fetch_interface_with_structs, |repl| {
         "Added 0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789's interface to source as `IEntryPoint`",
     );
     repl.expect_prompt();
-    repl.sendln("uint256 x = 1;\nx");
+    repl.sendln("uint256 x = 1;");
+    repl.sendln("x");
     repl.expect("Decimal: 1");
 });
 

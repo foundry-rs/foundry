@@ -11,6 +11,8 @@ pub struct ChiselSession {
     session: Box<PtySession>,
     project: Box<TestProject>,
     is_repl: bool,
+    /// Unread output from the last completed synchronous command.
+    output: Option<String>,
 }
 
 static SUBCOMMANDS: &[&str] = &["list", "load", "view", "clear-cache", "eval", "help"];
@@ -55,11 +57,13 @@ impl ChiselSession {
         .unwrap();
 
         let is_repl = is_repl(&args);
-        let mut session = Self { session: Box::new(session), project: Box::new(project), is_repl };
+        let mut session =
+            Self { session: Box::new(session), project: Box::new(project), is_repl, output: None };
 
         // Expect initial prompt only if we're in the REPL.
         if session.is_repl() {
             session.expect("Welcome to Chisel!");
+            session.expect_prompt();
         }
 
         session
@@ -73,12 +77,15 @@ impl ChiselSession {
         self.is_repl
     }
 
-    /// Send a line to the REPL and expects the prompt to appear.
+    /// Send one complete REPL input and wait for its next prompt.
+    ///
+    /// Retain the command's output for subsequent `expect` calls. Send multiple independent
+    /// inputs separately, or use `sendln_raw` and explicitly consume their prompts.
     #[track_caller]
     pub fn sendln(&mut self, line: &str) {
         self.sendln_raw(line);
         if self.is_repl() {
-            self.expect_prompt();
+            self.output = Some(self.read_until_prompt());
         }
     }
 
@@ -87,6 +94,7 @@ impl ChiselSession {
     /// You might want to call `expect_prompt` after this.
     #[track_caller]
     pub fn sendln_raw(&mut self, line: &str) {
+        self.output = None;
         match self.session.send_line(line) {
             Ok(_) => (),
             Err(e) => {
@@ -98,6 +106,13 @@ impl ChiselSession {
     /// Expect the needle to appear.
     #[track_caller]
     pub fn expect(&mut self, needle: &str) {
+        if let Some(output) = &mut self.output {
+            let Some(pos) = output.find(needle) else {
+                panic!("expected {needle:?} in completed command output: {output:?}");
+            };
+            output.drain(..pos + needle.len());
+            return;
+        }
         match self.session.exp_string(needle) {
             Ok(_) => (),
             Err(e) => {
@@ -109,7 +124,12 @@ impl ChiselSession {
     /// Expect the prompt to appear.
     #[track_caller]
     pub fn expect_prompt(&mut self) {
-        self.expect(PROMPT);
+        self.read_until_prompt();
+    }
+
+    #[track_caller]
+    fn read_until_prompt(&mut self) -> String {
+        self.session.exp_string(PROMPT).unwrap_or_else(|e| panic!("failed to expect prompt: {e}"))
     }
 
     /// Expect the prompt to appear `n` times.
