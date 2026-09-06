@@ -34,10 +34,11 @@ impl ChiselSession {
         let bin = env!("CARGO_BIN_EXE_chisel");
         let mut command = std::process::Command::new(bin);
 
-        // TODO: TTY works but logs become unreadable.
+        // Keep terminal output readable and use a non-interactive editor for `!edit`.
         command.current_dir(project.root());
         command.env("NO_COLOR", "1");
         command.env("TERM", "dumb");
+        command.env("EDITOR", "true");
 
         command.env("ETHERSCAN_API_KEY", foundry_test_utils::rpc::next_etherscan_api_key());
 

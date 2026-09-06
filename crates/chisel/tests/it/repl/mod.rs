@@ -288,14 +288,16 @@ repl_test!(last_result_resets_with_session, |repl| {
 });
 
 // Issue #4393: Test edit command with traces.
-// TODO: test `!edit`
-// repl_test!(edit_with_traces, |repl| {
-//     repl.sendln("!traces");
-//     repl.sendln("uint x = 42");
-//     repl.sendln("!edit");
-//     // Should open editor without errors.
-//     repl.expect("Running");
-// });
+repl_test!(edit_with_traces, |repl| {
+    repl.sendln("!traces");
+    repl.expect("Enabled traces!");
+    repl.sendln("uint x = 42");
+    repl.sendln("!edit");
+    repl.expect("Traces:");
+    repl.expect("Successfully edited `run()` function's body!");
+    repl.sendln("x");
+    repl.expect("Decimal: 42");
+});
 
 // Test tuple support.
 repl_test!(tuples, |repl| {
@@ -310,15 +312,10 @@ repl_test!(tuples, |repl| {
 repl_test!(import, "", init = true, |repl| {
     repl.sendln("import {Counter} from \"src/Counter.sol\"");
     repl.sendln("Counter c = new Counter()");
-    // TODO: pre-existing inspection failure.
-    // repl.sendln("c.number()");
-    repl.sendln("uint x = c.number();");
-    repl.sendln("x");
+    repl.sendln("c.number()");
     repl.expect("Decimal: 0");
     repl.sendln("c.increment();");
-    // repl.sendln("c.number()");
-    repl.sendln("x = c.number();");
-    repl.sendln("x");
+    repl.sendln("c.number()");
     repl.expect("Decimal: 1");
 });
 
