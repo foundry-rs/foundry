@@ -126,6 +126,45 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
     ) -> SymbolicRunResult {
+        self.execute_run(input, None)
+    }
+
+    /// Searches for concrete inputs that complete after reaching a requested branch outcome.
+    ///
+    /// Unlike [`Self::run`], this retains replay candidates independently of the proof result, so a
+    /// later unsupported path or resource limit does not discard an input found on an earlier
+    /// completed path. The caller must concretely replay every candidate before using it.
+    pub fn search_branch_target<FEN: FoundryEvmNetwork>(
+        &mut self,
+        input: SymbolicRunInput<'_, FEN>,
+    ) -> SymbolicBranchTargetSearchResult {
+        let mut candidates = Vec::new();
+        if input.branch_target.is_none() {
+            return SymbolicBranchTargetSearchResult {
+                candidates,
+                execution: SymbolicRunResult::Incomplete {
+                    kind: SymbolicStopReason::Error,
+                    reason: "branch target search requires a branch target".to_string(),
+                    stats: SymbolicStats::default(),
+                },
+            };
+        }
+
+        let execution = self.execute_run(input, Some(&mut candidates));
+        if let SymbolicRunResult::Counterexample { args, calldata, .. } = &execution {
+            candidates.insert(
+                0,
+                SymbolicConcreteInput { args: args.clone(), calldata: calldata.clone() },
+            );
+        }
+        SymbolicBranchTargetSearchResult { candidates, execution }
+    }
+
+    fn execute_run<FEN: FoundryEvmNetwork>(
+        &mut self,
+        input: SymbolicRunInput<'_, FEN>,
+        branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
+    ) -> SymbolicRunResult {
         self.reset_run_state(false);
         self.solver.clear_context_caches();
         self.cx = SymCx::new();
@@ -137,7 +176,7 @@ impl SymbolicExecutor {
             };
         }
 
-        match self.run_inner(input) {
+        match self.run_inner(input, branch_candidates) {
             Ok(result) => result,
             Err(err) => SymbolicRunResult::Incomplete {
                 kind: err.stop_reason(),
@@ -249,6 +288,7 @@ impl SymbolicExecutor {
     pub(super) fn run_inner<FEN: FoundryEvmNetwork>(
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
+        mut branch_candidates: Option<&mut Vec<SymbolicConcreteInput>>,
     ) -> Result<SymbolicRunResult, SymbolicError> {
         let heuristic_witness_baseline = self.solver.heuristic_witnesses();
         let account = input
@@ -300,6 +340,11 @@ impl SymbolicExecutor {
                 });
             }
             if std::mem::take(&mut state.pending_storage_hook_revert) {
+                self.collect_branch_candidate(
+                    branch_candidates.as_deref_mut(),
+                    input.function,
+                    &state,
+                )?;
                 completed_paths += 1;
                 reverted_paths += 1;
                 continue;
@@ -341,21 +386,27 @@ impl SymbolicExecutor {
                             stats: self.stats_with_paths(completed_paths + 1),
                         });
                     }
+                    let candidate = self.collect_branch_candidate(
+                        branch_candidates.as_deref_mut(),
+                        input.function,
+                        &state,
+                    )?;
                     if input.collect_success_input
                         && state.satisfies_branch_target()
-                        && state.can_seed_success_input()
+                        && state.can_materialize_seed()
                         && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
                     {
-                        success_input = Some((
-                            state.depth,
-                            self.materialize_stateless_input(
+                        let input = match candidate {
+                            Some(input) => input,
+                            None => self.materialize_stateless_input(
                                 state.root_calldata.as_ref().ok_or_else(|| {
                                     SymbolicError::Unsupported("missing root symbolic calldata")
                                 })?,
                                 input.function,
                                 &state,
                             )?,
-                        ));
+                        };
+                        success_input = Some((state.depth, input));
                     }
                     completed_paths += 1;
                     break;
@@ -392,27 +443,38 @@ impl SymbolicExecutor {
                                 stats: self.stats_with_paths(completed_paths + 1),
                             });
                         }
+                        let candidate = self.collect_branch_candidate(
+                            branch_candidates.as_deref_mut(),
+                            input.function,
+                            &state,
+                        )?;
                         if input.collect_success_input
                             && state.satisfies_branch_target()
-                            && state.can_seed_success_input()
+                            && state.can_materialize_seed()
                             && success_input.as_ref().is_none_or(|(depth, _)| state.depth > *depth)
                         {
-                            success_input = Some((
-                                state.depth,
-                                self.materialize_stateless_input(
+                            let input = match candidate {
+                                Some(input) => input,
+                                None => self.materialize_stateless_input(
                                     state.root_calldata.as_ref().ok_or_else(|| {
                                         SymbolicError::Unsupported("missing root symbolic calldata")
                                     })?,
                                     input.function,
                                     &state,
                                 )?,
-                            ));
+                            };
+                            success_input = Some((state.depth, input));
                         }
                         completed_paths += 1;
                         normal_paths += 1;
                         break;
                     }
                     StepOutcome::Revert => {
+                        self.collect_branch_candidate(
+                            branch_candidates.as_deref_mut(),
+                            input.function,
+                            &state,
+                        )?;
                         completed_paths += 1;
                         reverted_paths += 1;
                         break;
@@ -472,6 +534,31 @@ impl SymbolicExecutor {
             stats: self.stats_with_paths(completed_paths),
             success_input: success_input.map(|(_, input)| input),
         })
+    }
+
+    fn collect_branch_candidate(
+        &mut self,
+        candidates: Option<&mut Vec<SymbolicConcreteInput>>,
+        function: &Function,
+        state: &PathState,
+    ) -> Result<Option<SymbolicConcreteInput>, SymbolicError> {
+        let Some(candidates) = candidates else {
+            return Ok(None);
+        };
+        if !state.satisfies_branch_target() || !state.can_materialize_seed() {
+            return Ok(None);
+        }
+
+        let input = self.materialize_stateless_input(
+            state
+                .root_calldata
+                .as_ref()
+                .ok_or(SymbolicError::Unsupported("missing root symbolic calldata"))?,
+            function,
+            state,
+        )?;
+        candidates.push(input.clone());
+        Ok(Some(input))
     }
 
     fn materialize_stateless_counterexample_if_branch_target_satisfied(

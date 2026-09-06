@@ -181,6 +181,15 @@ pub struct SymbolicConcreteInput {
     pub calldata: Bytes,
 }
 
+/// Result of best-effort symbolic exploration toward one branch target.
+#[derive(Debug)]
+pub struct SymbolicBranchTargetSearchResult {
+    /// Concrete inputs whose completed root path reached the requested branch outcome.
+    pub candidates: Vec<SymbolicConcreteInput>,
+    /// Underlying execution result, retained so callers can report incomplete exploration.
+    pub execution: SymbolicRunResult,
+}
+
 /// A concrete invariant target selected from Foundry's invariant discovery.
 #[derive(Clone, Debug)]
 pub struct SymbolicInvariantTarget {

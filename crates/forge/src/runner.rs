@@ -51,8 +51,8 @@ use foundry_evm::{
         invariant::{
             CheckSequenceFailureSite, CheckSequenceOptions, CheckSequenceOutcome,
             HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError, ReplayErrorResult,
-            check_sequence, execute_tx, execute_tx_and_register_created, replay_error,
-            replay_handler_failure_sequence, replay_run,
+            check_sequence, did_fail_on_assert, execute_tx, execute_tx_and_register_created,
+            replay_error, replay_handler_failure_sequence, replay_run,
         },
         persist_corpus_seed, read_corpus_dir, replay_corpus_to_showmap,
         replay_sequence_for_minimization, should_ignore_revert,
@@ -3392,6 +3392,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let mut checked_property_calls = HashSet::<(usize, usize)>::default();
         let mut seeded_invariants = HashSet::<usize>::default();
+        let fail_on_revert = invariant_contract.invariant_fns.iter().any(|(_, policy)| *policy);
         for (frontier, sequence) in
             self.import_symbolic_invariant_frontiers(invariant_contract.anchor(), invariant_config)
         {
@@ -3514,64 +3515,78 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 frontier.site.opcode,
                 frontier.operands.result,
             );
-            let result = symbolic.run(SymbolicRunInput {
+            let search = symbolic.search_branch_target(SymbolicRunInput {
                 executor: &prefix_executor,
                 target: call.call_details.target,
                 sender: call.sender,
                 function,
                 value: U256::ZERO,
                 ffi_enabled: self.config.ffi,
-                collect_success_input: true,
+                collect_success_input: false,
                 corpus_seeds: vec![input],
                 branch_target: Some(target),
             });
-            let solved_input = match result {
-                SymbolicRunResult::Safe { success_input: Some(input), .. } => Some(input),
-                SymbolicRunResult::Counterexample { args, calldata, .. } => {
-                    Some(SymbolicConcreteInput { args, calldata })
-                }
-                SymbolicRunResult::Safe { success_input: None, .. } => {
-                    debug!(id, "targeted invariant frontier produced no branch-flipping input");
-                    None
-                }
-                SymbolicRunResult::Incomplete { kind, reason, .. } => {
-                    debug!(id, ?kind, %reason, "targeted invariant frontier incomplete");
-                    None
-                }
-            };
+            if let SymbolicRunResult::Incomplete { kind, reason, .. } = &search.execution {
+                debug!(
+                    id,
+                    ?kind,
+                    %reason,
+                    candidates = search.candidates.len(),
+                    "targeted invariant frontier incomplete"
+                );
+            } else if search.candidates.is_empty() {
+                debug!(id, "targeted invariant frontier produced no branch-flipping input");
+            }
 
-            if let Some(solved_input) = solved_input {
+            let mut selected_branch_seed = None;
+            for solved_input in search.candidates {
                 let mut solved_sequence = sequence[..=call_index].to_vec();
                 solved_sequence[call_index].call_details.calldata = solved_input.calldata;
-                let mut replay_executor = prefix_executor;
+                let mut replay_executor = prefix_executor.clone();
                 replay_executor.inspector_mut().collect_evm_cmp_log(true);
                 let replay_result =
                     match execute_tx(&mut replay_executor, &solved_sequence[call_index]) {
-                        Ok(result) => Some(result),
+                        Ok(result) => result,
                         Err(err) => {
                             debug!(%err, id, "failed to replay solved invariant frontier");
-                            None
+                            continue;
                         }
                     };
-                if replay_result.is_some_and(|result| {
-                    let comparisons = result.evm_cmp_values.as_deref().unwrap_or_default();
-                    frontier_comparison_flipped(
-                        frontier.site,
-                        frontier.operands.result,
-                        comparisons,
-                    )
-                }) {
-                    match persist_corpus_seed(&invariant_config.corpus, solved_sequence) {
-                        Ok(Some(path)) => {
-                            debug!(id, path = %path.display(), "persisted targeted invariant frontier seed");
-                        }
-                        Ok(None) => {}
-                        Err(err) => {
-                            warn!(%err, id, "failed to persist targeted invariant frontier seed");
-                        }
+                let comparisons = replay_result.evm_cmp_values.as_deref().unwrap_or_default();
+                let branch_flipped = frontier_comparison_flipped(
+                    frontier.site,
+                    frontier.operands.result,
+                    comparisons,
+                );
+                let assertion_failure =
+                    did_fail_on_assert(&replay_result, &replay_result.state_changeset);
+                let accepted = replay_result.result.as_ref() != MAGIC_ASSUME
+                    && (!replay_result.reverted || fail_on_revert || assertion_failure);
+                if !branch_flipped || !accepted {
+                    debug!(
+                        id,
+                        branch_flipped,
+                        reverted = replay_result.reverted,
+                        fail_on_revert,
+                        "solved invariant frontier was not eligible during concrete replay"
+                    );
+                    continue;
+                }
+                if assertion_failure || replay_result.reverted {
+                    selected_branch_seed = Some(solved_sequence);
+                    break;
+                }
+                selected_branch_seed.get_or_insert(solved_sequence);
+            }
+            if let Some(sequence) = selected_branch_seed {
+                match persist_corpus_seed(&invariant_config.corpus, sequence) {
+                    Ok(Some(path)) => {
+                        debug!(id, path = %path.display(), "persisted targeted invariant frontier seed");
                     }
-                } else {
-                    debug!(id, "solved invariant frontier did not flip during concrete replay");
+                    Ok(None) => {}
+                    Err(err) => {
+                        warn!(%err, id, "failed to persist targeted invariant frontier seed");
+                    }
                 }
             }
         }

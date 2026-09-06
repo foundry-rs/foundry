@@ -27,15 +27,12 @@ fn frontier_artifact_path(root: &Path, contract: &str, test: &str) -> PathBuf {
 }
 
 fn keep_only_matching_frontier(
-    root: &Path,
-    contract: &str,
-    test: &str,
+    frontier_path: &Path,
     missing: &str,
     mut matches: impl FnMut(&Value) -> bool,
 ) -> Value {
-    let frontier_path = frontier_artifact_path(root, contract, test);
     let mut artifact: Value = serde_json::from_slice(
-        &std::fs::read(&frontier_path)
+        &std::fs::read(frontier_path)
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
     )
     .unwrap();
@@ -47,7 +44,7 @@ fn keep_only_matching_frontier(
         .cloned()
         .unwrap_or_else(|| panic!("missing {missing} frontier in {artifact}"));
     *artifact["frontiers"].as_array_mut().unwrap() = vec![target_frontier.clone()];
-    std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap())
+    std::fs::write(frontier_path, serde_json::to_vec_pretty(&artifact).unwrap())
         .unwrap_or_else(|err| panic!("failed to write {}: {err}", frontier_path.display()));
     target_frontier
 }
@@ -3051,9 +3048,11 @@ contract SymbolicFuzzFrontierTargetGate {
         .assert_success();
 
     keep_only_matching_frontier(
-        prj.root(),
-        "SymbolicFuzzFrontierTargetGate",
-        "testFuzz_targetGate",
+        &frontier_artifact_path(
+            prj.root(),
+            "SymbolicFuzzFrontierTargetGate",
+            "testFuzz_targetGate",
+        ),
         "value < 777",
         |frontier| {
             frontier["site"]["opcode_name"] == "LT"
@@ -3152,9 +3151,11 @@ contract SymbolicFuzzDeployCodeFrontier is Test {
         .assert_success();
 
     let target_frontier = keep_only_matching_frontier(
-        prj.root(),
-        "SymbolicFuzzDeployCodeFrontier",
-        "testFuzz_deployCode",
+        &frontier_artifact_path(
+            prj.root(),
+            "SymbolicFuzzDeployCodeFrontier",
+            "testFuzz_deployCode",
+        ),
         "deployCode constructor value < 777",
         |frontier| {
             frontier["site"]["opcode_name"] == "LT"
@@ -3598,6 +3599,267 @@ contract SymbolicInvariantFrontierSeed is Test {
             "invariant_notBroken",
             "--corpus-dir",
             "filtered_invariant_corpus",
+        ])
+        .assert_failure();
+});
+
+forgetest_init!(symbolic_invariant_frontier_seeding_keeps_fail_on_revert_branch, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_keeps_fail_on_revert_branch because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantRevertSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantRevertTarget {
+    uint256 sink;
+
+    function act(uint256 value) external {
+        if (value > 777) {
+            revert("target revert");
+        } else {
+            sink = value;
+        }
+    }
+}
+
+contract SymbolicInvariantRevertSeed is Test {
+    SymbolicInvariantRevertTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantRevertTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantRevertSeed",
+            "--runs",
+            "1",
+            "--depth",
+            "1",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "revert_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = prj
+        .root()
+        .join("revert_frontiers")
+        .join("SymbolicInvariantRevertSeed")
+        .join("branch-frontiers.json");
+    let target_frontier = keep_only_matching_frontier(&frontier_path, "value > 777", |frontier| {
+        frontier["call_index"] == 0
+            && frontier["site"]["opcode_name"] == "GT"
+            && frontier["operands"]["result"] == false
+            && (frontier["operands"]["lhs"] == "0x309" || frontier["operands"]["rhs"] == "0x309")
+    });
+    let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantRevertSeed",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "revert_frontiers",
+        "--invariant-corpus-dir",
+        "ignored_revert_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
+    ])
+    .assert_success();
+    let ignored_corpus_dir = prj
+        .root()
+        .join("ignored_revert_corpus")
+        .join("SymbolicInvariantRevertSeed")
+        .join("worker0")
+        .join("corpus");
+    assert!(
+        !ignored_corpus_dir.exists() || ignored_corpus_dir.read_dir().unwrap().next().is_none(),
+        "ordinary revert seed ignored by policy was persisted"
+    );
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_FAIL_ON_REVERT", "true");
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.env("RUST_LOG", "forge::runner=debug");
+    let output = cmd
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantRevertSeed",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "revert_frontiers",
+            "--invariant-corpus-dir",
+            "revert_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+            "--symbolic-frontier-ids",
+            &target_frontier_id,
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+
+    let corpus_dir = prj
+        .root()
+        .join("revert_corpus")
+        .join("SymbolicInvariantRevertSeed")
+        .join("worker0")
+        .join("corpus");
+    assert!(
+        corpus_dir.exists() && corpus_dir.read_dir().unwrap().next().is_some(),
+        "missing replayable fail-on-revert corpus seed for {target_frontier}: stdout={} stderr={}",
+        output.stdout_lossy(),
+        output.stderr_lossy()
+    );
+
+    let seed_path = corpus_dir.read_dir().unwrap().next().unwrap().unwrap().path();
+    let seed: Value = serde_json::from_slice(&std::fs::read(&seed_path).unwrap()).unwrap();
+    let calldata =
+        hex::decode(seed[0]["calldata"].as_str().unwrap().trim_start_matches("0x")).unwrap();
+    assert_eq!(U256::from_be_slice(&calldata[4..]), U256::from(778));
+});
+
+forgetest_init!(symbolic_invariant_frontier_seeding_prefers_assertion_candidate, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_prefers_assertion_candidate because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantAssertionSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantAssertionTarget {
+    uint256 sink;
+
+    function act(uint256 value, bool fail) external {
+        if (value > 777) {
+            if (fail) assert(false);
+            sink = value;
+        }
+    }
+}
+
+contract SymbolicInvariantAssertionSeed is Test {
+    SymbolicInvariantAssertionTarget target;
+
+    function setUp() public {
+        target = new SymbolicInvariantAssertionTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantAssertionSeed",
+            "--runs",
+            "1",
+            "--depth",
+            "1",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "assertion_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = prj
+        .root()
+        .join("assertion_frontiers")
+        .join("SymbolicInvariantAssertionSeed")
+        .join("branch-frontiers.json");
+    let target_frontier = keep_only_matching_frontier(&frontier_path, "value > 777", |frontier| {
+        frontier["call_index"] == 0
+            && frontier["site"]["opcode_name"] == "GT"
+            && frontier["operands"]["result"] == false
+            && (frontier["operands"]["lhs"] == "0x309" || frontier["operands"]["rhs"] == "0x309")
+    });
+    let target_frontier_id = target_frontier["id"].as_u64().unwrap().to_string();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantAssertionSeed",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "assertion_frontiers",
+        "--invariant-corpus-dir",
+        "assertion_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
+    ])
+    .assert_success();
+
+    let corpus_dir = prj
+        .root()
+        .join("assertion_corpus")
+        .join("SymbolicInvariantAssertionSeed")
+        .join("worker0")
+        .join("corpus");
+    let seed_path = corpus_dir.read_dir().unwrap().next().unwrap().unwrap().path();
+    let seed: Value = serde_json::from_slice(&std::fs::read(&seed_path).unwrap()).unwrap();
+    let calldata =
+        hex::decode(seed[0]["calldata"].as_str().unwrap().trim_start_matches("0x")).unwrap();
+    assert_eq!(U256::from_be_slice(&calldata[4..36]), U256::from(778));
+    assert_eq!(U256::from_be_slice(&calldata[36..]), U256::from(1));
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantAssertionSeed",
+            "--match-test",
+            "invariant_ok",
+            "--corpus-dir",
+            "assertion_corpus",
         ])
         .assert_failure();
 });
