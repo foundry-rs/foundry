@@ -80,6 +80,9 @@ pub struct ProjectCompiler {
 
     /// Whether to compile with dynamic linking tests and scripts.
     dynamic_test_linking: bool,
+
+    /// Whether ABI acquisition may consult the compiler-owned ABI cache.
+    abi_cache: bool,
 }
 
 impl Default for ProjectCompiler {
@@ -104,6 +107,7 @@ impl ProjectCompiler {
             size_limits: ContractSizeLimits::default(),
             files: Vec::new(),
             dynamic_test_linking: false,
+            abi_cache: false,
         }
     }
 
@@ -196,6 +200,7 @@ impl ProjectCompiler {
         // Taking is fine since we don't need these in `compile_with`.
         let files = std::mem::take(&mut self.files);
         let preprocess = self.dynamic_test_linking;
+        let abi_cache = self.abi_cache;
         self.compile_with(|| {
             let sources = if files.is_empty() {
                 project.paths.read_input_files()?
@@ -208,7 +213,11 @@ impl ProjectCompiler {
             if preprocess {
                 compiler = compiler.with_preprocessor(DynamicTestLinkingPreprocessor);
             }
-            compiler.compile().map_err(Into::into)
+            if abi_cache {
+                compiler.compile_abi_cached().map_err(Into::into)
+            } else {
+                compiler.compile().map_err(Into::into)
+            }
         })
     }
 
@@ -697,7 +706,7 @@ where
 /// Compiles the project requesting only ABI output.
 pub fn compile_abi_project<C: Compiler<CompilerContract = Contract>>(
     project: &mut Project<C>,
-    compiler: ProjectCompiler,
+    mut compiler: ProjectCompiler,
 ) -> Result<ProjectCompileOutput<C>>
 where
     DynamicTestLinkingPreprocessor: Preprocessor<C>,
@@ -706,7 +715,30 @@ where
         // Request ABI so compilers populate `contracts` without producing bytecode outputs.
         *selection = OutputSelection::common_output_selection(["abi".to_string()]);
     });
+    compiler.abi_cache |= project.no_artifacts;
     compiler.compile(project)
+}
+
+/// Acquires ABI output with compiler-owned persistence separate from normal artifacts.
+///
+/// Requests for additional files or full build info retain their existing output behavior.
+pub fn compile_abi_project_cached<C: Compiler<CompilerContract = Contract>>(
+    project: &mut Project<C>,
+    mut compiler: ProjectCompiler,
+) -> Result<ProjectCompileOutput<C>>
+where
+    DynamicTestLinkingPreprocessor: Preprocessor<C>,
+{
+    if !project.cached
+        || project.build_info
+        || project.artifacts.additional_files != Default::default()
+    {
+        return compile_abi_project(project, compiler);
+    }
+    let mut cached_project = project.clone();
+    cached_project.no_artifacts = false;
+    compiler.abi_cache = true;
+    compile_abi_project(&mut cached_project, compiler)
 }
 
 /// Compiles the target contract requesting only ABI output and returns its ABI.

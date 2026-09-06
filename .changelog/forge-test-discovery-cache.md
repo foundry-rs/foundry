@@ -1,5 +1,9 @@
 ---
 forge: patch
+foundry-common: patch
+cast: patch
+forge-verify: patch
+foundry-bench: minor
 ---
 
-Cache ABI discovery for repeated filtered test runs.
+Reuse validated ABI results without replacing normal build artifacts, and add a local benchmark for filtered tests with partial compilation caches.

@@ -341,6 +341,31 @@ impl BenchmarkProject {
         )
     }
 
+    /// Benchmarks filtered tests after warming only the selected tests.
+    ///
+    /// Keeps the project's dynamic linking configuration and partial compilation cache.
+    pub fn bench_forge_test_filtered(
+        &self,
+        version: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
+        let command = self.cmd("forge test");
+        // The first invocation populates normal artifacts; the second warms discovery for
+        // that normal cache. Neither invocation builds unselected tests.
+        let setup = format!("{command} && {command}");
+        self.hyperfine(
+            "forge_test_filtered",
+            version,
+            &command,
+            runs,
+            Some(&setup),
+            None,
+            None,
+            verbose,
+        )
+    }
+
     /// Benchmark forge build with cache
     pub fn bench_forge_build_with_cache(
         &self,
@@ -569,6 +594,7 @@ impl BenchmarkProject {
     ) -> Result<HyperfineResult> {
         match benchmark {
             "forge_test" => self.bench_forge_test(version, runs, verbose),
+            "forge_test_filtered" => self.bench_forge_test_filtered(version, runs, verbose),
             "forge_build_no_cache" => self.bench_forge_build_no_cache(version, runs, verbose),
             "forge_build_with_cache" => self.bench_forge_build_with_cache(version, runs, verbose),
             "forge_fuzz_test" => self.bench_forge_fuzz_test(version, runs, verbose),
