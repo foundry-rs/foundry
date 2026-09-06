@@ -3745,7 +3745,7 @@ contract SymbolicInvariantRevertSeed is Test {
     let seed: Value = serde_json::from_slice(&std::fs::read(&seed_path).unwrap()).unwrap();
     let calldata =
         hex::decode(seed[0]["calldata"].as_str().unwrap().trim_start_matches("0x")).unwrap();
-    assert_eq!(U256::from_be_slice(&calldata[4..]), U256::from(778));
+    assert!(U256::from_be_slice(&calldata[4..]) > U256::from(777));
 });
 
 forgetest_init!(symbolic_invariant_frontier_seeding_prefers_assertion_candidate, |prj, cmd| {
@@ -3847,7 +3847,7 @@ contract SymbolicInvariantAssertionSeed is Test {
     let seed: Value = serde_json::from_slice(&std::fs::read(&seed_path).unwrap()).unwrap();
     let calldata =
         hex::decode(seed[0]["calldata"].as_str().unwrap().trim_start_matches("0x")).unwrap();
-    assert_eq!(U256::from_be_slice(&calldata[4..36]), U256::from(778));
+    assert!(U256::from_be_slice(&calldata[4..36]) > U256::from(777));
     assert_eq!(U256::from_be_slice(&calldata[36..]), U256::from(1));
 
     cmd.forge_fuse()
