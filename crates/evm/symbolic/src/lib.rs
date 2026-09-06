@@ -200,6 +200,8 @@ pub struct SymbolicInvariantCandidateInput<'a, FEN: FoundryEvmNetwork> {
     pub invariant_address: Address,
     /// Invariant functions checked independently after the handler call.
     pub invariants: &'a [&'a Function],
+    /// Optional campaign hook checked from the unchanged post-handler state.
+    pub after_invariant: Option<&'a Function>,
     /// Concrete handler target selected from the captured frontier.
     pub target: &'a SymbolicInvariantTarget,
     /// Sender of the captured handler call.

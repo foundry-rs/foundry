@@ -3299,151 +3299,77 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             })
             .flatten();
 
-        if after_invariant.is_none() {
-            let invariants = invariant_indexes
-                .iter()
-                .map(|&idx| invariant_contract.invariant_fns[idx].0)
-                .collect::<Vec<_>>();
-            let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
-            let result = symbolic.search_invariant_candidates(SymbolicInvariantCandidateInput {
-                executor: prefix_executor,
-                invariant_address: invariant_contract.address,
-                invariants: &invariants,
-                target,
-                handler_sender: sender,
-                ffi_enabled: self.config.ffi,
-            });
-            if let Some(limitation) = &result.limitation {
-                debug!(
-                    ?limitation.kind,
-                    reason = %limitation.reason,
-                    candidates = result.candidates.len(),
-                    "symbolic invariant frontier candidate search incomplete"
-                );
-            }
-
-            return result
-                .candidates
-                .into_iter()
-                .filter_map(|candidate| {
-                    if !candidate.storage.is_empty() {
-                        return None;
-                    }
-                    let invariant_idx = invariant_indexes[candidate.invariant_idx];
-                    let mut calls = prefix.to_vec();
-                    calls.push(BasicTxDetails {
-                        warp: None,
-                        roll: None,
-                        sender: candidate.step.sender,
-                        call_details: CallDetails {
-                            target: candidate.step.address,
-                            calldata: candidate.step.calldata,
-                            value: None,
-                        },
-                    });
-                    let sequence = (0..calls.len()).collect::<Vec<_>>();
-                    let policy = invariant_contract.invariant_fns[invariant_idx].1;
-                    let outcome = check_sequence(
-                        self.clone_executor(),
-                        &calls,
-                        &sequence,
-                        invariant_contract.address,
-                        invariant_contract.invariant_calldata(invariant_idx),
-                        CheckSequenceOptions {
-                            accumulate_warp_roll: false,
-                            fail_on_revert: policy,
-                            expect_assertion_failure: false,
-                            call_after_invariant: false,
-                            rd: Some(self.revert_decoder()),
-                        },
-                    )
-                    .ok()?;
-                    let confirmed = matches!(
-                        outcome.failure_site,
-                        Some(CheckSequenceFailureSite::Invariant {
-                            selector,
-                            ..
-                        }) if !outcome.success
-                            && outcome.replayed_entirely
-                            && selector == invariant_contract.invariant_fns[invariant_idx].0.selector()
-                    );
-                    confirmed.then_some((invariant_idx, calls))
-                })
-                .collect();
-        }
-
-        let anchor_idx = invariant_contract.anchor_idx;
-        if !invariant_indexes.contains(&anchor_idx) {
-            return Vec::new();
-        }
-        let fail_on_revert = invariant_contract.invariant_fns[invariant_contract.anchor_idx].1;
+        let invariants = invariant_indexes
+            .iter()
+            .map(|&idx| invariant_contract.invariant_fns[idx].0)
+            .collect::<Vec<_>>();
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
-        let result = symbolic.run_invariant(SymbolicInvariantRunInput {
+        let result = symbolic.search_invariant_candidates(SymbolicInvariantCandidateInput {
             executor: prefix_executor,
             invariant_address: invariant_contract.address,
-            sender: self.sender,
-            invariant: invariant_contract.anchor(),
+            invariants: &invariants,
             after_invariant,
-            targets: vec![target.clone()],
-            senders: vec![sender],
-            excluded_senders: Vec::new(),
-            depth: 1,
-            check_interval: 1,
-            fail_on_revert,
+            target,
+            handler_sender: sender,
             ffi_enabled: self.config.ffi,
         });
-        let SymbolicInvariantRunResult::Counterexample {
-            kind: SymbolicInvariantCounterexampleKind::Predicate,
-            sequence,
-            storage,
-            ..
-        } = result
-        else {
-            return Vec::new();
-        };
-        if sequence.len() != 1 || !storage.is_empty() {
-            return Vec::new();
+        if let Some(limitation) = &result.limitation {
+            debug!(
+                ?limitation.kind,
+                reason = %limitation.reason,
+                candidates = result.candidates.len(),
+                "symbolic invariant frontier candidate search incomplete"
+            );
         }
 
-        let step = &sequence[0];
-        let mut candidate = prefix.to_vec();
-        candidate.push(BasicTxDetails {
-            warp: None,
-            roll: None,
-            sender: step.sender,
-            call_details: CallDetails {
-                target: step.address,
-                calldata: step.calldata.clone(),
-                value: None,
-            },
-        });
-        let sequence = (0..candidate.len()).collect::<Vec<_>>();
-        let Ok(outcome) = check_sequence(
-            self.clone_executor(),
-            &candidate,
-            &sequence,
-            invariant_contract.address,
-            invariant_contract.anchor_calldata(),
-            CheckSequenceOptions {
-                accumulate_warp_roll: false,
-                fail_on_revert,
-                expect_assertion_failure: false,
-                call_after_invariant: after_invariant.is_some(),
-                rd: Some(self.revert_decoder()),
-            },
-        ) else {
-            return Vec::new();
-        };
-        let invariant_failed = matches!(
-            outcome.failure_site,
-            Some(
-                CheckSequenceFailureSite::Invariant { .. }
-                    | CheckSequenceFailureSite::AfterInvariant { .. }
-            )
-        );
-        (!outcome.success && outcome.replayed_entirely && invariant_failed)
-            .then_some((anchor_idx, candidate))
+        result
+            .candidates
             .into_iter()
+            .filter_map(|candidate| {
+                if !candidate.storage.is_empty() {
+                    return None;
+                }
+                let invariant_idx = invariant_indexes[candidate.invariant_idx];
+                let mut calls = prefix.to_vec();
+                calls.push(BasicTxDetails {
+                    warp: None,
+                    roll: None,
+                    sender: candidate.step.sender,
+                    call_details: CallDetails {
+                        target: candidate.step.address,
+                        calldata: candidate.step.calldata,
+                        value: None,
+                    },
+                });
+                let sequence = (0..calls.len()).collect::<Vec<_>>();
+                let policy = invariant_contract.invariant_fns[invariant_idx].1;
+                let outcome = check_sequence(
+                    self.clone_executor(),
+                    &calls,
+                    &sequence,
+                    invariant_contract.address,
+                    invariant_contract.invariant_calldata(invariant_idx),
+                    CheckSequenceOptions {
+                        accumulate_warp_roll: false,
+                        fail_on_revert: policy,
+                        expect_assertion_failure: false,
+                        call_after_invariant: after_invariant.is_some(),
+                        rd: Some(self.revert_decoder()),
+                    },
+                )
+                .ok()?;
+                let exact_failure = match outcome.failure_site {
+                    Some(CheckSequenceFailureSite::Invariant { selector, .. }) => {
+                        selector == invariant_contract.invariant_fns[invariant_idx].0.selector()
+                    }
+                    Some(CheckSequenceFailureSite::AfterInvariant { .. }) => {
+                        after_invariant.is_some()
+                    }
+                    _ => false,
+                };
+                (!outcome.success && outcome.replayed_entirely && exact_failure)
+                    .then_some((invariant_idx, calls))
+            })
             .collect()
     }
 
@@ -3619,7 +3545,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if let Some(solved_input) = solved_input {
                 let mut solved_sequence = sequence[..=call_index].to_vec();
                 solved_sequence[call_index].call_details.calldata = solved_input.calldata;
-                let mut replay_executor = prefix_executor.clone();
+                let mut replay_executor = prefix_executor;
                 replay_executor.inspector_mut().collect_evm_cmp_log(true);
                 let replay_result =
                     match execute_tx(&mut replay_executor, &solved_sequence[call_index]) {

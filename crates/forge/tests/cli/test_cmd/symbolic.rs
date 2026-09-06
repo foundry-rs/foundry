@@ -3850,6 +3850,145 @@ contract SymbolicInvariantPropertySeed is Test {
     assert!(result["symbolic"]["counterexample"].is_null());
 });
 
+forgetest_init!(symbolic_invariant_frontier_seeding_checks_after_invariant, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_frontier_seeding_checks_after_invariant because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvariantHookSeed.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvariantHookTarget {
+    uint256 public stored;
+
+    function set(uint256 value) external {
+        if (value == 42) return;
+        stored = value;
+    }
+}
+
+contract SymbolicInvariantHookSeed is Test {
+    SymbolicInvariantHookTarget target;
+    uint256 predicateTouches;
+
+    function setUp() public {
+        target = new SymbolicInvariantHookTarget();
+        targetContract(address(target));
+    }
+
+    function invariant_anchor() public returns (bool) {
+        predicateTouches++;
+        return false;
+    }
+
+    function afterInvariant() public view {
+        require(msg.sender == 0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38, "caller");
+        if (predicateTouches == 0) assert(target.stored() != 123456789);
+    }
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "SymbolicInvariantHookSeed",
+            "--runs",
+            "1",
+            "--depth",
+            "1",
+            "--seed",
+            "0xdef0",
+            "--threads",
+            "1",
+            "--sender",
+            "0x0000000000000000000000000000000000000002",
+            "--frontier-dir",
+            "hook_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = prj
+        .root()
+        .join("hook_frontiers")
+        .join("SymbolicInvariantHookSeed")
+        .join("branch-frontiers.json");
+    let mut artifact: Value = serde_json::from_slice(
+        &std::fs::read(&frontier_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+    )
+    .unwrap();
+    let frontier = artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|frontier| frontier["call_index"] == 0)
+        .cloned()
+        .unwrap_or_else(|| panic!("missing handler frontier in {artifact}"));
+    *artifact["frontiers"].as_array_mut().unwrap() = vec![frontier];
+    std::fs::write(&frontier_path, serde_json::to_vec_pretty(&artifact).unwrap())
+        .unwrap_or_else(|err| panic!("failed to write {}: {err}", frontier_path.display()));
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    let seed_output = cmd
+        .args([
+            "test",
+            "--match-contract",
+            "SymbolicInvariantHookSeed",
+            "--sender",
+            "0x0000000000000000000000000000000000000002",
+            "--threads",
+            "1",
+            "--invariant-frontier-dir",
+            "hook_frontiers",
+            "--invariant-corpus-dir",
+            "hook_corpus",
+            "--symbolic-use-fuzz-frontiers",
+            "--symbolic-check-invariant-frontiers",
+            "--symbolic-frontier-limit",
+            "1",
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+    let corpus_path = prj
+        .root()
+        .join("hook_corpus")
+        .join("SymbolicInvariantHookSeed")
+        .join("worker0")
+        .join("corpus");
+    let corpus_entries = std::fs::read_dir(&corpus_path).map_or(0, |entries| entries.count());
+    assert!(
+        corpus_entries > 0,
+        "empty {}\nstdout={}\nstderr={}",
+        corpus_path.display(),
+        seed_output.stdout_lossy(),
+        seed_output.stderr_lossy()
+    );
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantHookSeed",
+            "--match-test",
+            "invariant_anchor",
+            "--sender",
+            "0x0000000000000000000000000000000000000002",
+            "--corpus-dir",
+            "hook_corpus",
+        ])
+        .assert_failure();
+});
+
 forgetest_init!(symbolic_import_fuzz_corpus_guides_bounded_symbolic_path, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

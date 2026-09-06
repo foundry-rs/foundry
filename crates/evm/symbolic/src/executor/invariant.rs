@@ -170,11 +170,12 @@ impl SymbolicExecutor {
                 if !matches!(outcome.status, CallStatus::Success) {
                     continue;
                 }
+                let handler_state = outcome.state;
                 for (invariant_idx, invariant) in input.invariants.iter().enumerate() {
                     self.check_timeout()?;
                     let predicate = match self.execute_invariant_call(
                         input.executor,
-                        outcome.state.clone(),
+                        handler_state.clone(),
                         input.invariant_address,
                         CALLER,
                         invariant,
@@ -189,17 +190,57 @@ impl SymbolicExecutor {
                             continue;
                         }
                     };
-                    let stop_after_predicate = predicate
+                    let mut stop_after_predicate = predicate
                         .limitation
                         .is_some_and(|error| record_candidate_limitation(limitation, error));
+                    let mut candidate_states = Vec::new();
                     for predicate_outcome in predicate.outcomes {
-                        if matches!(predicate_outcome.status, CallStatus::Success) {
+                        if !matches!(predicate_outcome.status, CallStatus::Success) {
+                            candidate_states.push(predicate_outcome.state);
                             continue;
                         }
-                        match self.materialize_sequence(
-                            std::slice::from_ref(&step),
-                            &predicate_outcome.state,
+                        let Some(after_invariant) = input.after_invariant else {
+                            continue;
+                        };
+
+                        // Concrete invariant checks do not commit predicate state before invoking
+                        // `afterInvariant`. Retain its path constraints while restoring the
+                        // unchanged post-handler world.
+                        let mut after_state = handler_state.clone();
+                        after_state.constraints = predicate_outcome.state.constraints;
+                        let after = match self.execute_invariant_call(
+                            input.executor,
+                            after_state,
+                            input.invariant_address,
+                            CALLER,
+                            after_invariant,
+                            &mut completed_paths,
+                            true,
                         ) {
+                            Ok(outcomes) => outcomes,
+                            Err(error) => {
+                                if record_candidate_limitation(limitation, error) {
+                                    stop_after_predicate = true;
+                                    break;
+                                }
+                                continue;
+                            }
+                        };
+                        let stop_after_hook = after
+                            .limitation
+                            .is_some_and(|error| record_candidate_limitation(limitation, error));
+                        candidate_states.extend(after.outcomes.into_iter().filter_map(|outcome| {
+                            (!matches!(outcome.status, CallStatus::Success))
+                                .then_some(outcome.state)
+                        }));
+                        if stop_after_hook {
+                            stop_after_predicate = true;
+                            break;
+                        }
+                    }
+
+                    for state in candidate_states {
+                        match self.materialize_sequence(std::slice::from_ref(&step), &state) {
                             Ok((mut sequence, storage)) => {
                                 let step =
                                     sequence.pop().expect("one handler template produces one step");
