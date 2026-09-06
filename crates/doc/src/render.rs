@@ -646,6 +646,11 @@ fn collect_comments(
         Return,
     }
     let mut last_section: Option<LastSection> = None;
+    // Fenced-code-block state across the comment stream (same CommonMark rules as
+    // `hir_ext::fenced_code_regions`). Solar emits one item per `///` line, before
+    // continuations are stitched back together, so a fenced example's boundaries span
+    // successive items and must be tracked as the lines stream past.
+    let mut fences = hir_ext::FenceTracker::default();
 
     for doc in docs.iter() {
         if doc.natspec.is_empty() {
@@ -672,8 +677,20 @@ fn collect_comments(
                 continue;
             }
 
-            // Apply inline {Ident} -> markdown link replacement.
-            let content = hir_ext::replace_inline_links(trimmed, name_to_page, page_path, local);
+            // Apply inline {Ident} -> markdown link replacement. Lines belonging to a fenced
+            // code block are code examples: their `<` and `{` are literal content, not MDX
+            // hazards or link references, so they bypass the replacement and reach the page
+            // verbatim. Every line feeds the tracker in order, even when the item as a whole
+            // is not emitted verbatim, so the state stays in sync with the comment stream.
+            let mut is_fenced = !trimmed.is_empty();
+            for line in trimmed.lines() {
+                is_fenced &= fences.feed(line);
+            }
+            let content = if is_fenced {
+                trimmed.to_string()
+            } else {
+                hir_ext::replace_inline_links(trimmed, name_to_page, page_path, local)
+            };
 
             if is_continuation && !prev_doc_was_blank {
                 let appended = match last_section {
@@ -880,7 +897,7 @@ fn collect_code_regions(node: &Node, regions: &mut Vec<Range<usize>>) {
 /// Logical lines and their byte offsets in the original text. CRLF is one separator; lone CR and
 /// LF are separators too. The separator bytes are excluded from the returned slices and preserved
 /// in the source string.
-fn logical_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
+pub(crate) fn logical_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
     let bytes = text.as_bytes();
     let mut offset = 0;
     std::iter::from_fn(move || {

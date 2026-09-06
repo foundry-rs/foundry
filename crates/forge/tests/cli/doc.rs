@@ -748,6 +748,60 @@ function act(uint256 v) external override;
     );
 });
 
+// Fenced code examples in NatSpec are code: their MDX-sensitive characters must reach the
+// page verbatim, while prose outside fences keeps the escaping that stops MDX from parsing
+// `<` as a JSX tag and a bare `{` as an expression.
+forgetest_init!(natspec_preserves_fenced_code_characters, |prj, cmd| {
+    prj.add_source(
+        "Fenced.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Fenced {
+    /// @notice Compares two values.
+    ///
+    /// @dev Example:
+    /// ```solidity
+    /// if (a < b) { revert TooSmall(a, b); }
+    /// ```
+    ///
+    /// A bare < in prose like a < b stays escaped, and {Fenced} still links.
+    function cmp(uint256 a, uint256 b) external pure returns (bool) {
+        return a < b;
+    }
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+    assert_data_eq!(
+        Data::read_from(&prj.root().join("docs/src/pages/src/contract.Fenced.mdx"), None),
+        str![[r#"
+...
+### cmp
+
+Compares two values.
+
+<i>
+
+Example:
+```solidity
+if (a < b) { revert TooSmall(a, b); }
+```
+
+</i>
+
+A bare &lt; in prose like a &lt; b stays escaped, and [Fenced](/src/contract.Fenced) still links.
+
+```solidity
+function cmp(uint256 a, uint256 b) external pure returns (bool);
+```
+...
+"#]],
+    );
+});
+
 forgetest_init!(multiline_notice_populates_frontmatter_description, |prj, cmd| {
     prj.add_source(
         "Vault.sol",
