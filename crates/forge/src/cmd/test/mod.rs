@@ -1485,6 +1485,12 @@ impl TestArgs {
         }
 
         let mut project = config.create_project(true, true)?;
+        // Keep discovery artifacts separate from deployable bytecode artifacts.
+        let discovery_cache = config.cache_path.join("test-discovery");
+        project.paths.cache = discovery_cache.join("solidity-files-cache.json");
+        project.paths.artifacts = discovery_cache.join("out");
+        project.paths.build_infos = discovery_cache.join("build-info");
+        project.no_artifacts = false;
         let sources = src_files()
             .chain(
                 // Preserve path-filter behavior for conventional test files while still
