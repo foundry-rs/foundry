@@ -1051,18 +1051,22 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         };
 
         let frontier_limit = self.config.corpus.frontier_limit;
-        let frontiers = merge_frontiers(
-            frontier_limit,
-            worker_outputs.iter_mut().flat_map(|(_, frontiers)| frontiers.drain(..)),
-        );
-        if !frontiers.is_empty()
-            && let (Some(frontier_dir), Some(frontier_test)) =
-                (&self.config.corpus.frontier_dir, frontier_test.as_ref())
+        if let (Some(frontier_dir), Some(frontier_test)) =
+            (&self.config.corpus.frontier_dir, frontier_test.as_ref())
         {
-            let artifact =
-                StatefulFuzzBranchFrontierArtifact::new(frontier_test, frontier_limit, frontiers);
-            if let Err(err) = write_frontier_artifact(frontier_dir, &artifact) {
-                warn!(%err, path = ?frontier_dir, "failed to write fuzz branch frontier artifact");
+            let frontiers = merge_frontiers(
+                frontier_limit,
+                worker_outputs.iter_mut().flat_map(|(_, frontiers)| frontiers.drain(..)),
+            );
+            if !frontiers.is_empty() {
+                let artifact = StatefulFuzzBranchFrontierArtifact::new(
+                    frontier_test,
+                    frontier_limit,
+                    frontiers,
+                );
+                if let Err(err) = write_frontier_artifact(frontier_dir, &artifact) {
+                    warn!(%err, path = ?frontier_dir, "failed to write fuzz branch frontier artifact");
+                }
             }
         }
 
@@ -1342,6 +1346,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                     if result.reverted
                                         && !invariant_contract.is_optimization()
                                         && !config.has_delay()
+                                        && !config.corpus.capture_branch_frontiers()
                                     {
                                         current_run.inputs.pop();
                                     }

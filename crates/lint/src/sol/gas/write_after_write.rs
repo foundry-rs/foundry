@@ -1,7 +1,7 @@
 use super::WriteAfterWrite;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::loop_update},
 };
 use solar::{
     interface::Span,
@@ -22,25 +22,19 @@ declare_forge_lint!(
     "redundant storage write; value overwritten before being read"
 );
 
-impl<'hir> LateLintPass<'hir> for WriteAfterWrite {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for WriteAfterWrite {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         if let Some(body) = func.body {
-            Analyzer { ctx, hir, pending: HashMap::new() }.check_block(body);
+            Analyzer { ctx, hir: &gcx.hir, pending: HashMap::new() }.check_block(body);
         }
     }
 }
 
 /// Tracks state variable writes that no later read has observed yet; a second write to such a
 /// variable makes the pending one redundant.
-struct Analyzer<'a, 'hir> {
+struct Analyzer<'a, 'gcx> {
     ctx: &'a LintContext<'a, 'a>,
-    hir: &'hir Hir<'hir>,
+    hir: &'gcx Hir<'gcx>,
     pending: HashMap<VariableId, Span>,
 }
 
@@ -94,8 +88,11 @@ impl Analyzer<'_, '_> {
                 }
             }
             // A loop may run zero times, so it never stops the outer flow.
-            StmtKind::Loop(block, _) => {
-                self.isolated(|this| this.check_block(*block));
+            StmtKind::Loop(block, source) => {
+                self.isolated(|this| {
+                    this.check_block(*block)
+                        && loop_update(*source).is_none_or(|update| this.check_stmt(update))
+                });
             }
             StmtKind::Try(try_stmt) => {
                 self.reads(&try_stmt.expr);

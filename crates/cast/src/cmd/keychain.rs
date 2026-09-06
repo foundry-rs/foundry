@@ -1,36 +1,46 @@
+use crate::{
+    cmd::{
+        auth::confirm_and_build,
+        print_json_or,
+        send::{SendOptions, cast_send},
+        tempo_policy_args::{parse_period, parse_scope, parse_selector_bytes},
+    },
+    tempo::{
+        apply_fee_payment, is_tempo_hardfork_active, print_expires, require_hardfork, sponsor_hash,
+        tempo_provider,
+    },
+    tx::{CastTxBuilder, SendTxOpts, SenderKind, apply_poll_interval},
+};
 use alloy_consensus::BlockHeader;
 use alloy_ens::NameOrAddress;
-use foundry_wallets::BrowserWalletOpts;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-use alloy_network::{EthereumWallet, TransactionBuilder};
+use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, B256, Bytes, U256, hex};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
-use alloy_rlp::Encodable;
 use alloy_rpc_types::BlockId;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
-use alloy_transport::TransportError;
 use chrono::DateTime;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    json::print_json_object,
+    json::{print_json_object, print_json_success},
     opts::{RpcOpts, TempoOpts, TransactionOpts},
-    utils::{LoadConfig, maybe_print_resolved_lane, parse_fee_token_address, resolve_lane},
+    utils::{LoadConfig, now, parse_fee_token_address, resolve_lane},
 };
 use foundry_common::{
-    FoundryTransactionBuilder,
-    provider::{ProviderBuilder, is_rpc_method_not_found},
+    provider::ProviderBuilder,
     sh_warn, shell,
     tempo::{
-        self, AccountsStoreView, KeyType, maybe_print_fee_token, read_tempo_accounts_store,
-        resolve_and_set_fee_token, tempo_accounts_store_path,
+        self, AccountsStoreView, KeyType, read_tempo_accounts_store, tempo_accounts_store_path,
     },
 };
 use foundry_evm::hardfork::TempoHardfork;
-use foundry_wallets::{WalletOpts, WalletSigner, wallet_browser::signer::BrowserSigner};
+use foundry_wallets::{
+    BrowserWalletOpts, WalletOpts, WalletSigner, wallet_browser::signer::BrowserSigner,
+};
 use serde::Deserialize;
+use serde_json::{Value, json};
+use std::fmt::Display;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, DEFAULT_FEE_TOKEN,
@@ -46,19 +56,9 @@ use tempo_contracts::precompiles::{
 };
 use tempo_primitives::transaction::{
     CallScope as AuthCallScope, KeyAuthorization, PrimitiveSignature,
-    SelectorRule as AuthSelectorRule, SignatureType as AuthSignatureType, SignedKeyAuthorization,
-    TokenLimit as AuthTokenLimit,
+    SignatureType as AuthSignatureType, SignedKeyAuthorization, TokenLimit as AuthTokenLimit,
 };
 use yansi::Paint;
-
-use crate::cmd::tempo_policy_args::{
-    SelectorArg, parse_period, parse_scope, parse_selector_arg, parse_selector_bytes,
-};
-
-use crate::{
-    cmd::{auth::confirm_auth_rpc_disclosure_during_build, send::cast_send},
-    tx::{CastTxBuilder, CastTxSender, SendTxOpts, SenderKind},
-};
 
 /// Tempo keychain management commands.
 ///
@@ -122,8 +122,8 @@ pub enum KeychainSubcommand {
 
         /// Function selector for the TIP-1011 scope check (hex `0x12345678`,
         /// known shorthand like `transfer`, or full signature like `foo(uint256)`).
-        #[arg(long, value_parser = parse_selector_arg, requires = "to")]
-        selector: Option<SelectorArg>,
+        #[arg(long, value_parser = parse_selector_bytes, requires = "to")]
+        selector: Option<[u8; 4]>,
 
         /// Recipient address for the TIP-1011 scope check (per-selector recipient list).
         #[arg(long, value_name = "ADDRESS", requires = "selector")]
@@ -516,8 +516,8 @@ pub enum KeychainPolicySubcommand {
         target: Address,
 
         /// Function selector, full signature, or known TIP-20 shorthand.
-        #[arg(long, value_parser = parse_selector_arg)]
-        selector: SelectorArg,
+        #[arg(long, value_parser = parse_selector_bytes)]
+        selector: [u8; 4],
 
         /// Optional recipient/spender restrictions for selector calls.
         #[arg(long, value_delimiter = ',')]
@@ -574,15 +574,6 @@ pub enum KeychainPolicySubcommand {
     },
 }
 
-fn parse_signature_type(s: &str) -> Result<SignatureType, String> {
-    match s.to_lowercase().as_str() {
-        "secp256k1" => Ok(SignatureType::Secp256k1),
-        "p256" => Ok(SignatureType::P256),
-        "webauthn" => Ok(SignatureType::WebAuthn),
-        _ => Err(format!("unknown signature type: {s} (expected secp256k1, p256, or webauthn)")),
-    }
-}
-
 fn parse_auth_signature_type(s: &str) -> Result<AuthSignatureType, String> {
     match s.to_lowercase().as_str() {
         "secp256k1" => Ok(AuthSignatureType::Secp256k1),
@@ -592,25 +583,16 @@ fn parse_auth_signature_type(s: &str) -> Result<AuthSignatureType, String> {
     }
 }
 
-const fn signature_type_name(t: &SignatureType) -> &'static str {
-    match t {
-        SignatureType::Secp256k1 => "secp256k1",
-        SignatureType::P256 => "p256",
-        SignatureType::WebAuthn => "webauthn",
-        _ => "unknown",
-    }
+fn parse_signature_type(s: &str) -> Result<SignatureType, String> {
+    parse_auth_signature_type(s).map(Into::into)
 }
 
-const fn signature_type_label(t: &SignatureType) -> &'static str {
-    match t {
-        SignatureType::Secp256k1 => "Secp256k1",
-        SignatureType::P256 => "P256",
-        SignatureType::WebAuthn => "WebAuthn",
-        _ => "unknown",
-    }
+/// The key type of an ABI signature type; `None` for values outside the known variants.
+fn abi_key_type(t: SignatureType) -> Option<KeyType> {
+    AuthSignatureType::try_from(t).ok().map(KeyType::from)
 }
 
-const fn key_type_name(t: &KeyType) -> &'static str {
+const fn key_type_name(t: KeyType) -> &'static str {
     match t {
         KeyType::Secp256k1 => "secp256k1",
         KeyType::P256 => "p256",
@@ -618,7 +600,7 @@ const fn key_type_name(t: &KeyType) -> &'static str {
     }
 }
 
-const fn key_type_label(t: &KeyType) -> &'static str {
+const fn key_type_label(t: KeyType) -> &'static str {
     match t {
         KeyType::Secp256k1 => "Secp256k1",
         KeyType::P256 => "P256",
@@ -626,61 +608,34 @@ const fn key_type_label(t: &KeyType) -> &'static str {
     }
 }
 
-/// Parse a `--limit TOKEN:AMOUNT` flag value.
-fn parse_limit(s: &str) -> Result<TokenLimit, String> {
-    let mut parts = s.splitn(3, ':');
-    let token_str = parts.next().unwrap();
-    let amount_str = parts
-        .next()
-        .ok_or_else(|| format!("invalid limit format: {s} (expected TOKEN:AMOUNT[:PERIOD])"))?;
-    let period_str = parts.next();
-    let token: Address =
-        token_str.parse().map_err(|e| format!("invalid token address '{token_str}': {e}"))?;
-    let amount: U256 =
-        amount_str.parse().map_err(|e| format!("invalid amount '{amount_str}': {e}"))?;
-    let period = match period_str {
-        Some(p) => parse_period(p)?,
-        None => 0,
-    };
-    Ok(TokenLimit { token, amount, period })
-}
-
-/// Parse a key-authorization `--limit TOKEN:AMOUNT[:PERIOD]` flag value.
+/// Parse a `--limit TOKEN:AMOUNT[:PERIOD]` flag value.
 fn parse_auth_limit(s: &str) -> Result<AuthTokenLimit, String> {
-    let parts: Vec<_> = s.split(':').collect();
-    let (token_str, amount_str, period_str) = match parts.as_slice() {
-        [token_str, amount_str] => (*token_str, *amount_str, None),
-        [token_str, amount_str, period_str] => (*token_str, *amount_str, Some(*period_str)),
+    let (token, amount, period) = match s.split(':').collect::<Vec<_>>()[..] {
+        [token, amount] => (token, amount, None),
+        [token, amount, period] => (token, amount, Some(period)),
         _ => return Err(format!("invalid limit format: {s} (expected TOKEN:AMOUNT[:PERIOD])")),
     };
-    let token: Address =
-        token_str.parse().map_err(|e| format!("invalid token address '{token_str}': {e}"))?;
-    let limit: U256 =
-        amount_str.parse().map_err(|e| format!("invalid amount '{amount_str}': {e}"))?;
-    let period = if let Some(period_str) = period_str { parse_period(period_str)? } else { 0 };
-    Ok(AuthTokenLimit { token, limit, period })
+    Ok(AuthTokenLimit {
+        token: token.parse().map_err(|e| format!("invalid token address '{token}': {e}"))?,
+        limit: amount.parse().map_err(|e| format!("invalid amount '{amount}': {e}"))?,
+        period: period.map_or(Ok(0), parse_period)?,
+    })
+}
+
+fn parse_limit(s: &str) -> Result<TokenLimit, String> {
+    parse_auth_limit(s).map(|limit| TokenLimit {
+        token: limit.token,
+        amount: limit.limit,
+        period: limit.period,
+    })
 }
 
 fn parse_auth_scope(s: &str) -> Result<AuthCallScope, String> {
-    parse_scope(s).map(abi_scope_to_auth_scope)
+    parse_scope(s).map(Into::into)
 }
 
-fn abi_scope_to_auth_scope(scope: CallScope) -> AuthCallScope {
-    AuthCallScope {
-        target: scope.target,
-        selector_rules: scope
-            .selectorRules
-            .into_iter()
-            .map(|rule| {
-                let mut selector = [0u8; 4];
-                selector.copy_from_slice(rule.selector.as_slice());
-                AuthSelectorRule { selector, recipients: rule.recipients }
-            })
-            .collect(),
-    }
-}
 /// Represents a single scope entry in JSON format for `--scopes`.
-#[derive(serde::Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonCallScope {
     target: Address,
@@ -689,14 +644,15 @@ struct JsonCallScope {
 }
 
 /// A selector entry can be either a plain string or an object with recipients.
-#[derive(serde::Deserialize)]
+#[derive(Deserialize)]
 #[serde(untagged)]
 enum JsonSelectorEntry {
     Name(String),
     WithRecipients(JsonSelectorWithRecipients),
 }
 
-#[derive(serde::Deserialize)]
+// `deny_unknown_fields` is not honoured on untagged enum variants, so this needs its own struct.
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JsonSelectorWithRecipients {
     selector: String,
@@ -708,36 +664,35 @@ struct JsonSelectorWithRecipients {
 fn parse_scopes_json(s: &str) -> Result<Vec<CallScope>, String> {
     let entries: Vec<JsonCallScope> =
         serde_json::from_str(s).map_err(|e| format!("invalid --scopes JSON: {e}"))?;
-
-    let mut scopes = Vec::new();
-    for entry in entries {
-        let selector_rules = match entry.selectors {
-            None => vec![],
-            Some(sels) => {
-                let mut rules = Vec::new();
-                for sel_entry in sels {
-                    let (selector_str, recipients) = match sel_entry {
+    entries
+        .into_iter()
+        .map(|entry| {
+            let selector_rules = entry
+                .selectors
+                .unwrap_or_default()
+                .into_iter()
+                .map(|sel| {
+                    let (selector, recipients) = match sel {
                         JsonSelectorEntry::Name(name) => (name, vec![]),
-                        JsonSelectorEntry::WithRecipients(r) => (r.selector, r.recipients),
+                        JsonSelectorEntry::WithRecipients(JsonSelectorWithRecipients {
+                            selector,
+                            recipients,
+                        }) => (selector, recipients),
                     };
-                    let selector = parse_selector_bytes(&selector_str)
+                    let selector = parse_selector_bytes(&selector)
                         .map_err(|e| format!("in --scopes JSON: {e}"))?;
-                    rules.push(SelectorRule { selector: selector.into(), recipients });
-                }
-                rules
-            }
-        };
-        scopes.push(CallScope { target: entry.target, selectorRules: selector_rules });
-    }
-
-    Ok(scopes)
+                    Ok(SelectorRule { selector: selector.into(), recipients })
+                })
+                .collect::<Result<_, String>>()?;
+            Ok(CallScope { target: entry.target, selectorRules: selector_rules })
+        })
+        .collect()
 }
 
 /// Newtype wrapper for parsed `--scopes` JSON so clap can treat it as a single value.
 #[derive(Debug, Clone)]
 pub struct ScopesJson(Vec<CallScope>);
 
-/// Parse `--scopes` JSON flag value into the newtype wrapper.
 fn parse_scopes_json_wrapped(s: &str) -> Result<ScopesJson, String> {
     parse_scopes_json(s).map(ScopesJson)
 }
@@ -747,16 +702,15 @@ fn parse_scopes_json_wrapped(s: &str) -> Result<ScopesJson, String> {
 pub struct AuthScopesJson(Vec<AuthCallScope>);
 
 fn parse_auth_scopes_json_wrapped(s: &str) -> Result<AuthScopesJson, String> {
-    parse_scopes_json(s)
-        .map(|scopes| AuthScopesJson(scopes.into_iter().map(abi_scope_to_auth_scope).collect()))
+    parse_scopes_json(s).map(|scopes| AuthScopesJson(scopes.into_iter().map(Into::into).collect()))
 }
 
 impl KeychainSubcommand {
     #[allow(clippy::large_stack_frames)]
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::List => run_list(),
-            Self::Show { wallet_address } => run_show(wallet_address),
+            Self::List => list_keys(None),
+            Self::Show { wallet_address } => list_keys(Some(wallet_address)),
             Self::Check { wallet_address, key_address, rpc } => {
                 run_check(wallet_address, key_address, rpc).await
             }
@@ -770,20 +724,15 @@ impl KeychainSubcommand {
                 selector,
                 recipient,
                 fee_token,
-                tempo,
+                mut tempo,
                 rpc,
             } => {
-                run_doctor(
-                    key_address,
-                    root_account,
-                    to,
-                    selector.map(SelectorArg::into_bytes),
-                    recipient,
-                    fee_token,
-                    tempo,
-                    rpc,
-                )
-                .await
+                let fee_token = fee_token.or(tempo.fee_token).unwrap_or(DEFAULT_FEE_TOKEN);
+                let mut doctor = Doctor::new(root_account, key_address, fee_token);
+                doctor
+                    .run(key_address, root_account, to, selector, recipient, &mut tempo, rpc)
+                    .await;
+                doctor.finish()
             }
             Self::Authorize {
                 key_address,
@@ -800,18 +749,14 @@ impl KeychainSubcommand {
                 send_tx,
             } => {
                 let scopes_present = scopes_json.is_some() || !scope.is_empty();
-                let all_scopes = if let Some(ScopesJson(json_scopes)) = scopes_json {
-                    json_scopes
-                } else {
-                    scope
-                };
+                let scopes = scopes_json.map_or(scope, |ScopesJson(scopes)| scopes);
                 run_authorize(
                     key_address,
                     key_type,
                     expiry,
                     enforce_limits,
                     limits,
-                    all_scopes,
+                    scopes,
                     scopes_present,
                     witness,
                     admin,
@@ -822,16 +767,62 @@ impl KeychainSubcommand {
                 .await
             }
             Self::Revoke { key_address, force, tx, send_tx } => {
-                run_revoke(key_address, tx, send_tx, force).await
+                send_keychain_call(
+                    &IAccountKeychain::revokeKeyCall { keyId: key_address },
+                    tx,
+                    &send_tx,
+                    force,
+                )
+                .await
             }
             Self::BurnWitness { witness, force, tx, send_tx } => {
-                run_burn_witness(witness, tx, send_tx, force).await
+                let (_, provider) = tempo_provider(&send_tx.eth.rpc)?;
+                require_hardfork(
+                    &provider,
+                    TempoHardfork::T5,
+                    "burn-witness requires a Tempo T5-capable AccountKeychain RPC",
+                )
+                .await?;
+                send_keychain_call(
+                    &IAccountKeychain::burnKeyAuthorizationWitnessCall { witness },
+                    tx,
+                    &send_tx,
+                    force,
+                )
+                .await
             }
             Self::IsWitnessBurned { account, witness, rpc } => {
-                run_is_witness_burned(account, witness, rpc).await
+                let (_, provider) = tempo_provider(&rpc)?;
+                require_hardfork(
+                    &provider,
+                    TempoHardfork::T5,
+                    "is-witness-burned requires a Tempo T5-capable AccountKeychain RPC",
+                )
+                .await?;
+                let burned = provider
+                    .account_keychain()
+                    .isKeyAuthorizationWitnessBurned(account, witness)
+                    .call()
+                    .await?;
+                print_json_or(
+                    json!({ "account": account, "witness": witness, "burned": burned }),
+                    burned,
+                )
             }
             Self::IsAdmin { account, key_address, rpc } => {
-                run_is_admin(account, key_address, rpc).await
+                let (_, provider) = tempo_provider(&rpc)?;
+                require_hardfork(
+                    &provider,
+                    TempoHardfork::T6,
+                    "is-admin requires a Tempo T6-capable AccountKeychain RPC",
+                )
+                .await?;
+                let is_admin =
+                    provider.account_keychain().isAdminKey(account, key_address).call().await?;
+                print_json_or(
+                    json!({ "account": account, "key_address": key_address, "is_admin": is_admin }),
+                    is_admin,
+                )
             }
             Self::Verify { account, hash, signature, rpc } => {
                 run_verify_keychain(account, hash, signature, rpc, false).await
@@ -840,16 +831,47 @@ impl KeychainSubcommand {
                 run_verify_keychain(account, hash, signature, rpc, true).await
             }
             Self::RemainingLimit { wallet_address, key_address, token, rpc } => {
-                run_remaining_limit(wallet_address, key_address, token, rpc).await
+                let (_, provider) = tempo_provider(&rpc)?;
+                let is_t3 = is_tempo_hardfork_active(&provider, TempoHardfork::T3).await?;
+                let (remaining, _) =
+                    remaining_limit(&provider, wallet_address, key_address, token, is_t3).await?;
+                if shell::is_json() {
+                    sh_println!("{}", json!({ "remaining": remaining.to_string() }))?;
+                } else {
+                    sh_println!("{remaining}")?;
+                }
+                Ok(())
             }
             Self::UpdateLimit { key_address, token, new_limit, force, tx, send_tx } => {
-                run_update_limit(key_address, token, new_limit, tx, send_tx, force).await
+                send_keychain_call(
+                    &IAccountKeychain::updateSpendingLimitCall {
+                        keyId: key_address,
+                        token,
+                        newLimit: new_limit,
+                    },
+                    tx,
+                    &send_tx,
+                    force,
+                )
+                .await
             }
             Self::SetScope { key_address, scope, force, tx, send_tx } => {
-                run_set_scope(key_address, scope, tx, send_tx, force).await
+                send_keychain_call(
+                    &IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes: scope },
+                    tx,
+                    &send_tx,
+                    force,
+                )
+                .await
             }
             Self::RemoveScope { key_address, target, force, tx, send_tx } => {
-                run_remove_scope(key_address, target, tx, send_tx, force).await
+                send_keychain_call(
+                    &IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target },
+                    tx,
+                    &send_tx,
+                    force,
+                )
+                .await
             }
             Self::Policy { force, command } => command.run(force).await,
         }
@@ -859,7 +881,21 @@ impl KeychainSubcommand {
 impl KeyAuthorizationSubcommand {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::Encode { authorization, account } => run_key_auth_encode(authorization, account),
+            Self::Encode { authorization, account } => {
+                let authorization = authorization.into_authorization(account)?;
+                let encoded = alloy_rlp::encode(&authorization);
+                print_json_or(
+                    json!({
+                        "key_authorization": hex::encode_prefixed(&encoded),
+                        "signature_hash": authorization.signature_hash(),
+                        "rlp_length": encoded.len(),
+                        "is_admin": authorization.is_admin(),
+                        "account": authorization.account,
+                        "witness": authorization.witness(),
+                    }),
+                    hex::encode_prefixed(&encoded),
+                )
+            }
             Self::Sign { authorization, account, wallet, browser } => {
                 run_key_auth_sign(authorization, account, *wallet, browser).await
             }
@@ -886,7 +922,7 @@ impl KeychainPolicySubcommand {
                     key_address,
                     root_account,
                     target,
-                    selector.into_bytes(),
+                    selector,
                     recipients,
                     tx,
                     send_tx,
@@ -895,90 +931,74 @@ impl KeychainPolicySubcommand {
                 .await
             }
             Self::SetLimit { key_address, token, amount, period, tx, send_tx } => {
-                run_policy_set_limit(key_address, token, amount, period, tx, send_tx, force).await
+                if period.is_some_and(|period| period != 0) {
+                    eyre::bail!(
+                        "--period is not supported by the current AccountKeychain updateSpendingLimit \
+                         precompile; periods can only be set when authorizing a key"
+                    );
+                }
+                // updateSpendingLimit authorizes against msg.sender; the root account is not part
+                // of calldata.
+                send_keychain_call(
+                    &IAccountKeychain::updateSpendingLimitCall {
+                        keyId: key_address,
+                        token,
+                        newLimit: amount,
+                    },
+                    tx,
+                    &send_tx,
+                    force,
+                )
+                .await
             }
             Self::RemoveTarget { key_address, target, tx, send_tx } => {
-                run_remove_scope(key_address, target, tx, send_tx, force).await
+                send_keychain_call(
+                    &IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target },
+                    tx,
+                    &send_tx,
+                    force,
+                )
+                .await
             }
         }
     }
 }
 
-/// `cast keychain list` — display all entries from the Tempo Accounts store.
-fn run_list() -> Result<()> {
+/// `cast keychain list` / `cast keychain show <wallet_address>` — display Tempo Accounts store
+/// entries, optionally filtered to one wallet.
+fn list_keys(wallet_address: Option<Address>) -> Result<()> {
     let store = load_accounts_store()?;
+    let entries: Vec<_> = store
+        .keys
+        .iter()
+        .filter(|e| wallet_address.is_none_or(|wallet| e.wallet_address == wallet))
+        .collect();
 
     if shell::is_json() {
-        let entries: Vec<_> = store.keys.iter().map(key_entry_to_json).collect();
-        print_json_object(entries)?;
-        return Ok(());
+        return print_json_object(entries.iter().map(|e| key_entry_to_json(e)).collect::<Vec<_>>());
     }
-
-    if store.keys.is_empty() {
-        sh_println!("No keys found in store.json.")?;
-        return Ok(());
-    }
-
-    for (i, entry) in store.keys.iter().enumerate() {
-        if i > 0 {
-            sh_println!()?;
-        }
-        print_key_entry(entry)?;
-    }
-
-    Ok(())
-}
-
-/// `cast keychain show <wallet_address>` — show keys for a specific wallet.
-fn run_show(wallet_address: Address) -> Result<()> {
-    let store = load_accounts_store()?;
-
-    let entries: Vec<_> =
-        store.keys.iter().filter(|e| e.wallet_address == wallet_address).collect();
-
-    if shell::is_json() {
-        let entries_json: Vec<_> = entries.iter().map(|e| key_entry_to_json(e)).collect();
-        print_json_object(entries_json)?;
-        return Ok(());
-    }
-
     if entries.is_empty() {
-        sh_println!("No keys found for wallet {wallet_address}.")?;
-        return Ok(());
+        return match wallet_address {
+            Some(wallet) => sh_println!("No keys found for wallet {wallet}."),
+            None => sh_println!("No keys found in store.json."),
+        };
     }
-
     for (i, entry) in entries.iter().enumerate() {
         if i > 0 {
             sh_println!()?;
         }
         print_key_entry(entry)?;
     }
-
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-struct LocalLimitMetadata {
-    token: Address,
-    amount: String,
-}
-
-#[derive(Debug, Clone)]
-struct KeyMetadata {
-    root_account: Address,
-    key_type: Option<KeyType>,
-    limits: Vec<LocalLimitMetadata>,
-}
-
-#[derive(Debug, Clone)]
 struct InspectedLimit {
     token: Address,
-    configured_amount: Option<String>,
+    configured_amount: String,
     remaining: U256,
     period_end: Option<u64>,
 }
 
-#[derive(Debug, Clone)]
 enum AllowedCallsView {
     Unsupported,
     Unrestricted,
@@ -991,53 +1011,26 @@ async fn run_inspect(
     root_account: Option<Address>,
     rpc: RpcOpts,
 ) -> Result<()> {
-    let metadata = resolve_key_metadata(key_address, root_account)?;
-    let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let (root_account, entry) = resolve_key_metadata(key_address, root_account)?;
+    let (_, provider) = tempo_provider(&rpc)?;
 
-    let info: KeyInfo = provider.get_keychain_key(metadata.root_account, key_address).await?;
+    let info = provider.get_keychain_key(root_account, key_address).await?;
     let provisioned = info.keyId != Address::ZERO;
     let is_t3 = is_tempo_hardfork_active(&provider, TempoHardfork::T3).await?;
-    let is_t6 = is_tempo_hardfork_active(&provider, TempoHardfork::T6).await?;
-
     // On T6, `isAdminKey` is authoritative for the root/admin distinction.
-    let is_admin = if is_t6 {
-        provider.account_keychain().isAdminKey(metadata.root_account, key_address).call().await?
-    } else {
-        false
-    };
-    let role = if key_address == metadata.root_account {
-        "root"
-    } else if is_admin {
-        "admin"
-    } else {
-        "limited"
-    };
+    let is_admin = is_tempo_hardfork_active(&provider, TempoHardfork::T6).await?
+        && provider.account_keychain().isAdminKey(root_account, key_address).call().await?;
+    let role = key_role(key_address == root_account, is_admin);
 
     let mut limits = Vec::new();
     if info.enforceLimits {
-        for local_limit in &metadata.limits {
-            let (remaining, period_end) = if is_t3 {
-                let limit = provider
-                    .get_keychain_remaining_limit_with_period(
-                        metadata.root_account,
-                        key_address,
-                        local_limit.token,
-                    )
+        for local in entry.iter().flat_map(|entry| &entry.limits) {
+            let (remaining, period_end) =
+                remaining_limit(&provider, root_account, key_address, local.currency, is_t3)
                     .await?;
-                (limit.remaining, Some(limit.periodEnd))
-            } else {
-                let remaining = provider
-                    .account_keychain()
-                    .getRemainingLimit(metadata.root_account, key_address, local_limit.token)
-                    .call()
-                    .await?;
-                (remaining, None)
-            };
-
             limits.push(InspectedLimit {
-                token: local_limit.token,
-                configured_amount: Some(local_limit.amount.clone()),
+                token: local.currency,
+                configured_amount: local.limit.clone(),
                 remaining,
                 period_end,
             });
@@ -1045,11 +1038,8 @@ async fn run_inspect(
     }
 
     let allowed_calls = if is_t3 {
-        let allowed = provider
-            .account_keychain()
-            .getAllowedCalls(metadata.root_account, key_address)
-            .call()
-            .await?;
+        let allowed =
+            provider.account_keychain().getAllowedCalls(root_account, key_address).call().await?;
         if allowed.isScoped {
             AllowedCallsView::Scoped(allowed.scopes)
         } else {
@@ -1059,20 +1049,15 @@ async fn run_inspect(
         AllowedCallsView::Unsupported
     };
 
+    let key_type =
+        if provisioned { abi_key_type(info.signatureType) } else { entry.map(|e| e.key_type) };
+
     if shell::is_json() {
-        let key_type = if provisioned {
-            signature_type_name(&info.signatureType).to_string()
-        } else {
-            metadata
-                .key_type
-                .map(|key_type| key_type_name(&key_type).to_string())
-                .unwrap_or_else(|| "unknown".to_string())
-        };
-        let json = serde_json::json!({
-            "root_account": metadata.root_account.to_string(),
-            "key_id": key_address.to_string(),
+        return print_json_object(json!({
+            "root_account": root_account,
+            "key_id": key_address,
             "provisioned": provisioned,
-            "type": key_type,
+            "type": key_type.map_or("unknown", key_type_name),
             "role": role,
             "is_admin": is_admin,
             "expiry": provisioned.then_some(info.expiry),
@@ -1081,22 +1066,13 @@ async fn run_inspect(
             "is_revoked": info.isRevoked,
             "limits": limits.iter().map(inspected_limit_to_json).collect::<Vec<_>>(),
             "allowed_calls": allowed_calls_to_json(&allowed_calls),
-        });
-        print_json_object(json)?;
-        return Ok(());
+        }));
     }
 
-    let key_type = if provisioned {
-        signature_type_label(&info.signatureType)
-    } else {
-        metadata.key_type.map(|key_type| key_type_label(&key_type)).unwrap_or("unknown")
-    };
-
-    sh_println!("Root account: {}", metadata.root_account)?;
+    sh_println!("Root account: {root_account}")?;
     sh_println!("Key id:       {key_address}")?;
-    sh_println!("Type:         {key_type}")?;
+    sh_println!("Type:         {}", key_type.map_or("unknown", key_type_label))?;
     sh_println!("Role:         {role}")?;
-
     if info.isRevoked {
         sh_println!("Status:       revoked")?;
     } else if !provisioned {
@@ -1105,76 +1081,107 @@ async fn run_inspect(
         sh_println!("Status:       active")?;
         sh_println!("Expiry:       {}", format_expiry_for_inspect(info.expiry))?;
     }
-
     print_inspected_limits(info.enforceLimits, &limits)?;
-    print_allowed_calls(&allowed_calls)?;
-
-    Ok(())
+    print_allowed_calls(&allowed_calls)
 }
 
 /// `cast keychain check` / `cast keychain info` — query on-chain key status.
 async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-
-    let info: KeyInfo = provider.get_keychain_key(wallet_address, key_address).await?;
-
+    let (_, provider) = tempo_provider(&rpc)?;
+    let info = provider.get_keychain_key(wallet_address, key_address).await?;
     let provisioned = info.keyId != Address::ZERO;
+    let signature_type = abi_key_type(info.signatureType).map_or("unknown", key_type_name);
 
     if shell::is_json() {
-        let json = serde_json::json!({
-            "wallet_address": wallet_address.to_string(),
-            "key_address": key_address.to_string(),
+        return print_json_object(json!({
+            "wallet_address": wallet_address,
+            "key_address": key_address,
             "provisioned": provisioned,
-            "signatureType": signature_type_name(&info.signatureType),
-            "key_id": info.keyId.to_string(),
+            "signatureType": signature_type,
+            "key_id": info.keyId,
             "expiry": info.expiry,
             "expiry_human": format_expiry(info.expiry),
             "enforce_limits": info.enforceLimits,
             "is_revoked": info.isRevoked,
-        });
-        print_json_object(json)?;
-        return Ok(());
+        }));
     }
 
     sh_println!("Wallet:         {wallet_address}")?;
     sh_println!("Key:            {key_address}")?;
-
     if info.isRevoked {
-        sh_println!("Status:         {} revoked", "✗".red())?;
-        return Ok(());
+        return sh_println!("Status:         {} revoked", "✗".red());
     }
-
     if !provisioned {
-        sh_println!("Status:         {} not provisioned", "✗".red())?;
-        return Ok(());
+        return sh_println!("Status:         {} not provisioned", "✗".red());
     }
-
-    // Status line: active key.
     sh_println!("Status:         {} active", "✓".green())?;
-
-    sh_println!("Signature Type: {}", signature_type_name(&info.signatureType))?;
+    sh_println!("Signature Type: {signature_type}")?;
     sh_println!("Key ID:         {}", info.keyId)?;
-
-    // Expiry: show human-readable date and whether it's expired.
-    let expiry_str = format_expiry(info.expiry);
-    if info.expiry == u64::MAX {
-        sh_println!("Expiry:         {}", expiry_str)?;
+    let expiry = format_expiry(info.expiry);
+    if info.expiry != u64::MAX && info.expiry <= now().as_secs() {
+        sh_println!("Expiry:         {expiry} ({})", "expired".red())?;
     } else {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        if info.expiry <= now {
-            sh_println!("Expiry:         {} ({})", expiry_str, "expired".red())?;
-        } else {
-            sh_println!("Expiry:         {}", expiry_str)?;
-        }
+        sh_println!("Expiry:         {expiry}")?;
     }
+    sh_println!("Spending Limits: {}", if info.enforceLimits { "enforced" } else { "none" })
+}
 
-    sh_println!("Spending Limits: {}", if info.enforceLimits { "enforced" } else { "none" })?;
+/// `cast keychain verify` / `verify-admin` — verify a Tempo keychain signature (T6).
+async fn run_verify_keychain(
+    account: Address,
+    hash: B256,
+    signature: Bytes,
+    rpc: RpcOpts,
+    admin: bool,
+) -> Result<()> {
+    let (_, provider) = tempo_provider(&rpc)?;
+    let command = if admin { "verify-admin" } else { "verify" };
+    require_hardfork(
+        &provider,
+        TempoHardfork::T6,
+        &format!("{command} requires a Tempo T6-capable SignatureVerifier RPC"),
+    )
+    .await?;
 
-    Ok(())
+    let verifier = ISignatureVerifier::new(SIGNATURE_VERIFIER_ADDRESS, &provider);
+    let valid = if admin {
+        verifier.verifyKeychainAdmin(account, hash, signature.clone()).call().await?
+    } else {
+        verifier.verifyKeychain(account, hash, signature.clone()).call().await?
+    };
+    print_json_or(
+        json!({
+            "account": account,
+            "hash": hash,
+            "signature": signature,
+            "admin": admin,
+            "valid": valid,
+        }),
+        valid,
+    )
+}
+
+/// Remaining spending limit for `token` and, on T3+, the current period end.
+async fn remaining_limit<P: Provider<TempoNetwork>>(
+    provider: &P,
+    root_account: Address,
+    key_address: Address,
+    token: Address,
+    is_t3: bool,
+) -> Result<(U256, Option<u64>)> {
+    if is_t3 {
+        let limit = provider
+            .get_keychain_remaining_limit_with_period(root_account, key_address, token)
+            .await?;
+        Ok((limit.remaining, Some(limit.periodEnd)))
+    } else {
+        let remaining = provider
+            .account_keychain()
+            .getRemainingLimit(root_account, key_address, token)
+            .call()
+            .await?;
+        Ok((remaining, None))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1190,6 +1197,26 @@ async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) 
 //     foundry-rs/foundry#14743 + foundry-rs/foundry-core#67 + foundry-rs/foundry-browser-wallet#67.
 //     Once merged, doctor can probe whether the connected browser/passkey wallet can sign the
 //     digest.
+
+/// A doctor check as `(name, label)`.
+type Check = (&'static str, &'static str);
+
+const ACCOUNTS_STORE: Check = ("accounts_store", "Accounts store");
+const RPC: Check = ("rpc_reachability", "RPC reachable");
+const CHAIN_ID: Check = ("chain_id_match", "Chain ID match");
+const LOCAL_SIGNING: Check = ("local_signing", "Local signing");
+const KEY_REGISTRATION: Check = ("key_registration", "Key registration");
+const REVOCATION: Check = ("revocation", "Revocation");
+const EXPIRY: Check = ("expiry", "Expiry");
+const HARDFORK: Check = ("hardfork", "Hardfork");
+const SPENDING_LIMITS: Check = ("spending_limits", "Spending limits");
+const ALLOWED_CALLS: Check = ("allowed_calls", "Allowed calls");
+const FEE_TOKEN_BALANCE: Check = ("fee_token_balance", "Fee-token balance");
+const EXPIRING_NONCE: Check = ("expiring_nonce", "Expiring nonce");
+const SPONSORSHIP: Check = ("sponsorship", "Sponsorship");
+
+const HARDFORK_UNKNOWN_HINT: &str = "retry against an RPC that reports Tempo hardfork activation";
+const WIDEN_POLICY_HINT: &str = "widen the policy with `cast keychain policy add-call ...`";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -1210,38 +1237,25 @@ struct DoctorStep {
 }
 
 impl DoctorStep {
-    fn pass(name: &'static str, label: &'static str, detail: impl Into<String>) -> Self {
-        Self { name, label, status: DoctorStatus::Pass, detail: detail.into(), hint: None }
+    fn new(
+        (name, label): Check,
+        status: DoctorStatus,
+        detail: impl Into<String>,
+        hint: Option<String>,
+    ) -> Self {
+        Self { name, label, status, detail: detail.into(), hint }
     }
 
-    fn warn(
-        name: &'static str,
-        label: &'static str,
-        detail: impl Into<String>,
-        hint: impl Into<String>,
-    ) -> Self {
-        Self {
-            name,
-            label,
-            status: DoctorStatus::Warn,
-            detail: detail.into(),
-            hint: Some(hint.into()),
-        }
+    fn pass(check: Check, detail: impl Into<String>) -> Self {
+        Self::new(check, DoctorStatus::Pass, detail, None)
     }
 
-    fn fail(
-        name: &'static str,
-        label: &'static str,
-        detail: impl Into<String>,
-        hint: impl Into<String>,
-    ) -> Self {
-        Self {
-            name,
-            label,
-            status: DoctorStatus::Fail,
-            detail: detail.into(),
-            hint: Some(hint.into()),
-        }
+    fn warn(check: Check, detail: impl Into<String>, hint: impl Into<String>) -> Self {
+        Self::new(check, DoctorStatus::Warn, detail, Some(hint.into()))
+    }
+
+    fn fail(check: Check, detail: impl Into<String>, hint: impl Into<String>) -> Self {
+        Self::new(check, DoctorStatus::Fail, detail, Some(hint.into()))
     }
 }
 
@@ -1279,7 +1293,7 @@ impl DoctorCandidate {
     const fn from_entry(entry: tempo::KeyEntry) -> Self {
         Self {
             root_account: entry.wallet_address,
-            key_address: key_entry_effective_key(&entry),
+            key_address: entry.key_address,
             chain_id: Some(entry.chain_id),
             entry: Some(entry),
             explicit: false,
@@ -1295,25 +1309,9 @@ impl DoctorCandidate {
     }
 }
 
-#[derive(Debug)]
-struct LocalCandidateResolution {
-    step: DoctorStep,
-    candidates: Vec<DoctorCandidate>,
-}
-
-struct ValidKeyAuthorization {
-    signed: SignedKeyAuthorization,
-    detail: String,
-}
-
-enum KeyRegistrationState {
+enum KeyRegistration {
     OnChain(KeyInfo),
-    PendingAuthorization(Box<SignedKeyAuthorization>),
-}
-
-struct SponsorshipDiagnosis {
-    step: DoctorStep,
-    fee_payer: Option<Address>,
+    Pending(Box<SignedKeyAuthorization>),
 }
 
 #[derive(Debug, Clone)]
@@ -1330,22 +1328,19 @@ impl ChainTimestamp {
         }
     }
 
-    fn unavailable_step(
-        &self,
-        name: &'static str,
-        label: &'static str,
-        detail: impl Into<String>,
-    ) -> DoctorStep {
+    /// The chain timestamp, or a warning step that `detail` could not be checked without it.
+    fn get(&self, check: Check, detail: impl Display) -> Result<u64, DoctorStep> {
         match self {
-            Self::Known(_) => unreachable!("chain timestamp is available"),
+            Self::Known(timestamp) => Ok(*timestamp),
             Self::Unknown { detail: reason, hint } => {
-                DoctorStep::warn(name, label, format!("{}: {reason}", detail.into()), *hint)
+                Err(DoctorStep::warn(check, format!("{detail}: {reason}"), *hint))
             }
         }
     }
 }
 
 /// Outcome of TIP-1011 allowed-call matching.
+#[derive(Debug, PartialEq, Eq)]
 enum AllowedCallMatch {
     /// The call is allowed.
     Allowed(String),
@@ -1355,344 +1350,339 @@ enum AllowedCallMatch {
     RecipientRestricted(Vec<Address>),
 }
 
-/// `cast keychain doctor` — diagnose access-key signing failures.
-#[allow(clippy::too_many_arguments)]
-async fn run_doctor(
-    key_address: Option<Address>,
-    root_account: Option<Address>,
-    to: Option<Address>,
-    selector: Option<[u8; 4]>,
-    recipient: Option<Address>,
-    fee_token: Option<Address>,
-    mut tempo: TempoOpts,
-    rpc: RpcOpts,
-) -> Result<()> {
-    let mut steps: Vec<DoctorStep> = Vec::new();
-    let requested_fee_token = fee_token.or(tempo.fee_token);
-    let mut context = DoctorContext {
-        root_account,
-        key_address,
-        chain_id: None,
-        fee_token: requested_fee_token.unwrap_or(DEFAULT_FEE_TOKEN),
-    };
+/// Accumulated `cast keychain doctor` report.
+struct Doctor {
+    steps: Vec<DoctorStep>,
+    context: DoctorContext,
+}
 
-    // Step 1: Tempo Accounts store lookup.
-    let candidates = match collect_local_candidates(key_address, root_account) {
-        Ok(resolution) => {
-            steps.push(resolution.step);
-            resolution.candidates
-        }
-        Err(step) => {
-            steps.push(step);
-            return finalize_doctor(steps, context);
-        }
-    };
+impl Doctor {
+    const fn new(
+        root_account: Option<Address>,
+        key_address: Option<Address>,
+        fee_token: Address,
+    ) -> Self {
+        let context = DoctorContext { root_account, key_address, chain_id: None, fee_token };
+        Self { steps: Vec::new(), context }
+    }
 
-    // Step 2: RPC reachability.
-    let config = match rpc.load_config() {
-        Ok(c) => c,
-        Err(err) => {
-            steps.push(DoctorStep::fail(
-                "rpc_reachability",
-                "RPC reachable",
+    /// Records `step`; `None` when it failed so `?` stops the diagnosis.
+    fn check(&mut self, step: DoctorStep) -> Option<()> {
+        let failed = step.status == DoctorStatus::Fail;
+        self.steps.push(step);
+        (!failed).then_some(())
+    }
+
+    /// Unwraps `result`, recording the failing step and stopping the diagnosis on `Err`.
+    fn attempt<T>(&mut self, result: Result<T, DoctorStep>) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(step) => {
+                self.steps.push(step);
+                None
+            }
+        }
+    }
+
+    /// Diagnoses access-key signing failures, stopping at the first failing step.
+    #[allow(clippy::too_many_arguments)]
+    async fn run(
+        &mut self,
+        key_address: Option<Address>,
+        root_account: Option<Address>,
+        to: Option<Address>,
+        selector: Option<[u8; 4]>,
+        recipient: Option<Address>,
+        tempo: &mut TempoOpts,
+        rpc: RpcOpts,
+    ) -> Option<()> {
+        let resolved_expires_at = tempo.resolve_expires();
+
+        // Step 1: Tempo Accounts store lookup.
+        let (step, candidates) =
+            self.attempt(collect_local_candidates(key_address, root_account))?;
+        self.steps.push(step);
+
+        // Step 2: RPC reachability.
+        let config = self.attempt(rpc.load_config().map_err(|err| {
+            DoctorStep::fail(
+                RPC,
                 format!("could not load RPC config: {err}"),
                 "check --rpc-url and your foundry.toml",
-            ));
-            return finalize_doctor(steps, context);
-        }
-    };
-    let provider = match ProviderBuilder::<TempoNetwork>::from_config(&config)
-        .and_then(|builder| builder.build())
-    {
-        Ok(p) => p,
-        Err(err) => {
-            steps.push(DoctorStep::fail(
-                "rpc_reachability",
-                "RPC reachable",
-                format!("could not build provider: {err}"),
-                "verify --rpc-url is set and reachable",
-            ));
-            return finalize_doctor(steps, context);
-        }
-    };
-
-    let rpc_chain_id = match provider.get_chain_id().await {
-        Ok(id) => {
-            context.chain_id = Some(id);
-            steps.push(DoctorStep::pass(
-                "rpc_reachability",
-                "RPC reachable",
-                format!("chain id {id}"),
-            ));
-            id
-        }
-        Err(err) => {
-            steps.push(DoctorStep::fail(
-                "rpc_reachability",
-                "RPC reachable",
+            )
+        }))?;
+        let provider = self.attempt(
+            ProviderBuilder::<TempoNetwork>::from_config(&config)
+                .and_then(|builder| builder.build())
+                .map_err(|err| {
+                    DoctorStep::fail(
+                        RPC,
+                        format!("could not build provider: {err}"),
+                        "verify --rpc-url is set and reachable",
+                    )
+                }),
+        )?;
+        let rpc_chain_id = self.attempt(provider.get_chain_id().await.map_err(|err| {
+            DoctorStep::fail(
+                RPC,
                 format!("eth_chainId failed: {err}"),
                 "confirm the node is reachable and not rate-limited",
-            ));
-            return finalize_doctor(steps, context);
-        }
-    };
-    let chain_timestamp = fetch_chain_timestamp(&provider).await;
+            )
+        }))?;
+        self.context.chain_id = Some(rpc_chain_id);
+        self.steps.push(DoctorStep::pass(RPC, format!("chain id {rpc_chain_id}")));
+        let chain_timestamp = fetch_chain_timestamp(&provider).await;
 
-    // Step 3: chain-id match + final entry selection.
-    let subject = match select_subject_for_chain(candidates, rpc_chain_id, root_account) {
-        Ok(s) => {
-            let detail = if s.entry.is_some() {
-                format!(
-                    "local entry on chain {} matches RPC (root {}, key {})",
-                    rpc_chain_id, s.root_account, s.key_address
+        // Step 3: chain-id match + final entry selection.
+        let subject = self.attempt(
+            select_subject_for_chain(candidates, rpc_chain_id, root_account).map_err(|detail| {
+                DoctorStep::fail(
+                    CHAIN_ID,
+                    detail,
+                    "use the RPC for the chain the local entry was created on, or pass --root-account",
                 )
-            } else {
-                format!(
-                    "using explicit root {} and key {} on RPC chain {}",
-                    s.root_account, s.key_address, rpc_chain_id
-                )
-            };
-            steps.push(DoctorStep::pass("chain_id_match", "Chain ID match", detail));
-            context.root_account = Some(s.root_account);
-            context.key_address = Some(s.key_address);
-            s
-        }
-        Err(detail) => {
-            steps.push(DoctorStep::fail(
-                "chain_id_match",
-                "Chain ID match",
-                detail,
-                "use the RPC for the chain the local entry was created on, or pass --root-account",
-            ));
-            return finalize_doctor(steps, context);
-        }
-    };
+            }),
+        )?;
+        let DoctorSubject { root_account, key_address, .. } = subject;
+        let detail = if subject.entry.is_some() {
+            format!(
+                "local entry on chain {rpc_chain_id} matches RPC (root {root_account}, key {key_address})"
+            )
+        } else {
+            format!(
+                "using explicit root {root_account} and key {key_address} on RPC chain {rpc_chain_id}"
+            )
+        };
+        self.steps.push(DoctorStep::pass(CHAIN_ID, detail));
+        self.context.root_account = Some(root_account);
+        self.context.key_address = Some(key_address);
 
-    // Step 4: local signing readiness.
-    let local_signing = check_local_signing_readiness(&subject);
-    let local_signing_failed = local_signing.status == DoctorStatus::Fail;
-    steps.push(local_signing);
-    if local_signing_failed {
-        return finalize_doctor(steps, context);
-    }
+        // Step 4: local signing readiness.
+        self.check(check_local_signing_readiness(&subject))?;
 
-    // Step 5: on-chain key state.
-    let registration = match provider
-        .get_keychain_key(subject.root_account, subject.key_address)
-        .await
-    {
-        Ok(info) if info.keyId != Address::ZERO => {
-            steps.push(DoctorStep::pass(
-                "key_registration",
-                "Key registration",
-                format!("provisioned, type {}", signature_type_label(&info.signatureType)),
-            ));
-            KeyRegistrationState::OnChain(info)
-        }
-        Ok(_) => match validate_pending_key_authorization(&subject, rpc_chain_id, &chain_timestamp)
-        {
-            Ok(valid) => {
-                steps.push(DoctorStep::pass("key_registration", "Key registration", valid.detail));
-                KeyRegistrationState::PendingAuthorization(Box::new(valid.signed))
-            }
-            Err(step) => {
-                steps.push(step);
-                return finalize_doctor(steps, context);
-            }
-        },
-        Err(err) => {
-            steps.push(DoctorStep::fail(
-                "key_registration",
-                "Key registration",
-                format!("AccountKeychain.getKey failed: {err}"),
-                "verify the RPC supports the AccountKeychain precompile",
-            ));
-            return finalize_doctor(steps, context);
-        }
-    };
-
-    match registration {
-        KeyRegistrationState::OnChain(info) => {
-            // Step 6: revoked?
-            if info.isRevoked {
-                steps.push(DoctorStep::fail(
-                    "revocation",
-                    "Revocation",
-                    "key is revoked on-chain".to_string(),
-                    "authorize a new key or re-authorize this one",
+        // Step 5: on-chain key state.
+        let registration = match provider.get_keychain_key(root_account, key_address).await {
+            Ok(info) if info.keyId != Address::ZERO => {
+                let key_type = abi_key_type(info.signatureType).map_or("unknown", key_type_label);
+                self.steps.push(DoctorStep::pass(
+                    KEY_REGISTRATION,
+                    format!("provisioned, type {key_type}"),
                 ));
-                return finalize_doctor(steps, context);
+                KeyRegistration::OnChain(info)
             }
-            steps.push(DoctorStep::pass("revocation", "Revocation", "active"));
-
-            // Step 7: expiry.
-            let expiry = check_key_expiry(info.expiry, &chain_timestamp);
-            let expiry_failed = expiry.status == DoctorStatus::Fail;
-            steps.push(expiry);
-            if expiry_failed {
-                return finalize_doctor(steps, context);
+            Ok(_) => {
+                let (signed, detail) = self.attempt(validate_pending_key_authorization(
+                    &subject,
+                    rpc_chain_id,
+                    &chain_timestamp,
+                ))?;
+                self.steps.push(DoctorStep::pass(KEY_REGISTRATION, detail));
+                KeyRegistration::Pending(Box::new(signed))
             }
-
-            // Step 8: hardfork detection (used for limits and allowed-calls checks).
-            let (step, is_t3) = check_hardfork(&provider).await;
-            steps.push(step);
-
-            // Step 9: spending limits.
-            steps.push(
-                check_spending_limits(&provider, &subject, &info, context.fee_token, is_t3).await,
-            );
-
-            // Step 10: allowed calls (TIP-1011, T3+ only).
-            steps.push(
-                check_allowed_calls(&provider, &subject, is_t3, to, selector, recipient).await,
-            );
-        }
-        KeyRegistrationState::PendingAuthorization(signed) => {
-            steps.push(DoctorStep::pass(
-                "revocation",
-                "Revocation",
-                "not on-chain yet; key_authorization will provision a fresh key",
-            ));
-
-            let expiry = check_authorization_expiry(&signed, &chain_timestamp);
-            let expiry_failed = expiry.status == DoctorStatus::Fail;
-            steps.push(expiry);
-            if expiry_failed {
-                return finalize_doctor(steps, context);
+            Err(err) => {
+                return self.check(DoctorStep::fail(
+                    KEY_REGISTRATION,
+                    format!("AccountKeychain.getKey failed: {err}"),
+                    "verify the RPC supports the AccountKeychain precompile",
+                ));
             }
+        };
 
-            let (step, is_t3) = check_hardfork(&provider).await;
-            steps.push(step);
-            steps.push(check_authorization_spending_limits(&signed, context.fee_token, is_t3));
-            steps.push(check_authorization_allowed_calls(&signed, is_t3, to, selector, recipient));
-        }
-    }
+        // Steps 6-7: revocation and expiry.
+        let expiry = match &registration {
+            KeyRegistration::OnChain(info) => {
+                if info.isRevoked {
+                    return self.check(DoctorStep::fail(
+                        REVOCATION,
+                        "key is revoked on-chain",
+                        "authorize a new key or re-authorize this one",
+                    ));
+                }
+                self.steps.push(DoctorStep::pass(REVOCATION, "active"));
+                check_expiry(
+                    (info.expiry != u64::MAX).then_some(info.expiry),
+                    &chain_timestamp,
+                    "",
+                    "authorize a new key with a later expiry",
+                )
+            }
+            KeyRegistration::Pending(signed) => {
+                self.steps.push(DoctorStep::pass(
+                    REVOCATION,
+                    "not on-chain yet; key_authorization will provision a fresh key",
+                ));
+                check_expiry(
+                    signed.authorization.expiry.map(|expiry| expiry.get()),
+                    &chain_timestamp,
+                    "key_authorization ",
+                    "refresh the access key to get a later key_authorization expiry",
+                )
+            }
+        };
+        self.check(expiry)?;
 
-    // Transaction-option diagnostics that affect access-key sends.
-    let resolved_expires_at = tempo.resolve_expires();
-    steps.push(check_expiring_nonce(&tempo, resolved_expires_at, &chain_timestamp));
-
-    let sponsorship = check_sponsorship(&tempo, subject.root_account).await;
-    let sponsor_failed = sponsorship.step.status == DoctorStatus::Fail;
-    let fee_payer = sponsorship.fee_payer;
-    steps.push(sponsorship.step);
-
-    if sponsor_failed && tempo.has_sponsor_submission() {
-        steps.push(DoctorStep::warn(
-            "fee_token_balance",
-            "Fee-token balance",
-            "skipped; sponsorship config is invalid",
-            "fix the sponsorship configuration before checking the fee payer balance",
-        ));
-    } else {
-        let balance_account = fee_payer.unwrap_or(subject.root_account);
-        let balance_owner = if fee_payer.is_some() { "sponsor" } else { "root account" };
-        steps.push(
-            check_fee_token_balance(&provider, balance_account, context.fee_token, balance_owner)
-                .await,
+        // Steps 8-10: hardfork detection, spending limits, allowed calls (TIP-1011, T3+ only).
+        let (step, is_t3) = check_hardfork(&provider).await;
+        self.steps.push(step);
+        let fee_token = self.context.fee_token;
+        let (limits, pending) = match &registration {
+            KeyRegistration::OnChain(info) => {
+                (check_spending_limits(&provider, &subject, info, fee_token, is_t3).await, None)
+            }
+            KeyRegistration::Pending(signed) => (
+                check_authorization_spending_limits(signed, fee_token, is_t3),
+                Some(&signed.authorization),
+            ),
+        };
+        self.steps.push(limits);
+        self.steps.push(
+            check_allowed_calls(&provider, &subject, pending, is_t3, to, selector, recipient).await,
         );
+
+        // Transaction-option diagnostics that affect access-key sends.
+        self.steps.push(check_expiring_nonce(tempo, resolved_expires_at, &chain_timestamp));
+
+        let (sponsorship, fee_payer) = check_sponsorship(tempo, root_account).await;
+        let sponsor_failed = sponsorship.status == DoctorStatus::Fail;
+        self.steps.push(sponsorship);
+        let balance = if sponsor_failed && tempo.has_sponsor_submission() {
+            DoctorStep::warn(
+                FEE_TOKEN_BALANCE,
+                "skipped; sponsorship config is invalid",
+                "fix the sponsorship configuration before checking the fee payer balance",
+            )
+        } else {
+            let (account, owner) = match fee_payer {
+                Some(sponsor) => (sponsor, "sponsor"),
+                None => (root_account, "root account"),
+            };
+            check_fee_token_balance(&provider, account, fee_token, owner).await
+        };
+        self.steps.push(balance);
+        Some(())
     }
 
-    finalize_doctor(steps, context)
+    /// Renders the doctor report.
+    fn finish(self) -> Result<()> {
+        let Self { steps, context } = self;
+        let count = |status| steps.iter().filter(|s| s.status == status).count();
+        let failure_count = count(DoctorStatus::Fail);
+        let warning_count = count(DoctorStatus::Warn);
+        let no_failures = failure_count == 0;
+        let healthy = no_failures && warning_count == 0;
+
+        if shell::is_json() {
+            let status = if !no_failures {
+                "fail"
+            } else if !healthy {
+                "warn"
+            } else {
+                "pass"
+            };
+            return print_json_success(json!({
+                "context": context,
+                "steps": steps,
+                "status": status,
+                "no_failures": no_failures,
+                "healthy": healthy,
+                "warning_count": warning_count,
+                "failure_count": failure_count,
+            }));
+        }
+
+        for step in &steps {
+            let marker = match step.status {
+                DoctorStatus::Pass => "✓".green().to_string(),
+                DoctorStatus::Warn => "!".yellow().to_string(),
+                DoctorStatus::Fail => "✗".red().to_string(),
+            };
+            sh_println!("{marker} {:<22} {}", step.label, step.detail)?;
+            if let Some(hint) = &step.hint {
+                sh_println!("  {} {hint}", "hint:".dim())?;
+            }
+        }
+        sh_println!()?;
+        if healthy {
+            sh_println!("{} access-key signing path looks healthy", "✓".green())
+        } else if no_failures {
+            sh_println!("{} access-key signing path has warnings (see above)", "!".yellow())
+        } else {
+            sh_println!("{} access-key signing path has issues (see above)", "✗".red())
+        }
+    }
 }
 
 /// Step 1 helper: collect Tempo Accounts store candidates.
 fn collect_local_candidates(
     key_address: Option<Address>,
     root_account: Option<Address>,
-) -> Result<LocalCandidateResolution, DoctorStep> {
-    let explicit_candidate = || {
-        key_address
-            .zip(root_account)
-            .map(|(key_address, root_account)| DoctorCandidate::explicit(root_account, key_address))
-    };
+) -> Result<(DoctorStep, Vec<DoctorCandidate>), DoctorStep> {
+    let explicit = key_address
+        .zip(root_account)
+        .map(|(key_address, root_account)| DoctorCandidate::explicit(root_account, key_address));
+    let store_path = tempo_accounts_store_path_display();
 
     let Some(store) = read_tempo_accounts_store() else {
-        if let Some(candidate) = explicit_candidate() {
-            return Ok(LocalCandidateResolution {
-                step: DoctorStep::pass(
-                    "accounts_store",
-                    "Accounts store",
-                    format!(
-                        "could not read {}; using explicit root/key",
-                        tempo_accounts_store_path_display()
-                    ),
+        return match explicit {
+            Some(candidate) => Ok((
+                DoctorStep::pass(
+                    ACCOUNTS_STORE,
+                    format!("could not read {store_path}; using explicit root/key"),
                 ),
-                candidates: vec![candidate],
-            });
-        }
-
-        return Err(DoctorStep::fail(
-            "accounts_store",
-            "Accounts store",
-            format!(
-                "could not read Tempo Accounts store at {}",
-                tempo_accounts_store_path_display()
-            ),
-            "run `cast tempo login` or pass both KEY_ADDRESS and --root-account",
-        ));
+                vec![candidate],
+            )),
+            None => Err(DoctorStep::fail(
+                ACCOUNTS_STORE,
+                format!("could not read Tempo Accounts store at {store_path}"),
+                "run `cast tempo login` or pass both KEY_ADDRESS and --root-account",
+            )),
+        };
     };
 
-    let matches: Vec<tempo::KeyEntry> = store
+    let matches: Vec<_> = store
         .keys
         .into_iter()
-        .filter(|entry| match (key_address, root_account) {
-            (Some(k), Some(r)) => key_entry_effective_key(entry) == k && entry.wallet_address == r,
-            (Some(k), None) => key_entry_effective_key(entry) == k,
-            (None, Some(r)) => entry.wallet_address == r,
-            (None, None) => false,
+        .filter(|entry| {
+            (key_address.is_some() || root_account.is_some())
+                && key_address.is_none_or(|k| entry.key_address == k)
+                && root_account.is_none_or(|r| entry.wallet_address == r)
         })
         .collect();
 
     if matches.is_empty() {
-        if let Some(candidate) = explicit_candidate() {
-            return Ok(LocalCandidateResolution {
-                step: DoctorStep::pass(
-                    "accounts_store",
-                    "Accounts store",
-                    format!(
-                        "no local entry for key {} and root {}; using explicit root/key",
-                        candidate.key_address, candidate.root_account
-                    ),
-                ),
-                candidates: vec![candidate],
-            });
+        if let Some(candidate) = explicit {
+            let detail = format!(
+                "no local entry for key {} and root {}; using explicit root/key",
+                candidate.key_address, candidate.root_account
+            );
+            return Ok((DoctorStep::pass(ACCOUNTS_STORE, detail), vec![candidate]));
         }
-
-        let descriptor = match (key_address, root_account) {
-            (Some(k), Some(r)) => format!("key {k} for root {r}"),
-            (Some(k), None) => format!("key {k}"),
-            (None, Some(r)) => format!("root account {r}"),
-            (None, None) => "the requested key".to_string(),
-        };
-        let hint = match (key_address, root_account) {
-            (Some(_), None) => "pass --root-account to diagnose an explicit key/root pair",
-            (None, Some(_)) => "pass KEY_ADDRESS to diagnose a key absent from the Accounts store",
-            _ => "run `cast tempo login` to add a key to ~/.tempo/wallet/store.json",
+        let (descriptor, hint) = match (key_address, root_account) {
+            (Some(k), None) => {
+                (format!("key {k}"), "pass --root-account to diagnose an explicit key/root pair")
+            }
+            (None, Some(r)) => (
+                format!("root account {r}"),
+                "pass KEY_ADDRESS to diagnose a key absent from the Accounts store",
+            ),
+            _ => (
+                "the requested key".to_string(),
+                "run `cast tempo login` to add a key to ~/.tempo/wallet/store.json",
+            ),
         };
         return Err(DoctorStep::fail(
-            "accounts_store",
-            "Accounts store",
-            format!("no entry for {descriptor} in {}", tempo_accounts_store_path_display()),
+            ACCOUNTS_STORE,
+            format!("no entry for {descriptor} in {store_path}"),
             hint,
         ));
     }
 
     let count = matches.len();
-    let mut candidates: Vec<DoctorCandidate> =
-        matches.into_iter().map(DoctorCandidate::from_entry).collect();
-    if let Some(candidate) = explicit_candidate() {
-        candidates.push(candidate);
-    }
-
-    Ok(LocalCandidateResolution {
-        step: DoctorStep::pass(
-            "accounts_store",
-            "Accounts store",
-            format!("{count} candidate(s) in {}", tempo_accounts_store_path_display()),
-        ),
+    let candidates = matches.into_iter().map(DoctorCandidate::from_entry).chain(explicit).collect();
+    Ok((
+        DoctorStep::pass(ACCOUNTS_STORE, format!("{count} candidate(s) in {store_path}")),
         candidates,
-    })
+    ))
 }
 
 /// Step 3 helper: filter candidates to the RPC chain id and pick a single entry.
@@ -1702,21 +1692,20 @@ fn select_subject_for_chain(
     explicit_root: Option<Address>,
 ) -> Result<DoctorSubject, String> {
     let local_chain_ids: Vec<u64> = candidates.iter().filter_map(|e| e.chain_id).collect();
-
-    let chain_matched: Vec<DoctorCandidate> = candidates
+    let chain_matched: Vec<_> = candidates
         .into_iter()
         .filter(|entry| entry.chain_id.is_none_or(|chain_id| chain_id == rpc_chain_id))
         .collect();
 
-    if chain_matched.is_empty() {
+    let Some(first) = chain_matched.first() else {
         return Err(format!(
             "no local entry matches RPC chain id {rpc_chain_id} (local entries on {local_chain_ids:?})"
         ));
-    }
+    };
 
     // If multiple entries belong to different roots and the user did not pin one, refuse to guess.
     if explicit_root.is_none()
-        && chain_matched.iter().any(|entry| entry.root_account != chain_matched[0].root_account)
+        && chain_matched.iter().any(|entry| entry.root_account != first.root_account)
     {
         return Err(
             "multiple local entries match this chain across different root accounts; pass --root-account"
@@ -1724,90 +1713,77 @@ fn select_subject_for_chain(
         );
     }
 
-    let has_explicit = chain_matched.iter().any(|entry| entry.explicit);
-
+    let explicit = chain_matched.iter().any(|entry| entry.explicit);
     // Prefer a locally signable store entry over metadata-only records.
-    let preferred_idx = chain_matched.iter().position(DoctorCandidate::has_inline_key).unwrap_or(0);
-    let entry = chain_matched.into_iter().nth(preferred_idx).expect("non-empty");
-
+    let preferred = chain_matched.iter().position(DoctorCandidate::has_inline_key).unwrap_or(0);
+    let entry = chain_matched.into_iter().nth(preferred).expect("non-empty");
     Ok(DoctorSubject {
         root_account: entry.root_account,
         key_address: entry.key_address,
         entry: entry.entry,
-        explicit: has_explicit,
+        explicit,
     })
 }
 
 /// Step 4 helper: verify whether the local side can actually sign as the key.
 fn check_local_signing_readiness(subject: &DoctorSubject) -> DoctorStep {
-    let Some(entry) = subject.entry.as_ref() else {
+    let Some(entry) = &subject.entry else {
         return DoctorStep::warn(
-            "local_signing",
-            "Local signing",
+            LOCAL_SIGNING,
             "not verified; using explicit root/key absent from the Accounts store",
             "pass --tempo.access-key in the send command or run `cast tempo login`",
         );
     };
-
     if entry.has_inline_key() {
-        return DoctorStep::pass(
-            "local_signing",
-            "Local signing",
-            format!("inline {} key available", key_type_name(&entry.key_type)),
-        );
-    }
-
-    if subject.explicit {
-        return DoctorStep::warn(
-            "local_signing",
-            "Local signing",
+        DoctorStep::pass(
+            LOCAL_SIGNING,
+            format!("inline {} key available", key_type_name(entry.key_type)),
+        )
+    } else if subject.explicit {
+        DoctorStep::warn(
+            LOCAL_SIGNING,
             "local entry has no inline access-key private key; explicit root/key can still use --tempo.access-key",
             "pass --tempo.access-key in the send command or refresh the local key material",
-        );
+        )
+    } else {
+        DoctorStep::fail(
+            LOCAL_SIGNING,
+            "local entry has no inline access-key private key",
+            "run `cast tempo login` again, restore the key material, or pass --tempo.access-key when sending",
+        )
     }
-
-    DoctorStep::fail(
-        "local_signing",
-        "Local signing",
-        "local entry has no inline access-key private key",
-        "run `cast tempo login` again, restore the key material, or pass --tempo.access-key when sending",
-    )
 }
 
+/// Validates the local pending `key_authorization`, returning it with its pass detail.
 fn validate_pending_key_authorization(
     subject: &DoctorSubject,
     rpc_chain_id: u64,
     chain_timestamp: &ChainTimestamp,
-) -> Result<ValidKeyAuthorization, DoctorStep> {
-    let Some(entry) = subject.entry.as_ref() else {
-        return Err(DoctorStep::fail(
-            "key_registration",
-            "Key registration",
-            format!(
-                "key {} is not registered for root account {}",
-                subject.key_address, subject.root_account
-            ),
+) -> Result<(SignedKeyAuthorization, String), DoctorStep> {
+    let fail = |detail: String, hint: &str| DoctorStep::fail(KEY_REGISTRATION, detail, hint);
+    let not_registered = || {
+        format!(
+            "key {} is not registered for root account {}",
+            subject.key_address, subject.root_account
+        )
+    };
+
+    let Some(entry) = &subject.entry else {
+        return Err(fail(
+            not_registered(),
             "authorize the key with `cast keychain authorize <KEY>` or add a local key_authorization",
         ));
     };
-
     let Some(signed) = entry.key_authorization.clone() else {
-        return Err(DoctorStep::fail(
-            "key_registration",
-            "Key registration",
-            format!(
-                "key {} is not registered for root account {}",
-                subject.key_address, subject.root_account
-            ),
+        return Err(fail(
+            not_registered(),
             "authorize the key with `cast keychain authorize <KEY>` or refresh the local key_authorization",
         ));
     };
     let auth = &signed.authorization;
 
     if auth.key_id != subject.key_address {
-        return Err(DoctorStep::fail(
-            "key_registration",
-            "Key registration",
+        return Err(fail(
             format!(
                 "local key_authorization is for key {}, expected {}",
                 auth.key_id, subject.key_address
@@ -1815,53 +1791,41 @@ fn validate_pending_key_authorization(
             "refresh the access key for this root/key pair",
         ));
     }
-
     if auth.chain_id != rpc_chain_id {
-        return Err(DoctorStep::fail(
-            "key_registration",
-            "Key registration",
+        return Err(fail(
             format!(
-                "local key_authorization is for chain {}, RPC is chain {}",
-                auth.chain_id, rpc_chain_id
+                "local key_authorization is for chain {}, RPC is chain {rpc_chain_id}",
+                auth.chain_id
             ),
             "use the RPC for the chain the authorization was created on",
         ));
     }
-
-    if !key_type_matches_authorization(&entry.key_type, &auth.key_type) {
-        return Err(DoctorStep::fail(
-            "key_registration",
-            "Key registration",
+    if entry.key_type != KeyType::from(auth.key_type) {
+        return Err(fail(
             format!(
                 "local key type {} does not match key_authorization type {}",
-                key_type_label(&entry.key_type),
-                auth_signature_type_label(&auth.key_type)
+                key_type_label(entry.key_type),
+                key_type_label(auth.key_type.into())
             ),
             "refresh the local key entry so its key material and authorization agree",
         ));
     }
-
     if let Some(expiry) = auth.expiry
-        && let Some(chain_timestamp) = chain_timestamp.timestamp()
-        && expiry.get() <= chain_timestamp
+        && let Some(now) = chain_timestamp.timestamp()
+        && expiry.get() <= now
     {
-        return Err(DoctorStep::fail(
-            "key_registration",
-            "Key registration",
+        return Err(fail(
             format!(
                 "local key_authorization expired {}",
-                format_relative_timestamp_from(expiry.get(), chain_timestamp)
+                format_relative_timestamp_from(expiry.get(), now)
             ),
             "refresh the access key to get a later key_authorization expiry",
         ));
     }
-
     match signed.recover_signer() {
         Ok(recovered) if recovered == subject.root_account => {}
         Ok(recovered) => {
-            return Err(DoctorStep::fail(
-                "key_registration",
-                "Key registration",
+            return Err(fail(
                 format!(
                     "local key_authorization recovers signer {recovered}, expected root {}",
                     subject.root_account
@@ -1870,40 +1834,33 @@ fn validate_pending_key_authorization(
             ));
         }
         Err(err) => {
-            return Err(DoctorStep::fail(
-                "key_registration",
-                "Key registration",
+            return Err(fail(
                 format!("local key_authorization signature could not be verified: {err}"),
                 "refresh the access key with `cast tempo login`",
             ));
         }
     }
 
-    let expiry = auth
-        .expiry
-        .map(|expiry| {
-            let relative = chain_timestamp
-                .timestamp()
-                .map(|timestamp| format_relative_timestamp_from(expiry.get(), timestamp))
-                .unwrap_or_else(|| format_relative_timestamp(expiry.get()));
-            format!("{} ({})", relative, format_timestamp_iso(expiry.get()))
-        })
-        .unwrap_or_else(|| "never expires".to_string());
+    let expiry = auth.expiry.map_or_else(
+        || "never expires".to_string(),
+        |expiry| {
+            let expiry = expiry.get();
+            let relative = match chain_timestamp.timestamp() {
+                Some(now) => format_relative_timestamp_from(expiry, now),
+                None => format_relative_timestamp(expiry),
+            };
+            format!("{relative} ({})", format_timestamp_iso(expiry))
+        },
+    );
     let witness = auth.witness().map(|witness| format!(", witness {witness}")).unwrap_or_default();
     let detail = format!(
-        "not on-chain; local key_authorization can provision atomically, type {}, expiry {}{}",
-        auth_signature_type_label(&auth.key_type),
-        expiry,
-        witness
+        "not on-chain; local key_authorization can provision atomically, type {}, expiry {expiry}{witness}",
+        key_type_label(auth.key_type.into()),
     );
-
-    Ok(ValidKeyAuthorization { signed, detail })
+    Ok((signed, detail))
 }
 
-async fn fetch_chain_timestamp<P>(provider: &P) -> ChainTimestamp
-where
-    P: Provider<TempoNetwork>,
-{
+async fn fetch_chain_timestamp<P: Provider<TempoNetwork>>(provider: &P) -> ChainTimestamp {
     match provider.get_block(BlockId::latest()).await {
         Ok(Some(block)) => ChainTimestamp::Known(block.header.timestamp()),
         Ok(None) => ChainTimestamp::Unknown {
@@ -1917,89 +1874,39 @@ where
     }
 }
 
-fn check_key_expiry(expiry: u64, chain_timestamp: &ChainTimestamp) -> DoctorStep {
-    if expiry == u64::MAX {
-        return DoctorStep::pass("expiry", "Expiry", "never expires");
-    }
-
-    let Some(chain_timestamp) = chain_timestamp.timestamp() else {
-        return chain_timestamp.unavailable_step("expiry", "Expiry", "key expiry not checked");
-    };
-
-    if expiry <= chain_timestamp {
-        DoctorStep::fail(
-            "expiry",
-            "Expiry",
-            format!("expired {}", format_relative_timestamp_from(expiry, chain_timestamp)),
-            "authorize a new key with a later expiry",
-        )
-    } else {
-        DoctorStep::pass(
-            "expiry",
-            "Expiry",
-            format!(
-                "{} ({})",
-                format_relative_timestamp_from(expiry, chain_timestamp),
-                format_timestamp_iso(expiry)
-            ),
-        )
-    }
-}
-
-fn check_authorization_expiry(
-    signed: &SignedKeyAuthorization,
+/// Expiry check shared by on-chain keys (`prefix` empty) and pending authorizations
+/// (`prefix` = `"key_authorization "`). `None` means the key never expires.
+fn check_expiry(
+    expiry: Option<u64>,
     chain_timestamp: &ChainTimestamp,
+    prefix: &str,
+    hint: &str,
 ) -> DoctorStep {
-    let Some(expiry) = signed.authorization.expiry else {
-        return DoctorStep::pass("expiry", "Expiry", "key_authorization never expires");
+    let Some(expiry) = expiry else {
+        return DoctorStep::pass(EXPIRY, format!("{prefix}never expires"));
     };
-
-    let Some(chain_timestamp) = chain_timestamp.timestamp() else {
-        return chain_timestamp.unavailable_step(
-            "expiry",
-            "Expiry",
-            "key_authorization expiry not checked",
-        );
+    let subject = if prefix.is_empty() { "key " } else { prefix };
+    let now = match chain_timestamp.get(EXPIRY, format!("{subject}expiry not checked")) {
+        Ok(now) => now,
+        Err(step) => return step,
     };
-
-    let expiry = expiry.get();
-    if expiry <= chain_timestamp {
-        DoctorStep::fail(
-            "expiry",
-            "Expiry",
-            format!(
-                "key_authorization expired {}",
-                format_relative_timestamp_from(expiry, chain_timestamp)
-            ),
-            "refresh the access key to get a later key_authorization expiry",
-        )
+    let relative = format_relative_timestamp_from(expiry, now);
+    if expiry <= now {
+        DoctorStep::fail(EXPIRY, format!("{prefix}expired {relative}"), hint)
     } else {
-        DoctorStep::pass(
-            "expiry",
-            "Expiry",
-            format!(
-                "key_authorization {} ({})",
-                format_relative_timestamp_from(expiry, chain_timestamp),
-                format_timestamp_iso(expiry)
-            ),
-        )
+        DoctorStep::pass(EXPIRY, format!("{prefix}{relative} ({})", format_timestamp_iso(expiry)))
     }
 }
 
-async fn check_hardfork<P>(provider: &P) -> (DoctorStep, Option<bool>)
-where
-    P: Provider<TempoNetwork>,
-{
+async fn check_hardfork<P: Provider<TempoNetwork>>(provider: &P) -> (DoctorStep, Option<bool>) {
     match is_tempo_hardfork_active(provider, TempoHardfork::T3).await {
-        Ok(true) => (DoctorStep::pass("hardfork", "Hardfork", "Tempo T3 active"), Some(true)),
-        Ok(false) => (
-            DoctorStep::pass("hardfork", "Hardfork", "pre-T3; TIP-1011 scopes not enforced"),
-            Some(false),
-        ),
+        Ok(true) => (DoctorStep::pass(HARDFORK, "Tempo T3 active"), Some(true)),
+        Ok(false) => {
+            (DoctorStep::pass(HARDFORK, "pre-T3; TIP-1011 scopes not enforced"), Some(false))
+        }
         Err(err) => (
             DoctorStep::warn(
-                "hardfork",
-                "Hardfork",
+                HARDFORK,
                 format!("could not determine Tempo T3 activation: {err}"),
                 "TIP-1011 allowed-call and T3 spending-period checks will be skipped",
             ),
@@ -2008,227 +1915,186 @@ where
     }
 }
 
-/// Step 7 helper: spending limits.
-async fn check_spending_limits<P>(
+/// Step 9 helper: spending limits of an on-chain key.
+async fn check_spending_limits<P: Provider<TempoNetwork>>(
     provider: &P,
     subject: &DoctorSubject,
     info: &KeyInfo,
     fee_token: Address,
     is_t3: Option<bool>,
-) -> DoctorStep
-where
-    P: Provider<TempoNetwork>,
-{
+) -> DoctorStep {
     let Some(is_t3) = is_t3 else {
         return DoctorStep::warn(
-            "spending_limits",
-            "Spending limits",
+            SPENDING_LIMITS,
             "skipped; hardfork unknown",
-            "retry against an RPC that reports Tempo hardfork activation",
+            HARDFORK_UNKNOWN_HINT,
         );
     };
-
     if !info.enforceLimits {
-        return DoctorStep::pass(
-            "spending_limits",
-            "Spending limits",
-            "limits not enforced for this key",
-        );
+        return DoctorStep::pass(SPENDING_LIMITS, "limits not enforced for this key");
     }
 
-    let local_limits = subject.entry.as_ref().map(|entry| entry.limits.as_slice()).unwrap_or(&[]);
-
+    let local_limits = subject.entry.as_ref().map_or(&[][..], |entry| entry.limits.as_slice());
     // Token universe: local-entry limits ∪ {fee_token}.
     let mut tokens: Vec<Address> = local_limits.iter().map(|l| l.currency).collect();
     if !tokens.contains(&fee_token) {
         tokens.push(fee_token);
     }
 
-    let mut lines: Vec<String> = Vec::new();
+    let mut lines = Vec::new();
     let mut any_zero = false;
-
     for token in tokens {
-        let configured = local_limits.iter().find(|l| l.currency == token).map(|l| l.limit.clone());
-
-        let (remaining, period_end) = if is_t3 {
-            match provider
-                .get_keychain_remaining_limit_with_period(
-                    subject.root_account,
-                    subject.key_address,
-                    token,
-                )
-                .await
-            {
-                Ok(r) => (r.remaining, Some(r.periodEnd)),
-                Err(err) => {
-                    return DoctorStep::warn(
-                        "spending_limits",
-                        "Spending limits",
-                        format!("{} query failed: {err}", address_label(token)),
-                        "verify the AccountKeychain precompile is reachable",
-                    );
-                }
-            }
-        } else {
-            match provider
-                .account_keychain()
-                .getRemainingLimit(subject.root_account, subject.key_address, token)
-                .call()
-                .await
-            {
-                Ok(r) => (r, None),
-                Err(err) => {
-                    return DoctorStep::warn(
-                        "spending_limits",
-                        "Spending limits",
-                        format!("{} query failed: {err}", address_label(token)),
-                        "verify the AccountKeychain precompile is reachable",
-                    );
-                }
+        let (remaining, period_end) = match remaining_limit(
+            provider,
+            subject.root_account,
+            subject.key_address,
+            token,
+            is_t3,
+        )
+        .await
+        {
+            Ok(limit) => limit,
+            Err(err) => {
+                return DoctorStep::warn(
+                    SPENDING_LIMITS,
+                    format!("{} query failed: {err}", address_label(token)),
+                    "verify the AccountKeychain precompile is reachable",
+                );
             }
         };
-
-        if remaining.is_zero() {
-            any_zero = true;
-        }
-
-        let configured_str = configured.as_deref().unwrap_or("?");
-        let period_str = period_end
-            .and_then(|pe| (pe != 0).then(|| format!(" ({})", format_period_end(pe))))
-            .unwrap_or_default();
+        any_zero |= remaining.is_zero();
+        let configured =
+            local_limits.iter().find(|l| l.currency == token).map_or("?", |l| l.limit.as_str());
         lines.push(format!(
-            "{} remaining {} / {}{}",
+            "{} remaining {remaining} / {configured}{}",
             address_label(token),
-            remaining,
-            configured_str,
-            period_str
+            format_period_suffix(period_end)
         ));
     }
 
     let detail = lines.join("; ");
     if any_zero {
         DoctorStep::warn(
-            "spending_limits",
-            "Spending limits",
+            SPENDING_LIMITS,
             detail,
             "raise the limit (e.g. `cast keychain ul ...`) or wait for the window reset",
         )
     } else {
-        DoctorStep::pass("spending_limits", "Spending limits", detail)
+        DoctorStep::pass(SPENDING_LIMITS, detail)
     }
 }
 
+/// Step 9 helper: spending limits of a pending `key_authorization`.
 fn check_authorization_spending_limits(
     signed: &SignedKeyAuthorization,
     fee_token: Address,
     is_t3: Option<bool>,
 ) -> DoctorStep {
     let auth = &signed.authorization;
-
     if is_t3.is_none() && auth.has_periodic_limits() {
         return DoctorStep::warn(
-            "spending_limits",
-            "Spending limits",
+            SPENDING_LIMITS,
             "skipped; hardfork unknown and key_authorization uses periodic limits",
-            "retry against an RPC that reports Tempo hardfork activation",
+            HARDFORK_UNKNOWN_HINT,
         );
     }
-
-    if matches!(is_t3, Some(false)) && !auth.is_legacy_compatible() {
+    if is_t3 == Some(false) && !auth.is_legacy_compatible() {
         return DoctorStep::fail(
-            "spending_limits",
-            "Spending limits",
+            SPENDING_LIMITS,
             "key_authorization uses T3-only limits or call scopes on a pre-T3 chain",
             "use a T3 RPC or refresh the authorization with legacy-compatible restrictions",
         );
     }
 
     match auth.limits.as_deref() {
-        None => DoctorStep::pass(
-            "spending_limits",
-            "Spending limits",
-            "limits not enforced by key_authorization",
-        ),
+        None => DoctorStep::pass(SPENDING_LIMITS, "limits not enforced by key_authorization"),
         Some([]) => DoctorStep::warn(
-            "spending_limits",
-            "Spending limits",
+            SPENDING_LIMITS,
             "key_authorization allows no token spending",
             "refresh the access key with spending limits if the transaction spends TIP-20 tokens",
         ),
         Some(limits) => {
-            let detail = format_authorization_limits(limits, fee_token);
-            if !limits.iter().any(|limit| limit.token == fee_token) {
-                DoctorStep::warn(
-                    "spending_limits",
-                    "Spending limits",
+            let mut lines: Vec<String> = limits
+                .iter()
+                .map(|limit| {
+                    let period = if limit.period == 0 {
+                        String::new()
+                    } else {
+                        format!(" per {}s", limit.period)
+                    };
+                    format!("{} limit {}{period}", address_label(limit.token), limit.limit)
+                })
+                .collect();
+            let fee_limit = limits.iter().find(|limit| limit.token == fee_token);
+            if fee_limit.is_none() {
+                lines.push(format!(
+                    "{} not listed in key_authorization limits",
+                    address_label(fee_token)
+                ));
+            }
+            let detail = lines.join("; ");
+            match fee_limit {
+                None => DoctorStep::warn(
+                    SPENDING_LIMITS,
                     detail,
                     "refresh the access key with a limit for the selected fee token",
-                )
-            } else if limits.iter().any(|limit| limit.token == fee_token && limit.limit.is_zero()) {
-                DoctorStep::warn(
-                    "spending_limits",
-                    "Spending limits",
+                ),
+                Some(limit) if limit.limit.is_zero() => DoctorStep::warn(
+                    SPENDING_LIMITS,
                     detail,
                     "raise the fee-token limit before sending with this authorization",
-                )
-            } else {
-                DoctorStep::pass("spending_limits", "Spending limits", detail)
+                ),
+                Some(_) => DoctorStep::pass(SPENDING_LIMITS, detail),
             }
         }
     }
 }
 
-/// Step 8 helper: allowed calls (TIP-1011).
-async fn check_allowed_calls<P>(
+/// Step 10 helper: allowed calls (TIP-1011) of the on-chain key, or of `pending` when the key is
+/// not registered yet.
+async fn check_allowed_calls<P: Provider<TempoNetwork>>(
     provider: &P,
     subject: &DoctorSubject,
+    pending: Option<&KeyAuthorization>,
     is_t3: Option<bool>,
     to: Option<Address>,
     selector: Option<[u8; 4]>,
     recipient: Option<Address>,
-) -> DoctorStep
-where
-    P: Provider<TempoNetwork>,
-{
+) -> DoctorStep {
     let Some(is_t3) = is_t3 else {
-        return DoctorStep::warn(
-            "allowed_calls",
-            "Allowed calls",
-            "skipped; hardfork unknown",
-            "retry against an RPC that reports Tempo hardfork activation",
-        );
+        return DoctorStep::warn(ALLOWED_CALLS, "skipped; hardfork unknown", HARDFORK_UNKNOWN_HINT);
     };
-
     if !is_t3 {
-        return DoctorStep::pass(
-            "allowed_calls",
-            "Allowed calls",
-            "TIP-1011 not enforced before T3",
-        );
+        return DoctorStep::pass(ALLOWED_CALLS, "TIP-1011 not enforced before T3");
     }
 
-    let allowed = match provider
-        .account_keychain()
-        .getAllowedCalls(subject.root_account, subject.key_address)
-        .call()
-        .await
-    {
-        Ok(a) => a,
-        Err(err) => {
-            return DoctorStep::warn(
-                "allowed_calls",
-                "Allowed calls",
-                format!("getAllowedCalls failed: {err}"),
-                "verify the AccountKeychain precompile is reachable",
-            );
+    let scopes = match pending {
+        Some(auth) => {
+            let Some(scopes) = auth.allowed_calls.as_deref() else {
+                return DoctorStep::pass(ALLOWED_CALLS, "any call permitted by key_authorization");
+            };
+            scopes.iter().cloned().map(Into::into).collect()
         }
+        None => match provider
+            .account_keychain()
+            .getAllowedCalls(subject.root_account, subject.key_address)
+            .call()
+            .await
+        {
+            Ok(allowed) if !allowed.isScoped => {
+                return DoctorStep::pass(ALLOWED_CALLS, "any call permitted");
+            }
+            Ok(allowed) => allowed.scopes,
+            Err(err) => {
+                return DoctorStep::warn(
+                    ALLOWED_CALLS,
+                    format!("getAllowedCalls failed: {err}"),
+                    "verify the AccountKeychain precompile is reachable",
+                );
+            }
+        },
     };
-
-    if !allowed.isScoped {
-        return DoctorStep::pass("allowed_calls", "Allowed calls", "any call permitted");
-    }
-
-    diagnose_allowed_scopes(&allowed.scopes, to, selector, recipient)
+    diagnose_allowed_scopes(&scopes, to, selector, recipient)
 }
 
 fn diagnose_allowed_scopes(
@@ -2240,64 +2106,43 @@ fn diagnose_allowed_scopes(
     if scopes.is_empty() {
         let detail = "scoped, but no targets permitted";
         return if to.is_some() && selector.is_some() {
-            DoctorStep::fail(
-                "allowed_calls",
-                "Allowed calls",
-                detail,
-                "widen the policy with `cast keychain policy add-call ...`",
-            )
+            DoctorStep::fail(ALLOWED_CALLS, detail, WIDEN_POLICY_HINT)
         } else {
-            DoctorStep::warn(
-                "allowed_calls",
-                "Allowed calls",
-                detail,
-                "widen the policy with `cast keychain policy add-call ...`",
-            )
+            DoctorStep::warn(ALLOWED_CALLS, detail, WIDEN_POLICY_HINT)
         };
     }
-
     let Some(to) = to else {
         return DoctorStep::pass(
-            "allowed_calls",
-            "Allowed calls",
+            ALLOWED_CALLS,
             format!(
                 "scoped to {} target(s); pass --to/--selector to test a specific call",
                 scopes.len()
             ),
         );
     };
-
     let Some(selector) = selector else {
         // --to without --selector: report whether the target is in scope at all.
         return if scopes.iter().any(|s| s.target == to) {
             DoctorStep::pass(
-                "allowed_calls",
-                "Allowed calls",
+                ALLOWED_CALLS,
                 format!("target {to} is in scope; pass --selector to test the function"),
             )
         } else {
             DoctorStep::warn(
-                "allowed_calls",
-                "Allowed calls",
+                ALLOWED_CALLS,
                 format!("target {to} not in any allowed scope"),
-                "widen the policy with `cast keychain policy add-call ...`",
+                WIDEN_POLICY_HINT,
             )
         };
     };
 
     match match_allowed_call(scopes, to, selector, recipient) {
-        AllowedCallMatch::Allowed(detail) => {
-            DoctorStep::pass("allowed_calls", "Allowed calls", detail)
+        AllowedCallMatch::Allowed(detail) => DoctorStep::pass(ALLOWED_CALLS, detail),
+        AllowedCallMatch::Denied(reason) => {
+            DoctorStep::fail(ALLOWED_CALLS, reason, WIDEN_POLICY_HINT)
         }
-        AllowedCallMatch::Denied(reason) => DoctorStep::fail(
-            "allowed_calls",
-            "Allowed calls",
-            reason,
-            "widen the policy with `cast keychain policy add-call ...`",
-        ),
         AllowedCallMatch::RecipientRestricted(recipients) => DoctorStep::pass(
-            "allowed_calls",
-            "Allowed calls",
+            ALLOWED_CALLS,
             format!(
                 "selector {} on {} allowed only for {}; pass --recipient to verify exact match",
                 format_selector(&selector),
@@ -2308,105 +2153,53 @@ fn diagnose_allowed_scopes(
     }
 }
 
-fn check_authorization_allowed_calls(
-    signed: &SignedKeyAuthorization,
-    is_t3: Option<bool>,
-    to: Option<Address>,
-    selector: Option<[u8; 4]>,
-    recipient: Option<Address>,
-) -> DoctorStep {
-    let auth = &signed.authorization;
-
-    let Some(is_t3) = is_t3 else {
-        return DoctorStep::warn(
-            "allowed_calls",
-            "Allowed calls",
-            "skipped; hardfork unknown",
-            "retry against an RPC that reports Tempo hardfork activation",
-        );
-    };
-
-    if !is_t3 {
-        return DoctorStep::pass(
-            "allowed_calls",
-            "Allowed calls",
-            "TIP-1011 not enforced before T3",
-        );
-    }
-
-    let Some(scopes) = auth.allowed_calls.as_deref() else {
-        return DoctorStep::pass(
-            "allowed_calls",
-            "Allowed calls",
-            "any call permitted by key_authorization",
-        );
-    };
-
-    let scopes: Vec<CallScope> = scopes.iter().cloned().map(Into::into).collect();
-    diagnose_allowed_scopes(&scopes, to, selector, recipient)
-}
-
-/// Pure TIP-1011 matching logic. Extracted so it can be unit-tested.
+/// Pure TIP-1011 matching logic.
 fn match_allowed_call(
     scopes: &[CallScope],
     to: Address,
     selector: [u8; 4],
     recipient: Option<Address>,
 ) -> AllowedCallMatch {
+    let target = address_label_with_address(to);
     let matching_scopes: Vec<_> = scopes.iter().filter(|scope| scope.target == to).collect();
     if matching_scopes.is_empty() {
         return AllowedCallMatch::Denied(format!("target {to} not in any allowed scope"));
     }
-
     if matching_scopes.iter().any(|scope| scope.selectorRules.is_empty()) {
-        return AllowedCallMatch::Allowed(format!(
-            "any selector on {} permitted",
-            address_label_with_address(to)
-        ));
+        return AllowedCallMatch::Allowed(format!("any selector on {target} permitted"));
     }
 
+    let selector_str = format_selector(&selector);
     let matching_rules: Vec<_> = matching_scopes
         .iter()
-        .flat_map(|scope| scope.selectorRules.iter())
+        .flat_map(|scope| &scope.selectorRules)
         .filter(|rule| rule.selector.0 == selector)
         .collect();
-
     if matching_rules.is_empty() {
         return AllowedCallMatch::Denied(format!(
-            "selector {} on {} not in allowed list",
-            format_selector(&selector),
-            address_label_with_address(to)
+            "selector {selector_str} on {target} not in allowed list"
         ));
     }
-
     if matching_rules.iter().any(|rule| rule.recipients.is_empty()) {
         return AllowedCallMatch::Allowed(format!(
-            "{} on {} permitted (any recipient)",
-            format_selector(&selector),
-            address_label_with_address(to)
+            "{selector_str} on {target} permitted (any recipient)"
         ));
     }
 
     match recipient {
         Some(r) if matching_rules.iter().any(|rule| rule.recipients.contains(&r)) => {
             AllowedCallMatch::Allowed(format!(
-                "{} on {} to recipient {} permitted",
-                format_selector(&selector),
-                address_label_with_address(to),
-                r
+                "{selector_str} on {target} to recipient {r} permitted"
             ))
         }
         Some(r) => AllowedCallMatch::Denied(format!(
-            "recipient {r} not in allowed list for {} on {}",
-            format_selector(&selector),
-            address_label_with_address(to)
+            "recipient {r} not in allowed list for {selector_str} on {target}"
         )),
         None => {
             let mut recipients = Vec::new();
-            for recipient in matching_rules.iter().flat_map(|rule| rule.recipients.iter().copied())
-            {
-                if !recipients.contains(&recipient) {
-                    recipients.push(recipient);
+            for recipient in matching_rules.iter().flat_map(|rule| &rule.recipients) {
+                if !recipients.contains(recipient) {
+                    recipients.push(*recipient);
                 }
             }
             AllowedCallMatch::RecipientRestricted(recipients)
@@ -2414,56 +2207,45 @@ fn match_allowed_call(
     }
 }
 
-/// Step 9 helper: fee-token balance on the root account.
-async fn check_fee_token_balance<P>(
+/// Fee-token balance of the account paying for the transaction.
+async fn check_fee_token_balance<P: Provider<TempoNetwork>>(
     provider: &P,
     account: Address,
     fee_token: Address,
-    owner_label: &'static str,
-) -> DoctorStep
-where
-    P: Provider<TempoNetwork>,
-{
+    owner_label: &str,
+) -> DoctorStep {
+    let token = address_label(fee_token);
     match ITIP20::new(fee_token, provider).balanceOf(account).call().await {
         Ok(balance) if balance.is_zero() => DoctorStep::warn(
-            "fee_token_balance",
-            "Fee-token balance",
-            format!("0 {} on {owner_label} {}", address_label(fee_token), account),
-            format!("fund {owner_label} {} with {}", account, address_label(fee_token)),
+            FEE_TOKEN_BALANCE,
+            format!("0 {token} on {owner_label} {account}"),
+            format!("fund {owner_label} {account} with {token}"),
         ),
         Ok(balance) => DoctorStep::pass(
-            "fee_token_balance",
-            "Fee-token balance",
-            format!("{} {} on {owner_label} {}", balance, address_label(fee_token), account),
+            FEE_TOKEN_BALANCE,
+            format!("{balance} {token} on {owner_label} {account}"),
         ),
         Err(err) => DoctorStep::warn(
-            "fee_token_balance",
-            "Fee-token balance",
+            FEE_TOKEN_BALANCE,
             format!("balanceOf failed: {err}"),
             "verify --fee-token points to a TIP-20 token",
         ),
     }
 }
 
-/// Step 12 helper: validate TIP-1009 expiring-nonce options, if supplied.
+/// Validate TIP-1009 expiring-nonce options, if supplied.
 fn check_expiring_nonce(
     tempo: &TempoOpts,
     resolved_expires_at: Option<u64>,
     chain_timestamp: &ChainTimestamp,
 ) -> DoctorStep {
     if !tempo.expiring_nonce && tempo.valid_before.is_none() && tempo.valid_after.is_none() {
-        return DoctorStep::pass("expiring_nonce", "Expiring nonce", "not requested");
+        return DoctorStep::pass(EXPIRING_NONCE, "not requested");
     }
-
-    let Some(chain_timestamp) = chain_timestamp.timestamp() else {
-        return chain_timestamp.unavailable_step(
-            "expiring_nonce",
-            "Expiring nonce",
-            "validity window not checked",
-        );
-    };
-
-    check_expiring_nonce_window(tempo, resolved_expires_at, chain_timestamp)
+    match chain_timestamp.get(EXPIRING_NONCE, "validity window not checked") {
+        Ok(now) => check_expiring_nonce_window(tempo, resolved_expires_at, now),
+        Err(step) => step,
+    }
 }
 
 fn check_expiring_nonce_window(
@@ -2473,15 +2255,12 @@ fn check_expiring_nonce_window(
 ) -> DoctorStep {
     let valid_before = tempo.valid_before;
     let valid_after = tempo.valid_after;
-    let missing_expiring_nonce =
-        (valid_before.is_some() || valid_after.is_some()) && !tempo.expiring_nonce;
 
     if let (Some(after), Some(before)) = (valid_after, valid_before)
         && after >= before
     {
         return DoctorStep::fail(
-            "expiring_nonce",
-            "Expiring nonce",
+            EXPIRING_NONCE,
             format!("valid-after {after} is not before valid-before {before}"),
             "choose a valid window where valid-after < valid-before",
         );
@@ -2490,22 +2269,18 @@ fn check_expiring_nonce_window(
     if let Some(before) = valid_before {
         if before <= chain_timestamp {
             return DoctorStep::fail(
-                "expiring_nonce",
-                "Expiring nonce",
+                EXPIRING_NONCE,
                 format!(
-                    "valid-before {} is expired at chain timestamp {}",
-                    format_timestamp_iso(before),
-                    chain_timestamp
+                    "valid-before {} is expired at chain timestamp {chain_timestamp}",
+                    format_timestamp_iso(before)
                 ),
                 "use a later --tempo.valid-before or rerun with --tempo.expires",
             );
         }
-
         let ttl = before - chain_timestamp;
         if ttl <= 3 {
             return DoctorStep::fail(
-                "expiring_nonce",
-                "Expiring nonce",
+                EXPIRING_NONCE,
                 format!(
                     "valid-before must be more than 3s after chain timestamp {chain_timestamp}; current ttl is {ttl}s"
                 ),
@@ -2514,32 +2289,29 @@ fn check_expiring_nonce_window(
         }
         if ttl <= 5 {
             return DoctorStep::warn(
-                "expiring_nonce",
-                "Expiring nonce",
+                EXPIRING_NONCE,
                 format!("valid for only {ttl}s at chain timestamp {chain_timestamp}"),
                 "use a larger validity window before signing",
             );
         }
         if ttl > 30 {
-            if resolved_expires_at.is_some() {
-                return DoctorStep::warn(
-                    "expiring_nonce",
-                    "Expiring nonce",
+            return if resolved_expires_at.is_some() {
+                DoctorStep::warn(
+                    EXPIRING_NONCE,
                     format!(
                         "--tempo.expires resolved to a deadline {ttl}s ahead of chain timestamp {chain_timestamp}"
                     ),
                     "check local clock/RPC timestamp skew before relying on this deadline",
-                );
-            }
-
-            return DoctorStep::warn(
-                "expiring_nonce",
-                "Expiring nonce",
-                format!(
-                    "valid-before is {ttl}s ahead of chain timestamp {chain_timestamp}; --tempo.expires caps this at 30s"
-                ),
-                "prefer --tempo.expires for bounded retry-safe sends",
-            );
+                )
+            } else {
+                DoctorStep::warn(
+                    EXPIRING_NONCE,
+                    format!(
+                        "valid-before is {ttl}s ahead of chain timestamp {chain_timestamp}; --tempo.expires caps this at 30s"
+                    ),
+                    "prefer --tempo.expires for bounded retry-safe sends",
+                )
+            };
         }
     }
 
@@ -2547,17 +2319,15 @@ fn check_expiring_nonce_window(
         && after > chain_timestamp
     {
         return DoctorStep::warn(
-            "expiring_nonce",
-            "Expiring nonce",
+            EXPIRING_NONCE,
             format!("transaction is not valid until {}", format_timestamp_iso(after)),
             "wait until valid-after or choose an earlier lower bound",
         );
     }
 
-    if missing_expiring_nonce {
+    if (valid_before.is_some() || valid_after.is_some()) && !tempo.expiring_nonce {
         return DoctorStep::warn(
-            "expiring_nonce",
-            "Expiring nonce",
+            EXPIRING_NONCE,
             "validity window set without --tempo.expiring-nonce",
             "use --tempo.expiring-nonce or --tempo.expires so nonce_key is set to the expiring lane",
         );
@@ -2576,128 +2346,58 @@ fn check_expiring_nonce_window(
             format_timestamp_iso(expires_at)
         ));
     }
-
-    DoctorStep::pass("expiring_nonce", "Expiring nonce", detail)
+    DoctorStep::pass(EXPIRING_NONCE, detail)
 }
 
-/// Step 13 helper: validate sponsorship configuration, if supplied.
-async fn check_sponsorship(tempo: &TempoOpts, sender: Address) -> SponsorshipDiagnosis {
+/// Validate sponsorship configuration, if supplied; returns the step and the fee payer.
+async fn check_sponsorship(tempo: &TempoOpts, sender: Address) -> (DoctorStep, Option<Address>) {
     if tempo.print_sponsor_hash {
-        return SponsorshipDiagnosis {
-            step: DoctorStep::pass(
-                "sponsorship",
-                "Sponsorship",
+        return (
+            DoctorStep::pass(
+                SPONSORSHIP,
                 "--tempo.print-sponsor-hash requested, but doctor has no concrete tx payload",
             ),
-            fee_payer: None,
-        };
+            None,
+        );
     }
-
+    let not_requested = || (DoctorStep::pass(SPONSORSHIP, "not requested"), None);
     if !tempo.has_sponsor_submission() {
-        return SponsorshipDiagnosis {
-            step: DoctorStep::pass("sponsorship", "Sponsorship", "not requested"),
-            fee_payer: None,
-        };
+        return not_requested();
     }
-
     let sponsor = match tempo.sponsor_config().await {
-        Ok(Some(sponsor)) => sponsor,
-        Ok(None) => {
-            return SponsorshipDiagnosis {
-                step: DoctorStep::pass("sponsorship", "Sponsorship", "not requested"),
-                fee_payer: None,
-            };
-        }
+        Ok(Some(sponsor)) => sponsor.sponsor(),
+        Ok(None) => return not_requested(),
         Err(err) => {
-            return SponsorshipDiagnosis {
-                step: DoctorStep::fail(
-                    "sponsorship",
-                    "Sponsorship",
+            return (
+                DoctorStep::fail(
+                    SPONSORSHIP,
                     format!(
                         "invalid sponsor config: {}",
                         sanitize_sponsor_config_error(&err.to_string(), tempo)
                     ),
                     "pass --tempo.sponsor with either --tempo.sponsor-signer or --tempo.sponsor-sig",
                 ),
-                fee_payer: None,
-            };
+                None,
+            );
         }
     };
 
-    if sponsor.sponsor() == sender {
-        return SponsorshipDiagnosis {
-            step: DoctorStep::fail(
-                "sponsorship",
-                "Sponsorship",
-                format!("sponsor {} equals transaction sender {sender}", sponsor.sponsor()),
-                "use a different fee payer for sponsored transactions",
-            ),
-            fee_payer: Some(sponsor.sponsor()),
-        };
-    }
-
-    if tempo.sponsor_sig.is_some() {
-        return SponsorshipDiagnosis {
-            step: DoctorStep::warn(
-                "sponsorship",
-                "Sponsorship",
-                format!("signature syntax parsed for sponsor {}", sponsor.sponsor()),
-                "doctor cannot recover fee_payer_signature without the exact transaction digest",
-            ),
-            fee_payer: Some(sponsor.sponsor()),
-        };
-    }
-
-    SponsorshipDiagnosis {
-        step: DoctorStep::pass(
-            "sponsorship",
-            "Sponsorship",
-            format!("sponsor signer configured for {}", sponsor.sponsor()),
-        ),
-        fee_payer: Some(sponsor.sponsor()),
-    }
-}
-
-const fn key_type_matches_authorization(key_type: &KeyType, auth_type: &AuthSignatureType) -> bool {
-    matches!(
-        (key_type, auth_type),
-        (KeyType::Secp256k1, AuthSignatureType::Secp256k1)
-            | (KeyType::P256, AuthSignatureType::P256)
-            | (KeyType::WebAuthn, AuthSignatureType::WebAuthn)
-    )
-}
-
-const fn auth_signature_type_label(t: &AuthSignatureType) -> &'static str {
-    match t {
-        AuthSignatureType::Secp256k1 => "Secp256k1",
-        AuthSignatureType::P256 => "P256",
-        AuthSignatureType::WebAuthn => "WebAuthn",
-    }
-}
-
-const fn auth_signature_type_name(t: &AuthSignatureType) -> &'static str {
-    match t {
-        AuthSignatureType::Secp256k1 => "secp256k1",
-        AuthSignatureType::P256 => "p256",
-        AuthSignatureType::WebAuthn => "webauthn",
-    }
-}
-
-fn format_authorization_limits(limits: &[AuthTokenLimit], fee_token: Address) -> String {
-    let mut lines: Vec<String> = limits
-        .iter()
-        .map(|limit| {
-            let period =
-                if limit.period == 0 { String::new() } else { format!(" per {}s", limit.period) };
-            format!("{} limit {}{}", address_label(limit.token), limit.limit, period)
-        })
-        .collect();
-
-    if !limits.iter().any(|limit| limit.token == fee_token) {
-        lines.push(format!("{} not listed in key_authorization limits", address_label(fee_token)));
-    }
-
-    lines.join("; ")
+    let step = if sponsor == sender {
+        DoctorStep::fail(
+            SPONSORSHIP,
+            format!("sponsor {sponsor} equals transaction sender {sender}"),
+            "use a different fee payer for sponsored transactions",
+        )
+    } else if tempo.sponsor_sig.is_some() {
+        DoctorStep::warn(
+            SPONSORSHIP,
+            format!("signature syntax parsed for sponsor {sponsor}"),
+            "doctor cannot recover fee_payer_signature without the exact transaction digest",
+        )
+    } else {
+        DoctorStep::pass(SPONSORSHIP, format!("sponsor signer configured for {sponsor}"))
+    };
+    (step, Some(sponsor))
 }
 
 fn sanitize_sponsor_config_error(message: &str, tempo: &TempoOpts) -> String {
@@ -2714,7 +2414,6 @@ fn redact_private_key_uri_tokens(message: &str) -> String {
     const PREFIX: &str = "private-key://";
     let mut redacted = String::with_capacity(message.len());
     let mut rest = message;
-
     while let Some(idx) = rest.find(PREFIX) {
         redacted.push_str(&rest[..idx + PREFIX.len()]);
         redacted.push_str("<redacted>");
@@ -2724,65 +2423,8 @@ fn redact_private_key_uri_tokens(message: &str) -> String {
             .unwrap_or(after_prefix.len());
         rest = &after_prefix[end..];
     }
-
     redacted.push_str(rest);
     redacted
-}
-
-/// Render the doctor result and return.
-fn finalize_doctor(steps: Vec<DoctorStep>, context: DoctorContext) -> Result<()> {
-    let failure_count = steps.iter().filter(|s| s.status == DoctorStatus::Fail).count();
-    let warning_count = steps.iter().filter(|s| s.status == DoctorStatus::Warn).count();
-    let no_failures = failure_count == 0;
-    let healthy = no_failures && warning_count == 0;
-    let status = if failure_count > 0 {
-        "fail"
-    } else if warning_count > 0 {
-        "warn"
-    } else {
-        "pass"
-    };
-
-    if shell::is_json() {
-        foundry_cli::json::print_json_success(serde_json::json!({
-            "context": context,
-            "steps": steps,
-            "status": status,
-            "no_failures": no_failures,
-            "healthy": healthy,
-            "warning_count": warning_count,
-            "failure_count": failure_count,
-        }))?;
-    } else {
-        for step in &steps {
-            print_doctor_step(step)?;
-        }
-        sh_println!()?;
-        if healthy {
-            sh_println!("{} access-key signing path looks healthy", "✓".green())?;
-        } else if no_failures {
-            sh_println!("{} access-key signing path has warnings (see above)", "!".yellow())?;
-        } else {
-            sh_println!("{} access-key signing path has issues (see above)", "✗".red())?;
-        }
-    }
-
-    Ok(())
-}
-
-fn print_doctor_step(step: &DoctorStep) -> Result<()> {
-    let marker = match step.status {
-        DoctorStatus::Pass => "✓".green().to_string(),
-        DoctorStatus::Warn => "!".yellow().to_string(),
-        DoctorStatus::Fail => "✗".red().to_string(),
-    };
-
-    let label = format!("{:<22}", step.label);
-    sh_println!("{marker} {label} {}", step.detail)?;
-    if let Some(hint) = step.hint.as_deref() {
-        sh_println!("  {} {}", "hint:".dim(), hint)?;
-    }
-    Ok(())
 }
 
 /// `cast keychain authorize` / `cast keychain auth` — authorize a key on-chain.
@@ -2802,15 +2444,16 @@ async fn run_authorize(
     force: bool,
 ) -> Result<()> {
     let enforce = enforce_limits || !limits.is_empty();
-
-    let config = send_tx.eth.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let (_, provider) = tempo_provider(&send_tx.eth.rpc)?;
 
     // T6 admin keys are key-management only and use a dedicated precompile entrypoint.
     if admin {
-        if !is_tempo_hardfork_active(&provider, TempoHardfork::T6).await? {
-            eyre::bail!("--admin requires a Tempo T6-capable AccountKeychain RPC");
-        }
+        require_hardfork(
+            &provider,
+            TempoHardfork::T6,
+            "--admin requires a Tempo T6-capable AccountKeychain RPC",
+        )
+        .await?;
         // u64::MAX is the no-expiry default; anything else is an explicit expiry admin keys reject.
         eyre::ensure!(expiry == u64::MAX, "--admin cannot be combined with an explicit --expiry");
         eyre::ensure!(
@@ -2823,41 +2466,42 @@ async fn run_authorize(
         );
 
         // `authorizeAdminKey` requires a witness argument; omitting `--witness` submits bytes32(0).
-        let calldata = authorizeAdminKeyCall {
+        let call = authorizeAdminKeyCall {
             keyId: key_address,
             signatureType: key_type,
             witness: witness.unwrap_or(B256::ZERO),
-        }
-        .abi_encode();
-        send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
-        return Ok(());
+        };
+        return send_keychain_call(&call, tx_opts, &send_tx, force).await;
     }
 
     let is_t3 = is_tempo_hardfork_active(&provider, TempoHardfork::T3).await?;
-    if witness.is_some() && !is_tempo_hardfork_active(&provider, TempoHardfork::T5).await? {
-        eyre::bail!("--witness requires a Tempo T5-capable AccountKeychain RPC");
+    if witness.is_some() {
+        require_hardfork(
+            &provider,
+            TempoHardfork::T5,
+            "--witness requires a Tempo T5-capable AccountKeychain RPC",
+        )
+        .await?;
     }
 
     let calldata = if is_t3 {
-        // T3+ authorizeKey(address,SignatureType,KeyRestrictions)
-        let restrictions = KeyRestrictions {
+        let config = KeyRestrictions {
             expiry,
             enforceLimits: enforce,
             limits,
             allowAnyCalls: allowed_calls.is_empty(),
             allowedCalls: allowed_calls,
         };
-        if let Some(witness) = witness {
-            authorizeKeyWithWitnessCall {
+        match witness {
+            Some(witness) => authorizeKeyWithWitnessCall {
                 keyId: key_address,
                 signatureType: key_type,
-                config: restrictions,
+                config,
                 witness,
             }
-            .abi_encode()
-        } else {
-            authorizeKeyCall { keyId: key_address, signatureType: key_type, config: restrictions }
-                .abi_encode()
+            .abi_encode(),
+            None => authorizeKeyCall { keyId: key_address, signatureType: key_type, config }
+                .abi_encode(),
         }
     } else {
         // Legacy (pre-T3) authorizeKey(address,SignatureType,uint64,bool,LegacyTokenLimit[])
@@ -2870,43 +2514,20 @@ async fn run_authorize(
                 limit.period
             );
         }
-
-        let legacy_limits: Vec<LegacyTokenLimit> = limits
-            .into_iter()
-            .map(|l| LegacyTokenLimit { token: l.token, amount: l.amount })
-            .collect();
         legacyAuthorizeKeyCall {
             keyId: key_address,
             signatureType: key_type,
             expiry,
             enforceLimits: enforce,
-            limits: legacy_limits,
+            limits: limits
+                .into_iter()
+                .map(|l| LegacyTokenLimit { token: l.token, amount: l.amount })
+                .collect(),
         }
         .abi_encode()
     };
 
     send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
-    Ok(())
-}
-
-fn run_key_auth_encode(args: KeyAuthorizationArgs, account: Option<Address>) -> Result<()> {
-    let authorization = args.into_authorization(account)?;
-    let encoded = encode_key_authorization(&authorization);
-
-    if shell::is_json() {
-        let json = serde_json::json!({
-            "key_authorization": hex::encode_prefixed(&encoded),
-            "signature_hash": authorization.signature_hash().to_string(),
-            "rlp_length": encoded.len(),
-            "is_admin": authorization.is_admin(),
-            "account": authorization.account.map(|account| account.to_string()),
-            "witness": authorization.witness().map(|witness| witness.to_string()),
-        });
-        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
-    } else {
-        sh_println!("{}", hex::encode_prefixed(&encoded))?;
-    }
-
     Ok(())
 }
 
@@ -2929,34 +2550,27 @@ async fn run_key_auth_sign(
 
     if let Some(browser) = browser.run::<TempoNetwork>().await? {
         let signer_address = browser.address();
-        ensure_key_authorization_root_sender(signer_address, wallet.from)?;
+        ensure_root_sender(signer_address, wallet.from, "key authorization")?;
         // The browser path rejects admin/witness/account above, so there is nothing to bind.
         let authorization = args.into_authorization(None)?;
-        let authorized_key_type = auth_signature_type_name(&authorization.key_type);
+        let key_type = authorization.key_type;
         let signature_hash = authorization.signature_hash();
         let signed = browser.sign_key_authorization(authorization).await?;
-        return print_signed_key_authorization(
-            &signed,
-            signature_hash,
-            signer_address,
-            authorized_key_type,
-        );
+        return print_signed_key_authorization(&signed, signature_hash, signer_address, key_type);
     }
 
     let (signer, tempo_access_key) = wallet.maybe_signer_for_chain(chain_id).await?;
     let signer_address = match (&signer, &tempo_access_key) {
         (Some(signer), None) => signer.address(),
         (None, Some(wallet)) => wallet.key_id()?,
-        _ => {
-            eyre::bail!(
-                "a signer is required to sign key authorizations; pass a signer with \
-                 --browser, --private-key, --keystore, Ledger, Trezor, AWS, GCP, or Turnkey"
-            );
-        }
+        _ => eyre::bail!(
+            "a signer is required to sign key authorizations; pass a signer with \
+             --browser, --private-key, --keystore, Ledger, Trezor, AWS, GCP, or Turnkey"
+        ),
     };
 
     // Resolve the account this authorization is bound to (T6 replay protection).
-    let bound_account = if let Some(access_key) = tempo_access_key.as_ref() {
+    let bound_account = if let Some(access_key) = &tempo_access_key {
         // The access key (an admin key) signs for its root, so bind to the root, not the signer.
         if let Some(explicit) = account {
             eyre::ensure!(
@@ -2967,63 +2581,45 @@ async fn run_key_auth_sign(
         }
         Some(access_key.account())
     } else {
-        ensure_key_authorization_root_sender(signer_address, wallet.from)?;
-        match account {
-            Some(explicit) => Some(explicit),
-            None if is_admin => Some(signer_address),
-            None => None,
-        }
+        ensure_root_sender(signer_address, wallet.from, "key authorization")?;
+        account.or(is_admin.then_some(signer_address))
     };
 
     let authorization = args.into_authorization(bound_account)?;
-    let authorized_key_type = auth_signature_type_name(&authorization.key_type);
+    let key_type = authorization.key_type;
     let signature_hash = authorization.signature_hash();
-    let signature = match (signer.as_ref(), tempo_access_key.as_ref()) {
+    let signature = match (&signer, &tempo_access_key) {
         (Some(signer), None) => {
             PrimitiveSignature::Secp256k1(signer.sign_hash(&signature_hash).await?)
         }
         (None, Some(wallet)) => wallet.sign_hash(&signature_hash).await?,
-        _ => {
-            eyre::bail!("exactly one signer is required to sign a key authorization");
-        }
+        _ => eyre::bail!("exactly one signer is required to sign a key authorization"),
     };
     let signed = authorization.into_signed(signature);
-    print_signed_key_authorization(&signed, signature_hash, signer_address, authorized_key_type)
+    print_signed_key_authorization(&signed, signature_hash, signer_address, key_type)
 }
 
 fn print_signed_key_authorization(
     signed: &SignedKeyAuthorization,
     signature_hash: B256,
     signer_address: Address,
-    authorized_key_type: &'static str,
+    authorized_key_type: AuthSignatureType,
 ) -> Result<()> {
-    let encoded = encode_key_authorization(signed);
-
-    if shell::is_json() {
-        let signature_type = auth_signature_type_name(&signed.signature.signature_type());
-        let json = serde_json::json!({
+    let encoded = alloy_rlp::encode(signed);
+    print_json_or(
+        json!({
             "signed_key_authorization": hex::encode_prefixed(&encoded),
-            "signature_hash": signature_hash.to_string(),
+            "signature_hash": signature_hash,
             "rlp_length": encoded.len(),
-            "signer": signer_address.to_string(),
-            "authorized_key_type": authorized_key_type,
-            "signature_type": signature_type,
-            "witness": signed.authorization.witness().map(|witness| witness.to_string()),
+            "signer": signer_address,
+            "authorized_key_type": key_type_name(authorized_key_type.into()),
+            "signature_type": key_type_name(signed.signature.signature_type().into()),
+            "witness": signed.authorization.witness(),
             "is_admin": signed.authorization.is_admin(),
-            "account": signed.authorization.account.map(|account| account.to_string()),
-        });
-        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
-    } else {
-        sh_println!("{}", hex::encode_prefixed(&encoded))?;
-    }
-
-    Ok(())
-}
-
-fn encode_key_authorization<T: Encodable>(authorization: &T) -> Vec<u8> {
-    let mut out = Vec::new();
-    authorization.encode(&mut out);
-    out
+            "account": signed.authorization.account,
+        }),
+        hex::encode_prefixed(&encoded),
+    )
 }
 
 /// Decode a hex RLP key authorization (signed or unsigned) and validate its account binding.
@@ -3036,7 +2632,6 @@ fn decode_and_validate_key_authorization(
     expected_account: Option<Address>,
 ) -> Result<(KeyAuthorization, bool, Option<Address>)> {
     let raw = authorization.trim();
-
     let (auth, signed, signer) =
         match tempo::decode_key_authorization::<SignedKeyAuthorization>(raw) {
             // Signer recovery is best-effort so `inspect` still surfaces fields for a corrupt sig.
@@ -3046,22 +2641,18 @@ fn decode_and_validate_key_authorization(
             }
             Err(signed_err) => match tempo::decode_key_authorization::<KeyAuthorization>(raw) {
                 Ok(unsigned) => (unsigned, false, None),
-                Err(unsigned_err) => {
-                    eyre::bail!(
-                        "could not decode key authorization as signed ({signed_err}) or unsigned \
+                Err(unsigned_err) => eyre::bail!(
+                    "could not decode key authorization as signed ({signed_err}) or unsigned \
                  ({unsigned_err})"
-                    );
-                }
+                ),
             },
         };
 
     // Mirror the chain's T6 admin invariants so `inspect` rejects a malformed admin authorization.
-    if let Some(account) = auth.account {
-        eyre::ensure!(
-            account != Address::ZERO,
-            "key authorization account cannot be the zero address"
-        );
-    }
+    eyre::ensure!(
+        auth.account != Some(Address::ZERO),
+        "key authorization account cannot be the zero address"
+    );
     if auth.is_admin() {
         // A root-signed admin authorization may omit `account` (it is only required when the signer
         // is not the target root), so `inspect` does not require it here. Binding is still enforced
@@ -3081,16 +2672,12 @@ fn decode_and_validate_key_authorization(
     if let Some(expected) = expected_account {
         match auth.account {
             Some(account) if account == expected => {}
-            Some(account) => {
-                eyre::bail!(
-                    "key authorization is bound to account {account} but {expected} was expected"
-                );
-            }
-            None => {
-                eyre::bail!(
-                    "expected key authorization bound to account {expected} but it has no account field"
-                );
-            }
+            Some(account) => eyre::bail!(
+                "key authorization is bound to account {account} but {expected} was expected"
+            ),
+            None => eyre::bail!(
+                "expected key authorization bound to account {expected} but it has no account field"
+            ),
         }
     }
 
@@ -3102,332 +2689,100 @@ fn decode_and_validate_key_authorization(
 fn run_key_auth_inspect(authorization: &str, expected_account: Option<Address>) -> Result<()> {
     let (auth, signed, signer) =
         decode_and_validate_key_authorization(authorization, expected_account)?;
+    let key_type = key_type_name(auth.key_type.into());
 
     if shell::is_json() {
-        let json = serde_json::json!({
+        let json = json!({
             "signed": signed,
-            "signer": signer.map(|signer| signer.to_string()),
+            "signer": signer,
             "chain_id": auth.chain_id,
-            "key_address": auth.key_id.to_string(),
-            "key_type": auth_signature_type_name(&auth.key_type),
+            "key_address": auth.key_id,
+            "key_type": key_type,
             "is_admin": auth.is_admin(),
-            "account": auth.account.map(|account| account.to_string()),
-            "expiry": auth.expiry.map(|expiry| expiry.get()),
-            "witness": auth.witness().map(|witness| witness.to_string()),
+            "account": auth.account,
+            "expiry": auth.expiry,
+            "witness": auth.witness(),
             "enforce_limits": auth.limits.is_some(),
             "scoped_calls": auth.allowed_calls.is_some(),
         });
-        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
-    } else {
-        sh_println!("Signed:       {signed}")?;
-        if let Some(signer) = signer {
-            sh_println!("Signer:       {signer}")?;
-        }
-        sh_println!("Chain ID:     {}", auth.chain_id)?;
-        sh_println!("Key Address:  {}", auth.key_id)?;
-        sh_println!("Key Type:     {}", auth_signature_type_name(&auth.key_type))?;
-        sh_println!("Admin:        {}", auth.is_admin())?;
-        if let Some(account) = auth.account {
-            sh_println!("Account:      {account}")?;
-        }
-        match auth.expiry {
-            Some(expiry) => sh_println!("Expiry:       {}", expiry.get())?,
-            None => sh_println!("Expiry:       none")?,
-        }
-        match auth.witness() {
-            Some(witness) => sh_println!("Witness:      {witness}")?,
-            None => sh_println!("Witness:      none")?,
-        }
-        sh_println!("Enforce Lim:  {}", auth.limits.is_some())?;
-        sh_println!("Scoped Calls: {}", auth.allowed_calls.is_some())?;
+        return sh_println!("{}", serde_json::to_string_pretty(&json)?);
     }
 
-    Ok(())
+    sh_println!("Signed:       {signed}")?;
+    if let Some(signer) = signer {
+        sh_println!("Signer:       {signer}")?;
+    }
+    sh_println!("Chain ID:     {}", auth.chain_id)?;
+    sh_println!("Key Address:  {}", auth.key_id)?;
+    sh_println!("Key Type:     {key_type}")?;
+    sh_println!("Admin:        {}", auth.is_admin())?;
+    if let Some(account) = auth.account {
+        sh_println!("Account:      {account}")?;
+    }
+    match auth.expiry {
+        Some(expiry) => sh_println!("Expiry:       {expiry}")?,
+        None => sh_println!("Expiry:       none")?,
+    }
+    match auth.witness() {
+        Some(witness) => sh_println!("Witness:      {witness}")?,
+        None => sh_println!("Witness:      none")?,
+    }
+    sh_println!("Enforce Lim:  {}", auth.limits.is_some())?;
+    sh_println!("Scoped Calls: {}", auth.allowed_calls.is_some())
 }
 
 impl KeyAuthorizationArgs {
     /// Build a [`KeyAuthorization`] from these args, binding it to `account` when present.
     ///
-    /// For `--admin`, `account` must be `Some` (passed via `--account` for `encode`, or derived
-    /// from the root signer for `sign`).
+    /// Admin keys are key-management only: no expiry, spending limits, or call scopes, and they
+    /// must be bound to a target account (`--account` for `encode`, signer-derived for `sign`) to
+    /// prevent cross-account replay. A TIP-1053 witness is still allowed.
     fn into_authorization(self, account: Option<Address>) -> Result<KeyAuthorization> {
-        let (scopes, explicit_scopes_json) =
-            if let Some(AuthScopesJson(json_scopes)) = self.scopes_json {
-                (json_scopes, true)
-            } else {
-                (self.scope, false)
-            };
+        let (scopes, scopes_present) = match self.scopes_json {
+            Some(AuthScopesJson(scopes)) => (scopes, true),
+            None => {
+                let present = !self.scope.is_empty();
+                (self.scope, present)
+            }
+        };
+        let has_limits = self.enforce_limits || !self.limits.is_empty();
 
-        let scopes_present = explicit_scopes_json || !scopes.is_empty();
-        validate_admin_key_authorization(
-            self.admin,
-            account,
-            self.expiry.is_some(),
-            self.enforce_limits || !self.limits.is_empty(),
-            scopes_present,
-        )?;
+        eyre::ensure!(account != Some(Address::ZERO), "--account cannot be the zero address");
+        if self.admin {
+            eyre::ensure!(account.is_some(), "--admin requires --account");
+            eyre::ensure!(self.expiry.is_none(), "--admin cannot be combined with --expiry");
+            eyre::ensure!(
+                !has_limits,
+                "--admin cannot be combined with spending limits (--enforce-limits / --limit)"
+            );
+            eyre::ensure!(
+                !scopes_present,
+                "--admin cannot be combined with call scopes (--scope / --scopes)"
+            );
+        }
 
         let mut authorization =
             KeyAuthorization::unrestricted(self.chain_id, self.key_type, self.key_address);
-
         if let Some(expiry) = self.expiry {
-            if expiry == 0 {
-                eyre::bail!("--expiry must be greater than zero");
-            }
+            eyre::ensure!(expiry != 0, "--expiry must be greater than zero");
             authorization = authorization.with_expiry(expiry);
         }
-
-        if self.enforce_limits || !self.limits.is_empty() {
+        if has_limits {
             authorization = authorization.with_limits(self.limits);
         }
-
         if scopes_present {
             authorization = authorization.with_allowed_calls(scopes);
         }
-
         if let Some(witness) = self.witness {
             authorization = authorization.with_witness(witness);
         }
-
         // Apply T6 admin / account binding last, after the restriction fields are validated above.
-        if self.admin {
-            // `validate_admin_key_authorization` guarantees `account` is `Some` here.
-            authorization = authorization.into_admin(account.expect("admin requires account"));
-        } else if let Some(account) = account {
-            authorization = authorization.with_account(account);
-        }
-
-        Ok(authorization)
+        Ok(match account {
+            Some(account) if self.admin => authorization.into_admin(account),
+            Some(account) => authorization.with_account(account),
+            None => authorization,
+        })
     }
-}
-
-/// Enforce the T6 admin access-key invariants when constructing a key authorization.
-///
-/// Admin keys are key-management only: no expiry, spending limits, or call scopes, and they must be
-/// bound to a target account (to prevent cross-account replay). A TIP-1053 witness is still
-/// allowed.
-fn validate_admin_key_authorization(
-    admin: bool,
-    account: Option<Address>,
-    has_expiry: bool,
-    has_limits: bool,
-    has_scopes: bool,
-) -> Result<()> {
-    if let Some(account) = account {
-        eyre::ensure!(account != Address::ZERO, "--account cannot be the zero address");
-    }
-
-    if admin {
-        eyre::ensure!(account.is_some(), "--admin requires --account");
-        eyre::ensure!(!has_expiry, "--admin cannot be combined with --expiry");
-        eyre::ensure!(
-            !has_limits,
-            "--admin cannot be combined with spending limits (--enforce-limits / --limit)"
-        );
-        eyre::ensure!(
-            !has_scopes,
-            "--admin cannot be combined with call scopes (--scope / --scopes)"
-        );
-    }
-
-    Ok(())
-}
-
-/// `cast keychain revoke` / `cast keychain rev` — revoke a key on-chain.
-async fn run_revoke(
-    key_address: Address,
-    tx_opts: TransactionOpts,
-    send_tx: SendTxOpts,
-    force: bool,
-) -> Result<()> {
-    let calldata = IAccountKeychain::revokeKeyCall { keyId: key_address }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
-    Ok(())
-}
-
-/// `cast keychain burn-witness` — burn a TIP-1053 key authorization witness.
-async fn run_burn_witness(
-    witness: B256,
-    tx_opts: TransactionOpts,
-    send_tx: SendTxOpts,
-    force: bool,
-) -> Result<()> {
-    let config = send_tx.eth.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    if !is_tempo_hardfork_active(&provider, TempoHardfork::T5).await? {
-        eyre::bail!("burn-witness requires a Tempo T5-capable AccountKeychain RPC");
-    }
-
-    let calldata = IAccountKeychain::burnKeyAuthorizationWitnessCall { witness }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
-    Ok(())
-}
-
-/// `cast keychain is-witness-burned` — check TIP-1053 witness burn state.
-async fn run_is_witness_burned(account: Address, witness: B256, rpc: RpcOpts) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    if !is_tempo_hardfork_active(&provider, TempoHardfork::T5).await? {
-        eyre::bail!("is-witness-burned requires a Tempo T5-capable AccountKeychain RPC");
-    }
-
-    let burned = provider
-        .account_keychain()
-        .isKeyAuthorizationWitnessBurned(account, witness)
-        .call()
-        .await?;
-
-    if shell::is_json() {
-        let json = serde_json::json!({
-            "account": account.to_string(),
-            "witness": witness.to_string(),
-            "burned": burned,
-        });
-        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
-    } else {
-        sh_println!("{burned}")?;
-    }
-
-    Ok(())
-}
-
-/// `cast keychain is-admin` — check whether a key is the root or an active admin key (T6).
-async fn run_is_admin(account: Address, key_address: Address, rpc: RpcOpts) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    if !is_tempo_hardfork_active(&provider, TempoHardfork::T6).await? {
-        eyre::bail!("is-admin requires a Tempo T6-capable AccountKeychain RPC");
-    }
-
-    let is_admin = provider.account_keychain().isAdminKey(account, key_address).call().await?;
-
-    if shell::is_json() {
-        let json = serde_json::json!({
-            "account": account.to_string(),
-            "key_address": key_address.to_string(),
-            "is_admin": is_admin,
-        });
-        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
-    } else {
-        sh_println!("{is_admin}")?;
-    }
-
-    Ok(())
-}
-
-/// `cast keychain verify` / `verify-admin` — verify a Tempo keychain signature (T6).
-async fn run_verify_keychain(
-    account: Address,
-    hash: B256,
-    signature: Bytes,
-    rpc: RpcOpts,
-    admin: bool,
-) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    let command = if admin { "verify-admin" } else { "verify" };
-    if !is_tempo_hardfork_active(&provider, TempoHardfork::T6).await? {
-        eyre::bail!("{command} requires a Tempo T6-capable SignatureVerifier RPC");
-    }
-
-    let verifier = ISignatureVerifier::new(SIGNATURE_VERIFIER_ADDRESS, &provider);
-    let valid = if admin {
-        verifier.verifyKeychainAdmin(account, hash, signature.clone()).call().await?
-    } else {
-        verifier.verifyKeychain(account, hash, signature.clone()).call().await?
-    };
-
-    if shell::is_json() {
-        let json = serde_json::json!({
-            "account": account.to_string(),
-            "hash": hash.to_string(),
-            "signature": signature.to_string(),
-            "admin": admin,
-            "valid": valid,
-        });
-        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
-    } else {
-        sh_println!("{valid}")?;
-    }
-
-    Ok(())
-}
-
-/// `cast keychain rl` — query remaining spending limit.
-async fn run_remaining_limit(
-    wallet_address: Address,
-    key_address: Address,
-    token: Address,
-    rpc: RpcOpts,
-) -> Result<()> {
-    let config = rpc.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-
-    let remaining: U256 = if is_tempo_hardfork_active(&provider, TempoHardfork::T3).await? {
-        provider.get_keychain_remaining_limit(wallet_address, key_address, token).await?
-    } else {
-        // Pre-T3: use the legacy getRemainingLimit(address,address,address)
-        provider
-            .account_keychain()
-            .getRemainingLimit(wallet_address, key_address, token)
-            .call()
-            .await?
-    };
-
-    if shell::is_json() {
-        sh_println!("{}", serde_json::json!({ "remaining": remaining.to_string() }))?;
-    } else {
-        sh_println!("{remaining}")?;
-    }
-
-    Ok(())
-}
-
-/// `cast keychain ul` — update spending limit.
-async fn run_update_limit(
-    key_address: Address,
-    token: Address,
-    new_limit: U256,
-    tx_opts: TransactionOpts,
-    send_tx: SendTxOpts,
-    force: bool,
-) -> Result<()> {
-    let calldata = IAccountKeychain::updateSpendingLimitCall {
-        keyId: key_address,
-        token,
-        newLimit: new_limit,
-    }
-    .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
-    Ok(())
-}
-
-/// `cast keychain ss` — set allowed call scopes.
-async fn run_set_scope(
-    key_address: Address,
-    scopes: Vec<CallScope>,
-    tx_opts: TransactionOpts,
-    send_tx: SendTxOpts,
-    force: bool,
-) -> Result<()> {
-    let calldata =
-        IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
-    Ok(())
-}
-
-/// `cast keychain rs` — remove call scope for a target.
-async fn run_remove_scope(
-    key_address: Address,
-    target: Address,
-    tx_opts: TransactionOpts,
-    send_tx: SendTxOpts,
-    force: bool,
-) -> Result<()> {
-    let calldata =
-        IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
-    Ok(())
 }
 
 /// `cast keychain policy add-call` — merge a selector rule into a target scope.
@@ -3442,27 +2797,23 @@ async fn run_policy_add_call(
     send_tx: SendTxOpts,
     force: bool,
 ) -> Result<()> {
-    let metadata = resolve_key_metadata(key_address, root_account)?;
-    let config = send_tx.eth.load_config()?;
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let (root_account, _) = resolve_key_metadata(key_address, root_account)?;
+    let (_, provider) = tempo_provider(&send_tx.eth.rpc)?;
+    require_hardfork(
+        &provider,
+        TempoHardfork::T3,
+        "allowed-call policy editing requires the Tempo T3 hardfork",
+    )
+    .await?;
 
-    if !is_tempo_hardfork_active(&provider, TempoHardfork::T3).await? {
-        eyre::bail!("allowed-call policy editing requires the Tempo T3 hardfork");
-    }
-
-    let allowed = provider
-        .account_keychain()
-        .getAllowedCalls(metadata.root_account, key_address)
-        .call()
-        .await?;
-
+    let allowed =
+        provider.account_keychain().getAllowedCalls(root_account, key_address).call().await?;
     let new_rule = SelectorRule { selector: selector.into(), recipients };
-    let existing_target = allowed
+    let existing = allowed
         .isScoped
         .then(|| allowed.scopes.into_iter().find(|scope| scope.target == target))
         .flatten();
-
-    let (target_scope, changed) = match existing_target {
+    let (scope, changed) = match existing {
         Some(mut scope) => {
             if scope.selectorRules.is_empty() {
                 sh_warn!(
@@ -3477,43 +2828,20 @@ async fn run_policy_add_call(
     };
 
     if !changed {
-        if shell::is_json() {
-            sh_println!(
-                "{}",
-                serde_json::json!({ "status": "already_present", "target": target.to_string() })
-            )?;
+        return if shell::is_json() {
+            sh_println!("{}", json!({ "status": "already_present", "target": target }))
         } else {
-            sh_status!("Allowed call already present for {}", address_label_with_address(target))?;
-        }
-        return Ok(());
+            sh_status!("Allowed call already present for {}", address_label_with_address(target))
+        };
     }
 
-    let calldata =
-        IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes: vec![target_scope] }
-            .abi_encode();
-    send_keychain_tx(calldata, tx_opts, &send_tx, None, force).await?;
-    Ok(())
-}
-
-/// `cast keychain policy set-limit` — update a spending limit amount.
-async fn run_policy_set_limit(
-    key_address: Address,
-    token: Address,
-    amount: U256,
-    period: Option<u64>,
-    tx_opts: TransactionOpts,
-    send_tx: SendTxOpts,
-    force: bool,
-) -> Result<()> {
-    if period.is_some_and(|period| period != 0) {
-        eyre::bail!(
-            "--period is not supported by the current AccountKeychain updateSpendingLimit \
-             precompile; periods can only be set when authorizing a key"
-        );
-    }
-
-    // updateSpendingLimit authorizes against msg.sender; the root account is not part of calldata.
-    run_update_limit(key_address, token, amount, tx_opts, send_tx, force).await
+    send_keychain_call(
+        &IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes: vec![scope] },
+        tx_opts,
+        &send_tx,
+        force,
+    )
+    .await
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3550,9 +2878,10 @@ pub(crate) async fn resolve_keychain_root_signer(
     expected_from: Option<Address>,
     print_sponsor_hash: bool,
 ) -> Result<KeychainRootSigner> {
+    const WHAT: &str = "AccountKeychain transaction";
     let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
     if let Some(browser) = send_tx.browser.run::<TempoNetwork>().await? {
-        ensure_root_sender(browser.address(), expected_from)?;
+        ensure_root_sender(browser.address(), expected_from, WHAT)?;
         return Ok(KeychainRootSigner::Browser(browser));
     }
 
@@ -3572,17 +2901,26 @@ pub(crate) async fn resolve_keychain_root_signer(
     }
 
     let signer = match signer {
-        Some(s) => s,
-        None if print_sponsor_hash => {
-            eyre::bail!(
-                "--tempo.print-sponsor-hash requires a root account signer, such as \
-                 --browser, --private-key, or --keystore"
-            );
-        }
+        Some(signer) => signer,
+        None if print_sponsor_hash => eyre::bail!(
+            "--tempo.print-sponsor-hash requires a root account signer, such as \
+             --browser, --private-key, or --keystore"
+        ),
         None => send_tx.eth.wallet.signer().await?,
     };
-    ensure_root_sender(signer.address(), expected_from)?;
+    ensure_root_sender(signer.address(), expected_from, WHAT)?;
     Ok(KeychainRootSigner::Wallet(Box::new(signer)))
+}
+
+/// Send an AccountKeychain precompile call as a root-authorized transaction.
+async fn send_keychain_call(
+    call: &impl SolCall,
+    tx_opts: TransactionOpts,
+    send_tx: &SendTxOpts,
+    force: bool,
+) -> Result<()> {
+    send_keychain_tx(call.abi_encode(), tx_opts, send_tx, None, force).await?;
+    Ok(())
 }
 
 /// Send calldata to the Tempo AccountKeychain precompile as a root-authorized transaction.
@@ -3622,13 +2960,10 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
     let tempo_sponsor =
         if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
 
-    let config = send_tx.eth.load_config()?;
-    let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-
-    if let Some(interval) = send_tx.poll_interval {
-        provider.client().set_poll_interval(Duration::from_secs(interval));
-    }
+    let (config, provider) = tempo_provider(&send_tx.eth)?;
+    apply_poll_interval(&provider, send_tx.poll_interval);
+    // `--curl` must preserve the first RPC request for the user's intended action.
+    let fee_provider = (!config.eth_rpc_curl).then_some(&provider);
 
     // Resolve `--tempo.lane <name>` against the lanes file (default
     // `<root>/tempo.lanes.toml`) and populate `tx_opts.tempo.nonce_key` from the lane.
@@ -3641,279 +2976,115 @@ pub(crate) async fn send_keychain_tx_with_root_signer(
         .with_code_sig_and_args(None, Some(hex::encode_prefixed(&calldata)), vec![])
         .await?;
 
-    if !confirm_auth_rpc_disclosure_during_build(&builder, root_signer.sender(), force)? {
-        return Ok(KeychainTxOutcome::Aborted);
-    }
-
+    let from = root_signer.address();
+    let chain = builder.chain();
     if print_sponsor_hash {
-        let from = root_signer.address();
-        let chain = builder.chain();
-        let (mut tx, _) = builder.build(root_signer.sender()).await?;
-        if let Some(fee_payer) = sponsor_fee_payer {
-            resolve_and_set_fee_token(
-                (!config.eth_rpc_curl).then_some(&provider),
-                Some(chain),
-                &mut tx,
-                Some(fee_payer),
-            )
-            .await?;
-        }
-        let hash = tx
-            .compute_sponsor_hash(from)
-            .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))?;
+        let Some(mut tx) =
+            confirm_and_build(builder, root_signer.sender(), force, None, false).await?
+        else {
+            return Ok(KeychainTxOutcome::Aborted);
+        };
+        let hash = sponsor_hash(fee_provider, chain, &mut tx, from, sponsor_fee_payer).await?;
         if shell::is_json() {
-            sh_println!("{}", serde_json::json!({ "sponsor_hash": format!("{hash:?}") }))?;
+            sh_println!("{}", json!({ "sponsor_hash": format!("{hash:?}") }))?;
         } else {
             sh_println!("{hash:?}")?;
         }
         return Ok(KeychainTxOutcome::PrintedSponsorHash);
     }
 
-    crate::tempo::print_expires(expires_at)?;
+    print_expires(expires_at)?;
+
+    let send_opts = SendOptions::new(send_tx, &config)
+        .resolving_fee_token(tempo_sponsor.is_none().then_some(chain), &config);
+    let is_browser = matches!(root_signer, KeychainRootSigner::Browser(_));
+    let (builder, lane) = if is_browser {
+        (builder.with_browser_wallet(), None)
+    } else {
+        (builder, resolved_lane.as_ref())
+    };
+    let Some(mut tx) = confirm_and_build(builder, root_signer.sender(), force, lane, false).await?
+    else {
+        return Ok(KeychainTxOutcome::Aborted);
+    };
+    apply_fee_payment::<TempoNetwork, _>(
+        tempo_sponsor.as_ref(),
+        fee_provider,
+        chain,
+        &mut tx,
+        from,
+    )
+    .await?;
+    before_submit()?;
 
     match root_signer {
         KeychainRootSigner::Browser(browser) => {
-            let chain = builder.chain();
-            let (mut tx, _) = builder.with_browser_wallet().build(browser.address()).await?;
-            if let Some(sponsor) = &tempo_sponsor {
-                sponsor
-                    .resolve_and_set_fee_token(
-                        (!config.eth_rpc_curl).then_some(&provider),
-                        Some(chain),
-                        &mut tx,
-                    )
-                    .await?;
-                sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
-            } else {
-                let fee_token = resolve_and_set_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    &mut tx,
-                    Some(browser.address()),
-                )
-                .await?;
-                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
-                    .await?;
-            }
-
-            before_submit()?;
             let tx_hash = browser.send_transaction_via_browser(tx).await?;
-            CastTxSender::new(&provider)
-                .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
-                .await?;
+            send_opts.print_tx_result(&provider, tx_hash).await?;
         }
         KeychainRootSigner::Wallet(signer) => {
-            let from = signer.address();
-            let chain = builder.chain();
-            let (mut tx, _) = builder.build(signer.as_ref()).await?;
-            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-            if let Some(sponsor) = &tempo_sponsor {
-                sponsor
-                    .resolve_and_set_fee_token(
-                        (!config.eth_rpc_curl).then_some(&provider),
-                        Some(chain),
-                        &mut tx,
-                    )
-                    .await?;
-                sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
-            } else {
-                let fee_token = resolve_and_set_fee_token(
-                    (!config.eth_rpc_curl).then_some(&provider),
-                    Some(chain),
-                    &mut tx,
-                    Some(from),
-                )
-                .await?;
-                maybe_print_fee_token((!config.eth_rpc_curl).then_some(&provider), fee_token)
-                    .await?;
-            }
-
-            before_submit()?;
-            let wallet = EthereumWallet::from(*signer);
             let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
-                .wallet(wallet)
+                .wallet(EthereumWallet::from(*signer))
                 .connect_provider(&provider);
-
-            cast_send(
-                provider,
-                tx,
-                tempo_sponsor.is_none().then_some(chain),
-                None,
-                send_tx.cast_async,
-                send_tx.sync,
-                send_tx.confirmations,
-                timeout,
-                tempo_sponsor.is_none() && !config.eth_rpc_curl,
-            )
-            .await?;
+            cast_send(provider, tx, &send_opts).await?;
         }
     }
 
     Ok(KeychainTxOutcome::Submitted)
 }
 
-/// Ensures AccountKeychain calls with a known root account use that root as the signer.
-fn ensure_root_sender(actual: Address, expected: Option<Address>) -> Result<()> {
+/// Ensures `what` is signed by the expected root account when one is known.
+fn ensure_root_sender(actual: Address, expected: Option<Address>, what: &str) -> Result<()> {
     if let Some(expected) = expected
         && actual != expected
     {
         eyre::bail!(
-            "AccountKeychain transaction must be signed by root account {expected}; resolved signer is {actual}"
+            "{what} must be signed by root account {expected}; resolved signer is {actual}"
         );
     }
     Ok(())
 }
 
-/// Ensures key authorization artifacts are signed by the expected root account.
-fn ensure_key_authorization_root_sender(actual: Address, expected: Option<Address>) -> Result<()> {
-    if let Some(expected) = expected
-        && actual != expected
-    {
-        eyre::bail!(
-            "key authorization must be signed by root account {expected}; resolved signer is {actual}"
-        );
-    }
-    Ok(())
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AnvilNodeInfo {
-    hard_fork: Option<String>,
-    network: Option<String>,
-}
-
-pub(crate) async fn is_tempo_hardfork_active<P>(
-    provider: &P,
-    hardfork: TempoHardfork,
-) -> Result<bool>
-where
-    P: Provider<TempoNetwork>,
-{
-    match provider.is_hardfork_active(hardfork).await {
-        Ok(active) => Ok(active),
-        Err(err) if is_rpc_method_not_found(&err) => {
-            match anvil_tempo_hardfork_active(provider, hardfork).await {
-                Ok(Some(active)) => Ok(active),
-                _ => Err(err.into()),
-            }
-        }
-        Err(err) => Err(err.into()),
-    }
-}
-
-/// Fails early with `requirement` when a Tempo precompile is not active yet: a pre-fork call
-/// would succeed as a silent no-op instead of reverting. Prefers the hardfork query and falls
-/// back to checking the precompile's code when the RPC lacks the method.
-pub(crate) async fn ensure_tempo_precompile_active<P>(
-    provider: &P,
-    hardfork: TempoHardfork,
-    precompile: Address,
-    requirement: &str,
-) -> Result<()>
-where
-    P: Provider<TempoNetwork>,
-{
-    let active = match is_tempo_hardfork_active(provider, hardfork).await {
-        Ok(active) => active,
-        Err(_) => !provider.get_code_at(precompile).await?.is_empty(),
-    };
-    if !active {
-        eyre::bail!("{requirement}");
-    }
-    Ok(())
-}
-
-async fn anvil_tempo_hardfork_active<P>(
-    provider: &P,
-    hardfork: TempoHardfork,
-) -> Result<Option<bool>, TransportError>
-where
-    P: Provider<TempoNetwork>,
-{
-    let info = provider.raw_request::<_, AnvilNodeInfo>("anvil_nodeInfo".into(), ()).await?;
-    Ok(active_from_anvil_node_info(&info, hardfork))
-}
-
-fn active_from_anvil_node_info(info: &AnvilNodeInfo, hardfork: TempoHardfork) -> Option<bool> {
-    (info.network.as_deref() == Some("tempo")).then(|| {
-        info.hard_fork
-            .as_deref()
-            .and_then(|active_hardfork| active_hardfork.parse::<TempoHardfork>().ok())
-            .is_some_and(|active_hardfork| active_hardfork >= hardfork)
-    })
-}
-
+/// Resolves the root account of `key_address` and its local Accounts store entry, if any.
 fn resolve_key_metadata(
     key_address: Address,
     root_account: Option<Address>,
-) -> Result<KeyMetadata> {
+) -> Result<(Address, Option<tempo::KeyEntry>)> {
     let store = read_tempo_accounts_store();
-
     if let Some(root_account) = root_account {
-        if let Some(store) = store.as_ref()
-            && let Some(entry) = store.keys.iter().find(|entry| {
-                entry.wallet_address == root_account
-                    && key_entry_effective_key(entry) == key_address
+        let entry = store.and_then(|store| {
+            store.keys.into_iter().find(|entry| {
+                entry.wallet_address == root_account && entry.key_address == key_address
             })
-        {
-            return Ok(key_metadata_from_entry(entry));
-        }
-
-        return Ok(KeyMetadata { root_account, key_type: None, limits: Vec::new() });
+        });
+        return Ok((root_account, entry));
     }
 
-    let Some(store) = store.as_ref() else {
+    let path = tempo_accounts_store_path_display();
+    let Some(store) = store else {
         eyre::bail!(
-            "key {key_address} was not found because the Tempo Accounts store could not be read at {}; pass --root-account",
-            tempo_accounts_store_path_display()
+            "key {key_address} was not found because the Tempo Accounts store could not be read at {path}; pass --root-account"
         );
     };
-
-    let matches: Vec<_> =
-        store.keys.iter().filter(|entry| key_entry_effective_key(entry) == key_address).collect();
-
-    if matches.is_empty() {
-        eyre::bail!(
-            "key {key_address} was not found in {}; pass --root-account",
-            tempo_accounts_store_path_display()
-        );
-    }
-
-    let root_account = matches[0].wallet_address;
+    let mut matches =
+        store.keys.into_iter().filter(|entry| entry.key_address == key_address).peekable();
+    let Some(root_account) = matches.peek().map(|entry| entry.wallet_address) else {
+        eyre::bail!("key {key_address} was not found in {path}; pass --root-account");
+    };
+    let matches: Vec<_> = matches.collect();
     if matches.iter().any(|entry| entry.wallet_address != root_account) {
         eyre::bail!(
-            "key {key_address} matches multiple root accounts in {}; pass --root-account",
-            tempo_accounts_store_path_display()
+            "key {key_address} matches multiple root accounts in {path}; pass --root-account"
         );
     }
-
-    let entry =
-        matches.iter().copied().find(|entry| !entry.limits.is_empty()).unwrap_or(matches[0]);
-    Ok(key_metadata_from_entry(entry))
-}
-
-const fn key_entry_effective_key(entry: &tempo::KeyEntry) -> Address {
-    entry.key_address
-}
-
-fn key_metadata_from_entry(entry: &tempo::KeyEntry) -> KeyMetadata {
-    KeyMetadata {
-        root_account: entry.wallet_address,
-        key_type: Some(entry.key_type),
-        limits: entry
-            .limits
-            .iter()
-            .map(|limit| LocalLimitMetadata { token: limit.currency, amount: limit.limit.clone() })
-            .collect(),
-    }
+    let preferred = matches.iter().position(|entry| !entry.limits.is_empty()).unwrap_or(0);
+    Ok((root_account, matches.into_iter().nth(preferred)))
 }
 
 fn tempo_accounts_store_path_display() -> String {
     let Some(path) = tempo_accounts_store_path() else {
         return "(unknown)".to_string();
     };
-
     if let Some(home) =
         std::env::var_os("HOME").filter(|home| !home.is_empty()).map(std::path::PathBuf::from)
         && let Ok(relative) = path.strip_prefix(&home)
@@ -3921,146 +3092,118 @@ fn tempo_accounts_store_path_display() -> String {
     {
         return "~/.tempo/wallet/store.json".to_string();
     }
-
     path.display().to_string()
 }
 
+/// Merges `rule` into `scope`; returns whether the scope changed.
 fn add_selector_rule_to_scope(scope: &mut CallScope, rule: SelectorRule) -> bool {
     if scope.selectorRules.is_empty() {
         return false;
     }
-
-    let Some(existing_rule) =
+    let Some(existing) =
         scope.selectorRules.iter_mut().find(|existing| existing.selector == rule.selector)
     else {
         scope.selectorRules.push(rule);
         return true;
     };
-
-    if existing_rule.recipients.is_empty() {
+    if existing.recipients.is_empty() {
         return false;
     }
-
     if rule.recipients.is_empty() {
-        existing_rule.recipients = Vec::new();
+        existing.recipients = Vec::new();
         return true;
     }
-
     let mut changed = false;
     for recipient in rule.recipients {
-        if !existing_rule.recipients.contains(&recipient) {
-            existing_rule.recipients.push(recipient);
+        if !existing.recipients.contains(&recipient) {
+            existing.recipients.push(recipient);
             changed = true;
         }
     }
     changed
 }
 
-fn inspected_limit_to_json(limit: &InspectedLimit) -> serde_json::Value {
-    serde_json::json!({
-        "token": limit.token.to_string(),
+fn inspected_limit_to_json(limit: &InspectedLimit) -> Value {
+    json!({
+        "token": limit.token,
         "token_label": address_label(limit.token),
-        "configured_amount": limit.configured_amount.as_deref(),
+        "configured_amount": limit.configured_amount,
         "remaining": limit.remaining.to_string(),
         "period_end": limit.period_end,
-        "period_end_human": limit.period_end.and_then(|period_end| {
-            (period_end != 0).then(|| format_period_end(period_end))
-        }),
+        "period_end_human": limit.period_end.filter(|&end| end != 0).map(format_period_end),
     })
 }
 
-fn allowed_calls_to_json(allowed_calls: &AllowedCallsView) -> serde_json::Value {
-    match allowed_calls {
-        AllowedCallsView::Unsupported => serde_json::json!({
-            "mode": "unsupported",
-            "scopes": [],
-        }),
-        AllowedCallsView::Unrestricted => serde_json::json!({
-            "mode": "any",
-            "scopes": [],
-        }),
-        AllowedCallsView::Scoped(scopes) => serde_json::json!({
-            "mode": if scopes.is_empty() { "none" } else { "scoped" },
-            "scopes": scopes.iter().map(call_scope_to_json).collect::<Vec<_>>(),
-        }),
-    }
-}
-
-fn call_scope_to_json(scope: &CallScope) -> serde_json::Value {
-    serde_json::json!({
-        "target": scope.target.to_string(),
-        "target_label": address_label(scope.target),
-        "selectors": scope.selectorRules.iter().map(selector_rule_to_json).collect::<Vec<_>>(),
-    })
-}
-
-fn selector_rule_to_json(rule: &SelectorRule) -> serde_json::Value {
-    serde_json::json!({
-        "selector": selector_hex(&rule.selector.0),
-        "signature": selector_signature(&rule.selector.0),
-        "recipients": rule.recipients.iter().map(ToString::to_string).collect::<Vec<_>>(),
-    })
+fn allowed_calls_to_json(allowed_calls: &AllowedCallsView) -> Value {
+    let (mode, scopes) = match allowed_calls {
+        AllowedCallsView::Unsupported => ("unsupported", &[][..]),
+        AllowedCallsView::Unrestricted => ("any", &[][..]),
+        AllowedCallsView::Scoped(scopes) => {
+            (if scopes.is_empty() { "none" } else { "scoped" }, scopes.as_slice())
+        }
+    };
+    let scopes: Vec<_> = scopes
+        .iter()
+        .map(|scope| {
+            json!({
+                "target": scope.target,
+                "target_label": address_label(scope.target),
+                "selectors": scope.selectorRules.iter().map(|rule| json!({
+                    "selector": hex::encode_prefixed(rule.selector),
+                    "signature": selector_signature(&rule.selector.0),
+                    "recipients": rule.recipients,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    json!({ "mode": mode, "scopes": scopes })
 }
 
 fn print_inspected_limits(enforce_limits: bool, limits: &[InspectedLimit]) -> Result<()> {
     if !enforce_limits {
-        sh_println!("Limits:       none")?;
-        return Ok(());
+        return sh_println!("Limits:       none");
     }
-
     sh_println!("Limits:")?;
     if limits.is_empty() {
-        sh_println!("  enforced, but no local limit metadata was found")?;
-        return Ok(());
+        return sh_println!("  enforced, but no local limit metadata was found");
     }
-
     for limit in limits {
-        let configured = limit.configured_amount.as_deref().unwrap_or("unknown");
-        let period = limit
-            .period_end
-            .and_then(|period_end| {
-                (period_end != 0).then(|| format!(" ({})", format_period_end(period_end)))
-            })
-            .unwrap_or_default();
         sh_println!(
             "  {}: {} / {} remaining{}",
             address_label(limit.token),
             limit.remaining,
-            configured,
-            period
+            limit.configured_amount,
+            format_period_suffix(limit.period_end)
         )?;
     }
-
     Ok(())
 }
 
 fn print_allowed_calls(allowed_calls: &AllowedCallsView) -> Result<()> {
-    match allowed_calls {
-        AllowedCallsView::Unsupported => sh_println!("Allowed calls: unsupported before T3")?,
-        AllowedCallsView::Unrestricted => sh_println!("Allowed calls: any")?,
-        AllowedCallsView::Scoped(scopes) if scopes.is_empty() => {
-            sh_println!("Allowed calls: none")?;
+    let scopes = match allowed_calls {
+        AllowedCallsView::Unsupported => {
+            return sh_println!("Allowed calls: unsupported before T3");
         }
-        AllowedCallsView::Scoped(scopes) => {
-            sh_println!("Allowed calls:")?;
-            for scope in scopes {
-                sh_println!("  {}:", address_label_with_address(scope.target))?;
-                if scope.selectorRules.is_empty() {
-                    sh_println!("    any selector")?;
-                    continue;
-                }
-
-                for rule in &scope.selectorRules {
-                    sh_println!(
-                        "    {} -> {}",
-                        format_selector(&rule.selector.0),
-                        format_recipients(&rule.recipients)
-                    )?;
-                }
-            }
+        AllowedCallsView::Unrestricted => return sh_println!("Allowed calls: any"),
+        AllowedCallsView::Scoped(scopes) if scopes.is_empty() => {
+            return sh_println!("Allowed calls: none");
+        }
+        AllowedCallsView::Scoped(scopes) => scopes,
+    };
+    sh_println!("Allowed calls:")?;
+    for scope in scopes {
+        sh_println!("  {}:", address_label_with_address(scope.target))?;
+        if scope.selectorRules.is_empty() {
+            sh_println!("    any selector")?;
+        }
+        for rule in &scope.selectorRules {
+            sh_println!(
+                "    {} -> {}",
+                format_selector(&rule.selector.0),
+                format_recipients(&rule.recipients)
+            )?;
         }
     }
-
     Ok(())
 }
 
@@ -4073,38 +3216,29 @@ fn address_label_with_address(address: Address) -> String {
 }
 
 fn format_selector(selector: &[u8; 4]) -> String {
-    selector_signature(selector).map(str::to_string).unwrap_or_else(|| selector_hex(selector))
+    selector_signature(selector).map_or_else(|| hex::encode_prefixed(selector), str::to_string)
 }
 
 fn selector_signature(selector: &[u8; 4]) -> Option<&'static str> {
-    if selector == &ITIP20::transferCall::SELECTOR {
-        Some("transfer(address,uint256)")
-    } else if selector == &ITIP20::approveCall::SELECTOR {
-        Some("approve(address,uint256)")
-    } else if selector == &ITIP20::transferFromCall::SELECTOR {
-        Some("transferFrom(address,address,uint256)")
-    } else if selector == &ITIP20::transferWithMemoCall::SELECTOR {
-        Some("transferWithMemo(address,uint256,bytes32)")
-    } else if selector == &ITIP20::transferFromWithMemoCall::SELECTOR {
-        Some("transferFromWithMemo(address,address,uint256,bytes32)")
-    } else if selector == &ITIP20::mintCall::SELECTOR {
-        Some("mint(address,uint256)")
-    } else if selector == &ITIP20::burnCall::SELECTOR {
-        Some("burn(uint256)")
-    } else {
-        None
-    }
-}
-
-fn selector_hex(selector: &[u8; 4]) -> String {
-    hex::encode_prefixed(selector)
+    const KNOWN: [([u8; 4], &str); 7] = [
+        (ITIP20::transferCall::SELECTOR, "transfer(address,uint256)"),
+        (ITIP20::approveCall::SELECTOR, "approve(address,uint256)"),
+        (ITIP20::transferFromCall::SELECTOR, "transferFrom(address,address,uint256)"),
+        (ITIP20::transferWithMemoCall::SELECTOR, "transferWithMemo(address,uint256,bytes32)"),
+        (
+            ITIP20::transferFromWithMemoCall::SELECTOR,
+            "transferFromWithMemo(address,address,uint256,bytes32)",
+        ),
+        (ITIP20::mintCall::SELECTOR, "mint(address,uint256)"),
+        (ITIP20::burnCall::SELECTOR, "burn(uint256)"),
+    ];
+    KNOWN.iter().find(|(known, _)| known == selector).map(|(_, signature)| *signature)
 }
 
 fn format_recipients(recipients: &[Address]) -> String {
     if recipients.is_empty() {
         return "any recipient".to_string();
     }
-
     let recipients = recipients.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
     format!("recipients [{recipients}]")
 }
@@ -4113,7 +3247,6 @@ fn format_expiry_for_inspect(expiry: u64) -> String {
     if expiry == u64::MAX {
         return "never".to_string();
     }
-
     format!("{} ({})", format_timestamp_iso(expiry), format_relative_timestamp(expiry))
 }
 
@@ -4121,15 +3254,25 @@ fn format_period_end(period_end: u64) -> String {
     format!("period resets {}", format_relative_timestamp(period_end))
 }
 
-fn format_timestamp_iso(timestamp: u64) -> String {
+/// ` (period resets ...)` for a non-zero period end, empty otherwise.
+fn format_period_suffix(period_end: Option<u64>) -> String {
+    period_end
+        .filter(|&end| end != 0)
+        .map(|end| format!(" ({})", format_period_end(end)))
+        .unwrap_or_default()
+}
+
+fn format_utc(timestamp: u64, format: &str) -> String {
     DateTime::from_timestamp(timestamp as i64, 0)
-        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
-        .unwrap_or_else(|| timestamp.to_string())
+        .map_or_else(|| timestamp.to_string(), |dt| dt.format(format).to_string())
+}
+
+fn format_timestamp_iso(timestamp: u64) -> String {
+    format_utc(timestamp, "%Y-%m-%dT%H:%M:%SZ")
 }
 
 fn format_relative_timestamp(timestamp: u64) -> String {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    format_relative_timestamp_from(timestamp, now)
+    format_relative_timestamp_from(timestamp, now().as_secs())
 }
 
 fn format_relative_timestamp_from(timestamp: u64, now: u64) -> String {
@@ -4146,16 +3289,14 @@ fn format_duration_words(seconds: u64) -> String {
     const MINUTE: u64 = 60;
     const HOUR: u64 = 60 * MINUTE;
     const DAY: u64 = 24 * HOUR;
-
-    if seconds >= DAY {
-        let days = seconds / DAY;
-        if days == 1 { "1 day".to_string() } else { format!("{days} days") }
-    } else if seconds >= HOUR {
-        format!("{}h", seconds / HOUR)
-    } else if seconds >= MINUTE {
-        format!("{}m", seconds / MINUTE)
-    } else {
-        format!("{seconds}s")
+    match seconds {
+        DAY.. => {
+            let days = seconds / DAY;
+            if days == 1 { "1 day".to_string() } else { format!("{days} days") }
+        }
+        HOUR.. => format!("{}h", seconds / HOUR),
+        MINUTE.. => format!("{}m", seconds / MINUTE),
+        _ => format!("{seconds}s"),
     }
 }
 
@@ -4163,117 +3304,21 @@ fn format_expiry(expiry: u64) -> String {
     if expiry == u64::MAX {
         return "never".to_string();
     }
-    DateTime::from_timestamp(expiry as i64, 0)
-        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-        .unwrap_or_else(|| expiry.to_string())
+    format_utc(expiry, "%Y-%m-%d %H:%M:%S UTC")
 }
 
 fn load_accounts_store() -> Result<AccountsStoreView> {
-    match read_tempo_accounts_store() {
-        Some(f) => Ok(f),
-        None => {
-            let path = tempo_accounts_store_path()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "(unknown)".to_string());
-            eyre::bail!("could not read Tempo Accounts store at {path}");
-        }
-    }
-}
-
-fn print_key_entry(entry: &tempo::KeyEntry) -> Result<()> {
-    sh_println!("Wallet:       {}", entry.wallet_address)?;
-    sh_println!("Chain ID:     {}", entry.chain_id)?;
-    sh_println!("Key Type:     {}", key_type_name(&entry.key_type))?;
-    sh_println!("Key Address:  {}", entry.key_address)?;
-    if entry.key_address == entry.wallet_address {
-        sh_println!("Mode:         direct (EOA)")?;
-    } else {
-        sh_println!("Mode:         keychain (access key)")?;
-    }
-
-    if let Some(expiry) = entry.expiry {
-        sh_println!("Expiry:       {}", format_expiry(expiry))?;
-    }
-
-    let decoded = decoded_entry_key_authorization(entry);
-    let is_admin = decoded.as_ref().is_some_and(|signed| signed.authorization.is_admin());
-    sh_println!("Role:         {}", local_key_role(entry, is_admin))?;
-
-    sh_println!("Has Key:      {}", entry.has_inline_key())?;
-    sh_println!("Has Auth:     {}", entry.key_authorization.is_some())?;
-    if let Some(signed) = &decoded {
-        let witness = signed
-            .authorization
-            .witness()
-            .map(|witness| witness.to_string())
-            .unwrap_or_else(|| "(none)".to_string());
-        sh_println!("Auth Witness: {witness}")?;
-        sh_println!("Auth Admin:   {}", signed.authorization.is_admin())?;
-        if let Some(account) = signed.authorization.account {
-            sh_println!("Auth Account: {account}")?;
-        }
-    }
-
-    if !entry.limits.is_empty() {
-        sh_println!("Limits:")?;
-        for limit in &entry.limits {
-            sh_println!("  {} → {}", limit.currency, limit.limit)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn key_entry_to_json(entry: &tempo::KeyEntry) -> serde_json::Value {
-    let is_direct = entry.key_address == entry.wallet_address;
-    let decoded = decoded_entry_key_authorization(entry);
-    let authorization_witness =
-        decoded.as_ref().and_then(|signed| signed.authorization.witness()).map(|w| w.to_string());
-    let authorization_is_admin =
-        decoded.as_ref().is_some_and(|signed| signed.authorization.is_admin());
-    let authorization_account = decoded
-        .as_ref()
-        .and_then(|signed| signed.authorization.account)
-        .map(|account| account.to_string());
-    let role = local_key_role(entry, authorization_is_admin);
-
-    let limits: Vec<_> = entry
-        .limits
-        .iter()
-        .map(|l| {
-            serde_json::json!({
-                "currency": l.currency.to_string(),
-                "limit": l.limit,
-            })
-        })
-        .collect();
-
-    serde_json::json!({
-        "wallet_address": entry.wallet_address.to_string(),
-        "chain_id": entry.chain_id,
-        "key_type": key_type_name(&entry.key_type),
-        "key_address": entry.key_address.to_string(),
-        "mode": if is_direct { "direct" } else { "keychain" },
-        "expiry": entry.expiry,
-        "expiry_human": entry.expiry.map(format_expiry),
-        "has_key": entry.has_inline_key(),
-        "has_authorization": entry.key_authorization.is_some(),
-        "role": role,
-        "authorization_witness": authorization_witness,
-        "authorization_is_admin": authorization_is_admin,
-        "authorization_account": authorization_account,
-        "limits": limits,
+    read_tempo_accounts_store().ok_or_else(|| {
+        let path = tempo_accounts_store_path()
+            .map_or_else(|| "(unknown)".to_string(), |p| p.display().to_string());
+        eyre::eyre!("could not read Tempo Accounts store at {path}")
     })
 }
 
-/// Classify a local key entry's role for display.
-///
-/// `root` when the key is the account EOA itself, `admin` when a decoded local authorization marks
-/// the key as a T6 admin key, otherwise `access`. This reflects only locally available data; use
-/// `keychain is-admin` for the authoritative on-chain role.
-fn local_key_role(entry: &tempo::KeyEntry, is_admin: bool) -> &'static str {
-    let is_direct = entry.key_address == entry.wallet_address;
-    if is_direct {
+/// `root` when the key is the account EOA itself, `admin` when it is a T6 admin key, otherwise
+/// `limited`.
+const fn key_role(is_root: bool, is_admin: bool) -> &'static str {
+    if is_root {
         "root"
     } else if is_admin {
         "admin"
@@ -4282,218 +3327,81 @@ fn local_key_role(entry: &tempo::KeyEntry, is_admin: bool) -> &'static str {
     }
 }
 
-fn decoded_entry_key_authorization(entry: &tempo::KeyEntry) -> Option<SignedKeyAuthorization> {
-    entry.key_authorization.clone()
+fn print_key_entry(entry: &tempo::KeyEntry) -> Result<()> {
+    let is_direct = entry.key_address == entry.wallet_address;
+    let auth = entry.key_authorization.as_ref().map(|signed| &signed.authorization);
+    let is_admin = auth.is_some_and(KeyAuthorization::is_admin);
+
+    sh_println!("Wallet:       {}", entry.wallet_address)?;
+    sh_println!("Chain ID:     {}", entry.chain_id)?;
+    sh_println!("Key Type:     {}", key_type_name(entry.key_type))?;
+    sh_println!("Key Address:  {}", entry.key_address)?;
+    sh_println!(
+        "Mode:         {}",
+        if is_direct { "direct (EOA)" } else { "keychain (access key)" }
+    )?;
+    if let Some(expiry) = entry.expiry {
+        sh_println!("Expiry:       {}", format_expiry(expiry))?;
+    }
+    sh_println!("Role:         {}", key_role(is_direct, is_admin))?;
+    sh_println!("Has Key:      {}", entry.has_inline_key())?;
+    sh_println!("Has Auth:     {}", auth.is_some())?;
+    if let Some(auth) = auth {
+        let witness = auth.witness().map_or_else(|| "(none)".to_string(), |w| w.to_string());
+        sh_println!("Auth Witness: {witness}")?;
+        sh_println!("Auth Admin:   {is_admin}")?;
+        if let Some(account) = auth.account {
+            sh_println!("Auth Account: {account}")?;
+        }
+    }
+    if !entry.limits.is_empty() {
+        sh_println!("Limits:")?;
+        for limit in &entry.limits {
+            sh_println!("  {} → {}", limit.currency, limit.limit)?;
+        }
+    }
+    Ok(())
+}
+
+fn key_entry_to_json(entry: &tempo::KeyEntry) -> Value {
+    let is_direct = entry.key_address == entry.wallet_address;
+    let auth = entry.key_authorization.as_ref().map(|signed| &signed.authorization);
+    let is_admin = auth.is_some_and(KeyAuthorization::is_admin);
+    let limits: Vec<_> =
+        entry.limits.iter().map(|l| json!({ "currency": l.currency, "limit": l.limit })).collect();
+    json!({
+        "wallet_address": entry.wallet_address,
+        "chain_id": entry.chain_id,
+        "key_type": key_type_name(entry.key_type),
+        "key_address": entry.key_address,
+        "mode": if is_direct { "direct" } else { "keychain" },
+        "expiry": entry.expiry,
+        "expiry_human": entry.expiry.map(format_expiry),
+        "has_key": entry.has_inline_key(),
+        "has_authorization": auth.is_some(),
+        "role": key_role(is_direct, is_admin),
+        "authorization_witness": auth.and_then(KeyAuthorization::witness),
+        "authorization_is_admin": is_admin,
+        "authorization_account": auth.and_then(|auth| auth.account),
+        "limits": limits,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
+    use alloy_rlp::Decodable;
 
-    #[test]
-    fn test_parse_scopes_json_plain() {
-        let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":["transfer","approve"]},{"target":"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D"}]"#;
-        let result = parse_scopes_json(json).unwrap();
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].selectorRules.len(), 2);
-        assert!(result[1].selectorRules.is_empty());
-    }
-
-    #[test]
-    fn test_parse_scopes_json_with_recipients() {
-        let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":[{"selector":"transfer","recipients":["0x1111111111111111111111111111111111111111"]}]}]"#;
-        let result = parse_scopes_json(json).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].selectorRules.len(), 1);
-        assert_eq!(result[0].selectorRules[0].recipients.len(), 1);
-    }
-
-    #[test]
-    fn test_parse_scopes_json_deny_unknown_scope_fields() {
-        let json =
-            r#"[{"target":"0x20c0000000000000000000000000000000000001","selector":["transfer"]}]"#;
-        assert!(parse_scopes_json(json).is_err());
-    }
-
-    #[test]
-    fn test_parse_scopes_json_deny_unknown_fields() {
-        let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":[{"selector":"transfer","recipients":[],"bogus":true}]}]"#;
-        assert!(parse_scopes_json(json).is_err());
-    }
-
-    #[test]
-    fn test_add_selector_rule_merges_recipients() {
-        let first = Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
-        let second = Address::from_str("0x2222222222222222222222222222222222222222").unwrap();
-        let mut scope = CallScope {
-            target: PATH_USD_ADDRESS,
-            selectorRules: vec![SelectorRule {
-                selector: parse_selector_bytes("transfer").unwrap().into(),
-                recipients: vec![first],
-            }],
-        };
-
-        let changed = add_selector_rule_to_scope(
-            &mut scope,
-            SelectorRule {
-                selector: parse_selector_bytes("transfer").unwrap().into(),
-                recipients: vec![second],
-            },
-        );
-
-        assert!(changed);
-        assert_eq!(scope.selectorRules.len(), 1);
-        assert_eq!(scope.selectorRules[0].recipients, vec![first, second]);
-    }
-
-    #[test]
-    fn test_add_selector_rule_empty_recipients_widens_to_any() {
-        let first = Address::from_str("0x1111111111111111111111111111111111111111").unwrap();
-        let mut scope = CallScope {
-            target: PATH_USD_ADDRESS,
-            selectorRules: vec![SelectorRule {
-                selector: parse_selector_bytes("approve").unwrap().into(),
-                recipients: vec![first],
-            }],
-        };
-
-        let changed = add_selector_rule_to_scope(
-            &mut scope,
-            SelectorRule {
-                selector: parse_selector_bytes("approve").unwrap().into(),
-                recipients: vec![],
-            },
-        );
-
-        assert!(changed);
-        assert!(scope.selectorRules[0].recipients.is_empty());
-    }
-
-    #[test]
-    fn test_add_selector_rule_target_wildcard_is_unchanged() {
-        let mut scope = CallScope { target: PATH_USD_ADDRESS, selectorRules: vec![] };
-
-        let changed = add_selector_rule_to_scope(
-            &mut scope,
-            SelectorRule {
-                selector: parse_selector_bytes("transfer").unwrap().into(),
-                recipients: vec![],
-            },
-        );
-
-        assert!(!changed);
-        assert!(scope.selectorRules.is_empty());
-    }
-
-    #[test]
-    fn test_policy_set_limit_parses() {
-        let key = "0x1111111111111111111111111111111111111111";
-
-        let command = KeychainSubcommand::try_parse_from([
-            "keychain",
-            "policy",
-            "set-limit",
-            key,
-            "--token",
-            "PathUSD",
-            "--amount",
-            "123",
-        ])
-        .unwrap();
-
-        match command {
-            KeychainSubcommand::Policy {
-                command:
-                    KeychainPolicySubcommand::SetLimit { key_address, token, amount, period, .. },
-                ..
-            } => {
-                assert_eq!(key_address, Address::from_str(key).unwrap());
-                assert_eq!(token, PATH_USD_ADDRESS);
-                assert_eq!(amount, U256::from(123));
-                assert_eq!(period, None);
-            }
-            other => panic!("unexpected command: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_key_authorization_encode_parses() {
-        let key = "0x1111111111111111111111111111111111111111";
-        let token = "0x20c0000000000000000000000000000000000000";
-
-        let command = KeyAuthorizationSubcommand::try_parse_from([
-            "key-authorization",
-            "encode",
-            key,
-            "--chain-id",
-            "4217",
-            "--key-type",
-            "secp256k1",
-            "--expiry",
-            "1782647677",
-            "--witness",
-            "0x5353535353535353535353535353535353535353535353535353535353535353",
-            "--limit",
-            "0x20c0000000000000000000000000000000000000:10000000",
-        ])
-        .unwrap();
-
-        match command {
-            KeyAuthorizationSubcommand::Encode {
-                authorization:
-                    KeyAuthorizationArgs {
-                        chain_id,
-                        key_address,
-                        key_type,
-                        expiry,
-                        limits,
-                        witness,
-                        ..
-                    },
-                ..
-            } => {
-                assert_eq!(chain_id, 4217);
-                assert_eq!(key_address, Address::from_str(key).unwrap());
-                assert_eq!(key_type, AuthSignatureType::Secp256k1);
-                assert_eq!(expiry, Some(1_782_647_677));
-                assert_eq!(witness, Some(B256::repeat_byte(0x53)));
-                assert_eq!(limits.len(), 1);
-                assert_eq!(limits[0].token, Address::from_str(token).unwrap());
-                assert_eq!(limits[0].limit, U256::from(10_000_000));
-                assert_eq!(limits[0].period, 0);
-            }
-            other => panic!("unexpected command: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_active_from_anvil_node_info_requires_tempo_network() {
-        let tempo_t3 =
-            AnvilNodeInfo { network: Some("tempo".to_string()), hard_fork: Some("T3".to_string()) };
-        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T2), Some(true));
-        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T3), Some(true));
-        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T4), Some(false));
-
-        let tempo_t11 = AnvilNodeInfo {
-            network: Some("tempo".to_string()),
-            hard_fork: Some("T11".to_string()),
-        };
-        assert_eq!(active_from_anvil_node_info(&tempo_t11, TempoHardfork::T11), Some(true));
-
-        let ethereum_t3 = AnvilNodeInfo {
-            network: Some("ethereum".to_string()),
-            hard_fork: Some("T3".to_string()),
-        };
-        assert_eq!(active_from_anvil_node_info(&ethereum_t3, TempoHardfork::T3), None);
+    fn addr(byte: u8) -> Address {
+        Address::from([byte; 20])
     }
 
     fn rule(selector: [u8; 4], recipients: Vec<Address>) -> SelectorRule {
         SelectorRule { selector: selector.into(), recipients }
     }
 
-    fn target_addr(byte: u8) -> Address {
-        Address::from([byte; 20])
+    fn scope(target: Address, rules: Vec<SelectorRule>) -> CallScope {
+        CallScope { target, selectorRules: rules }
     }
 
     fn stored_entry(wallet: Address, chain_id: u64, key: Address) -> tempo::KeyEntry {
@@ -4504,7 +3412,7 @@ mod tests {
         limits: Option<Vec<AuthTokenLimit>>,
     ) -> SignedKeyAuthorization {
         let mut authorization =
-            KeyAuthorization::unrestricted(31337, AuthSignatureType::Secp256k1, target_addr(0x42));
+            KeyAuthorization::unrestricted(31337, AuthSignatureType::Secp256k1, addr(0x42));
         authorization.limits = limits;
         authorization.into_signed(PrimitiveSignature::default())
     }
@@ -4512,7 +3420,7 @@ mod tests {
     fn key_auth_args() -> KeyAuthorizationArgs {
         KeyAuthorizationArgs {
             chain_id: 31337,
-            key_address: target_addr(0x42),
+            key_address: addr(0x42),
             key_type: AuthSignatureType::Secp256k1,
             expiry: None,
             enforce_limits: false,
@@ -4524,747 +3432,471 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_signed_key_authorization_witness_roundtrip_and_json_exposure() {
-        use alloy_rlp::Decodable;
+    fn admin_args() -> KeyAuthorizationArgs {
+        KeyAuthorizationArgs { admin: true, ..key_auth_args() }
+    }
 
-        let witness = B256::repeat_byte(0x53);
-        let authorization =
-            KeyAuthorization::unrestricted(31337, AuthSignatureType::Secp256k1, target_addr(0x42))
-                .with_witness(witness);
+    fn signed_hex(authorization: KeyAuthorization) -> String {
         let signed = authorization.into_signed(PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap());
-        let encoded = encode_key_authorization(&signed);
+        hex::encode_prefixed(alloy_rlp::encode(&signed))
+    }
 
+    #[test]
+    fn parse_scopes_json_shapes() {
+        let plain = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":["transfer","approve"]},{"target":"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D"}]"#;
+        let result = parse_scopes_json(plain).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].selectorRules.len(), 2);
+        assert!(result[1].selectorRules.is_empty());
+
+        let with_recipients = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":[{"selector":"transfer","recipients":["0x1111111111111111111111111111111111111111"]}]}]"#;
+        let result = parse_scopes_json(with_recipients).unwrap();
+        assert_eq!(result[0].selectorRules[0].recipients.len(), 1);
+
+        let unknown_scope_field =
+            r#"[{"target":"0x20c0000000000000000000000000000000000001","selector":["transfer"]}]"#;
+        assert!(parse_scopes_json(unknown_scope_field).is_err());
+        let unknown_selector_field = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":[{"selector":"transfer","recipients":[],"bogus":true}]}]"#;
+        assert!(parse_scopes_json(unknown_selector_field).is_err());
+    }
+
+    #[test]
+    fn parse_limit_grammar() {
+        let token = "0x20c0000000000000000000000000000000000000";
+        let limit = parse_auth_limit(&format!("{token}:10000000")).unwrap();
+        assert_eq!(limit.token, token.parse::<Address>().unwrap());
+        assert_eq!(limit.limit, U256::from(10_000_000));
+        assert_eq!(limit.period, 0);
+        assert_eq!(parse_auth_limit(&format!("{token}:5:1d")).unwrap().period, 86_400);
+        assert_eq!(parse_limit(&format!("{token}:5:1d")).unwrap().period, 86_400);
+        assert!(parse_auth_limit(token).unwrap_err().contains("invalid limit format"));
+        assert!(parse_auth_limit(&format!("{token}:x")).unwrap_err().contains("invalid amount"));
+    }
+
+    #[test]
+    fn add_selector_rule_merging() {
+        let transfer = parse_selector_bytes("transfer").unwrap();
+        let (first, second) = (addr(0x11), addr(0x22));
+
+        let mut merged = scope(PATH_USD_ADDRESS, vec![rule(transfer, vec![first])]);
+        assert!(add_selector_rule_to_scope(&mut merged, rule(transfer, vec![second])));
+        assert_eq!(merged.selectorRules.len(), 1);
+        assert_eq!(merged.selectorRules[0].recipients, vec![first, second]);
+
+        let mut widened = scope(PATH_USD_ADDRESS, vec![rule(transfer, vec![first])]);
+        assert!(add_selector_rule_to_scope(&mut widened, rule(transfer, vec![])));
+        assert!(widened.selectorRules[0].recipients.is_empty());
+
+        let mut wildcard = scope(PATH_USD_ADDRESS, vec![]);
+        assert!(!add_selector_rule_to_scope(&mut wildcard, rule(transfer, vec![])));
+        assert!(wildcard.selectorRules.is_empty());
+    }
+
+    #[test]
+    fn into_authorization_builds_fields() {
+        let plain = key_auth_args().into_authorization(None).unwrap();
+        assert!(!plain.is_admin());
+        assert_eq!(plain.account, None);
+        assert_eq!(plain.witness(), None);
+        assert_eq!(plain.allowed_calls, None);
+        assert!(plain.is_legacy_compatible());
+
+        // `bytes32(0)` is a present witness, distinct from omitting the flag.
+        let zero_witness = KeyAuthorizationArgs { witness: Some(B256::ZERO), ..key_auth_args() }
+            .into_authorization(None)
+            .unwrap();
+        assert_eq!(zero_witness.witness(), Some(B256::ZERO));
+        assert_ne!(plain.signature_hash(), zero_witness.signature_hash());
+        assert_ne!(alloy_rlp::encode(&plain), alloy_rlp::encode(&zero_witness));
+
+        // An explicit empty `--scopes []` denies all calls rather than allowing any.
+        let deny_all =
+            KeyAuthorizationArgs { scopes_json: Some(AuthScopesJson(vec![])), ..key_auth_args() }
+                .into_authorization(None)
+                .unwrap();
+        assert_eq!(deny_all.allowed_calls, Some(vec![]));
+        assert_ne!(plain.signature_hash(), deny_all.signature_hash());
+
+        // Account binding round-trips and feeds the signing hash.
+        let bound = key_auth_args().into_authorization(Some(addr(0xCD))).unwrap();
+        assert!(!bound.is_admin());
+        assert_eq!(bound.account, Some(addr(0xCD)));
+        let admin_a = admin_args().into_authorization(Some(addr(0x01))).unwrap();
+        let admin_b = admin_args().into_authorization(Some(addr(0x02))).unwrap();
+        assert!(admin_a.is_admin());
+        assert_ne!(admin_a.signature_hash(), admin_b.signature_hash());
+
+        let signed =
+            admin_a.clone().into_signed(PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap());
+        let encoded = alloy_rlp::encode(&signed);
         let decoded = SignedKeyAuthorization::decode(&mut encoded.as_slice()).unwrap();
-        assert_eq!(decoded.authorization.witness(), Some(witness));
+        assert_eq!(decoded.authorization, admin_a);
 
-        let entry = tempo::KeyEntry::default().with_key_authorization(signed);
-        let json = key_entry_to_json(&entry);
+        // Local store entries expose the decoded authorization witness.
+        let witness = B256::repeat_byte(0x53);
+        let signed =
+            KeyAuthorization::unrestricted(31337, AuthSignatureType::Secp256k1, addr(0x42))
+                .with_witness(witness)
+                .into_signed(PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap());
+        let json = key_entry_to_json(&tempo::KeyEntry::default().with_key_authorization(signed));
         assert_eq!(json["authorization_witness"], witness.to_string());
     }
 
     #[test]
-    fn test_key_auth_encode_preserves_zero_witness_presence() {
-        let absent = key_auth_args().into_authorization(None).unwrap();
-        let mut args = key_auth_args();
-        args.witness = Some(B256::ZERO);
-        let zero_witness = args.into_authorization(None).unwrap();
-
-        assert_eq!(absent.witness(), None);
-        assert_eq!(zero_witness.witness(), Some(B256::ZERO));
-        assert_ne!(absent.signature_hash(), zero_witness.signature_hash());
-        assert_ne!(encode_key_authorization(&absent), encode_key_authorization(&zero_witness));
+    fn into_authorization_rejects_invalid_args() {
+        let account = Some(addr(0xAB));
+        let cases: [(KeyAuthorizationArgs, Option<Address>, &str); 6] = [
+            (admin_args(), None, "--admin requires --account"),
+            (
+                KeyAuthorizationArgs { expiry: Some(1_782_647_677), ..admin_args() },
+                account,
+                "--expiry",
+            ),
+            (
+                KeyAuthorizationArgs { enforce_limits: true, ..admin_args() },
+                account,
+                "spending limits",
+            ),
+            (
+                KeyAuthorizationArgs { scopes_json: Some(AuthScopesJson(vec![])), ..admin_args() },
+                account,
+                "call scopes",
+            ),
+            (key_auth_args(), Some(Address::ZERO), "--account cannot be the zero address"),
+            (
+                KeyAuthorizationArgs { expiry: Some(0), ..key_auth_args() },
+                None,
+                "--expiry must be greater than zero",
+            ),
+        ];
+        for (args, account, expected) in cases {
+            let err = args.into_authorization(account).unwrap_err().to_string();
+            assert!(err.contains(expected), "expected {expected:?}, got: {err}");
+        }
     }
 
     #[test]
-    fn test_admin_key_auth_roundtrip_preserves_admin_and_account() {
-        use alloy_rlp::Decodable;
-
-        let account = target_addr(0xAB);
-        let mut args = key_auth_args();
-        args.admin = true;
-        let authorization = args.into_authorization(Some(account)).unwrap();
-        assert!(authorization.is_admin());
-        assert_eq!(authorization.account, Some(account));
-
-        let signed = authorization.into_signed(PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap());
-        let encoded = encode_key_authorization(&signed);
-        let decoded = SignedKeyAuthorization::decode(&mut encoded.as_slice()).unwrap();
-        assert!(decoded.authorization.is_admin());
-        assert_eq!(decoded.authorization.account, Some(account));
-    }
-
-    #[test]
-    fn test_account_bound_non_admin_roundtrip() {
-        use alloy_rlp::Decodable;
-
-        let account = target_addr(0xCD);
-        let authorization = key_auth_args().into_authorization(Some(account)).unwrap();
-        assert!(!authorization.is_admin());
-        assert_eq!(authorization.account, Some(account));
-
-        let signed = authorization.into_signed(PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap());
-        let encoded = encode_key_authorization(&signed);
-        let decoded = SignedKeyAuthorization::decode(&mut encoded.as_slice()).unwrap();
-        assert!(!decoded.authorization.is_admin());
-        assert_eq!(decoded.authorization.account, Some(account));
-    }
-
-    #[test]
-    fn test_non_admin_authorization_omits_t6_fields() {
-        // Backward compatibility: a plain authorization must not carry admin/account.
-        let authorization = key_auth_args().into_authorization(None).unwrap();
-        assert!(!authorization.is_admin());
-        assert_eq!(authorization.account, None);
-        assert!(authorization.is_legacy_compatible());
-    }
-
-    #[test]
-    fn test_admin_account_binding_changes_signature_hash() {
-        let mut admin_a = key_auth_args();
-        admin_a.admin = true;
-        let auth_a = admin_a.into_authorization(Some(target_addr(0x01))).unwrap();
-
-        let mut admin_b = key_auth_args();
-        admin_b.admin = true;
-        let auth_b = admin_b.into_authorization(Some(target_addr(0x02))).unwrap();
-
-        // Account binding feeds the signing hash so a signature cannot be replayed across accounts.
-        assert_ne!(auth_a.signature_hash(), auth_b.signature_hash());
-    }
-
-    #[test]
-    fn test_admin_requires_account() {
-        let mut args = key_auth_args();
-        args.admin = true;
-        let err = args.into_authorization(None).unwrap_err().to_string();
-        assert!(err.contains("--admin requires --account"), "got: {err}");
-    }
-
-    #[test]
-    fn test_admin_rejects_expiry_limits_and_scopes() {
-        let account = target_addr(0xAB);
-
-        let mut expiry = key_auth_args();
-        expiry.admin = true;
-        expiry.expiry = Some(1_782_647_677);
-        assert!(
-            expiry.into_authorization(Some(account)).unwrap_err().to_string().contains("--expiry"),
-            "expiry must be rejected for admin keys"
-        );
-
-        let mut limits = key_auth_args();
-        limits.admin = true;
-        limits.enforce_limits = true;
-        assert!(
-            limits
-                .into_authorization(Some(account))
-                .unwrap_err()
-                .to_string()
-                .contains("spending limits"),
-            "spending limits must be rejected for admin keys"
-        );
-
-        let mut scopes = key_auth_args();
-        scopes.admin = true;
-        scopes.scopes_json = Some(AuthScopesJson(vec![]));
-        assert!(
-            scopes
-                .into_authorization(Some(account))
-                .unwrap_err()
-                .to_string()
-                .contains("call scopes"),
-            "call scopes must be rejected for admin keys"
-        );
-    }
-
-    #[test]
-    fn test_account_zero_is_rejected() {
-        let err = key_auth_args().into_authorization(Some(Address::ZERO)).unwrap_err().to_string();
-        assert!(err.contains("--account cannot be the zero address"), "got: {err}");
-    }
-
-    /// Hex-encode a signed admin authorization bound to `account` for inspect tests.
-    fn signed_admin_auth_hex(account: Address) -> String {
-        let mut args = key_auth_args();
-        args.admin = true;
-        let authorization = args.into_authorization(Some(account)).unwrap();
-        let signed = authorization.into_signed(PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap());
-        hex::encode_prefixed(encode_key_authorization(&signed))
-    }
-
-    #[test]
-    fn test_inspect_decodes_signed_and_unsigned_shapes() {
-        // Signed admin authorization: reported as signed with its T6 fields exposed.
-        let account = target_addr(0xAB);
-        let (auth, signed, _signer) =
-            decode_and_validate_key_authorization(&signed_admin_auth_hex(account), None).unwrap();
+    fn inspect_decodes_signed_and_unsigned_shapes() {
+        let account = addr(0xAB);
+        let hex = signed_hex(admin_args().into_authorization(Some(account)).unwrap());
+        let (auth, signed, _) = decode_and_validate_key_authorization(&hex, None).unwrap();
         assert!(signed, "signed input must be reported as signed");
         assert!(auth.is_admin());
         assert_eq!(auth.account, Some(account));
 
-        // Unsigned authorization: the other RLP shape decodes with no signer.
         let unsigned = key_auth_args().into_authorization(None).unwrap();
-        let hex = hex::encode_prefixed(encode_key_authorization(&unsigned));
+        let hex = hex::encode_prefixed(alloy_rlp::encode(&unsigned));
         let (auth, signed, signer) = decode_and_validate_key_authorization(&hex, None).unwrap();
         assert!(!signed, "unsigned input must be reported as unsigned");
-        assert!(!auth.is_admin());
-        assert_eq!(auth.account, None);
+        assert_eq!(auth, unsigned);
         assert!(signer.is_none(), "unsigned input must not recover a signer");
     }
 
     #[test]
-    fn test_inspect_account_mismatch_is_rejected() {
-        let account = target_addr(0xAB);
-        let hex = signed_admin_auth_hex(account);
-        let err = decode_and_validate_key_authorization(&hex, Some(target_addr(0xCD)))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("is bound to account") && err.contains("was expected"), "got: {err}");
-    }
+    fn inspect_enforces_admin_invariants_and_account_binding() {
+        let unrestricted =
+            || KeyAuthorization::unrestricted(31337, AuthSignatureType::Secp256k1, addr(0x42));
+        // Built directly (bypassing the CLI constructor's guard) to prove `inspect` mirrors the
+        // chain's admin invariants.
+        let admin_with_expiry = unrestricted().with_expiry(1_782_647_677).into_admin(addr(0xAB));
+        let mut admin_without_account = unrestricted();
+        admin_without_account.is_admin = true;
 
-    #[test]
-    fn test_inspect_rejects_admin_auth_carrying_restrictions() {
-        // Build an admin authorization that carries an expiry directly (bypassing the CLI
-        // constructor's guard) to prove `inspect` mirrors the chain's admin invariants.
-        let account = target_addr(0xAB);
-        let authorization =
-            KeyAuthorization::unrestricted(31337, AuthSignatureType::Secp256k1, target_addr(0x42))
-                .with_expiry(1_782_647_677)
-                .into_admin(account);
-        let hex = hex::encode_prefixed(encode_key_authorization(&authorization));
-
-        let err = decode_and_validate_key_authorization(&hex, None).unwrap_err().to_string();
-        assert!(err.contains("cannot carry an expiry"), "got: {err}");
-    }
-
-    #[test]
-    fn test_inspect_accepts_root_signed_admin_auth_without_account() {
-        // T6 allows a root-signed admin authorization to omit `account` (account is only required
-        // when the signer is not the target root). `inspect` is a decoder and must not reject it.
-        let mut authorization =
-            KeyAuthorization::unrestricted(31337, AuthSignatureType::Secp256k1, target_addr(0x42));
-        authorization.is_admin = true;
-        let hex = hex::encode_prefixed(encode_key_authorization(&authorization));
-
-        let (auth, _signed, _signer) =
-            decode_and_validate_key_authorization(&hex, None).expect("admin auth may omit account");
+        // T6 allows a root-signed admin authorization to omit `account`; `inspect` is a decoder and
+        // must not reject it unless `--account` asks for a binding it cannot verify.
+        let hex = hex::encode_prefixed(alloy_rlp::encode(&admin_without_account));
+        let (auth, _, _) = decode_and_validate_key_authorization(&hex, None).unwrap();
         assert!(auth.is_admin());
         assert_eq!(auth.account, None);
+
+        let cases = [
+            (
+                signed_hex(admin_args().into_authorization(Some(addr(0xAB))).unwrap()),
+                Some(addr(0xCD)),
+                "was expected",
+            ),
+            (
+                hex::encode_prefixed(alloy_rlp::encode(&admin_with_expiry)),
+                None,
+                "cannot carry an expiry",
+            ),
+            (hex, Some(addr(0xAB)), "no account field"),
+        ];
+        for (hex, expected_account, expected) in cases {
+            let err = decode_and_validate_key_authorization(&hex, expected_account)
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains(expected), "expected {expected:?}, got: {err}");
+        }
     }
 
     #[test]
-    fn test_inspect_admin_auth_without_account_rejected_when_account_expected() {
-        // When the caller supplies `--account`, an admin authorization that omits `account` must
-        // still be rejected: the binding cannot be verified.
-        let mut authorization =
-            KeyAuthorization::unrestricted(31337, AuthSignatureType::Secp256k1, target_addr(0x42));
-        authorization.is_admin = true;
-        let hex = hex::encode_prefixed(encode_key_authorization(&authorization));
-
-        let err = decode_and_validate_key_authorization(&hex, Some(target_addr(0xAB)))
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("no account field"), "got: {err}");
-    }
-
-    #[test]
-    fn test_local_key_role_classification() {
-        let wallet = target_addr(0x01);
-        let key = target_addr(0x02);
-
-        let root = stored_entry(wallet, 0, wallet);
-        assert_eq!(local_key_role(&root, false), "root");
-
-        let access = stored_entry(wallet, 0, key);
-        assert_eq!(local_key_role(&access, false), "limited");
-        assert_eq!(local_key_role(&access, true), "admin");
-    }
-
-    #[test]
-    fn test_key_auth_encode_preserves_explicit_empty_scopes_json() {
-        let absent = key_auth_args().into_authorization(None).unwrap();
-        let mut args = key_auth_args();
-        args.scopes_json = Some(AuthScopesJson(vec![]));
-        let deny_all = args.into_authorization(None).unwrap();
-
-        assert_eq!(absent.allowed_calls, None);
-        assert_eq!(deny_all.allowed_calls, Some(vec![]));
-        assert_ne!(absent.signature_hash(), deny_all.signature_hash());
-        assert_ne!(encode_key_authorization(&absent), encode_key_authorization(&deny_all));
-    }
-
-    #[test]
-    fn test_key_auth_encode_rejects_zero_expiry() {
-        let mut args = key_auth_args();
-        args.expiry = Some(0);
-        let err = args.into_authorization(None).unwrap_err();
-        assert!(
-            err.to_string().contains("--expiry must be greater than zero"),
-            "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn test_key_auth_root_sender_mismatch_message_is_artifact_specific() {
-        let expected = target_addr(0x11);
-        let actual = target_addr(0x22);
-        let err = ensure_key_authorization_root_sender(actual, Some(expected)).unwrap_err();
+    fn root_sender_mismatch_message_names_the_artifact() {
+        let (expected, actual) = (addr(0x11), addr(0x22));
+        let err = ensure_root_sender(actual, Some(expected), "key authorization").unwrap_err();
         assert_eq!(
             err.to_string(),
             format!(
                 "key authorization must be signed by root account {expected}; resolved signer is {actual}"
             )
         );
+        assert!(ensure_root_sender(actual, None, "key authorization").is_ok());
     }
 
     #[test]
-    fn test_match_allowed_call_target_wildcard_any_selector() {
-        let scopes = vec![CallScope { target: target_addr(0xAA), selectorRules: vec![] }];
-        let result =
-            match_allowed_call(&scopes, target_addr(0xAA), ITIP20::transferCall::SELECTOR, None);
-        assert!(matches!(result, AllowedCallMatch::Allowed(_)));
-    }
-
-    #[test]
-    fn test_match_allowed_call_empty_recipients_any_recipient() {
-        let scopes = vec![CallScope {
-            target: target_addr(0xAA),
-            selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, vec![])],
-        }];
-        let result = match_allowed_call(
-            &scopes,
-            target_addr(0xAA),
-            ITIP20::transferCall::SELECTOR,
-            Some(target_addr(0xBB)),
-        );
-        assert!(matches!(result, AllowedCallMatch::Allowed(_)));
-    }
-
-    #[test]
-    fn test_match_allowed_call_missing_target_denied() {
-        let scopes = vec![CallScope { target: target_addr(0xAA), selectorRules: vec![] }];
-        let result =
-            match_allowed_call(&scopes, target_addr(0xCC), ITIP20::transferCall::SELECTOR, None);
-        assert!(matches!(result, AllowedCallMatch::Denied(_)));
-    }
-
-    #[test]
-    fn test_match_allowed_call_recipient_restricted_no_recipient_arg() {
-        let recipients = vec![target_addr(0xBB)];
-        let scopes = vec![CallScope {
-            target: target_addr(0xAA),
-            selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, recipients.clone())],
-        }];
-        let result =
-            match_allowed_call(&scopes, target_addr(0xAA), ITIP20::transferCall::SELECTOR, None);
-        match result {
-            AllowedCallMatch::RecipientRestricted(rs) => assert_eq!(rs, recipients),
-            other => panic!(
-                "expected RecipientRestricted, got {:?}",
-                match other {
-                    AllowedCallMatch::Allowed(s) => format!("Allowed({s})"),
-                    AllowedCallMatch::Denied(s) => format!("Denied({s})"),
-                    AllowedCallMatch::RecipientRestricted(_) => unreachable!(),
-                }
-            ),
-        }
-    }
-
-    #[test]
-    fn test_match_allowed_call_recipient_match_allowed() {
-        let recipients = vec![target_addr(0xBB), target_addr(0xCC)];
-        let scopes = vec![CallScope {
-            target: target_addr(0xAA),
-            selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, recipients)],
-        }];
-        let result = match_allowed_call(
-            &scopes,
-            target_addr(0xAA),
-            ITIP20::transferCall::SELECTOR,
-            Some(target_addr(0xCC)),
-        );
-        assert!(matches!(result, AllowedCallMatch::Allowed(_)));
-    }
-
-    #[test]
-    fn test_match_allowed_call_recipient_not_in_list_denied() {
-        let recipients = vec![target_addr(0xBB)];
-        let scopes = vec![CallScope {
-            target: target_addr(0xAA),
-            selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, recipients)],
-        }];
-        let result = match_allowed_call(
-            &scopes,
-            target_addr(0xAA),
-            ITIP20::transferCall::SELECTOR,
-            Some(target_addr(0xDD)),
-        );
-        assert!(matches!(result, AllowedCallMatch::Denied(_)));
-    }
-
-    #[test]
-    fn test_match_allowed_call_selector_not_in_list_denied() {
-        let scopes = vec![CallScope {
-            target: target_addr(0xAA),
-            selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, vec![])],
-        }];
-        let result =
-            match_allowed_call(&scopes, target_addr(0xAA), ITIP20::approveCall::SELECTOR, None);
-        assert!(matches!(result, AllowedCallMatch::Denied(_)));
-    }
-
-    #[test]
-    fn test_match_allowed_call_checks_duplicate_target_scopes() {
-        let scopes = vec![
-            CallScope {
-                target: target_addr(0xAA),
-                selectorRules: vec![rule(ITIP20::approveCall::SELECTOR, vec![])],
-            },
-            CallScope {
-                target: target_addr(0xAA),
-                selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, vec![])],
-            },
+    fn match_allowed_call_cases() {
+        use AllowedCallMatch::{Allowed, Denied, RecipientRestricted};
+        let transfer = ITIP20::transferCall::SELECTOR;
+        let approve = ITIP20::approveCall::SELECTOR;
+        let (target, other, bob, carol) = (addr(0xAA), addr(0xCC), addr(0xBB), addr(0xDD));
+        let wildcard = vec![scope(target, vec![])];
+        let any_recipient = vec![scope(target, vec![rule(transfer, vec![])])];
+        let restricted = vec![scope(target, vec![rule(transfer, vec![bob])])];
+        let duplicated = vec![
+            scope(target, vec![rule(transfer, vec![bob])]),
+            scope(target, vec![rule(approve, vec![]), rule(transfer, vec![carol])]),
         ];
+        let kind = |m: &AllowedCallMatch| match m {
+            Allowed(_) => "allowed",
+            Denied(_) => "denied",
+            RecipientRestricted(_) => "restricted",
+        };
 
-        let result =
-            match_allowed_call(&scopes, target_addr(0xAA), ITIP20::transferCall::SELECTOR, None);
-        assert!(matches!(result, AllowedCallMatch::Allowed(_)));
-    }
-
-    #[test]
-    fn test_match_allowed_call_aggregates_duplicate_target_recipients() {
-        let first = target_addr(0xBB);
-        let second = target_addr(0xCC);
-        let scopes = vec![
-            CallScope {
-                target: target_addr(0xAA),
-                selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, vec![first])],
-            },
-            CallScope {
-                target: target_addr(0xAA),
-                selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, vec![second])],
-            },
+        let cases = [
+            (&wildcard, target, transfer, None, "allowed"),
+            (&wildcard, other, transfer, None, "denied"),
+            (&any_recipient, target, transfer, Some(bob), "allowed"),
+            (&any_recipient, target, approve, None, "denied"),
+            (&restricted, target, transfer, None, "restricted"),
+            (&restricted, target, transfer, Some(bob), "allowed"),
+            (&restricted, target, transfer, Some(carol), "denied"),
+            (&duplicated, target, approve, None, "allowed"),
+            (&duplicated, target, transfer, Some(carol), "allowed"),
         ];
+        for (scopes, to, selector, recipient, expected) in cases {
+            let result = match_allowed_call(scopes, to, selector, recipient);
+            assert_eq!(kind(&result), expected, "{result:?}");
+        }
 
-        let result = match_allowed_call(
-            &scopes,
-            target_addr(0xAA),
-            ITIP20::transferCall::SELECTOR,
-            Some(second),
+        // Recipient lists are aggregated across duplicate target scopes.
+        assert_eq!(
+            match_allowed_call(&duplicated, target, transfer, None),
+            RecipientRestricted(vec![bob, carol])
         );
-        assert!(matches!(result, AllowedCallMatch::Allowed(_)));
-
-        let result =
-            match_allowed_call(&scopes, target_addr(0xAA), ITIP20::transferCall::SELECTOR, None);
-        match result {
-            AllowedCallMatch::RecipientRestricted(recipients) => {
-                assert_eq!(recipients, vec![first, second]);
-            }
-            _ => panic!("expected recipient restriction"),
-        }
     }
 
     #[test]
-    fn test_doctor_command_parses_with_only_root_account() {
-        let cmd = KeychainSubcommand::try_parse_from([
-            "keychain",
-            "doctor",
-            "--root-account",
-            "0x1111111111111111111111111111111111111111",
-        ])
-        .unwrap();
-        match cmd {
-            KeychainSubcommand::Doctor { key_address, root_account, .. } => {
-                assert!(key_address.is_none());
-                assert!(root_account.is_some());
-            }
-            other => panic!("unexpected: {other:?}"),
-        }
+    fn doctor_args_parse() {
+        let root = "0x1111111111111111111111111111111111111111";
+        let key = "0x2222222222222222222222222222222222222222";
+        let KeychainSubcommand::Doctor { key_address, root_account, .. } =
+            KeychainSubcommand::try_parse_from(["keychain", "doctor", "--root-account", root])
+                .unwrap()
+        else {
+            panic!("expected doctor");
+        };
+        assert!(key_address.is_none());
+        assert!(root_account.is_some());
+
+        assert!(
+            KeychainSubcommand::try_parse_from([
+                "keychain",
+                "doctor",
+                key,
+                "--selector",
+                "transfer"
+            ])
+            .is_err(),
+            "--selector without --to should error"
+        );
+
+        let KeychainSubcommand::Doctor { fee_token, tempo, .. } =
+            KeychainSubcommand::try_parse_from([
+                "keychain",
+                "doctor",
+                key,
+                "--root-account",
+                root,
+                "--fee-token",
+                "PathUSD",
+                "--tempo.expiring-nonce",
+                "--tempo.valid-before",
+                "9999999999",
+            ])
+            .unwrap()
+        else {
+            panic!("expected doctor");
+        };
+        assert_eq!(fee_token, Some(PATH_USD_ADDRESS));
+        assert!(tempo.expiring_nonce);
+        assert_eq!(tempo.valid_before, Some(9_999_999_999));
     }
 
     #[test]
-    fn test_doctor_selector_requires_to() {
-        let res = KeychainSubcommand::try_parse_from([
-            "keychain",
-            "doctor",
-            "0x1111111111111111111111111111111111111111",
-            "--selector",
-            "transfer",
-        ]);
-        assert!(res.is_err(), "--selector without --to should error");
-    }
+    fn select_subject_for_chain_preferences() {
+        let (root, key, other_key) = (addr(0x11), addr(0x22), addr(0x33));
 
-    #[test]
-    fn test_doctor_parses_tempo_expiring_nonce_options() {
-        let cmd = KeychainSubcommand::try_parse_from([
-            "keychain",
-            "doctor",
-            "0x1111111111111111111111111111111111111111",
-            "--root-account",
-            "0x2222222222222222222222222222222222222222",
-            "--tempo.expiring-nonce",
-            "--tempo.valid-before",
-            "9999999999",
-            "--tempo.fee-token",
-            "0x20C0000000000000000000000000000000000002",
-        ])
-        .unwrap();
-        match cmd {
-            KeychainSubcommand::Doctor { tempo, .. } => {
-                assert!(tempo.expiring_nonce);
-                assert_eq!(tempo.valid_before, Some(9_999_999_999));
-                assert_eq!(
-                    tempo.fee_token,
-                    Some(Address::from_str("0x20C0000000000000000000000000000000000002").unwrap())
-                );
-            }
-            other => panic!("unexpected: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_doctor_parses_fee_token_option() {
-        let cmd = KeychainSubcommand::try_parse_from([
-            "keychain",
-            "doctor",
-            "0x1111111111111111111111111111111111111111",
-            "--root-account",
-            "0x2222222222222222222222222222222222222222",
-            "--fee-token",
-            "PathUSD",
-        ])
-        .unwrap();
-        match cmd {
-            KeychainSubcommand::Doctor { fee_token, .. } => {
-                assert_eq!(fee_token, Some(PATH_USD_ADDRESS));
-            }
-            other => panic!("unexpected: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_select_subject_accepts_explicit_root_key_without_local_entry() {
-        let root = target_addr(0x11);
-        let key = target_addr(0x22);
+        // Explicit root/key without a local entry is accepted and warns about local signing.
         let subject =
             select_subject_for_chain(vec![DoctorCandidate::explicit(root, key)], 31337, Some(root))
                 .unwrap();
-
-        assert_eq!(subject.root_account, root);
-        assert_eq!(subject.key_address, key);
+        assert_eq!((subject.root_account, subject.key_address), (root, key));
         assert!(subject.entry.is_none());
+        assert_eq!(check_local_signing_readiness(&subject).status, DoctorStatus::Warn);
 
-        let signing = check_local_signing_readiness(&subject);
-        assert_eq!(signing.status, DoctorStatus::Warn);
-    }
-
-    #[test]
-    fn test_select_subject_uses_explicit_root_key_when_local_entry_is_wrong_chain() {
-        let root = target_addr(0x11);
-        let key = target_addr(0x22);
-        let local = stored_entry(root, 1, key).with_locally_signable(true);
-
+        // A local entry on another chain is skipped in favour of the explicit pair.
+        let wrong_chain = stored_entry(root, 1, key).with_locally_signable(true);
         let subject = select_subject_for_chain(
-            vec![DoctorCandidate::from_entry(local), DoctorCandidate::explicit(root, key)],
+            vec![DoctorCandidate::from_entry(wrong_chain), DoctorCandidate::explicit(root, key)],
             31337,
             Some(root),
         )
         .unwrap();
-
-        assert_eq!(subject.root_account, root);
         assert_eq!(subject.key_address, key);
         assert!(subject.entry.is_none());
-    }
 
-    #[test]
-    fn test_select_subject_prefers_locally_signable_entry() {
-        let root = target_addr(0x11);
-        let metadata_only_key = target_addr(0x22);
-        let signable_key = target_addr(0x33);
-        let metadata_only = stored_entry(root, 31337, metadata_only_key);
-        let signable = stored_entry(root, 31337, signable_key).with_locally_signable(true);
-
+        // Locally signable entries win over metadata-only records.
         let subject = select_subject_for_chain(
-            vec![DoctorCandidate::from_entry(metadata_only), DoctorCandidate::from_entry(signable)],
+            vec![
+                DoctorCandidate::from_entry(stored_entry(root, 31337, key)),
+                DoctorCandidate::from_entry(
+                    stored_entry(root, 31337, other_key).with_locally_signable(true),
+                ),
+            ],
             31337,
             Some(root),
         )
         .unwrap();
+        assert_eq!(subject.key_address, other_key);
 
-        assert_eq!(subject.key_address, signable_key);
-    }
-
-    #[test]
-    fn test_select_subject_keeps_explicit_stale_entry_for_authorization_metadata() {
-        let root = target_addr(0x11);
-        let key = target_addr(0x22);
-        let local = stored_entry(root, 31337, key)
+        // A stale entry is kept for its authorization metadata when the pair is also explicit.
+        let stale = stored_entry(root, 31337, key)
             .with_key_authorization(signed_authorization_with_limits(None));
-
         let subject = select_subject_for_chain(
-            vec![DoctorCandidate::from_entry(local), DoctorCandidate::explicit(root, key)],
+            vec![DoctorCandidate::from_entry(stale), DoctorCandidate::explicit(root, key)],
             31337,
             Some(root),
         )
         .unwrap();
-
-        assert_eq!(subject.root_account, root);
-        assert_eq!(subject.key_address, key);
         assert!(subject.explicit);
         assert!(subject.entry.as_ref().is_some_and(|entry| entry.key_authorization.is_some()));
+        assert_eq!(check_local_signing_readiness(&subject).status, DoctorStatus::Warn);
 
-        let signing = check_local_signing_readiness(&subject);
-        assert_eq!(signing.status, DoctorStatus::Warn);
-    }
-
-    #[test]
-    fn test_local_signing_readiness_fails_without_inline_key() {
-        let root = target_addr(0x11);
-        let key = target_addr(0x22);
-        let subject = DoctorSubject {
+        // Without an inline key a non-explicit local entry fails; with one it passes.
+        let mut subject = DoctorSubject {
             root_account: root,
             key_address: key,
-            explicit: false,
             entry: Some(stored_entry(root, 31337, key)),
-        };
-
-        let signing = check_local_signing_readiness(&subject);
-        assert_eq!(signing.status, DoctorStatus::Fail);
-    }
-
-    #[test]
-    fn test_local_signing_readiness_passes_with_inline_key() {
-        let root = target_addr(0x11);
-        let key = target_addr(0x22);
-        let subject = DoctorSubject {
-            root_account: root,
-            key_address: key,
             explicit: false,
-            entry: Some(stored_entry(root, 31337, key).with_locally_signable(true)),
         };
-
-        let signing = check_local_signing_readiness(&subject);
-        assert_eq!(signing.status, DoctorStatus::Pass);
+        assert_eq!(check_local_signing_readiness(&subject).status, DoctorStatus::Fail);
+        subject.entry = Some(stored_entry(root, 31337, key).with_locally_signable(true));
+        assert_eq!(check_local_signing_readiness(&subject).status, DoctorStatus::Pass);
     }
 
     #[test]
-    fn test_check_authorization_spending_limits_warns_when_fee_token_missing() {
-        let fee_token = target_addr(0xAA);
-        let signed = signed_authorization_with_limits(Some(vec![AuthTokenLimit {
-            token: target_addr(0xBB),
-            limit: U256::from(1),
-            period: 0,
-        }]));
+    fn authorization_spending_limits_warnings() {
+        let fee_token = addr(0xAA);
+        let limit = |token, limit, period| AuthTokenLimit { token, limit, period };
+        let cases = [
+            (limit(addr(0xBB), U256::from(1), 0), Some(true), "not listed"),
+            (limit(fee_token, U256::ZERO, 0), Some(true), ""),
+            (limit(fee_token, U256::from(1), 60), None, "hardfork unknown"),
+        ];
+        for (limit, is_t3, detail) in cases {
+            let signed = signed_authorization_with_limits(Some(vec![limit]));
+            let step = check_authorization_spending_limits(&signed, fee_token, is_t3);
+            assert_eq!(step.status, DoctorStatus::Warn, "{step:?}");
+            assert!(step.detail.contains(detail), "{step:?}");
+        }
+    }
 
-        let step = check_authorization_spending_limits(&signed, fee_token, Some(true));
+    #[test]
+    fn key_role_precedence() {
+        assert_eq!(key_role(true, false), "root");
+        assert_eq!(key_role(true, true), "root");
+        assert_eq!(key_role(false, true), "admin");
+        assert_eq!(key_role(false, false), "limited");
+    }
+
+    #[tokio::test]
+    async fn allowed_calls_hardfork_gates() {
+        let provider = alloy_provider::ProviderBuilder::new_with_network::<TempoNetwork>()
+            .connect_mocked_client(alloy_provider::mock::Asserter::new());
+        let subject = DoctorSubject {
+            root_account: addr(0x11),
+            key_address: addr(0x22),
+            entry: None,
+            explicit: true,
+        };
+        let step = check_allowed_calls(&provider, &subject, None, None, None, None, None).await;
         assert_eq!(step.status, DoctorStatus::Warn);
-        assert!(step.detail.contains("not listed"));
-    }
-
-    #[test]
-    fn test_check_authorization_spending_limits_warns_when_fee_token_zero() {
-        let fee_token = target_addr(0xAA);
-        let signed = signed_authorization_with_limits(Some(vec![AuthTokenLimit {
-            token: fee_token,
-            limit: U256::ZERO,
-            period: 0,
-        }]));
-
-        let step = check_authorization_spending_limits(&signed, fee_token, Some(true));
-        assert_eq!(step.status, DoctorStatus::Warn);
-    }
-
-    #[test]
-    fn test_check_authorization_spending_limits_warns_when_periodic_hardfork_unknown() {
-        let fee_token = target_addr(0xAA);
-        let signed = signed_authorization_with_limits(Some(vec![AuthTokenLimit {
-            token: fee_token,
-            limit: U256::from(1),
-            period: 60,
-        }]));
-
-        let step = check_authorization_spending_limits(&signed, fee_token, None);
-        assert_eq!(step.status, DoctorStatus::Warn);
-    }
-
-    #[test]
-    fn test_check_authorization_allowed_calls_warns_when_hardfork_unknown() {
-        let signed = signed_authorization_with_limits(None);
-        let step = check_authorization_allowed_calls(&signed, None, None, None, None);
-        assert_eq!(step.status, DoctorStatus::Warn);
-    }
-
-    #[test]
-    fn test_check_key_expiry_uses_chain_timestamp() {
-        let step = check_key_expiry(100, &ChainTimestamp::Known(100));
-        assert_eq!(step.status, DoctorStatus::Fail);
-
-        let step = check_key_expiry(101, &ChainTimestamp::Known(100));
+        assert_eq!(step.detail, "skipped; hardfork unknown");
+        let step =
+            check_allowed_calls(&provider, &subject, None, Some(false), None, None, None).await;
         assert_eq!(step.status, DoctorStatus::Pass);
+        assert_eq!(step.detail, "TIP-1011 not enforced before T3");
     }
 
     #[test]
-    fn test_check_key_expiry_warns_when_chain_timestamp_unknown() {
-        let step = check_key_expiry(
-            100,
-            &ChainTimestamp::Unknown {
-                detail: "latest block not found".to_string(),
-                hint: "test hint",
-            },
-        );
+    fn expiry_uses_chain_timestamp() {
+        let known = ChainTimestamp::Known(100);
+        assert_eq!(check_expiry(Some(100), &known, "", "hint").status, DoctorStatus::Fail);
+        assert_eq!(check_expiry(Some(101), &known, "", "hint").status, DoctorStatus::Pass);
+        assert_eq!(check_expiry(None, &known, "", "hint").detail, "never expires");
 
+        let unknown =
+            ChainTimestamp::Unknown { detail: "latest block not found".to_string(), hint: "h" };
+        let step = check_expiry(Some(100), &unknown, "key_authorization ", "hint");
         assert_eq!(step.status, DoctorStatus::Warn);
+        assert_eq!(step.detail, "key_authorization expiry not checked: latest block not found");
     }
 
     #[test]
-    fn test_check_expiring_nonce_window_validates_without_expiring_nonce_flag() {
-        let tempo =
-            TempoOpts { valid_after: Some(20), valid_before: Some(20), ..Default::default() };
-        let step = check_expiring_nonce_window(&tempo, None, 10);
-        assert_eq!(step.status, DoctorStatus::Fail);
-
-        let tempo = TempoOpts { valid_before: Some(10), ..Default::default() };
-        let step = check_expiring_nonce_window(&tempo, None, 10);
-        assert_eq!(step.status, DoctorStatus::Fail);
-    }
-
-    #[test]
-    fn test_check_expiring_nonce_window_thresholds() {
-        let tempo =
-            TempoOpts { expiring_nonce: true, valid_before: Some(103), ..Default::default() };
-        assert_eq!(check_expiring_nonce_window(&tempo, None, 100).status, DoctorStatus::Fail);
-
-        let tempo =
-            TempoOpts { expiring_nonce: true, valid_before: Some(104), ..Default::default() };
-        assert_eq!(check_expiring_nonce_window(&tempo, None, 100).status, DoctorStatus::Warn);
-
-        let tempo =
-            TempoOpts { expiring_nonce: true, valid_before: Some(105), ..Default::default() };
-        assert_eq!(check_expiring_nonce_window(&tempo, None, 100).status, DoctorStatus::Warn);
-
-        let tempo =
-            TempoOpts { expiring_nonce: true, valid_before: Some(131), ..Default::default() };
-        assert_eq!(check_expiring_nonce_window(&tempo, None, 100).status, DoctorStatus::Warn);
-    }
-
-    #[test]
-    fn test_diagnose_allowed_scopes_exact_denial_fails() {
-        let step = diagnose_allowed_scopes(
-            &[],
-            Some(target_addr(0x11)),
-            Some([0xaa, 0xbb, 0xcc, 0xdd]),
-            None,
-        );
-        assert_eq!(step.status, DoctorStatus::Fail);
-    }
-
-    #[test]
-    fn test_diagnose_allowed_scopes_target_only_denial_warns() {
-        let scope = CallScope {
-            target: target_addr(0x11),
-            selectorRules: vec![SelectorRule {
-                selector: [0xaa, 0xbb, 0xcc, 0xdd].into(),
-                recipients: Vec::new(),
-            }],
+    fn expiring_nonce_window_thresholds() {
+        let opts = |expiring_nonce, valid_after, valid_before| TempoOpts {
+            expiring_nonce,
+            valid_after,
+            valid_before,
+            ..Default::default()
         };
-
-        let step = diagnose_allowed_scopes(&[scope], Some(target_addr(0x22)), None, None);
-        assert_eq!(step.status, DoctorStatus::Warn);
+        let cases = [
+            // Validated even without --tempo.expiring-nonce.
+            (opts(false, Some(20), Some(20)), 10, DoctorStatus::Fail),
+            (opts(false, None, Some(10)), 10, DoctorStatus::Fail),
+            (opts(true, None, Some(103)), 100, DoctorStatus::Fail),
+            (opts(true, None, Some(104)), 100, DoctorStatus::Warn),
+            (opts(true, None, Some(105)), 100, DoctorStatus::Warn),
+            (opts(true, None, Some(131)), 100, DoctorStatus::Warn),
+            (opts(true, None, Some(120)), 100, DoctorStatus::Pass),
+        ];
+        for (tempo, now, expected) in cases {
+            let step = check_expiring_nonce_window(&tempo, None, now);
+            assert_eq!(step.status, expected, "{step:?}");
+        }
     }
 
     #[test]
-    fn test_sponsor_config_error_redacts_private_key_uri() {
+    fn diagnose_allowed_scopes_denials() {
+        let exact =
+            diagnose_allowed_scopes(&[], Some(addr(0x11)), Some([0xaa, 0xbb, 0xcc, 0xdd]), None);
+        assert_eq!(exact.status, DoctorStatus::Fail);
+
+        let scopes = [scope(addr(0x11), vec![rule([0xaa, 0xbb, 0xcc, 0xdd], vec![])])];
+        let target_only = diagnose_allowed_scopes(&scopes, Some(addr(0x22)), None, None);
+        assert_eq!(target_only.status, DoctorStatus::Warn);
+    }
+
+    #[test]
+    fn sponsor_config_error_redacts_private_key_uri() {
         let tempo = TempoOpts {
             sponsor_signer: Some("private-key://super-secret".to_string()),
             ..Default::default()
         };
-
         let sanitized = sanitize_sponsor_config_error(
             "unsupported Tempo sponsor signer `private-key://super-secret`",
             &tempo,
         );
-
         assert!(sanitized.contains("private-key://<redacted>"));
         assert!(!sanitized.contains("super-secret"));
     }

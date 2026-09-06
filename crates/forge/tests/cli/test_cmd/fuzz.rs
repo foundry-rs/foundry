@@ -1433,6 +1433,107 @@ contract ForgeFuzzRunStatefulFrontiersTest is Test {
         let sequence = sequences[sequence_index].as_array().unwrap();
         assert!(sequence.len() > call_index, "{frontier:#}");
     }
+
+    prj.update_config(|config| config.invariant.call_override = true);
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunStatefulFrontiersTest",
+            "--match-test",
+            "invariant",
+            "--runs",
+            "1",
+            "--depth",
+            "1",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "override_frontiers",
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "Invariant frontier capture does not support `invariant.call_override`; running the \
+             campaign without writing frontier artifacts."
+        ),
+        "stdout={stdout}\nstderr={stderr}"
+    );
+    assert!(!prj.root().join("override_frontiers").exists());
+});
+
+forgetest_init!(forge_fuzz_run_frontiers_keep_reverted_environment_prefix, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzRunRevertedFrontier.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForgeFuzzRunRevertedFrontierTest is Test {
+    uint256 public marker;
+
+    function setUp() public {
+        vm.warp(1);
+        targetContract(address(this));
+    }
+
+    function advance(uint256 value) external {
+        if (block.timestamp < 1000) {
+            vm.warp(1000);
+            revert("advance timestamp");
+        }
+        marker = value < 100 ? 1 : 2;
+    }
+
+    function invariant_ok() public pure {}
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunRevertedFrontierTest",
+            "--match-test",
+            "invariant",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x4321",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "reverted_frontiers",
+        ])
+        .assert_success();
+
+    let frontier_path = prj
+        .root()
+        .join("reverted_frontiers")
+        .join("ForgeFuzzRunRevertedFrontierTest")
+        .join("branch-frontiers.json");
+    let artifact: Value = serde_json::from_slice(
+        &std::fs::read(&frontier_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+    )
+    .unwrap();
+    let frontier = artifact["frontiers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|frontier| frontier["call_index"] == 1)
+        .unwrap_or_else(|| panic!("missing post-revert frontier in {artifact:#}"));
+    let sequence_index = frontier["sequence_index"].as_u64().unwrap() as usize;
+    assert_eq!(artifact["sequences"][sequence_index].as_array().unwrap().len(), 2);
 });
 
 forgetest_init!(forge_fuzz_run_runs_sets_invariant_runs, |prj, cmd| {

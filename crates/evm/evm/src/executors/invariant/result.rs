@@ -423,10 +423,14 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
             }
         }
 
-        if reverted && !is_optimization && !invariant_config.has_delay() {
-            // If we don't fail test on revert then remove the reverted call from inputs.
-            // Delay-enabled campaigns keep reverted calls so shrinking can preserve their
-            // warp/roll contribution when building the final counterexample.
+        if reverted
+            && !is_optimization
+            && !invariant_config.has_delay()
+            && !invariant_config.corpus.capture_branch_frontiers()
+        {
+            // If we don't fail the test on revert, remove the reverted call from inputs.
+            // Delay-enabled campaigns and frontier capture keep reverted calls so their
+            // warp/roll contribution can be replayed.
             invariant_run.inputs.pop();
         }
     }

@@ -105,7 +105,13 @@ impl StatefulFuzzBranchFrontierArtifact {
                     index
                 }
             };
-            records.push(StatefulFuzzBranchFrontier::new(id as u64, sequence_index, frontier));
+            records.push(StatefulFuzzBranchFrontier {
+                id: id as u64,
+                call_index: frontier.call_index,
+                sequence_index,
+                site: frontier.site,
+                operands: frontier.operands,
+            });
         }
 
         Self {
@@ -164,18 +170,6 @@ struct StatefulFuzzBranchFrontier {
     sequence_index: usize,
     site: FuzzBranchFrontierSite,
     operands: FuzzBranchFrontierOperands,
-}
-
-impl StatefulFuzzBranchFrontier {
-    fn new(id: u64, sequence_index: usize, frontier: FuzzBranchFrontier) -> Self {
-        Self {
-            id,
-            call_index: frontier.call_index,
-            sequence_index,
-            site: frontier.site,
-            operands: frontier.operands,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -284,8 +278,7 @@ impl FuzzFrontierRecorder {
         }
 
         let mut new_frontier = |cmp: &CmpOperands, result, operand_delta| {
-            let sequence = recorded_sequence
-                .get_or_insert_with(|| Arc::from(sequence.to_vec().into_boxed_slice()));
+            let sequence = recorded_sequence.get_or_insert_with(|| Arc::from(sequence));
             FuzzBranchFrontier::new(
                 run,
                 Arc::clone(sequence),
