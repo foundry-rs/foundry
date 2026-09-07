@@ -403,45 +403,6 @@ class WorkspaceTests(unittest.TestCase):
                 before, after, {"forge", "cast"}, "1.7.2", "1.7.2-rc1"
             )
 
-    def test_stable_cli_preserves_checked_candidate_and_restores_failed_dry_run(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / ".changelog").mkdir()
-            fragment = root / ".changelog" / "feature.md"
-            fragment.write_text("---\nforge: minor\n---\nA new feature.\n")
-            manifest = root / "Cargo.toml"
-            original_manifest = '[workspace.package]\nversion = "1.8.2"\n'
-            manifest.write_text(original_manifest)
-            lockfile = root / "Cargo.lock"
-            original_lock = 'version = 4\n[[package]]\nname = "forge"\nversion = "1.8.2"\n'
-            lockfile.write_text(original_lock)
-            metadata = {
-                "workspace_members": ["forge"],
-                "packages": [{"id": "forge", "name": "forge", "version": "1.8.2"}],
-            }
-
-            def completed(command, root, capture_output=False):
-                if command[:2] == ["git", "tag"]:
-                    output = "v1.8.1\n"
-                elif command[0] == "cargo":
-                    output = json.dumps(metadata)
-                else:
-                    self.assertEqual(command, [str(root / "changelogs"), "version", "--dry-run"])
-                    # Promotion keeps 1.8.2 even with minor fragments; a stable
-                    # 1.8.1 baseline would instead produce 1.9.0.
-                    self.assertEqual(prepare_stable_release.workspace_version(manifest), "1.8.2-rc1")
-                    lockfile.write_text("lockfile modified by cargo metadata\n")
-                    raise subprocess.CalledProcessError(1, command)
-                return subprocess.CompletedProcess(command, returncode=0, stdout=output)
-
-            with patch.object(prepare_stable_release, "run", side_effect=completed), \
-                self.assertRaises(subprocess.CalledProcessError):
-                prepare_stable_release.prepare(root, root / "changelogs")
-
-            self.assertEqual(manifest.read_text(), original_manifest)
-            self.assertEqual(lockfile.read_text(), original_lock)
-            self.assertEqual(fragment.read_text(), "---\nforge: minor\n---\nA new feature.\n")
-
     def test_release_plan_warning_stops_before_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

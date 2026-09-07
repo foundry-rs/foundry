@@ -577,11 +577,6 @@ def prepare(
     original_changelog = changelog.read_bytes() if changelog.exists() else None
 
     baseline = stable if operation in ("stable", "start") else checked
-    if operation == "stable":
-        # The manifest owns the stable target, regardless of fragment bump levels.
-        # The pinned CLI preserves a prerelease core when promoting to stable.
-        # This temporary version is never committed or tagged.
-        baseline = f"{checked}-rc1"
     command = [str(changelogs), "version"]
     if operation in ("start", "advance"):
         command.extend(["--prerelease", "rc"])
