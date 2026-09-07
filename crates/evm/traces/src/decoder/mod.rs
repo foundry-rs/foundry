@@ -53,8 +53,9 @@ use tempo_precompiles::{
 mod monad;
 pub(crate) mod precompiles;
 
-type AddressEvents = HashMap<Address, BTreeMap<(B256, usize), Vec<Event>>>;
-type AddressAnonymousEvents = HashMap<Address, BTreeMap<usize, Vec<Event>>>;
+/// Address-scoped events keyed by signature and indexed input count; anonymous events have no
+/// signature.
+type AddressEvents = HashMap<Address, BTreeMap<(Option<B256>, usize), Vec<Event>>>;
 
 /// A decoded event with both display-formatted parameters and their underlying ABI values.
 #[derive(Debug, Default)]
@@ -251,10 +252,8 @@ pub struct CallTraceDecoder {
     ///
     /// Key is: `(topics[0], topics.len() - 1)`.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
-    /// Events identified for a specific contract address.
+    /// Regular and anonymous events identified for a specific contract address.
     events_by_address: Option<Box<AddressEvents>>,
-    /// Anonymous events identified for a specific contract address, keyed by topic count.
-    anonymous_events_by_address: Option<Box<AddressAnonymousEvents>>,
     /// Revert decoder. Contains all known custom errors.
     pub revert_decoder: RevertDecoder,
 
@@ -457,7 +456,6 @@ impl CallTraceDecoder {
             constructor_args_offsets: Default::default(),
             events,
             events_by_address: None,
-            anonymous_events_by_address: None,
             // Decode Tempo precompile custom errors by name in traces.
             revert_decoder: RevertDecoder::new().with_abis(tempo_abis.iter()),
 
@@ -493,7 +491,6 @@ impl CallTraceDecoder {
         self.non_fallback_contracts.clear();
         self.functions_by_address.clear();
         self.events_by_address = None;
-        self.anonymous_events_by_address = None;
         self.constructors_by_address.clear();
         self.constructor_args_offsets.clear();
 
@@ -570,25 +567,12 @@ impl CallTraceDecoder {
 
     /// Adds a single event to the decoder for a specific contract address.
     pub fn push_address_event(&mut self, address: Address, event: Event) {
-        if event.anonymous {
-            let events = self
-                .anonymous_events_by_address
-                .get_or_insert_with(Default::default)
-                .entry(address)
-                .or_default()
-                .entry(indexed_inputs(&event))
-                .or_default();
-            if !events.contains(&event) {
-                events.push(event);
-            }
-            return;
-        }
         let events = self
             .events_by_address
             .get_or_insert_with(Default::default)
             .entry(address)
             .or_default()
-            .entry((event.selector(), indexed_inputs(&event)))
+            .entry(((!event.anonymous).then(|| event.selector()), indexed_inputs(&event)))
             .or_default();
         if !events.contains(&event) {
             events.push(event);
@@ -1396,16 +1380,11 @@ impl CallTraceDecoder {
         canonical_signature: bool,
     ) -> DecodedEvent {
         let key = log.topics().first().map(|&topic| (topic, log.topics().len() - 1));
-        let address_events = key.and_then(|key| {
-            address
-                .and_then(|address| self.events_by_address.as_deref()?.get(&address))
-                .and_then(|events| events.get(&key))
-        });
+        let events = address.and_then(|address| self.events_by_address.as_deref()?.get(&address));
+        let address_events = key.and_then(|(topic, count)| events?.get(&(Some(topic), count)));
         let global_events = key.and_then(|key| self.events.get(&key));
         let regular_events = address_events.or(global_events);
-        let anonymous_events = address
-            .and_then(|address| self.anonymous_events_by_address.as_deref()?.get(&address))
-            .and_then(|events| events.get(&log.topics().len()));
+        let anonymous_events = events.and_then(|events| events.get(&(None, log.topics().len())));
 
         let decoded = if canonical_signature && address_events.is_none() {
             // Topic zero does not encode indexed parameter placement, so global metadata is only
@@ -1935,6 +1914,40 @@ mod tests {
             let decoded = decoder.decode_event_with_address(address, &log).await;
             assert_eq!(decoded.name.as_deref(), Some(event.name.as_str()));
             assert!(decoder.decode_event_with_address(Address::ZERO, &log).await.name.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn clearing_addresses_removes_regular_and_anonymous_events() {
+        let address = Address::from([0x12; 20]);
+        let abi = JsonAbi::parse([
+            "event ScopedValue(uint256 value)",
+            "event AnonymousValue(uint256 value) anonymous",
+        ])
+        .unwrap();
+        let mut decoder = CallTraceDecoderBuilder::new()
+            .with_address_events(address, &abi)
+            .with_address_events(address, &abi)
+            .build();
+        let global = Event::parse("event GlobalValue()").unwrap();
+        let global_log = LogData::new_unchecked(vec![global.selector()], Default::default());
+        decoder.push_event(global);
+
+        for event in abi.events() {
+            let topics = if event.anonymous { vec![] } else { vec![event.selector()] };
+            let log = LogData::new_unchecked(topics, (U256::from(7),).abi_encode().into());
+            assert_eq!(
+                decoder.decode_event_with_address(address, &log).await.name.as_deref(),
+                Some(event.name.as_str())
+            );
+
+            let mut cleared = decoder.clone();
+            cleared.clear_addresses();
+            assert!(cleared.decode_event_with_address(address, &log).await.name.is_none());
+            assert_eq!(
+                cleared.decode_event(&global_log).await.name.as_deref(),
+                Some("GlobalValue")
+            );
         }
     }
 

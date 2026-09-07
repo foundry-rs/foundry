@@ -15,13 +15,12 @@ declare_forge_lint!(
     "`nonReentrant` should be the first modifier"
 );
 
-impl<'hir> LateLintPass<'hir> for NonReentrantNotFirst {
+impl<'gcx> LateLintPass<'gcx> for NonReentrantNotFirst {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        func: &'hir hir::Function<'hir>,
+        gcx: Gcx<'gcx>,
+        func: &'gcx hir::Function<'gcx>,
     ) {
         if !matches!(
             func.kind,
@@ -29,21 +28,13 @@ impl<'hir> LateLintPass<'hir> for NonReentrantNotFirst {
         ) {
             return;
         }
-
-        func.modifiers
-            .iter()
-            .enumerate()
-            .filter(|(index, modifier)| {
-                *index != 0 && modifier_is_named(hir, modifier, "nonReentrant")
-            })
-            .for_each(|(_, modifier)| ctx.emit(&NON_REENTRANT_NOT_FIRST, modifier.span));
+        for modifier in func.modifiers.iter().skip(1) {
+            let is_non_reentrant = modifier.id.as_function().is_some_and(|id| {
+                gcx.hir.function(id).name.is_some_and(|name| name.as_str() == "nonReentrant")
+            });
+            if is_non_reentrant {
+                ctx.emit(&NON_REENTRANT_NOT_FIRST, modifier.span);
+            }
+        }
     }
-}
-
-fn modifier_is_named(hir: &hir::Hir<'_>, modifier: &hir::Modifier<'_>, name: &str) -> bool {
-    modifier.id.as_function().is_some_and(|function_id| {
-        let modifier_fn = hir.function(function_id);
-        matches!(modifier_fn.kind, FunctionKind::Modifier)
-            && modifier_fn.name.is_some_and(|ident| ident.as_str() == name)
-    })
 }

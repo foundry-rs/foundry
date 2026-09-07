@@ -101,7 +101,7 @@ use foundry_common::{
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
-    FoundryTxReceipt, FoundryTxType, FoundryTypedTx,
+    FoundryTxReceipt, FoundryTypedTx,
 };
 use futures::{
     StreamExt, TryFutureExt,
@@ -1231,6 +1231,9 @@ impl<N: Network> EthApi<N> {
             || reward_percentiles.windows(2).any(|pair| pair[0] >= pair[1])
         {
             return Err(FeeHistoryError::InvalidRewardPercentiles.into());
+        }
+        if block_count.is_zero() {
+            return Ok(FeeHistory::default());
         }
 
         // max number of blocks in the requested range
@@ -2537,6 +2540,10 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<HashMap<Address, Vec<B256>>> {
         node_info!("eth_getStorageValues");
 
+        if requests.is_empty() {
+            return Err(RpcError::invalid_params("empty request").into());
+        }
+
         let total_slots: usize = requests.values().map(|s| s.len()).sum();
         if total_slots > 1024 {
             return Err(BlockchainError::RpcError(RpcError::invalid_params(format!(
@@ -2708,11 +2715,12 @@ impl EthApi<FoundryNetwork> {
         block_number: BlockNumber,
     ) -> Result<Option<U256>> {
         node_info!("eth_getBlockTransactionCountByNumber");
-        let block_request = self.block_request(Some(block_number.into())).await?;
-        if let BlockRequest::Pending(txs) = block_request {
+        if block_number == BlockNumber::Pending {
+            let txs = self.pool.ready_transactions().collect();
             let block = self.backend.pending_block(txs).await;
             return Ok(Some(U256::from(block.block.body.transactions.len())));
         }
+
         let block = self.backend.block_by_number(block_number).await?;
         let txs = block.map(|b| match b.transactions() {
             BlockTransactions::Full(txs) => U256::from(txs.len()),
@@ -3672,6 +3680,18 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_getLogs`
     pub async fn logs(&self, filter: Filter) -> Result<Vec<Log>> {
         node_info!("eth_getLogs");
+        let best = self.backend.best_number();
+        let to_block =
+            self.backend.convert_block_number(filter.block_option.get_to_block().copied());
+        if to_block > best {
+            return Err(BlockchainError::BlockOutOfRange(best, to_block));
+        }
+        let from_block =
+            self.backend.convert_block_number(filter.block_option.get_from_block().copied());
+        if from_block > to_block {
+            return Err(RpcError::invalid_params("invalid block range params").into());
+        }
+
         self.backend.logs(filter).await
     }
 
@@ -4830,22 +4850,20 @@ impl EthApi<FoundryNetwork> {
 
         // Fill missing tx type specific fields
         if let Err((tx_type, _)) = request.missing_keys() {
-            if matches!(tx_type, FoundryTxType::Legacy | FoundryTxType::Eip2930) {
+            if tx_type.is_legacy() || tx_type.is_eip2930() {
                 request.gas_price().is_none().then(|| request.set_gas_price(self.gas_price()));
             }
-            if tx_type == FoundryTxType::Eip2930 {
+            if tx_type.is_eip2930() {
                 request
                     .access_list()
                     .is_none()
                     .then(|| request.set_access_list(Default::default()));
             }
-            if matches!(
-                tx_type,
-                FoundryTxType::Eip1559
-                    | FoundryTxType::Eip4844
-                    | FoundryTxType::Eip7702
-                    | FoundryTxType::Tempo
-            ) {
+            if tx_type.is_eip1559()
+                || tx_type.is_eip4844()
+                || tx_type.is_eip7702()
+                || tx_type.is_tempo()
+            {
                 request
                     .max_fee_per_gas()
                     .is_none()
@@ -4855,7 +4873,7 @@ impl EthApi<FoundryNetwork> {
                     .is_none()
                     .then(|| request.set_max_priority_fee_per_gas(MIN_SUGGESTED_PRIORITY_FEE));
             }
-            if tx_type == FoundryTxType::Eip4844 {
+            if tx_type.is_eip4844() {
                 request.as_ref().max_fee_per_blob_gas().is_none().then(|| {
                     request.as_mut().set_max_fee_per_blob_gas(
                         self.backend.fees().get_next_block_blob_base_fee_per_gas(),

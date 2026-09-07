@@ -10,6 +10,7 @@ on:
 
 jobs:
   bump-tempo:
+    if: github.repository == 'foundry-rs/foundry'
     runs-on: ubuntu-latest
     permissions:
       contents: write

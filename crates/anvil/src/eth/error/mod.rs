@@ -350,6 +350,11 @@ pub enum InvalidTransactionError {
     /// Tempo transaction valid_before is expired or too close to current time
     #[error("Tempo tx valid_before ({valid_before}) must be > current time + 3s ({min_allowed})")]
     TempoValidBeforeExpired { valid_before: u64, min_allowed: u64 },
+    /// Tempo expiring nonce transaction valid_before is too far in the future.
+    #[error(
+        "Tempo expiring nonce tx valid_before ({valid_before}) must be <= current time + {max_expiry_secs}s ({max_allowed})"
+    )]
+    TempoValidBeforeTooFar { valid_before: u64, max_expiry_secs: u64, max_allowed: u64 },
     /// Tempo transaction valid_after is too far in the future
     #[error("Tempo tx valid_after ({valid_after}) must be <= current time + 1h ({max_allowed})")]
     TempoValidAfterTooFar { valid_after: u64, max_allowed: u64 },

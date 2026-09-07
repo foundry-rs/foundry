@@ -25,7 +25,7 @@ use alloy_primitives::{Address, B256, ChainId, TxKind, U256, keccak256, map::Add
 use alloy_rpc_types::{BlockNumberOrTag, BlockTransactions};
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
-use foundry_evm_networks::NetworkConfigs;
+use foundry_evm_networks::{NetworkConfigs, apply_bsc_p256_precompile};
 pub use foundry_fork_db::{
     BlockchainDb, ForkBlock, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta,
 };
@@ -1022,12 +1022,9 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     ) -> eyre::Result<ResultAndState<HaltReasonFor<FEN>>> {
         self.initialize(evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind());
         let factory = FEN::EvmFactory::default();
-        let mut evm = factory.create_foundry_evm_with_inspector(
-            self,
-            evm_env.to_owned(),
-            chain_context,
-            inspector,
-        );
+        let mut evm =
+            factory.create_foundry_evm_with_inspector(self, evm_env.to_owned(), inspector);
+        *evm.chain_mut() = chain_context;
         let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
 
         *tx_env = evm.tx().clone();
@@ -2263,8 +2260,8 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             let depth = journaled_state.depth + 1;
             let factory = FEN::EvmFactory::default();
             let chain_context = self.chain_context_for_synthetic_transaction(&tx_env)?;
-            let mut evm =
-                factory.create_foundry_nested_evm(&mut db, evm_env, chain_context, inspector);
+            let mut evm = factory.create_foundry_nested_evm(&mut db, evm_env, inspector);
+            *evm.chain_mut() = chain_context;
             evm.journal_inner_mut().depth = depth;
             evm.transact_raw(tx_env)?
         };
@@ -3192,12 +3189,9 @@ fn commit_transaction<FEN: FoundryEvmNetwork>(
             Backend::new_with_fork(fork_id, fork, journaled_state, networks)?;
         db.fork_block_number_override = Some(rpc_block_number);
 
-        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
-            &mut db,
-            evm_env,
-            chain_context,
-            inspector,
-        );
+        let mut evm =
+            FEN::EvmFactory::default().create_foundry_nested_evm(&mut db, evm_env, inspector);
+        *evm.chain_mut() = chain_context;
         evm.journal_inner_mut().depth = depth + 1;
         evm.transact_raw(tx_env).wrap_err("backend: failed committing transaction")?
     };
@@ -3260,7 +3254,7 @@ fn inject_replay_precompiles(
     timestamp: u64,
 ) {
     networks.inject_precompiles(precompiles);
-    networks.inject_chain_precompiles(precompiles, chain_id, timestamp);
+    apply_bsc_p256_precompile(precompiles, chain_id, timestamp);
 }
 
 #[cfg(test)]

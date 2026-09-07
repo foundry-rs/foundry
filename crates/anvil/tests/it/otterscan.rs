@@ -373,7 +373,7 @@ async fn ots_get_block_transactions() {
         assert!(result.receipts.len() <= page_size);
         let len = result.receipts.len();
         assert!(len <= page_size);
-        assert!(result.fullblock.transaction_count == result.receipts.len());
+        assert_eq!(result.fullblock.transaction_count, 10);
 
         result.receipts.iter().enumerate().for_each(|(i, receipt)| {
             let expected = hashes.pop_front();

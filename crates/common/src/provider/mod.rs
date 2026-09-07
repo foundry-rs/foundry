@@ -192,14 +192,21 @@ impl<N: Network> ProviderBuilder<N> {
     /// Defaults to `http://localhost:8545` and `Mainnet`.
     pub fn from_config(config: &Config) -> Result<Self> {
         let url = config.get_rpc_url_or_localhost_http()?;
-        let mut builder = Self::new(url.as_ref())
-            .accept_invalid_certs(config.eth_rpc_accept_invalid_certs)
-            .no_proxy(config.eth_rpc_no_proxy)
-            .curl_mode(config.eth_rpc_curl);
+        let mut builder = Self::from_config_with_url(config, url.as_ref())?;
 
         if let Ok(chain) = config.chain.unwrap_or_default().try_into() {
             builder = builder.chain(chain);
         }
+
+        Ok(builder)
+    }
+
+    /// Constructs a [ProviderBuilder] for `url`, applying transport options from [Config].
+    pub fn from_config_with_url(config: &Config, url: &str) -> Result<Self> {
+        let mut builder = Self::new(url)
+            .accept_invalid_certs(config.eth_rpc_accept_invalid_certs)
+            .no_proxy(config.eth_rpc_no_proxy)
+            .curl_mode(config.eth_rpc_curl);
 
         if let Some(jwt) = config.get_rpc_jwt_secret()? {
             builder = builder.jwt(jwt.as_ref());
@@ -703,6 +710,7 @@ mod tests {
     fn from_config_applies_rpc_transport_options() {
         let config = Config {
             eth_rpc_url: Some("http://example.com".to_string()),
+            chain: Some(NamedChain::Polygon.into()),
             eth_rpc_accept_invalid_certs: true,
             eth_rpc_no_proxy: true,
             eth_rpc_timeout: Some(7),
@@ -714,5 +722,24 @@ mod tests {
         assert!(builder.accept_invalid_certs);
         assert!(builder.no_proxy);
         assert_eq!(builder.timeout, Duration::from_secs(7));
+        assert_eq!(builder.chain, NamedChain::Polygon);
+    }
+
+    #[test]
+    fn from_config_with_url_overrides_rpc_url() {
+        let config = Config {
+            eth_rpc_url: Some("http://configured.example".to_string()),
+            chain: Some(NamedChain::Polygon.into()),
+            eth_rpc_timeout: Some(7),
+            ..Default::default()
+        };
+
+        let builder =
+            ProviderBuilder::<AnyNetwork>::from_config_with_url(&config, "http://sequence.example")
+                .unwrap();
+
+        assert_eq!(builder.url.unwrap().as_str(), "http://sequence.example/");
+        assert_eq!(builder.timeout, Duration::from_secs(7));
+        assert_eq!(builder.chain, NamedChain::Mainnet);
     }
 }

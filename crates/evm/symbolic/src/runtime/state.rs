@@ -209,6 +209,8 @@ impl PathState {
         // semantics unless the callee sets its own prank.
         child.prank = SymbolicPrank::default();
         child.loop_jumps.clear();
+        child.expected_revert = None;
+        child.assume_no_revert_next_call = None;
         child
     }
 
@@ -217,8 +219,6 @@ impl PathState {
         child.storage_hook_active = true;
         child.recorded_logs = None;
         child.access_record = None;
-        child.expected_revert = None;
-        child.assume_no_revert_next_call = None;
         child.expected_emit = None;
         child.expected_calls.clear();
         child.expected_creates.clear();
@@ -417,6 +417,14 @@ impl PathState {
         self.expected_creates = reverted.expected_creates;
         self.call_mocks = reverted.call_mocks;
         self.function_mocks = reverted.function_mocks;
+    }
+
+    /// Returns `true` if a successful path can be materialized into a fuzz corpus seed.
+    ///
+    /// Gas-dependent constraints are never modeled, so a seed for such a path would carry a
+    /// fabricated `gasleft()` value; skip the seed rather than failing the whole run.
+    pub(crate) fn can_seed_success_input(&self) -> bool {
+        !self.constraints.iter().any(SymBoolExpr::contains_gasleft)
     }
 
     pub(crate) const fn satisfies_branch_target(&self) -> bool {
@@ -1075,7 +1083,7 @@ impl ExpectedCall {
             gas,
             min_gas,
             data,
-            expected: count.unwrap_or(1).max(1),
+            expected: count.unwrap_or(1),
             observed: 0,
             exact: count.is_some(),
         }
@@ -1137,11 +1145,34 @@ impl ExpectedCall {
     }
 }
 
+/// Registers an expected call using the concrete cheatcode's keyed-additive semantics.
+pub(crate) fn register_expected_call(
+    expected_calls: &mut Vec<ExpectedCall>,
+    cx: &mut SymCx,
+    expected: ExpectedCall,
+) -> Result<(), &'static str> {
+    if let Some(existing) = expected_calls
+        .iter_mut()
+        .find(|call| call.callee == expected.callee && call.data.same_bytes(cx, &expected.data))
+    {
+        if expected.exact {
+            return Err("counted expected calls can only bet set once");
+        }
+        if existing.exact {
+            return Err("cannot overwrite a counted expectCall with a non-counted expectCall");
+        }
+        existing.expected += 1;
+    } else {
+        expected_calls.push(expected);
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CallMock {
-    callee: SymExpr,
+    pub(crate) callee: SymExpr,
     value: Option<U256>,
-    data: SymBytes,
+    pub(crate) data: SymBytes,
     returns: Vec<SymReturnData>,
     reverts: bool,
     calls: usize,
@@ -2280,6 +2311,91 @@ fn symbolic_storage_symbol(cx: &mut SymCx, address: Address, key: &SymExpr) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expected_call_zero_count_is_satisfied_only_if_call_never_happens() {
+        let mut cx = SymCx::new();
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+
+        // vm.expectCall(callee, data, 0) - the call must NEVER happen.
+        let mut never_called =
+            ExpectedCall::new(callee.clone(), None, None, None, data.clone(), Some(0));
+        // If the forbidden call never occurs, the expectation is satisfied.
+        assert!(never_called.is_satisfied());
+
+        // A forbidden call is rejected without incrementing the observed count.
+        assert!(!never_called.observe());
+        assert!(never_called.is_satisfied());
+
+        // Sanity check: an exact count=1 expectation still behaves as before.
+        let mut called_once = ExpectedCall::new(callee, None, None, None, data, Some(1));
+        assert!(!called_once.is_satisfied());
+        assert!(called_once.observe());
+        assert!(called_once.is_satisfied());
+        // A second call beyond the exact count of 1 must be rejected.
+        assert!(!called_once.observe());
+    }
+
+    #[test]
+    fn duplicate_non_counted_expect_call_merges_additively() {
+        let mut cx = SymCx::new();
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+        let mut expected_calls = Vec::new();
+        let first = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), None);
+        let second = ExpectedCall::new(callee, None, None, None, data, None);
+
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, first), Ok(()));
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, second), Ok(()));
+        assert_eq!(expected_calls.len(), 1);
+        assert_eq!(expected_calls[0].expected, 2);
+        assert!(expected_calls[0].observe());
+        assert!(!expected_calls[0].is_satisfied());
+        assert!(expected_calls[0].observe());
+        assert!(expected_calls[0].is_satisfied());
+    }
+
+    #[test]
+    fn duplicate_counted_expect_call_is_rejected() {
+        let mut cx = SymCx::new();
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+        let mut expected_calls = Vec::new();
+        let first = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), Some(3));
+        let counted = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), Some(5));
+        let non_counted = ExpectedCall::new(callee, None, None, None, data, None);
+
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, first), Ok(()));
+        assert_eq!(
+            register_expected_call(&mut expected_calls, &mut cx, counted),
+            Err("counted expected calls can only bet set once")
+        );
+        assert_eq!(
+            register_expected_call(&mut expected_calls, &mut cx, non_counted),
+            Err("cannot overwrite a counted expectCall with a non-counted expectCall")
+        );
+        assert_eq!(expected_calls.len(), 1);
+        assert_eq!(expected_calls[0].expected, 3);
+    }
+
+    #[test]
+    fn counted_expect_call_over_existing_non_counted_is_rejected() {
+        let mut cx = SymCx::new();
+        let callee = SymExpr::zero(&mut cx);
+        let data = SymBytes::empty(&mut cx);
+        let mut expected_calls = Vec::new();
+        let first = ExpectedCall::new(callee.clone(), None, None, None, data.clone(), None);
+        let counted = ExpectedCall::new(callee, None, None, None, data, Some(2));
+
+        assert_eq!(register_expected_call(&mut expected_calls, &mut cx, first), Ok(()));
+        assert_eq!(
+            register_expected_call(&mut expected_calls, &mut cx, counted),
+            Err("counted expected calls can only bet set once")
+        );
+        assert_eq!(expected_calls.len(), 1);
+        assert_eq!(expected_calls[0].expected, 1);
+    }
 
     #[test]
     fn reverted_top_level_effects_preserve_storage_hook_registrations() {

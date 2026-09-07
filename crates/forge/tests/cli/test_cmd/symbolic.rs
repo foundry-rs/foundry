@@ -652,6 +652,67 @@ contract SymbolicBoundedCarry {
     assert_eq!(result["symbolic"]["replay"]["status"], "confirmed");
 });
 
+forgetest_init!(symbolic_proves_fixed_point_fee_bounds, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_proves_fixed_point_fee_bounds because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicFixedPointFee.t.sol",
+        r#"
+library FixedPointMathLib {
+    function mulWad(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        assembly {
+            if gt(x, div(not(0), y)) {
+                if y { revert(0, 0) }
+            }
+            z := div(mul(x, y), 1000000000000000000)
+        }
+    }
+}
+
+contract SymbolicFixedPointFee {
+    uint256 constant WAD = 1e18;
+    uint256 constant RATE = 3e15;
+
+    function checkMinimumFee(uint128 amount, uint128 minimum) public pure {
+        uint256 fee = FixedPointMathLib.mulWad(amount, RATE);
+        if (fee >= minimum) {
+            unchecked {
+                assert(uint256(amount) * RATE >= uint256(minimum) * WAD);
+            }
+        }
+    }
+
+    function checkMaximumFee(uint128 amount, uint128 maximum) public pure {
+        uint256 fee = FixedPointMathLib.mulWad(amount, RATE);
+        if (fee <= maximum) {
+            unchecked {
+                assert(uint256(amount) * RATE < (uint256(maximum) + 1) * WAD);
+            }
+        }
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .args(["test", "--symbolic", "--json", "--match-contract", "SymbolicFixedPointFee"])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    for signature in ["checkMinimumFee(uint128,uint128)", "checkMaximumFee(uint128,uint128)"] {
+        let result = json_test_result(&output, signature);
+        assert_eq!(result["symbolic"]["status"], "pass");
+        assert_eq!(result["symbolic"]["solver"]["stats"]["heuristic_witnesses"], 0);
+    }
+});
+
 forgetest_init!(symbolic_proves_saturating_mul_equivalence, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -2567,6 +2628,8 @@ forgetest_init!(symbolic_json_reports_minimized_sequence_counterexample, |prj, c
         return;
     }
 
+    // `check_interval = 0` makes the symbolic engine check the invariant only at the terminal
+    // depth, so the symbolic sequence budget is kept at two calls to stay within `max_paths`.
     prj.add_test(
         "SymbolicInvariantSequenceMinimize.t.sol",
         r#"
@@ -2606,6 +2669,7 @@ contract SymbolicInvariantSequenceMinimize is Test {
         targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
     }
 
+    /// forge-config: default.symbolic.invariant_depth = 2
     /// forge-config: default.invariant.runs = 1
     /// forge-config: default.invariant.depth = 20
     /// forge-config: default.invariant.check_interval = 0
@@ -4599,6 +4663,83 @@ symbolic svm.create integer bits
         &stdout,
         foundry_test_utils::str![[r#"
 symbolic prank delegatecall
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_invalid_jumps_revert_current_frame, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_invalid_jumps_revert_current_frame because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicInvalidJump.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicInvalidJump is Test {
+    address constant INVALID_JUMP = address(0x1000);
+    address constant INVALID_JUMPI = address(0x2000);
+    address constant SYMBOLIC_DESTINATION = address(0x3000);
+
+    function setUp() public {
+        vm.etch(INVALID_JUMP, hex"6001600055600856");
+        vm.etch(INVALID_JUMPI, hex"60003560085700");
+        vm.etch(SYMBOLIC_DESTINATION, hex"6020356000355700");
+    }
+
+    function checkInvalidJumpRevertsFrame(uint256) public {
+        (bool ok, bytes memory data) = INVALID_JUMP.call("");
+        assertFalse(ok);
+        assertEq(data.length, 0);
+        assertEq(vm.load(INVALID_JUMP, bytes32(0)), bytes32(0));
+    }
+
+    function checkUntakenInvalidJumpiFallsThrough(uint256) public {
+        (bool ok, bytes memory data) = INVALID_JUMPI.call(abi.encode(uint256(0)));
+        assertTrue(ok);
+        assertEq(data.length, 0);
+    }
+
+    function checkTakenInvalidJumpiRevertsFrame(uint256 condition) public {
+        vm.assume(condition != 0);
+        (bool ok, bytes memory data) = INVALID_JUMPI.call(abi.encode(condition));
+        assertFalse(ok);
+        assertEq(data.length, 0);
+    }
+
+    function checkSymbolicInvalidJumpiBranches(uint256 condition) public {
+        (bool ok, bytes memory data) = INVALID_JUMPI.call(abi.encode(condition));
+        assertEq(ok, condition == 0);
+        assertEq(data.length, 0);
+    }
+
+    function checkUntakenJumpiIgnoresSymbolicDestination(uint256 destination) public {
+        (bool ok, bytes memory data) =
+            SYMBOLIC_DESTINATION.call(abi.encode(destination, uint256(0)));
+        assertTrue(ok);
+        assertEq(data.length, 0);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicInvalidJump"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkInvalidJumpRevertsFrame(uint256)
+[PASS] checkSymbolicInvalidJumpiBranches(uint256)
+[PASS] checkTakenInvalidJumpiRevertsFrame(uint256)
+[PASS] checkUntakenInvalidJumpiFallsThrough(uint256)
+[PASS] checkUntakenJumpiIgnoresSymbolicDestination(uint256)
 "#]],
     );
 });

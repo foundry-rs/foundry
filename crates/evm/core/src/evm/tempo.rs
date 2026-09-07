@@ -53,7 +53,6 @@ impl FoundryEvmFactory for TempoEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let is_forked = db.is_forked_mode();
@@ -65,8 +64,6 @@ impl FoundryEvmFactory for TempoEvmFactory {
             tempo_evm.cfg.tx_gas_limit_cap = spec.tx_gas_limit_cap();
         }
 
-        let networks = tempo_evm.inspector().get_networks();
-        networks.inject_precompiles(tempo_evm.precompiles_mut());
         // Re-extend Tempo precompiles, preserving shared non-creditable slots.
         let cfg = tempo_evm.cfg.clone();
         let non_creditable_slots = tempo_evm.non_creditable_slots();
@@ -85,13 +82,9 @@ impl FoundryEvmFactory for TempoEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> NestedEvmFor<'db, Self> {
-        Box::new(
-            self.create_foundry_evm_with_inspector(db, evm_env, chain_context, inspector)
-                .into_inner(),
-        )
+        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
     }
 }
 

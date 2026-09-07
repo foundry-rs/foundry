@@ -1,6 +1,7 @@
 use alloy_evm::{
     EthEvm, EthEvmFactory, Evm, EvmEnv, EvmFactory, eth::EthEvmContext, precompiles::PrecompilesMap,
 };
+use foundry_evm_networks::apply_bsc_p256_precompile;
 use foundry_fork_db::DatabaseError;
 use revm::{
     context::{
@@ -49,7 +50,6 @@ impl FoundryEvmFactory for EthEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv,
-        _chain_context: Self::Chain,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
         let chain_id = evm_env.cfg_env.chain_id;
@@ -58,7 +58,7 @@ impl FoundryEvmFactory for EthEvmFactory {
         eth_evm.cfg.tx_chain_id_check = true;
         let networks = eth_evm.inspector().get_networks();
         networks.inject_precompiles(eth_evm.precompiles_mut());
-        networks.inject_chain_precompiles(eth_evm.precompiles_mut(), chain_id, timestamp);
+        apply_bsc_p256_precompile(eth_evm.precompiles_mut(), chain_id, timestamp);
         eth_evm
     }
 
@@ -66,13 +66,9 @@ impl FoundryEvmFactory for EthEvmFactory {
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv,
-        chain_context: Self::Chain,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> NestedEvmFor<'db, Self> {
-        Box::new(
-            self.create_foundry_evm_with_inspector(db, evm_env, chain_context, inspector)
-                .into_inner(),
-        )
+        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
     }
 }
 

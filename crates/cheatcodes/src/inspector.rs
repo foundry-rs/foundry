@@ -193,7 +193,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         #[cfg(feature = "monad")]
         let mut reserve_balance = None;
         with_cloned_context(ecx, |db, evm_env, journaled_state| {
-            let mut evm = factory.create_foundry_nested_evm(db, evm_env, chain_context, cheats);
+            let mut evm = factory.create_foundry_nested_evm(db, evm_env, cheats);
+            *evm.chain_mut() = chain_context;
             *evm.journal_inner_mut() = journaled_state;
             #[cfg(feature = "monad")]
             {
@@ -230,12 +231,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         chain_context: ChainFor<FEN>,
         f: NestedEvmClosureFor<'_, FEN>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
-        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
-            db,
-            evm_env,
-            chain_context,
-            cheats,
-        );
+        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, cheats);
+        *evm.chain_mut() = chain_context;
         f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }
