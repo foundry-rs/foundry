@@ -1424,15 +1424,10 @@ contract SymbolicNativeOnlyIncomplete {
     let symbolic = &result["symbolic"];
     assert_eq!(symbolic["status"], "incomplete");
     assert_eq!(symbolic["incomplete"]["kind"], "timeout");
-    assert!(
-        symbolic["incomplete"]["reason"]
-            .as_str()
-            .unwrap()
-            .contains("hard arithmetic heuristic witness used")
-    );
+    assert_eq!(symbolic["incomplete"]["reason"], "solver returned unknown");
     assert_eq!(symbolic["solver"]["name"], "native");
     assert!(symbolic["solver"]["command"].is_null());
-    assert!(symbolic["solver"]["stats"]["heuristic_witnesses"].as_u64().unwrap() >= 1);
+    assert!(symbolic["solver"]["stats"]["solver_queries"].as_u64().unwrap() >= 1);
     assert_eq!(symbolic["solver"]["stats"]["smt_queries"], 0);
     assert_eq!(symbolic["solver"]["stats"]["smt_input_bytes"], 0);
     assert_eq!(symbolic["replay"]["status"], "not_required");
