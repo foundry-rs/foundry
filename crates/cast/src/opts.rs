@@ -1466,7 +1466,6 @@ pub fn parse_slot(s: &str) -> Result<B256> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::SimpleCast;
     use clap::CommandFactory;
 
     #[test]
@@ -1552,8 +1551,8 @@ mod tests {
                     "__$_$__$$$$$__$$_$$$_$$__$$___$$(address,address,uint256)".to_string()
                 );
 
-                let selector = SimpleCast::get_selector(&sig, 0).unwrap();
-                assert_eq!(selector.0, "0x23b872dd".to_string());
+                let selector = foundry_common::abi::get_func(&sig).unwrap().selector();
+                assert_eq!(selector.to_string(), "0x23b872dd");
             }
             _ => unreachable!(),
         };

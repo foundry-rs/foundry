@@ -1174,6 +1174,207 @@ fn memory_symbolic_write_after_concrete_overwrite_still_applies() {
 }
 
 #[test]
+fn memory_dynamic_read_finds_symbolic_write_with_no_concrete_write_at_all() {
+    // Symbolic stores do not extend the materialized region.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let write_offset = SymExpr::var(&mut cx, "write_offset");
+    let byte = SymExpr::var(&mut cx, "byte");
+    memory.store_byte_offset(&mut cx, write_offset, byte);
+
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.byte_dynamic_with_delta(&mut cx, &read_offset, 0);
+
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("write_offset".to_string(), U256::from(500)),
+            ("read_offset".to_string(), U256::from(500)),
+            ("byte".to_string(), U256::from(0xcd)),
+        ],
+    );
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0xcd));
+}
+
+#[test]
+fn memory_dynamic_read_finds_symbolic_write_beyond_concretely_materialized_region() {
+    // A symbolic store beyond a concrete region must remain visible.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let concrete = SymExpr::constant(&mut cx, U256::from(0xaa));
+    memory.store_byte(&mut cx, 0x20, concrete); // establishes a small materialized_size
+
+    let write_offset = SymExpr::var(&mut cx, "write_offset");
+    let byte = SymExpr::var(&mut cx, "byte");
+    memory.store_byte_offset(&mut cx, write_offset, byte); // symbolic offset, well past 0x20
+
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.byte_dynamic_with_delta(&mut cx, &read_offset, 0);
+
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("write_offset".to_string(), U256::from(0x200)),
+            ("read_offset".to_string(), U256::from(0x200)),
+            ("byte".to_string(), U256::from(0xef)),
+        ],
+    );
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0xef));
+}
+
+#[test]
+fn memory_load_word_offset_dynamic_finds_symbolic_write_beyond_materialized_region() {
+    // Exercise the same case through MLOAD.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let concrete = SymExpr::constant(&mut cx, U256::from(0xaa));
+    memory.store_byte(&mut cx, 0x20, concrete);
+
+    let write_offset = SymExpr::var(&mut cx, "write_offset");
+    let word = SymExpr::var(&mut cx, "word");
+    memory.store_word_offset(&mut cx, write_offset, word);
+
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.load_word_offset(&mut cx, read_offset).unwrap();
+
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("write_offset".to_string(), U256::from(0x200)),
+            ("read_offset".to_string(), U256::from(0x200)),
+            ("word".to_string(), U256::from(0x1234)),
+        ],
+    );
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0x1234));
+}
+
+#[test]
+fn memory_dynamic_read_finds_write_at_const_evaluable_but_undispatched_concrete_offset() {
+    // eval() resolves this offset, but as_const() does not; the store remains symbolic.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let (write_offset, concrete_write_offset) = undispatched_concrete_offset(&mut cx, 1);
+
+    let write_byte = SymExpr::constant(&mut cx, U256::from(0xef));
+    memory.store_byte_offset(&mut cx, write_offset, write_byte);
+
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.byte_dynamic_with_delta(&mut cx, &read_offset, 0);
+
+    let model = symbolic_model(&mut cx, [("read_offset".to_string(), concrete_write_offset)]);
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0xef));
+}
+
+#[test]
+fn memory_load_word_offset_dynamic_finds_write_at_const_evaluable_but_undispatched_concrete_offset()
+{
+    // MLOAD must find const-evaluable writes beyond the concrete region.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let filler = SymExpr::constant(&mut cx, U256::from(0xaa));
+    memory.store_byte(&mut cx, 31, filler); // establishes materialized_size = 32
+
+    let (write_offset, concrete_write_offset) = undispatched_concrete_offset(&mut cx, 2);
+
+    let write_byte = SymExpr::constant(&mut cx, U256::from(0xef));
+    memory.store_byte_offset(&mut cx, write_offset, write_byte);
+
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.load_word_offset(&mut cx, read_offset).unwrap();
+
+    let model = symbolic_model(&mut cx, [("read_offset".to_string(), concrete_write_offset)]);
+    let mut expected_bytes = [0u8; 32];
+    expected_bytes[0] = 0xef;
+    let expected = U256::from_be_bytes(expected_bytes);
+    assert_eq!(loaded.eval_model(&model).unwrap(), expected);
+}
+
+/// Builds a const-evaluable offset in 0..=255 that does not fold to a literal.
+fn undispatched_concrete_offset(cx: &mut SymCx, seed: u64) -> (SymExpr, U256) {
+    let preimage = SymExpr::constant(cx, U256::from(seed));
+    let len = SymExpr::constant(cx, U256::from(1));
+    let name = stable_symbol(cx, "test-keccak-offset", &seed.to_be_bytes());
+    let keccak = SymExpr::keccak_symbol(cx, name, len, vec![preimage]);
+    let mask = SymExpr::constant(cx, U256::from(0xff));
+    let offset = SymExpr::binop(cx, SymBinOp::And, keccak, mask);
+    assert!(offset.as_const().is_none(), "must not fold to a literal Const at construction");
+    let value = offset.eval().expect("Keccak(const) & 0xff is fully evaluable with no free vars");
+    (offset, value)
+}
+
+#[test]
+fn memory_dynamic_read_finds_write_straddling_the_materialized_boundary() {
+    // A write starting inside the materialized region can still extend beyond it.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let (write_offset, offset_value) = undispatched_concrete_offset(&mut cx, 3);
+    let offset_usize = usize::try_from(offset_value).unwrap();
+
+    // The concrete store materializes only the start of the later word write.
+    let filler = SymExpr::constant(&mut cx, U256::from(0xaa));
+    memory.store_byte(&mut cx, offset_usize + 1, filler);
+
+    let write_word = SymExpr::var(&mut cx, "write_word");
+    memory.store_word_offset(&mut cx, write_offset, write_word);
+
+    // Memory expands in 32-byte words; the marker must cross that rounded boundary.
+    let materialized_end = (offset_usize + 2).next_multiple_of(32);
+    assert!(offset_usize < materialized_end);
+    assert!(offset_usize + 31 >= materialized_end);
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.byte_dynamic_with_delta(&mut cx, &read_offset, 0);
+
+    let mut write_word_bytes = [0u8; 32];
+    write_word_bytes[31] = 0xab;
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("read_offset".to_string(), offset_value + U256::from(31)),
+            ("write_word".to_string(), U256::from_be_bytes(write_word_bytes)),
+        ],
+    );
+    assert_eq!(loaded.eval_model(&model).unwrap(), U256::from(0xab));
+}
+
+#[test]
+fn memory_load_word_offset_dynamic_word_read_includes_pseudo_concrete_write_past_materialized_size()
+{
+    // The stored byte must be visible at index 24 of a dynamic word read.
+    let mut cx = SymCx::new();
+    let mut memory = SymMemory::default();
+
+    let filler = SymExpr::constant(&mut cx, U256::from(0xaa));
+    memory.store_byte(&mut cx, 31, filler); // establishes materialized_size = 32
+
+    // Keep offset - 24 nonnegative.
+    let (keccak_masked, _) = undispatched_concrete_offset(&mut cx, 4);
+    let high_bit = SymExpr::constant(&mut cx, U256::from(0x80));
+    let write_offset = SymExpr::binop(&mut cx, SymBinOp::Or, keccak_masked, high_bit);
+    assert!(write_offset.as_const().is_none(), "must not fold to a literal Const at construction");
+    let offset_value = write_offset.eval().expect("offset is fully evaluable with no free vars");
+    assert!(offset_value >= U256::from(0x80));
+
+    let write_byte = SymExpr::constant(&mut cx, U256::from(0xef));
+    memory.store_byte_offset(&mut cx, write_offset, write_byte);
+
+    let read_offset = SymExpr::var(&mut cx, "read_offset");
+    let loaded = memory.load_word_offset(&mut cx, read_offset).unwrap();
+
+    let model =
+        symbolic_model(&mut cx, [("read_offset".to_string(), offset_value - U256::from(24))]);
+    let mut expected_bytes = [0u8; 32];
+    expected_bytes[24] = 0xef;
+    let expected = U256::from_be_bytes(expected_bytes);
+    assert_eq!(loaded.eval_model(&model).unwrap(), expected);
+}
+
+#[test]
 fn memory_store_byte_accepts_symbolic_offsets() {
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();

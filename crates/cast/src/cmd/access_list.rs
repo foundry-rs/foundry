@@ -1,10 +1,8 @@
 use super::auth::confirm_and_build;
-use crate::{
-    Cast,
-    tx::{CastTxBuilder, read_only_sender},
-};
+use crate::tx::{CastTxBuilder, read_only_sender};
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, Network};
+use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
@@ -12,7 +10,7 @@ use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
     utils::LoadConfig,
 };
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder, shell};
 use foundry_wallets::{BrowserWalletOpts, WalletOpts};
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
@@ -95,7 +93,24 @@ impl AccessListArgs {
             return Ok(());
         };
 
-        let access_list = Cast::new(&provider).access_list(&tx, block).await?;
+        let access_list =
+            provider.create_access_list(&tx).block_id(block.unwrap_or_default()).await?;
+        let access_list = if shell::is_json() {
+            serde_json::to_string(&access_list)?
+        } else {
+            let mut s =
+                vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
+            for al in access_list.access_list.0 {
+                s.push(format!("- address: {}", al.address.to_checksum(None)));
+                if !al.storage_keys.is_empty() {
+                    s.push("  keys:".to_string());
+                    for key in al.storage_keys {
+                        s.push(format!("    {key:?}"));
+                    }
+                }
+            }
+            s.join("\n")
+        };
         sh_println!("{access_list}")?;
         Ok(())
     }
