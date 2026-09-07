@@ -217,7 +217,7 @@ jobs:
 
   deny:
     needs: cargo-cooldown
-    uses: tempoxyz/gh-actions/.github/workflows/rust-lint.yml@9b0664503f535261c1d4af0aadf0098bb7cbf26f # main
+    uses: tempoxyz/gh-actions/.github/workflows/rust-lint.yml@5aecd9fd9dca5935851b94f7cb853465e7f9158f # main
     permissions:
       contents: read
     secrets:
@@ -258,10 +258,12 @@ jobs:
 
   workflow-validation:
     name: Workflow Validation
-    uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@483bda4a2a4b5e04a51edff03768c1590d271f80 # main
+    uses: tempoxyz/gh-actions/.github/workflows/scan-github-actions.yml@5aecd9fd9dca5935851b94f7cb853465e7f9158f # main
     permissions:
       actions: read
       contents: read
+    secrets:
+      STEP_SECURITY_API_KEY: ${{ secrets.STEP_SECURITY_API_KEY }}
     with:
       pinact: true
 
