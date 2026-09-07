@@ -534,9 +534,7 @@ impl<'gcx> Analyzer<'gcx> {
             let floor = floor.and_then(|f| f.get(r)).copied().unwrap_or(0);
             count > floor
         };
-        let Some(rep) =
-            candidates.into_iter().find(|r| is_fresh(r, &self.state.repayments))
-        else {
+        let Some(rep) = candidates.into_iter().find(|r| is_fresh(r, &self.state.repayments)) else {
             return false;
         };
         match self.state.repayments.get_mut(&rep) {
