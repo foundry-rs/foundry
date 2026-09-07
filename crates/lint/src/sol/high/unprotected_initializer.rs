@@ -6,6 +6,7 @@ use crate::{
         analysis::{builtins, function_ids, is_builtin, runtime_entry_points},
     },
 };
+use alloy_primitives::map::HashSet;
 use solar::{
     ast::{ContractKind, DataLocation, StateMutability},
     interface::{kw, sym},
@@ -24,15 +25,14 @@ declare_forge_lint!(
     "upgradeable initializer is not protected against direct implementation calls"
 );
 
-impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
+impl<'gcx> LateLintPass<'gcx> for UnprotectedInitializer {
     fn check_nested_contract(
         &mut self,
         ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
+        gcx: Gcx<'gcx>,
         contract_id: ContractId,
     ) {
-        let contract = hir.contract(contract_id);
+        let contract = gcx.hir.contract(contract_id);
         if contract.kind != ContractKind::Contract || contract.linearization_failed() {
             return;
         }
@@ -42,34 +42,41 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
         // fallback/receive functions.
         let entries = runtime_entry_points(gcx, contract_id);
 
-        let upgradeable =
-            bases.iter().any(|&cid| hir.contract(cid).name.as_str() == "Initializable")
-                || entries.iter().any(|&fid| has_initializer_modifier(hir, hir.function(fid)));
-        let locked = bases.iter().filter_map(|&cid| hir.contract(cid).ctor).any(|ctor| {
-            reaches(hir, bases, ctor, |expr| {
+        let upgradeable = bases
+            .iter()
+            .any(|&cid| gcx.hir.contract(cid).name.as_str() == "Initializable")
+            || entries.iter().any(|&fid| has_initializer_modifier(&gcx.hir, gcx.hir.function(fid)));
+        if !upgradeable {
+            return;
+        }
+        let locked = bases.iter().filter_map(|&cid| gcx.hir.contract(cid).ctor).any(|ctor| {
+            reaches(gcx, bases, ctor, |expr| {
                 let ExprKind::Call(callee, ..) = &expr.kind else { return false };
-                callees(hir, callee, bases).into_iter().any(|fid| {
-                    let func = hir.function(fid);
+                callees(&gcx.hir, callee, bases).into_iter().any(|fid| {
+                    let func = gcx.hir.function(fid);
                     func.contract.is_some_and(|cid| bases.contains(&cid))
                         && func.name.is_some_and(|name| name.as_str() == "_disableInitializers")
                 })
             })
         });
+        if locked {
+            return;
+        }
         let destructive = entries.iter().any(|&fid| {
-            !has_modifier_named(hir, hir.function(fid), "onlyProxy")
-                && reaches(hir, bases, fid, is_destructive_call)
+            !has_modifier_named(&gcx.hir, gcx.hir.function(fid), "onlyProxy")
+                && reaches(gcx, bases, fid, is_destructive_call)
         });
-        if !upgradeable || locked || !destructive {
+        if !destructive {
             return;
         }
 
         for fid in entries {
-            let func = hir.function(fid);
+            let func = gcx.hir.function(fid);
             if func.is_part_of_external_interface()
                 && !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
-                && has_initializer_modifier(hir, func)
-                && !has_modifier_named(hir, func, "onlyProxy")
-                && reaches(hir, bases, fid, |expr| writes_state(gcx, expr))
+                && has_initializer_modifier(&gcx.hir, func)
+                && !has_modifier_named(&gcx.hir, func, "onlyProxy")
+                && reaches(gcx, bases, fid, |expr| writes_state(gcx, expr))
             {
                 ctx.emit(&UNPROTECTED_INITIALIZER, func.name.map_or(func.span, |name| name.span));
             }
@@ -92,48 +99,48 @@ fn has_modifier_named(hir: &hir::Hir<'_>, func: &hir::Function<'_>, name: &str) 
 
 /// True if `hit` matches an expression in `fid`'s body or, transitively, in the body of any
 /// internal function it calls.
-fn reaches<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    bases: &'hir [ContractId],
+fn reaches<'gcx>(
+    gcx: Gcx<'gcx>,
+    bases: &'gcx [ContractId],
     fid: FunctionId,
-    hit: impl FnMut(&'hir Expr<'hir>) -> bool,
+    hit: impl FnMut(&'gcx Expr<'gcx>) -> bool,
 ) -> bool {
-    Reach { hir, bases, stack: Vec::new(), hit }.visit_function_body(fid).is_break()
+    Reach { gcx, bases, visited: HashSet::default(), hit }.visit_function_body(fid).is_break()
 }
 
-struct Reach<'hir, F> {
-    hir: &'hir hir::Hir<'hir>,
-    bases: &'hir [ContractId],
-    stack: Vec<FunctionId>,
+struct Reach<'gcx, F> {
+    gcx: Gcx<'gcx>,
+    bases: &'gcx [ContractId],
+    // The predicate and dispatch context are fixed for the entire reachability check.
+    visited: HashSet<FunctionId>,
     hit: F,
 }
 
-impl<'hir, F: FnMut(&'hir Expr<'hir>) -> bool> Reach<'hir, F> {
+impl<'gcx, F: FnMut(&'gcx Expr<'gcx>) -> bool> Reach<'gcx, F> {
     fn visit_function_body(&mut self, fid: FunctionId) -> ControlFlow<()> {
-        if self.stack.contains(&fid) {
+        if !self.visited.insert(fid) {
             return ControlFlow::Continue(());
         }
-        let Some(body) = self.hir.function(fid).body else { return ControlFlow::Continue(()) };
-        self.stack.push(fid);
-        let flow = body.stmts.iter().try_for_each(|stmt| self.visit_stmt(stmt));
-        self.stack.pop();
-        flow
+        let Some(body) = self.gcx.hir.function(fid).body else {
+            return ControlFlow::Continue(());
+        };
+        body.stmts.iter().try_for_each(|stmt| self.visit_stmt(stmt))
     }
 }
 
-impl<'hir, F: FnMut(&'hir Expr<'hir>) -> bool> Visit<'hir> for Reach<'hir, F> {
+impl<'gcx, F: FnMut(&'gcx Expr<'gcx>) -> bool> Visit<'gcx> for Reach<'gcx, F> {
     type BreakValue = ();
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
+        &self.gcx.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<()> {
         if (self.hit)(expr) {
             return ControlFlow::Break(());
         }
         if let ExprKind::Call(callee, ..) = &expr.kind {
-            for fid in callees(self.hir, callee, self.bases) {
+            for fid in callees(&self.gcx.hir, callee, self.bases) {
                 self.visit_function_body(fid)?;
             }
         }

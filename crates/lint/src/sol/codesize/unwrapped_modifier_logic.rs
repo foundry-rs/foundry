@@ -23,14 +23,8 @@ declare_forge_lint!(
     "wrap modifier logic to reduce code size"
 );
 
-impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir hir::Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for UnwrappedModifierLogic {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         let (FunctionKind::Modifier, Some(body), Some(name)) = (func.kind, func.body, func.name)
         else {
             return;
@@ -48,7 +42,7 @@ impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
             return;
         };
         let (before, after) = (&body.stmts[..idx], &body.stmts[idx + 1..]);
-        if let Some(suggestion) = snippet(ctx, hir, func, name.as_str(), before, after) {
+        if let Some(suggestion) = snippet(ctx, &gcx.hir, func, name.as_str(), before, after) {
             ctx.emit_with_suggestion(
                 &UNWRAPPED_MODIFIER_LOGIC,
                 func.span.to(func.body_span),
@@ -86,13 +80,13 @@ fn requires_wrapping(hir: &hir::Hir<'_>, stmts: &[Stmt<'_>]) -> bool {
     other || calls > 1
 }
 
-fn snippet<'hir>(
+fn snippet<'gcx>(
     ctx: &LintContext,
-    hir: &'hir hir::Hir<'hir>,
-    func: &'hir Function<'hir>,
+    hir: &'gcx hir::Hir<'gcx>,
+    func: &'gcx Function<'gcx>,
     name: &str,
-    before: &'hir [Stmt<'hir>],
-    after: &'hir [Stmt<'hir>],
+    before: &'gcx [Stmt<'gcx>],
+    after: &'gcx [Stmt<'gcx>],
 ) -> Option<Suggestion> {
     let (wrap_before, wrap_after) = (requires_wrapping(hir, before), requires_wrapping(hir, after));
     if !(wrap_before || wrap_after) {
@@ -191,28 +185,28 @@ fn snippet<'hir>(
 }
 
 /// Visits every expression under `stmts`, stopping as soon as `f` returns `true`.
-fn any_expr<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    stmts: &'hir [Stmt<'hir>],
-    f: impl FnMut(&'hir Expr<'hir>) -> bool,
+fn any_expr<'gcx>(
+    hir: &'gcx hir::Hir<'gcx>,
+    stmts: &'gcx [Stmt<'gcx>],
+    f: impl FnMut(&'gcx Expr<'gcx>) -> bool,
 ) -> bool {
     let mut finder = ExprFinder { hir, f };
     stmts.iter().any(|stmt| finder.visit_stmt(stmt).is_break())
 }
 
-struct ExprFinder<'hir, F> {
-    hir: &'hir hir::Hir<'hir>,
+struct ExprFinder<'gcx, F> {
+    hir: &'gcx hir::Hir<'gcx>,
     f: F,
 }
 
-impl<'hir, F: FnMut(&'hir Expr<'hir>) -> bool> hir::Visit<'hir> for ExprFinder<'hir, F> {
+impl<'gcx, F: FnMut(&'gcx Expr<'gcx>) -> bool> hir::Visit<'gcx> for ExprFinder<'gcx, F> {
     type BreakValue = ();
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'gcx hir::Hir<'gcx> {
         self.hir
     }
 
-    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<()> {
+    fn visit_expr(&mut self, expr: &'gcx Expr<'gcx>) -> ControlFlow<()> {
         if (self.f)(expr) {
             return ControlFlow::Break(());
         }

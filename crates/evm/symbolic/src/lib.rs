@@ -350,7 +350,7 @@ pub struct SymbolicStats {
 pub struct SymbolicExecutor {
     config: SymbolicConfig,
     cx: runtime::SymCx,
-    solver: Box<dyn runtime::SymbolicSolver>,
+    solver: runtime::SmtLibSubprocessSolver,
     deferred_incomplete: Option<DeferredIncomplete>,
     deadline: Option<Instant>,
 }

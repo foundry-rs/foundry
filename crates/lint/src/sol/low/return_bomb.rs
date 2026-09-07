@@ -22,14 +22,8 @@ declare_forge_lint!(
     "external calls with a gas limit should not consume unbounded return data"
 );
 
-impl<'hir> LateLintPass<'hir> for ReturnBomb {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
-        expr: &'hir hir::Expr<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for ReturnBomb {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) {
         // Flag gas-limited calls that can force the caller to copy unbounded returndata: a
         // low-level call on an address, or a call returning dynamic data.
         let expr = expr.peel_parens();
@@ -46,7 +40,7 @@ impl<'hir> LateLintPass<'hir> for ReturnBomb {
     }
 }
 
-fn is_dynamic_ty<'hir>(gcx: Gcx<'hir>, ty: Ty<'hir>) -> bool {
+fn is_dynamic_ty<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> bool {
     let ty = ty.peel_refs();
     match ty.kind {
         TyKind::Struct(id) => {

@@ -12,6 +12,9 @@ Reports high-level contract calls, low-level `call`/`delegatecall`/`staticcall`,
 `send`/`transfer`, external self-calls through `this`, and contract creation inside a loop. Internal
 and private library calls and `super` dispatch are not treated as external calls.
 
+Memory allocations such as `new LedgerRow[](n)`, `new bytes(n)`, and `new string(n)` are not
+external calls. External calls used to calculate their lengths are still reported.
+
 ## Why is this bad?
 
 External calls inside loops can turn one reverting or gas-heavy callee into a denial-of-service for

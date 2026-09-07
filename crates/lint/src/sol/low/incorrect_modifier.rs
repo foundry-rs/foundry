@@ -5,7 +5,7 @@ use crate::{
 };
 use solar::{
     ast::FunctionKind,
-    sema::{Gcx, Hir, hir::Function},
+    sema::{Gcx, hir::Function},
 };
 
 declare_forge_lint!(
@@ -15,14 +15,8 @@ declare_forge_lint!(
     "modifier can finish without executing the modified function"
 );
 
-impl<'hir> LateLintPass<'hir> for IncorrectModifier {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        _hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for IncorrectModifier {
+    fn check_function(&mut self, ctx: &LintContext, _gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         if func.kind == FunctionKind::Modifier
             && func.body.is_some_and(|body| block_outcome(body).can_skip_placeholder())
         {
