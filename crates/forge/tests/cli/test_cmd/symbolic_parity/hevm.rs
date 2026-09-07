@@ -26,7 +26,7 @@ contract HevmCalldataConstraint {
 ...
 Failing tests:
 Encountered 1 failing test in test/HevmCalldataConstraint.t.sol:HevmCalldataConstraint
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkMagic(bytes4,uint256) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkMagic(bytes4,uint256) ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

@@ -1,7 +1,386 @@
 //! Tests for commands using the preprocessed cache.
 
-use foundry_compilers::artifacts::EvmVersion;
+use foundry_compilers::artifacts::{EvmVersion, remappings::Remapping};
 use foundry_config::{CompilationRestrictions, SettingsOverrides};
+
+// <https://github.com/foundry-rs/foundry/issues/16682>
+forgetest!(preprocess_remapped_bytecode_dependencies, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.remappings = vec!["@p/=src/".parse::<Remapping>().unwrap().into()];
+    });
+    let source = r#"
+contract Impl {
+    constructor(uint256) {}
+    function v() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_test(
+        "Impl.t.sol",
+        r#"
+import {Impl} from "@p/Impl.sol";
+contract ImplTest {
+    function test_new() public {
+        require(new Impl(1).v() == 111, "stale implementation");
+    }
+    function test_creationCode() public {
+        bytes memory code = abi.encodePacked(type(Impl).creationCode, abi.encode(uint256(1)));
+        address deployed;
+        assembly { deployed := create(0, add(code, 32), mload(code)) }
+        require(Impl(deployed).v() == 111, "stale implementation");
+    }
+}
+"#,
+    );
+    cmd.env("RUST_LOG", "error");
+    cmd.args(["test"]).assert_success().stderr_eq("").stdout_eq(str![[r#"
+...
+Ran 2 tests for test/Impl.t.sol:ImplTest
+[PASS] test_creationCode() ([GAS])
+[PASS] test_new() ([GAS])
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
+
+    // A body-only edit must reach both dynamically linked bytecode references.
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    prj.forge_command().arg("build").with_no_redact().assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [..]
+[..]
+Compiler run successful!
+
+"#]]);
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 2 tests for test/Impl.t.sol:ImplTest
+[FAIL: stale implementation] test_creationCode() ([GAS])
+[FAIL: stale implementation] test_new() ([GAS])
+Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+
+Failing tests:
+Encountered 2 failing tests in test/Impl.t.sol:ImplTest
+[FAIL: stale implementation] test_creationCode() ([GAS])
+[FAIL: stale implementation] test_new() ([GAS])
+
+Encountered a total of 2 failing tests, 0 tests succeeded
+...
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16682>
+forgetest!(preprocess_remapping_identity, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.remappings = ["@p/=src/../src/", "src/=lib/alternate/"]
+            .into_iter()
+            .map(|remapping| remapping.parse::<Remapping>().unwrap().into())
+            .collect();
+    });
+    let source = r#"
+contract Impl {
+    struct Args { uint256 value; }
+    constructor(Args memory args) {}
+    function v() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.create_file(
+        "lib/alternate/Impl.sol",
+        r#"
+contract Impl {
+    struct Args { address value; }
+    constructor(Args memory args) {}
+    function v() external pure returns (uint256) { return 999; }
+}
+"#,
+    );
+    prj.add_test(
+        "Impl.t.sol",
+        r#"
+import {Impl as Implementation} from "@p/Impl.sol";
+contract ImplTest {
+    function test_new() public {
+        require(
+            new Implementation(Implementation.Args({value: 1})).v() == 111,
+            "stale implementation"
+        );
+    }
+}
+contract EmptyTest {}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    // Ambiguous source-unit references stay native and are invalidated after a body-only edit.
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").with_no_redact().assert_failure().stdout_eq(str![[r#"
+Compiling 3 files with [..]
+[..]
+Compiler run successful!
+
+Ran 1 test for test/Impl.t.sol:ImplTest
+[FAIL: stale implementation] test_new() (gas: [..])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in [..] ([..] CPU time)
+
+Ran 1 test suite in [..] ([..] CPU time): 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Impl.t.sol:ImplTest
+[FAIL: stale implementation] test_new() (gas: [..])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+...
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16682>
+forgetest!(preprocess_remapping_context_uses_running_test, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.remappings =
+            vec!["test/suite/:src/=lib/alternate/".parse::<Remapping>().unwrap().into()];
+    });
+    let source = r#"
+contract Impl {
+    function v() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.create_file("lib/alternate/Impl.sol", &source.replace("return 111", "return 999"));
+    prj.add_test(
+        "support/Helper.sol",
+        r#"
+import {Impl} from "src/Impl.sol";
+contract Helper {
+    function create() public returns (Impl) { return new Impl(); }
+}
+"#,
+    );
+    prj.add_test(
+        "suite/Impl.t.sol",
+        r#"
+import {Helper} from "../support/Helper.sol";
+contract ImplTest is Helper {
+    function test_new() public {
+        require(create().v() == 111, "stale implementation");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale implementation] test_new() ([GAS])
+...
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16682>
+forgetest!(preprocess_remapped_helper_source, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.remappings = ["@p/=src/", "test/:foundry-pp/=lib/alternate/"]
+            .into_iter()
+            .map(|remapping| remapping.parse::<Remapping>().unwrap().into())
+            .collect();
+    });
+    let source = r#"
+contract Impl {
+    constructor(uint256) {}
+    function v() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_test(
+        "Impl.t.sol",
+        r#"
+import {Impl} from "@p/Impl.sol";
+contract ImplTest {
+    function test_new() public {
+        require(new Impl(1).v() == 111, "stale implementation");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale implementation] test_new() ([GAS])
+...
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16682>
+forgetest!(preprocess_ambiguous_artifact_stays_native, |prj, cmd| {
+    prj.update_config(|config| config.dynamic_test_linking = true);
+    let source = r#"
+contract Impl {
+    function v() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.create_file("vendor/pkg/src/Impl.sol", source);
+    prj.add_source(
+        "UsesLib.sol",
+        r#"
+import {Impl as LibImpl} from "vendor/pkg/src/Impl.sol";
+contract UsesLib {
+    function create() public returns (LibImpl) { return new LibImpl(); }
+}
+"#,
+    );
+    prj.forge_command().arg("build").assert_success();
+
+    let test = r#"
+import {Impl} from "../src/Impl.sol";
+contract ImplTest {
+    function test_new() public {
+        require(new Impl().v() == 111, "stale implementation");
+    }
+}
+"#;
+    prj.add_test("Impl.t.sol", test);
+    cmd.args(["test"]).assert_success();
+
+    // A narrower test-only compilation must retain the native fallback classification.
+    prj.add_test("Impl.t.sol", &format!("\n{test}"));
+    cmd.forge_fuse().arg("test").assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: stale implementation] test_new() ([GAS])
+...
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16682>
+forgetest!(preprocess_remapped_mock_inheritance, |prj, cmd| {
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.remappings = vec!["@p/=src/".parse::<Remapping>().unwrap().into()];
+    });
+    let source = r#"
+contract Impl {
+    function v() public pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_test(
+        "ImplMock.sol",
+        r#"
+import {Impl} from "@p/Impl.sol";
+contract ImplMock is Impl {}
+"#,
+    );
+    prj.add_test(
+        "Impl.t.sol",
+        r#"
+import {ImplMock} from "./ImplMock.sol";
+contract ImplTest is ImplMock {
+    function test_inherited() public pure {
+        require(v() == 111, "stale implementation");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Impl.t.sol:ImplTest
+[PASS] test_inherited() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+
+    // Inherited bytecode stays native, so the test must be rebuilt as well.
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    prj.forge_command().arg("build").with_no_redact().assert_success().stdout_eq(str![[r#"
+Compiling 3 files with [..]
+[..]
+Compiler run successful!
+
+"#]]);
+    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/Impl.t.sol:ImplTest
+[FAIL: stale implementation] test_inherited() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Impl.t.sol:ImplTest
+[FAIL: stale implementation] test_inherited() ([GAS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+...
+"#]]);
+});
+
+// <https://github.com/foundry-rs/foundry/issues/16682>
+#[cfg(unix)]
+forgetest!(preprocess_remapped_symlinked_source, |prj, cmd| {
+    use std::{fs, os::unix::fs::symlink};
+
+    fs::remove_dir_all(prj.root().join("src")).unwrap();
+    fs::create_dir_all(prj.root().join(".shared/src")).unwrap();
+    symlink(".shared/src", prj.root().join("src")).unwrap();
+    prj.update_config(|config| {
+        config.dynamic_test_linking = true;
+        config.remappings = vec!["@p/=src/".parse::<Remapping>().unwrap().into()];
+    });
+    let source = r#"
+contract Impl {
+    function v() external pure returns (uint256) { return 111; }
+}
+"#;
+    prj.add_source("Impl.sol", source);
+    prj.add_test(
+        "Impl.t.sol",
+        r#"
+import {Impl} from "@p/Impl.sol";
+contract ImplTest {
+    function test_new() public {
+        require(new Impl().v() == 111, "stale implementation");
+    }
+}
+"#,
+    );
+    cmd.args(["test"]).assert_success();
+
+    prj.add_source("Impl.sol", &source.replace("return 111", "return 222"));
+    cmd.forge_fuse().arg("test").with_no_redact().assert_failure().stdout_eq(str![[r#"
+Compiling 3 files with [..]
+[..]
+Compiler run successful!
+
+Ran 1 test for test/Impl.t.sol:ImplTest
+[FAIL: stale implementation] test_new() (gas: [..])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; finished in [..] ([..] CPU time)
+
+Ran 1 test suite in [..] ([..] CPU time): 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Impl.t.sol:ImplTest
+[FAIL: stale implementation] test_new() (gas: [..])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+...
+"#]]);
+});
 
 #[cfg(unix)]
 forgetest_init!(abi_commands_reuse_preprocessed_cache, |prj, cmd| {
@@ -946,9 +1325,7 @@ forgetest_init!(preprocess_mock_to_non_mock, |prj, cmd| {
         config.dynamic_test_linking = true;
     });
 
-    prj.add_source(
-        "Counter.sol",
-        r#"
+    let source = r#"
 contract Counter {
     uint256 public number;
 
@@ -960,8 +1337,8 @@ contract Counter {
         number++;
     }
 }
-    "#,
-    );
+    "#;
+    prj.add_source("Counter.sol", source);
 
     prj.add_test(
         "mock/CounterMock.sol",
@@ -1039,6 +1416,15 @@ Compiling 2 files with [..]
 [FAIL: assertion failed: 5678 != 1] test_Increment() (gas: [..])
 [FAIL: assertion failed: 1234 != 1] test_SetNumber() (gas: [..])
 ...
+
+"#]]);
+
+    // The former mock classification must not rebuild importers after a source body-only edit.
+    prj.add_source("Counter.sol", &source.replace("number++", "number += 2"));
+    prj.forge_command().arg("build").with_no_redact().assert_success().stdout_eq(str![[r#"
+Compiling 1 files with [..]
+[..]
+Compiler run successful!
 
 "#]]);
 });

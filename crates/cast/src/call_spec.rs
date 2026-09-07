@@ -12,7 +12,7 @@ use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, U256, hex};
 use alloy_provider::Provider;
 use eyre::{Result, WrapErr, eyre};
-use foundry_cli::utils::parse_function_args;
+use foundry_cli::utils::{parse_ether_value, parse_function_args};
 use foundry_config::Chain;
 use std::str::FromStr;
 use tempo_primitives::transaction::Call;
@@ -35,80 +35,50 @@ pub struct CallSpec {
 impl CallSpec {
     /// Parse a call spec string.
     ///
-    /// Format: `to[:<value>][:<sig>[:<args>]]` or `to[:<value>][:<0xrawdata>]`
-    ///
-    /// The delimiter is `:` but we need to be careful about:
-    /// - Colons in function signatures (none expected)
-    /// - Colons in hex addresses (none expected)
-    /// - We use double-colon `::` to separate value from sig/data when value is empty
+    /// Format: `to[:<value>][:<sig>[:<args>]]` or `to[:<value>][:<0xrawdata>]`. A double colon
+    /// (`::`) separates the address from the sig/data when the value is omitted.
     pub fn parse(s: &str) -> Result<Self> {
         let s = s.trim();
         if s.is_empty() {
             return Err(eyre!("Empty call specification"));
         }
 
-        // Split by `:` but handle `::` for empty value
         let parts: Vec<&str> = s.split(':').collect();
-
-        if parts.is_empty() {
-            return Err(eyre!("Invalid call specification: {}", s));
-        }
-
-        // First part is always the address
         let to = Address::from_str(parts[0])
             .map_err(|e| eyre!("Invalid address '{}': {}", parts[0], e))?;
+        let mut spec = Self { to, value: U256::ZERO, sig: None, args: Vec::new(), data: None };
 
-        let mut value = U256::ZERO;
-        let mut sig = None;
-        let mut args = Vec::new();
-        let mut data = None;
-
-        // Parse remaining parts
-        // Pattern: to:value:sig:args or to::sig:args (empty value) or to:value:0xdata
-        let mut idx = 1;
-
-        // Check for value (non-empty and not a signature). A terminal lowercase hex field is
-        // treated as raw calldata, while one followed by another field is a value.
-        if idx < parts.len() {
-            let part = parts[idx];
-            if !part.is_empty()
-                && (!part.starts_with("0x") || idx + 1 < parts.len())
-                && !part.contains('(')
-            {
-                // This looks like a value
-                value = parse_ether_or_wei(part)?;
-                idx += 1;
-            } else if part.is_empty() {
-                // Empty value (::), skip
-                idx += 1;
+        // The first field is the value unless it is empty, a signature, or a terminal lowercase
+        // hex field, which is raw calldata.
+        let mut rest = &parts[1..];
+        if let Some((part, tail)) = rest.split_first() {
+            if part.is_empty() {
+                rest = tail;
+            } else if (!part.starts_with("0x") || !tail.is_empty()) && !part.contains('(') {
+                spec.value =
+                    parse_ether_value(part).wrap_err_with(|| format!("Invalid value '{part}'"))?;
+                rest = tail;
             }
         }
 
-        // Check for sig/data
-        if idx < parts.len() {
-            let part = parts[idx];
-            if part.starts_with("0x") {
-                // Raw calldata
+        match rest.split_first() {
+            Some((part, tail)) if part.starts_with("0x") => {
                 let decoded =
                     hex::decode(part).map_err(|e| eyre!("Invalid hex data '{}': {}", part, e))?;
-                if idx + 1 != parts.len() {
-                    return Err(eyre!("Unexpected trailing field(s) after raw calldata"));
-                }
-                data = Some(Bytes::from(decoded));
-            } else if !part.is_empty() {
-                // Function signature
-                sig = Some(part.to_string());
-                idx += 1;
-
-                // Collect remaining parts as args (comma-separated in the last part)
-                if idx < parts.len() {
-                    let args_str = parts[idx..].join(":");
-                    args = args_str.split(',').map(|s| s.trim().to_string()).collect();
+                eyre::ensure!(tail.is_empty(), "Unexpected trailing field(s) after raw calldata");
+                spec.data = Some(Bytes::from(decoded));
+            }
+            Some((part, tail)) if !part.is_empty() => {
+                spec.sig = Some(part.to_string());
+                if !tail.is_empty() {
+                    // Args are comma-separated; rejoin any colons that were split off.
+                    spec.args = tail.join(":").split(',').map(|s| s.trim().to_string()).collect();
                 }
             }
+            _ => {}
         }
 
-        Ok(Self { to, value, sig, args, data })
+        Ok(spec)
     }
 
     /// Resolves this spec into a [`Call`], encoding function arguments if needed.
@@ -143,56 +113,22 @@ impl CallSpec {
     }
 }
 
-impl FromStr for CallSpec {
-    type Err = eyre::Error;
-
-    fn from_str(s: &str) -> Result<Self> {
-        Self::parse(s)
-    }
-}
-
-/// Parse a value string that can be in ether notation (e.g., "0.1ether") or raw wei.
-fn parse_ether_or_wei(s: &str) -> Result<U256> {
-    // Use alloy's DynSolType coercion which handles "1ether", "1gwei", "1000" etc.
-    if s.starts_with("0x") || s.starts_with("0X") {
-        U256::from_str(s).map_err(|e| eyre!("Invalid hex value '{}': {}", s, e))
-    } else {
-        alloy_dyn_abi::DynSolType::coerce_str(&alloy_dyn_abi::DynSolType::Uint(256), s)
-            .wrap_err_with(|| format!("Invalid value '{s}'"))?
-            .as_uint()
-            .map(|(v, _)| v)
-            .ok_or_else(|| eyre!("Could not parse value '{}'", s))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_address_only() {
-        let spec = CallSpec::parse("0x1234567890123456789012345678901234567890").unwrap();
-        assert_eq!(
-            spec.to,
-            "0x1234567890123456789012345678901234567890".parse::<Address>().unwrap()
-        );
+    fn test_parse_address_and_value() {
+        let address = "0x1234567890123456789012345678901234567890";
+
+        let spec = CallSpec::parse(address).unwrap();
+        assert_eq!(spec.to, address.parse::<Address>().unwrap());
         assert_eq!(spec.value, U256::ZERO);
-        assert!(spec.sig.is_none());
-        assert!(spec.args.is_empty());
-        assert!(spec.data.is_none());
-    }
+        assert!(spec.sig.is_none() && spec.args.is_empty() && spec.data.is_none());
 
-    #[test]
-    fn test_parse_with_value() {
-        let spec = CallSpec::parse("0x1234567890123456789012345678901234567890:1ether").unwrap();
-        assert_eq!(spec.value, parse_ether_or_wei("1ether").unwrap());
+        let spec = CallSpec::parse(&format!("{address}:1ether")).unwrap();
+        assert_eq!(spec.value, parse_ether_value("1ether").unwrap());
         assert!(spec.sig.is_none());
-    }
-
-    #[test]
-    fn test_parse_hex_value() {
-        assert_eq!(parse_ether_or_wei("0x10").unwrap(), U256::from(16));
-        assert_eq!(parse_ether_or_wei("0X10").unwrap(), U256::from(16));
     }
 
     #[test]
@@ -225,7 +161,7 @@ mod tests {
             "0x1234567890123456789012345678901234567890:0.5ether:transfer(address,uint256):0xabc,1000",
         )
         .unwrap();
-        assert_eq!(spec.value, parse_ether_or_wei("0.5ether").unwrap());
+        assert_eq!(spec.value, parse_ether_value("0.5ether").unwrap());
         assert_eq!(spec.sig, Some("transfer(address,uint256)".to_string()));
     }
 

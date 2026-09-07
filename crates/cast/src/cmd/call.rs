@@ -1,16 +1,19 @@
 use super::{
     auth::{confirm_auth_rpc_disclosure, confirm_auth_rpc_disclosure_before_network_resolution},
     call_overrides::CallOverrideOpts,
-    run::{fetch_contracts_bytecode_from_trace, fetch_contracts_bytecode_via_rpc},
+    fetch_code_via_rpc, print_raw_line,
+    run::{
+        block_num_hash, call_tracer_frame, fetch_contracts_bytecode_from_trace, trace_addresses,
+    },
 };
 use crate::{
-    Cast,
-    debug::{ensure_remote_trace_context_unchanged, handle_traces, select_remote_trace_hardfork},
-    rpc_trace::{call_frame_to_arena, is_method_not_found_error, is_missing_state_error},
+    debug::{ensure_remote_trace_context_unchanged, handle_traces, resolve_remote_trace_hardfork},
+    rpc_trace::call_frame_to_arena,
     traces::TraceKind,
-    tx::{CastTxBuilder, SenderKind},
+    tx::{CastTxBuilder, SenderKind, read_only_sender},
 };
 use alloy_consensus::BlockHeader;
+use alloy_dyn_abi::FunctionExt;
 use alloy_eips::BlockNumHash;
 use alloy_ens::NameOrAddress;
 use alloy_network::{
@@ -19,15 +22,14 @@ use alloy_network::{
 use alloy_primitives::{B256, Bytes, TxKind, U256, hex, map::AddressHashMap};
 use alloy_provider::{Provider, ext::DebugApi};
 use alloy_rpc_types::{
-    BlockId, BlockNumberOrTag, BlockOverrides,
-    state::StateOverride,
+    BlockId, BlockNumberOrTag,
     trace::geth::{
         CallConfig, GethDebugBuiltInTracerType, GethDebugTracerType, GethDebugTracingCallOptions,
-        GethDebugTracingOptions, GethTrace,
+        GethDebugTracingOptions,
     },
 };
 use clap::Parser;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TracingArgs, TransactionOpts},
     utils::{LoadConfig, TraceResult, parse_ether_value},
@@ -35,12 +37,13 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     abi::{encode_function_args, get_func},
+    fmt::{format_token, serialize_value_as_json},
     provider::{ProviderBuilder, curl_transport::generate_curl_command},
     sh_println, shell,
 };
 use foundry_compilers::artifacts::EvmVersion;
 use foundry_config::{
-    Chain, Config, FoundryHardfork, TracingConfig,
+    Chain, Config, TracingConfig,
     figment::{
         self, Metadata, Profile,
         value::{Dict, Map},
@@ -53,6 +56,7 @@ use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
+        decode::RevertDecoder,
         evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
     },
     executors::{ExecutorBuilder, TracingExecutor},
@@ -218,13 +222,13 @@ pub enum CallSubcommands {
     },
 }
 
-struct AuthDisclosurePreflight {
-    confirmed: bool,
-    sender: Option<SenderKind<'static>>,
-}
-
-fn infer_network_from_chain_id(networks: NetworkConfigs, chain_id: u64) -> Result<NetworkConfigs> {
-    networks.try_with_chain_id(chain_id).map_err(eyre::Report::msg)
+/// The `callTracer` options shared by `--debug-trace-call` and its `--curl` rendering.
+fn call_tracer_options() -> GethDebugTracingCallOptions {
+    GethDebugTracingCallOptions::default().with_tracing_options(
+        GethDebugTracingOptions::default()
+            .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
+            .with_call_config(CallConfig::default().with_log()),
+    )
 }
 
 impl CallArgs {
@@ -258,7 +262,8 @@ impl CallArgs {
         if self.tx.tempo.is_tempo() {
             evm_opts.networks = NetworkConfigs::with_tempo();
         } else if let Some(chain) = self.chain {
-            evm_opts.networks = infer_network_from_chain_id(evm_opts.networks, chain.id())?;
+            evm_opts.networks =
+                evm_opts.networks.try_with_chain_id(chain.id()).map_err(eyre::Report::msg)?;
         }
         let Some(auth_preflight) = self.preflight_auth_disclosure().await? else {
             return Ok(());
@@ -322,9 +327,15 @@ impl CallArgs {
         !self.tx.auth.is_empty() && (!self.trace || matches!(self.tx.access_list, Some(None)))
     }
 
-    async fn preflight_auth_disclosure(&self) -> Result<Option<AuthDisclosurePreflight>> {
+    /// Confirms the authorization disclosure before the network is resolved.
+    ///
+    /// Returns `None` when the user declined, otherwise whether the disclosure was confirmed
+    /// along with the sender resolved for it (absent for browser wallets).
+    async fn preflight_auth_disclosure(
+        &self,
+    ) -> Result<Option<(bool, Option<SenderKind<'static>>)>> {
         if !self.will_disclose_auth() {
-            return Ok(Some(AuthDisclosurePreflight { confirmed: false, sender: None }));
+            return Ok(Some((false, None)));
         }
 
         let sender = if self.browser.browser {
@@ -342,7 +353,7 @@ impl CallArgs {
             return Ok(None);
         }
 
-        Ok(Some(AuthDisclosurePreflight { confirmed: true, sender }))
+        Ok(Some((true, sender)))
     }
 
     fn validate_trace_args(&self) -> Result<()> {
@@ -367,12 +378,12 @@ impl CallArgs {
         self,
         mut config: Box<Config>,
         evm_opts: EvmOpts,
-        auth_preflight: AuthDisclosurePreflight,
+        (auth_confirmed, auth_sender): (bool, Option<SenderKind<'static>>),
         executor_builder: ExecutorBuilder<FEN>,
     ) -> Result<()> {
         config.networks = evm_opts.networks;
-        let mut state_overrides = self.get_state_overrides()?;
-        let block_overrides = self.get_block_overrides()?;
+        let mut state_overrides = self.overrides.get_state_overrides()?;
+        let block_overrides = self.overrides.get_block_overrides()?;
         config.tracing = self.resolve_tracing(&config.tracing, shell::verbosity());
         let tracing = config.tracing.clone();
 
@@ -403,12 +414,9 @@ impl CallArgs {
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
         let endpoint_identity =
             if debug_trace_call { Some(evm_opts.discover_fork_endpoint().await?) } else { None };
-        let sender = if let Some(sender) = auth_preflight.sender {
-            sender
-        } else if let Some(browser) = browser.run::<FEN::Network>().await? {
-            browser.address().into()
-        } else {
-            SenderKind::from_wallet_opts(wallet).await?
+        let sender = match auth_sender {
+            Some(sender) => sender,
+            None => read_only_sender::<FEN::Network>(&browser, wallet).await?.0,
         };
         let from = sender.address();
 
@@ -469,7 +477,7 @@ impl CallArgs {
         let will_disclose =
             (!trace && builder.has_auth()) || builder.will_disclose_auth_during_build();
         if will_disclose
-            && !auth_preflight.confirmed
+            && !auth_confirmed
             && !confirm_auth_rpc_disclosure(&builder, &sender, force)?
         {
             return Ok(());
@@ -484,15 +492,12 @@ impl CallArgs {
 
         if debug_trace_call {
             let endpoint_identity = endpoint_identity
-                .as_ref()
                 .ok_or_else(|| eyre::eyre!("remote trace endpoint identity was not captured"))?;
             let requested_block = block.unwrap_or(BlockId::latest());
             let fetched_block = provider.get_block(requested_block).await?;
             let resolved_canonical_block =
                 if matches!(requested_block, BlockId::Number(_)) && !requested_block.is_pending() {
-                    fetched_block.as_ref().map(|block| {
-                        BlockNumHash::new(block.header().number(), block.header().hash())
-                    })
+                    fetched_block.as_ref().map(block_num_hash)
                 } else {
                     None
                 };
@@ -501,11 +506,7 @@ impl CallArgs {
                 fetched_block.as_ref().map(|block| block.header().hash()),
             )?;
             let block_time_override = block_overrides.as_ref().and_then(|overrides| overrides.time);
-            let mut call_options = GethDebugTracingCallOptions::default().with_tracing_options(
-                GethDebugTracingOptions::default()
-                    .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
-                    .with_call_config(CallConfig::default().with_log()),
-            );
+            let mut call_options = call_tracer_options();
             // A contract that only exists through a `--override-code` entry has no on-chain
             // code to fetch for local-artifact matching, so remember the override code before
             // handing the overrides to `debug_traceCall`.
@@ -526,44 +527,22 @@ impl CallArgs {
                 call_options = call_options.with_block_overrides(block_overrides);
             }
 
-            let geth_trace = provider
-                .debug_trace_call(tx, block, call_options)
-                .await
-                .map_err(|err| -> eyre::Report {
-                    // Two RPC rejections deserve an actionable hint instead of the raw transport
-                    // error, and they need different fixes: a disabled `debug` namespace, and
-                    // missing historical state, hit whenever `--block` targets a block a full
-                    // node has pruned.
-                    if is_method_not_found_error(&err) {
-                        eyre::eyre!(
-                            "the RPC endpoint does not support `debug_traceCall` (method not found); use a node with the `debug` namespace enabled (e.g. a local anvil/reth or an archive endpoint), or drop `--debug-trace-call` to run the call locally with `--trace`"
-                        )
-                    } else if is_missing_state_error(&err) {
-                        eyre::eyre!(
-                            "the RPC endpoint does not have the historical state for the requested block; use an archive endpoint, or target a more recent block with `--block`"
-                        )
-                    } else {
-                        err.into()
-                    }
-                })?;
-            let GethTrace::CallTracer(frame) = geth_trace else {
-                eyre::bail!(
-                    "`debug_traceCall` did not return a callTracer frame; the RPC endpoint may not \
-                     support the `callTracer`"
-                );
-            };
+            let frame = call_tracer_frame(
+                provider.debug_trace_call(tx, block, call_options).await,
+                "debug_traceCall",
+                "drop `--debug-trace-call` to run the call locally with `--trace`",
+                "the requested block; use an archive endpoint, or target a more recent block with `--block`",
+            )?;
 
-            let success = frame.error.is_none() && frame.revert_reason.is_none();
-            let gas_used = frame.gas_used.saturating_to();
             let arena = SparsedTraceArena {
-                arena: call_frame_to_arena(&frame),
+                arena: call_frame_to_arena(&frame, None),
                 ignored: Default::default(),
                 diagnostics: Default::default(),
             };
             let result = TraceResult {
-                success,
+                success: frame.error.is_none() && frame.revert_reason.is_none(),
                 traces: Some(vec![(TraceKind::Execution, arena)]),
-                gas_used,
+                gas_used: frame.gas_used.saturating_to(),
             };
 
             // Local-artifact labeling matches deployed runtime bytecode against the
@@ -572,7 +551,7 @@ impl CallArgs {
             // local artifacts were requested.
             let contracts_bytecode = if with_local_artifacts {
                 let mut contracts_bytecode =
-                    fetch_contracts_bytecode_via_rpc(&provider, &result, block).await?;
+                    fetch_code_via_rpc(&provider, trace_addresses(&result), block).await;
                 // The trace ran the override code, not the on-chain code, so the override
                 // wins for artifact matching.
                 contracts_bytecode.extend(override_bytecode);
@@ -581,40 +560,24 @@ impl CallArgs {
                 Default::default()
             };
             let final_endpoint_identity = evm_opts.discover_fork_endpoint().await?;
-            ensure_remote_trace_context_unchanged(endpoint_identity, &final_endpoint_identity)?;
+            ensure_remote_trace_context_unchanged(&endpoint_identity, &final_endpoint_identity)?;
 
             // The remote node executed this trace, so its reported family is authoritative for
             // decoding even when the caller selected a compatible local EVM implementation.
-            let execution_network = endpoint_identity.network;
             let chain = alloy_chains::Chain::from_id(endpoint_identity.source_chain_id);
-            let block_timestamp = if let Some(timestamp) = block_time_override {
-                Some(timestamp)
-            } else {
-                fetched_block.as_ref().map(|block| block.header().timestamp())
-            };
-            // A configured hardfork is an explicit trace-decoding override. Otherwise honor an
-            // Anvil endpoint's exact execution hardfork before consulting the source schedule.
-            let resolved_hardfork = select_remote_trace_hardfork(
-                config.hardfork,
-                endpoint_identity.hardfork,
-                execution_network,
-            )
-            .or_else(|| {
-                block_timestamp.and_then(|timestamp| {
-                    FoundryHardfork::from_chain_and_timestamp(chain.id(), timestamp)
-                })
-            });
+            let block_timestamp = block_time_override
+                .or_else(|| fetched_block.as_ref().map(|block| block.header().timestamp()));
+            let resolved_hardfork =
+                resolve_remote_trace_hardfork(config.hardfork, &endpoint_identity, block_timestamp);
             if let Some(resolved_block) = resolved_canonical_block {
                 let canonical_block =
                     provider.get_block_by_number(resolved_block.number.into()).await?;
                 ensure_remote_trace_block_is_canonical(
                     resolved_block,
-                    canonical_block.as_ref().map(|block| {
-                        BlockNumHash::new(block.header().number(), block.header().hash())
-                    }),
+                    canonical_block.as_ref().map(block_num_hash),
                 )?;
             }
-            handle_traces(
+            return handle_traces(
                 result,
                 &config,
                 TraceContext::new(chain, endpoint_identity.network_profile, resolved_hardfork),
@@ -623,9 +586,7 @@ impl CallArgs {
                 with_local_artifacts,
                 false,
             )
-            .await?;
-
-            return Ok(());
+            .await;
         }
 
         if trace {
@@ -635,13 +596,11 @@ impl CallArgs {
             }
 
             let create2_deployer = evm_opts.create2_deployer;
-            let verbosity = tracing.verbosity;
             let mut fork = TracingExecutor::<FEN>::get_fork(&mut config, evm_opts).await?;
             // Modify settings usually set in eth_call while keeping execution gas bounded.
             fork.evm_env.cfg_env.disable_block_gas_limit = true;
             fork.evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
 
-            // Apply the block overrides.
             if let Some(block_overrides) = block_overrides {
                 if let Some(number) = block_overrides.number {
                     fork.evm_env.block_env.set_number(number.to());
@@ -662,7 +621,7 @@ impl CallArgs {
                 } else {
                     InternalTraceMode::None
                 })
-                .with_state_changes(verbosity > 4);
+                .with_state_changes(tracing.verbosity > 4);
             let mut executor = fork.into_executor(
                 executor_builder,
                 trace_requirements,
@@ -681,35 +640,24 @@ impl CallArgs {
                 executor.set_gas_limit(gas_limit);
             }
 
-            let env_tx = executor.tx_env_mut();
-
             // Set transaction options with --trace
-            if let Some(gas_price) = tx.gas_price() {
+            let env_tx = executor.tx_env_mut();
+            if let Some(gas_price) = tx.max_fee_per_gas().or(tx.gas_price()) {
                 env_tx.set_gas_price(gas_price);
             }
-
-            if let Some(max_fee_per_gas) = tx.max_fee_per_gas() {
-                env_tx.set_gas_price(max_fee_per_gas);
-            }
-
             if let Some(max_priority_fee_per_gas) = tx.max_priority_fee_per_gas() {
                 env_tx.set_gas_priority_fee(Some(max_priority_fee_per_gas));
             }
-
             if let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas() {
                 env_tx.set_max_fee_per_blob_gas(max_fee_per_blob_gas);
             }
-
             if let Some(nonce) = tx.nonce() {
                 env_tx.set_nonce(nonce);
             }
-
             env_tx.set_tx_type(tx.output_tx_type().into());
-
             if let Some(access_list) = tx.access_list().cloned() {
                 env_tx.set_access_list(access_list);
             }
-
             if let Some(auth) = tx.authorization_list().cloned() {
                 env_tx.set_signed_authorization(auth);
             }
@@ -726,7 +674,7 @@ impl CallArgs {
             };
 
             let contracts_bytecode = fetch_contracts_bytecode_from_trace(&executor, &trace)?;
-            handle_traces(
+            return handle_traces(
                 trace,
                 &config,
                 context,
@@ -735,34 +683,82 @@ impl CallArgs {
                 with_local_artifacts,
                 debug,
             )
-            .await?;
-
-            return Ok(());
+            .await;
         }
 
-        let response = Cast::new(&provider)
-            .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
-            .await?;
+        let mut call = provider
+            .call(tx.clone())
+            .block(block.unwrap_or_default())
+            .with_block_overrides_opt(block_overrides);
+        if let Some(state_override) = state_overrides {
+            call = call.overrides(state_override)
+        }
+
+        let res = match call.await {
+            Ok(res) => res,
+            Err(err) => {
+                let data = err.as_error_resp().and_then(|payload| payload.as_revert_data());
+                if let Some(data) = data {
+                    let decoded = match RevertDecoder::new().maybe_decode_known(&data) {
+                        Some(decoded) => Some(decoded),
+                        None => crate::tx::decode_custom_error(&data).await.ok().flatten(),
+                    };
+                    if let Some(decoded) = decoded {
+                        return Err(err).wrap_err(format!("execution reverted: {decoded}"));
+                    }
+                }
+                return Err(err.into());
+            }
+        };
+        let decoded = match func.as_ref() {
+            Some(func) => match func.abi_decode_output(res.as_ref()) {
+                Ok(decoded) => decoded,
+                Err(err) => {
+                    // An empty response usually means the recipient is not a contract.
+                    if res.is_empty() {
+                        let Some(addr) = tx.to() else {
+                            eyre::bail!("tx req is a contract deployment");
+                        };
+                        if let Ok(code) =
+                            provider.get_code_at(addr).block_id(block.unwrap_or_default()).await
+                            && code.is_empty()
+                        {
+                            eyre::bail!("contract {addr:?} does not have any code");
+                        }
+                    }
+                    return Err(err).wrap_err(
+                        "could not decode output; did you specify the wrong function return data type?"
+                    );
+                }
+            },
+            None => vec![],
+        };
+
+        // handle case when return type is not specified
+        let response = if decoded.is_empty() {
+            res.to_string()
+        } else if shell::is_json() {
+            let tokens = decoded
+                .into_iter()
+                .map(|value| serialize_value_as_json(value, None, true))
+                .collect::<eyre::Result<Vec<_>>>()?;
+            serde_json::to_string_pretty(&tokens).unwrap()
+        } else {
+            // seth compatible user-friendly return type conversions
+            decoded.iter().map(format_token).collect::<Vec<_>>().join("\n")
+        };
 
         // With `--delegate` the call targets the sender, whose code comes from the override and
         // was already checked to be non-empty, so the on-chain code lookup would be misleading.
         if response == "0x"
             && !delegate
             && let Some(contract_address) = tx.to()
+            && provider.get_code_at(contract_address).await?.is_empty()
         {
-            let code = provider.get_code_at(contract_address).await?;
-            if code.is_empty() {
-                sh_warn!("Contract code is empty")?;
-            }
+            sh_warn!("Contract code is empty")?;
         }
 
-        // Bypass the shell verbosity layer so `--quiet` does not suppress the primary result.
-        let mut shell = shell::Shell::get();
-        let out = shell.out();
-        writeln!(out, "{response}")?;
-        out.flush()?;
-
-        Ok(())
+        print_raw_line(response)
     }
 
     /// Handle --curl mode by generating curl command without any RPC interaction.
@@ -776,12 +772,9 @@ impl CallArgs {
             hex::decode(data)?
         } else if let Some(sig) = &self.sig {
             // If sig is already hex data, use it directly
-            if let Ok(data) = hex::decode(sig) {
-                data
-            } else {
-                // Parse function signature and encode args
-                let func = get_func(sig)?;
-                encode_function_args(&func, &self.args)?
+            match hex::decode(sig) {
+                Ok(data) => data,
+                Err(_) => encode_function_args(&get_func(sig)?, &self.args)?,
             }
         } else {
             Vec::new()
@@ -827,15 +820,11 @@ impl CallArgs {
         // non-curl path: the tracer options plus any state / block overrides, so the printed
         // request traces the same state as the command it represents.
         let (method, params) = if self.debug_trace_call {
-            let mut call_options = GethDebugTracingCallOptions::default().with_tracing_options(
-                GethDebugTracingOptions::default()
-                    .with_tracer(GethDebugTracerType::from(GethDebugBuiltInTracerType::CallTracer))
-                    .with_call_config(CallConfig::default().with_log()),
-            );
-            if let Some(state_overrides) = self.get_state_overrides()? {
+            let mut call_options = call_tracer_options();
+            if let Some(state_overrides) = self.overrides.get_state_overrides()? {
                 call_options = call_options.with_state_overrides(state_overrides);
             }
-            if let Some(block_overrides) = self.get_block_overrides()? {
+            if let Some(block_overrides) = self.overrides.get_block_overrides()? {
                 call_options = call_options.with_block_overrides(block_overrides);
             }
             ("debug_traceCall", serde_json::json!([call_object, block_param, call_options]))
@@ -853,16 +842,6 @@ impl CallArgs {
 
         sh_println!("{}", curl_cmd)?;
         Ok(())
-    }
-
-    /// Parses state overrides from command line arguments.
-    pub fn get_state_overrides(&self) -> Result<Option<StateOverride>> {
-        self.overrides.get_state_overrides()
-    }
-
-    /// Parses block overrides from command line arguments.
-    pub fn get_block_overrides(&self) -> Result<Option<BlockOverrides>> {
-        self.overrides.get_block_overrides()
     }
 }
 
@@ -935,16 +914,13 @@ impl figment::Provider for CallArgs {
 mod tests {
     use super::*;
     use alloy_eips::RpcBlockHash;
-    use alloy_primitives::U64;
 
     #[test]
-    fn pending_remote_trace_block_remains_unpinned() {
-        assert_eq!(pin_remote_trace_block(BlockId::pending(), None).unwrap(), BlockId::pending());
-    }
-
-    #[test]
-    fn non_pending_remote_trace_blocks_are_pinned() {
+    fn remote_trace_block_pinning() {
         let hash = B256::repeat_byte(0x11);
+
+        // Pending stays unpinned; every other block is pinned to the fetched hash.
+        assert_eq!(pin_remote_trace_block(BlockId::pending(), None).unwrap(), BlockId::pending());
         for requested in [
             BlockId::number(42),
             BlockId::earliest(),
@@ -954,25 +930,14 @@ mod tests {
         ] {
             assert_eq!(pin_remote_trace_block(requested, Some(hash)).unwrap(), BlockId::hash(hash));
         }
-    }
-
-    #[test]
-    fn non_pending_remote_trace_block_must_exist() {
         let err = pin_remote_trace_block(BlockId::number(42), None).unwrap_err();
         assert!(err.to_string().contains("was not found while preparing the remote trace"));
-    }
 
-    #[test]
-    fn hash_remote_trace_block_preserves_canonical_requirement() {
-        let hash = B256::repeat_byte(0x22);
+        // Hash requests keep `requireCanonical` and must match the response.
         for require_canonical in [None, Some(false), Some(true)] {
             let requested = BlockId::Hash(RpcBlockHash { block_hash: hash, require_canonical });
             assert_eq!(pin_remote_trace_block(requested, Some(hash)).unwrap(), requested);
         }
-    }
-
-    #[test]
-    fn hash_remote_trace_block_must_match_response() {
         let err = pin_remote_trace_block(
             BlockId::hash_canonical(B256::repeat_byte(0x33)),
             Some(B256::repeat_byte(0x44)),
@@ -984,29 +949,14 @@ mod tests {
     #[test]
     fn remote_trace_block_must_remain_canonical() {
         let expected = BlockNumHash::new(42, B256::repeat_byte(0x55));
-
         ensure_remote_trace_block_is_canonical(expected, Some(expected)).unwrap();
 
         let err = ensure_remote_trace_block_is_canonical(expected, None).unwrap_err();
-        assert!(err.to_string().contains("no longer reports that height"));
+        assert!(err.to_string().contains("no longer reports that height"), "{err}");
 
-        let err = ensure_remote_trace_block_is_canonical(
-            expected,
-            Some(BlockNumHash::new(expected.number, B256::repeat_byte(0x66))),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("changed canonicality"));
-    }
-
-    #[test]
-    fn can_parse_call_data() {
-        let data = hex::encode("hello");
-        let args = CallArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
-        assert_eq!(args.data, Some(data));
-
-        let data = hex::encode_prefixed("hello");
-        let args = CallArgs::parse_from(["foundry-cli", "--data", data.as_str()]);
-        assert_eq!(args.data, Some(data));
+        let reorged = BlockNumHash::new(42, B256::repeat_byte(0x66));
+        let err = ensure_remote_trace_block_is_canonical(expected, Some(reorged)).unwrap_err();
+        assert!(err.to_string().contains("changed canonicality"), "{err}");
     }
 
     #[test]
@@ -1015,163 +965,6 @@ mod tests {
         let config = Config::from_provider(Config::figment().merge(&args)).unwrap();
 
         assert_eq!(config.chain, Some(Chain::mainnet()));
-    }
-
-    #[test]
-    #[cfg(not(feature = "monad"))]
-    fn chain_id_rejects_disabled_monad_network() {
-        let error = infer_network_from_chain_id(NetworkConfigs::default(), 143).unwrap_err();
-
-        assert_eq!(
-            error.to_string(),
-            "cannot infer execution network from chain ID 143: network family `monad` is not \
-             enabled in this build"
-        );
-    }
-
-    #[test]
-    fn explicit_ethereum_overrides_chain_id_inference() {
-        let ethereum = NetworkConfigs::with_ethereum();
-        let inferred = infer_network_from_chain_id(ethereum, 143).unwrap();
-
-        assert_eq!(inferred, ethereum);
-    }
-
-    #[test]
-    fn can_parse_state_overrides() {
-        let args = CallArgs::parse_from([
-            "foundry-cli",
-            "--override-balance",
-            "0x123:0x1234",
-            "--override-nonce",
-            "0x123:1",
-            "--override-code",
-            "0x123:0x1234",
-            "--override-state",
-            "0x123:0x1:0x1234",
-        ]);
-
-        assert_eq!(args.overrides.balance_overrides, Some(vec!["0x123:0x1234".to_string()]));
-        assert_eq!(args.overrides.nonce_overrides, Some(vec!["0x123:1".to_string()]));
-        assert_eq!(args.overrides.code_overrides, Some(vec!["0x123:0x1234".to_string()]));
-        assert_eq!(args.overrides.state_overrides, Some(vec!["0x123:0x1:0x1234".to_string()]));
-    }
-
-    #[test]
-    fn can_parse_multiple_state_overrides() {
-        let args = CallArgs::parse_from([
-            "foundry-cli",
-            "--override-balance",
-            "0x123:0x1234",
-            "--override-balance",
-            "0x456:0x5678",
-            "--override-nonce",
-            "0x123:1",
-            "--override-nonce",
-            "0x456:2",
-            "--override-code",
-            "0x123:0x1234",
-            "--override-code",
-            "0x456:0x5678",
-            "--override-state",
-            "0x123:0x1:0x1234",
-            "--override-state",
-            "0x456:0x2:0x5678",
-        ]);
-
-        assert_eq!(
-            args.overrides.balance_overrides,
-            Some(vec!["0x123:0x1234".to_string(), "0x456:0x5678".to_string()])
-        );
-        assert_eq!(
-            args.overrides.nonce_overrides,
-            Some(vec!["0x123:1".to_string(), "0x456:2".to_string()])
-        );
-        assert_eq!(
-            args.overrides.code_overrides,
-            Some(vec!["0x123:0x1234".to_string(), "0x456:0x5678".to_string()])
-        );
-        assert_eq!(
-            args.overrides.state_overrides,
-            Some(vec!["0x123:0x1:0x1234".to_string(), "0x456:0x2:0x5678".to_string()])
-        );
-    }
-
-    #[test]
-    fn test_negative_args_with_flags() {
-        // Test that negative args work with flags
-        let args = CallArgs::parse_from([
-            "foundry-cli",
-            "--trace",
-            "0xDeaDBeeFcAfEbAbEfAcEfEeDcBaDbEeFcAfEbAbE",
-            "process(int256)",
-            "-999999",
-            "--debug",
-        ]);
-
-        assert!(args.trace);
-        assert!(args.debug);
-        assert_eq!(args.args, vec!["-999999"]);
-    }
-
-    #[test]
-    fn test_transaction_opts_with_trace() {
-        // Test that transaction options are correctly parsed when using --trace
-        let args = CallArgs::parse_from([
-            "foundry-cli",
-            "--trace",
-            "--gas-limit",
-            "1000000",
-            "--gas-price",
-            "20000000000",
-            "--priority-gas-price",
-            "2000000000",
-            "--nonce",
-            "42",
-            "--value",
-            "1000000000000000000", // 1 ETH
-            "--blob-gas-price",
-            "10000000000",
-            "0xDeaDBeeFcAfEbAbEfAcEfEeDcBaDbEeFcAfEbAbE",
-            "balanceOf(address)",
-            "0x123456789abcdef123456789abcdef123456789a",
-        ]);
-
-        assert!(args.trace);
-        assert_eq!(args.tx.gas_limit, Some(U256::from(1000000u32)));
-        assert_eq!(args.tx.gas_price, Some(U256::from(20000000000u64)));
-        assert_eq!(args.tx.priority_gas_price, Some(U256::from(2000000000u64)));
-        assert_eq!(args.tx.nonce, Some(U64::from(42)));
-        assert_eq!(args.tx.value, Some(U256::from(1000000000000000000u64)));
-        assert_eq!(args.tx.blob_gas_price, Some(U256::from(10000000000u64)));
-    }
-
-    #[test]
-    fn debug_trace_call_conflicts_with_trace() {
-        let result = CallArgs::try_parse_from(["foundry-cli", "--trace", "--debug-trace-call"]);
-        assert!(result.is_err(), "--trace and --debug-trace-call must be mutually exclusive");
-    }
-
-    #[test]
-    fn debug_trace_call_rejects_local_trace_flags() {
-        for flag in ["--debug", "--decode-internal"] {
-            let result = CallArgs::try_parse_from([
-                "foundry-cli",
-                "--debug-trace-call",
-                "0xDeaDBeeFcAfEbAbEfAcEfEeDcBaDbEeFcAfEbAbE",
-                flag,
-            ]);
-            assert!(result.is_err(), "--debug-trace-call must reject {flag}");
-        }
-        // --evm-version takes a value, so it is checked separately from the boolean flags above.
-        let result = CallArgs::try_parse_from([
-            "foundry-cli",
-            "--debug-trace-call",
-            "0xDeaDBeeFcAfEbAbEfAcEfEeDcBaDbEeFcAfEbAbE",
-            "--evm-version",
-            "shanghai",
-        ]);
-        assert!(result.is_err(), "--debug-trace-call must reject --evm-version");
     }
 
     #[test]

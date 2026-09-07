@@ -19,14 +19,8 @@ declare_forge_lint!(
     "typecasts that can truncate values should be checked"
 );
 
-impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
-        expr: &'hir hir::Expr<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for UnsafeTypecast {
+    fn check_expr(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) {
         if let ExprKind::Call(call, args, _) = &expr.kind
             && let Some(ty) = cast_type(call)
             && args.len() == 1
@@ -66,7 +60,7 @@ fn is_bounded_by_mask(source: &hir::Expr<'_>, target: ElementaryType) -> bool {
 
 /// Collects the ultimate elementary source type(s) of `expr` into `out`, looking through cast
 /// chains and unary operators and gathering both sides of binary operations.
-fn source_types<'hir>(gcx: Gcx<'hir>, expr: &hir::Expr<'hir>, out: &mut Vec<ElementaryType>) {
+fn source_types<'gcx>(gcx: Gcx<'gcx>, expr: &hir::Expr<'gcx>, out: &mut Vec<ElementaryType>) {
     match &expr.kind {
         ExprKind::Call(callee, args, _) if cast_type(callee).is_some() => {
             if let Some(inner) = args.exprs().next() {
