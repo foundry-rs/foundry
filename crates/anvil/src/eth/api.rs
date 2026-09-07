@@ -2612,7 +2612,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn block_by_number_full(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
-            return Ok(self.pending_block_full().await?);
+            return self.pending_block_full().await;
         }
         self.backend.block_by_number_full(number).await
     }
