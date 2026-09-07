@@ -14,6 +14,11 @@ struct CallOutcome {
     state: PathState,
 }
 
+struct CallPathOutcomes {
+    outcomes: Vec<CallOutcome>,
+    limitation: Option<SymbolicError>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CallStatus {
     Success,
@@ -156,15 +161,32 @@ impl SymbolicExecutor {
         code: &SymCode,
         completed_paths: &mut usize,
         kind: CallPathKind,
-    ) -> Result<Vec<CallOutcome>, SymbolicError> {
+        preserve_completed: bool,
+    ) -> Result<CallPathOutcomes, SymbolicError> {
         let mut worklist = VecDeque::from([initial]);
         let mut outcomes = Vec::new();
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = self.pop_next_feasible_path(&mut worklist)? {
+        macro_rules! try_or_preserve_outcomes {
+            ($result:expr) => {
+                match $result {
+                    Ok(value) => value,
+                    Err(error) if preserve_completed && !outcomes.is_empty() => {
+                        return Ok(CallPathOutcomes { outcomes, limitation: Some(error) });
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+        }
+
+        while let Some(mut state) =
+            try_or_preserve_outcomes!(self.pop_next_feasible_path(&mut worklist))
+        {
             if *completed_paths >= path_limit {
-                return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
+                try_or_preserve_outcomes!(Err::<(), _>(SymbolicError::Unsupported(
+                    "symbolic path limit exceeded",
+                )));
             }
             if std::mem::take(&mut state.pending_storage_hook_revert) {
                 *completed_paths += 1;
@@ -180,44 +202,54 @@ impl SymbolicExecutor {
             }
 
             loop {
-                self.check_timeout()?;
+                try_or_preserve_outcomes!(self.check_timeout());
                 if state.depth >= depth_limit {
-                    return Err(SymbolicError::Unsupported("symbolic depth limit exceeded"));
+                    try_or_preserve_outcomes!(Err::<(), _>(SymbolicError::Unsupported(
+                        "symbolic depth limit exceeded",
+                    )));
                 }
                 state.depth += 1;
 
                 let op = match kind {
-                    CallPathKind::Sequence => match code.opcode(&mut self.cx, state.pc)? {
-                        Some(op) => CallPathOpcode::Execute(op),
-                        None => CallPathOpcode::Halt,
-                    },
-                    CallPathKind::External => match code.guarded_opcode(&mut self.cx, state.pc)? {
-                        GuardedOpcode::End => CallPathOpcode::Halt,
-                        GuardedOpcode::Concrete(op) => CallPathOpcode::Execute(op),
-                        GuardedOpcode::SymbolicSize { condition, opcode } => {
-                            let mut in_bounds_constraints = state.constraints.clone();
-                            in_bounds_constraints.push(condition.clone());
-                            let in_bounds_sat =
-                                self.is_sat_with_state(&state, &in_bounds_constraints)?;
+                    CallPathKind::Sequence => {
+                        match try_or_preserve_outcomes!(code.opcode(&mut self.cx, state.pc)) {
+                            Some(op) => CallPathOpcode::Execute(op),
+                            None => CallPathOpcode::Halt,
+                        }
+                    }
+                    CallPathKind::External => {
+                        match try_or_preserve_outcomes!(code.guarded_opcode(&mut self.cx, state.pc))
+                        {
+                            GuardedOpcode::End => CallPathOpcode::Halt,
+                            GuardedOpcode::Concrete(op) => CallPathOpcode::Execute(op),
+                            GuardedOpcode::SymbolicSize { condition, opcode } => {
+                                let mut in_bounds_constraints = state.constraints.clone();
+                                in_bounds_constraints.push(condition.clone());
+                                let in_bounds_sat = try_or_preserve_outcomes!(
+                                    self.is_sat_with_state(&state, &in_bounds_constraints)
+                                );
 
-                            let mut out_of_bounds_constraints = state.constraints.clone();
-                            out_of_bounds_constraints.push(condition.not(&mut self.cx));
-                            if self.is_sat_with_state(&state, &out_of_bounds_constraints)? {
-                                let mut halted = state.clone();
-                                halted.constraints = out_of_bounds_constraints;
-                                *completed_paths += 1;
-                                let status = self.successful_call_status(kind, &halted);
-                                outcomes.push(CallOutcome { status, state: halted });
-                            }
+                                let mut out_of_bounds_constraints = state.constraints.clone();
+                                out_of_bounds_constraints.push(condition.not(&mut self.cx));
+                                if try_or_preserve_outcomes!(
+                                    self.is_sat_with_state(&state, &out_of_bounds_constraints)
+                                ) {
+                                    let mut halted = state.clone();
+                                    halted.constraints = out_of_bounds_constraints;
+                                    *completed_paths += 1;
+                                    let status = self.successful_call_status(kind, &halted);
+                                    outcomes.push(CallOutcome { status, state: halted });
+                                }
 
-                            if in_bounds_sat {
-                                state.constraints = in_bounds_constraints;
-                                CallPathOpcode::Execute(opcode)
-                            } else {
-                                CallPathOpcode::Discard
+                                if in_bounds_sat {
+                                    state.constraints = in_bounds_constraints;
+                                    CallPathOpcode::Execute(opcode)
+                                } else {
+                                    CallPathOpcode::Discard
+                                }
                             }
                         }
-                    },
+                    }
                 };
                 let op = match op {
                     CallPathOpcode::Execute(op) => op,
@@ -232,7 +264,7 @@ impl SymbolicExecutor {
 
                 let _step_span = matches!(kind, CallPathKind::Sequence)
                     .then(|| trace_span!("symbolic_step", pc = state.pc, op).entered());
-                match self.step(
+                match try_or_preserve_outcomes!(self.step(
                     executor,
                     code,
                     code.jump_table(),
@@ -240,7 +272,7 @@ impl SymbolicExecutor {
                     &mut worklist,
                     completed_paths,
                     op,
-                )? {
+                )) {
                     StepOutcome::Continue => {}
                     StepOutcome::Halt => {
                         *completed_paths += 1;
@@ -263,7 +295,7 @@ impl SymbolicExecutor {
             }
         }
 
-        Ok(outcomes)
+        Ok(CallPathOutcomes { outcomes, limitation: None })
     }
 
     fn successful_call_status(&self, kind: CallPathKind, state: &PathState) -> CallStatus {

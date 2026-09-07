@@ -185,6 +185,14 @@ impl SymbolicExecutor {
         code: &SymCode,
         completed_paths: &mut usize,
     ) -> Result<Vec<CallOutcome>, SymbolicError> {
-        self.execute_call_paths(executor, initial, code, completed_paths, CallPathKind::External)
+        self.execute_call_paths(
+            executor,
+            initial,
+            code,
+            completed_paths,
+            CallPathKind::External,
+            false,
+        )
+        .map(|outcomes| outcomes.outcomes)
     }
 }
