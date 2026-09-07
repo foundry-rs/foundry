@@ -629,7 +629,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // We send transactions and wait for receipts in batches of 100, since some networks
                 // cannot handle more than that.
                 let batch_size = if sequential_broadcast { 1 } else { 100 };
-                let mut index = already_broadcasted;
                 let sequence_chain = sequence.chain;
 
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
@@ -640,100 +639,39 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     ));
 
                     if !batch.is_empty() {
-                        let pending_transactions =
-                            batch.iter().map(|(kind, is_fixed_gas_limit)| {
-                                let provider = provider.clone();
-                                let tempo_sponsor = tempo_sponsor.clone();
-                                async move {
-                                    let res = kind
-                                        .clone()
-                                        .prepare_and_send(
-                                            provider,
-                                            sequential_broadcast,
-                                            *is_fixed_gas_limit,
-                                            estimate_via_rpc,
-                                            self.args.gas_estimate_multiplier,
-                                            tempo_sponsor.as_deref(),
-                                            Some(sequence_chain.into()),
-                                        )
-                                        .await;
-                                    (res, kind, *is_fixed_gas_limit, 0, None)
-                                }
-                                .boxed()
-                            });
-
-                        let mut buffer = pending_transactions.collect::<FuturesUnordered<_>>();
-
-                        'send: while let Some((
-                            res,
-                            kind,
-                            is_fixed_gas_limit,
-                            attempt,
-                            original_res,
-                        )) = buffer.next().await
-                        {
-                            if res.is_err()
-                                && self.script_config.tempo.sponsor_sig.is_some()
-                                && attempt == 0
-                            {
-                                debug!(
-                                    "not retrying transaction because --tempo.sponsor-sig is a static signature"
-                                );
-                            } else if res.is_err() && attempt <= 3 {
-                                // Try to resubmit the transaction
-                                let provider = provider.clone();
-                                let progress = seq_progress.inner.clone();
-                                let tempo_sponsor = tempo_sponsor.clone();
-                                buffer.push(Box::pin(async move {
-                                    debug!(err=?res, ?attempt, "retrying transaction ");
-                                    let attempt = attempt + 1;
-                                    progress.write().set_status(&format!(
-                                        "retrying transaction {res:?} (attempt {attempt})"
-                                    ));
-                                    tokio::time::sleep(Duration::from_millis(1000 * attempt)).await;
-                                    let r = kind
-                                        .clone()
-                                        .prepare_and_send(
-                                            provider,
-                                            sequential_broadcast,
-                                            is_fixed_gas_limit,
-                                            estimate_via_rpc,
-                                            self.args.gas_estimate_multiplier,
-                                            tempo_sponsor.as_deref(),
-                                            Some(sequence_chain.into()),
-                                        )
-                                        .await;
-                                    (
-                                        r,
-                                        kind,
-                                        is_fixed_gas_limit,
-                                        attempt,
-                                        original_res.or(Some(res)),
-                                    )
-                                }));
-
-                                continue 'send;
-                            }
-
-                            // Preserve the original error if any
-                            let tx_hash = res.wrap_err_with(|| {
-                                if let Some(original_res) = original_res {
-                                    format!(
-                                        "Failed to send transaction after {attempt} attempts {original_res:?}"
-                                    )
-                                } else {
-                                    "Failed to send transaction".to_string()
-                                }
-                            })?;
-                            sequence.add_pending(index, tx_hash);
-
-                            // Checkpoint save
-                            self.sequence.save(true, false)?;
-                            sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
-
-                            seq_progress.inner.write().tx_sent(tx_hash);
-                            index += 1;
-                        }
+                        let batch_start_index = already_broadcasted + batch_number * batch_size;
+                        broadcast_transactions(
+                            batch_start_index,
+                            batch.len(),
+                            self.script_config.tempo.sponsor_sig.is_none(),
+                            |original_index| {
+                                let (kind, is_fixed_gas_limit) =
+                                    &batch[original_index - batch_start_index];
+                                kind.clone().prepare_and_send(
+                                    provider.clone(),
+                                    sequential_broadcast,
+                                    *is_fixed_gas_limit,
+                                    estimate_via_rpc,
+                                    self.args.gas_estimate_multiplier,
+                                    tempo_sponsor.as_deref(),
+                                    Some(sequence_chain.into()),
+                                )
+                            },
+                            |res, attempt| {
+                                seq_progress.inner.write().set_status(&format!(
+                                    "retrying transaction {res:?} (attempt {attempt})"
+                                ));
+                            },
+                            |original_index, tx_hash| {
+                                self.sequence.sequences_mut()[i]
+                                    .add_pending(original_index, tx_hash);
+                                // Checkpoint save.
+                                self.sequence.save(true, false)?;
+                                seq_progress.inner.write().tx_sent(tx_hash);
+                                Ok(())
+                            },
+                        )
+                        .await?;
 
                         // Checkpoint save
                         self.sequence.save(true, false)?;
@@ -1348,6 +1286,56 @@ impl BundledState<TempoEvmNetwork> {
     }
 }
 
+/// Sends a batch concurrently, retaining transaction positions through retries.
+/// The recording callback checkpoints each successful submission before polling the next one.
+async fn broadcast_transactions<Fut: Future<Output = Result<TxHash>> + Send>(
+    batch_start_index: usize,
+    batch_len: usize,
+    retry: bool,
+    send_one: impl Fn(usize) -> Fut + Sync,
+    on_retry: impl Fn(&Result<TxHash>, u64) + Sync,
+    mut record: impl FnMut(usize, TxHash) -> Result<()>,
+) -> Result<()> {
+    let send_one = &send_one;
+    let on_retry = &on_retry;
+    let pending_transactions = (0..batch_len).map(|pos| {
+        let original_index = batch_start_index + pos;
+        async move { (send_one(original_index).await, original_index, 0, None) }.boxed()
+    });
+    let mut buffer = pending_transactions.collect::<FuturesUnordered<_>>();
+
+    while let Some((res, original_index, attempt, original_res)) = buffer.next().await {
+        if res.is_err() && !retry && attempt == 0 {
+            debug!("not retrying transaction because --tempo.sponsor-sig is a static signature");
+        } else if res.is_err() && attempt <= 3 {
+            buffer.push(Box::pin(async move {
+                debug!(err=?res, ?attempt, "retrying transaction ");
+                let attempt = attempt + 1;
+                on_retry(&res, attempt);
+                tokio::time::sleep(Duration::from_millis(1000 * attempt)).await;
+                (
+                    send_one(original_index).await,
+                    original_index,
+                    attempt,
+                    original_res.or(Some(res)),
+                )
+            }));
+            continue;
+        }
+
+        // Preserve the original error if any.
+        let tx_hash = res.wrap_err_with(|| {
+            if let Some(original_res) = original_res {
+                format!("Failed to send transaction after {attempt} attempts {original_res:?}")
+            } else {
+                "Failed to send transaction".to_string()
+            }
+        })?;
+        record(original_index, tx_hash)?;
+    }
+    Ok(())
+}
+
 async fn wait_for_batch_receipt<N: Network>(
     provider: &RootProvider<N>,
     tx_hash: TxHash,
@@ -1386,6 +1374,78 @@ mod tests {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
     const ACCESS_KEY_PRIVATE_KEY: &str =
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+
+    #[tokio::test(start_paused = true)]
+    async fn broadcast_preserves_transaction_indices_out_of_order() {
+        // Cover a fresh sequence, a resumed prefix, and a subsequent batch.
+        for batch_start_index in [0, 2, 102] {
+            for retry_first in [false, true] {
+                let hashes = [
+                    TxHash::with_last_byte(1),
+                    TxHash::with_last_byte(2),
+                    TxHash::with_last_byte(3),
+                ];
+                let mut sequence = ScriptSequence::<Ethereum> {
+                    transactions: (0..batch_start_index + 4)
+                        .map(|_| script_tx(Address::ZERO))
+                        .collect(),
+                    ..Default::default()
+                };
+                let prefix_hash = TxHash::with_last_byte(99);
+                for tx in sequence.transactions.iter_mut().take(batch_start_index) {
+                    tx.hash = Some(prefix_hash);
+                }
+                let attempts = parking_lot::Mutex::new([0; 3]);
+                let mut completion_order = Vec::new();
+                broadcast_transactions(
+                    batch_start_index,
+                    3,
+                    true,
+                    |original_index| {
+                        let pos = original_index - batch_start_index;
+                        let attempt = {
+                            let mut attempts = attempts.lock();
+                            attempts[pos] += 1;
+                            attempts[pos]
+                        };
+                        async move {
+                            tokio::time::sleep(Duration::from_millis([50, 10, 30][pos])).await;
+                            if retry_first && pos == 0 && attempt == 1 {
+                                bail!("retry transaction zero");
+                            }
+                            Ok(hashes[pos])
+                        }
+                    },
+                    |_, _| {},
+                    |original_index, hash| {
+                        sequence.add_pending(original_index, hash);
+                        completion_order.push(hash);
+                        Ok(())
+                    },
+                )
+                .await
+                .unwrap();
+
+                assert_eq!(completion_order, [hashes[1], hashes[2], hashes[0]]);
+                assert_eq!(*attempts.lock(), [if retry_first { 2 } else { 1 }, 1, 1]);
+                for (pos, hash) in hashes.into_iter().enumerate() {
+                    assert_eq!(
+                        sequence.transactions[batch_start_index + pos].hash,
+                        Some(hash),
+                        "wrong hash for transaction {pos} (batch start {batch_start_index}, retry {retry_first})"
+                    );
+                }
+                assert!(
+                    sequence
+                        .transactions
+                        .iter()
+                        .take(batch_start_index)
+                        .all(|tx| tx.hash == Some(prefix_hash))
+                );
+                assert_eq!(sequence.transactions[batch_start_index + 3].hash, None);
+            }
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn next_nonce_uses_exact_fork_hash() {
