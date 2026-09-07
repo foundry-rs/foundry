@@ -77,19 +77,42 @@ struct OpcodeListState {
     max_pc: usize,
 }
 
+/// The active prompt and its current contents.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Prompt {
+    Pc(String),
+    BufferOffset(String),
+    Command(String),
+    OpcodeSearch(String),
+}
+
+impl Prompt {
+    const fn input_mut(&mut self) -> &mut String {
+        match self {
+            Self::Pc(input)
+            | Self::BufferOffset(input)
+            | Self::Command(input)
+            | Self::OpcodeSearch(input) => input,
+        }
+    }
+
+    fn accepts(&self, c: char) -> bool {
+        match self {
+            Self::Pc(_) => c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | ':'),
+            Self::BufferOffset(input) => is_buffer_offset_input_char(input, c),
+            Self::Command(_) => !c.is_control(),
+            Self::OpcodeSearch(_) => true,
+        }
+    }
+}
+
 pub(crate) struct TUIContext<'a> {
     pub(crate) debugger_context: &'a mut DebuggerContext,
 
     /// Buffer for keys prior to execution, i.e. '10' + 'k' => move up 10 operations.
     pub(crate) key_buffer: String,
-    /// Current goto program counter prompt contents, if the prompt is active.
-    pub(crate) pc_input: Option<String>,
-    /// Current active-buffer byte offset prompt contents, if the prompt is active.
-    pub(crate) buffer_offset_input: Option<String>,
-    /// Current debugger command prompt contents, if the prompt is active.
-    pub(crate) command_input: Option<String>,
-    /// Current opcode search prompt contents, if the prompt is active.
-    pub(crate) opcode_search_input: Option<String>,
+    /// Current prompt, if one is active.
+    pub(crate) prompt: Option<Prompt>,
     /// Last opcode search term, used by repeat-search shortcuts.
     pub(crate) last_opcode_search: Option<String>,
     /// Last status or error message to show in the footer.
@@ -119,10 +142,7 @@ impl<'a> TUIContext<'a> {
             debugger_context,
 
             key_buffer: String::with_capacity(64),
-            pc_input: None,
-            buffer_offset_input: None,
-            command_input: None,
-            opcode_search_input: None,
+            prompt: None,
             last_opcode_search: None,
             status: None,
             current_step: 0,
@@ -292,23 +312,8 @@ impl TUIContext<'_> {
     }
 
     fn handle_key_event(&mut self, event: KeyEvent) -> ControlFlow<ExitReason> {
-        if self.opcode_search_input.is_some() {
-            self.handle_opcode_search_input_key_event(event);
-            return ControlFlow::Continue(());
-        }
-
-        if self.pc_input.is_some() {
-            self.handle_pc_input_key_event(event);
-            return ControlFlow::Continue(());
-        }
-
-        if self.buffer_offset_input.is_some() {
-            self.handle_buffer_offset_input_key_event(event);
-            return ControlFlow::Continue(());
-        }
-
-        if self.command_input.is_some() {
-            self.handle_command_input_key_event(event);
+        if let Some(prompt) = self.prompt.take() {
+            self.handle_prompt_key_event(prompt, event);
             return ControlFlow::Continue(());
         }
 
@@ -459,7 +464,7 @@ impl TUIContext<'_> {
             KeyCode::Char('p') => {
                 self.key_buffer.clear();
                 self.status = None;
-                self.pc_input = Some(String::new());
+                self.prompt = Some(Prompt::Pc(String::new()));
             }
 
             // Go to byte offset in the active buffer
@@ -467,9 +472,9 @@ impl TUIContext<'_> {
                 self.key_buffer.clear();
                 self.status = None;
                 if let Some(space) = self.active_storage {
-                    self.command_input = Some(format!("{} ", space.command()));
+                    self.prompt = Some(Prompt::Command(format!("{} ", space.command())));
                 } else {
-                    self.buffer_offset_input = Some(String::new());
+                    self.prompt = Some(Prompt::BufferOffset(String::new()));
                 }
             }
 
@@ -477,14 +482,14 @@ impl TUIContext<'_> {
             KeyCode::Char(':') => {
                 self.key_buffer.clear();
                 self.status = None;
-                self.command_input = Some(String::new());
+                self.prompt = Some(Prompt::Command(String::new()));
             }
 
             // Search opcodes in the current call
             KeyCode::Char('/') => {
                 self.key_buffer.clear();
                 self.status = None;
-                self.opcode_search_input = Some(String::new());
+                self.prompt = Some(Prompt::OpcodeSearch(String::new()));
             }
 
             // Repeat opcode search forward
@@ -521,53 +526,29 @@ impl TUIContext<'_> {
         ControlFlow::Continue(())
     }
 
-    fn handle_pc_input_key_event(&mut self, event: KeyEvent) {
-        if let Some(input) = handle_prompt_input_key_event(&mut self.pc_input, event, |_, c| {
-            c.is_ascii_hexdigit() || matches!(c, 'x' | 'X' | ':')
-        }) {
-            self.goto_pc_from_input(&input);
-        }
-    }
-
-    fn handle_buffer_offset_input_key_event(&mut self, event: KeyEvent) {
-        if let Some(input) = handle_prompt_input_key_event(
-            &mut self.buffer_offset_input,
-            event,
-            is_buffer_offset_input_char,
-        ) {
-            self.goto_buffer_offset_from_input(&input);
-        }
-    }
-
-    fn handle_command_input_key_event(&mut self, event: KeyEvent) {
-        if let Some(input) =
-            handle_prompt_input_key_event(&mut self.command_input, event, |_, c| !c.is_control())
-        {
-            self.run_command_from_input(&input);
-        }
-    }
-
-    fn handle_opcode_search_input_key_event(&mut self, event: KeyEvent) {
+    fn handle_prompt_key_event(&mut self, mut prompt: Prompt, event: KeyEvent) {
         match event.code {
-            KeyCode::Esc => {
-                self.opcode_search_input = None;
-            }
+            KeyCode::Esc => return,
             KeyCode::Enter => {
-                let input = self.opcode_search_input.take().unwrap_or_default();
-                self.search_opcode_from_input(&input);
+                match prompt {
+                    Prompt::Pc(input) => self.goto_pc_from_input(&input),
+                    Prompt::BufferOffset(input) => self.goto_buffer_offset_from_input(&input),
+                    Prompt::Command(input) => self.run_command_from_input(&input),
+                    Prompt::OpcodeSearch(input) => self.search_opcode_from_input(&input),
+                }
+                return;
             }
             KeyCode::Backspace => {
-                if let Some(input) = &mut self.opcode_search_input {
-                    input.pop();
-                }
+                prompt.input_mut().pop();
             }
-            KeyCode::Char(c) if !event.modifiers.contains(KeyModifiers::CONTROL) => {
-                if let Some(input) = &mut self.opcode_search_input {
-                    input.push(c);
-                }
+            KeyCode::Char(c)
+                if !event.modifiers.contains(KeyModifiers::CONTROL) && prompt.accepts(c) =>
+            {
+                prompt.input_mut().push(c);
             }
             _ => {}
         }
+        self.prompt = Some(prompt);
     }
 
     fn search_opcode_from_input(&mut self, input: &str) {
@@ -1024,11 +1005,7 @@ impl TUIContext<'_> {
     }
 
     fn handle_mouse_event(&mut self, event: MouseEvent) -> ControlFlow<ExitReason> {
-        if self.pc_input.is_some()
-            || self.buffer_offset_input.is_some()
-            || self.command_input.is_some()
-            || self.opcode_search_input.is_some()
-        {
+        if self.prompt.is_some() {
             return ControlFlow::Continue(());
         }
 
@@ -1209,36 +1186,6 @@ fn command_help() -> String {
 
 fn command_aliases(commands: &[&str]) -> String {
     commands.iter().map(|command| format!(":{command}")).collect::<Vec<_>>().join("/")
-}
-
-fn handle_prompt_input_key_event(
-    input: &mut Option<String>,
-    event: KeyEvent,
-    is_input_char: impl Fn(&str, char) -> bool,
-) -> Option<String> {
-    match event.code {
-        KeyCode::Esc => {
-            *input = None;
-        }
-        KeyCode::Enter => {
-            return Some(input.take().unwrap_or_default());
-        }
-        KeyCode::Backspace => {
-            if let Some(input) = input {
-                input.pop();
-            }
-        }
-        KeyCode::Char(c) if !event.modifiers.contains(KeyModifiers::CONTROL) => {
-            if let Some(input) = input
-                && is_input_char(input, c)
-            {
-                input.push(c);
-            }
-        }
-        _ => {}
-    }
-
-    None
 }
 
 fn is_buffer_offset_input_char(input: &str, c: char) -> bool {
@@ -2256,6 +2203,43 @@ mod tests {
     }
 
     #[test]
+    fn prompts_preserve_character_filters_and_block_navigation() {
+        for (shortcut, expected) in [
+            ('p', Prompt::Pc("a".into())),
+            ('o', Prompt::BufferOffset("a".into())),
+            (':', Prompt::Command("aé".into())),
+            ('/', Prompt::OpcodeSearch("aé\n".into())),
+        ] {
+            let address = Address::repeat_byte(1);
+            let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
+            let mut tui = TUIContext::new(&mut context);
+            tui.init();
+
+            let _ = tui.handle_key_event(key(KeyCode::Char(shortcut)));
+            for c in ['a', 'é', '\n'] {
+                let _ = tui.handle_key_event(key(KeyCode::Char(c)));
+            }
+            let _ = tui.handle_key_event(ctrl_key(KeyCode::Char('c')));
+            let _ = tui.handle_key_event(key(KeyCode::Down));
+            let _ = tui.handle_mouse_event(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::empty(),
+            });
+            assert_eq!(tui.prompt, Some(expected));
+            assert_eq!(tui.current_step, 0);
+
+            let _ = tui.handle_key_event(key(KeyCode::Esc));
+            assert_eq!(tui.prompt, None);
+            assert_eq!(tui.current_step, 0);
+            assert_eq!(tui.status, None);
+            let _ = tui.handle_key_event(key(KeyCode::Down));
+            assert_eq!(tui.current_step, 1);
+        }
+    }
+
+    #[test]
     fn pc_input_mode_handles_keys_and_blocks_normal_commands() {
         let address = Address::repeat_byte(1);
         let mut context = context_with_arena(vec![node(address, CallKind::Call, &[1, 42])]);
@@ -2263,22 +2247,22 @@ mod tests {
         tui.init();
 
         assert!(matches!(tui.handle_key_event(key(KeyCode::Char('p'))), ControlFlow::Continue(())));
-        assert_eq!(tui.pc_input.as_deref(), Some(""));
+        assert_eq!(tui.prompt, Some(Prompt::Pc(String::new())));
 
         let _ = tui.handle_key_event(key(KeyCode::Char('q')));
-        assert_eq!(tui.pc_input.as_deref(), Some(""));
+        assert_eq!(tui.prompt, Some(Prompt::Pc(String::new())));
         assert_eq!(tui.current_step, 0);
 
         let _ = tui.handle_key_event(key(KeyCode::Char('2')));
         let _ = tui.handle_key_event(key(KeyCode::Char('a')));
-        assert_eq!(tui.pc_input.as_deref(), Some("2a"));
+        assert_eq!(tui.prompt, Some(Prompt::Pc("2a".into())));
 
         let _ = tui.handle_key_event(key(KeyCode::Backspace));
-        assert_eq!(tui.pc_input.as_deref(), Some("2"));
+        assert_eq!(tui.prompt, Some(Prompt::Pc("2".into())));
         let _ = tui.handle_key_event(key(KeyCode::Char('a')));
         let _ = tui.handle_key_event(key(KeyCode::Enter));
 
-        assert_eq!(tui.pc_input, None);
+        assert_eq!(tui.prompt, None);
         assert_eq!(tui.current_step, 1);
         assert_eq!(tui.status.as_ref().unwrap().kind, StatusKind::Info);
     }
@@ -2294,7 +2278,7 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('2')));
         let _ = tui.handle_key_event(key(KeyCode::Esc));
 
-        assert_eq!(tui.pc_input, None);
+        assert_eq!(tui.prompt, None);
         assert_eq!(tui.current_step, 0);
         assert_eq!(tui.status, None);
     }
@@ -2307,10 +2291,10 @@ mod tests {
         tui.init();
 
         assert!(matches!(tui.handle_key_event(key(KeyCode::Char(':'))), ControlFlow::Continue(())));
-        assert_eq!(tui.command_input.as_deref(), Some(""));
+        assert_eq!(tui.prompt, Some(Prompt::Command(String::new())));
 
         let _ = tui.handle_key_event(key(KeyCode::Char('q')));
-        assert_eq!(tui.command_input.as_deref(), Some("q"));
+        assert_eq!(tui.prompt, Some(Prompt::Command("q".into())));
         assert_eq!(tui.current_step, 0);
 
         let _ = tui.handle_key_event(key(KeyCode::Backspace));
@@ -2319,7 +2303,7 @@ mod tests {
         }
         let _ = tui.handle_key_event(key(KeyCode::Enter));
 
-        assert_eq!(tui.command_input, None);
+        assert_eq!(tui.prompt, None);
         assert_eq!(tui.current_step, 1);
         let status = tui.status.as_ref().unwrap();
         assert_eq!(status.kind, StatusKind::Info);
@@ -2810,10 +2794,10 @@ mod tests {
         tui.active_buffer = BufferKind::Calldata;
 
         assert!(matches!(tui.handle_key_event(key(KeyCode::Char('o'))), ControlFlow::Continue(())));
-        assert_eq!(tui.buffer_offset_input.as_deref(), Some(""));
+        assert_eq!(tui.prompt, Some(Prompt::BufferOffset(String::new())));
 
         let _ = tui.handle_key_event(key(KeyCode::Char('q')));
-        assert_eq!(tui.buffer_offset_input.as_deref(), Some(""));
+        assert_eq!(tui.prompt, Some(Prompt::BufferOffset(String::new())));
         assert_eq!(tui.draw_memory.current_buf_startline, 0);
 
         for c in "40".chars() {
@@ -2821,7 +2805,7 @@ mod tests {
         }
         let _ = tui.handle_key_event(key(KeyCode::Enter));
 
-        assert_eq!(tui.buffer_offset_input, None);
+        assert_eq!(tui.prompt, None);
         assert_eq!(tui.draw_memory.current_buf_startline, 2);
         let status = tui.status.as_ref().unwrap();
         assert_eq!(status.kind, StatusKind::Info);
@@ -2911,7 +2895,7 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('2')));
         let _ = tui.handle_key_event(key(KeyCode::Esc));
 
-        assert_eq!(tui.buffer_offset_input, None);
+        assert_eq!(tui.prompt, None);
         assert_eq!(tui.draw_memory.current_buf_startline, 0);
         assert_eq!(tui.status, None);
 
@@ -3017,10 +3001,10 @@ mod tests {
         tui.init();
 
         assert!(matches!(tui.handle_key_event(key(KeyCode::Char('/'))), ControlFlow::Continue(())));
-        assert_eq!(tui.opcode_search_input.as_deref(), Some(""));
+        assert_eq!(tui.prompt, Some(Prompt::OpcodeSearch(String::new())));
 
         let _ = tui.handle_key_event(key(KeyCode::Char('q')));
-        assert_eq!(tui.opcode_search_input.as_deref(), Some("q"));
+        assert_eq!(tui.prompt, Some(Prompt::OpcodeSearch("q".into())));
         assert_eq!(tui.current_step, 0);
 
         let _ = tui.handle_key_event(key(KeyCode::Backspace));
@@ -3028,7 +3012,7 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('5')));
         let _ = tui.handle_key_event(key(KeyCode::Enter));
 
-        assert_eq!(tui.opcode_search_input, None);
+        assert_eq!(tui.prompt, None);
         assert_eq!(tui.last_opcode_search.as_deref(), Some("95"));
         assert_eq!(tui.current_step, 1);
         assert_eq!(tui.status.as_ref().unwrap().kind, StatusKind::Info);
@@ -3106,7 +3090,7 @@ mod tests {
         let _ = tui.handle_key_event(key(KeyCode::Char('s')));
         let _ = tui.handle_key_event(key(KeyCode::Esc));
 
-        assert_eq!(tui.opcode_search_input, None);
+        assert_eq!(tui.prompt, None);
         assert_eq!(tui.last_opcode_search, None);
         assert_eq!(tui.current_step, 0);
         assert_eq!(tui.status, None);

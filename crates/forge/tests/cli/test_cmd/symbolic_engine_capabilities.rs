@@ -151,7 +151,7 @@ contract TxOriginBypass is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/TxOriginBypass.t.sol:TxOriginBypass
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkOnlyOwnerCanTrigger(address,address) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkOnlyOwnerCanTrigger(address,address) ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -196,7 +196,7 @@ contract EcrecoverBasic {
 ...
 Failing tests:
 Encountered 1 failing test in test/EcrecoverBasic.t.sol:EcrecoverBasic
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkEcrecoverNeverHitsZero(bytes32,uint8,bytes32,bytes32) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: 		[SENDER] [SENDER] [CALLDATA] [ARGS]] checkEcrecoverNeverHitsZero(bytes32,uint8,bytes32,bytes32) ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

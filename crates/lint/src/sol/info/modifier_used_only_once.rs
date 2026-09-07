@@ -18,11 +18,12 @@ impl<'ast> ProjectLintPass<'ast> for ModifierUsedOnlyOnce {
         if !ctx.is_lint_enabled(MODIFIER_USED_ONLY_ONCE.id()) {
             return;
         }
-        let hir = &ctx.gcx().hir;
 
         // Only modifiers declared in user-provided files are reported, while invocations are
         // counted across the whole unit, dependencies included.
-        let input_source_idx: HashMap<_, _> = hir
+        let input_source_idx: HashMap<_, _> = ctx
+            .gcx()
+            .hir
             .sources_enumerated()
             .filter_map(|(sid, src)| {
                 let FileName::Real(path) = &src.file.name else { return None };
@@ -36,16 +37,16 @@ impl<'ast> ProjectLintPass<'ast> for ModifierUsedOnlyOnce {
         // Invocations live in each function's resolved modifier list, where base-constructor
         // calls carry a contract id and stay out of the count.
         let mut counts = HashMap::<hir::FunctionId, usize>::new();
-        for function_id in hir.function_ids() {
-            for invocation in hir.function(function_id).modifiers {
+        for function_id in ctx.gcx().hir.function_ids() {
+            for invocation in ctx.gcx().hir.function(function_id).modifiers {
                 if let hir::ItemId::Function(modifier_id) = invocation.id {
                     *counts.entry(modifier_id).or_default() += 1;
                 }
             }
         }
 
-        for function_id in hir.function_ids() {
-            let function = hir.function(function_id);
+        for function_id in ctx.gcx().hir.function_ids() {
+            let function = ctx.gcx().hir.function(function_id);
             let Some(&src_idx) = input_source_idx.get(&function.source) else { continue };
             // Only modifier declarations with a body qualify. `virtual` modifiers and overrides
             // exist for dynamic dispatch, so inlining them is not an option. Exactly one

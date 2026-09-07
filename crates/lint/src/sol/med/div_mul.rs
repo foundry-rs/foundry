@@ -3,7 +3,7 @@ use crate::{
     linter::{LateLintPass, LintContext},
     sol::{
         Severity, SolLint,
-        analysis::{builtins, is_revert_call, tuple_elems},
+        analysis::{builtins, is_revert_call, loop_update, tuple_elems},
     },
 };
 use solar::sema::{
@@ -23,25 +23,19 @@ declare_forge_lint!(
 /// Locals whose current value is the result of a division.
 type Tainted = HashSet<VariableId>;
 
-impl<'hir> LateLintPass<'hir> for DivideBeforeMultiply {
-    fn check_function(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        hir: &'hir Hir<'hir>,
-        func: &'hir Function<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for DivideBeforeMultiply {
+    fn check_function(&mut self, ctx: &LintContext, gcx: Gcx<'gcx>, func: &'gcx Function<'gcx>) {
         if let Some(body) = func.body {
-            check_block(ctx, hir, body, &mut Tainted::new());
+            check_block(ctx, &gcx.hir, body, &mut Tainted::new());
         }
     }
 }
 
 /// Checks `block`, returning `false` once control cannot continue past a statement.
-fn check_block<'hir>(
+fn check_block<'gcx>(
     ctx: &LintContext,
-    hir: &'hir Hir<'hir>,
-    block: Block<'hir>,
+    hir: &'gcx Hir<'gcx>,
+    block: Block<'gcx>,
     tainted: &mut Tainted,
 ) -> bool {
     block.stmts.iter().all(|stmt| check_stmt(ctx, hir, stmt, tainted))
@@ -49,10 +43,10 @@ fn check_block<'hir>(
 
 /// Checks the bodies of mutually exclusive branches and keeps the taint of every branch that
 /// falls through, on top of the taint before the branch.
-fn check_branches<'hir>(
+fn check_branches<'gcx>(
     ctx: &LintContext,
-    hir: &'hir Hir<'hir>,
-    blocks: impl Iterator<Item = Block<'hir>>,
+    hir: &'gcx Hir<'gcx>,
+    blocks: impl Iterator<Item = Block<'gcx>>,
     tainted: &mut Tainted,
 ) {
     let mut merged = Tainted::new();
@@ -65,10 +59,10 @@ fn check_branches<'hir>(
     tainted.extend(merged);
 }
 
-fn check_stmt<'hir>(
+fn check_stmt<'gcx>(
     ctx: &LintContext,
-    hir: &'hir Hir<'hir>,
-    stmt: &'hir Stmt<'hir>,
+    hir: &'gcx Hir<'gcx>,
+    stmt: &'gcx Stmt<'gcx>,
     tainted: &mut Tainted,
 ) -> bool {
     match &stmt.kind {
@@ -117,8 +111,14 @@ fn check_stmt<'hir>(
             }
             falls_through
         }
-        StmtKind::Loop(block, _) => {
-            check_branches(ctx, hir, std::iter::once(*block), tainted);
+        StmtKind::Loop(block, source) => {
+            let mut branch = tainted.clone();
+            if check_block(ctx, hir, *block, &mut branch)
+                && loop_update(*source)
+                    .is_none_or(|update| check_stmt(ctx, hir, update, &mut branch))
+            {
+                tainted.extend(branch);
+            }
             true
         }
         StmtKind::Try(try_stmt) => {
@@ -138,10 +138,10 @@ fn check_stmt<'hir>(
     }
 }
 
-fn check_expr<'hir>(
+fn check_expr<'gcx>(
     ctx: &LintContext,
-    hir: &'hir Hir<'hir>,
-    expr: &'hir Expr<'hir>,
+    hir: &'gcx Hir<'gcx>,
+    expr: &'gcx Expr<'gcx>,
     tainted: &mut Tainted,
 ) {
     match &expr.peel_parens().kind {

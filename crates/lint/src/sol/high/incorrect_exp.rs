@@ -19,14 +19,8 @@ declare_forge_lint!(
     "`^` is bitwise xor, not exponentiation; use `**`"
 );
 
-impl<'hir> LateLintPass<'hir> for IncorrectExp {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        _gcx: Gcx<'hir>,
-        _hir: &'hir hir::Hir<'hir>,
-        expr: &'hir hir::Expr<'hir>,
-    ) {
+impl<'gcx> LateLintPass<'gcx> for IncorrectExp {
+    fn check_expr(&mut self, ctx: &LintContext, _gcx: Gcx<'gcx>, expr: &'gcx hir::Expr<'gcx>) {
         // `a ^ b` between integer literals is almost always a mistake for `a ** b`: `^` is bitwise
         // xor in Solidity, so `10 ^ 18` is `24`, not `10 ** 18`.
         //
@@ -70,7 +64,7 @@ fn plain_decimal_int_lit(ctx: &LintContext, expr: &Expr<'_>) -> Option<U256> {
 /// operand. A misplaced `^` can hide behind such a cast (`uint256(10) ^ 18`), which a bare literal
 /// check would miss. Non-integer casts (`bytes32(x)`, `address(x)`) are left alone, since xor of a
 /// `bytesN` bit pattern is a legitimate operation.
-fn peel_int_casts<'a, 'hir>(expr: &'a Expr<'hir>) -> &'a Expr<'hir> {
+fn peel_int_casts<'a, 'gcx>(expr: &'a Expr<'gcx>) -> &'a Expr<'gcx> {
     let expr = expr.peel_parens();
     if let ExprKind::Call(callee, args, _) = &expr.kind
         && let ExprKind::Type(hir::Type {

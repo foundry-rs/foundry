@@ -9,6 +9,12 @@ Flags local variables that are declared without an initializer and then read bef
 
 Reports any local variable of `VarKind::Statement` (i.e., a variable declared inside a function body, not a parameter or state variable) whose first use is a read and which has never been explicitly assigned prior to that read on at least one execution path.
 
+Unsigned counters declared in a `for` initializer may intentionally start at zero, as in
+`for (uint256 i; i < n; ++i)`. The lint exempts these counters when the condition compares
+them against an upper bound and the header update uses `++i` or `i++`. Other uninitialized
+locals read by the condition or body still produce warnings. Counters declared outside the
+header or incremented inside the body retain their existing diagnostics.
+
 ## Why is this bad?
 
 Reading an uninitialized variable means the code silently depends on a language-level zero-default rather than an explicit value chosen by the developer. Common consequences include:
