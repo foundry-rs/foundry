@@ -55,12 +55,7 @@ pub(crate) fn parse_scope(s: &str) -> Result<CallScope, String> {
 }
 
 fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
-    let mut rules: Vec<SelectorRule> = Vec::new();
-    // Tracks whether the most recently pushed rule had a `@RECIPIENTS` clause. The top-level
-    // splitter below cannot tell a rule-separating comma from a recipient-separating one (both
-    // are plain top-level commas), so a bare address immediately following such a rule is
-    // treated as another recipient for it rather than a malformed next selector.
-    let mut last_rule_has_recipients = false;
+    let mut rules = Vec::<SelectorRule>::new();
 
     for part in split_selector_rule_parts(s) {
         let part = part.trim();
@@ -68,21 +63,17 @@ fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
             continue;
         }
 
-        if last_rule_has_recipients
-            && !part.contains('@')
+        // Require a hex prefix to distinguish recipients from hex-like function names.
+        if let Some(rule) = rules.last_mut()
+            && !rule.recipients.is_empty()
+            && (part.starts_with("0x") || part.starts_with("0X"))
             && let Ok(addr) = part.parse::<Address>()
         {
-            rules
-                .last_mut()
-                .expect("last_rule_has_recipients implies a rule was already pushed")
-                .recipients
-                .push(addr);
+            rule.recipients.push(addr);
             continue;
         }
 
         let (selector_str, recipients_str) = part.split_once('@').unwrap_or((part, ""));
-        last_rule_has_recipients = !recipients_str.is_empty();
-
         let selector = parse_selector_bytes(selector_str)?;
         let recipients = recipients_str
             .split(',')
@@ -211,17 +202,12 @@ mod tests {
                 vec![([0xaa, 0xbb, 0xcc, 0xdd], vec![recipient])],
             ),
             (
-                // Multiple comma-separated recipients for one selector rule. The top-level
-                // splitter treats every top-level comma as a rule separator, so without the
-                // recipient-continuation check this second address would be misparsed as its
-                // own (invalid) selector.
+                // Multiple recipients for one rule.
                 "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:transfer@0x1111111111111111111111111111111111111111,0x2222222222222222222222222222222222222222",
                 vec![(selector("transfer(address,uint256)"), vec![recipient, recipient2])],
             ),
             (
-                // A recipient-scoped rule followed by a second, unrestricted rule: the plain
-                // `approve` after the comma must still start a new rule, not be swallowed as a
-                // third recipient.
+                // An unrestricted rule ends the previous recipient list.
                 "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:transfer@0x1111111111111111111111111111111111111111,0x2222222222222222222222222222222222222222,approve",
                 vec![
                     (selector("transfer(address,uint256)"), vec![recipient, recipient2]),
@@ -229,7 +215,7 @@ mod tests {
                 ],
             ),
             (
-                // Two independent recipient-scoped rules must not bleed into each other.
+                // Recipient lists stay local to their rules.
                 "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:transfer@0x1111111111111111111111111111111111111111,approve@0x2222222222222222222222222222222222222222",
                 vec![
                     (selector("transfer(address,uint256)"), vec![recipient]),
@@ -247,10 +233,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_scope_hex_like_function_name_starts_a_new_rule() {
+        let scope = parse_scope(
+            "0x20c0000000000000000000000000000000000001:transfer@0x1111111111111111111111111111111111111111,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        assert_eq!(scope.selectorRules.len(), 2);
+        assert_eq!(scope.selectorRules[0].recipients.len(), 1);
+        assert_eq!(
+            scope.selectorRules[1].selector.0,
+            selector("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa()")
+        );
+        assert!(scope.selectorRules[1].recipients.is_empty());
+    }
+
+    #[test]
     fn parse_scope_bogus_selector_after_unrestricted_rule_still_errors() {
-        // `transfer` has no `@` clause, so a bare address right after it is not a recipient
-        // continuation - it must still fail as an invalid selector, same as before the
-        // recipient-continuation fix.
+        // A bare address cannot continue a rule without an @ clause.
         let err = parse_scope(
             "0x20c0000000000000000000000000000000000001:transfer,0x2222222222222222222222222222222222222222",
         )
