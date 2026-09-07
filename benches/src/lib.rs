@@ -341,9 +341,10 @@ impl BenchmarkProject {
         )
     }
 
-    /// Benchmarks filtered tests after warming only the selected tests.
+    /// Benchmarks tests after cleaning once and warming the selected workload.
     ///
-    /// Keeps the project's dynamic linking configuration and partial compilation cache.
+    /// Keeps the project's dynamic linking configuration. Effective CLI or configuration
+    /// filters are needed to exercise partial-cache discovery.
     pub fn bench_forge_test_filtered(
         &self,
         version: &str,
@@ -351,9 +352,9 @@ impl BenchmarkProject {
         verbose: bool,
     ) -> Result<HyperfineResult> {
         let command = self.cmd("forge test");
-        // The first invocation populates normal artifacts; the second warms discovery for
-        // that normal cache. Neither invocation builds unselected tests.
-        let setup = format!("{command} && {command}");
+        // Clean inherited artifacts once so earlier benchmarks cannot hide discovery misses.
+        // The first test invocation populates normal artifacts; the second warms discovery.
+        let setup = format!("forge clean && {command} && {command}");
         self.hyperfine(
             "forge_test_filtered",
             version,

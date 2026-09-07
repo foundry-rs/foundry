@@ -132,10 +132,13 @@ Use `--symbolic-sidecar-output <FILE>` with exactly one `--versions` value to ca
 versioned per-run results. Like `--json-output`, the sidecar path is relative to `--output-dir`.
 
 For filtered test discovery, use `--benchmarks forge_test_filtered` with test filters
-in the repository's extra arguments. This keeps the project's dynamic-linking
-configuration and warms only the selected tests twice: once to populate normal
-artifacts and once to populate ABI discovery for that cache. It does not run an
-unfiltered build, which would hide partial-cache discovery costs. For example:
+in the repository's extra arguments or `foundry.toml`. This keeps the project's
+dynamic-linking configuration, cleans inherited artifacts once before each benchmark
+series, and warms the selected tests twice: once to populate normal artifacts and
+once to populate ABI discovery for that cache. Timed runs retain that warm cache.
+The result is labeled `Forge Test (Warm Cache)` because without effective filters
+it measures ordinary unfiltered tests; it does not guarantee ABI-discovery coverage.
+No unfiltered build runs during setup. For example:
 
 ```bash
 foundry-bench --versions local --benchmarks forge_test_filtered \
