@@ -1578,7 +1578,7 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<Option<AnyRpcTransaction>> {
         node_info!("eth_getTransactionByBlockNumberAndIndex");
         if block == BlockNumber::Pending {
-            return Ok(self.pending_block_full().await.and_then(|block| {
+            return Ok(self.pending_block_full().await?.and_then(|block| {
                 let WithOtherFields { inner: block, .. } = block.0;
                 block.transactions.into_transactions().nth(idx.into())
             }));
@@ -2581,7 +2581,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn block_by_number(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
-            return Ok(Some(self.pending_block().await));
+            return Ok(Some(self.pending_block().await?));
         }
 
         self.backend.block_by_number(number).await
@@ -2596,7 +2596,7 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<Option<WithOtherFields<AnyRpcHeader>>> {
         node_info!("eth_getHeaderByNumber");
         if number == BlockNumber::Pending {
-            let WithOtherFields { inner: block, other } = self.pending_block().await.0;
+            let WithOtherFields { inner: block, other } = self.pending_block().await?.0;
             return Ok(Some(WithOtherFields { inner: block.header, other }));
         }
 
@@ -2612,7 +2612,7 @@ impl EthApi<FoundryNetwork> {
     pub async fn block_by_number_full(&self, number: BlockNumber) -> Result<Option<AnyRpcBlock>> {
         node_info!("eth_getBlockByNumber");
         if number == BlockNumber::Pending {
-            return Ok(self.pending_block_full().await);
+            return Ok(self.pending_block_full().await?);
         }
         self.backend.block_by_number_full(number).await
     }
@@ -2717,7 +2717,7 @@ impl EthApi<FoundryNetwork> {
         node_info!("eth_getBlockTransactionCountByNumber");
         if block_number == BlockNumber::Pending {
             let txs = self.pool.ready_transactions().collect();
-            let block = self.backend.pending_block(txs).await;
+            let block = self.backend.pending_block(txs).await?;
             return Ok(Some(U256::from(block.block.body.transactions.len())));
         }
 
@@ -3669,7 +3669,7 @@ impl EthApi<FoundryNetwork> {
             if transactions.is_empty() {
                 return Ok(Some(Vec::new()));
             }
-            return Ok(Some(self.backend.pending_block_receipts(transactions).await));
+            return Ok(Some(self.backend.pending_block_receipts(transactions).await?));
         }
 
         self.backend.block_receipts(number).await
@@ -4774,17 +4774,17 @@ impl EthApi<FoundryNetwork> {
     }
 
     /// Returns the pending block with tx hashes
-    async fn pending_block(&self) -> AnyRpcBlock {
+    async fn pending_block(&self) -> Result<AnyRpcBlock> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
-        let info = self.backend.pending_block(transactions).await;
-        self.backend.convert_block(info.block)
+        let info = self.backend.pending_block(transactions).await?;
+        Ok(self.backend.convert_block(info.block))
     }
 
     /// Returns the full pending block with `Transaction` objects
-    async fn pending_block_full(&self) -> Option<AnyRpcBlock> {
+    async fn pending_block_full(&self) -> Result<Option<AnyRpcBlock>> {
         let transactions = self.pool.ready_transactions().collect::<Vec<_>>();
         let BlockInfo { block, transactions, receipts: _ } =
-            self.backend.pending_block(transactions).await;
+            self.backend.pending_block(transactions).await?;
 
         let mut partial_block = self.backend.convert_block(block.clone());
 
@@ -4792,7 +4792,10 @@ impl EthApi<FoundryNetwork> {
         let base_fee = self.backend.base_fee();
 
         for info in transactions {
-            let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
+            let Some(tx) = block.body.transactions.get(info.transaction_index as usize).cloned()
+            else {
+                return Ok(None);
+            };
 
             let tx = transaction_build(
                 Some(info.transaction_hash),
@@ -4806,7 +4809,7 @@ impl EthApi<FoundryNetwork> {
 
         partial_block.transactions = BlockTransactions::from(block_transactions);
 
-        Some(partial_block)
+        Ok(Some(partial_block))
     }
 
     /// Prepares transaction request by filling missing fields using Anvil's API, then attempts
