@@ -59,17 +59,6 @@ impl FoundryEvmFactory for OpEvmFactory {
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         OpEvm<&'db mut dyn DatabaseExt<Self>, I, Self::Precompiles>;
 
-    fn create_evm_with_context<DB: alloy_evm::Database>(
-        &self,
-        db: DB,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
-    ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
-        let mut evm = self.create_evm(db, evm_env);
-        evm.ctx_mut().chain = chain_context;
-        evm
-    }
-
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
@@ -79,6 +68,14 @@ impl FoundryEvmFactory for OpEvmFactory {
         let mut op_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
         op_evm.cfg.tx_chain_id_check = true;
         op_evm
+    }
+
+    fn create_nested_evm<'db>(
+        &self,
+        db: &'db mut dyn DatabaseExt<Self>,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+    ) -> NestedEvmFor<'db, Self> {
+        Box::new(self.create_evm(db, evm_env).into_inner())
     }
 
     fn create_foundry_nested_evm<'db>(
@@ -121,6 +118,10 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
 
     fn chain_mut(&mut self) -> &mut Self::Chain {
         &mut self.ctx_mut().chain
+    }
+
+    fn precompiles_mut(&mut self) -> &mut alloy_evm::precompiles::PrecompilesMap {
+        &mut self.0.precompiles
     }
 
     fn journal_mut(&mut self) -> &mut Self::Journal {
@@ -206,9 +207,7 @@ mod tests {
         let mut evm_env = EvmEnvFor::<OpEvmNetwork>::default();
         evm_env.cfg_env.spec = OpSpecId::REGOLITH;
         evm_env.cfg_env.disable_fee_charge = false;
-        let mut inspector = NoOpInspector;
-        let mut evm =
-            OpEvmFactory::default().create_foundry_nested_evm(&mut db, evm_env, &mut inspector);
+        let mut evm = OpEvmFactory::default().create_nested_evm(&mut db, evm_env);
         *evm.chain_mut() = L1BlockInfo {
             l2_block: Some(U256::ZERO),
             tx_l1_cost: Some(l1_cost),

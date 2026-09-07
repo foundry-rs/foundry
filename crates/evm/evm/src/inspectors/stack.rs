@@ -89,7 +89,8 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     /// EVM context, enabling more precise gas accounting and transaction state changes.
     pub enable_isolation: bool,
     /// Configuration retained for Celo precompile support.
-    // TODO(monad-fen-dispatch): Replace this residual with a concrete Celo execution owner.
+    // TODO(celo-execution-owner): Replace this residual with concrete Celo precompile
+    // configuration. This is independent of the Monad lifecycle migration.
     pub networks: NetworkConfigs,
     /// Concrete Tempo label inspector selected by the Tempo executor builder.
     tempo_labels: Option<Box<TempoLabels>>,

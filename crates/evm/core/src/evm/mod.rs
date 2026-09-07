@@ -22,7 +22,7 @@ use revm::{
         result::{EVMError, HaltReason, ResultAndState},
     },
     handler::{EvmTr, FrameResult},
-    inspector::{InspectorEvmTr, InspectorHandler, NoOpInspector},
+    inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{
         CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, GasTracker,
         InstructionResult, SharedMemory, interpreter::EthInterpreter,
@@ -171,31 +171,15 @@ pub trait FoundryEvmFactory:
         inspector: I,
     ) -> Self::FoundryEvm<'db, I>;
 
-    /// Tries to execute a canonical system transaction on a regular Alloy EVM during replay.
+    /// Creates an uninspected, boxed Alloy EVM with the supplied environment unchanged.
     ///
-    /// Returning `Ok(None)` means the transaction was not recognized. Implementations must not
-    /// mutate the EVM, its database, or inspector before returning `Ok(None)`, because callers may
-    /// fall back to ordinary execution using the same EVM instance.
-    #[cfg(feature = "monad")]
-    fn try_transact_system_replay<DB, I>(
+    /// Unlike Foundry execution construction, this does not initialize test accounts or apply
+    /// test-validation defaults. Replay callers install position context through `chain_mut`.
+    fn create_nested_evm<'db>(
         &self,
-        _evm: &mut Self::Evm<DB, I>,
-        _tx: &Self::Tx,
-    ) -> eyre::Result<Option<ResultAndState<Self::HaltReason>>>
-    where
-        DB: alloy_evm::Database,
-        I: revm::inspector::Inspector<Self::Context<DB>>,
-    {
-        Ok(None)
-    }
-
-    /// Creates an uninspected EVM with explicit transaction-position context.
-    fn create_evm_with_context<DB: alloy_evm::Database>(
-        &self,
-        db: DB,
+        db: &'db mut dyn DatabaseExt<Self>,
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        chain_context: Self::Chain,
-    ) -> Self::Evm<DB, NoOpInspector>;
+    ) -> NestedEvmFor<'db, Self>;
 
     /// Creates a Foundry-wrapped EVM with a dynamic inspector, returning a boxed [`NestedEvm`].
     ///
@@ -213,7 +197,7 @@ pub trait FoundryEvmFactory:
     ) -> NestedEvmFor<'db, Self>;
 }
 
-/// Object-safe trait exposing the operations that cheatcode nested EVM closures need.
+/// Object-safe EVM operations used by nested execution and fork replay.
 ///
 /// This abstracts over the concrete EVM type (`FoundryEvm`, future `TempoEvm`, etc.)
 /// so that cheatcode impls can build and run nested EVMs without knowing the concrete type.
@@ -237,6 +221,9 @@ pub trait NestedEvm {
     /// Returns a mutable reference to the chain-position context.
     fn chain_mut(&mut self) -> &mut Self::Chain;
 
+    /// Returns the precompile map.
+    fn precompiles_mut(&mut self) -> &mut PrecompilesMap;
+
     /// Returns a mutable reference to the Journal.
     fn journal_mut(&mut self) -> &mut Self::Journal;
 
@@ -245,6 +232,26 @@ pub trait NestedEvm {
 
     /// Executes a full transaction with the given tx env.
     fn transact_raw(&mut self, tx: Self::Tx) -> eyre::Result<ResultAndState<HaltReason>>;
+
+    /// Executes a replay transaction, or skips a system envelope unsupported by this EVM.
+    ///
+    /// `is_system` is the original RPC envelope classification. Decoding into `Self::Tx` may
+    /// discard the system transaction type, so callers must retain that classification.
+    /// Returning `None` must leave the EVM, database, and inspector unchanged.
+    /// Ordinary execution and error propagation use the existing full-transaction operation;
+    /// concrete implementations may recognize and execute their own system envelopes. Every
+    /// execution family that supports protocol system envelopes must override this method; the
+    /// default deliberately skips unsupported system envelopes.
+    fn transact_replay(
+        &mut self,
+        tx: Self::Tx,
+        is_system: bool,
+    ) -> eyre::Result<Option<ResultAndState<HaltReason>>> {
+        if is_system {
+            return Ok(None);
+        }
+        self.transact_raw(tx).map(Some)
+    }
 
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block>;
 }

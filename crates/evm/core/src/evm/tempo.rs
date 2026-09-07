@@ -40,15 +40,6 @@ impl FoundryEvmFactory for TempoEvmFactory {
     type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
         TempoEvm<&'db mut dyn DatabaseExt<Self>, I>;
 
-    fn create_evm_with_context<DB: alloy_evm::Database>(
-        &self,
-        db: DB,
-        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
-        _chain_context: Self::Chain,
-    ) -> Self::Evm<DB, revm::inspector::NoOpInspector> {
-        self.create_evm(db, evm_env)
-    }
-
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
         db: &'db mut dyn DatabaseExt<Self>,
@@ -76,6 +67,14 @@ impl FoundryEvmFactory for TempoEvmFactory {
 
         initialize_tempo_evm(&mut tempo_evm, is_forked);
         tempo_evm
+    }
+
+    fn create_nested_evm<'db>(
+        &self,
+        db: &'db mut dyn DatabaseExt<Self>,
+        evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
+    ) -> NestedEvmFor<'db, Self> {
+        Box::new(self.create_evm(db, evm_env).into_inner())
     }
 
     fn create_foundry_nested_evm<'db>(
@@ -126,6 +125,10 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
 
     fn chain_mut(&mut self) -> &mut Self::Chain {
         &mut self.ctx_mut().chain
+    }
+
+    fn precompiles_mut(&mut self) -> &mut alloy_evm::precompiles::PrecompilesMap {
+        &mut self.precompiles
     }
 
     fn journal_mut(&mut self) -> &mut Self::Journal {
@@ -197,4 +200,21 @@ pub(crate) fn initialize_tempo_evm<
             }
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{backend::Backend, evm::TempoEvmNetwork};
+
+    #[test]
+    fn replay_skip_does_not_initialize_tempo_accounts() {
+        let mut db = Backend::<TempoEvmNetwork>::spawn(None).unwrap();
+        let env = EvmEnv::default();
+        let mut evm = TempoEvmFactory::default().create_nested_evm(&mut db, env.clone());
+        assert_eq!(evm.to_evm_env().cfg_env.tx_chain_id_check, env.cfg_env.tx_chain_id_check);
+        assert!(evm.journal_inner_mut().state.is_empty());
+        assert!(evm.transact_replay(TempoTxEnv::default(), true).unwrap().is_none());
+        assert!(evm.journal_inner_mut().state.is_empty());
+    }
 }
