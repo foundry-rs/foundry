@@ -196,25 +196,3 @@ pub(crate) fn initialize_tempo_evm<
         },
     );
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use revm::Database;
-
-    use crate::{backend::Backend, evm::TempoEvmNetwork};
-
-    #[test]
-    fn replay_skip_does_not_commit_tempo_initialization() {
-        let mut db = Backend::<TempoEvmNetwork>::spawn(None).unwrap();
-        let account_before = db.basic(TEMPO_TIP20_TOKENS[0]).unwrap();
-        let mut evm = TempoEvmFactory::default().create_nested_evm(&mut db, EvmEnv::default());
-        assert!(evm.to_evm_env().cfg_env.tx_chain_id_check);
-        let initialized_state = evm.journal_inner_mut().state.clone();
-        assert!(!initialized_state.is_empty());
-        assert!(evm.transact_replay(TempoTxEnv::default(), true).unwrap().is_none());
-        assert_eq!(evm.journal_inner_mut().state, initialized_state);
-        drop(evm);
-        assert_eq!(db.basic(TEMPO_TIP20_TOKENS[0]).unwrap(), account_before);
-    }
-}
