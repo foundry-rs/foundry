@@ -1468,6 +1468,93 @@ contract ForgeFuzzRunStatefulFrontiersTest is Test {
     assert!(!prj.root().join("override_frontiers").exists());
 });
 
+forgetest_init!(forge_fuzz_run_isolates_unmerged_invariant_frontiers, |prj, cmd| {
+    prj.add_test(
+        "ForgeFuzzRunIsolatedFrontiers.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract IsolatedFrontierTarget {
+    uint256 public marker;
+
+    function step(uint256 value) external {
+        marker = value < 100 ? 1 : 2;
+    }
+}
+
+contract ForgeFuzzRunIsolatedFrontiersTest is Test {
+    function setUp() public {
+        targetContract(address(new IsolatedFrontierTarget()));
+    }
+
+    function invariant_one() public pure {}
+
+    /// forge-config: default.invariant.depth = 1
+    function invariant_two() public pure {}
+}
+"#,
+    );
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunIsolatedFrontiersTest",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "2",
+            "--frontier-dir",
+            "isolated_frontiers",
+        ])
+        .assert_success();
+
+    for invariant in ["invariant_one", "invariant_two"] {
+        let frontier_path = prj
+            .root()
+            .join("isolated_frontiers")
+            .join("ForgeFuzzRunIsolatedFrontiersTest")
+            .join(invariant)
+            .join("branch-frontiers.json");
+        let artifact: Value = serde_json::from_slice(
+            &std::fs::read(&frontier_path)
+                .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
+        )
+        .unwrap();
+        assert_eq!(artifact["test"], format!("{invariant}()"));
+    }
+
+    cmd.forge_fuse()
+        .args([
+            "fuzz",
+            "run",
+            "--match-contract",
+            "ForgeFuzzRunIsolatedFrontiersTest",
+            "--match-test",
+            "invariant_two",
+            "--runs",
+            "1",
+            "--depth",
+            "2",
+            "--seed",
+            "0x1234",
+            "--threads",
+            "1",
+            "--frontier-dir",
+            "filtered_isolated_frontiers",
+        ])
+        .assert_success();
+    let filtered_root =
+        prj.root().join("filtered_isolated_frontiers").join("ForgeFuzzRunIsolatedFrontiersTest");
+    assert!(filtered_root.join("invariant_two/branch-frontiers.json").is_file());
+    assert!(!filtered_root.join("branch-frontiers.json").exists());
+});
+
 forgetest_init!(forge_fuzz_run_frontiers_keep_reverted_environment_prefix, |prj, cmd| {
     prj.add_test(
         "ForgeFuzzRunRevertedFrontier.t.sol",

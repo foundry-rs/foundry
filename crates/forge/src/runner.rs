@@ -240,8 +240,11 @@ fn select_invariant_campaigns<'a>(
     inline_config: &InlineConfig,
     contract_name: &str,
 ) -> InvariantCampaignSelection<'a> {
-    let boolean_invariant_fns =
-        invariant_fns.iter().copied().filter(|func| !is_optimization_invariant(func));
+    let boolean_invariant_fns = invariant_fns
+        .iter()
+        .copied()
+        .filter(|func| !is_optimization_invariant(func))
+        .collect::<Vec<_>>();
     let matched_boolean_invariant_fns = functions
         .iter()
         .copied()
@@ -252,17 +255,16 @@ fn select_invariant_campaigns<'a>(
         .filter(|func| func.is_invariant_test() && is_optimization_invariant(func))
         .count();
 
-    // The boolean invariant campaign is contract-level. Test filters only select which predicates
-    // are evaluated/reported inside that campaign; they must not decide the corpus/failure
-    // namespace. Use the canonical anchor when it is part of the filtered set, but preserve
-    // `--mt`/`--nmt` isolation when the filter deliberately excludes it.
-    let canonical_boolean_anchor = boolean_invariant_fns.into_iter().next();
+    // A uniformly configured boolean suite is contract-level. Decide from the full suite so test
+    // filters cannot change its corpus/frontier namespace, then use the canonical anchor when it
+    // remains selected. Differently configured predicates stay isolated.
+    let canonical_boolean_anchor = boolean_invariant_fns.first().copied();
     let merge_boolean_suite = !matched_boolean_invariant_fns.is_empty()
         && invariant_suite_configs_match(
             config,
             inline_config,
             contract_name,
-            &matched_boolean_invariant_fns,
+            &boolean_invariant_fns,
         );
     let boolean_suite_anchor = merge_boolean_suite
         .then(|| {
@@ -1136,6 +1138,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 let mut res = FunctionRunner::new(&self, &setup).run(
                     func,
                     invariants,
+                    merge_invariant_suite,
                     kind,
                     call_after_invariant,
                     identified_contracts.as_ref(),
@@ -1776,6 +1779,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         mut self,
         func: &Function,
         invariants: &[&Function],
+        merge_invariant_suite: bool,
         kind: TestFunctionKind,
         call_after_invariant: bool,
         identified_contracts: Option<&ContractsByAddress>,
@@ -1826,6 +1830,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 self.run_invariant_test(
                     func,
                     invariant_fns,
+                    merge_invariant_suite,
                     call_after_invariant,
                     identified_contracts.unwrap(),
                 )
@@ -3037,6 +3042,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         mut self,
         func: &Function,
         invariants: Vec<(&Function, bool)>,
+        merge_invariant_suite: bool,
         call_after_invariant: bool,
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
@@ -3047,6 +3053,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
         let invariant_config = &invariant_config;
         let is_optimization = is_optimization_invariant(func);
+        let isolated_campaign =
+            (is_optimization || !merge_invariant_suite).then_some(func.name.as_str());
 
         let mut live_invariants = Vec::new();
         let mut skipped_predicate_results = Vec::new();
@@ -3098,8 +3106,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &mut config.corpus,
             invariant_config.failure_persist_dir.clone().unwrap(),
             self.cr.name,
-            &func.name,
-            is_optimization,
+            isolated_campaign,
         );
         // Snapshot the per-test corpus dir before `config` is moved into `InvariantExecutor`.
         let resolved_corpus_dir = config.corpus.corpus_dir.clone();
@@ -3175,12 +3182,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     .corpus_dir
                     .clone()
                     .map(|corpus_dir| {
-                        let target_dir = invariant_corpus_dir(
-                            &corpus_dir,
-                            self.cr.name,
-                            &func.name,
-                            is_optimization,
-                        );
+                        let target_dir =
+                            invariant_corpus_dir(&corpus_dir, self.cr.name, isolated_campaign);
                         narrow_generated_corpus_root(corpus_dir, target_dir)
                     })
                     .or(resolved_corpus_dir);
@@ -4754,16 +4757,14 @@ fn test_paths(
     (failures_dir, failure_file)
 }
 
-/// Returns the corpus directory of a contract-level invariant campaign, or of a single
-/// optimization campaign.
+/// Returns the corpus directory of a shared contract campaign or an isolated campaign.
 fn invariant_corpus_dir(
     root: &Path,
     contract_name: &str,
-    invariant_name: &str,
-    is_optimization: bool,
+    isolated_campaign: Option<&str>,
 ) -> PathBuf {
     let dir = root.join(contract_short_name(contract_name));
-    if is_optimization { dir.join(invariant_name) } else { dir }
+    if let Some(name) = isolated_campaign { dir.join(name) } else { dir }
 }
 
 /// Sets the invariant corpus directory and returns the contract-level failure directory.
@@ -4771,24 +4772,15 @@ fn invariant_suite_paths(
     corpus_config: &mut FuzzCorpusConfig,
     persist_dir: PathBuf,
     contract_name: &str,
-    invariant_name: &str,
-    is_optimization: bool,
+    isolated_campaign: Option<&str>,
 ) -> PathBuf {
     if let Some(root) = &corpus_config.corpus_dir {
-        corpus_config.corpus_dir = Some(canonicalized(invariant_corpus_dir(
-            root,
-            contract_name,
-            invariant_name,
-            is_optimization,
-        )));
+        corpus_config.corpus_dir =
+            Some(canonicalized(invariant_corpus_dir(root, contract_name, isolated_campaign)));
     }
     if let Some(root) = &corpus_config.frontier_dir {
-        corpus_config.frontier_dir = Some(canonicalized(invariant_corpus_dir(
-            root,
-            contract_name,
-            invariant_name,
-            is_optimization,
-        )));
+        corpus_config.frontier_dir =
+            Some(canonicalized(invariant_corpus_dir(root, contract_name, isolated_campaign)));
     }
     canonicalized(persist_dir.join("failures").join(contract_short_name(contract_name)))
 }
