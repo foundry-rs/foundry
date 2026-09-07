@@ -3329,6 +3329,10 @@ contract SymbolicInvariantFrontierSeed is Test {
     function invariant_notBroken() public view {
         assertFalse(target.broken());
     }
+
+    function invariant_alsoNotBroken() public view {
+        assertFalse(target.broken());
+    }
 }
 "#,
     );
@@ -3362,6 +3366,7 @@ contract SymbolicInvariantFrontierSeed is Test {
             .unwrap_or_else(|err| panic!("failed to read {}: {err}", frontier_path.display())),
     )
     .unwrap();
+    assert_eq!(artifact["test"], "invariant_alsoNotBroken()");
     let target_frontier = artifact["frontiers"]
         .as_array()
         .unwrap()
@@ -3601,6 +3606,62 @@ contract SymbolicInvariantFrontierSeed is Test {
             "filtered_invariant_corpus",
         ])
         .assert_failure();
+
+    cmd.forge_fuse();
+    cmd.env("FOUNDRY_INVARIANT_RUNS", "0");
+    cmd.args([
+        "test",
+        "--match-contract",
+        "SymbolicInvariantFrontierSeed",
+        "--match-test",
+        "invariant_notBroken",
+        "--invariant-depth",
+        "1",
+        "--threads",
+        "1",
+        "--invariant-frontier-dir",
+        "invariant_frontiers",
+        "--invariant-corpus-dir",
+        "alternate_anchor_corpus",
+        "--symbolic-use-fuzz-frontiers",
+        "--symbolic-frontier-limit",
+        "1",
+        "--symbolic-frontier-ids",
+        &target_frontier_id,
+    ])
+    .assert_success();
+    let alternate_anchor_corpus = prj
+        .root()
+        .join("alternate_anchor_corpus")
+        .join("SymbolicInvariantFrontierSeed")
+        .join("worker0")
+        .join("corpus");
+    assert!(
+        alternate_anchor_corpus.is_dir()
+            && alternate_anchor_corpus.read_dir().unwrap().next().is_some(),
+        "alternate-anchor import did not seed the corpus"
+    );
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "fuzz",
+            "replay",
+            "--match-contract",
+            "SymbolicInvariantFrontierSeed",
+            "--match-test",
+            "invariant_notBroken",
+            "--corpus-dir",
+            "alternate_anchor_corpus",
+        ])
+        .assert_failure()
+        .get_output()
+        .clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    assert!(
+        stdout.contains("[FAIL:") && stdout.contains("invariant_notBroken"),
+        "stdout={stdout}\nstderr={stderr}"
+    );
 });
 
 forgetest_init!(symbolic_invariant_frontier_seeding_keeps_fail_on_revert_branch, |prj, cmd| {

@@ -2469,7 +2469,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
     fn import_symbolic_invariant_frontiers(
         &self,
-        func: &Function,
+        invariant_contract: &InvariantContract<'_>,
         invariant_config: &InvariantConfig,
     ) -> Vec<(FuzzBranchFrontierRecord, Arc<[BasicTxDetails]>)> {
         let limit = self.config.symbolic.frontier_limit;
@@ -2507,8 +2507,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             );
             return Vec::new();
         }
-        let signature = func.signature();
-        if artifact.test != signature {
+        let signature = invariant_contract.anchor().signature();
+        // Boolean frontiers describe handler execution, so their recorded predicate anchor is
+        // provenance; candidates are replayed against the currently selected predicates.
+        if invariant_contract.is_optimization() && artifact.test != signature {
             warn!(
                 artifact_test = %artifact.test,
                 test = %signature,
@@ -3394,7 +3396,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let mut seeded_invariants = HashSet::<usize>::default();
         let fail_on_revert = invariant_contract.invariant_fns.iter().any(|(_, policy)| *policy);
         for (frontier, sequence) in
-            self.import_symbolic_invariant_frontiers(invariant_contract.anchor(), invariant_config)
+            self.import_symbolic_invariant_frontiers(invariant_contract, invariant_config)
         {
             let id = frontier.id;
             let call_index = frontier.call_index;
