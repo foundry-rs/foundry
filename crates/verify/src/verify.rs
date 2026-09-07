@@ -15,6 +15,7 @@ use alloy_provider::Provider;
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
+    install,
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
 };
@@ -563,8 +564,8 @@ enum RunContext {
 impl VerifyArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> Result<()> {
-        let config = self.load_config()?;
         let context = self.resolve_context().await?;
+        let config = context.config.clone();
         self.run_with_resolved_context(RunContext::Local(Box::new(context)), config).await
     }
 
@@ -809,6 +810,10 @@ impl VerifyArgs {
     /// match bytecode located at given address.
     pub async fn resolve_context(&self) -> Result<VerificationContext> {
         let mut config = self.load_config()?;
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
+            config = self.load_config()?;
+        }
         config.libraries.extend(self.libraries.clone());
 
         let project = config.project()?;

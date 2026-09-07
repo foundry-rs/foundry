@@ -3,7 +3,7 @@ use alloy_primitives::map::HashSet;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
-use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
+use foundry_cli::{install, opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{
     compile::{ProjectCompiler, compile_abi_project},
     fs::json_files,
@@ -123,12 +123,18 @@ pub struct BindArgs {
 }
 
 impl BindArgs {
-    pub fn run(self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
         if self.ethers {
             eyre::bail!("`--ethers` bindings have been removed. Use `--alloy` (default) instead.");
         }
 
-        let config = self.load_config()?;
+        let mut config = self.load_config()?;
+        if !self.skip_build
+            && install::install_missing_dependencies(&mut config).await
+            && config.auto_detect_remappings
+        {
+            config = self.load_config()?;
+        }
         let artifacts = config.out.clone();
         let enum_definitions = if self.skip_build {
             let paths = config.project_paths();

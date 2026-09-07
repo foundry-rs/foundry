@@ -1,10 +1,12 @@
-use crate::{DepIdentifier, FOUNDRY_LOCK, Lockfile};
-use clap::{Parser, ValueHint};
-use eyre::{Context, Result};
-use foundry_cli::{
+//! Dependency installation shared by Forge commands.
+
+use crate::{
+    lockfile::{DepIdentifier, FOUNDRY_LOCK, Lockfile},
     opts::Dependency,
     utils::{Git, LoadConfig},
 };
+use clap::{Parser, ValueHint};
+use eyre::{Context, Result};
 use foundry_common::fs;
 use foundry_config::{Config, impl_figment_convert_basic};
 use regex::Regex;

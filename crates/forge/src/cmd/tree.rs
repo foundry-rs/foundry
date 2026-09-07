@@ -1,6 +1,6 @@
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::ProjectPathOpts, utils::LoadConfig};
+use foundry_cli::{install, opts::ProjectPathOpts, utils::LoadConfig};
 use foundry_compilers::{
     Graph,
     resolver::{Charset, TreeOptions},
@@ -26,8 +26,12 @@ pub struct TreeArgs {
 foundry_config::impl_figment_convert!(TreeArgs, project_paths);
 
 impl TreeArgs {
-    pub fn run(self) -> Result<()> {
-        let config = self.load_config()?;
+    pub async fn run(self) -> Result<()> {
+        let mut config = self.load_config()?;
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
+            config = self.load_config()?;
+        }
         let graph = <Graph>::resolve(&config.project_paths())?;
         let opts = TreeOptions { charset: self.charset, no_dedupe: self.no_dedupe };
         graph.print_with_options(opts);

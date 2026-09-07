@@ -22,6 +22,7 @@ use alloy_rpc_types::{
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result};
 use foundry_cli::{
+    install,
     opts::EtherscanOpts,
     utils::{self, LoadConfig, read_constructor_args_file},
 };
@@ -236,6 +237,10 @@ impl VerifyBytecodeArgs {
     /// bytecode.
     pub async fn run(mut self) -> Result<()> {
         let mut config = self.load_config()?;
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
+            config = self.load_config()?;
+        }
         config.libraries.append(&mut self.libraries);
 
         if let Some(network) = self.network {

@@ -1,11 +1,11 @@
 use crate::{
-    cmd::{cache::CacheSubcommands, install, watch},
+    cmd::{cache::CacheSubcommands, watch},
     opts::{Forge, ForgeSubcommand},
 };
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
-use foundry_cli::utils::{self, LoadConfig};
+use foundry_cli::utils;
 use foundry_common::{sh_warn, shell};
 use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 
@@ -67,11 +67,7 @@ pub fn run_command(args: Forge) -> Result<()> {
             let outcome = global.block_on(cmd.run())?;
             outcome.ensure_ok(silent)
         }
-        ForgeSubcommand::Script(cmd) => block_on_command(global, || async {
-            install::install_missing_dependencies(&mut cmd.load_config()?).await;
-            // Script execution loads config again, picking up any new remappings.
-            cmd.run_script().await
-        }),
+        ForgeSubcommand::Script(cmd) => block_on_command(global, || cmd.run_script()),
         ForgeSubcommand::Coverage(cmd) => {
             if cmd.is_watch() {
                 global.block_on(watch::watch_coverage(cmd))
@@ -79,7 +75,7 @@ pub fn run_command(args: Forge) -> Result<()> {
                 global.block_on(cmd.run())
             }
         }
-        ForgeSubcommand::Bind(cmd) => cmd.run(),
+        ForgeSubcommand::Bind(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Build { args, locked } => {
             if args.is_watch() {
                 global.block_on(watch::watch_build(args))
@@ -132,9 +128,9 @@ pub fn run_command(args: Forge) -> Result<()> {
             }
         }
         ForgeSubcommand::Config(cmd) => cmd.run(),
-        ForgeSubcommand::Flatten(cmd) => cmd.run(),
-        ForgeSubcommand::Inspect(cmd) => cmd.run(),
-        ForgeSubcommand::Tree(cmd) => cmd.run(),
+        ForgeSubcommand::Flatten(cmd) => global.block_on(cmd.run()),
+        ForgeSubcommand::Inspect(cmd) => global.block_on(cmd.run()),
+        ForgeSubcommand::Tree(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Geiger(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Doc(cmd) => {
             if cmd.is_watch() {
@@ -144,10 +140,10 @@ pub fn run_command(args: Forge) -> Result<()> {
             }
         }
         ForgeSubcommand::Selectors { command } => global.block_on(command.run()),
-        ForgeSubcommand::Compiler(cmd) => cmd.run(),
+        ForgeSubcommand::Compiler(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Soldeer(cmd) => global.block_on(cmd.run()),
-        ForgeSubcommand::Eip712(cmd) => cmd.run(),
-        ForgeSubcommand::BindJson(cmd) => cmd.run(),
+        ForgeSubcommand::Eip712(cmd) => global.block_on(cmd.run()),
+        ForgeSubcommand::BindJson(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Lint(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Lsp(cmd) => global.block_on(crate::cmd::lsp::run(cmd)),
     }

@@ -143,6 +143,70 @@ Script ran successfully.
         .stderr_eq(str![""]);
 });
 
+// Commands that consume project sources must restore dependencies before resolving imports.
+forgetest_init!(can_install_missing_deps_source_commands, |prj, cmd| {
+    prj.add_source(
+        "UsesDeps",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract UsesDeps is Script {
+    struct Message { uint256 value; }
+    function run() public pure {}
+}
+"#,
+    );
+
+    let commands: &[&[&str]] = &[
+        &["inspect", "UsesDeps", "abi"],
+        &["flatten", "src/UsesDeps.sol"],
+        &["bind"],
+        &["eip712", "src/UsesDeps.sol"],
+        &["tree"],
+        &["compiler", "resolve"],
+        &["selectors", "list"],
+        &["selectors", "collision", "UsesDeps", "UsesDeps"],
+        &[
+            "verify-contract",
+            "0x0000000000000000000000000000000000000001",
+            "src/UsesDeps.sol:UsesDeps",
+            "--show-standard-json-input",
+        ],
+        &["bind-json"],
+    ];
+
+    for args in commands {
+        prj.clear();
+        let forge_std_dir = prj.root().join("lib/forge-std");
+        pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+        cmd.forge_fuse().args(*args).assert_success().stderr_eq(str![[r#"
+...
+Missing dependencies found. Installing now...
+[UPDATING_DEPENDENCIES]
+...
+"#]]);
+
+        let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+        assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
+    }
+});
+
+forgetest_init!(bind_skip_build_does_not_install_missing_deps, |prj, cmd| {
+    prj.initialize_default_contracts();
+    cmd.arg("build").assert_success();
+
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    cmd.forge_fuse().args(["bind", "--skip-build"]).assert_success().stderr_eq(str![[r#"
+Generating bindings for [..] contracts
+Bindings have been generated to [..]
+
+"#]]);
+    assert!(!forge_std_dir.exists());
+});
+
 // Checks missing dependencies are auto installed.
 forgetest_init!(can_install_missing_deps_lint, |prj, cmd| {
     prj.initialize_default_contracts();

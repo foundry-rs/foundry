@@ -28,6 +28,7 @@ use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
+    install,
     opts::{BuildOpts, EvmArgs, GlobalArgs, TempoOpts, TracingArgs},
     utils::LoadConfig,
 };
@@ -300,10 +301,12 @@ impl ScriptArgs {
         Ok(self.tempo.session_id()?.is_some())
     }
 
-    /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
-    async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
-        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
-
+    /// Resolves evm_opts (including network inference from fork) using the loaded config.
+    async fn resolved_evm_opts(
+        &self,
+        mut config: Config,
+        mut evm_opts: EvmOpts,
+    ) -> Result<(Config, EvmOpts)> {
         if self.tempo.is_tempo() || self.has_tempo_session()? {
             // If Tempo tx options or a session are set, select the Tempo network.
             evm_opts.networks = NetworkConfigs::with_tempo();
@@ -386,7 +389,12 @@ impl ScriptArgs {
             return self.run_wallet_session_wrapper();
         }
 
-        let (config, evm_opts) = self.resolved_evm_opts().await?;
+        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
+            (config, evm_opts) = self.load_config_and_evm_opts()?;
+        }
+        let (config, evm_opts) = self.resolved_evm_opts(config, evm_opts).await?;
 
         let is_tempo = evm_opts.networks.is_tempo();
 
@@ -2313,7 +2321,8 @@ mod tests {
         unsafe { std::env::set_var(TEMPO_SESSION_ID_ENV, format!("{session_id:?}")) };
 
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol"]);
-        let (_, evm_opts) = args.resolved_evm_opts().await.unwrap();
+        let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
+        let (_, evm_opts) = args.resolved_evm_opts(config, evm_opts).await.unwrap();
 
         assert!(evm_opts.networks.is_tempo());
     }

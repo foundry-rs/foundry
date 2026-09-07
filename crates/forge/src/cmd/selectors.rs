@@ -6,6 +6,7 @@ use comfy_table::{
 };
 use eyre::Result;
 use foundry_cli::{
+    install,
     opts::{BuildOpts, ProjectPathOpts},
     utils::{FoundryPathExt, LoadConfig, cache_local_signatures, cache_signatures_from_abis},
 };
@@ -101,12 +102,12 @@ impl SelectorsSubcommands {
                 }
 
                 sh_status!("Caching selectors for contracts in the project...")?;
-                let (mut project, compiler) = project_from_paths(project_paths)?;
+                let (mut project, compiler) = project_from_paths(project_paths).await?;
                 let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
                 cache_local_signatures(&outcome)?;
             }
             Self::Upload { contract, all, project_paths } => {
-                let (mut project, compiler) = project_from_paths(project_paths)?;
+                let (mut project, compiler) = project_from_paths(project_paths).await?;
                 let output = if let Some(contract_info) = &contract {
                     let Some(contract_name) = contract_info.name() else {
                         eyre::bail!("No contract name provided.");
@@ -169,7 +170,13 @@ impl SelectorsSubcommands {
                 // Compile the project with the two contracts included
                 let user_extra_output = !build.compiler.extra_output.is_empty()
                     || !build.compiler.extra_output_files.is_empty();
-                let mut project = build.project()?;
+                let mut config = build.load_config()?;
+                if install::install_missing_dependencies(&mut config).await
+                    && config.auto_detect_remappings
+                {
+                    config = build.load_config()?;
+                }
+                let mut project = config.project()?;
                 if !user_extra_output && !project.build_info {
                     project.no_artifacts = true;
                     project.update_output_selection(|selection| {
@@ -240,7 +247,7 @@ impl SelectorsSubcommands {
             }
             Self::List { contract, project_paths, no_group } => {
                 sh_status!("Listing selectors for contracts in the project...")?;
-                let (mut project, compiler) = project_from_paths(project_paths)?;
+                let (mut project, compiler) = project_from_paths(project_paths).await?;
                 let target_path = contract
                     .as_ref()
                     .filter(|_| project.no_artifacts)
@@ -384,7 +391,7 @@ impl SelectorsSubcommands {
             Self::Find { selector, project_paths } => {
                 sh_status!("Searching for selector {selector:?} in the project...")?;
 
-                let (mut project, compiler) = project_from_paths(project_paths)?;
+                let (mut project, compiler) = project_from_paths(project_paths).await?;
                 let outcome = compile_abi_project(&mut project, compiler.quiet(true))?;
                 let artifacts = outcome
                     .into_artifacts_with_files()
@@ -456,10 +463,14 @@ impl SelectorsSubcommands {
     }
 }
 
-fn project_from_paths(
+async fn project_from_paths(
     project_paths: ProjectPathOpts,
 ) -> Result<(Project<MultiCompiler>, ProjectCompiler)> {
-    let config = BuildOpts { project_paths, ..Default::default() }.load_config()?;
+    let build = BuildOpts { project_paths, ..Default::default() };
+    let mut config = build.load_config()?;
+    if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings {
+        config = build.load_config()?;
+    }
     let compiler = ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking);
     let mut project = config.project()?;
     if !project.build_info {

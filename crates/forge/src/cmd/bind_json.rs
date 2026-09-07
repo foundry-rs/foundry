@@ -2,6 +2,7 @@ use super::eip712::Resolver;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::{
+    install,
     opts::{BuildOpts, configure_pcx_from_solc},
     utils::LoadConfig,
 };
@@ -46,8 +47,12 @@ pub struct BindJsonArgs {
 }
 
 impl BindJsonArgs {
-    pub fn run(self) -> Result<()> {
-        let config = self.load_config()?;
+    pub async fn run(self) -> Result<()> {
+        let mut config = self.load_config()?;
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
+            config = self.load_config()?;
+        }
         let project = config.ephemeral_project()?;
         let target_path = config.root.join(self.out.as_ref().unwrap_or(&config.bind_json.out));
 

@@ -52,6 +52,8 @@ rayon.workspace = true
 regex = { workspace = true, default-features = false }
 serde_json.workspace = true
 serde.workspace = true
+semver.workspace = true
+soldeer-commands.workspace = true
 toml.workspace = true
 strsim = "0.11"
 tokio = { workspace = true, features = ["macros"] }
