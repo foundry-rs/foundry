@@ -38,7 +38,7 @@ use foundry_evm_core::{
         history_window_start,
     },
     evm::{
-        BlockContext, ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork,
+        ChainFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork,
         IntoInstructionResult, SpecFor, TxEnvFor,
     },
     utils::StateChangeset,
@@ -141,8 +141,6 @@ pub struct Executor<FEN: FoundryEvmNetwork> {
     gas_limit: u64,
     /// Whether `failed()` should be called on the test contract to determine if the test failed.
     legacy_assertions: bool,
-    /// Opt-in cursor for transactions simulated sequentially against one fork.
-    block_context: Option<BlockContext<FEN>>,
 }
 
 #[cfg(feature = "monad")]
@@ -177,9 +175,7 @@ impl Executor<MonadEvmNetwork> {
             has_state_snapshot_failure,
             fork_block_number,
         )?;
-        let committed_tx = result.tx_env.clone();
         self.commit(&mut result);
-        self.record_block_transaction(committed_tx);
         Ok(Some(result))
     }
 
@@ -360,7 +356,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             inspector,
             gas_limit,
             legacy_assertions,
-            block_context: None,
         }
     }
 
@@ -373,7 +368,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             inspector: self.inspector().clone(),
             gas_limit: self.gas_limit,
             legacy_assertions: self.legacy_assertions,
-            block_context: self.block_context.clone(),
         }
     }
 
@@ -390,36 +384,11 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         Arc::make_mut(&mut self.backend)
     }
 
-    /// Enables exact block-context progression for sequential committed transactions.
-    ///
-    /// This is opt-in because test and setup calls are execution phases rather than transactions
-    /// that should automatically become part of one simulated block.
-    pub fn enable_block_context_progression(&mut self) -> eyre::Result<()> {
-        self.block_context = self.backend().block_context_for_synthetic_transaction()?;
-        Ok(())
-    }
-
-    /// Advances an enabled block-context cursor to the start of the next block.
-    pub fn advance_block_context(&mut self) {
-        if let Some(context) = &mut self.block_context {
-            context.advance_block();
-        }
-    }
-
     fn chain_context_for_synthetic_transaction(
         &self,
         tx: &TxEnvFor<FEN>,
     ) -> eyre::Result<ChainFor<FEN>> {
-        self.block_context.as_ref().map_or_else(
-            || self.backend().chain_context_for_synthetic_transaction(tx),
-            |context| Ok(context.next_transaction(tx)),
-        )
-    }
-
-    fn record_block_transaction(&mut self, tx: TxEnvFor<FEN>) {
-        if let Some(context) = &mut self.block_context {
-            context.record_transaction(tx);
-        }
+        self.backend().chain_context_for_synthetic_transaction(tx)
     }
 
     /// Returns a reference to the EVM environment (block and cfg).
@@ -644,7 +613,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         value: U256,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
-        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Create, code, value);
+        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Create, code, value);
         self.deploy_with_env(evm_env, tx_env, rd)
     }
 
@@ -657,7 +626,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         chain_context: ChainFor<FEN>,
         rd: Option<&RevertDecoder>,
     ) -> Result<DeployResult<FEN>, EvmError<FEN>> {
-        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Create, code, value);
+        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Create, code, value);
         self.deploy_with_env_and_context(evm_env, tx_env, chain_context, rd)
     }
 
@@ -801,7 +770,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
         self.call_with_env(evm_env, tx_env)
     }
 
@@ -815,7 +784,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         value: U256,
         authorization_list: Vec<SignedAuthorization>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let (evm_env, mut tx_env) = self.build_test_env(from, to.into(), calldata, value);
+        let (evm_env, mut tx_env) = self.prepare_call_env(from, to.into(), calldata, value);
         tx_env.set_signed_authorization(authorization_list);
         tx_env.set_tx_type(4);
         self.call_with_env(evm_env, tx_env)
@@ -829,7 +798,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         calldata: Bytes,
         value: U256,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
         self.transact_with_env(evm_env, tx_env)
     }
 
@@ -842,7 +811,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         value: U256,
         chain_context: ChainFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let (evm_env, tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        let (evm_env, tx_env) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
         self.transact_with_env_and_context(evm_env, tx_env, chain_context)
     }
 
@@ -856,7 +825,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         value: U256,
         authorization_list: Vec<SignedAuthorization>,
     ) -> eyre::Result<RawCallResult<FEN>> {
-        let (evm_env, mut tx_env) = self.build_test_env(from, TxKind::Call(to), calldata, value);
+        let (evm_env, mut tx_env) = self.prepare_call_env(from, TxKind::Call(to), calldata, value);
         tx_env.set_signed_authorization(authorization_list);
         tx_env.set_tx_type(4);
         self.transact_with_env(evm_env, tx_env)
@@ -987,9 +956,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         if sancov_trace_cmp {
             SancovGuard::drain_cmp_into(&mut result);
         }
-        let committed_tx = result.tx_env.clone();
         self.commit(&mut result);
-        self.record_block_transaction(committed_tx);
         Ok(result)
     }
 
@@ -1292,7 +1259,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ///
     /// If using a backend with cheatcodes, `tx.gas_price` and `block.number` will be overwritten by
     /// the cheatcode state in between calls.
-    fn build_test_env(
+    pub fn prepare_call_env(
         &self,
         caller: Address,
         kind: TxKind,
