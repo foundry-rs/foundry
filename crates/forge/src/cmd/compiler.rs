@@ -23,9 +23,9 @@ pub struct CompilerArgs {
 }
 
 impl CompilerArgs {
-    pub async fn run(self) -> Result<()> {
+    pub fn run(self) -> Result<()> {
         match self.sub {
-            CompilerSubcommands::Resolve(args) => args.run().await,
+            CompilerSubcommands::Resolve(args) => args.run(),
         }
     }
 }
@@ -70,15 +70,12 @@ pub struct ResolveArgs {
 }
 
 impl ResolveArgs {
-    pub async fn run(self) -> Result<()> {
+    pub fn run(self) -> Result<()> {
         let Self { root, skip, path } = self;
 
         let root = root.unwrap_or_else(|| PathBuf::from("."));
         let mut config = Config::load_with_root(&root)?;
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
-            config = Config::load_with_root(&root)?;
-        }
+        install::install_missing_dependencies(&mut config, || Config::load_with_root(&root))?;
         let project = config.project()?;
 
         let graph = Graph::resolve(&project.paths)?;

@@ -1,7 +1,7 @@
 //! Dependency installation shared by Forge commands.
 
 use crate::{
-    lockfile::{DepIdentifier, FOUNDRY_LOCK, Lockfile},
+    lockfile::{DepIdentifier, DepMap, FOUNDRY_LOCK, Lockfile},
     opts::Dependency,
     utils::{Git, LoadConfig},
 };
@@ -108,12 +108,12 @@ impl DependencyInstallOpts {
     /// See also [`Self::install`].
     ///
     /// Returns true if any dependency was installed.
-    pub async fn install_missing_dependencies(self, config: &mut Config) -> bool {
+    pub fn install_missing_dependencies(self, config: &mut Config) -> bool {
         let lib = config.install_lib_dir();
         if self.git(config).has_missing_dependencies(Some(lib)).unwrap_or(false) {
             let _ = sh_status!("Missing dependencies found. Installing now...");
 
-            if self.install(config, Vec::new()).await.is_err() {
+            if self.install_existing_dependencies(config).is_err() {
                 let _ =
                     sh_warn!("Your project has missing dependencies that could not be installed.");
             }
@@ -123,31 +123,14 @@ impl DependencyInstallOpts {
         }
     }
 
-    /// Installs all dependencies
-    pub async fn install(self, config: &mut Config, dependencies: Vec<Dependency>) -> Result<()> {
-        let Self { no_git, commit, .. } = self;
-
+    /// Restores existing dependencies without running asynchronous package installation.
+    fn install_existing_dependencies(self, config: &mut Config) -> Result<()> {
         let git = self.git(config);
-
         let install_lib_dir = config.install_lib_dir();
         let libs = git.root.join(install_lib_dir);
+        let (lockfile, out_of_sync_deps) = self.sync_lockfile(config, &git)?;
 
-        let mut lockfile = Lockfile::new(&config.root);
-        if !no_git {
-            lockfile = lockfile.with_git(&git);
-
-            // Check if submodules are uninitialized, if so, we need to fetch all submodules
-            // This is to ensure that foundry.lock syncs successfully and doesn't error out, when
-            // looking for commits/tags in submodules
-            if git.submodules_uninitialized()? {
-                trace!(lib = %libs.display(), "submodules uninitialized");
-                git.submodule_update(false, false, false, true, Some(&libs))?;
-            }
-        }
-
-        let out_of_sync_deps = lockfile.sync(config.install_lib_dir())?;
-
-        if dependencies.is_empty() && !no_git {
+        if !self.no_git {
             // Use the root of the git repository to look for submodules.
             let root = Git::root_of(git.root)?;
             match git.has_submodules(Some(&root)) {
@@ -174,6 +157,56 @@ impl DependencyInstallOpts {
                 }
             }
         }
+
+        fs::create_dir_all(&libs)?;
+
+        // update `libs` in config if not included yet
+        if !config.libs.iter().any(|p| p == install_lib_dir) {
+            config.libs.push(install_lib_dir.to_path_buf());
+            config.update_libs()?;
+        }
+
+        Ok(())
+    }
+
+    fn sync_lockfile<'a>(
+        self,
+        config: &Config,
+        git: &'a Git<'_>,
+    ) -> Result<(Lockfile<'a>, Option<DepMap>)> {
+        let libs = git.root.join(config.install_lib_dir());
+        let mut lockfile = Lockfile::new(&config.root);
+        if !self.no_git {
+            lockfile = lockfile.with_git(git);
+
+            // Check if submodules are uninitialized, if so, we need to fetch all submodules
+            // This is to ensure that foundry.lock syncs successfully and doesn't error out, when
+            // looking for commits/tags in submodules
+            if git.submodules_uninitialized()? {
+                trace!(lib = %libs.display(), "submodules uninitialized");
+                git.submodule_update(false, false, false, true, Some(&libs))?;
+            }
+        }
+
+        let out_of_sync_deps = lockfile.sync(config.install_lib_dir())?;
+
+        Ok((lockfile, out_of_sync_deps))
+    }
+
+    /// Installs all dependencies
+    pub async fn install(self, config: &mut Config, dependencies: Vec<Dependency>) -> Result<()> {
+        if dependencies.is_empty() {
+            return self.install_existing_dependencies(config);
+        }
+
+        let Self { no_git, commit, .. } = self;
+
+        let git = self.git(config);
+
+        let install_lib_dir = config.install_lib_dir();
+        let libs = git.root.join(install_lib_dir);
+
+        let (mut lockfile, out_of_sync_deps) = self.sync_lockfile(config, &git)?;
 
         fs::create_dir_all(&libs)?;
 
@@ -303,8 +336,17 @@ impl DependencyInstallOpts {
     }
 }
 
-pub async fn install_missing_dependencies(config: &mut Config) -> bool {
-    DependencyInstallOpts::default().install_missing_dependencies(config).await
+/// Installs missing dependencies and reloads config only to discover new remappings.
+pub fn install_missing_dependencies<E>(
+    config: &mut Config,
+    reload: impl FnOnce() -> Result<Config, E>,
+) -> Result<(), E> {
+    if DependencyInstallOpts::default().install_missing_dependencies(config)
+        && config.auto_detect_remappings
+    {
+        *config = reload()?;
+    }
+    Ok(())
 }
 
 /// Checks if a dependency has soldeer.lock and installs soldeer dependencies if needed.

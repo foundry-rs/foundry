@@ -6,7 +6,6 @@ use comfy_table::{
 };
 use eyre::{Result, eyre};
 use foundry_cli::{
-    install,
     opts::{BuildOpts, CompilerOpts},
     utils::LoadConfig,
 };
@@ -56,7 +55,7 @@ pub struct InspectArgs {
 }
 
 impl InspectArgs {
-    pub async fn run(self) -> Result<()> {
+    pub fn run(self) -> Result<()> {
         let Self { contract, field, build, strip_yul_comments, wrap } = self;
 
         trace!(target: "forge", ?field, ?contract, "running forge inspect");
@@ -87,11 +86,7 @@ impl InspectArgs {
         };
 
         // Build the project
-        let mut config = modified_build_args.load_config()?;
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
-            config = modified_build_args.load_config()?;
-        }
+        let config = modified_build_args.load_config_with_dependencies()?;
         let mut project = config.project()?;
         if !user_extra_output
             && !project.build_info

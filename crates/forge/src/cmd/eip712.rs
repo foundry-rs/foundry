@@ -1,7 +1,7 @@
 use alloy_primitives::{B256, keccak256};
 use clap::{Parser, ValueHint};
 use eyre::Result;
-use foundry_cli::{install, opts::BuildOpts, utils::LoadConfig};
+use foundry_cli::{opts::BuildOpts, utils::LoadConfig};
 use foundry_common::{compile::ProjectCompiler, shell};
 use serde::Serialize;
 use solar::sema::{
@@ -46,12 +46,8 @@ impl Display for Eip712Output {
 }
 
 impl Eip712Args {
-    pub async fn run(self) -> Result<()> {
-        let mut config = self.build.load_config()?;
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
-            config = self.build.load_config()?;
-        }
+    pub fn run(self) -> Result<()> {
+        let config = self.build.load_config_with_dependencies()?;
         let project = config.solar_project()?;
         let mut output = ProjectCompiler::new().files([self.target_path]).compile(&project)?;
         let compiler = output.parser_mut().solc_mut().compiler_mut();

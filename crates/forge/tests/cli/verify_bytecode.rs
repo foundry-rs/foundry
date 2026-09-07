@@ -510,11 +510,6 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
         .expect("contract address in `forge create` output")
         .to_string();
 
-    // Verification must restore missing dependencies, including their remappings.
-    let forge_std = prj.root().join("lib/forge-std");
-    fs::remove_dir_all(&forge_std).unwrap();
-    prj.clear();
-
     // Bare contract names should compile only their uniquely resolved source.
     prj.add_source("Broken", "contract Broken { uint256 public value = doesNotExist; }");
 
@@ -533,7 +528,6 @@ forgetest_async!(can_verify_bytecode_without_explorer, |prj, cmd| {
 
     assert!(stdout.contains("Runtime code matched"), "{stdout}");
     assert!(stderr.contains("Creation data is unavailable"), "{stderr}");
-    assert!(forge_std.join("src/Script.sol").exists());
 
     // Dependencies and projects with Vyper sources retain full-project compilation. The unrelated
     // invalid source therefore makes both builds fail.

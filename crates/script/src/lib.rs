@@ -28,7 +28,6 @@ use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
-    install,
     opts::{BuildOpts, EvmArgs, GlobalArgs, TempoOpts, TracingArgs},
     utils::LoadConfig,
 };
@@ -389,11 +388,8 @@ impl ScriptArgs {
             return self.run_wallet_session_wrapper();
         }
 
-        let (mut config, mut evm_opts) = self.load_config_and_evm_opts()?;
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
-        {
-            (config, evm_opts) = self.load_config_and_evm_opts()?;
-        }
+        let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+        self.install_missing_dependencies(&mut config)?;
         let (config, evm_opts) = self.resolved_evm_opts(config, evm_opts).await?;
 
         let is_tempo = evm_opts.networks.is_tempo();
