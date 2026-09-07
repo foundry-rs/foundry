@@ -5571,7 +5571,7 @@ dependencies = [
 [[package]]
 name = "foundry-block-explorers"
 version = "0.24.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=6ce81d5c491121c22b3912fb91455d4f2875439e#6ce81d5c491121c22b3912fb91455d4f2875439e"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=4afd49526c95bc5abc60fcd4767a6212bea03fed#4afd49526c95bc5abc60fcd4767a6212bea03fed"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -5814,7 +5814,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=6ce81d5c491121c22b3912fb91455d4f2875439e#6ce81d5c491121c22b3912fb91455d4f2875439e"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=4afd49526c95bc5abc60fcd4767a6212bea03fed#4afd49526c95bc5abc60fcd4767a6212bea03fed"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5845,7 +5845,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=6ce81d5c491121c22b3912fb91455d4f2875439e#6ce81d5c491121c22b3912fb91455d4f2875439e"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=4afd49526c95bc5abc60fcd4767a6212bea03fed#4afd49526c95bc5abc60fcd4767a6212bea03fed"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -5854,7 +5854,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=6ce81d5c491121c22b3912fb91455d4f2875439e#6ce81d5c491121c22b3912fb91455d4f2875439e"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=4afd49526c95bc5abc60fcd4767a6212bea03fed#4afd49526c95bc5abc60fcd4767a6212bea03fed"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5874,7 +5874,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=6ce81d5c491121c22b3912fb91455d4f2875439e#6ce81d5c491121c22b3912fb91455d4f2875439e"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=4afd49526c95bc5abc60fcd4767a6212bea03fed#4afd49526c95bc5abc60fcd4767a6212bea03fed"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5887,7 +5887,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.21.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=6ce81d5c491121c22b3912fb91455d4f2875439e#6ce81d5c491121c22b3912fb91455d4f2875439e"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=4afd49526c95bc5abc60fcd4767a6212bea03fed#4afd49526c95bc5abc60fcd4767a6212bea03fed"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -6226,7 +6226,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.27.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=6ce81d5c491121c22b3912fb91455d4f2875439e#6ce81d5c491121c22b3912fb91455d4f2875439e"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=4afd49526c95bc5abc60fcd4767a6212bea03fed#4afd49526c95bc5abc60fcd4767a6212bea03fed"
 dependencies = [
  "alloy-chains",
  "alloy-consensus",
@@ -6333,7 +6333,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=6ce81d5c491121c22b3912fb91455d4f2875439e#6ce81d5c491121c22b3912fb91455d4f2875439e"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=4afd49526c95bc5abc60fcd4767a6212bea03fed#4afd49526c95bc5abc60fcd4767a6212bea03fed"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -12088,7 +12088,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.13.1",
  "bumpalo",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint 0.5.1",
  "num-rational",
@@ -12132,9 +12132,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-commands"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7b8c477ead17bfafc7e8deddd6cd33e578749dea9971ab4c8a5f4629e7d4697"
+checksum = "b1149d04975bf4da754f2cd9e0b3ab51f33899eb5ff80f4889d93222c60faaef"
 dependencies = [
  "bon",
  "clap",
@@ -12150,9 +12150,9 @@ dependencies = [
 
 [[package]]
 name = "soldeer-core"
-version = "0.11.0"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d32eb6865b1ba187930003d4bbcfb6bdc71747a55845f9807aa06bbf35ea1fb"
+checksum = "2ca40c75555686674209accf592806aaa42a9a518e87fc4cae03fd62e4efdccd"
 dependencies = [
  "bon",
  "chrono",
@@ -12175,8 +12175,7 @@ dependencies = [
  "tokio",
  "toml_edit",
  "uuid 1.26.0",
- "zip 4.6.1",
- "zip-extract",
+ "zip",
 ]
 
 [[package]]
@@ -12411,9 +12410,9 @@ dependencies = [
 
 [[package]]
 name = "svm-rs"
-version = "0.5.26"
+version = "0.5.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "719335a19e8e3a37111f6bc98934f23b352c90ba4c212093de468040045cba6c"
+checksum = "4c237a2fa75db3754792aae93571a0e172c0b60f52cfe20fb96632d96fdf37fa"
 dependencies = [
  "const-hex",
  "dirs",
@@ -12425,14 +12424,14 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "url",
- "zip 8.6.0",
+ "zip",
 ]
 
 [[package]]
 name = "svm-rs-builds"
-version = "0.5.26"
+version = "0.5.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fad35f683c073d486fac669d71433752a8bfff3b19e49f2bc089fd6b0c158dd"
+checksum = "fa9535b2e1700ef60c8036dee0ead4e0dd36f5e6c7120d616ca4171aaa37c506"
 dependencies = [
  "const-hex",
  "semver 1.0.28",
@@ -14767,20 +14766,6 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "4.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "caa8cd6af31c3b31c6631b8f483848b91589021b28fffe50adada48d4f4d2ed1"
-dependencies = [
- "arbitrary",
- "crc32fast",
- "flate2",
- "indexmap 2.14.0",
- "memchr",
- "zopfli",
-]
-
-[[package]]
-name = "zip"
 version = "8.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
@@ -14791,17 +14776,6 @@ dependencies = [
  "memchr",
  "typed-path",
  "zopfli",
-]
-
-[[package]]
-name = "zip-extract"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fa5b9958fd0b5b685af54f2c3fa21fca05fe295ebaf3e77b6d24d96c4174037"
-dependencies = [
- "log",
- "thiserror 2.0.20",
- "zip 4.6.1",
 ]
 
 [[package]]

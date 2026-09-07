@@ -343,7 +343,7 @@ solar = { package = "solar-compiler", version = "=0.2.0", default-features = fal
 solar-cli = { version = "=0.2.0", default-features = false }
 solar-lsp = { version = "=0.2.0", default-features = false }
 solar-lint = { version = "=0.2.0", default-features = false }
-svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
+svm = { package = "svm-rs", version = "0.5.27", default-features = false, features = [
     "rustls",
 ] }
 
@@ -481,8 +481,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 shlex = "2"
 similar-asserts = "2.0"
-soldeer-commands = "=0.11.0"
-soldeer-core = { version = "=0.11.0", features = ["serde"] }
+soldeer-commands = "=0.12.0"
+soldeer-core = { version = "=0.12.0", features = ["serde"] }
 strum = "0.28"
 tempfile = "3.23"
 tokio = "1"
@@ -562,10 +562,10 @@ solar-lsp = { git = "https://github.com/paradigmxyz/solar", rev = "8d73a1e1fd539
 solar-lint = { git = "https://github.com/paradigmxyz/solar", rev = "8d73a1e1fd53980a7f4ae020c821fb92f025616a" }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "6ce81d5c491121c22b3912fb91455d4f2875439e" }
-foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "6ce81d5c491121c22b3912fb91455d4f2875439e" }
-foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "6ce81d5c491121c22b3912fb91455d4f2875439e" }
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "6ce81d5c491121c22b3912fb91455d4f2875439e" }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "4afd49526c95bc5abc60fcd4767a6212bea03fed" }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "4afd49526c95bc5abc60fcd4767a6212bea03fed" }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "4afd49526c95bc5abc60fcd4767a6212bea03fed" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "4afd49526c95bc5abc60fcd4767a6212bea03fed" }
 
 ## alloy-core
 # alloy-dyn-abi = { path = "../../alloy-rs/core/crates/dyn-abi" }
