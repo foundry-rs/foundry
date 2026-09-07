@@ -1,4 +1,4 @@
-use crate::Cast;
+use alloy_provider::Provider;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{json::print_json_value_or_scalar, opts::RpcOpts, utils, utils::LoadConfig};
@@ -49,7 +49,10 @@ impl RpcArgs {
             value_or_string(params.into_iter().join(" "))
         };
 
-        let result = Cast::new(utils::get_provider(&config)?).rpc(&method, params).await?;
+        let result = utils::get_provider(&config)?
+            .raw_request::<_, serde_json::Value>(method.into(), params)
+            .await?;
+        let result = serde_json::to_string(&result)?;
         print_json_value_or_scalar(result)
     }
 }

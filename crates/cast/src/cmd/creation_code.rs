@@ -1,5 +1,4 @@
 use super::interface::load_abi_from_file;
-use crate::SimpleCast;
 use alloy_consensus::Transaction;
 use alloy_json_abi::{Constructor, JsonAbi};
 use alloy_primitives::{Address, Bytes};
@@ -62,7 +61,7 @@ impl CreationCodeArgs {
         .await?;
 
         if disassemble {
-            sh_println!("{}", SimpleCast::disassemble(&bytecode)?)?;
+            sh_println!("{}", super::disassemble(&bytecode)?)?;
         } else {
             sh_println!("{bytecode}")?;
         }

@@ -1,10 +1,7 @@
-use super::{fetch_code_via_rpc, logs::LogQueryArgs};
-use crate::{
-    Cast, MAX_CONCURRENT_RPC_REQUESTS,
-    traces::{
-        CallTraceDecoderBuilder, DecodedEvent,
-        identifier::{ExternalIdentifier, SignaturesIdentifier},
-    },
+use super::{MAX_CONCURRENT_RPC_REQUESTS, fetch_code_via_rpc, logs::LogQueryArgs};
+use crate::traces::{
+    CallTraceDecoderBuilder, DecodedEvent,
+    identifier::{ExternalIdentifier, SignaturesIdentifier},
 };
 use alloy_dyn_abi::DynSolValue;
 use alloy_json_abi::JsonAbi;
@@ -89,14 +86,21 @@ impl EventsArgs {
         let (decoder_chain, explorer_chain) = resolve_chains(config.chain, rpc_chain);
         config.chain = Some(decoder_chain);
 
-        let cast = Cast::new(&provider);
         let logs = if let Some(tx_hash) = tx_hash {
-            cast.get_transaction_logs(tx_hash).await?
+            provider
+                .get_transaction_receipt(tx_hash)
+                .await?
+                .ok_or_else(|| eyre::eyre!("tx receipt not found: {tx_hash}"))?
+                .inner
+                .logs()
+                .to_vec()
         } else {
             let (filter, query_size) = query.resolve(&provider).await?;
             match query_size {
-                Some(chunk_size) => cast.get_logs_chunked(&filter, chunk_size).await?,
-                None => cast.get_logs(&filter).await?,
+                Some(chunk_size) => {
+                    crate::cmd::logs::get_logs_chunked(&provider, &filter, chunk_size).await?
+                }
+                None => provider.get_logs(&filter).await?,
             }
         };
 
