@@ -1,11 +1,11 @@
 use crate::{
-    cmd::{cache::CacheSubcommands, watch},
+    cmd::{cache::CacheSubcommands, install, watch},
     opts::{Forge, ForgeSubcommand},
 };
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
-use foundry_cli::utils;
+use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::{sh_warn, shell};
 use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 
@@ -67,7 +67,11 @@ pub fn run_command(args: Forge) -> Result<()> {
             let outcome = global.block_on(cmd.run())?;
             outcome.ensure_ok(silent)
         }
-        ForgeSubcommand::Script(cmd) => block_on_command(global, || cmd.run_script()),
+        ForgeSubcommand::Script(cmd) => block_on_command(global, || async {
+            install::install_missing_dependencies(&mut cmd.load_config()?).await;
+            // Script execution loads config again, picking up any new remappings.
+            cmd.run_script().await
+        }),
         ForgeSubcommand::Coverage(cmd) => {
             if cmd.is_watch() {
                 global.block_on(watch::watch_coverage(cmd))

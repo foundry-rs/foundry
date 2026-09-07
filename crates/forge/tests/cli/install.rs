@@ -93,6 +93,56 @@ Missing dependencies found. Installing now...
     assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
 });
 
+// Checks scripts install missing dependencies before resolving imports.
+forgetest_init!(can_install_missing_deps_script, |prj, cmd| {
+    let script = prj.add_script(
+        "InstallDeps",
+        r#"
+import {Script} from "forge-std/Script.sol";
+
+contract InstallDeps is Script {
+    function run() public pure {}
+}
+"#,
+    );
+    prj.clear();
+
+    let forge_std_dir = prj.root().join("lib/forge-std");
+    pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
+
+    cmd.arg("script")
+        .arg(&script)
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+Script ran successfully.
+[GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Missing dependencies found. Installing now...
+[UPDATING_DEPENDENCIES]
+...
+"#]]);
+
+    let forge_std = lockfile_get(prj.root(), &PathBuf::from("lib/forge-std")).unwrap();
+    assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
+
+    cmd.forge_fuse()
+        .arg("script")
+        .arg(&script)
+        .assert_success()
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+Script ran successfully.
+[GAS]
+
+"#]])
+        .stderr_eq(str![""]);
+});
+
 // Checks missing dependencies are auto installed.
 forgetest_init!(can_install_missing_deps_lint, |prj, cmd| {
     prj.initialize_default_contracts();
