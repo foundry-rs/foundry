@@ -1,6 +1,8 @@
 //! A wrapper around `Backend` that is clone-on-write used for fuzzing.
 
 use super::BackendError;
+#[cfg(feature = "monad")]
+use crate::evm::MonadEvmNetwork;
 use crate::{
     FoundryInspectorExt,
     backend::{
@@ -105,12 +107,8 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
 
         let factory = FEN::EvmFactory::default();
-        let mut evm = factory.create_foundry_evm_with_inspector(
-            self,
-            evm_env.clone(),
-            chain_context,
-            inspector,
-        );
+        let mut evm = factory.create_foundry_evm_with_inspector(self, evm_env.clone(), inspector);
+        *evm.chain_mut() = chain_context;
 
         let res = evm.transact(tx_env.clone()).wrap_err("EVM error")?;
 
@@ -118,39 +116,6 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
         *evm_env = evm.finish().1;
 
         Ok(res)
-    }
-
-    /// Tries to execute a canonical system transaction with explicit network-specific context.
-    #[cfg(feature = "monad")]
-    #[instrument(name = "inspect_system_replay", level = "debug", skip_all)]
-    pub fn try_inspect_system_replay_with_context<
-        I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, FEN>>,
-    >(
-        &mut self,
-        evm_env: &mut EvmEnvFor<FEN>,
-        tx_env: &mut TxEnvFor<FEN>,
-        chain_context: ChainFor<FEN>,
-        inspector: &mut I,
-    ) -> eyre::Result<Option<ResultAndState<revm::context_interface::result::HaltReason>>> {
-        if !self.backend.networks().is_monad()
-            || crate::evm::protocol_system_call(tx_env)?.is_none()
-        {
-            return Ok(None);
-        }
-
-        self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
-
-        let factory = FEN::EvmFactory::default();
-        let mut evm =
-            factory.create_foundry_nested_evm(self, evm_env.clone(), chain_context, inspector);
-        let result = evm.transact_raw(tx_env.clone())?;
-
-        // A successful specialized replay replaces the EVM transaction with its synthetic system
-        // call. Keep the canonical envelope in `tx_env`; ordinary execution uses
-        // `inspect_with_context` above and copies inspector mutations back normally.
-        *evm_env = evm.to_evm_env();
-
-        Ok(Some(result))
     }
 
     /// Returns whether there was a state snapshot failure in the backend.
@@ -178,6 +143,39 @@ impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
             return Some(self.backend.to_mut());
         }
         None
+    }
+}
+
+#[cfg(feature = "monad")]
+impl CowBackend<'_, MonadEvmNetwork> {
+    /// Tries to execute a canonical system transaction with explicit network-specific context.
+    #[instrument(name = "inspect_system_replay", level = "debug", skip_all)]
+    pub fn try_inspect_system_replay_with_context<
+        I: for<'db> FoundryInspectorExt<FoundryContextFor<'db, MonadEvmNetwork>>,
+    >(
+        &mut self,
+        evm_env: &mut EvmEnvFor<MonadEvmNetwork>,
+        tx_env: &mut TxEnvFor<MonadEvmNetwork>,
+        chain_context: ChainFor<MonadEvmNetwork>,
+        inspector: &mut I,
+    ) -> eyre::Result<Option<ResultAndState<revm::context_interface::result::HaltReason>>> {
+        if crate::evm::protocol_system_call(tx_env)?.is_none() {
+            return Ok(None);
+        }
+
+        self.pending_init = Some((evm_env.cfg_env.spec, tx_env.caller(), tx_env.kind()));
+
+        let factory = <MonadEvmNetwork as FoundryEvmNetwork>::EvmFactory::default();
+        let mut evm = factory.create_foundry_nested_evm(self, evm_env.clone(), inspector);
+        *evm.chain_mut() = chain_context;
+        let result = evm.transact_raw(tx_env.clone())?;
+
+        // A successful specialized replay replaces the EVM transaction with its synthetic system
+        // call. Keep the canonical envelope in `tx_env`; ordinary execution uses
+        // `inspect_with_context` above and copies inspector mutations back normally.
+        *evm_env = evm.to_evm_env();
+
+        Ok(Some(result))
     }
 }
 

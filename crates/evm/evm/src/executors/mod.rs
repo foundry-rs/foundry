@@ -147,6 +147,42 @@ pub struct Executor<FEN: FoundryEvmNetwork> {
 
 #[cfg(feature = "monad")]
 impl Executor<MonadEvmNetwork> {
+    /// Tries to execute and commit a canonical system transaction during replay.
+    #[instrument(name = "transact_system_replay", level = "debug", skip_all)]
+    pub fn try_transact_system_replay_with_env_and_context(
+        &mut self,
+        mut evm_env: EvmEnvFor<MonadEvmNetwork>,
+        mut tx_env: TxEnvFor<MonadEvmNetwork>,
+        chain_context: ChainFor<MonadEvmNetwork>,
+    ) -> eyre::Result<Option<RawCallResult<MonadEvmNetwork>>> {
+        let mut stack = self.inspector().clone();
+        let mut backend = CowBackend::new_borrowed(self.backend());
+        let Some(result) = backend.try_inspect_system_replay_with_context(
+            &mut evm_env,
+            &mut tx_env,
+            chain_context,
+            &mut stack,
+        )?
+        else {
+            return Ok(None);
+        };
+        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
+        let fork_block_number = backend.active_fork_block_number();
+        let mut result = convert_executed_result(
+            evm_env,
+            tx_env,
+            stack,
+            result,
+            &backend,
+            has_state_snapshot_failure,
+            fork_block_number,
+        )?;
+        let committed_tx = result.tx_env.clone();
+        self.commit(&mut result);
+        self.record_block_transaction(committed_tx);
+        Ok(Some(result))
+    }
+
     /// Replays Monad transactions and executes the target against one EVM instance.
     #[instrument(name = "transact_monad_block_replay", level = "debug", skip_all)]
     pub fn transact_with_monad_block_replay(
@@ -173,12 +209,8 @@ impl Executor<MonadEvmNetwork> {
             };
             backend.set_test_contract(target_contract);
             let mut evm = <MonadEvmNetwork as FoundryEvmNetwork>::EvmFactory::default()
-                .create_foundry_evm_with_inspector(
-                    backend,
-                    evm_env,
-                    target_chain_context.clone(),
-                    &mut stack,
-                );
+                .create_foundry_evm_with_inspector(backend, evm_env, &mut stack);
+            *evm.chain_mut() = target_chain_context.clone();
             evm.disable_inspector();
             for (tx_hash, tx_env, chain_context) in replay {
                 evm.ctx_mut().chain = chain_context;
@@ -844,9 +876,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             let mut evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
                 &mut backend,
                 evm_env.clone(),
-                ChainFor::<FEN>::for_transaction(&TxEnvFor::<FEN>::default()),
                 inspector,
             );
+            *evm.chain_mut() = ChainFor::<FEN>::for_transaction(&TxEnvFor::<FEN>::default());
             let result =
                 evm.transact_system_call(SYSTEM_ADDRESS, BEACON_ROOTS_ADDRESS, calldata)?;
             evm_env = evm.finish().1;
@@ -990,13 +1022,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             if !replay.is_empty() {
                 evm_env.cfg_env.disable_balance_check = true;
             }
-            let evm = FEN::EvmFactory::default().create_foundry_evm_with_inspector(
-                backend,
-                evm_env,
-                target_chain_context,
-                &mut stack,
-            );
-            let mut evm = evm;
+            let mut evm = FEN::EvmFactory::default()
+                .create_foundry_evm_with_inspector(backend, evm_env, &mut stack);
+            *evm.chain_mut() = target_chain_context;
             evm.disable_inspector();
             for (tx_hash, tx_env) in replay {
                 let created = match tx_env.kind() {
@@ -1041,43 +1069,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         }
         self.commit(&mut result);
         Ok(result)
-    }
-
-    /// Tries to execute and commit a canonical system transaction during replay.
-    #[cfg(feature = "monad")]
-    #[instrument(name = "transact_system_replay", level = "debug", skip_all)]
-    pub fn try_transact_system_replay_with_env_and_context(
-        &mut self,
-        mut evm_env: EvmEnvFor<FEN>,
-        mut tx_env: TxEnvFor<FEN>,
-        chain_context: ChainFor<FEN>,
-    ) -> eyre::Result<Option<RawCallResult<FEN>>> {
-        let mut stack = self.inspector().clone();
-        let mut backend = CowBackend::new_borrowed(self.backend());
-        let Some(result) = backend.try_inspect_system_replay_with_context(
-            &mut evm_env,
-            &mut tx_env,
-            chain_context,
-            &mut stack,
-        )?
-        else {
-            return Ok(None);
-        };
-        let has_state_snapshot_failure = backend.has_state_snapshot_failure();
-        let fork_block_number = backend.active_fork_block_number();
-        let mut result = convert_executed_result(
-            evm_env,
-            tx_env,
-            stack,
-            result,
-            &backend,
-            has_state_snapshot_failure,
-            fork_block_number,
-        )?;
-        let committed_tx = result.tx_env.clone();
-        self.commit(&mut result);
-        self.record_block_transaction(committed_tx);
-        Ok(Some(result))
     }
 
     /// Commit the changeset to the database and adjust `self.inspector_config` values according to
@@ -2741,5 +2732,64 @@ mod tests {
             executor.inspector().cheatcodes.as_ref().unwrap().env_overrides.is_empty(),
             "inactive env overrides must be removed after restoring their metadata",
         );
+    }
+    #[cfg(feature = "monad")]
+    #[test]
+    fn concrete_system_replay_preserves_envelope_and_rejects_without_commit() {
+        let mut executor = ExecutorBuilder::<MonadEvmNetwork>::new().gas_limit(1 << 20).build(
+            EvmEnvFor::<MonadEvmNetwork>::default(),
+            TxEnvFor::<MonadEvmNetwork>::default(),
+            Backend::spawn(None).unwrap(),
+            NetworkConfigs::with_monad(),
+        );
+        let caller = alloy_primitives::address!("6f49a8f621353f12378d0046e7d7e4b9b249dc9e");
+        let selector = keccak256("syscallSnapshot()");
+        let system = TxEnv {
+            caller,
+            gas_limit: 0,
+            kind: TxKind::Call(alloy_primitives::address!(
+                "0000000000000000000000000000000000001000"
+            )),
+            data: Bytes::copy_from_slice(&selector[..4]),
+            chain_id: None,
+            ..Default::default()
+        };
+        let result = executor
+            .try_transact_system_replay_with_env_and_context(
+                EvmEnvFor::<MonadEvmNetwork>::default(),
+                system.clone(),
+                ChainFor::<MonadEvmNetwork>::for_transaction(&system),
+            )
+            .unwrap()
+            .unwrap();
+        assert!(!result.reverted);
+        assert_eq!(result.tx_env, system);
+        assert_eq!(executor.get_nonce(caller).unwrap(), 1);
+
+        // Replaying the same canonical nonce must fail without committing another increment.
+        assert!(
+            executor
+                .try_transact_system_replay_with_env_and_context(
+                    EvmEnvFor::<MonadEvmNetwork>::default(),
+                    system.clone(),
+                    ChainFor::<MonadEvmNetwork>::for_transaction(&system),
+                )
+                .is_err()
+        );
+        assert_eq!(executor.get_nonce(caller).unwrap(), 1);
+
+        let ordinary = TxEnv { caller: CALLER, ..Default::default() };
+        let nonce = executor.get_nonce(CALLER).unwrap();
+        assert!(
+            executor
+                .try_transact_system_replay_with_env_and_context(
+                    EvmEnvFor::<MonadEvmNetwork>::default(),
+                    ordinary.clone(),
+                    ChainFor::<MonadEvmNetwork>::for_transaction(&ordinary),
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(executor.get_nonce(CALLER).unwrap(), nonce);
     }
 }
