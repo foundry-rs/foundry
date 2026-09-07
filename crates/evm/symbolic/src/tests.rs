@@ -3586,6 +3586,191 @@ fn solver_normalizes_udiv_nonzero_predicates_without_bvudiv() {
 }
 
 #[test]
+fn solver_normalizes_bounded_udiv_comparisons_without_bvudiv() {
+    let mut cx = SymCx::new();
+    let numerator = SymExpr::var(&mut cx, "numerator");
+    let threshold_word = SymExpr::var(&mut cx, "threshold");
+    let uint64_max = SymExpr::constant(&mut cx, U256::from(u64::MAX));
+    let threshold = SymExpr::binop(&mut cx, SymBinOp::And, threshold_word, uint64_max);
+    let divisor = SymExpr::constant(&mut cx, U256::from(3));
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, divisor);
+    let conditions = [
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, quotient.clone(), threshold.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient.clone(), threshold.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, quotient.clone(), threshold.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, quotient.clone(), threshold.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, threshold.clone(), quotient.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, threshold.clone(), quotient.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ugt, threshold.clone(), quotient.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, threshold, quotient),
+    ];
+
+    for condition in conditions {
+        for original in [condition.clone(), condition.not(&mut cx)] {
+            let normalized =
+                normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&original));
+            assert_eq!(normalized.len(), 1);
+            assert!(!normalized[0].smt(&cx).contains("bvudiv"));
+
+            for threshold in [U256::ZERO, U256::ONE, U256::from(u64::MAX)] {
+                let lower = threshold * U256::from(3);
+                let upper = (threshold + U256::ONE) * U256::from(3);
+                let mut numerators = vec![U256::ZERO, lower, upper, U256::MAX];
+                if let Some(value) = lower.checked_sub(U256::ONE) {
+                    numerators.push(value);
+                }
+                if let Some(value) = upper.checked_sub(U256::ONE) {
+                    numerators.push(value);
+                }
+                if let Some(value) = upper.checked_add(U256::ONE) {
+                    numerators.push(value);
+                }
+
+                for numerator in numerators {
+                    let model = symbolic_model(
+                        &mut cx,
+                        [
+                            ("numerator".to_string(), numerator),
+                            ("threshold".to_string(), threshold),
+                        ],
+                    );
+                    assert_eq!(
+                        original.eval_model(&model).unwrap(),
+                        normalized[0].eval_model(&model).unwrap(),
+                        "numerator={numerator} threshold={threshold} condition={original:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn solver_normalizes_udiv_comparisons_only_at_safe_product_boundaries() {
+    let mut cx = SymCx::new();
+    let numerator = SymExpr::var(&mut cx, "numerator");
+    let divisor_value = U256::from(3);
+    let divisor = SymExpr::constant(&mut cx, divisor_value);
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, divisor);
+    let threshold = SymExpr::constant(&mut cx, U256::MAX / divisor_value);
+    let safe = [
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, quotient.clone(), threshold.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, threshold.clone(), quotient.clone()),
+    ];
+    let overflowing = [
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient.clone(), threshold.clone()),
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, threshold, quotient.clone()),
+    ];
+
+    for condition in safe {
+        let normalized =
+            normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&condition));
+        assert_eq!(normalized.len(), 1);
+        assert!(!normalized[0].smt(&cx).contains("bvudiv"));
+    }
+    for condition in overflowing {
+        let normalized =
+            normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&condition));
+        assert_eq!(normalized, vec![condition]);
+    }
+
+    let threshold = SymExpr::constant(&mut cx, U256::MAX / divisor_value - U256::ONE);
+    let comparison = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient.clone(), threshold.clone());
+    let normalized = normalize_constraints_for_solver(&mut cx, std::slice::from_ref(&comparison));
+    assert_eq!(normalized.len(), 1);
+    assert!(!normalized[0].smt(&cx).contains("bvudiv"));
+    for numerator in [U256::MAX - U256::ONE, U256::MAX] {
+        let model = symbolic_model(&mut cx, [("numerator", numerator)]);
+        assert_eq!(
+            comparison.eval_model(&model).unwrap(),
+            normalized[0].eval_model(&model).unwrap(),
+            "numerator={numerator} threshold={threshold:?}"
+        );
+    }
+
+    let symbolic_threshold = SymExpr::var(&mut cx, "symbolic_threshold");
+    let max = SymExpr::constant(&mut cx, U256::MAX);
+    let threshold_is_max = SymBoolExpr::eq(&mut cx, symbolic_threshold.clone(), max);
+    let comparison = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient, symbolic_threshold);
+    let normalized =
+        normalize_constraints_for_solver(&mut cx, &[threshold_is_max, comparison.clone()]);
+    assert!(normalized.contains(&comparison));
+
+    let symbolic_divisor = SymExpr::var(&mut cx, "divisor");
+    let numerator = SymExpr::var(&mut cx, "other_numerator");
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, symbolic_divisor);
+    let threshold = SymExpr::constant(&mut cx, U256::from(10));
+    let comparison = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, quotient, threshold);
+    let normalized = normalize_constraints_for_solver(&mut cx, &[comparison]);
+    assert!(normalized[0].smt(&cx).contains("bvudiv"));
+}
+
+#[test]
+fn solver_normalizes_udiv_comparison_with_independent_bound() {
+    let mut cx = SymCx::new();
+    let numerator = SymExpr::var(&mut cx, "numerator");
+    let threshold = SymExpr::var(&mut cx, "threshold");
+    let divisor = SymExpr::constant(&mut cx, U256::from(1_000_000_000_000_000_000u128));
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, divisor);
+    let uint128_max = SymExpr::constant(&mut cx, U256::from(u128::MAX));
+    let threshold_bounded =
+        SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, threshold.clone(), uint128_max);
+    let comparison = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, quotient, threshold);
+    let constraints = vec![threshold_bounded, comparison];
+
+    let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+    assert_eq!(normalized.len(), 2);
+    assert!(normalized.iter().all(|constraint| !constraint.smt(&cx).contains("bvudiv")));
+}
+
+#[test]
+fn solver_does_not_use_udiv_comparison_to_bound_itself() {
+    let mut cx = SymCx::new();
+    let numerator = SymExpr::var(&mut cx, "numerator");
+    let threshold = SymExpr::var(&mut cx, "threshold");
+    let divisor_value = U256::from(3);
+    let divisor = SymExpr::constant(&mut cx, divisor_value);
+    let quotient = SymExpr::binop(&mut cx, SymBinOp::UDiv, numerator, divisor);
+    let five = SymExpr::constant(&mut cx, U256::from(5));
+    let quotient_is_five = SymBoolExpr::eq(&mut cx, quotient.clone(), five.clone());
+    let comparison = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ule, threshold, quotient.clone());
+    let constraints = vec![quotient_is_five, comparison.clone()];
+    let model = symbolic_model(
+        &mut cx,
+        [
+            ("numerator".to_string(), U256::from(15)),
+            ("threshold".to_string(), U256::MAX / divisor_value + U256::ONE),
+            ("quotient_alias".to_string(), U256::from(5)),
+        ],
+    );
+
+    assert!(constraints[0].eval_model(&model).unwrap());
+    assert!(!comparison.eval_model(&model).unwrap());
+    let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+    assert!(normalized.contains(&comparison));
+    assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+
+    let alias = SymExpr::var(&mut cx, "quotient_alias");
+    let alias_is_quotient = SymBoolExpr::eq(&mut cx, alias.clone(), quotient.clone());
+    let alias_is_five = SymBoolExpr::eq(&mut cx, alias, five);
+    let threshold = SymExpr::var(&mut cx, "threshold");
+    let reversed = SymBoolExpr::cmp(&mut cx, SymCmpOp::Uge, quotient.clone(), threshold.clone());
+    let less_than = SymBoolExpr::cmp(&mut cx, SymCmpOp::Ult, quotient, threshold);
+    let negated = less_than.not(&mut cx);
+    for comparison in [reversed, negated] {
+        let conjunction = SymBoolExpr::and(
+            &mut cx,
+            vec![comparison, alias_is_quotient.clone(), alias_is_five.clone()],
+        );
+        let constraints = vec![conjunction];
+        assert!(constraints.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+
+        let normalized = normalize_constraints_for_solver(&mut cx, &constraints);
+        assert!(normalized.iter().any(|constraint| !constraint.eval_model(&model).unwrap()));
+    }
+}
+
+#[test]
 fn solver_normalizes_constraint_batches_by_flattening_and_deduping() {
     let mut cx = SymCx::new();
     let x = SymExpr::var(&mut cx, "x");
