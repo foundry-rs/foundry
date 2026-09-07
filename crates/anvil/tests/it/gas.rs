@@ -299,10 +299,7 @@ async fn test_fee_history_ignores_stale_cache_after_reset() {
     assert_eq!(first.header.base_fee_per_gas, Some(INITIAL_BASE_FEE));
 }
 
-// A block mined with a zero gas limit must not poison `eth_feeHistory`'s `gasUsedRatio` with a
-// `NaN` (serialized as JSON `null`), which real clients (including our own `cast`) fail to
-// deserialize into `f64`. See https://github.com/foundry-rs/foundry/issues/11515 for the same
-// failure shape on the blob-gas axis.
+// Zero gas limits must not serialize gasUsedRatio as null.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fee_history_zero_gas_limit_does_not_produce_null_ratio() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -311,8 +308,7 @@ async fn test_fee_history_zero_gas_limit_does_not_produce_null_ratio() {
     assert!(api.evm_set_block_gas_limit(U256::ZERO).unwrap());
     api.mine_one().await.unwrap();
 
-    // Round-trips through real JSON serialization/deserialization, exactly like a real client
-    // (e.g. `cast`) talking to the node over HTTP - this is what a raw `NaN` -> `null` would break.
+    // Use HTTP to exercise JSON serialization and client deserialization.
     let fee_history = provider
         .get_fee_history(1, BlockNumberOrTag::Latest, &[])
         .await
