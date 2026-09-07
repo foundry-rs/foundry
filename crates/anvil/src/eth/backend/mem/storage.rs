@@ -469,25 +469,14 @@ impl<N: Network> BlockchainStorage<N> {
         block_hash
     }
 
-    /// Adds a block to storage by hash only, without claiming its number in the
-    /// canonical `number -> hash` map. Used for dumped blocks whose number belongs to a
-    /// fork's real chain rather than the dump itself - see [`Self::load_blocks`].
+    /// Stores a block by hash without updating canonical number mappings.
     fn insert_block_data_only(&mut self, block: Block) -> B256 {
         let block_hash = block.header.hash_slow();
         self.blocks.insert(block_hash, block);
         block_hash
     }
 
-    /// Deserialize and add all blocks data to the backend storage.
-    ///
-    /// `fork_boundary`, when set, is the highest block number that belongs to a fork's own
-    /// canonical chain (i.e. the fork's block number, when the loaded state's head was resolved
-    /// from the fork rather than from the dump - see `Backend::load_state`). Dumped blocks at or
-    /// below that number must not claim their slot in the `number -> hash` map: that range
-    /// belongs to the fork's real chain, and letting a dumped block win it corrupts the
-    /// `number -> hash` lookup for every block below the fork head, even though only the head
-    /// entry itself gets corrected afterward. The block's own data is still stored (so lookups
-    /// by hash keep working), only its `number -> hash` claim is skipped.
+    /// Loads blocks without replacing canonical fork slots at or below `fork_boundary`.
     pub fn load_blocks(
         &mut self,
         serializable_blocks: Vec<SerializableBlock>,
@@ -541,13 +530,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> BlockchainStorage<N> 
         transactions
     }
 
-    /// Deserialize and add all transactions data to the backend storage.
-    ///
-    /// `fork_boundary` has the same meaning as in [`super::BlockchainStorage::load_blocks`]:
-    /// dumped transactions that claim a block number at or below the fork's own boundary are
-    /// dropped, since that block number's canonical block now belongs to the fork rather than to
-    /// the dump - keeping such a transaction would let `eth_getTransactionByHash` report a
-    /// `blockNumber` whose canonical block doesn't actually contain it.
+    /// Loads transactions, excluding block numbers at or below `fork_boundary`.
     pub fn load_transactions(
         &mut self,
         serializable_transactions: Vec<SerializableTransaction>,

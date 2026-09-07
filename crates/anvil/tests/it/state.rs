@@ -786,21 +786,13 @@ async fn test_fork_load_state() {
     assert_eq!(balance_alice + value, latest_balance_alice);
 }
 
-// Loading a state dump on a forked node must not let dumped blocks below the fork's head
-// number steal that number's slot in the canonical `number -> hash` map: those numbers belong
-// to the fork's own real chain. Regression test for a bug where only the head entry was
-// corrected after `load_blocks`, silently leaving every other dumped block's foreign hash in
-// place - producing a canonical chain with a hash mismatch between adjacent blocks.
+// Imported blocks must not replace the canonical history below the fork head.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_fork_load_state_preserves_fork_blocks_below_head() {
     let bob = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     let alice = address!("0x9276449EaC5b4f7Bc17cFC6700f7BeeB86F9bCd0");
 
-    // `origin` is what `forked` below forks from - its blocks 1..=5 are the real upstream chain
-    // that must survive a state load. Each block carries a transfer of a DIFFERENT (trivial, wei-
-    // sized) amount so its blocks are guaranteed to differ from `dump_source`'s below (two empty-
-    // mined chains from identical genesis state can otherwise produce byte-identical blocks and
-    // defeat this test).
+    // Distinct transfers ensure the upstream and imported block hashes differ.
     let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let origin_provider = origin_handle.http_provider();
     let mut origin_tx_hashes = Vec::new();
@@ -826,10 +818,7 @@ async fn test_fork_load_state_preserves_fork_blocks_below_head() {
         origin_hashes.push((n, block.header.hash, block.header.parent_hash));
     }
 
-    // `dump_source` is an unrelated node whose blocks 1..=5 must NOT end up occupying numbers
-    // 1..=5 on `forked` after the load below - including block 5 itself, to exercise the `<=`
-    // boundary at the fork number exactly, not just strictly-below it. Different transfer amounts
-    // guarantee its blocks differ from `origin`'s same-numbered blocks.
+    // Match the fork height to exercise the inclusive boundary with unrelated blocks.
     let (dump_source_api, dump_source_handle) = spawn(NodeConfig::test()).await;
     let dump_source_provider = dump_source_handle.http_provider();
     let mut dump_source_tx_hashes = Vec::new();
@@ -848,8 +837,7 @@ async fn test_fork_load_state_preserves_fork_blocks_below_head() {
     let serialized_state = dump_source_api.serialized_state(false).await.unwrap();
     assert_eq!(serialized_state.best_block_number, Some(5));
 
-    // Fork at block 5 (== the dump's best_block_number), then load the unrelated dump - this is
-    // the "head from fork" path, with the dump's own block 5 landing exactly on the boundary.
+    // Load the unrelated dump at the same height as the fork head.
     let (forked_api, forked_handle) = spawn(
         NodeConfig::test()
             .with_eth_rpc_url(Some(origin_handle.http_endpoint()))
@@ -858,7 +846,6 @@ async fn test_fork_load_state_preserves_fork_blocks_below_head() {
     )
     .await;
 
-    // Head must still be the fork's real block 5.
     assert_eq!(forked_api.block_number().unwrap(), U256::from(5u64));
 
     let forked_provider = forked_handle.http_provider();
@@ -874,15 +861,14 @@ async fn test_fork_load_state_preserves_fork_blocks_below_head() {
         );
     }
 
-    // Real fork transactions must still be discoverable...
+    // Upstream transactions remain available.
     for hash in origin_tx_hashes {
         assert!(
             forked_provider.get_transaction_by_hash(hash).await.unwrap().is_some(),
             "a real transaction from the fork's own history must still be gettable by hash"
         );
     }
-    // ...and the dump's foreign transactions (whose blockNumber would otherwise point at a
-    // block that no longer canonically contains them) must not leak in.
+    // Imported transactions must not claim canonical fork block numbers.
     for hash in dump_source_tx_hashes {
         assert!(
             forked_provider.get_transaction_by_hash(hash).await.unwrap().is_none(),
