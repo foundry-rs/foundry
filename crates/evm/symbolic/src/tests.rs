@@ -1175,10 +1175,7 @@ fn memory_symbolic_write_after_concrete_overwrite_still_applies() {
 
 #[test]
 fn memory_dynamic_read_finds_symbolic_write_with_no_concrete_write_at_all() {
-    // Regression for a false negative: a store at a genuinely symbolic offset
-    // never extends `materialized_size` (there is no concrete candidate to
-    // extend it to), so a dynamic read used to enumerate zero candidates and
-    // silently return zero instead of the write's actual value.
+    // Symbolic stores do not extend the materialized region.
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
@@ -1202,11 +1199,7 @@ fn memory_dynamic_read_finds_symbolic_write_with_no_concrete_write_at_all() {
 
 #[test]
 fn memory_dynamic_read_finds_symbolic_write_beyond_concretely_materialized_region() {
-    // Same defect, shaped like the realistic trigger: some concrete writes
-    // establish a modest `materialized_size` (e.g. a Solidity free-memory
-    // pointer write), then a *symbolic*-offset write lands well past that
-    // region with no further concrete write. A dynamic read at the symbolic
-    // write's own location must still find it.
+    // A symbolic store beyond a concrete region must remain visible.
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
@@ -1233,9 +1226,7 @@ fn memory_dynamic_read_finds_symbolic_write_beyond_concretely_materialized_regio
 
 #[test]
 fn memory_load_word_offset_dynamic_finds_symbolic_write_beyond_materialized_region() {
-    // Same defect via `load_word_offset` (MLOAD's entry point), which used to
-    // have its own separate, independently-buggy `load_word_dynamic` bounded
-    // the same way. Now delegates through the fixed read path.
+    // Exercise the same case through MLOAD.
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
@@ -1262,19 +1253,7 @@ fn memory_load_word_offset_dynamic_finds_symbolic_write_beyond_materialized_regi
 
 #[test]
 fn memory_dynamic_read_finds_write_at_const_evaluable_but_undispatched_concrete_offset() {
-    // Regression for the store-dispatch / `concrete_offset()` mismatch: store
-    // dispatch (`store_byte_offset` et al.) gates on `offset.as_const()` -- a
-    // shallow "is this literally a `Const` node" check -- to decide whether a
-    // write bumps `materialized_size`. `SymbolicMemoryWrite::concrete_offset`
-    // gates on the strictly broader `offset.eval()` (full recursive
-    // evaluation). `Keccak(1) & 0xff` evaluates to a concrete, small value via
-    // `eval()` without ever folding to a literal `Const` at construction time
-    // (the mask-folding rules in `and_const` have no case for a bare
-    // `Keccak` operand), so `as_const()` reports `None`, the write is
-    // dispatched through `store_symbolic_bytes` -- which never bumps
-    // `materialized_size` -- while `concrete_offset()` still reports it as
-    // concrete. A naive `concrete_offset().is_some()` fast-path predicate
-    // would wrongly trust `materialized_size` here and silently return zero.
+    // eval() resolves this offset, but as_const() does not; the store remains symbolic.
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
@@ -1293,12 +1272,7 @@ fn memory_dynamic_read_finds_write_at_const_evaluable_but_undispatched_concrete_
 #[test]
 fn memory_load_word_offset_dynamic_finds_write_at_const_evaluable_but_undispatched_concrete_offset()
 {
-    // Same defect as above, exercised through `load_word_offset` (MLOAD's
-    // entry point) with a materialized region already established by an
-    // ordinary concrete store, matching the realistic trigger: some earlier
-    // concrete writes give a modest `materialized_size`, then a write whose
-    // offset only *looks* symbolic to the store dispatch (but is actually
-    // const-evaluable) lands past that region.
+    // MLOAD must find const-evaluable writes beyond the concrete region.
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
@@ -1310,9 +1284,6 @@ fn memory_load_word_offset_dynamic_finds_write_at_const_evaluable_but_undispatch
     let write_byte = SymExpr::constant(&mut cx, U256::from(0xef));
     memory.store_byte_offset(&mut cx, write_offset, write_byte);
 
-    // Read a full word starting exactly at the write's own (now-known)
-    // concrete position, so the write's byte lands at the word's most
-    // significant (first) position.
     let read_offset = SymExpr::var(&mut cx, "read_offset");
     let loaded = memory.load_word_offset(&mut cx, read_offset).unwrap();
 
@@ -1323,12 +1294,7 @@ fn memory_load_word_offset_dynamic_finds_write_at_const_evaluable_but_undispatch
     assert_eq!(loaded.eval_model(&model).unwrap(), expected);
 }
 
-/// Builds an offset expression that is const-evaluable (via `Keccak(..) &
-/// 0xff`) but not `as_const()`-able, so store dispatch never bumps
-/// `materialized_size` for a write using it, while `concrete_offset()`
-/// still resolves it to a concrete value. Returns the offset expression and
-/// its resolved concrete value (in `0..=0xff`, unpredictable but
-/// deterministic per `seed`).
+/// Builds a const-evaluable offset in 0..=255 that does not fold to a literal.
 fn undispatched_concrete_offset(cx: &mut SymCx, seed: u64) -> (SymExpr, U256) {
     let preimage = SymExpr::constant(cx, U256::from(seed));
     let len = SymExpr::constant(cx, U256::from(1));
@@ -1343,42 +1309,33 @@ fn undispatched_concrete_offset(cx: &mut SymCx, seed: u64) -> (SymExpr, U256) {
 
 #[test]
 fn memory_dynamic_read_finds_write_straddling_the_materialized_boundary() {
-    // Coverage gap named by review: the fast-path predicate must reject a
-    // write whose const-evaluable-but-undispatched offset starts INSIDE the
-    // current `materialized_size` bound but whose full extent (offset +
-    // length) ends past it. A predicate that only checked the offset itself
-    // (not the write's full extent) would wrongly accept this write into
-    // the bounded fast path, which stops enumerating at `materialized_size`
-    // and would miss the write's tail bytes.
+    // A write starting inside the materialized region can still extend beyond it.
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
     let (write_offset, offset_value) = undispatched_concrete_offset(&mut cx, 3);
     let offset_usize = usize::try_from(offset_value).unwrap();
 
-    // A concrete filler two bytes past the write's own start pins
-    // `materialized_size` to `offset + 2`: inside the write's real 32-byte
-    // extent (`store_word_offset` always writes a full EVM word), so it
-    // starts inside the bound and ends well past it.
+    // The concrete store materializes only the start of the later word write.
     let filler = SymExpr::constant(&mut cx, U256::from(0xaa));
     memory.store_byte(&mut cx, offset_usize + 1, filler);
 
     let write_word = SymExpr::var(&mut cx, "write_word");
     memory.store_word_offset(&mut cx, write_offset, write_word);
 
-    // Read word-local index 3 (a marker byte placed there via the model) --
-    // inside the write's real extent but well past `materialized_size`, so
-    // a predicate that ignored the write's full extent would have wrongly
-    // trusted the bounded fast path and returned zero here.
+    // Memory expands in 32-byte words; the marker must cross that rounded boundary.
+    let materialized_end = (offset_usize + 2).next_multiple_of(32);
+    assert!(offset_usize < materialized_end);
+    assert!(offset_usize + 31 >= materialized_end);
     let read_offset = SymExpr::var(&mut cx, "read_offset");
     let loaded = memory.byte_dynamic_with_delta(&mut cx, &read_offset, 0);
 
     let mut write_word_bytes = [0u8; 32];
-    write_word_bytes[3] = 0xab;
+    write_word_bytes[31] = 0xab;
     let model = symbolic_model(
         &mut cx,
         [
-            ("read_offset".to_string(), offset_value + U256::from(3)),
+            ("read_offset".to_string(), offset_value + U256::from(31)),
             ("write_word".to_string(), U256::from_be_bytes(write_word_bytes)),
         ],
     );
@@ -1388,20 +1345,14 @@ fn memory_dynamic_read_finds_write_straddling_the_materialized_boundary() {
 #[test]
 fn memory_load_word_offset_dynamic_word_read_includes_pseudo_concrete_write_past_materialized_size()
 {
-    // The exact regression named by review, relative to the deleted
-    // `load_word_dynamic`: a const-evaluable (but undispatched-as-concrete)
-    // write lands well past `materialized_size`, and a dynamic WORD read
-    // starts 24 bytes before it -- so the write falls at word-local index
-    // 24, not at the read's own start. Byte-by-byte enumeration over a
-    // wrongly-accepted bounded fast path would exclude it entirely.
+    // The stored byte must be visible at index 24 of a dynamic word read.
     let mut cx = SymCx::new();
     let mut memory = SymMemory::default();
 
     let filler = SymExpr::constant(&mut cx, U256::from(0xaa));
     memory.store_byte(&mut cx, 31, filler); // establishes materialized_size = 32
 
-    // `| 0x80` guarantees the resolved offset is >= 128, so `offset - 24`
-    // below never underflows.
+    // Keep offset - 24 nonnegative.
     let (keccak_masked, _) = undispatched_concrete_offset(&mut cx, 4);
     let high_bit = SymExpr::constant(&mut cx, U256::from(0x80));
     let write_offset = SymExpr::binop(&mut cx, SymBinOp::Or, keccak_masked, high_bit);
