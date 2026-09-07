@@ -143,11 +143,7 @@ impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     ///
     /// Optionally, returns a tuple containing the next cached session's id and file name.
     ///
-    /// The next id is one past the highest existing `chisel-<n>.json` id, not the directory's
-    /// entry count: once a session has been deleted or renamed (both already possible via
-    /// `!save <new-id>` and `remove_cached_session`), the entry count no longer matches the
-    /// lowest unused numeric id, and reusing it as a fresh autosave id silently overwrites
-    /// whichever existing session already happens to occupy that number.
+    /// Uses one past the highest numeric ID to avoid collisions after deletion.
     pub fn next_cached_session() -> Result<(String, String)> {
         Self::next_cached_session_in(&Self::cache_dir()?)
     }
@@ -282,12 +278,7 @@ mod tests {
     use foundry_evm::core::{constants::MONAD_CHEATCODE_ADDRESS, evm::MonadEvmNetwork};
     use semver::Version;
 
-    /// A deleted or renamed session leaves a gap in the numeric id sequence; the directory's
-    /// entry count no longer matches the lowest unused id. The next autosave must still land
-    /// past every existing numeric session, never reusing one of their filenames.
-    ///
-    /// Uses a block of very high ids so this can't collide with a real session already on the
-    /// machine running the test.
+    /// Deleted sessions must not cause the next ID to collide with an existing file.
     #[test]
     fn next_cached_session_skips_gaps_left_by_deleted_sessions() {
         let dir = tempfile::tempdir().unwrap();
@@ -300,12 +291,10 @@ mod tests {
         let (next_id, next_file) =
             ChiselSession::<EthEvmNetwork>::next_cached_session_in(&cache_dir).unwrap();
 
-        // The buggy count-based implementation returns "2" here (2 entries in the directory),
-        // which collides with the still-live chisel-2.json and would silently overwrite it.
+        // Counting entries would select the occupied ID 2.
         assert_eq!(next_id, "3", "must skip past the gap instead of reusing the occupied id 2");
         assert_eq!(next_file, format!("{cache_dir}chisel-3.json"));
 
-        // The existing sessions must be untouched by merely computing the next id.
         assert_eq!(
             std::fs::read_to_string(format!("{cache_dir}chisel-0.json")).unwrap(),
             "{\"id\":\"0\"}"
