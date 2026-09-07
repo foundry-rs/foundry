@@ -818,6 +818,9 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     pub fn script(&mut self, script_address: Address) {
         self.script_execution_inspector.get_or_insert_with(Default::default).script_address =
             script_address;
+        if let Some(cheatcodes) = &mut self.cheatcodes {
+            cheatcodes.script_address = Some(script_address);
+        }
         self.refresh_static_step_dispatch();
     }
 
